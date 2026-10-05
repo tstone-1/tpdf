@@ -67,12 +67,124 @@ have the binary.)
   chosen where the new choices still have it. A choice the file does not have yet is
   listed and can be chosen after the save.
 
+- **What the command-line tool says when the source changes.** A command that finds its
+  source changed while it was writing now says so and adds "no output was published".
+  The sentence about edits that are "still here" is gone: it was written for the window.
+  `tpdf fill` says a copy "was not written" where it said "was removed".
+
+- **The release script checks the dependency audit.** `scripts/publish_release.py`
+  refuses to publish when the audit run for the tag's commit is missing, unfinished or
+  failed. `BUILD.md` leads its release section with the twelve steps as one list, and
+  the per-feature verification records moved to `docs/VERIFICATION.md`.
+
 ### Fixed
 
 - **An answer in a field that says it is turned was written on its side.** A form made
   for a page displayed a quarter or a half turn round declares that turn on each field.
   tpdf ignored it, laid the answer out for the wrong side of the rectangle and drew it
   lying down. The answer is now drawn the way the field is read.
+
+- **A redaction could leave the removed text in the file.** On a page whose content is
+  stored as several streams, redacting text or a drawing wrote the old streams out
+  beside the page that no longer drew them, and the check could still say verified.
+  Every redaction now writes only what the document still uses, and a page whose
+  content cannot be replaced is refused.
+
+- **A copy of a removed line in a note or bookmark could be missed.** The check after a
+  redaction compared text as bytes, so a copy stored as UTF-16 or with an accented
+  letter read as clean. It is now found and reported.
+
+- **A redaction was reported clean over a script the check had not shown it can read.**
+  The check proves the recogniser reads a control word on the page. A Latin control
+  said nothing about Chinese, Japanese, Korean, Arabic, Thai, Devanagari or Hebrew
+  left in the region. The result is now *not verified* unless the control word is
+  written in every script the region held. On macOS the check also asks the recogniser
+  to detect the language, which reads Chinese, Japanese, Korean and Thai.
+
+- **Redacting beside a removed or added form field failed at the black fill.** The fill
+  asked for the field change a second time and was refused after the content had gone.
+
+- **A page whose content cannot be read to its end is no longer redacted in part.**
+  Removing something from such a page could drop everything after the unreadable
+  point. The redaction is now refused and nothing is written.
+
+- **A form field renamed to a name outside ASCII** was stored so that every reader,
+  tpdf included, showed other letters, and `tpdf fill` no longer found it. The name is
+  now stored as it was typed.
+
+- **Signing with an answer still being typed.** *Sign document…* chosen from the menu
+  while the caret was in a form field, or while a comment was being rewritten, signed
+  the file on disk without those words and reported the signature intact. The words
+  are now committed first, and the document is then said to need saving.
+
+- **Reload, with a draft open.** A file that changed on disk was reloaded over a form
+  answer or a note still being typed when *reload automatically* was chosen, and the
+  *Reload* command did the same. tpdf now asks, as it does for any unsaved edit.
+
+- **Redact all matches after a page was moved or deleted.** Matches read while the
+  pages changed could be marked on the page that took their place. The command now
+  stops and marks nothing.
+
+- **A drawing finished after a page above it was deleted** went onto the page that
+  moved up. It stays on the page it was drawn on, and goes with that page if that is
+  the one deleted. Picked rectangles follow their page the same way.
+
+- **Field properties after switching tabs.** The panel stayed open and its Save could
+  change a field of the other document. It closes with the document.
+
+- **The eraser over a field of the document**, while the fields are being changed,
+  removes the field as Delete does. It used to ask for a mark that does not exist.
+
+- **`tpdf fill --force` could lose an existing output.** The filled copy was written
+  under the output's name before it was read back, and removed when the read-back
+  disagreed. The copy is now staged and checked before it takes the name, as every
+  other command does it.
+
+- **`--force` on `fill` and `text -o`** no longer writes through a link or onto a
+  directory. `--force` replaces a regular file only.
+
+- **Plain command-line output** no longer passes terminal control characters from a
+  document's strings: a title or a field name holding one is printed with U+FFFD in
+  its place. `--json` carries the string as it is in the file, escaped.
+
+- **`--help`, `-h` or `--json` given as an option's value** is that value. Before,
+  `tpdf redact in.pdf -o out.pdf --text -h` printed the help and redacted nothing.
+
+- **After `--`, `-` names a file** and not standard input. `compress --preview` and
+  `edit --plan` refuse the output's own name.
+
+- **Long-term signing asked about a certificate somebody added to the timestamp.** A
+  timestamp carries certificates outside its signature. One added on the way, with the
+  authority's name and key and addresses of its own, was asked for revocation data and
+  written into the document. tpdf now takes no certificate above the authority's from
+  outside the chain this computer vouched for, and refuses the signing otherwise.
+
+- **`tpdf verify --strict` passed a document whose pages were rewritten after the
+  signature.** It now exits 1 when something appended after the last intact signature
+  or document timestamp touches a page or could not be read, and plain `verify` says so
+  in a line beginning *After the last signature:*. Validation data and an archive
+  timestamp do not count. The *Appended* row in the properties dialog counts a page
+  whose content was replaced, where it counted only a page object written again.
+
+- **A signed copy whose timestamp or long-term data did not read back** was reported as
+  signed in the window, where the command-line tool refused it. Both now refuse it in
+  the same words.
+
+- **A signature naming another certificate than the one it carries** read as intact. It
+  now reads as not checked.
+
+- **A malformed range from the worker while adding an archive timestamp** stopped the
+  application. It is now a refusal.
+
+- **A smaller copy could garble a picture.** A deflated picture whose predictor is
+  declared in an array or by reference was scaled from the wrong samples. Such a
+  picture is now left as it is.
+
+- **A crafted Type 1 font** can no longer hold a worker busy by calling a large
+  subroutine many times.
+
+- **A print job that fails part-way on Windows** is aborted and no longer left open on
+  the spooler.
 
 ### Known limits
 

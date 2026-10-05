@@ -1742,3 +1742,86 @@ describe("Viewer frame cost", () => {
     viewer.destroy();
   });
 });
+
+/**
+ * What "redact all matches" is handed when the pages moved while the matches'
+ * text was being read.
+ *
+ * A match is filed under a slot and a redaction under a page's id, and the
+ * text between the two is an await. `Viewer lifetime` above covers a reply
+ * that arrives after the viewer has gone; this is a reply that arrives after
+ * the *order* has, which nothing there can see because the viewer is still
+ * the same viewer.
+ */
+describe("Viewer matches across a page edit", () => {
+  let dom: FakeDom;
+  /** Pages whose extraction is held open, so a test can time its arrival. */
+  let held: Map<number, () => void>;
+
+  beforeEach(() => {
+    dom = installFakeDom();
+    held = new Map();
+    core.invoke.mockReset();
+    core.invoke.mockImplementation((command: string, args: { page: number }) => {
+      if (command === "search_page") {
+        // One hit, on the last page of the file and nowhere else.
+        const matches = args.page === 2
+          ? [{ page: 2, start: 0, end: 2, before: "", hit: "ab", after: "" }]
+          : [];
+        return Promise.resolve({ page: args.page, matches, chars: 2 });
+      }
+      if (command !== "page_text") return Promise.resolve(null);
+      if (!held.has(args.page)) return Promise.resolve(pageText());
+      return new Promise<PageText>((resolve) => {
+        held.set(args.page, () => resolve(pageText()));
+      });
+    });
+    tiles.fetchTile.mockReset();
+    tiles.fetchTile.mockImplementation(() => Promise.reject(new Error("boom")));
+    tiles.cancelTile.mockReset();
+    let rid = 0;
+    tiles.nextRequestId.mockImplementation(() => ++rid);
+  });
+
+  afterEach(() => {
+    dom.restore();
+    vi.clearAllMocks();
+  });
+
+  it("matches_asked_for_before_a_page_move_are_not_marked_on_the_page_that_took_the_slot", async () => {
+    const viewer = build(dom);
+    // Held from the start: the search itself asks for no text, and anything
+    // that read the page before the question below would leave it cached,
+    // which answers without an await and so without a window to move a page in.
+    held.set(2, () => {});
+    viewer.search("ab");
+    await settle();
+    await settle();
+    // The precondition: one match, in the last slot.
+    expect(viewer.searchMatches.map((match) => match.page)).toEqual([2]);
+
+    const [first, middle, last] = viewer.pageOrder;
+    let answered = false;
+    const asking = viewer.matchQuadsByPage().finally(() => { answered = true; });
+    await settle();
+    // Still waiting, or the move below would come after the answer.
+    expect(answered).toBe(false);
+    // The last page goes to the front while its text is still on its way, so
+    // the slot the match was filed under now holds the page that was second.
+    expect(viewer.setPages([last!, first!, middle!])).toBe(true);
+    held.get(2)?.();
+
+    // Refused whole, as an unreadable page is: the rectangles are the old
+    // last page's, and the id in that slot is another page's.
+    expect(await asking).toBeNull();
+
+    // The control: asked again once the order has settled, the same question
+    // has an answer, so the refusal above was about the move.
+    viewer.search("ab");
+    await settle();
+    await settle();
+    const again = await viewer.matchQuadsByPage();
+    expect(again?.map((entry) => entry.page)).toEqual([last!.id]);
+    viewer.destroy();
+  });
+});

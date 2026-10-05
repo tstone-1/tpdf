@@ -294,6 +294,38 @@ impl TestTsa {
             root,
         }
     }
+
+    /// The authority of [`TestTsa::new`] --- the same key --- with its
+    /// certificate issued by `issuing`, an authority under [`TestCa::of_tsa`]'s
+    /// root, as the public authorities' certificates are issued by one below
+    /// their roots. Its tokens carry `issuing`'s certificate and the root.
+    #[must_use]
+    pub fn under(issuing: &TestCa, published: &Published) -> Self {
+        let key = key(0x52);
+        let certificate = certificate_with(
+            &Spec {
+                subject: AUTHORITY,
+                issuer: &issuing.name,
+                key: &key,
+                signer: &issuing.key,
+                serial: 2,
+                purposes: Some(&[TIMESTAMPING]),
+                authority: false,
+            },
+            Dates {
+                from: FROM,
+                until: UNTIL,
+            },
+            &published.extensions(),
+        );
+        let root = TestCa::of_tsa().certificate;
+        TestTsa {
+            key,
+            certificate,
+            carried: vec![issuing.certificate.clone(), root.clone()],
+            root,
+        }
+    }
 }
 
 /// A token for `imprint`, made with `imprint_hash`, at `gen_time` (seconds
@@ -1462,6 +1494,29 @@ impl TestCa {
             purposes: None,
             authority: true,
         })
+    }
+
+    /// [`TestCa::cross`], saying where its revocation data is published: what
+    /// somebody on the path adds to a token --- `other`'s name and key under a
+    /// root of their own, naming addresses of their choosing.
+    #[must_use]
+    pub fn cross_publishing(&self, other: &TestCa, serial: u8, published: &Published) -> Vec<u8> {
+        certificate_with(
+            &Spec {
+                subject: &other.name,
+                issuer: &self.name,
+                key: &other.key,
+                signer: &self.key,
+                serial,
+                purposes: None,
+                authority: true,
+            },
+            Dates {
+                from: FROM,
+                until: UNTIL,
+            },
+            &published.extensions(),
+        )
     }
 
     /// [`TestCa::intermediate`], saying where its own revocation data is.

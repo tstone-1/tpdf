@@ -8,7 +8,7 @@
 //! choice worth arguing about is argued in `reading.ts` and not here.
 //!
 //! A restatement is a second copy, and `docs/TRAPS.md` records what second
-//! copies do. So it is held to the original the way `cli/words.rs` is:
+//! copies do. So it is held to the original the way `words.rs` is:
 //! `cli::tests` writes every case in [`tests::cases`] with the order this file
 //! computes to `testdata/cli/reading.json` (`TPDF_CLI_SAMPLES=write`), and
 //! `src/lib/clireading.test.ts` asks `reading.ts` the same questions and

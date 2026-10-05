@@ -126,6 +126,11 @@ export function read(now: FieldProperties, typed: Typed): FieldProperties | { pr
 
 /** What {@link changeProperties} needs from the window around it. */
 export interface PropertiesDeps {
+  /**
+   * The open document's model, compared by identity and never read: what
+   * says whether the document the panel was opened on is still the one open.
+   */
+  model(): unknown;
   /** The ids the viewer has picked. */
   picked(): readonly number[];
   /** The open document's form, while its own fields are being changed. */
@@ -171,12 +176,19 @@ export function pickedField(deps: Subject): number | null {
  * The field is asked for again after the panel closes: a panel can stay open
  * across an undo or a closed tab, and the change is made to the field as it
  * then is, or not at all.
+ *
+ * **And only in the document it was opened on.** Asking again by id is not
+ * enough for that: a mark's id starts at 1 in every document and a field of
+ * the file is named by its place in the form, so after a switch of tabs the
+ * same id is very likely another document's field, found and changed.
  */
 export async function changeProperties(deps: PropertiesDeps): Promise<boolean> {
+  const model = deps.model();
   const before = subject(deps);
   if (!before) return false;
   const to = await deps.ask(before.now);
   if (!to) return false;
+  if (deps.model() !== model) return false;
   const after = subject({ ...deps, picked: () => [before.id] });
   const state = deps.state();
   const form = deps.form();

@@ -326,6 +326,35 @@ pub trait Recogniser {
         pixels: Pixels<'_>,
         options: &Options,
     ) -> Result<Vec<RecognisedItem>, RecogniseError>;
+
+    /// [`recognise`](Self::recognise), for a caller that cannot say which
+    /// script the image holds and must not be answered as though it held none.
+    ///
+    /// The redaction gate is that caller. Vision reads Latin, Cyrillic and
+    /// Greek by default and returns **no span at all** for a line of Chinese,
+    /// Japanese or Thai of the same size, unless it is asked to detect the
+    /// language first --- so a region still showing one read as empty beside a
+    /// Latin control that was read back perfectly. An engine with such a
+    /// switch overrides this and turns it on; [`crate::ocr_vision`] has the
+    /// measurement, script by script.
+    ///
+    /// The default is the plain call, which is what an engine without one can
+    /// offer: `Windows.Media.Ocr` reads with the language it was created for
+    /// and cannot be re-pointed per call. That is safe because this is not
+    /// what the gate rests on. [`hold_to_scripts`] is: a clean verdict stands
+    /// only for the scripts the control itself was read back in, whatever the
+    /// engine was asked to do.
+    ///
+    /// # Errors
+    ///
+    /// As [`recognise`](Self::recognise).
+    fn recognise_any_script(
+        &self,
+        pixels: Pixels<'_>,
+        options: &Options,
+    ) -> Result<Vec<RecognisedItem>, RecogniseError> {
+        self.recognise(pixels, options)
+    }
 }
 
 // ------------------------------------------------------------------ the gate
@@ -826,11 +855,13 @@ pub enum Legibility {
         /// What the engine had returned, for the one cause that has an engine
         /// answer to report. See [`Unread`].
         ///
-        /// `None` means the engine had not answered --- either it never ran,
-        /// which is every cause that refuses before the recognition, or it
-        /// failed, which is [`NotVerifiedCause::EngineError`] and produced no
-        /// items to summarise. It never means *not recorded*: the one arm that
-        /// can build this always does.
+        /// `None` means there is no answer to summarise --- the engine never
+        /// ran, which is every cause that refuses before the recognition; it
+        /// failed, which is [`NotVerifiedCause::EngineError`]; or it read the
+        /// control and nothing else, which is
+        /// [`NotVerifiedCause::ScriptUnproven`] and is the whole of what it
+        /// said. It never means *not recorded*: the one arm that can build
+        /// this always does.
         evidence: Option<Unread>,
     },
 }
@@ -926,6 +957,11 @@ pub enum NotVerifiedCause {
     /// The engine answered and did not read the control token back, so its
     /// silence about the rest of the image carries no information.
     ControlUnread,
+    /// The engine read the control back and nothing else, and the text the
+    /// region held was written in a script the control is not written in. The
+    /// control proved the engine reads its own script at this size; about any
+    /// other its silence carries no information. See [`hold_to_scripts`].
+    ScriptUnproven,
 }
 
 impl NotVerifiedCause {
@@ -956,6 +992,7 @@ impl NotVerifiedCause {
             Self::ControlTooSmall => "no scale renders the control legibly",
             Self::EngineError => "the engine did not answer",
             Self::ControlUnread => "control not read back",
+            Self::ScriptUnproven => "control is in another script than what was removed",
         }
     }
 
@@ -964,7 +1001,7 @@ impl NotVerifiedCause {
     /// A cause that never fired is the interesting reading and an absent row is
     /// not: `docs/TRAPS.md` records an empty answer from a whole-document scan
     /// being unable to say whether it looked.
-    pub const ALL: [Self; 13] = [
+    pub const ALL: [Self; 14] = [
         Self::ControlNoSize,
         Self::ControlNoSurvivor,
         Self::ControlAllLarger,
@@ -978,6 +1015,7 @@ impl NotVerifiedCause {
         Self::Stack,
         Self::EngineError,
         Self::ControlUnread,
+        Self::ScriptUnproven,
     ];
 }
 
@@ -1083,6 +1121,186 @@ fn normalise(s: &str) -> String {
         .filter(|c| !c.is_whitespace())
         .flat_map(char::to_uppercase)
         .collect()
+}
+
+// ------------------------------------------------- what a control proves
+
+/// A writing system, as far as the gate has to tell them apart.
+///
+/// Not the Unicode `Script` property, which needs a table this crate does not
+/// carry. The scripts named are the ones a redaction is likely to meet and the
+/// ones measured against Vision; every other letter is told apart by the block
+/// it sits in, which is coarser than a script in one direction only --- two
+/// blocks of one script read as two, so a control in one does not vouch for
+/// text in the other, and the answer is *not verified* where a finer table
+/// would have certified.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum Script {
+    /// Latin, with its accented and extended letters.
+    Latin,
+    /// Greek.
+    Greek,
+    /// Cyrillic.
+    Cyrillic,
+    /// Hebrew.
+    Hebrew,
+    /// Arabic, in base letters or presentation forms.
+    Arabic,
+    /// Devanagari.
+    Devanagari,
+    /// Thai.
+    Thai,
+    /// Korean: syllables and jamo.
+    Hangul,
+    /// Japanese hiragana.
+    Hiragana,
+    /// Japanese katakana.
+    Katakana,
+    /// Chinese characters, wherever they are used.
+    Han,
+    /// A letter or digit of no script named above, by its block of 128 code
+    /// points.
+    Other(u32),
+}
+
+impl fmt::Display for Script {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let name = match self {
+            Self::Latin => "Latin",
+            Self::Greek => "Greek",
+            Self::Cyrillic => "Cyrillic",
+            Self::Hebrew => "Hebrew",
+            Self::Arabic => "Arabic",
+            Self::Devanagari => "Devanagari",
+            Self::Thai => "Thai",
+            Self::Hangul => "Korean",
+            Self::Hiragana => "hiragana",
+            Self::Katakana => "katakana",
+            Self::Han => "Chinese characters",
+            Self::Other(block) => return write!(f, "the script at U+{:04X}", block << 7),
+        };
+        f.write_str(name)
+    }
+}
+
+/// The script a character belongs to, or `None` for one that belongs to none.
+///
+/// `None` is everything that is not a letter or a digit --- punctuation,
+/// symbols, white space --- and the ten European digits, which every script
+/// here sets its numbers in. A character of no script is vouched for by any
+/// control, so this errs towards naming one: a digit of another script is
+/// that script's.
+///
+/// Fullwidth forms are the ASCII letters and digits drawn wide, and are read
+/// as those.
+#[must_use]
+pub fn script_of(ch: char) -> Option<Script> {
+    if !ch.is_alphanumeric() {
+        return None;
+    }
+    let code = match u32::from(ch) {
+        wide @ 0xFF01..=0xFF5E => wide - 0xFEE0,
+        code => code,
+    };
+    Some(match code {
+        0x30..=0x39 => return None,
+        0x0000..=0x02AF | 0x1E00..=0x1EFF | 0x2C60..=0x2C7F | 0xA720..=0xA7FF | 0xFB00..=0xFB06 => {
+            Script::Latin
+        }
+        0x0370..=0x03FF | 0x1F00..=0x1FFF => Script::Greek,
+        0x0400..=0x052F | 0x1C80..=0x1C8F | 0x2DE0..=0x2DFF | 0xA640..=0xA69F => Script::Cyrillic,
+        0x0590..=0x05FF | 0xFB1D..=0xFB4F => Script::Hebrew,
+        0x0600..=0x06FF | 0x0750..=0x077F | 0x0870..=0x08FF | 0xFB50..=0xFDFF | 0xFE70..=0xFEFF => {
+            Script::Arabic
+        }
+        0x0900..=0x097F | 0xA8E0..=0xA8FF => Script::Devanagari,
+        0x0E00..=0x0E7F => Script::Thai,
+        0x1100..=0x11FF | 0x3130..=0x318F | 0xA960..=0xA97F | 0xAC00..=0xD7FF | 0xFFA0..=0xFFDC => {
+            Script::Hangul
+        }
+        0x3040..=0x309F => Script::Hiragana,
+        0x30A0..=0x30FF | 0x31F0..=0x31FF | 0xFF66..=0xFF9F => Script::Katakana,
+        0x2E80..=0x2FDF
+        | 0x3005..=0x3007
+        | 0x3400..=0x4DBF
+        | 0x4E00..=0x9FFF
+        | 0xF900..=0xFAFF
+        | 0x2_0000..=0x3_23AF => Script::Han,
+        other => Script::Other(other >> 7),
+    })
+}
+
+/// Every script a piece of text is written in.
+#[must_use]
+pub fn scripts_of(text: &str) -> std::collections::BTreeSet<Script> {
+    text.chars().filter_map(script_of).collect()
+}
+
+/// Holds a clean verdict to the scripts its control was read back in.
+///
+/// `docs/TRAPS.md` has the rule under *a control that is easier than the check
+/// certifies nothing*: the control has to be at least as hard as what is being
+/// checked for. [`control_from_page`] enforces that for size. This enforces it
+/// for script, and it was missing until 2026-10-05: with a Latin word as the
+/// control, Vision read the control back and returned nothing at all for a
+/// region still showing a line of Chinese, so the region was *illegible* and
+/// the redaction certified. What the control had proved was that the engine
+/// reads Latin.
+///
+/// `covered` is what the document said the region held **before** the removal
+/// --- the words [`crate::ocr_gate::GatePage::words`] places under it. A clean
+/// verdict stands only when every script in them is one the control token is
+/// written in, because the token read back whole is the only evidence there is
+/// that the engine reads anything. Otherwise the answer is
+/// [`NotVerifiedCause::ScriptUnproven`]. A script no engine here reads at all
+/// ends the same way from either side: with a control in another script it is
+/// refused here, and with a control of its own the control is not read back.
+///
+/// **It only ever takes a clean verdict away.** [`Legibility::Legible`] and
+/// [`Legibility::NotVerified`] pass through untouched, so nothing this does can
+/// turn an answer that did not certify into one that does.
+///
+/// Two things it cannot see, both of which leave the verdict as it was. A
+/// region that covered **no** words has no script to hold the control to ---
+/// a drawing, a scan --- and is judged as before, on the control's size alone.
+/// And the scripts are the text layer's word for it: a page whose glyphs draw
+/// one script while its character codes claim another is read as the codes
+/// say.
+#[must_use]
+pub fn hold_to_scripts(verdict: Legibility, control: &Control, covered: &[&str]) -> Legibility {
+    if !verdict.certifies() {
+        return verdict;
+    }
+    let proven = scripts_of(&control.token);
+    let unproven: std::collections::BTreeSet<Script> = covered
+        .iter()
+        .flat_map(|word| scripts_of(word))
+        .filter(|script| !proven.contains(script))
+        .collect();
+    if unproven.is_empty() {
+        return verdict;
+    }
+    Legibility::NotVerified {
+        why: format!(
+            "the text removed here was written in {}, and the control word {:?} only shows that \
+             the engine reads {} on this page. Its finding nothing in a script it was not shown \
+             to read says nothing about what survived.",
+            listed(&unproven),
+            control.token,
+            listed(&proven)
+        ),
+        cause: NotVerifiedCause::ScriptUnproven,
+        evidence: None,
+    }
+}
+
+/// Script names joined for a sentence, or a phrase for none at all.
+fn listed(scripts: &std::collections::BTreeSet<Script>) -> String {
+    if scripts.is_empty() {
+        return "digits and punctuation".into();
+    }
+    let names: Vec<String> = scripts.iter().map(ToString::to_string).collect();
+    names.join(" and ")
 }
 
 // ------------------------------------------------------- the type-level rule
@@ -1206,6 +1424,132 @@ mod tests {
         EngineId {
             name: "fake",
             build: "test".into(),
+        }
+    }
+
+    #[test]
+    fn a_character_is_of_one_script_or_of_none() {
+        for (ch, script) in [
+            ('q', Some(Script::Latin)),
+            ('\u{e9}', Some(Script::Latin)),
+            ('\u{df}', Some(Script::Latin)),
+            ('\u{ff21}', Some(Script::Latin)),
+            ('\u{3a9}', Some(Script::Greek)),
+            ('\u{416}', Some(Script::Cyrillic)),
+            ('\u{5e9}', Some(Script::Hebrew)),
+            ('\u{645}', Some(Script::Arabic)),
+            ('\u{fef5}', Some(Script::Arabic)),
+            ('\u{915}', Some(Script::Devanagari)),
+            ('\u{e01}', Some(Script::Thai)),
+            ('\u{ae40}', Some(Script::Hangul)),
+            ('\u{3042}', Some(Script::Hiragana)),
+            ('\u{30a2}', Some(Script::Katakana)),
+            ('\u{5f20}', Some(Script::Han)),
+            ('\u{20000}', Some(Script::Han)),
+            // Of no script: the European digits, wide or not, and everything
+            // that is neither a letter nor a digit.
+            ('7', None),
+            ('\u{ff17}', None),
+            (',', None),
+            (' ', None),
+            ('\u{3002}', None),
+            ('\u{20ac}', None),
+        ] {
+            assert_eq!(script_of(ch), script, "U+{:04X}", u32::from(ch));
+        }
+        // A digit of another script is that script's, or a Latin control would
+        // vouch for it.
+        assert_eq!(script_of('\u{663}'), Some(Script::Arabic));
+        // Scripts with no name here are told apart by block: Tamil is not
+        // Telugu, and Tamil is Tamil.
+        let (tamil, telugu) = (script_of('\u{ba4}'), script_of('\u{c24}'));
+        assert!(matches!(tamil, Some(Script::Other(_))), "{tamil:?}");
+        assert_ne!(tamil, telugu);
+        assert_eq!(tamil, script_of('\u{bae}'));
+    }
+
+    #[test]
+    fn a_clean_verdict_stands_only_for_the_scripts_the_control_is_written_in() {
+        let clean = || adjudicate(&engine(), &control(), &Ok(vec![in_band("K7QX2")]));
+        assert!(clean().certifies(), "the fixture has to start clean");
+        assert!(hold_to_scripts(clean(), &control(), &["Ackerman", "120,000"]).certifies());
+        assert!(hold_to_scripts(clean(), &control(), &[]).certifies());
+        // Each of these is a line Vision either needs language detection to
+        // read or does not read at all, and Greek and Cyrillic besides: it
+        // reads those by default, and a Latin control still did not show it.
+        for other in [
+            "\u{5f20}\u{4f1f}",
+            "\u{305f}\u{306a}\u{304b}",
+            "\u{30bf}\u{30ca}\u{30ab}",
+            "\u{ae40}\u{bbfc}\u{c900}",
+            "\u{645}\u{62d}\u{645}\u{62f}",
+            "\u{e2a}\u{e21}\u{e0a}\u{e32}\u{e22}",
+            "\u{930}\u{93e}\u{92e}",
+            "\u{5e9}\u{5dc}\u{5d5}\u{5dd}",
+            "\u{418}\u{432}\u{430}\u{43d}\u{43e}\u{432}",
+            "\u{3a0}\u{3b1}\u{3c0}\u{3b1}\u{3c2}",
+            "\u{ba4}\u{bae}\u{bbf}\u{bb4}\u{bcd}",
+        ] {
+            let held = hold_to_scripts(clean(), &control(), &["Ackerman", other]);
+            assert!(
+                matches!(
+                    held,
+                    Legibility::NotVerified {
+                        cause: NotVerifiedCause::ScriptUnproven,
+                        evidence: None,
+                        ..
+                    }
+                ),
+                "{other}: {held:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_control_vouches_for_every_script_it_is_written_in_and_no_other() {
+        // A Japanese line is one token and three scripts. Read back whole, it
+        // shows the engine reading each of them.
+        let mut japanese = control();
+        japanese.token = "\u{3053}\u{306e}\u{6587}\u{66f8}\u{30c6}\u{30b9}\u{30c8}".into();
+        let clean = || Legibility::Illegible { engine: engine() };
+        for covered in ["\u{6771}\u{4eac}", "\u{3068}\u{3046}", "\u{30c8}\u{30b9}"] {
+            assert!(hold_to_scripts(clean(), &japanese, &[covered]).certifies());
+        }
+        assert!(!hold_to_scripts(clean(), &japanese, &["Tanaka"]).certifies());
+        // A control of digits shows digits being read, and nothing lettered.
+        let mut digits = control();
+        digits.token = "120000".into();
+        assert!(hold_to_scripts(clean(), &digits, &["4711"]).certifies());
+        assert!(!hold_to_scripts(clean(), &digits, &["Ackerman"]).certifies());
+    }
+
+    #[test]
+    fn the_refusal_names_the_script_removed_and_the_one_the_control_showed() {
+        let clean = adjudicate(&engine(), &control(), &Ok(vec![in_band("K7QX2")]));
+        let held = hold_to_scripts(clean, &control(), &["\u{645}\u{62d}\u{645}\u{62f}"]);
+        let Legibility::NotVerified { why, .. } = held else {
+            panic!("an Arabic word under a Latin control certified");
+        };
+        assert!(why.contains("written in Arabic"), "{why}");
+        assert!(why.contains("\"K7QX2\""), "{why}");
+        assert!(why.contains("reads Latin"), "{why}");
+    }
+
+    #[test]
+    fn holding_to_scripts_never_turns_a_verdict_clean() {
+        // The direction that must not exist. A survivor and a failed check go
+        // through unchanged whatever was covered, including nothing.
+        let legible = Legibility::Legible {
+            found: vec![outside("Aldebaran")],
+        };
+        let unread = adjudicate(&engine(), &control(), &Ok(vec![]));
+        for verdict in [legible, unread] {
+            for covered in [&[][..], &["Ackerman"][..], &["\u{5f20}\u{4f1f}"][..]] {
+                assert_eq!(
+                    hold_to_scripts(verdict.clone(), &control(), covered),
+                    verdict
+                );
+            }
         }
     }
 

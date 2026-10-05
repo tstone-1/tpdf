@@ -122,7 +122,7 @@ function deps(update: {
   fields?: FieldEdited[];
   answer?: (now: FieldProperties) => FieldProperties | null;
   /** What happens to the window while the panel is open. */
-  meanwhile?: (world: { form: Form | null; marks: MarkView[] }) => void;
+  meanwhile?: (world: { form: Form | null; marks: MarkView[]; model: object }) => void;
 } = {}): {
   deps: PropertiesDeps; asked: FieldProperties[]; made: FieldTarget[]; fitted: [number, FieldProps][]; said: string[];
   /** How many widgets each change to the file named. */
@@ -133,10 +133,11 @@ function deps(update: {
   const made: FieldTarget[] = [];
   const fitted: [number, FieldProps][] = [];
   const said: string[] = [];
-  const world = { form: update.form === undefined ? FORM : update.form, marks: update.marks ?? MARKS };
+  const world = { form: update.form === undefined ? FORM : update.form, marks: update.marks ?? MARKS, model: {} };
   return {
     asked, made, fitted, said, sent,
     deps: {
+      model: () => world.model,
       picked: () => update.picked ?? [SAVED_BASE],
       form: () => world.form,
       state: () => ({ fields: update.fields ?? [], pages: PAGES, marks: world.marks }),
@@ -282,6 +283,37 @@ describe("changing a placed field's properties", () => {
     run.deps.ask = (now) => { picked = [5]; return ask(now); };
     await expect(changeProperties(run.deps)).resolves.toBe(true);
     expect(run.fitted).toEqual([[3, { required: true }]]);
+  });
+
+  it("changeProperties_made_after_the_document_changed_changes_nothing", async () => {
+    // Mark ids start at 1 in every document, so another document's mark with
+    // the id the panel was opened on is found, is a field, and differs from
+    // what was typed. Only which document it is says the change is not for it.
+    const placed = deps({
+      picked: [3],
+      answer: (now) => ({ ...now, required: true }),
+      meanwhile: (world) => {
+        world.model = {};
+        world.marks = [mark(3, "Another document's", { kind: "text", border: false })];
+      },
+    });
+    await expect(changeProperties(placed.deps)).resolves.toBe(false);
+    expect(placed.fitted).toEqual([]);
+    expect(placed.said).toEqual([]);
+
+    // A field of the file is found by its place in the form, which is as
+    // good a match in the other document's form.
+    const saved = deps({
+      answer: (now) => ({ ...now, tooltip: "Full name" }),
+      meanwhile: (world) => { world.model = {}; },
+    });
+    await expect(changeProperties(saved.deps)).resolves.toBe(false);
+    expect(saved.made).toEqual([]);
+
+    // The control: the same answers with the document still the one open.
+    const still = deps({ picked: [3], answer: (now) => ({ ...now, required: true }) });
+    await expect(changeProperties(still.deps)).resolves.toBe(true);
+    expect(still.fitted).toEqual([[3, { required: true }]]);
   });
 });
 

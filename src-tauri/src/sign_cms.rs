@@ -724,6 +724,24 @@ fn length(n: usize) -> Vec<u8> {
     out
 }
 
+/// Whether `range` frames one reserved value in a revision of `update` bytes
+/// appended to a document of `was`: `[0, a, b, c]` with `a` and `b` inside the
+/// revision, the hole between them the size of `<`, [`RESERVED`] bytes as hex
+/// and `>`, and `b + c` the end of the result.
+///
+/// The numbers are a worker's, and [`check`] and [`seal_document_timestamp`]
+/// both index the revision by them: this is asked first by each, so a range
+/// that points outside the revision is a refusal and never an index.
+fn framed(range: [u64; 4], was: usize, update: usize) -> bool {
+    let end = was + update;
+    let [start, first, second, last] = range.map(|n| usize::try_from(n).unwrap_or(usize::MAX));
+    start == 0
+        && first >= was
+        && second == first.saturating_add(RESERVED * 2 + 2)
+        && second <= end
+        && second.checked_add(last) == Some(end)
+}
+
 /// Checks the worker's numbers against the bytes this process will write.
 ///
 /// `original` is the file as this process read it. The update must have been
@@ -750,18 +768,12 @@ pub fn check(original: &[u8], unsigned: &Unsigned) -> Result<[u8; 32], String> {
             unsigned.built_against
         )));
     }
-    let end = was + unsigned.update.len();
-    let [start, first, second, last] = unsigned
-        .range
-        .map(|n| usize::try_from(n).unwrap_or(usize::MAX));
-    let shaped = start == 0
-        && first >= was
-        && second == first.saturating_add(RESERVED * 2 + 2)
-        && second <= end
-        && second.checked_add(last) == Some(end);
-    if !shaped {
+    if !framed(unsigned.range, was, unsigned.update.len()) {
         return Err(changed("covers a range that does not frame its own value"));
     }
+    let [_, first, second, _] = unsigned
+        .range
+        .map(|n| usize::try_from(n).unwrap_or(usize::MAX));
     let hole = &unsigned.update[first - was..second - was];
     let zeros = hole.first() == Some(&b'<')
         && hole.last() == Some(&b'>')
@@ -831,8 +843,8 @@ fn write_hex(
 /// # Errors
 ///
 /// The token is larger than the span the revision reserved; the revision was
-/// built against other bytes; or tpdf's own verifier does not call the result
-/// intact.
+/// built against other bytes, or states a range that does not frame its own
+/// value; or tpdf's own verifier does not call the result intact.
 pub fn seal_document_timestamp(
     original: Vec<u8>,
     unsigned: crate::sign_prepare::Unsigned,
@@ -850,6 +862,15 @@ pub fn seal_document_timestamp(
              the document is {}",
             original.len()
         ));
+    }
+    // The shape the signing path holds a worker's range to, before the
+    // revision is indexed by it: a hole stated before the revision begins
+    // would otherwise be a subtraction below zero in this process.
+    if !framed(range, built_against, update.len()) {
+        return Err(
+            "the document timestamp's revision covers a range that does not frame its own value"
+                .into(),
+        );
     }
     if token.len() > RESERVED {
         return Err(format!(

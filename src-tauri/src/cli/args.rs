@@ -8,7 +8,7 @@
 //! `run`, after its `parse` has said the line is well formed. A refusal here is
 //! exit code 2, [`super::Exit::Usage`].
 
-use std::path::{Component, Path};
+use std::path::{Component, Path, PathBuf};
 
 use super::{Registered, Subcommand, COMMANDS};
 
@@ -50,15 +50,66 @@ pub fn parse(args: &[String]) -> Result<Line, String> {
     // Before the command's own parser, which would refuse `--help` as an option
     // it does not have --- the answer a reader got until 2026-10-02, for the
     // one thing typed by somebody who does not yet know the options. Only
-    // before `--`, after which every word is a path.
-    if rest
+    // before `--`, after which every word is a path, and only where an option
+    // stands: `redact in.pdf -o out.pdf --text -h` looks for `-h` in the
+    // document, and answering it with the help text and exit code 0 told a
+    // script the redaction was done.
+    if options(command, rest)
         .iter()
-        .take_while(|arg| *arg != "--")
-        .any(|arg| arg == "--help" || arg == "-h")
+        .any(|option| *option == "--help" || *option == "-h")
     {
         return Ok(Line::HelpFor(command));
     }
     (command.parse)(rest).map(Line::Run)
+}
+
+/// Whether the line asks for `--json`, for the things [`super::run`] prints
+/// before or instead of the command: a refusal of the line itself, and `help`.
+///
+/// Where an option stands, as [`parse`] reads `--help`: the `--json` in
+/// `search in.pdf --text --json` is what to look for. A first word that is no
+/// command has no parser to ask, and `help` takes no option with a value, so
+/// there every word before `--` counts.
+pub(crate) fn wants_json(args: &[String]) -> bool {
+    let command = args
+        .split_first()
+        .and_then(|(name, rest)| Some((COMMANDS.iter().find(|c| c.name == name)?, rest)));
+    match command {
+        Some((command, rest)) => options(command, rest).contains(&"--json"),
+        None => args
+            .iter()
+            .take_while(|arg| *arg != "--")
+            .any(|arg| arg == "--json"),
+    }
+}
+
+/// The words of `rest` that stand where an option does: before `--`,
+/// beginning with `-`, and not the value of the option before them.
+///
+/// **The command's own parser says which options take a value**, so there is
+/// no second table to fall behind the first. Every parser reads a value with
+/// [`value`], and a parser handed one word that is such an option answers with
+/// [`value`]'s refusal, which no other word produces. Nothing is opened by
+/// asking: a parser is pure (this module's note).
+fn options<'a>(command: &Registered, rest: &'a [String]) -> Vec<&'a str> {
+    let takes_value = |option: &String| {
+        (command.parse)(std::slice::from_ref(option)).is_err_and(|why| why == needs_value(option))
+    };
+    let mut found = Vec::new();
+    let mut words = rest.iter();
+    while let Some(word) = words.next() {
+        if word == "--" {
+            break;
+        }
+        if !word.starts_with('-') {
+            continue;
+        }
+        found.push(word.as_str());
+        if takes_value(word) {
+            words.next();
+        }
+    }
+    found
 }
 
 /// The registered command called `name`, or the refusal that says what is.
@@ -137,8 +188,26 @@ pub(crate) fn value<'a>(
     flag: &str,
     rest: &mut std::slice::Iter<'a, String>,
 ) -> Result<&'a String, String> {
-    rest.next()
-        .ok_or_else(|| format!("`{flag}` needs a value after it"))
+    rest.next().ok_or_else(|| needs_value(flag))
+}
+
+/// [`value`]'s refusal, which [`options`] also reads a parser's answer by.
+fn needs_value(flag: &str) -> String {
+    format!("`{flag}` needs a value after it")
+}
+
+/// A word that names a document, as the path a command opens.
+///
+/// After `--` every word is a file's name, `-` among them, and the commands
+/// that read standard input know it by exactly that path (`opened_or_stdin`).
+/// So the file called `-` is handed over as `./-`, which names the same file
+/// and is not the stream.
+pub(crate) fn operand(after_separator: bool, word: &str) -> PathBuf {
+    if after_separator && word == "-" {
+        Path::new(".").join(word)
+    } else {
+        PathBuf::from(word)
+    }
 }
 
 /// Whether two paths are the same path as written, `.` and `..` resolved.

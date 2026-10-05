@@ -4057,12 +4057,12 @@ fn rewrite(plan: &Plan, checked: Checked, job: Job) -> Result<Vec<u8>, Refusal> 
     // a turn and a crop write entries in the page dictionary. Not one of them
     // touches a content stream, which is the property that makes the ordinals
     // still true here.
-    let redacted = if job == Job::RedactionFill {
+    if job == Job::RedactionFill {
         redaction_fill::paint(&mut doc, &pages, &plan.redactions)?;
-        apply_redactions(&mut doc, &pages, &[])?
+        apply_redactions(&mut doc, &pages, &[])?;
     } else {
-        apply_redactions(&mut doc, &pages, &plan.redactions)?
-    };
+        apply_redactions(&mut doc, &pages, &plan.redactions)?;
+    }
 
     // **Only what this rewrite orphaned, and only when it orphaned something.**
     // `drop_pages` unlinks a page object and every reference to it, and
@@ -4114,10 +4114,6 @@ fn rewrite(plan: &Plan, checked: Checked, job: Job) -> Result<Vec<u8>, Refusal> 
     // text somebody asked to be rid of.
     if !dropped.is_empty()
         || moved
-        || redacted.annots > 0
-        || redacted.outline > 0
-        || redacted.fields > 0
-        || redacted.images > 0
         || discarded > 0
         || !plan.text_edits.is_empty()
         // And a change to a field of the file, the same shape a sixth time. A
@@ -4127,6 +4123,22 @@ fn rewrite(plan: &Plan, checked: Checked, job: Job) -> Result<Vec<u8>, Refusal> 
         // test that removes a field and then looks for it in the file found
         // this on the day the removal landed.
         || !plan.field_edits.is_empty()
+        // And **any redaction at all**, which is the annotation, the outline
+        // entry and the picture above, and one case more. Until 2026-10-05
+        // this asked four counts of what a redaction took --- annotations,
+        // outline entries, fields, pictures --- each added on the day its
+        // carrier was found written out, and `shows`, `paths` and `cuts` were
+        // never among them. Taking text or a drawing off a page whose
+        // `/Contents` is several streams gives the page one new stream and
+        // leaves the old ones named by nothing, with every removed glyph in
+        // them, so a plain text redaction of such a page wrote them all out.
+        // Asked of the plan rather than of one more count, so the next thing a
+        // redaction learns to remove cannot be the next one missing here: a
+        // file a redaction wrote holds what its trailer reaches and no more.
+        //
+        // Not the fill, which carries the regions and removes nothing: it is
+        // pointed at the bytes the verification read, and only adds to them.
+        || (job != Job::RedactionFill && !plan.redactions.is_empty())
     {
         sweep::collect(&mut doc)?;
     }
@@ -4518,9 +4530,10 @@ fn strip_metadata(doc: &mut Document) -> Result<usize, Refusal> {
 
 /// What a redaction took out of the document.
 ///
-/// Counts rather than one number, because they are separate carriers and the
-/// caller acts on one of them: an annotation that went may have left an
-/// appearance stream reachable from nothing, which is what the sweep is for.
+/// Counts rather than one number, because they are separate carriers. The
+/// writer acted on four of them until 2026-10-05, to decide whether to sweep;
+/// it now sweeps after every redaction, so what reads them is this module's
+/// tests, which ask of each carrier whether it went.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 struct Redacted {
     /// Text-showing operations deleted from content streams.

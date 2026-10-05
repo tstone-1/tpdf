@@ -454,6 +454,29 @@ fn stored(doc: &Document, dict: &Dictionary) -> Option<Stored> {
     }
 }
 
+/// Whether `lopdf` will undo the predictor a deflated stream was stored with.
+///
+/// It reads `/DecodeParms` only as a dictionary written in the stream's own
+/// dictionary, and each number in it only as a number written there. An array
+/// of one dictionary and a reference are both allowed by the format, and for
+/// either it inflates the stream and hands back samples that are still
+/// differences. For a TIFF predictor those are exactly as many bytes as the
+/// picture has samples, so [`samples`] cannot tell by counting them, and a
+/// picture scaled from them is a different picture stored as this one.
+///
+/// No parameters at all is no predictor, and is read.
+fn parms_are_read(dict: &Dictionary) -> bool {
+    /// The numbers a predictor is undone by.
+    const NUMBERS: [&[u8]; 4] = [b"Predictor", b"Colors", b"Columns", b"BitsPerComponent"];
+    match dict.get(b"DecodeParms") {
+        Err(_) => true,
+        Ok(Object::Dictionary(parms)) => NUMBERS
+            .iter()
+            .all(|key| matches!(parms.get(key), Err(_) | Ok(Object::Integer(_)))),
+        Ok(_) => false,
+    }
+}
+
 /// What a picture is, when it is one this can shrink.
 ///
 /// `as_mask` reads a soft mask, which is always grey and may not carry a
@@ -493,6 +516,9 @@ fn picture(doc: &Document, id: ObjectId, as_mask: bool) -> Option<Picture> {
         return None;
     }
     let stored = stored(doc, dict)?;
+    if stored == Stored::Flate && !parms_are_read(dict) {
+        return None;
+    }
     let mask = match dict.get(b"SMask") {
         Err(_) => None,
         Ok(mask) => {

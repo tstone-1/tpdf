@@ -2790,6 +2790,321 @@ fn plain_text_ends_every_page_with_a_form_feed() {
     );
 }
 
+/// A string the document chose reaches a terminal without the characters a
+/// terminal acts on, and `--json` still carries it whole.
+#[test]
+fn plain_output_carries_no_escape_from_a_document_string() {
+    // U+001B and U+009B both begin a control sequence; this one would clear
+    // the screen. A title stored as UTF-16 can hold either.
+    let title = "Quarterly\u{1b}[2J \u{9b}2J review";
+    let mut report = info_sample();
+    let document = report.files[0].document.as_mut().expect("described");
+    document.metadata[0].value = title.into();
+    let written = |json: bool| {
+        let mut out = Vec::new();
+        if json {
+            super::json(&mut out, &report);
+        } else {
+            say(&mut out, &super::info::info_text(&report));
+        }
+        String::from_utf8(out).expect("utf-8")
+    };
+
+    let plain = written(false);
+    assert!(
+        !plain.contains('\u{1b}') && !plain.contains('\u{9b}'),
+        "{plain:?}"
+    );
+    assert!(
+        plain.contains("  Title: Quarterly\u{fffd}[2J \u{fffd}2J review\n"),
+        "{plain:?}"
+    );
+    // The lines are still lines: a newline is not among what is replaced.
+    assert!(plain.lines().count() > 5, "{plain:?}");
+
+    let json = written(true);
+    assert!(
+        json.contains(r"Quarterly\u001b[2J \u009b2J review"),
+        "{json}"
+    );
+    let back: serde_json::Value = serde_json::from_str(&json).expect("one JSON document");
+    assert_eq!(back["files"][0]["document"]["metadata"][0]["value"], title);
+
+    // Every C0 control but the newline and the tab, DEL, and every C1
+    // control; nothing else, and nothing at all in a string with none.
+    for code in (0..=0x9f_u32).chain([0xa0, 0xfc, 0x2028]) {
+        let c = char::from_u32(code).expect("a character");
+        let replaced = super::printable(&format!("a{c}b")) == "a\u{fffd}b";
+        let control = (code < 0x20 && c != '\n' && c != '\t') || (0x7f..=0x9f).contains(&code);
+        assert_eq!(replaced, control, "U+{code:04X}");
+    }
+    assert!(matches!(
+        super::printable("Größe\tzwei\n"),
+        std::borrow::Cow::Borrowed(_)
+    ));
+
+    // The text of a page keeps its lines and its tabs and nothing else of
+    // the kind, and the form feed that ends a page is the command's own.
+    let mut text = text_sample();
+    text.pages.truncate(1);
+    text.pages[0].text = "one\ttwo\n\u{1b}]0;title\u{7}three\u{c}".into();
+    assert_eq!(
+        super::text::plain(&text),
+        "one\ttwo\n\u{fffd}]0;title\u{fffd}three\u{fffd}\n\u{c}"
+    );
+    // What `search` prints quotes the document too.
+    let found = super::printable("a.pdf:1: an \u{1b}[31minvoice\n").into_owned();
+    assert_eq!(found, "a.pdf:1: an \u{fffd}[31minvoice\n");
+}
+
+/// `--help` and `--json` are options where an option stands, and a value
+/// where a value does.
+#[test]
+fn a_help_or_json_word_that_is_an_options_value_is_the_value() {
+    // The control: in option position each is what it was.
+    for line in [
+        "redact in.pdf -o out.pdf --text x -h",
+        "redact --help in.pdf",
+        "search in.pdf --text x --help",
+    ] {
+        assert!(matches!(parse(&argv(line)), Ok(Line::HelpFor(_))), "{line}");
+    }
+    // As the value of the option before it, it is that option's value, and
+    // the command runs: this one looks for `-h` in the document.
+    for line in [
+        "redact in.pdf -o out.pdf --text -h",
+        "redact in.pdf -o out.pdf --text --help",
+        "search in.pdf --text -h",
+        "search in.pdf --pattern --help",
+        "fill in.pdf -o out.pdf --values --help",
+        "sign in.pdf -o --help --identity x",
+    ] {
+        assert!(matches!(parse(&argv(line)), Ok(Line::Run(_))), "{line}");
+    }
+    // A value is skipped once: the word after it is an option again.
+    assert!(matches!(
+        parse(&argv("search in.pdf --text -h -h")),
+        Ok(Line::HelpFor(_))
+    ));
+    // After `--` nothing is an option, as before.
+    assert!(matches!(
+        parse(&argv("search --text x -- -h")),
+        Ok(Line::Run(_))
+    ));
+
+    use super::args::wants_json;
+    for (line, wanted) in [
+        ("search in.pdf --text x --json", true),
+        ("search --json in.pdf --text x", true),
+        ("search in.pdf --text --json", false),
+        ("search in.pdf --text --json --json", true),
+        ("extract in.pdf --pages --json -o out.pdf", false),
+        ("extract -o out.pdf -- --json", false),
+        // No command to ask: every word before `--` counts, as it did.
+        ("help --json", true),
+        ("unknown --json", true),
+        ("--json", true),
+        ("help -- --json", false),
+        ("", false),
+    ] {
+        assert_eq!(wants_json(&argv(line)), wanted, "{line}");
+    }
+    // What that decides: a refused line prints a JSON document only when
+    // `--json` was asked for. `--pages --json` is a page list that is not one.
+    let store = Soft256(Vec::new());
+    let (code, out, err) = ran(&argv("extract in.pdf --pages --json -o out.pdf"), &store);
+    assert_eq!(code, 2, "{err}");
+    assert!(out.is_empty(), "{out}");
+    let (code, out, _) = ran(&argv("extract in.pdf --pages x -o out.pdf --json"), &store);
+    assert_eq!(code, 2);
+    assert!(
+        serde_json::from_str::<report::Failed>(&out).is_ok(),
+        "{out}"
+    );
+
+    // Every option a command's usage shows with a value after it is one its
+    // parser reads a value for, which is what the walk above asks the parser.
+    let mut valued = 0;
+    for command in COMMANDS {
+        let words: Vec<&str> = command.usage.split_whitespace().collect();
+        for pair in words.windows(2) {
+            let option = pair[0].trim_start_matches(['[', '(']);
+            let after = pair[1];
+            if !option.starts_with('-') || option.ends_with([']', ')']) || option == "-" {
+                continue;
+            }
+            // `-o <out.pdf>`, `--pages 1-3,7`, `--password-env VAR`: a value
+            // follows unless the next word opens or closes a group, alternates
+            // or is an option.
+            if after.starts_with(['[', '(', '|', '-', ')', ']']) {
+                continue;
+            }
+            valued += 1;
+            let line = format!("{} {option} --help", command.name);
+            assert!(
+                !matches!(parse(&argv(&line)), Ok(Line::HelpFor(_))),
+                "`{line}`: the usage shows `{option}` with a value"
+            );
+        }
+    }
+    // The usage lines were read: a loop that found no option proves nothing.
+    assert!(valued > 60, "{valued} options with a value");
+}
+
+/// After `--` every word names a file, `-` among them.
+#[test]
+fn a_dash_after_the_separator_is_a_file_and_not_standard_input() {
+    let stdin = Path::new("-");
+    let file = Path::new(".").join("-");
+    assert_ne!(file.as_path(), stdin);
+    // The control: before `--` it is standard input, as it was.
+    assert_eq!(super::text::parse(&argv("-")).unwrap().input, stdin);
+    assert_eq!(super::info::parse(&argv("-")).unwrap().files, [stdin]);
+    assert_eq!(super::fields::parse(&argv("-")).unwrap().input, stdin);
+    assert_eq!(
+        super::search::parse(&argv("- --text x")).unwrap().files,
+        [stdin]
+    );
+
+    assert_eq!(super::text::parse(&argv("-- -")).unwrap().input, file);
+    assert_eq!(
+        super::info::parse(&argv("a.pdf -- - b.pdf")).unwrap().files,
+        [Path::new("a.pdf"), file.as_path(), Path::new("b.pdf")]
+    );
+    assert_eq!(super::fields::parse(&argv("-- -")).unwrap().input, file);
+    assert_eq!(
+        super::search::parse(&argv("--text x -- -")).unwrap().files,
+        [file.as_path()]
+    );
+    // Every other word after `--` is the path it was.
+    assert_eq!(
+        super::text::parse(&argv("-- --force")).unwrap().input,
+        Path::new("--force")
+    );
+
+    // And it is opened as a file: one that is not there is "could not open",
+    // where standard input would have been read (and found empty).
+    let why = super::opened_or_stdin(&file).expect_err("no such file");
+    assert!(why.contains("could not open"), "{why}");
+}
+
+/// Two names on one line that must not be one file.
+#[test]
+fn an_output_that_names_another_file_of_the_line_is_refused() {
+    // The controls: each line with three different names parses.
+    for line in [
+        "compress in.pdf -o out.pdf --pictures screen --preview before-after.png",
+        "edit in.pdf --plan plan.json -o out.pdf",
+        "edit in.pdf --plan - -o out.pdf",
+    ] {
+        assert!(matches!(parse(&argv(line)), Ok(Line::Run(_))), "{line}");
+    }
+    assert!(
+        refused("compress in.pdf -o out.pdf --pictures screen --preview ./out.pdf")
+            .contains("the preview names the output")
+    );
+    assert!(refused("edit in.pdf --plan plan.json -o ./plan.json").contains("names the plan file"));
+    // `-` is standard input for a plan and a file for an output.
+    assert!(matches!(
+        parse(&argv("edit in.pdf --plan - -o -")),
+        Ok(Line::Run(_))
+    ));
+
+    // One file under two names, which only the filesystem can say: exit 2
+    // before a worker is asked for anything (`library_dir` names nothing, so
+    // a line that reached one would be 4).
+    let dir = scratch("two-names");
+    let s = |p: &Path| p.display().to_string();
+    let store = Soft256(Vec::new());
+    let input = dir.join("in.pdf");
+    std::fs::write(&input, crate::sign_cms::testkeys::plain_pdf()).expect("input");
+    let plan = dir.join("plan.json");
+    std::fs::write(&plan, br#"{"schema":1,"operations":[]}"#).expect("plan");
+    let alias = dir.join("alias.pdf");
+    std::fs::hard_link(&plan, &alias).expect("a second name");
+    let (code, _, err) = ran(
+        &line(&[
+            "edit",
+            &s(&input),
+            "--plan",
+            &s(&plan),
+            "-o",
+            &s(&alias),
+            "--force",
+        ]),
+        &store,
+    );
+    assert_eq!(code, 2, "{err}");
+    assert!(err.contains("plan file under another name"), "{err}");
+    assert_eq!(
+        std::fs::read(&plan).expect("plan"),
+        br#"{"schema":1,"operations":[]}"#
+    );
+
+    let output = dir.join("out.pdf");
+    std::fs::write(&output, b"yesterday's copy").expect("output");
+    let preview = dir.join("preview.png");
+    std::fs::hard_link(&output, &preview).expect("a second name");
+    let (code, _, err) = ran(
+        &line(&[
+            "compress",
+            &s(&input),
+            "-o",
+            &s(&output),
+            "--pictures",
+            "screen",
+            "--preview",
+            &s(&preview),
+            "--force",
+        ]),
+        &store,
+    );
+    assert_eq!(code, 2, "{err}");
+    assert!(
+        err.contains("preview is the output under another name"),
+        "{err}"
+    );
+    assert_eq!(std::fs::read(&output).expect("output"), b"yesterday's copy");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// `text -o` holds its output to the rule every writing command does.
+#[test]
+fn text_does_not_write_through_a_link_or_onto_a_directory() {
+    let dir = scratch("text-target");
+    let s = |p: &Path| p.display().to_string();
+    let store = Soft256(Vec::new());
+    let input = dir.join("in.pdf");
+    std::fs::write(&input, crate::sign_cms::testkeys::plain_pdf()).expect("input");
+    let directory = dir.join("a-directory");
+    std::fs::create_dir(&directory).expect("directory");
+    let mut targets = vec![directory];
+    #[cfg(unix)]
+    {
+        let victim = dir.join("victim.txt");
+        std::fs::write(&victim, b"not this run's").expect("victim");
+        let link = dir.join("link.txt");
+        std::os::unix::fs::symlink(&victim, &link).expect("link");
+        targets.push(link);
+    }
+    for target in &targets {
+        // Exit 3 before a worker: `library_dir` names nothing, so a line
+        // that had gone on to read the document would be 4.
+        let (code, _, err) = ran(
+            &line(&["text", &s(&input), "-o", &s(target), "--force"]),
+            &store,
+        );
+        assert_eq!(code, 3, "{}: {err}", target.display());
+        assert!(err.contains("--force for a regular file"), "{err}");
+    }
+    #[cfg(unix)]
+    assert_eq!(
+        std::fs::read(dir.join("victim.txt")).expect("victim"),
+        b"not this run's"
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 #[test]
 fn json_output_is_ascii_and_means_the_same_text() {
     // A German path, the dash the verdict sentences use, and a character

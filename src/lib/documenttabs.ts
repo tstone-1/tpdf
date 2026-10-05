@@ -72,11 +72,11 @@ export function keepState(tab: DocumentTab, state: TabState): void {
  * What a tab being reopened restores, or {@link freshState} for a document
  * that was never kept.
  *
- * Read at three points of `openDocument` rather than applied at one, because
- * the order is load-bearing there: the status line before the viewer mounts,
- * the covered words beside the model, the search and sidebar tab after the
- * panels exist. What this owns is that every one of them comes from the same
- * record.
+ * Applied at three points of `openDocument` rather than at one, because the
+ * order is load-bearing there: the status line before the viewer mounts, the
+ * covered words beside the model, the search and sidebar tab after the panels
+ * exist. What this owns is that every one of them comes from the same record;
+ * {@link restore} owns that every field of it is applied.
  */
 export function restoredState(tab: DocumentTab | undefined): FreshState {
   if (!tab) return freshState();
@@ -84,6 +84,72 @@ export function restoredState(tab: DocumentTab | undefined): FreshState {
     redactedCopyPath } = tab;
   return { covered, query, findShown, searchOptions, searchScope, sidebarTab, error, offers, notice,
     redactedCopyPath };
+}
+
+/**
+ * The three points of an open at which restored state can be applied, in the
+ * order an open reaches them: before the viewer exists, when the document's
+ * model is in place, and once the viewer and the panels are mounted.
+ */
+export const RESTORE_POINTS = ["unmounted", "model", "mounted"] as const;
+export type RestorePoint = (typeof RESTORE_POINTS)[number];
+
+/**
+ * When each restored field is applied, and in what order within its point.
+ *
+ * Typed over every field, so a field added to {@link DocumentTab} does not
+ * compile until it is given a point here. The order of the lines is the order
+ * of application and one pair depends on it: showing the message clears the
+ * path of the redacted copy, so the path is put back after it.
+ */
+const RESTORED_AT: { readonly [K in keyof FreshState]: RestorePoint } = {
+  query: "unmounted",
+  findShown: "unmounted",
+  error: "unmounted",
+  offers: "unmounted",
+  notice: "unmounted",
+  redactedCopyPath: "unmounted",
+  covered: "model",
+  searchOptions: "mounted",
+  searchScope: "mounted",
+  sidebarTab: "mounted",
+};
+
+/**
+ * One function for every restored field, each handed its value and the whole
+ * record it came from.
+ *
+ * **This is the half {@link restoredState}'s typing could not reach.** That a
+ * field is kept and read back is a compile error to get wrong; that anything
+ * *applies* what was read back was three hand-written places in
+ * `openDocument`, in the one file no gate reaches, and a field nothing applied
+ * compiled. Supplied as an object of this type, a new field has no entry and
+ * the window does not build until someone has said what restoring it means.
+ *
+ * The record comes too because some fields are one fact shown together: a
+ * message with its buttons, a search with its options and its scope. The
+ * field that takes the others along reads them from it, and each of the
+ * others says so with {@link restoredWith}.
+ */
+export type Restore = {
+  [K in keyof FreshState]: (value: FreshState[K], kept: FreshState) => void;
+};
+
+/**
+ * The entry for a field that another field's entry applies along with its
+ * own. Does nothing; `field` is there so the pairing is written down where the
+ * next reader looks for what restores this one.
+ */
+export function restoredWith(_field: keyof FreshState): () => void {
+  return () => {};
+}
+
+/** Applies every field of `kept` that belongs at `point`, in {@link RESTORED_AT}'s order. */
+export function restore(kept: FreshState, point: RestorePoint, apply: Restore): void {
+  const one = <K extends keyof FreshState>(key: K) => apply[key](kept[key], kept);
+  for (const key of Object.keys(RESTORED_AT) as (keyof FreshState)[]) {
+    if (RESTORED_AT[key] === point) one(key);
+  }
 }
 
 /** Ordered ownership of open handles. Only removal permits backend release. */

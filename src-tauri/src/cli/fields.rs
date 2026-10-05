@@ -70,13 +70,13 @@ pub fn parse(args: &[String]) -> Result<Fields, String> {
             (false, flag) if flag.starts_with('-') && flag != "-" => {
                 return Err(unknown("fields", flag))
             }
-            (_, path) => {
+            (after, path) => {
                 if input.is_some() {
                     return Err(format!(
                         "`fields` takes one document, and `{path}` is a second"
                     ));
                 }
-                input = Some(PathBuf::from(path));
+                input = Some(super::args::operand(after, path));
             }
         }
     }

@@ -402,9 +402,11 @@ pub struct Verified {
     pub command: String,
     /// Whether `--strict` would pass: every document read, each with at least
     /// one signature, every signature `intact`, `trusted` or
-    /// `trusted_at_timestamp`, and none whose revocation, or whose chain's,
-    /// is `revoked` other than after an attested moment. Present whether or
-    /// not `--strict` was given.
+    /// `trusted_at_timestamp`, none whose revocation, or whose chain's, is
+    /// `revoked` other than after an attested moment, and nothing appended
+    /// after a document's last intact signature that touches a page other
+    /// than to list a signature or timestamp field, or that could not be
+    /// read. Present whether or not `--strict` was given.
     pub strict_passed: bool,
     /// One entry per document, in the order given.
     pub files: Vec<File>,

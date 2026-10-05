@@ -242,7 +242,15 @@ impl Fingerprint {
     }
 
     /// [`Self::agrees_with`] without the advice, so the advice has one home.
-    fn compare_deeply(&self, path: &Path) -> Result<Fingerprint, String> {
+    ///
+    /// Public for the caller the advice is false for: the command-line tool
+    /// holds no document open and has no edits to save under another name, so
+    /// it takes the fact and says what follows from it there (`cli/pages.rs`).
+    ///
+    /// # Errors
+    ///
+    /// As [`Self::agrees_with`], the fact alone.
+    pub fn compare_deeply(&self, path: &Path) -> Result<Fingerprint, String> {
         // Cheap and conclusive when it differs, so the common failure costs no
         // read at all and its message names the size rather than the bytes.
         self.len_agrees(path)?;

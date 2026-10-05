@@ -856,7 +856,7 @@ pub fn apply(doc: &mut Document, edits: &[FieldEdit]) -> Result<(), String> {
     for (field, name) in &names {
         doc.get_dictionary_mut(*field)
             .map_err(|e| e.to_string())?
-            .set("T", crate::formfields::text(name));
+            .set("T", forms::pdf_string(name));
     }
     // A field that is drawn again is drawn as one that takes an answer, and
     // is made read-only afterwards if that is what it is to be.

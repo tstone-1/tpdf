@@ -620,6 +620,114 @@ fn written(mut doc: Document, form: &Form, json: &str) -> (Vec<fill::Resolved>, 
     (resolved, scanned(&reread))
 }
 
+/// What `--force` once cost: the copy was written under the output's name
+/// before it was read back, and removed when the read-back disagreed.
+#[test]
+fn a_fill_that_does_not_read_back_leaves_an_existing_output_as_it_was() {
+    let dir = std::env::temp_dir().join(format!("tpdf-fill-read-back-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).expect("scratch");
+    let input = dir.join("in.pdf");
+    std::fs::write(&input, b"the form as it was read").expect("input");
+    let output = dir.join("out.pdf");
+    std::fs::write(&output, b"yesterday's filled copy").expect("output");
+    let command = fill::Fill {
+        input: input.clone(),
+        output: output.clone(),
+        values: Values::Stdin,
+        password_env: None,
+        json: true,
+        force: true,
+    };
+    let opened_as = crate::fingerprint::Fingerprint::of(&input).expect("fingerprint");
+
+    let asking = r#"{"consent": true, "delivery": "Second"}"#;
+    let (doc, form) = mixed();
+    let (asked, good) = written(doc, &form, asking);
+    let (doc, _) = mixed();
+    let (_, other) = written(doc, &form, r#"{"consent": false, "delivery": "First"}"#);
+    // The writer's half: a copy staged where it was told to stage it.
+    let stage = |staged: &Path| {
+        std::fs::write(staged, b"today's filled copy").expect("staged");
+        Ok((false, ()))
+    };
+    let run = |reread: &dyn Fn() -> Result<Form, Failure>| {
+        let (mut out, mut err) = (Vec::new(), Vec::new());
+        let result = fill::publish_filled(
+            &command,
+            &opened_as,
+            &asked,
+            &form,
+            stage,
+            |staged| {
+                assert_ne!(staged, output, "the read-back is of the staged copy");
+                reread()
+            },
+            &mut out,
+            &mut err,
+            "tpdf",
+        );
+        let left = std::fs::read_dir(&dir)
+            .expect("scratch")
+            .filter_map(Result::ok)
+            .map(|entry| entry.file_name().to_string_lossy().into_owned())
+            .filter(|name| name.starts_with(".tpdf-cli-"))
+            .count();
+        assert_eq!(left, 0, "a staging directory was left behind");
+        (
+            result,
+            String::from_utf8(out).expect("utf-8"),
+            String::from_utf8(err).expect("utf-8"),
+        )
+    };
+    let kept = || std::fs::read(&output).expect("output") == b"yesterday's filled copy";
+
+    // The copy's form says something else than was asked.
+    let (result, out, err) = run(&|| Ok(other.clone()));
+    let failure = result.expect_err("refused");
+    assert_eq!(failure.exit, Exit::Internal);
+    assert!(
+        failure
+            .message
+            .contains("2 fields did not read back as filled")
+            && failure.message.ends_with("was not written"),
+        "{}",
+        failure.message
+    );
+    assert!(kept(), "the existing output was replaced or removed");
+    assert!(
+        err.contains("tpdf: consent: ") && err.contains("tpdf: delivery: "),
+        "{err}"
+    );
+    let reported: report::Filled = serde_json::from_str(&out).expect("one JSON document");
+    assert!(!reported.written && reported.problems.len() == 2);
+
+    // The copy cannot be read at all.
+    let (result, out, _) = run(&|| Err(Failure::new(Exit::Refused, "it does not open")));
+    let failure = result.expect_err("refused");
+    assert_eq!(failure.exit, Exit::Internal);
+    assert!(
+        failure.message.contains("could not be checked")
+            && failure
+                .message
+                .contains("was not written: it does not open"),
+        "{}",
+        failure.message
+    );
+    assert!(kept(), "the existing output was replaced or removed");
+    assert!(out.is_empty(), "{out}");
+
+    // The control: a copy that reads back as asked takes the output's name.
+    let (result, out, err) = run(&|| Ok(good.clone()));
+    assert!(result.is_ok(), "{err}");
+    assert!(out.is_empty() && err.is_empty(), "{out}{err}");
+    assert_eq!(
+        std::fs::read(&output).expect("output"),
+        b"today's filled copy"
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 #[test]
 fn a_written_form_reads_back_as_asked_and_a_difference_is_named() {
     let (doc, form) = mixed();

@@ -219,12 +219,22 @@ pub struct Appendix {
     pub kinds: Vec<String>,
     /// Keys the catalog gained, which is where an LTV append announces itself.
     pub catalog_gained: Vec<String>,
-    /// How many `/Page` objects were among those added or replaced.
+    /// How many pages the append touched.
     ///
     /// The one count worth separating, because it is the difference between an
-    /// append that changed what a reader sees and one that did not. Still a
-    /// count and not a verdict: a page can be replaced for reasons that change
-    /// nothing on screen, and this does not claim otherwise.
+    /// append that changed what a reader sees and one that did not. A page is
+    /// counted when its `/Page` object was added or replaced, and --- since
+    /// 2026-10-05 --- when anything it draws from was: its content streams, its
+    /// resources and what they name, its annotations and their fields, and
+    /// what it inherits from the page tree above it. Before that a content
+    /// stream written again under an untouched page object counted as no page
+    /// at all, which is the append this count exists to show. A page that is
+    /// no longer where it was in the document is counted too.
+    ///
+    /// Still a count and not a verdict: a page can be touched for reasons that
+    /// change nothing on screen, and this does not claim otherwise. And what
+    /// reaches no page is not in it --- the catalog's own entries, such as the
+    /// form's defaults and the optional-content configuration.
     pub pages_touched: usize,
     /// The touched pages whose rewrite did one thing: list a new signature or
     /// timestamp field among the page's annotations.
@@ -2836,9 +2846,9 @@ pub(crate) fn certification_of(document: &Document, sig: &Dictionary) -> u8 {
 ///
 /// # What it does not establish
 ///
-/// That an append is harmless, or that it is not. A `/Page` among the replaced
-/// objects means a page object was written again; it does not mean what the page
-/// draws has changed. The types are what the file says they are.
+/// That an append is harmless, or that it is not. A touched page means its
+/// object, or something it draws from, was written again; it does not mean what
+/// the page shows has changed. The types are what the file says they are.
 fn read_appendix(bytes: &[u8], end: usize, password: Option<&str>) -> Appendix {
     let unread = Appendix {
         unread: true,
@@ -2872,6 +2882,9 @@ fn read_appendix(bytes: &[u8], end: usize, password: Option<&str>) -> Appendix {
 
     let mut out = Appendix::default();
     let mut kinds: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
+    let mut changed: std::collections::BTreeSet<lopdf::ObjectId> =
+        std::collections::BTreeSet::new();
+    let mut touched = changed.clone();
     for (id, object) in &whole.objects {
         let before = signed.objects.get(id);
         match before {
@@ -2881,9 +2894,10 @@ fn read_appendix(bytes: &[u8], end: usize, password: Option<&str>) -> Appendix {
             // this is a diff rather than a count of what the whole document has.
             Some(_) => continue,
         }
+        changed.insert(*id);
         let kind = kind_of(object);
         if kind == "Page" {
-            out.pages_touched += 1;
+            touched.insert(*id);
             if let Some(listing) =
                 before.and_then(|before| page_listing(&signed, &whole, *id, before, object))
             {
@@ -2892,6 +2906,16 @@ fn read_appendix(bytes: &[u8], end: usize, password: Option<&str>) -> Appendix {
         }
         kinds.insert(kind);
     }
+    // And the pages whose own object stands as it was while something they
+    // draw from does not, or which are no longer where they were.
+    touched.extend(pages_drawing_from(&whole, &changed));
+    let now = whole.get_pages();
+    let moved = signed
+        .get_pages()
+        .into_iter()
+        .filter(|(number, page)| now.get(number) != Some(page) && !touched.contains(page))
+        .count();
+    out.pages_touched = touched.len() + moved;
     out.kinds = kinds.into_iter().collect();
     out.pages_listing.sort_by_key(|listing| listing.page);
 
@@ -2918,6 +2942,110 @@ fn read_appendix(bytes: &[u8], end: usize, password: Option<&str>) -> Appendix {
     }
 
     out
+}
+
+/// What a node of the page tree passes to the pages below it: the four
+/// entries a page inherits when it states none itself (PDF 32000-1 §7.7.3.4),
+/// and --- through its own parent --- whatever the nodes above it pass down.
+const HANDED_DOWN: [&[u8]; 5] = [b"Parent", b"Resources", b"MediaBox", b"CropBox", b"Rotate"];
+
+/// Every object `object` refers to, however deep inside it the reference is.
+fn references_in(object: &Object, into: &mut Vec<lopdf::ObjectId>) {
+    let mut pending = vec![object];
+    while let Some(at) = pending.pop() {
+        match at {
+            Object::Reference(id) => into.push(*id),
+            Object::Array(items) => pending.extend(items),
+            Object::Dictionary(dict) => pending.extend(dict.iter().map(|(_, value)| value)),
+            Object::Stream(stream) => pending.extend(stream.dict.iter().map(|(_, value)| value)),
+            _ => {}
+        }
+    }
+}
+
+/// The pages of `whole` that draw from an object in `changed`: the pages an
+/// append touched without writing their own objects again.
+///
+/// **A page reaches what it refers to, and what that refers to, and never
+/// through another page.** A link's destination and an annotation's `/P` name
+/// a page without drawing from it, so a page that links to a rewritten page
+/// is not touched by that.
+///
+/// **A node of the page tree is read for what it hands down and nothing
+/// else** ([`HANDED_DOWN`]). A page reaches the nodes above it by `/Parent`,
+/// and through each of them the resources and boxes it inherits; it does not
+/// reach its siblings through a node's `/Kids`, which would make one branch
+/// written again touch every page of the document.
+///
+/// One pass over the document builds who refers to whom, and one walk back
+/// from the changed objects finds what reaches them, so the cost is the
+/// document's size and not its size times its page count.
+fn pages_drawing_from(
+    whole: &Document,
+    changed: &std::collections::BTreeSet<lopdf::ObjectId>,
+) -> std::collections::BTreeSet<lopdf::ObjectId> {
+    use lopdf::ObjectId;
+    use std::collections::{BTreeMap, BTreeSet};
+
+    let pages: BTreeSet<ObjectId> = whole.get_pages().into_values().collect();
+    let parent_of = |id: &ObjectId| {
+        whole
+            .objects
+            .get(id)
+            .and_then(|object| object.as_dict().ok())
+            .and_then(|dict| dict.get(b"Parent").ok())
+            .and_then(|parent| parent.as_reference().ok())
+    };
+    // The tree's nodes: every page's ancestors. A chain stops at a node
+    // already met, which is also what ends a `/Parent` that points in a
+    // circle --- it is the document's word.
+    let mut tree: BTreeSet<ObjectId> = BTreeSet::new();
+    for page in &pages {
+        let mut at = *page;
+        while let Some(parent) = parent_of(&at) {
+            if pages.contains(&parent) || !tree.insert(parent) {
+                break;
+            }
+            at = parent;
+        }
+    }
+
+    let mut referrers: BTreeMap<ObjectId, Vec<ObjectId>> = BTreeMap::new();
+    let mut named = Vec::new();
+    for (id, object) in &whole.objects {
+        named.clear();
+        match (tree.contains(id), object.as_dict()) {
+            (true, Ok(node)) => {
+                for key in HANDED_DOWN {
+                    if let Ok(value) = node.get(key) {
+                        references_in(value, &mut named);
+                    }
+                }
+            }
+            (true, Err(_)) => {}
+            (false, _) => references_in(object, &mut named),
+        }
+        for to in &named {
+            referrers.entry(*to).or_default().push(*id);
+        }
+    }
+    // Everything that reaches a changed object, the changed ones included.
+    // A page is where a path ends: what refers to a page does not draw from
+    // it.
+    let mut reaching = changed.clone();
+    let mut pending: Vec<ObjectId> = changed
+        .iter()
+        .filter(|id| !pages.contains(id))
+        .copied()
+        .collect();
+    while let Some(at) = pending.pop() {
+        for from in referrers.get(&at).into_iter().flatten() {
+            if reaching.insert(*from) && !pages.contains(from) {
+                pending.push(*from);
+            }
+        }
+    }
+    pages.intersection(&reaching).copied().collect()
 }
 
 /// Whether a page was rewritten only to list a new signature or timestamp
@@ -3084,6 +3212,9 @@ fn kind_of(object: &Object) -> String {
 
 #[cfg(test)]
 mod revocation_tests;
+
+#[cfg(test)]
+mod appendix_tests;
 
 #[cfg(test)]
 mod tests {

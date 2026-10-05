@@ -16,13 +16,12 @@ use serde::Deserialize;
 use super::args::{lexically_same, unknown, value};
 use super::fields::{ask_form, grouped, kind, value_json};
 use super::fill::{read_values, SignedState, Values};
-use super::pages::{check_target, read_input, same_sizes, Temporary};
+use super::pages::{check_target, copy_of, publish_copy, read_input, same_sizes};
 use super::report::{self, AddedField, FieldKind, SCHEMA};
 use super::text::{password, variable};
 use super::{json, say, Env, Exit, Failure, Registered, Subcommand};
 use crate::formfields::{Kind, NewField};
 use crate::forms::Form;
-use crate::save;
 
 pub const COMMAND: Registered = Registered {
     name: "form",
@@ -361,59 +360,42 @@ impl Subcommand for AddFields {
         }
         input.plan.new_fields = asked.clone();
 
-        let agrees = |input: &super::pages::Input| {
-            input
-                .plan
-                .opened_as
-                .as_ref()
-                .expect("read_input fingerprints every source")
-                .agrees_with(&self.input)
-                .map_err(|why| Failure::new(Exit::Refused, why))
-        };
-        agrees(&input)?;
-        let staging = Temporary::beside(&self.output)?;
-        let staged = staging.0.join("output.pdf");
-        let result = save::write_copy(
-            &self.input,
-            &input.plan,
-            &staged,
-            key.as_deref(),
-            &env.worker(),
-        )
-        .map_err(|why| Failure::new(Exit::Refused, why.message))?;
-        if result.changed {
-            return Err(Failure::new(
-                Exit::Refused,
-                "the source changed while writing; no output was published",
-            ));
-        }
-
         let unpublished = |what: String| {
             Failure::new(
                 Exit::Internal,
                 format!("the staged file {what}; no output was published"),
             )
         };
-        let (after, mut session) = read_input(env, &staged, key.as_deref())
-            .map_err(|why| unpublished(format!("could not be opened again: {}", why.message)))?;
-        let form = ask_form(&mut session, "the staged file", key.is_some()).map_err(|why| {
-            unpublished(format!("has a form that cannot be read: {}", why.message))
-        })?;
-        drop(session);
-        if after.encrypted != input.encrypted || !same_sizes(&after.sizes, &input.sizes) {
-            return Err(unpublished(
-                "does not have the source's pages or encryption".into(),
-            ));
-        }
-        let added = read_back(&asked, &before, &form).map_err(|problems| {
-            unpublished(format!(
-                "is not what was asked for: {}",
-                problems.join("; ")
-            ))
-        })?;
-        agrees(&input)?;
-        check_target(inputs, &self.output, self.force)?;
-        Temporary::publish(&staged, &self.output, self.force)?;
+        let (form, added) = publish_copy(
+            inputs,
+            &[(self.input.as_path(), input.opened_as())],
+            &self.output,
+            self.force,
+            copy_of(env, &self.input, &input.plan, key.as_deref()),
+            |staged, ()| {
+                let (after, mut session) =
+                    read_input(env, staged, key.as_deref()).map_err(|why| {
+                        unpublished(format!("could not be opened again: {}", why.message))
+                    })?;
+                let form =
+                    ask_form(&mut session, "the staged file", key.is_some()).map_err(|why| {
+                        unpublished(format!("has a form that cannot be read: {}", why.message))
+                    })?;
+                drop(session);
+                if after.encrypted != input.encrypted || !same_sizes(&after.sizes, &input.sizes) {
+                    return Err(unpublished(
+                        "does not have the source's pages or encryption".into(),
+                    ));
+                }
+                let added = read_back(&asked, &before, &form).map_err(|problems| {
+                    unpublished(format!(
+                        "is not what was asked for: {}",
+                        problems.join("; ")
+                    ))
+                })?;
+                Ok((form, added))
+            },
+        )?;
 
         let report = report::FormAdded {
             schema: SCHEMA,

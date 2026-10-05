@@ -25,23 +25,32 @@
 //!   token came from the network, and over `http://` anybody on the path can
 //!   answer with one from an authority of their own whose certificates name
 //!   addresses of their choosing; a chain the OS trusts is what makes those
-//!   addresses the certificate authority's. They may still be on a private
-//!   network or this machine, on purpose: a company's own PKI publishes its
-//!   responder there. The signer's certificate needs no such gate: it comes
-//!   from the reader's own keychain or certificate store, not from the network.
+//!   addresses the certificate authority's --- and only for the certificates
+//!   on that chain, so the chain is what [`vouched`] answers and [`plan`]
+//!   takes no certificate above the authority's from anywhere else. They may
+//!   still be on a private network or this machine, on purpose: a company's
+//!   own PKI publishes its responder there. The signer's certificate needs no
+//!   such gate: it comes from the reader's own keychain or certificate store,
+//!   not from the network.
 //! - **What is asked about** ([`plan`]): the signer's certificate and every
 //!   certificate above it that is not a root, and the timestamp authority's
 //!   certificate and every one above it that is not a root. Roots need nothing:
 //!   nobody revokes a trust anchor through its own data. A certificate carrying
 //!   `id-pkix-ocsp-nocheck` needs nothing either (RFC 6960 §4.2.2.2.1: it is a
 //!   delegated responder's, which is trusted for the life of the certificate).
-//!   The issuers are found among the signature's own certificates, the token's,
-//!   and the chain the operating system assembles offline --- and **every one of
-//!   them goes into `/DSS /Certs`**, because the reader does not offer the OS
-//!   chain as candidate issuers, so an issuer not in the document reads as
-//!   `unchecked`, reason `issuer`. The walk itself is the reader's
-//!   (`revocation::chain::walk`), so what is asked about here is exactly what
-//!   the reader judges in the file written.
+//!   The signer's issuers are the signature's own certificates and the chain
+//!   the operating system assembles for the signer offline; the authority's
+//!   **only the chain the operating system vouched for it by**, never a
+//!   certificate its token carries beside that chain, since anybody on the
+//!   path can add one (since 2026-10-05; until then a certificate added to a
+//!   token could pass for an issuer by name and key, and its addresses were
+//!   asked). **Every issuer goes into `/DSS /Certs`**, because the reader
+//!   does not offer the OS chain as candidate issuers, so an issuer not in
+//!   the document reads as `unchecked`, reason `issuer`. The walk itself is
+//!   the reader's (`revocation::chain::walk`), over what the reader will
+//!   have, so what is asked about here is exactly what the reader judges in
+//!   the file written --- and a walk that meets a certificate outside those
+//!   chains is a refusal, not a different walk.
 //! - **How** ([`gather`]): OCSP first --- a `POST` of `application/ocsp-request`
 //!   to each `id-ad-ocsp` address in the certificate's `authorityInfoAccess`, in
 //!   the order written --- and the revocation list from its
@@ -442,28 +451,46 @@ fn token_of(signed: &cms::signed_data::SignedData) -> Option<Vec<u8>> {
         .and_then(|value| value.to_der().ok())
 }
 
-/// Who says whether the timestamp authority is trusted for timestamping,
-/// given its token (a CMS `ContentInfo`, DER) and the present: [`vouched_by_os`]
-/// in the application, the same rule over a test's own roots in a test.
-pub type Vouch<'a> = dyn Fn(&[u8], u64) -> crate::trust::Trust + 'a;
+/// What [`Vouch`] answers about a timestamp authority.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Vouched {
+    /// Whether it is trusted for timestamping.
+    pub trust: crate::trust::Trust,
+    /// The chain that answer is about, the authority's certificate first and
+    /// the root last, DER: the one the store assembled in the evaluation that
+    /// passed. Empty unless trusted.
+    pub chain: Vec<Vec<u8>>,
+}
 
-/// [`Vouch`] for the application and the tool: the operating system's store,
-/// offline, for timestamping --- `trust::of_blob_for`, the rule the reader
-/// applies to every token, including its cap on how many certificates the OS
-/// is handed.
+/// Who says whether the timestamp authority is trusted for timestamping, and
+/// by which chain, given its token (a CMS `ContentInfo`, DER) and the present:
+/// [`vouched_by_os`] in the application, the same rule over a test's own roots
+/// in a test.
+pub type Vouch<'a> = dyn Fn(&[u8], u64) -> Vouched + 'a;
+
+/// [`Vouch`] for the application: the operating system's store, offline, for
+/// timestamping --- `trust::of_blob_with_chain`, the rule the reader applies
+/// to every token, including its cap on how many certificates the OS is
+/// handed.
 #[must_use]
-pub fn vouched_by_os(token: &[u8], now: u64) -> crate::trust::Trust {
-    crate::trust::of_blob_for(
-        token,
-        crate::trust::Purpose::Timestamping,
-        now,
-        crate::trust::Anchors::System,
-    )
+pub fn vouched_by_os(token: &[u8], now: u64) -> Vouched {
+    vouched_under(token, now, crate::trust::Anchors::System)
+}
+
+/// [`vouched_by_os`] over `anchors`: the system's store, or the roots a test
+/// or the command-line tool's environment names.
+#[must_use]
+pub fn vouched_under(token: &[u8], now: u64, anchors: crate::trust::Anchors<'_>) -> Vouched {
+    let (trust, chain) =
+        crate::trust::of_blob_with_chain(token, crate::trust::Purpose::Timestamping, now, anchors);
+    Vouched { trust, chain }
 }
 
 /// Refuses unless `vouch` says the authority that stamped `cms` is trusted
 /// for timestamping now --- asked before anything is fetched, so an
 /// authority nobody vouches for never chooses an address tpdf connects to.
+/// Answers the chain it was vouched for by, which is the only place
+/// [`plan`] then looks for the certificates above the authority's.
 ///
 /// **Trusted, and nothing less**: a store that could not be asked, or a
 /// token carrying more certificates than the OS is handed, is not a chain
@@ -474,20 +501,20 @@ pub fn vouched_by_os(token: &[u8], now: u64) -> crate::trust::Trust {
 ///
 /// [`Refusal::Untrusted`], naming the authority and why; a signature or
 /// token tpdf cannot read; no timestamp.
-pub fn vouched(cms: &[u8], now: u64, vouch: &Vouch<'_>) -> Result<(), Refusal> {
+pub fn vouched(cms: &[u8], now: u64, vouch: &Vouch<'_>) -> Result<Vec<Vec<u8>>, Refusal> {
     use crate::trust::Standing;
     let signed = signed_data(cms).map_err(Refusal::Unreadable)?;
     let token = token_of(&signed).ok_or(Refusal::NoTimestamp)?;
-    let trust = vouch(&token, now);
+    let Vouched { trust, chain } = vouch(&token, now);
     if trust.standing == Standing::Trusted {
-        return Ok(());
+        return Ok(chain);
     }
-    let computer = crate::cli::words::computer(trust.store);
+    let computer = crate::words::computer(trust.store);
     let why = match (trust.standing, trust.why) {
         (Standing::Expired | Standing::NotYetValid, _) => {
             "its certificate is not in force now".to_string()
         }
-        (_, Some(doubt)) => crate::cli::words::doubt_about(doubt, computer, "the authority's"),
+        (_, Some(doubt)) => crate::words::doubt_about(doubt, computer, "the authority's"),
         (_, None) => "no reason was given".to_string(),
     };
     let name = signed_data(&token)
@@ -512,10 +539,33 @@ pub fn vouched(cms: &[u8], now: u64, vouch: &Vouch<'_>) -> Result<(), Refusal> {
 /// `cms` is the timestamped signature just made. `os_chain` answers the chain
 /// the operating system assembles for a certificate from the ones given, DER,
 /// offline --- `trust::platform::evaluate`'s chain in the application, nothing
-/// in a test that wants none.
+/// in a test that wants none. `vouched_chain` is the chain the timestamp
+/// authority was vouched for by, as [`vouched`] answers it.
+///
+/// **Where an issuer may come from** differs for the two chains, because
+/// where the certificates came from does:
+///
+/// - **Above the signer's**, from the signature's own set --- the chain the
+///   reader's key store gave when signing --- and what `os_chain` assembles
+///   for the signer from it. Never from the token.
+/// - **Above the authority's**, from `vouched_chain` and nowhere else. The
+///   token's own set is outside its signature: anybody on the path can add a
+///   certificate with an issuer's name and key under a root of their own,
+///   naming addresses of their choosing, and a walk that took its links from
+///   that set would ask those addresses and write that certificate. A
+///   certificate the store did not put on the chain it accepted is not a
+///   link, and a walk that meets one is refused ([`Refusal::NoIssuer`]).
+///
+/// The walk still runs over everything the reader will have --- the token's
+/// set included --- because it has to be the reader's walk. So a token
+/// carrying such a certificate where the walk meets it first is a refusal,
+/// not a signing by the genuine chain: the file would read back with that
+/// certificate on the chain, and nothing said about it. A cross-certificate
+/// of a root is not a link (the walk ends at it), so the tokens that carry
+/// one are not refused.
 ///
 /// It does not ask whether the authority is trusted: [`extend`] asks that
-/// first ([`vouched`]), and nothing but a probe calls this without it.
+/// first ([`vouched`]) and passes the chain on.
 ///
 /// # Errors
 ///
@@ -523,15 +573,22 @@ pub fn vouched(cms: &[u8], now: u64, vouch: &Vouch<'_>) -> Result<(), Refusal> {
 /// timestamp, an issuer nowhere to be found, a signer or authority whose
 /// certificate is self-issued and publishes nothing, or more than
 /// [`MAX_SUBJECTS`].
-pub fn plan(cms: &[u8], os_chain: &OsChain<'_>) -> Result<(Vec<Subject>, Vec<Vec<u8>>), Refusal> {
-    planned(cms, os_chain, true)
+pub fn plan(
+    cms: &[u8],
+    os_chain: &OsChain<'_>,
+    vouched_chain: &[Vec<u8>],
+) -> Result<(Vec<Subject>, Vec<Vec<u8>>), Refusal> {
+    planned(cms, os_chain, Some(vouched_chain), true)
 }
 
-/// [`plan`] for the timestamp authority's chain alone.
+/// [`plan`] for the timestamp authority's chain alone, taken from `os_chain`
+/// over the token's certificates rather than from a chain anybody vouched
+/// for.
 ///
 /// **For `sign-probe`'s measurement against the real authorities**, whose
 /// signer is a self-made certificate [`plan`] refuses: it measures the half a
-/// real B-LT signing shares with every signer. Never the signing path.
+/// real B-LT signing shares with every signer. Never the signing path, which
+/// asks nothing about an authority before [`vouched`] has answered.
 ///
 /// # Errors
 ///
@@ -540,13 +597,15 @@ pub fn plan_authority(
     cms: &[u8],
     os_chain: &OsChain<'_>,
 ) -> Result<(Vec<Subject>, Vec<Vec<u8>>), Refusal> {
-    planned(cms, os_chain, false)
+    planned(cms, os_chain, None, false)
 }
 
-/// [`plan`], with the signer's chain walked or not.
+/// [`plan`], with the signer's chain walked or not, and the authority's
+/// links held to `vouched_chain` --- or, for the probe alone, to `os_chain`'s.
 fn planned(
     cms: &[u8],
     os_chain: &OsChain<'_>,
+    vouched_chain: Option<&[Vec<u8>]>,
     with_signer: bool,
 ) -> Result<(Vec<Subject>, Vec<Vec<u8>>), Refusal> {
     let signed = signed_data(cms).map_err(Refusal::Unreadable)?;
@@ -558,26 +617,45 @@ fn planned(
         Refusal::Unreadable("the timestamp's certificate is not identified".into())
     })?;
 
-    // Every candidate issuer: the signature's set, the token's, and what the
-    // OS assembles for each leaf from them.
-    let mut known: Vec<Vec<u8>> = Vec::new();
-    let keep = |der: Vec<u8>, known: &mut Vec<Vec<u8>>| {
-        if !known.contains(&der) {
-            known.push(der);
-        }
+    let encoded = |certificates: Vec<&Certificate>| -> Vec<Vec<u8>> {
+        certificates
+            .iter()
+            .filter_map(|certificate| certificate.to_der().ok())
+            .collect()
     };
-    for certificate in crate::docinfo::certificates_of(&signed)
-        .into_iter()
-        .chain(crate::docinfo::certificates_of(&token))
-    {
-        if let Ok(der) = certificate.to_der() {
-            keep(der, &mut known);
+    let in_signature = encoded(crate::docinfo::certificates_of(&signed));
+    let in_token = encoded(crate::docinfo::certificates_of(&token));
+    // Which certificates may stand on each chain, DER. Above the signer's:
+    // the signature's own set, and what the OS assembles for the signer from
+    // it. Above the authority's: the chain it was vouched for by.
+    let mut above_signer = in_signature.clone();
+    if with_signer {
+        if let Ok(der) = signer.to_der() {
+            above_signer.extend(os_chain(&der, &in_signature));
         }
     }
-    for leaf in [&signer, &authority] {
-        let Ok(der) = leaf.to_der() else { continue };
-        for found in os_chain(&der, &known.clone()) {
-            keep(found, &mut known);
+    let above_authority = match vouched_chain {
+        Some(chain) => chain.to_vec(),
+        None => authority
+            .to_der()
+            .map(|der| os_chain(&der, &in_token))
+            .unwrap_or_default(),
+    };
+
+    // Every candidate the reader will have, in the reader's order: the
+    // signature's set, the token's, and the two chains, which go into the
+    // `/DSS`. The token's stay candidates so the walk here is the walk the
+    // reader makes over the file written; which of them may be a link is
+    // decided below.
+    let mut known: Vec<Vec<u8>> = Vec::new();
+    for der in in_signature
+        .iter()
+        .chain(&in_token)
+        .chain(&above_signer)
+        .chain(&above_authority)
+    {
+        if !known.contains(der) {
+            known.push(der.clone());
         }
     }
     let candidates: Vec<Certificate> = known
@@ -595,9 +673,14 @@ fn planned(
             }
         }
     };
-    for (leaf, own, above) in [
-        (&signer, Whose::Signer, Whose::SignerIssuer),
-        (&authority, Whose::Authority, Whose::AuthorityIssuer),
+    for (leaf, own, above, admitted) in [
+        (&signer, Whose::Signer, Whose::SignerIssuer, &above_signer),
+        (
+            &authority,
+            Whose::Authority,
+            Whose::AuthorityIssuer,
+            &above_authority,
+        ),
     ] {
         if own == Whose::Signer && !with_signer {
             continue;
@@ -623,6 +706,19 @@ fn planned(
         }
         for (at, link) in walked.links.iter().enumerate() {
             let whose = if at == 0 { own } else { above };
+            // A certificate above the leaf that passes for an issuer by name
+            // and key, and is not on the chain this leaf may have: for the
+            // authority, one the token carries that the OS did not vouch for.
+            // Refused here, before anything is fetched or carried: its
+            // addresses were chosen by whoever made it, and the reader of
+            // the file would walk into it as this walk did. The certificate
+            // below it is the one whose issuer was not found.
+            let der = link.certificate.to_der().unwrap_or_default();
+            if at > 0 && !admitted.contains(&der) {
+                let below = &walked.links[at - 1].certificate;
+                let whose = if at == 1 { own } else { above };
+                return Err(Refusal::NoIssuer(named(below, whose)));
+            }
             carry(&link.certificate);
             let Some(issuer) = &link.issuer else {
                 return Err(Refusal::NoIssuer(named(&link.certificate, whose)));
@@ -630,7 +726,6 @@ fn planned(
             if link.no_check {
                 continue;
             }
-            let der = link.certificate.to_der().unwrap_or_default();
             if !subjects
                 .iter()
                 .any(|s| s.certificate.to_der().ok().as_deref() == Some(&der[..]))
@@ -1062,9 +1157,10 @@ pub fn check(signatures: &[crate::docinfo::Signature], field: &str) -> Result<()
 /// The chain the operating system assembles for `leaf` from `others`,
 /// offline, signer first --- or nothing where there is no store to ask.
 ///
-/// **Held to the reader's bounds** ([`bounded`]): `others` includes the
-/// timestamp token's certificates, which came from the network, and they are
-/// parsed by the OS in this process rather than a worker's.
+/// **Held to the reader's bounds** ([`bounded`]): for `sign-probe`'s
+/// [`plan_authority`], `others` is the timestamp token's certificates, which
+/// came from the network, and they are parsed by the OS in this process
+/// rather than a worker's.
 #[must_use]
 pub fn os_chain(leaf: &[u8], others: &[Vec<u8>]) -> Vec<Vec<u8>> {
     let now = std::time::SystemTime::now()
@@ -1149,8 +1245,8 @@ pub fn extend(
     fetch: &mut Fetch<'_>,
     archive: &mut Archive<'_>,
 ) -> Result<Vec<u8>, Refusal> {
-    vouched(cms, now, vouch)?;
-    let (subjects, certificates) = plan(cms, os_chain)?;
+    let vouched_chain = vouched(cms, now, vouch)?;
+    let (subjects, certificates) = plan(cms, os_chain, &vouched_chain)?;
     let gathered = gather(&subjects, certificates, now, TOTAL, fetch)?;
     let extended = worker
         .validation(bytes, &gathered)

@@ -9,6 +9,7 @@ import {
   afterRefusal,
   beforeRedactingInPlace,
   beforeReload,
+  reloadAsked,
   refusalOf,
   type Offer,
 } from "./recovery";
@@ -351,5 +352,32 @@ describe("what to say after an image-only redaction", () => {
       "Saved report redacted image-only.pdf. Created an image-only PDF with 2 masked " +
         "regions. The original is unchanged.",
     );
+  });
+});
+
+describe("reloadAsked", () => {
+  it("settles drafts before it reads dirty, so a draft the settle commits gets the prompt", async () => {
+    let dirty = false;
+    const prompt = await reloadAsked({
+      settle: async () => {
+        dirty = true;
+      },
+      dirty: () => dirty,
+    });
+    expect(prompt?.offers).toEqual(["saveCopy", "reload"]);
+  });
+
+  it("reloads without a word when nothing is at stake once the drafts are settled", async () => {
+    expect(await reloadAsked({ settle: async () => {}, dirty: () => false })).toBeNull();
+  });
+
+  it("treats a draft that cannot be committed as work at stake", async () => {
+    const prompt = await reloadAsked({
+      settle: async () => {
+        throw new Error("no such field");
+      },
+      dirty: () => false,
+    });
+    expect(prompt).not.toBeNull();
   });
 });

@@ -787,7 +787,7 @@ pub fn spool(
     output: Option<&str>,
     sheets: &[u32],
 ) -> Result<u32, String> {
-    use windows::Win32::Storage::Xps::{EndDoc, EndPage, StartDocW, StartPage, DOCINFOW};
+    use windows::Win32::Storage::Xps::{EndPage, StartDocW, StartPage, DOCINFOW};
 
     let document = parse(bytes).ok_or("the OS parser could not read the print job")?;
     let count = document
@@ -821,6 +821,9 @@ pub fn spool(
             std::io::Error::last_os_error()
         ));
     }
+    // From here every early return leaves through this guard, which abandons
+    // the job. Declared after the two `HSTRING`s, so it is dropped before them.
+    let open = OpenDocument { dc };
 
     let sheet = sheet_size(dc);
     let (dpi_x, dpi_y) = dc_dpi(dc);
@@ -863,17 +866,59 @@ pub fn spool(
         }
     }
 
-    // SAFETY: closing the document opened above.
-    if unsafe { EndDoc(dc) } <= 0 {
-        return Err(format!(
-            "EndDoc failed: {}",
-            std::io::Error::last_os_error()
-        ));
-    }
+    open.end()?;
     // What was spooled, not what the job holds: a reader who asked for two sheets
     // of forty should see two here, and the caller compares this against the
     // request rather than against the document.
     Ok(u32::try_from(sheets.len()).unwrap_or(u32::MAX))
+}
+
+/// A print document between `StartDocW` and whichever call closes it.
+///
+/// **Dropping it abandons the job.** [`spool`] can fail in several places after
+/// the document is open --- a sheet outside the job, a page that will not render,
+/// GDI refusing a page --- and each of them used to return with the document
+/// still open on the spooler: no `EndDoc`, no `AbortDoc`, and a caller that then
+/// deletes the device context under it. What a driver does with a job left that
+/// way is its own business, and printing the pages that did arrive is one of
+/// the answers. `AbortDoc` is the call for it: it stops the job and discards
+/// what was spooled.
+///
+/// A guard rather than a call on each error path, because the next error path
+/// added to `spool` would otherwise have to remember.
+struct OpenDocument {
+    dc: HDC,
+}
+
+impl OpenDocument {
+    /// Closes the document so that it prints.
+    ///
+    /// # Errors
+    ///
+    /// GDI refusing `EndDoc`. The guard is dropped on that path like any other,
+    /// so a document that would not end is abandoned rather than left open.
+    fn end(self) -> Result<(), String> {
+        // SAFETY: closing the document `spool` opened on this live DC.
+        if unsafe { windows::Win32::Storage::Xps::EndDoc(self.dc) } <= 0 {
+            return Err(format!(
+                "EndDoc failed: {}",
+                std::io::Error::last_os_error()
+            ));
+        }
+        // Ended, so there is nothing left to abandon.
+        std::mem::forget(self);
+        Ok(())
+    }
+}
+
+impl Drop for OpenDocument {
+    fn drop(&mut self) {
+        // SAFETY: the DC is the caller's and outlives `spool`, the only place
+        // this is built. The result is ignored: this runs while a failure is
+        // already being reported, and a job that will not abort leaves nothing
+        // further to try.
+        let _ = unsafe { windows::Win32::Storage::Xps::AbortDoc(self.dc) };
+    }
 }
 
 /// Opens the system print dialog for these bytes and prints what it returns.

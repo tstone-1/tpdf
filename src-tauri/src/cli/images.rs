@@ -9,7 +9,7 @@ use std::io::Write;
 use std::path::PathBuf;
 
 use super::args::{lexically_same, unknown, value};
-use super::pages::{check_target, read_input, Temporary};
+use super::pages::{check_target, publish_copy, read_input};
 use super::report::{self, SCHEMA};
 use super::{json, say, Env, Exit, Failure, Registered, Subcommand};
 use crate::imagepages::{Options, Paper};
@@ -96,34 +96,47 @@ fn parse(args: &[String]) -> Result<Images, String> {
 impl Images {
     fn run_images(&self, env: &Env<'_>, out: &mut dyn Write) -> Result<Exit, Failure> {
         check_target(&self.inputs, &self.output, self.force)?;
-        let staging = Temporary::beside(&self.output)?;
-        let staged = staging.0.join("output.pdf");
-        let made = save::write_images(&self.inputs, &staged, self.options, &env.worker())
-            .map_err(|why| Failure::new(Exit::Refused, why.message))?;
-
-        // The staged file, in a fresh worker that did not write it.
-        let (after, session) = read_input(env, &staged, None).map_err(|why| {
-            Failure::new(
-                Exit::Internal,
-                format!(
-                    "the staged file could not be opened again: {}; no output was published",
-                    why.message
-                ),
-            )
-        })?;
-        drop(session);
-        if after.sizes.len() != self.inputs.len() || made.pages as usize != self.inputs.len() {
-            return Err(Failure::new(
-                Exit::Internal,
-                format!(
-                    "the staged file has {} pages for {} pictures; no output was published",
-                    after.sizes.len(),
-                    self.inputs.len()
-                ),
-            ));
-        }
-        check_target(&self.inputs, &self.output, self.force)?;
-        Temporary::publish(&staged, &self.output, self.force)?;
+        // No source is held to what it was: the inputs are pictures, read
+        // once by the writer, and nothing of them was read before it.
+        let after = publish_copy(
+            &self.inputs,
+            &[],
+            &self.output,
+            self.force,
+            |staged| {
+                save::write_images(&self.inputs, staged, self.options, &env.worker())
+                    .map(|made| (false, made))
+                    .map_err(|why| Failure::new(Exit::Refused, why.message))
+            },
+            // The staged file, in a fresh worker that did not write it.
+            |staged, made| {
+                let (after, session) = read_input(env, staged, None).map_err(|why| {
+                    Failure::new(
+                        Exit::Internal,
+                        format!(
+                            "the staged file could not be opened again: {}; no output was \
+                             published",
+                            why.message
+                        ),
+                    )
+                })?;
+                drop(session);
+                if after.sizes.len() != self.inputs.len()
+                    || made.pages as usize != self.inputs.len()
+                {
+                    return Err(Failure::new(
+                        Exit::Internal,
+                        format!(
+                            "the staged file has {} pages for {} pictures; no output was \
+                             published",
+                            after.sizes.len(),
+                            self.inputs.len()
+                        ),
+                    ));
+                }
+                Ok(after)
+            },
+        )?;
 
         let report = report::ImagesMade {
             schema: SCHEMA,

@@ -165,7 +165,7 @@ pub fn parse(args: &[String]) -> Result<Search, String> {
             (false, flag) if flag.starts_with('-') && flag != "-" => {
                 return Err(unknown("search", flag))
             }
-            (_, path) => command.files.push(PathBuf::from(path)),
+            (after, path) => command.files.push(super::args::operand(after, path)),
         }
     }
     if command.files.is_empty() {
@@ -365,9 +365,11 @@ impl Subcommand for Search {
         if self.json {
             json(out, &report);
         } else {
+            // The matches quote the document, so through `printable` as a
+            // line `say` writes would be.
             let text = plain(&report);
             if !text.is_empty() {
-                let _ = out.write_all(text.as_bytes());
+                let _ = out.write_all(super::printable(&text).as_bytes());
                 let _ = out.flush();
             }
         }

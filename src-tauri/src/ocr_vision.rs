@@ -32,7 +32,8 @@
 //! survives the flip unchanged and tests nothing.
 
 use objc2::rc::Retained;
-use objc2::AnyThread;
+use objc2::runtime::NSObjectProtocol;
+use objc2::{sel, AnyThread};
 use objc2_core_foundation::CFRetained;
 use objc2_core_graphics::{
     CGBitmapInfo, CGColorRenderingIntent, CGColorSpace, CGDataProvider, CGImage, CGImageAlphaInfo,
@@ -155,6 +156,25 @@ impl Vision {
     /// outside the boundary. The first call on a machine pays the compile (23.4 s on an M5
     /// under 26A428, cold cache); every later worker finds the cache and pays ~0.1 s.
     ///
+    /// **Both ways the worker is asked, because they are not one request to Vision.** The
+    /// redaction gate asks with language detection on ([`Recogniser::recognise_any_script`])
+    /// and the text layer asks without it, and whatever either needs that the other does
+    /// not has to be in the process before the profile as well.
+    ///
+    /// **That covers every script but two, measured 2026-10-05 on 26A434 with a cold cache
+    /// and the profile on.** After this warm-up a line of Chinese, Japanese, Korean or Thai
+    /// is read when the worker is asked for any script. Arabic and Devanagari are not:
+    /// each has a model of its own that Vision compiles the first time it *detects* that
+    /// script, a blank image detects none, and inside the profile the compile's cache
+    /// write is refused --- the request fails with `CRImageReaderError error 1`, which the
+    /// gate reports as *not verified*. A request naming `ar-SA` or `hi-IN` on this same
+    /// blank image does compile them (measured: 14.0 s and 12.6 s on a cold cache, against
+    /// 23.4 s for everything above), and an Arabic page was then read inside the profile;
+    /// Devanagari was not measured again afterwards. It is not done here because it more
+    /// than doubles the wait before a machine's first redaction, all of it inside
+    /// [`crate::ocr_worker::FIRST_REPLY_DEADLINE`], for two scripts whose failure is
+    /// already the safe one.
+    ///
     /// # Errors
     ///
     /// Whatever the engine reports. The caller does not treat that as fatal: a failed
@@ -163,16 +183,15 @@ impl Vision {
     pub fn warm(&self) -> Result<(), RecogniseError> {
         let side = WARM_SIDE;
         let rgba = vec![0xff_u8; (side * side * 4) as usize];
-        self.recognise(
-            Pixels {
-                rgba: &rgba,
-                width: side,
-                height: side,
-                scale: 1.0,
-            },
-            &Options::default(),
-        )
-        .map(|_| ())
+        let blank = Pixels {
+            rgba: &rgba,
+            width: side,
+            height: side,
+            scale: 1.0,
+        };
+        self.recognise(blank, &Options::default())?;
+        self.recognise_any_script(blank, &Options::default())
+            .map(|_| ())
     }
 }
 
@@ -196,6 +215,42 @@ impl Recogniser for Vision {
         pixels: Pixels<'_>,
         options: &Options,
     ) -> Result<Vec<RecognisedItem>, RecogniseError> {
+        Self::read(pixels, options, false)
+    }
+
+    fn recognise_any_script(
+        &self,
+        pixels: Pixels<'_>,
+        options: &Options,
+    ) -> Result<Vec<RecognisedItem>, RecogniseError> {
+        Self::read(pixels, options, true)
+    }
+}
+
+impl Vision {
+    /// One recognition, with or without Vision working out the language for itself.
+    ///
+    /// **`any_script` is `automaticallyDetectsLanguage`, and without it Vision is a Latin,
+    /// Cyrillic and Greek reader.** Measured 2026-10-05 on 26A434 in the gate's own probe
+    /// image, 12 pt type at 2x, with the request built as it is here --- accurate level,
+    /// correction off, no languages named: a line of Chinese, Japanese or Thai comes back
+    /// as **no span at all**, and one of Korean, Arabic or Devanagari as nothing or as a
+    /// few misread characters, depending on the word. With detection on, Chinese,
+    /// Japanese, Korean and Thai are read, and so are Arabic and Devanagari where their
+    /// models can be loaded ([`Vision::warm`] has where they cannot). Hebrew is read in
+    /// neither mode. For a text layer that is recall lost; for the redaction gate an
+    /// empty answer is the claim, which is why the gate asks this way and why it does not
+    /// rest on the answer alone ([`crate::ocr::hold_to_scripts`]).
+    ///
+    /// The property arrived with macOS 13 and this binary's deployment target is older, so
+    /// it is set only where the request answers to the selector. On an older system the
+    /// request is the plain one, and the gate's script rule is what keeps a region in a
+    /// script the engine cannot read from being certified.
+    fn read(
+        pixels: Pixels<'_>,
+        options: &Options,
+        any_script: bool,
+    ) -> Result<Vec<RecognisedItem>, RecogniseError> {
         if !pixels.is_consistent() {
             return Err(RecogniseError::MalformedInput(format!(
                 "{}x{} at scale {} does not describe {} bytes",
@@ -211,6 +266,9 @@ impl Recogniser for Vision {
         let request = VNRecognizeTextRequest::new();
         request.setRecognitionLevel(VNRequestTextRecognitionLevel::Accurate);
         request.setUsesLanguageCorrection(options.language_correction);
+        if any_script && request.respondsToSelector(sel!(setAutomaticallyDetectsLanguage:)) {
+            request.setAutomaticallyDetectsLanguage(true);
+        }
         if !options.languages.is_empty() {
             let langs: Vec<Retained<NSString>> = options
                 .languages
@@ -232,9 +290,16 @@ impl Recogniser for Vision {
         let request_any: Retained<VNRequest> =
             Retained::into_super(Retained::into_super(request.clone()));
         let requests = NSArray::from_slice(&[request_any.as_ref()]);
-        handler
-            .performRequests_error(&requests)
-            .map_err(|e| RecogniseError::Rejected(format!("Vision refused the image: {e}")))?;
+        handler.performRequests_error(&requests).map_err(|e| {
+            // Said apart because they have different causes: asked for any script,
+            // Vision also fails on a script whose model it could not load.
+            let asked = if any_script {
+                "Vision refused the image when asked to read any script"
+            } else {
+                "Vision refused the image"
+            };
+            RecogniseError::Rejected(format!("{asked}: {e}"))
+        })?;
 
         // `None` here is Vision reporting no results object at all, which is different from
         // an empty one. Both mean "nothing read", and neither may be turned into a claim

@@ -196,6 +196,52 @@ describe("picking marks to arrange", () => {
     expect(viewer.pickedMarks()).toEqual([1, 3]);
     expect(counts.at(-1)).toBe(2);
   });
+
+  /**
+   * Three pages, two fields on the second and one on the third, and the first
+   * page deleted after `picked` was pressed: the second page is in slot 0 and
+   * the third in the slot the second had.
+   */
+  async function afterDeletionAbove(picked: number): Promise<Viewer> {
+    const viewer = new Viewer(dom.root as unknown as HTMLElement, {
+      doc: 1,
+      pageCount: 3,
+      pages: [{ width_pt: 600, height_pt: 800 }],
+      onPicked: (count) => counts.push(count),
+    });
+    const [, second, third] = viewer.pageOrder;
+    viewer.setMarks([
+      { ...one(1, "field", [100, 100, 200, 120]), page: second!.id },
+      { ...one(2, "field", [100, 200, 200, 220]), page: second!.id },
+      { ...one(3, "field", [100, 100, 200, 120]), page: third!.id },
+    ]);
+    await settle();
+    viewer.goToPage(1);
+    press(viewer, picked);
+    expect(viewer.pickedMarks()).toEqual([picked]);
+    expect(viewer.setPages([second!, third!])).toBe(true);
+    return viewer;
+  }
+
+  it("keeps_what_is_picked_on_its_page_when_a_page_above_is_deleted", async () => {
+    // Shift adds a mark on the page the picked ones are on, and that page is
+    // remembered as a slot. With the slot left at its old number, the page
+    // that took it is the one Shift adds from.
+    const viewer = await afterDeletionAbove(1);
+    expect(viewer.pickedMarks()).toEqual([1]);
+    viewer.goToPage(0);
+    press(viewer, 2, true);
+    expect(viewer.pickedMarks()).toEqual([1, 2]);
+  });
+
+  it("does_not_add_a_mark_from_the_page_that_took_the_picked_page's_slot", async () => {
+    const viewer = await afterDeletionAbove(1);
+    viewer.goToPage(1);
+    press(viewer, 3, true);
+    // Another page's mark replaces the picked ones, as it does in a document
+    // nobody has edited. Both together would be marks of two pages picked.
+    expect(viewer.pickedMarks()).toEqual([3]);
+  });
 });
 
 describe("arranging the picked marks", () => {

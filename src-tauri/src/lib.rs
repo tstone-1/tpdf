@@ -136,6 +136,7 @@ mod testutil;
 pub mod textbox;
 pub mod webopen;
 pub mod weburl;
+pub mod words;
 pub mod worker;
 pub mod xmp;
 // The four modules `worker.rs` was split into at 2,861 lines. Public, and

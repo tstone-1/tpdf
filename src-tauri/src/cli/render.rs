@@ -6,7 +6,7 @@ use std::io::Write;
 use std::path::PathBuf;
 
 use super::args::{unknown, value};
-use super::pages::{check_target, Temporary};
+use super::pages::{check_target, unchanged, Temporary};
 use super::report::{self, SCHEMA};
 use super::text::{declined, password, variable};
 use super::{json, opened, say, Env, Exit, Failure, Registered, Subcommand};
@@ -174,9 +174,7 @@ impl Subcommand for Render {
         }
         drop(session);
         drop(file);
-        fingerprint
-            .agrees_with(&self.input)
-            .map_err(|e| Failure::new(Exit::Refused, e))?;
+        unchanged(&[(self.input.as_path(), &fingerprint)])?;
         let png = crate::render::encode_png(&pixels, width, height)
             .map_err(|e| Failure::new(Exit::Internal, e))?;
         let staging = Temporary::beside(&self.output)?;

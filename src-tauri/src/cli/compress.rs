@@ -21,7 +21,7 @@ use std::path::PathBuf;
 
 use super::args::{lexically_same, unknown, value};
 use super::fill::SignedState;
-use super::pages::{check_target, read_input, same_sizes, Temporary};
+use super::pages::{check_target, copy_of, publish_copy, read_input, same_sizes, Temporary};
 use super::report::{self, SCHEMA};
 use super::text::{declined, password, variable};
 use super::{json, say, Env, Exit, Failure, Registered, Subcommand};
@@ -135,6 +135,15 @@ fn parse(args: &[String]) -> Result<Compress, String> {
         if lexically_same(&command.input, preview) {
             return Err("the preview names the input; choose a different name".into());
         }
+        // One name for both would have the copy replace the picture, or
+        // refuse it, after the picture was already written.
+        if command
+            .output
+            .as_ref()
+            .is_some_and(|output| lexically_same(output, preview))
+        {
+            return Err("the preview names the output; choose a different name".into());
+        }
     }
     Ok(command)
 }
@@ -170,6 +179,17 @@ impl Compress {
         }
         if let Some(preview) = &self.preview {
             check_target(inputs, preview, self.force)?;
+            // The same file under two names, which the parser cannot see.
+            if self
+                .output
+                .as_ref()
+                .is_some_and(|output| save::same_file(output, preview))
+            {
+                return Err(Failure::new(
+                    Exit::Usage,
+                    "the preview is the output under another name",
+                ));
+            }
         }
         let key = password(self.password_env.as_deref())?;
         let (mut input, mut session) = read_input(env, &self.input, key.as_deref())?;
@@ -227,45 +247,6 @@ impl Compress {
         let mut after = estimate.as_ref().map_or(0, |estimate| estimate.bytes_after);
         if let Some(output) = &self.output {
             input.plan.compress = self.way();
-            let agrees = |input: &super::pages::Input| {
-                input
-                    .plan
-                    .opened_as
-                    .as_ref()
-                    .expect("read_input fingerprints every source")
-                    .agrees_with(&self.input)
-                    .map_err(|why| Failure::new(Exit::Refused, why))
-            };
-            agrees(&input)?;
-            let staging = Temporary::beside(output)?;
-            let staged = staging.0.join("output.pdf");
-            let result = save::write_copy(
-                &self.input,
-                &input.plan,
-                &staged,
-                key.as_deref(),
-                &env.worker(),
-            )
-            .map_err(|why| Failure::new(Exit::Refused, why.message))?;
-            if result.changed {
-                return Err(Failure::new(
-                    Exit::Refused,
-                    "the source changed while writing; no output was published",
-                ));
-            }
-            after = std::fs::metadata(&staged)
-                .map(|data| data.len())
-                .map_err(|why| Failure::new(Exit::Internal, format!("the staged file: {why}")))?;
-            if after >= before {
-                return Err(Failure::new(
-                    Exit::Refused,
-                    format!(
-                        "{shown} cannot be made smaller this way: the copy would be {after} \
-                         bytes and the document is {before}; no output was published"
-                    ),
-                ));
-            }
-
             // The staged file, in a fresh worker, which shares no code with the
             // writer's own read-back: PDFium decides whether it opens.
             let unpublished = |what: &str| {
@@ -274,25 +255,50 @@ impl Compress {
                     format!("the staged file {what}; no output was published"),
                 )
             };
-            let (reread, session) = read_input(env, &staged, key.as_deref()).map_err(|why| {
-                Failure::new(
-                    Exit::Internal,
-                    format!(
-                        "the staged file could not be opened again: {}; no output was published",
-                        why.message
-                    ),
-                )
-            })?;
-            drop(session);
-            if reread.encrypted != input.encrypted {
-                return Err(unpublished("is not protected the way the source is"));
-            }
-            if !same_sizes(&reread.sizes, &input.sizes) {
-                return Err(unpublished("does not have the source's pages"));
-            }
-            agrees(&input)?;
-            check_target(inputs, output, self.force)?;
-            Temporary::publish(&staged, output, self.force)?;
+            after = publish_copy(
+                inputs,
+                &[(self.input.as_path(), input.opened_as())],
+                output,
+                self.force,
+                copy_of(env, &self.input, &input.plan, key.as_deref()),
+                |staged, ()| {
+                    let after =
+                        std::fs::metadata(staged)
+                            .map(|data| data.len())
+                            .map_err(|why| {
+                                Failure::new(Exit::Internal, format!("the staged file: {why}"))
+                            })?;
+                    if after >= before {
+                        return Err(Failure::new(
+                            Exit::Refused,
+                            format!(
+                                "{shown} cannot be made smaller this way: the copy would be \
+                                 {after} bytes and the document is {before}; no output was \
+                                 published"
+                            ),
+                        ));
+                    }
+                    let (reread, session) =
+                        read_input(env, staged, key.as_deref()).map_err(|why| {
+                            Failure::new(
+                                Exit::Internal,
+                                format!(
+                                    "the staged file could not be opened again: {}; no output \
+                                     was published",
+                                    why.message
+                                ),
+                            )
+                        })?;
+                    drop(session);
+                    if reread.encrypted != input.encrypted {
+                        return Err(unpublished("is not protected the way the source is"));
+                    }
+                    if !same_sizes(&reread.sizes, &input.sizes) {
+                        return Err(unpublished("does not have the source's pages"));
+                    }
+                    Ok(after)
+                },
+            )?;
         }
 
         let report = report::Compressed {

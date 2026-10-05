@@ -12105,3 +12105,348 @@ fn a_text_layer_for_a_page_the_file_lacks_is_refused() {
     plan.text_layers = one_word_on(2);
     assert!(rewrite_update(&original, &plan, Job::Save, None).is_err());
 }
+
+/// How a fixture page names its content.
+#[derive(Clone, Copy, Debug)]
+enum ContentsShape {
+    /// `/Contents 5 0 R`, one stream. The shape every other fixture here has.
+    OneStream,
+    /// `/Contents [5 0 R 6 0 R]`, which a stamped or numbered page has and
+    /// which `textlayer::attach` writes.
+    Array,
+    /// `/Contents 9 0 R` where object 9 is `[5 0 R 6 0 R]`.
+    ReferenceToArray,
+}
+
+/// A one-page document drawing `streams` in that order, uncompressed.
+///
+/// [`ContentsShape::OneStream`] joins them into one stream, so the three
+/// shapes draw the same page and differ only in how the page names it.
+fn document_of_streams(streams: &[&[u8]], shape: ContentsShape) -> Vec<u8> {
+    use lopdf::Stream;
+    let mut doc = Document::with_version("1.7");
+    let pages = doc.new_object_id();
+    let font = doc.add_object(dictionary! {
+        "Type" => "Font", "Subtype" => "Type1", "BaseFont" => "Helvetica",
+    });
+    let contents: Object = match shape {
+        ContentsShape::OneStream => doc
+            .add_object(Stream::new(Dictionary::new(), streams.join(&b"\n"[..])))
+            .into(),
+        ContentsShape::Array | ContentsShape::ReferenceToArray => {
+            let each: Vec<Object> = streams
+                .iter()
+                .map(|body| {
+                    doc.add_object(Stream::new(Dictionary::new(), body.to_vec()))
+                        .into()
+                })
+                .collect();
+            if matches!(shape, ContentsShape::Array) {
+                each.into()
+            } else {
+                doc.add_object(Object::Array(each)).into()
+            }
+        }
+    };
+    let page = doc.add_object(dictionary! {
+        "Type" => "Page", "Parent" => pages,
+        "MediaBox" => vec![0.into(), 0.into(), 700.into(), 800.into()],
+        "Resources" => dictionary! { "Font" => dictionary! { "F1" => font } },
+        "Contents" => contents,
+    });
+    doc.objects.insert(
+        pages,
+        dictionary! { "Type" => "Pages", "Kids" => vec![page.into()], "Count" => 1 }.into(),
+    );
+    let root = doc.add_object(dictionary! { "Type" => "Catalog", "Pages" => pages });
+    doc.trailer.set("Root", root);
+    let mut bytes = Vec::new();
+    doc.save_to(&mut bytes).expect("serialises");
+    bytes
+}
+
+/// Every stream a written file holds, decoded, whether or not a page draws it.
+///
+/// **Every object rather than the page's content**, which is the difference
+/// the tests below exist for: a page can stop drawing a stream that is still
+/// in the file, and asking what the page draws answers for the first and says
+/// nothing about the second.
+fn every_stream_of(written: &[u8]) -> Vec<String> {
+    let doc = Document::load_mem(written).expect("the written file loads");
+    doc.objects
+        .values()
+        .filter_map(|object| object.as_stream().ok())
+        .map(|stream| {
+            let body = stream
+                .decompressed_content()
+                .unwrap_or_else(|_| stream.content.clone());
+            String::from_utf8_lossy(&body).into_owned()
+        })
+        .collect()
+}
+
+/// What the one page of a written file draws.
+fn the_page_draws(written: &[u8]) -> String {
+    let doc = Document::load_mem(written).expect("the written file loads");
+    let page = *doc.get_pages().values().next().expect("a page");
+    String::from_utf8_lossy(&doc.get_page_content(page)).into_owned()
+}
+
+/// A plan that takes shows or paths out of the fixture's one page and does
+/// nothing else to it.
+fn removing(
+    shows: Vec<usize>,
+    text_objects: usize,
+    paths: Vec<usize>,
+    path_objects: usize,
+) -> Plan {
+    let mut plan = plan_of(&[0]);
+    plan.redactions = vec![crate::edits::PlannedRedaction {
+        form_paths: Default::default(),
+        source: 0,
+        shows,
+        text_objects,
+        areas: Vec::new(),
+        taking: Vec::new(),
+        form_shows: Vec::new(),
+        form_images: Vec::new(),
+        form_image_objects: Vec::new(),
+        form_text_objects: Vec::new(),
+        images: Vec::new(),
+        image_objects: 0,
+        paths,
+        path_objects,
+        cuts: Vec::new(),
+    }];
+    plan
+}
+
+/// The line the text fixtures below lose.
+///
+/// A `TJ` array with a kerning number through the middle of it, so no single
+/// string holds the whole of what was removed. That is the case a scan for the
+/// joined words is weakest on, and the one a real document has.
+const TAKEN_LINE: &[u8] = b"BT /F1 12 Tf 72 700 Td [(TOP-SE) -20 (CRET-4711)] TJ ET";
+/// And the line they keep, in a stream of its own.
+const KEPT_LINE: &[u8] = b"BT /F1 12 Tf 72 600 Td (KEPT-LINE-0815) Tj ET";
+
+/// A text redaction on a page of several streams leaves the words in none of
+/// them.
+///
+/// **The streams the page stopped drawing, not the one it draws now.**
+/// Replacing the content of such a page gives it one new stream and leaves the
+/// old ones in the document, named by nothing; a writer that serialises every
+/// object it holds then writes the removed line out beside the page that no
+/// longer shows it. The page renders clean, and a scan for the joined words
+/// does not match a `TJ` array, so nothing after the writer says otherwise.
+///
+/// The one-stream page is the control: the same line, the same plan, and a
+/// shape where the replacement happens in place and there is nothing to leave
+/// behind. It held before the several-stream case did, which is what makes
+/// that failure a fact about several streams rather than about this fixture.
+#[test]
+fn a_text_redaction_on_a_page_of_several_streams_leaves_none_of_them() {
+    for shape in [ContentsShape::OneStream, ContentsShape::Array] {
+        let original = document_of_streams(&[TAKEN_LINE, KEPT_LINE], shape);
+        assert!(
+            every_stream_of(&original)
+                .iter()
+                .any(|body| body.contains("CRET-4711")),
+            "{shape:?}: the fixture has to hold the line for its absence to mean anything"
+        );
+        let plan = removing(vec![0], 2, Vec::new(), 0);
+        let written = rewrite_update(&original, &plan, Job::Save, None).expect("rewritten");
+        let held: Vec<String> = every_stream_of(&written)
+            .into_iter()
+            .filter(|body| body.contains("CRET-4711") || body.contains("TOP-SE"))
+            .collect();
+        assert!(
+            held.is_empty(),
+            "{shape:?}: the removed line is still in the file: {held:?}"
+        );
+        let drawn = the_page_draws(&written);
+        assert!(
+            drawn.contains("KEPT-LINE-0815"),
+            "{shape:?}: and the line nobody marked went with it: {drawn}"
+        );
+    }
+}
+
+/// The same for a drawing, whose removal takes the same road to the page's
+/// content and reports a count nothing swept for.
+#[test]
+fn a_path_redaction_on_a_page_of_several_streams_leaves_none_of_them() {
+    const TAKEN: &[u8] = b"0 0 m 123.456 654.321 l S";
+    const KEPT: &[u8] = b"5 5 77.125 9 re f";
+    for shape in [ContentsShape::OneStream, ContentsShape::Array] {
+        let original = document_of_streams(&[TAKEN, KEPT], shape);
+        let plan = removing(Vec::new(), 0, vec![0], 2);
+        let written = rewrite_update(&original, &plan, Job::Save, None).expect("rewritten");
+        let held: Vec<String> = every_stream_of(&written)
+            .into_iter()
+            .filter(|body| body.contains("123.456"))
+            .collect();
+        assert!(
+            held.is_empty(),
+            "{shape:?}: the removed drawing is still in the file: {held:?}"
+        );
+        let drawn = the_page_draws(&written);
+        assert!(
+            drawn.contains("77.125"),
+            "{shape:?}: and its neighbour went with it: {drawn}"
+        );
+    }
+}
+
+/// A page whose `/Contents` is a reference to an array is rewritten like any
+/// other, and is never reported redacted with the line still drawn.
+///
+/// The shape where a replacement that knows a stream and an array finds
+/// neither behind the reference, changes nothing and answers that it
+/// succeeded: the counts say one show went and the file says none did.
+#[test]
+fn a_page_whose_contents_is_a_reference_to_an_array_loses_the_line_too() {
+    let original = document_of_streams(&[TAKEN_LINE, KEPT_LINE], ContentsShape::ReferenceToArray);
+    assert!(
+        the_page_draws(&original).contains("CRET-4711"),
+        "the control: the page is read through the reference to begin with"
+    );
+    let plan = removing(vec![0], 2, Vec::new(), 0);
+    let written = rewrite_update(&original, &plan, Job::Save, None).expect("rewritten");
+    let drawn = the_page_draws(&written);
+    assert!(
+        !drawn.contains("CRET-4711"),
+        "the page still draws the line: {drawn}"
+    );
+    assert!(drawn.contains("KEPT-LINE-0815"), "{drawn}");
+    let held: Vec<String> = every_stream_of(&written)
+        .into_iter()
+        .filter(|body| body.contains("CRET-4711"))
+        .collect();
+    assert!(
+        held.is_empty(),
+        "and no stream of the file holds it: {held:?}"
+    );
+}
+
+/// A rewrite that redacts nothing still does not sweep.
+///
+/// The scope control for the three tests above, and the position
+/// `a_copy_that_drops_nothing_keeps_the_orphans_it_was_given` pins on a real
+/// fixture: a plain copy is a serialisation. What a redaction adds is a sweep
+/// of the file it wrote, and only a redaction adds it.
+#[test]
+fn a_copy_of_a_page_of_several_streams_that_redacts_nothing_keeps_every_stream() {
+    let original = document_of_streams(&[TAKEN_LINE, KEPT_LINE], ContentsShape::Array);
+    let before = Document::load_mem(&original).expect("loads").objects.len();
+    let written = rewrite_update(&original, &plan_of(&[1]), Job::Save, None).expect("rewritten");
+    let after = Document::load_mem(&written).expect("loads");
+    assert_eq!(after.objects.len(), before, "no object was collected");
+    assert!(the_page_draws(&written).contains("CRET-4711"));
+}
+
+/// A redaction beside a change to the form gets its black fill.
+///
+/// **Both passes through the writer, which is the only place the defect
+/// shows.** The removal pass applies the plan's field changes and the fill
+/// pass is handed a plan made from the same one, pointed at the file the first
+/// wrote. A fill plan that still carried the changes asked for them again: a
+/// removed field was looked for in a file that no longer had it, and the fill
+/// was refused after the content was gone; an added field was added to a file
+/// that already held one of that name.
+///
+/// One plan per kind of change, so each refusal is its own: a test with both
+/// would stop at whichever the writer reaches first and say nothing about the
+/// other.
+#[test]
+fn a_redaction_beside_a_field_change_gets_its_black_fill() {
+    use crate::formedit::FieldEdit;
+    use crate::formfields::{add, Kind, NewField};
+    let field = |name: &str, top: f64| NewField {
+        text_size: None,
+        default_value: None,
+        options: Vec::new(),
+        name: name.into(),
+        kind: Kind::Text,
+        page: 0,
+        rect: [20.0, top, 100.0, 20.0],
+        tooltip: None,
+        required: false,
+        max_length: None,
+        border: true,
+    };
+    let mut doc = Document::load_mem(&two_blank_pages()).expect("loads");
+    add(&mut doc, &[field("Stays", 20.0), field("Goes", 60.0)]).expect("added");
+    let mut original = Vec::new();
+    doc.save_to(&mut original).expect("serialises");
+    let goes = crate::forms::scan(&doc)
+        .expect("a form")
+        .widgets
+        .iter()
+        .find(|widget| widget.name == "Goes")
+        .expect("the field")
+        .widget;
+    let names = |bytes: &[u8]| -> Vec<String> {
+        crate::forms::scan(&Document::load_mem(bytes).expect("loads"))
+            .expect("a form")
+            .widgets
+            .iter()
+            .map(|widget| widget.name.clone())
+            .collect()
+    };
+    // The black squares the fill pass put on the first page.
+    let filled = |bytes: &[u8]| -> usize {
+        let doc = Document::load_mem(bytes).expect("loads");
+        doc.objects
+            .values()
+            .filter_map(|object| object.as_dict().ok())
+            .filter(|dict| {
+                dict.get(b"Subtype")
+                    .and_then(Object::as_name)
+                    .is_ok_and(|kind| kind == b"Square")
+            })
+            .count()
+    };
+
+    let removing_a_field = {
+        let mut plan = removing(Vec::new(), 0, Vec::new(), 0);
+        plan.field_edits = vec![FieldEdit {
+            value: None,
+            widget: goes,
+            rect: None,
+            name: None,
+            remove: true,
+            props: Default::default(),
+        }];
+        (plan, vec!["Stays".to_string()])
+    };
+    let adding_a_field = {
+        let mut plan = removing(Vec::new(), 0, Vec::new(), 0);
+        plan.new_fields = vec![field("Added", 100.0)];
+        (
+            plan,
+            vec!["Stays".to_string(), "Goes".to_string(), "Added".to_string()],
+        )
+    };
+    for (mut plan, expected) in [removing_a_field, adding_a_field] {
+        // Two pages, as the fixture has, and a region on the first that is
+        // nowhere near a field.
+        plan.baseline = 2;
+        plan.pages = plan_of(&[0, 0]).pages;
+        plan.redactions[0].areas = vec![[300.0, 300.0, 400.0, 320.0]];
+
+        let removed = rewrite_update(&original, &plan, Job::Save, None).expect("the removal pass");
+        assert_eq!(names(&removed), expected, "the first pass changed the form");
+        assert_eq!(filled(&removed), 0, "the control: nothing is filled yet");
+
+        let fill = redaction_fill::output_plan(&plan).expect("a fill plan");
+        let written = rewrite_update(&removed, &fill, Job::RedactionFill, None)
+            .expect("the fill pass must not be asked for the field change again");
+        assert_eq!(filled(&written), 1, "and the region is covered");
+        assert_eq!(
+            names(&written),
+            expected,
+            "with the form as the first pass left it"
+        );
+    }
+}

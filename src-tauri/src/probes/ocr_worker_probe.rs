@@ -9,7 +9,11 @@ use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
 use tpdf_lib::document::OpenDocument;
-use tpdf_lib::ocr::{Options, Pixels, RecogniseError, RecognisedItem, Recogniser};
+use tpdf_lib::ocr::{
+    ControlChoice, ControlWord, Legibility, Options, Pixels, RecogniseError, RecognisedItem,
+    Recogniser, Script,
+};
+use tpdf_lib::ocr_gate::{self, GatePage};
 #[cfg(target_os = "macos")]
 use tpdf_lib::ocr_vision::Vision;
 #[cfg(windows)]
@@ -85,7 +89,8 @@ pub fn main() {
 }
 
 fn run(file: &Path, library: &Path) -> Result<(), String> {
-    let sheet = render_page(file, library)?;
+    let (bindings, document) = open(file, library)?;
+    let sheet = tile(bindings, &document.page(0)?, 0, 2.0, None)?;
     let opts = Options::default();
 
     println!("document   {}", file.display());
@@ -345,6 +350,9 @@ fn run(file: &Path, library: &Path) -> Result<(), String> {
         format!("{} at pid {}", outcome(&survived), worker.pid()),
     );
 
+    // ------------------------------------------- a script the control is not in
+    other_scripts(&mut r, &mut worker, bindings, &document)?;
+
     // ------------------------------------------------- and a bounded give-up
     // `docs/TRAPS.md` records a check whose failure mode is a wait, which cannot
     // fail. Kill the child from outside and the next call has to *report*, inside
@@ -364,6 +372,228 @@ fn run(file: &Path, library: &Path) -> Result<(), String> {
 
     r.finish();
 }
+
+/// Whether an engine left to itself is silent about a script the control is not in.
+///
+/// The redaction gate shows the engine a region with a control word under it, and
+/// believes an empty answer once the control has been read back. Until 2026-10-05
+/// nothing asked what the control was written in: a Latin word proves the engine
+/// reads Latin, and Vision returns **no span at all** for a line of Chinese,
+/// Japanese or Thai unless it is asked to detect the language. So a region still
+/// showing one of those certified.
+///
+/// This builds that image for real --- one word per page that is not Latin, above
+/// the longest plain Latin word in the document set no larger than it, through
+/// `ocr_gate`'s own `geometry_for`, `mask_columns` and `stack` --- and asks the
+/// worker both ways. Nothing has been removed, so the word is still there to be
+/// read, and three things are checked:
+///
+/// - **Asked for any script, the engine reads it.** A statement about Vision
+///   inside its profile, so it is a check on macOS, and only for the scripts
+///   [`NOT_READ_UNDER_THE_PROFILE`] does not name; for the rest, and on Windows,
+///   the reading is printed and asserted about by nothing. `Windows.Media.Ocr`
+///   reads the one language it was created for and has no such switch.
+/// - **The gate does not certify on that answer**, which is the one it asks for.
+/// - **Nor on the plain one**, which is the image the defect was: either the
+///   engine read the word, or it read only the control and the script rule
+///   refuses.
+///
+/// The last two have to hold on every platform, every engine and every script:
+/// the word is on the page, so no answer may come out clean.
+///
+/// Skipped, with the reason, on a document with no such pair of words.
+/// `testdata/multilingual.pdf` has three.
+fn other_scripts(
+    r: &mut Report,
+    worker: &mut OcrWorker,
+    bindings: progressive::Bindings,
+    document: &OpenDocument,
+) -> Result<(), String> {
+    const NAME: &str = "another script is read above a Latin control";
+    let latin: std::collections::BTreeSet<Script> = [Script::Latin].into();
+
+    let mut pages: Vec<(u32, Vec<ControlWord>)> = Vec::new();
+    for index in 0..document.page_count() {
+        let words = ocr_gate::words_from(&tpdf_lib::text::extract(&document.page(index)?)?);
+        pages.push((index, words));
+    }
+    let long_enough =
+        |word: &ControlWord| word.text.chars().count() >= tpdf_lib::ocr::MIN_CONTROL_CHARS;
+    let height = |rect: [f32; 4]| (rect[3] - rect[1]).abs();
+    // Plain ASCII letters, so reading it back does not turn on an accent.
+    let controls: Vec<(u32, &ControlWord)> = pages
+        .iter()
+        .flat_map(|(index, words)| words.iter().map(move |word| (*index, word)))
+        .filter(|(_, word)| long_enough(word) && word.text.chars().all(|c| c.is_ascii_alphabetic()))
+        .collect();
+    if controls.is_empty() {
+        r.skip(
+            NAME,
+            "no plain Latin word in this document to be the control",
+        );
+        return Ok(());
+    }
+    // One word a page: the tallest that is long enough and not purely Latin,
+    // which leaves the most Latin words small enough to stand under it.
+    let subjects: Vec<(u32, &ControlWord)> = pages
+        .iter()
+        .filter_map(|(index, words)| {
+            words
+                .iter()
+                .filter(|word| {
+                    let scripts = tpdf_lib::ocr::scripts_of(&word.text);
+                    long_enough(word) && !scripts.is_empty() && !scripts.is_subset(&latin)
+                })
+                .max_by(|a, b| height(a.rect).total_cmp(&height(b.rect)))
+                .map(|word| (*index, word))
+        })
+        .collect();
+    if subjects.is_empty() {
+        r.skip(NAME, "every word in this document is Latin");
+        return Ok(());
+    }
+
+    let opts = Options::default();
+    for (index, subject) in subjects {
+        let scripts = tpdf_lib::ocr::scripts_of(&subject.text);
+        let named: Vec<String> = scripts.iter().map(ToString::to_string).collect();
+        let name = format!("page {}: {}", index + 1, named.join(" and "));
+        // A control set larger than the word proves less than the gate asks, so
+        // the longest Latin word that is no taller than this one.
+        let control = controls
+            .iter()
+            .filter(|(_, word)| height(word.rect) <= height(subject.rect))
+            .max_by_key(|(_, word)| word.text.chars().count());
+        let Some(&(control_page, control)) = control else {
+            r.skip(&name, "every Latin word is set larger than this one");
+            continue;
+        };
+        let subject_page = document.page(index)?;
+        let gate_page = GatePage {
+            page: index,
+            regions: vec![subject.rect],
+            words: vec![subject.clone()],
+            taking: String::new(),
+            width_pt: subject_page.width_pt(),
+            height_pt: subject_page.height_pt(),
+        };
+        let choice = ControlChoice {
+            crop: control.rect,
+            token: control.text.clone(),
+            size_pt: height(subject.rect),
+            from_page: false,
+        };
+        let scale = match ocr_gate::geometry_for(&gate_page, &choice) {
+            Ok(geometry) => geometry.scale,
+            Err((why, _)) => {
+                r.skip(&name, why);
+                continue;
+            }
+        };
+        let strip_of = |page_index: u32, rect: [f32; 4]| -> Result<Sheet, String> {
+            let page = document.page(page_index)?;
+            let height_px = (page.height_pt() * scale).ceil() as u32;
+            let (top, rows) = ocr_gate::rows_of(rect, height_px, scale)
+                .ok_or_else(|| format!("{rect:?} is not on page {page_index}"))?;
+            tile(bindings, &page, top, scale, Some(rows))
+        };
+        let mut under = strip_of(index, subject.rect)?;
+        let band = strip_of(control_page, control.rect)?;
+        if under.width != band.width {
+            r.skip(&name, "the control's page is a different width");
+            continue;
+        }
+        ocr_gate::mask_columns(&mut under.rgba, under.width, subject.rect, scale)?;
+        let (rgba, rows, placed_at) = ocr_gate::stack(&under.rgba, &band.rgba, under.width, scale)?;
+        let placed = choice.placed(placed_at);
+        let image = Pixels {
+            rgba: &rgba,
+            width: under.width,
+            height: rows,
+            scale,
+        };
+
+        let plain = worker.recognise(image, &opts);
+        let any = worker.recognise_any_script(image, &opts);
+        // A row per answer the gate could have been given, and a clean one is
+        // the failure either way.
+        let gate_on = |answer: &Result<
+            (tpdf_lib::ocr::EngineId, Vec<RecognisedItem>),
+            RecogniseError,
+        >| {
+            let gate = ocr_gate::verdict(&gate_page, subject.rect, &placed, answer.clone());
+            let said = match &gate {
+                Legibility::NotVerified { cause, .. } => cause.label().to_string(),
+                Legibility::Legible { found } => format!("{} survivor(s)", found.len()),
+                Legibility::Illegible { .. } => "certified with the word still on the page".into(),
+            };
+            (!gate.certifies(), said)
+        };
+        // What the engine said, before the gate holds it to the control's script.
+        let engine_says = |answer: &Result<
+            (tpdf_lib::ocr::EngineId, Vec<RecognisedItem>),
+            RecogniseError,
+        >| {
+            match answer {
+                Ok((id, items)) => match tpdf_lib::ocr::adjudicate(id, &placed, &Ok(items.clone()))
+                {
+                    Legibility::Legible { found } => {
+                        format!("{} span(s) in the region", found.len())
+                    }
+                    Legibility::Illegible { .. } => "the control and nothing else".to_string(),
+                    Legibility::NotVerified { cause, .. } => cause.label().to_string(),
+                },
+                Err(e) => format!("{e}"),
+            }
+        };
+        let detail = format!(
+            "{:?} at {scale}x: any script {}; plainly {}",
+            control.text,
+            engine_says(&any),
+            engine_says(&plain)
+        );
+        let read = matches!(
+            &any,
+            Ok((id, items)) if matches!(
+                tpdf_lib::ocr::adjudicate(id, &placed, &Ok(items.clone())),
+                Legibility::Legible { .. }
+            )
+        );
+        let claimed = cfg!(target_os = "macos")
+            && !scripts
+                .iter()
+                .any(|script| NOT_READ_UNDER_THE_PROFILE.contains(script));
+        if claimed {
+            r.check(
+                read,
+                &format!("{name} is read above a Latin control"),
+                &detail,
+            );
+        } else {
+            println!("{:7}{name:48} {detail}", "");
+        }
+        let (refused, said) = gate_on(&any);
+        r.check(
+            refused,
+            &format!("{name}: the gate does not certify on its own answer"),
+            said,
+        );
+        let (refused, said) = gate_on(&plain);
+        r.check(refused, &format!("{name}: nor on the plain answer"), said);
+    }
+    Ok(())
+}
+
+/// The scripts Vision is not claimed to read from inside the OCR worker, even
+/// asked for any script.
+///
+/// Measured 2026-10-05 on 26A434, cold cache, 12 pt at 2x. Hebrew is not read in
+/// either mode, in or out of the profile. Arabic and Devanagari are read outside
+/// it and fail inside it with `CRImageReaderError error 1`: each needs a model
+/// the worker's warm-up does not load (`ocr_vision::Vision::warm`). All three
+/// end *not verified* at the gate, which the two rows under each page check.
+const NOT_READ_UNDER_THE_PROFILE: [Script; 3] =
+    [Script::Hebrew, Script::Arabic, Script::Devanagari];
 
 /// Which Vision images this process has mapped, by path.
 #[cfg(target_os = "macos")]
@@ -450,25 +680,33 @@ impl Sheet {
     }
 }
 
-fn render_page(file: &Path, library: &Path) -> Result<Sheet, String> {
+fn open(file: &Path, library: &Path) -> Result<(progressive::Bindings, OpenDocument), String> {
     use pdfium_render::prelude::Pdfium;
     let path = Pdfium::pdfium_platform_library_name_at_path(library);
     let bound = progressive::bind_library(&path)
         .map_err(|e| format!("could not load Pdfium from {}: {e}", path.display()))?;
     let bindings = progressive::bindings_of(bound);
     let document = OpenDocument::open(bindings, file, None)?;
-    let page = document.page(0)?;
-    tile(bindings, &page, 2.0)
+    Ok((bindings, document))
 }
 
-fn tile(bindings: progressive::Bindings, page: &RawPage<'_>, scale: f32) -> Result<Sheet, String> {
+/// A page at `scale`, or with `rows` only the rows `(top, count)` of it.
+///
+/// Full width either way, which is what `ocr_gate::stack` needs of two strips.
+fn tile(
+    bindings: progressive::Bindings,
+    page: &RawPage<'_>,
+    top: u32,
+    scale: f32,
+    rows: Option<u32>,
+) -> Result<Sheet, String> {
     let width = (page.width_pt() * scale).ceil() as u32;
-    let height = (page.height_pt() * scale).ceil() as u32;
+    let height = rows.unwrap_or((page.height_pt() * scale).ceil() as u32);
     let spec = TileSpec {
         scale,
         turns: 0,
         x: 0,
-        y: 0,
+        y: i32::try_from(top).map_err(|_| "strip too far down for one tile".to_string())?,
         width: u16::try_from(width).map_err(|_| "page too wide for one tile".to_string())?,
         height: u16::try_from(height).map_err(|_| "page too tall for one tile".to_string())?,
     };

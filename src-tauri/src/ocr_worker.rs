@@ -111,6 +111,14 @@ pub struct Ask {
     pub scale: f32,
     /// What to ask the engine for.
     pub options: Options,
+    /// Whether to ask through [`crate::ocr::Recogniser::recognise_any_script`].
+    ///
+    /// Here and not in [`Options`] because it is not something every caller
+    /// chooses: the redaction gate always asks this way and the text layer
+    /// never does. `#[serde(default)]` so a request written before this
+    /// existed asks for what it always got.
+    #[serde(default)]
+    pub any_script: bool,
 }
 
 /// What the child answers.
@@ -475,6 +483,33 @@ impl OcrWorker {
         pixels: Pixels<'_>,
         options: &Options,
     ) -> Result<(EngineId, Vec<RecognisedItem>), RecogniseError> {
+        self.ask(pixels, options, false)
+    }
+
+    /// [`recognise`](Self::recognise), through
+    /// [`crate::ocr::Recogniser::recognise_any_script`] in the other process.
+    ///
+    /// What the redaction gate calls, because an engine left to its default
+    /// languages answers a region in another script with nothing at all.
+    ///
+    /// # Errors
+    ///
+    /// As [`recognise`](Self::recognise).
+    pub fn recognise_any_script(
+        &mut self,
+        pixels: Pixels<'_>,
+        options: &Options,
+    ) -> Result<(EngineId, Vec<RecognisedItem>), RecogniseError> {
+        self.ask(pixels, options, true)
+    }
+
+    /// One request and its reply, whichever way it is asked.
+    fn ask(
+        &mut self,
+        pixels: Pixels<'_>,
+        options: &Options,
+        any_script: bool,
+    ) -> Result<(EngineId, Vec<RecognisedItem>), RecogniseError> {
         if let Some(why) = &self.dead {
             return Err(RecogniseError::Crashed(why.clone()));
         }
@@ -486,6 +521,7 @@ impl OcrWorker {
             height: pixels.height,
             scale: pixels.scale,
             options: options.clone(),
+            any_script,
         };
         let line = serde_json::to_string(&ask).map_err(|e| {
             RecogniseError::MalformedInput(format!("the request will not encode: {e}"))
@@ -783,7 +819,12 @@ fn answer<E: crate::ocr::Recogniser>(engine: &E, named: &Named, pixels: &Shm, as
         height: ask.height,
         scale: ask.scale,
     };
-    match engine.recognise(px, &ask.options) {
+    let read = if ask.any_script {
+        engine.recognise_any_script(px, &ask.options)
+    } else {
+        engine.recognise(px, &ask.options)
+    };
+    match read {
         Ok(items) => Said::Read {
             engine: named.clone(),
             items,
@@ -899,9 +940,67 @@ mod tests {
                 deadline_ms: 5_000,
                 words: true,
             },
+            any_script: true,
         };
         let line = serde_json::to_string(&ask).expect("encodes");
         assert_eq!(serde_json::from_str::<Ask>(&line).expect("decodes"), ask);
+    }
+
+    /// A request written before `any_script` existed is the plain one. The
+    /// other default would change what the text layer is given.
+    #[test]
+    fn an_ask_that_does_not_say_is_the_plain_one() {
+        let old = r#"{"width":4,"height":2,"scale":1.0,"options":{"languages":[],"language_correction":false,"deadline_ms":10000}}"#;
+        let ask = serde_json::from_str::<Ask>(old).expect("decodes");
+        assert!(!ask.any_script);
+    }
+
+    /// An engine that records which way it was asked and reads nothing.
+    struct Asked(std::cell::Cell<Option<bool>>);
+
+    impl crate::ocr::Recogniser for Asked {
+        fn id(&self) -> EngineId {
+            EngineId {
+                name: "vision",
+                build: "test".into(),
+            }
+        }
+        fn recognise(
+            &self,
+            _: Pixels<'_>,
+            _: &Options,
+        ) -> Result<Vec<RecognisedItem>, RecogniseError> {
+            self.0.set(Some(false));
+            Ok(Vec::new())
+        }
+        fn recognise_any_script(
+            &self,
+            _: Pixels<'_>,
+            _: &Options,
+        ) -> Result<Vec<RecognisedItem>, RecogniseError> {
+            self.0.set(Some(true));
+            Ok(Vec::new())
+        }
+    }
+
+    /// The flag has to reach the engine as the call it names. Dropped in the
+    /// child, the gate would ask for any script and be answered as before:
+    /// nothing read in a region still showing another one.
+    #[test]
+    fn the_child_asks_the_engine_the_way_the_request_says() {
+        let mapping = crate::worker_shm::Shm::create(64).expect("a mapping");
+        let named = Named {
+            name: "vision".into(),
+            build: "test".into(),
+        };
+        for any_script in [true, false] {
+            let engine = Asked(std::cell::Cell::new(None));
+            let mut request = ask(3, 2);
+            request.any_script = any_script;
+            let said = answer(&engine, &named, &mapping, &request);
+            assert!(matches!(said, Said::Read { .. }), "{said:?}");
+            assert_eq!(engine.0.get(), Some(any_script));
+        }
     }
 
     #[test]
@@ -940,6 +1039,7 @@ mod tests {
             height,
             scale: 1.0,
             options: Options::default(),
+            any_script: false,
         }
     }
 

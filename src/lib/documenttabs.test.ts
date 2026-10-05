@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
-  DocumentTabs, DocumentTasks, freshState, keepState, restoredState, type DocumentTab, type TabState,
+  DocumentTabs, DocumentTasks, RESTORE_POINTS, freshState, keepState, restore, restoredState, restoredWith,
+  type DocumentTab, type FreshState, type Restore, type TabState,
 } from "./documenttabs";
 import { PLAIN_SEARCH } from "./search";
 import { handleWindowKey, registerAppCommands, type AppActions } from "./appcommands";
@@ -197,5 +198,56 @@ describe("what a tab keeps across a switch", () => {
     const two = freshState();
     expect(one.covered).not.toBe(two.covered);
     expect(one.offers).not.toBe(two.offers);
+  });
+
+  /** An applier for every field that records which were handed over, and with what. */
+  function recording() {
+    const applied: [string, unknown][] = [];
+    const seen: FreshState[] = [];
+    const note = (key: keyof FreshState) => (value: unknown, kept: FreshState) => {
+      applied.push([key, value]);
+      seen.push(kept);
+    };
+    const apply: Restore = {
+      covered: note("covered"), query: note("query"), findShown: note("findShown"),
+      searchOptions: note("searchOptions"), searchScope: note("searchScope"),
+      sidebarTab: note("sidebarTab"), error: note("error"), offers: note("offers"),
+      notice: note("notice"), redactedCopyPath: note("redactedCopyPath"),
+    };
+    return { applied, seen, apply };
+  }
+
+  it("applies every restored field exactly once across the three points of an open", () => {
+    const tab = blank();
+    keepState(tab, touched());
+    const kept = restoredState(tab);
+    const { applied, seen, apply } = recording();
+    for (const point of RESTORE_POINTS) restore(kept, point, apply);
+    expect(applied.map(([key]) => key).sort()).toEqual(Object.keys(kept).sort());
+    // Each with its own value, and the whole record beside it for a field
+    // that is shown together with another.
+    for (const [key, value] of applied) expect(value).toBe(kept[key as keyof FreshState]);
+    expect(seen.every((record) => record === kept)).toBe(true);
+  });
+
+  it("applies each field at its point, in the order the open depends on", () => {
+    const kept = restoredState(undefined);
+    const at = (point: (typeof RESTORE_POINTS)[number]) => {
+      const { applied, apply } = recording();
+      restore(kept, point, apply);
+      return applied.map(([key]) => key);
+    };
+    // The message before the copy it clears the offer of: `say` resets it.
+    expect(at("unmounted")).toEqual(["query", "findShown", "error", "offers", "notice", "redactedCopyPath"]);
+    expect(at("model")).toEqual(["covered"]);
+    expect(at("mounted")).toEqual(["searchOptions", "searchScope", "sidebarTab"]);
+  });
+
+  it("names the field another is applied with, and does nothing for it", () => {
+    const { applied, apply } = recording();
+    apply.offers = restoredWith("error");
+    restore(restoredState(undefined), "unmounted", apply);
+    expect(applied.map(([key]) => key)).not.toContain("offers");
+    expect(applied.map(([key]) => key)).toContain("error");
   });
 });

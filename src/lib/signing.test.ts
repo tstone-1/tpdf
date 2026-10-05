@@ -61,6 +61,7 @@ function shell(overrides: Partial<SigningShell> = {}) {
     ],
   };
   const base: SigningShell = {
+    settle: async () => {},
     dirty: () => false,
     openPath: "/docs/report.pdf",
     list: async () => {
@@ -228,6 +229,51 @@ describe("the order the questions are asked in", () => {
   it("refuses unsaved edits before asking the OS anything", async () => {
     const { asked, shell: s } = shell({ dirty: () => true });
     expect(await signDocument(s)).toBe(UNSAVED);
+    expect(asked).toEqual([]);
+  });
+
+  it("signDocument_settles_drafts_before_it_reads_dirty", async () => {
+    // An answer still being typed is not an edit until something commits it,
+    // so a document can read as saved with a change on screen. Settling is
+    // what commits it, and only what `dirty` says afterwards is the document
+    // the reader is looking at.
+    let committed = false;
+    const { asked, shell: s } = shell({
+      settle: async () => { committed = true; },
+      dirty: () => committed,
+    });
+    expect(await signDocument(s)).toBe(UNSAVED);
+    expect(asked).not.toContain("list");
+    expect(asked).toEqual([]);
+  });
+
+  it("waits for the drafts to settle before it asks anything else", async () => {
+    const order: string[] = [];
+    let finish = () => {};
+    const { asked, shell: s } = shell({
+      settle: () => new Promise<void>((resolve) => {
+        order.push("settle");
+        finish = () => { order.push("settled"); resolve(); };
+      }),
+      dirty: () => { order.push("dirty"); return false; },
+    });
+    const signing = signDocument(s);
+    await Promise.resolve();
+    await Promise.resolve();
+    // Held open: neither the document nor the OS has been asked.
+    expect(order).toEqual(["settle"]);
+    expect(asked).toEqual([]);
+    finish();
+    await signing;
+    expect(order).toEqual(["settle", "settled", "dirty"]);
+    expect(asked[0]).toBe("list");
+  });
+
+  it("passes on a draft that could not be committed, and asks nothing", async () => {
+    const { asked, shell: s } = shell({
+      settle: async () => { throw new Error("This answer was refused."); },
+    });
+    await expect(signDocument(s)).rejects.toThrow("This answer was refused.");
     expect(asked).toEqual([]);
   });
 

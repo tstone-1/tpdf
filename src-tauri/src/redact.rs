@@ -663,18 +663,28 @@ pub fn covered(objects: &[PageObject], forms: &[FormObject], region: Rect) -> Pl
 /// more than once*.
 ///
 /// **`None` is "drawn once" and "could not be answered" together, and that is
-/// the safe direction rather than a shortcut.** [`remove_images`] and
-/// [`remove_form_shows`] ask the same question again with the document in hand
-/// and refuse when the counts disagree, so an entry this could not fill leaves
-/// that refusal standing. Failing the other way --- reporting *shared* whenever
-/// nothing could be read --- would leave the object in the file and tell the
-/// reader it was a repeat, which is a claim about a document nobody parsed.
+/// the safe direction rather than a shortcut.** An entry goes unanswered when
+/// the page's content cannot be read or its counts disagree with PDFium's, and
+/// the removal meets the same page with the document in hand: [`remove_images`]
+/// refuses on that disagreement, and [`remove_form_shows`],
+/// [`remove_form_images`] and [`take_form_paths`] refuse on it and ask
+/// [`drawn_more_than_once`] about the form again besides. So an entry this
+/// could not fill leaves a refusal standing. Failing the other way ---
+/// reporting *shared* whenever nothing could be read --- would leave the object
+/// in the file and tell the reader it was a repeat, which is a claim about a
+/// document nobody parsed.
+///
+/// What nothing asks a second time is whether a **picture** is drawn elsewhere.
+/// [`remove_images`] takes the marked draw either way and keeps the picture's
+/// name while anything else draws through it, so an unanswered entry there
+/// costs the reader the finding that the picture stays, and no more.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct SharedDraws {
     /// For each form, in the order `forms` lists them, how many times the
     /// document draws each picture inside it. Empty when nobody asked, which
-    /// reads as *drawn once* for [`SharedDraws`]'s reason: the removal asks
-    /// again with the document in hand and refuses if that was wrong.
+    /// reads as *drawn once*. [`remove_form_images`] then takes the marked draw
+    /// and leaves the picture's bytes to whatever else still names them, as it
+    /// would have with the answer; what is lost is the finding.
     pub form_images: Vec<Vec<Option<usize>>>,
     /// Per image on the page, in [`Plan::images`]'s ordinals.
     pub images: Vec<Option<usize>>,
@@ -831,6 +841,11 @@ fn form_list_is_shared(doc: &Document, form: ObjectId) -> bool {
 }
 
 /// A form's content, decoded.
+///
+/// Whole or not at all, by [`decode_whole`]: two of the four callers write
+/// this back, and the two that only look answer *could not be read* for a
+/// stream this refuses, which is what they answer for any other they cannot
+/// read.
 fn form_content(doc: &Document, form: ObjectId) -> Result<Content, String> {
     let stream = doc
         .get_object(form)
@@ -839,8 +854,36 @@ fn form_content(doc: &Document, form: ObjectId) -> Result<Content, String> {
     let body = stream
         .decompressed_content_with_limit(MAX_CONTENT_BYTES)
         .map_err(|why| format!("the form's content stream will not decode: {why}"))?;
-    Content::decode(&body)
-        .map_err(|why| format!("the form's content stream will not decode: {why}"))
+    decode_whole(&body, "the form's content stream")
+}
+
+/// Every operation of a content stream that is about to be written back, or a
+/// refusal.
+///
+/// **`Content::decode` is not this, and the difference removes content nobody
+/// marked.** `lopdf` reads operations until one will not parse and answers with
+/// the ones before it, as a success. For a function that only looks, a short
+/// answer is a count that disagrees and a refusal that follows. For one that
+/// re-encodes what it was given and stores that as the stream, the rest of the
+/// page is gone from the written file: the redaction took a line and the
+/// output lost the table under it, with the removal reported as one show.
+///
+/// So every reader here whose result is encoded again goes through this, which
+/// refuses a stream with anything left over. `what` names the stream in the
+/// sentence a reader gets. The readers that only count --- [`shared_draws`],
+/// [`path_clips`], the form lookups in the three form removals --- stay
+/// lenient on purpose: a short count there already ends in a refusal or in
+/// *could not answer*, and refusing earlier would only change which sentence
+/// says so.
+///
+/// `textedit::inspect_pinning` reads a page the same way, for the same reason.
+fn decode_whole(data: &[u8], what: &str) -> Result<Content, String> {
+    Content::decode_strict(data).map_err(|_| {
+        format!(
+            "{what} does not parse to its end, and writing back the part that could be read \
+             would drop the rest of it. Nothing was removed."
+        )
+    })
 }
 
 /// The XObject a form's content means by `name`: from the form's own
@@ -939,6 +982,11 @@ fn times_drawn(
 /// Reported through [`Plan::unhandled`] with [`Unhandled::drawn`] set, so the
 /// count that explains it reaches the review panel *before* anything is written
 /// and the verdict afterwards. Everything else in the region still goes.
+///
+/// **A picture the page itself draws is not among them since 2026-10-03, and a
+/// Form XObject still is.** The picture keeps its place in the plan and its
+/// draw on this page goes; what is recorded, in [`Plan::shared`], is that the
+/// picture's bytes stay for the pages that still draw it. See that field.
 pub fn leave_shared(
     plan: &mut Plan,
     shared: &SharedDraws,
@@ -1910,6 +1958,94 @@ fn property_list<'a>(doc: &'a Document, page: ObjectId, name: &[u8]) -> Option<&
     None
 }
 
+/// Puts `encoded` in place of everything a page draws, and proves that it did.
+///
+/// **Not `Document::change_page_content`, which this replaced on 2026-10-05,
+/// because that function answers `Ok` for two pages it did not rewrite as
+/// asked.** Read out of `lopdf` 0.45.0's `processor.rs`:
+///
+/// * `/Contents` an array of two or more streams gets one new stream and the
+///   page is pointed at it. The old streams stay in `doc.objects`, named by
+///   nothing, and a writer that serialises every object it holds writes them
+///   out --- every removed glyph included.
+/// * `/Contents` a reference to an array object matches neither arm that does
+///   anything. Nothing is replaced, and the caller goes on to report how many
+///   operators it removed from a page that still draws all of them.
+///
+/// So the streams are found the way the content was read
+/// (`Document::get_page_contents`, which follows a reference to an array), one
+/// stream is rewritten where it stands, and any other number is replaced by one
+/// new stream the page names directly.
+///
+/// **The streams a page of several is taken off are left for the sweep, and
+/// that is a dependency rather than an oversight.** Deleting them here would
+/// need to know what else names them --- a letterhead stream is routinely one
+/// entry in every page's array --- which is the question `sweep::collect`
+/// answers by walking. `save::rewrite` therefore sweeps after every redaction;
+/// a caller that does not must not use this.
+///
+/// **The read back is the guard, and it is of the page rather than of the
+/// call.** Whatever shape `/Contents` had, the page now has to read as exactly
+/// the bytes that were written; if it does not, the removal did not happen and
+/// saying so is the only honest answer.
+///
+/// It has no input that reaches it today, and that is stated rather than left
+/// to be found by whoever writes a mutation for it: the two arms above cover
+/// every list `get_page_contents` can answer, so a page that failed to read
+/// back would be a third shape nobody has seen. That is the shape the function
+/// this replaced was wrong about twice, which is the reason to ask the page
+/// rather than trust the arms. What can be shown is that it is what refuses
+/// when an arm goes wrong: point the page at one of its old streams and the
+/// refusal is this one.
+///
+/// # Errors
+///
+/// The page naming no content stream, or one that is not a stream; the page
+/// not being a dictionary; or the page not reading back as `encoded`.
+fn replace_page_content(
+    doc: &mut Document,
+    page: ObjectId,
+    encoded: Vec<u8>,
+) -> Result<(), String> {
+    let streams = doc.get_page_contents(page);
+    match streams.as_slice() {
+        [] => {
+            return Err("the page names no content stream, so there was nothing to replace".into());
+        }
+        [only] => {
+            let stream = doc
+                .get_object_mut(*only)
+                .and_then(|object| object.as_stream_mut())
+                .map_err(|why| format!("the page's content could not be replaced: {why}"))?;
+            stream.set_plain_content(encoded.clone());
+            // Stored as it is when it will not deflate, which is still the
+            // content that was asked for.
+            let _ = stream.compress();
+        }
+        _ => {
+            let mut stream = lopdf::Stream::new(Dictionary::new(), encoded.clone());
+            let _ = stream.compress();
+            let fresh = doc.add_object(stream);
+            doc.get_object_mut(page)
+                .and_then(|object| object.as_dict_mut())
+                .map_err(|why| format!("the page's content could not be replaced: {why}"))?
+                .set("Contents", fresh);
+        }
+    }
+
+    // `get_page_content` ends each stream it reads with a newline, so one
+    // stream holding `encoded` reads as `encoded` and one byte.
+    let now = doc.get_page_content(page);
+    if doc.get_page_contents(page).len() != 1 || now.strip_suffix(b"\n") != Some(&encoded[..]) {
+        return Err(
+            "the page does not read back as the content that was written for it, so nothing can \
+             be said to have been removed"
+                .into(),
+        );
+    }
+    Ok(())
+}
+
 /// Deletes the numbered show operators from a page's content stream.
 ///
 /// `ordinals` are positions among the page's show operators, as [`covered`]
@@ -1923,9 +2059,10 @@ fn property_list<'a>(doc: &'a Document, page: ObjectId, name: &[u8]) -> Option<&
 ///
 /// # Errors
 ///
-/// The page has no content or it will not decode within [`MAX_CONTENT_BYTES`];
-/// the show-operator count disagrees with `text_objects`; an ordinal names no
-/// operator; or the rewritten stream will not encode.
+/// The page has no content, or it does not parse to its end within
+/// [`MAX_CONTENT_BYTES`]; the show-operator count disagrees with `text_objects`;
+/// an ordinal names no operator; the rewritten stream will not encode; or the
+/// page does not read back as what was written for it.
 pub fn remove_shows(
     doc: &mut Document,
     page: ObjectId,
@@ -1935,8 +2072,7 @@ pub fn remove_shows(
     let data = doc
         .get_page_content_with_limit(page, MAX_CONTENT_BYTES)
         .map_err(|why| format!("the page's content stream could not be read: {why}"))?;
-    let mut content = Content::decode(&data)
-        .map_err(|why| format!("the content stream will not decode: {why}"))?;
+    let mut content = decode_whole(&data, "the page's content stream")?;
 
     let shows: Vec<usize> = content
         .operations
@@ -1995,8 +2131,7 @@ pub fn remove_shows(
     let encoded = content
         .encode()
         .map_err(|why| format!("the rewritten content stream will not encode: {why}"))?;
-    doc.change_page_content(page, encoded)
-        .map_err(|why| format!("the page's content could not be replaced: {why}"))?;
+    replace_page_content(doc, page, encoded)?;
 
     Ok(Removed {
         shows_before: shows.len(),
@@ -2035,10 +2170,11 @@ pub fn remove_shows(
 /// between pages, and for the same reason: a redaction may not quietly edit a
 /// part of the document the reader did not mark.
 ///
-/// A backstop since 2026-09-07, exactly as [`remove_images`]'s is and for the
-/// same reason: [`leave_shared`] takes a shared form's text out of the plan
-/// before the plan is committed to, so a reader gets the finding while they can
-/// still act on it instead of a refusal that cancels the rest of the page.
+/// A backstop since 2026-09-07: [`leave_shared`] takes a shared form's text out
+/// of the plan before the plan is committed to, so a reader gets the finding
+/// while they can still act on it instead of a refusal that cancels the rest of
+/// the page. Reaching it here means the document changed under a plan that had
+/// already been checked.
 ///
 /// # Errors
 ///
@@ -2098,8 +2234,7 @@ pub fn remove_form_shows(
     let body = stream
         .decompressed_content_with_limit(MAX_CONTENT_BYTES)
         .map_err(|why| format!("the form's content stream will not decode: {why}"))?;
-    let mut inside = Content::decode(&body)
-        .map_err(|why| format!("the form's content stream will not decode: {why}"))?;
+    let mut inside = decode_whole(&body, "the form's content stream")?;
 
     let shows: Vec<usize> = inside
         .operations
@@ -2161,48 +2296,6 @@ pub fn remove_form_shows(
     })
 }
 
-/// Deletes the numbered images from a page, and the bytes behind them.
-///
-/// `ordinals` are positions among the page's **image objects**, as [`covered`]
-/// produces them. `image_objects` is how many PDFium reported, and is the same
-/// correspondence guard [`remove_shows`] applies to text.
-///
-/// ## Two removals, and only the second one redacts
-///
-/// Deleting the `Do` operation stops the page drawing the image. It does **not**
-/// remove the image: the stream is still an object in the file, reachable from
-/// the page's `/Resources /XObject`, and every byte of the picture is still
-/// there for anyone who opens the file with something other than a viewer. So
-/// the resource entry goes too, which leaves the object unreferenced --- and
-/// `sweep::collect`, which every rewrite runs, is what drops it. `redact-apply-
-/// probe` greps the written file for the image's own pixels rather than asking
-/// whether the page still draws it, because those are different claims and only
-/// the second is a redaction.
-///
-/// ## An image drawn more than once is refused, and by now should not arrive
-///
-/// Removing one of its `Do` operations would hide it here and leave it drawn
-/// elsewhere, so the object stays reachable and the pixels stay in the file --- a
-/// redaction that removed the picture from the reader's view and nothing else.
-/// Removing *all* of them would take drawings the reader never marked. The same
-/// two counts as `remove_form_shows` and for the same reason: a graph reference
-/// count is blind to one page drawing the same image twice.
-///
-/// **This refusal is a backstop rather than the answer a reader meets.** It was
-/// the answer until 2026-09-07, and being a writer's refusal it cancelled the
-/// whole redaction --- so a region over a letterhead removed nothing, the words
-/// included. [`leave_shared`] asks the same question while the plan is being
-/// built and takes such an image out of it, so reaching here means the document
-/// changed under a plan that had already been checked. Kept, because that is a
-/// real state and refusing it is right; moved, because a fact the planner can
-/// find belongs in the plan. `docs/TRAPS.md` has the shape.
-///
-/// # Errors
-///
-/// The page having no content or it not decoding within [`MAX_CONTENT_BYTES`];
-/// the image-`Do` count disagreeing with `image_objects`; an ordinal naming no
-/// image; an image drawn more than once anywhere; or the rewritten stream not
-/// encoding.
 /// Takes pictures out of one Form XObject the page draws.
 ///
 /// [`remove_form_shows`]'s twin for a form's pictures, and [`remove_images`]'s
@@ -2397,6 +2490,48 @@ fn forget_form_xobjects(
     Ok(())
 }
 
+/// Deletes the numbered images from a page, and the bytes behind them.
+///
+/// `ordinals` are positions among the page's **image objects**, as [`covered`]
+/// produces them. `image_objects` is how many PDFium reported, and is the same
+/// correspondence guard [`remove_shows`] applies to text.
+///
+/// ## Two removals, and only the second one redacts
+///
+/// Deleting the `Do` operation stops the page drawing the image. It does **not**
+/// remove the image: the stream is still an object in the file, reachable from
+/// the page's `/Resources /XObject`, and every byte of the picture is still
+/// there for anyone who opens the file with something other than a viewer. So
+/// the resource entry goes too, which leaves the object unreferenced --- and
+/// `sweep::collect`, which the rewrite runs after any redaction, is what drops
+/// it. `redact-apply-probe` greps the written file for the image's own pixels
+/// rather than asking whether the page still draws it, because those are
+/// different claims and only the second is a redaction.
+///
+/// ## An image drawn more than once loses the draw that was marked, and stays
+///
+/// The marked `Do` goes like any other. What stays is the **name**, whenever
+/// something still draws through it: this page a second time, or another page
+/// reading the same resource list. The object then stays reachable and its
+/// bytes stay in the file, which is right --- they are still a picture on a
+/// page nobody marked --- and when the last page that draws it is redacted the
+/// name goes then, and the bytes with it.
+///
+/// **Refused here until 2026-09-07, and left where it was until 2026-10-03.**
+/// The refusal was a writer's, so it cancelled the whole redaction and a region
+/// over a letterhead removed nothing, the words included; leaving it meant a
+/// logo drawn on every page could be redacted on none of them. [`leave_shared`]
+/// now records the picture in [`Plan::shared`] with how many times it is drawn,
+/// which is how a reader learns before anything is written that the picture
+/// itself stays.
+///
+/// # Errors
+///
+/// The page having no content, or it not parsing to its end within
+/// [`MAX_CONTENT_BYTES`]; the image-`Do` count disagreeing with `image_objects`;
+/// an ordinal naming no image; the rewritten stream not encoding; or the page
+/// not reading back as what was written for it. A call that names no image
+/// reads nothing and refuses nothing.
 pub fn remove_images(
     doc: &mut Document,
     page: ObjectId,
@@ -2424,8 +2559,7 @@ pub fn remove_images(
     let data = doc
         .get_page_content_with_limit(page, MAX_CONTENT_BYTES)
         .map_err(|why| format!("the page's content stream could not be read: {why}"))?;
-    let mut content = Content::decode(&data)
-        .map_err(|why| format!("the content stream will not decode: {why}"))?;
+    let mut content = decode_whole(&data, "the page's content stream")?;
 
     let drawn = xobject_draws(doc, page, &content, b"Image");
     if drawn.len() != image_objects {
@@ -2458,8 +2592,7 @@ pub fn remove_images(
     let encoded = content
         .encode()
         .map_err(|why| format!("the rewritten content stream will not encode: {why}"))?;
-    doc.change_page_content(page, encoded)
-        .map_err(|why| format!("the page's content could not be replaced: {why}"))?;
+    replace_page_content(doc, page, encoded)?;
 
     // **The half that redacts.** Without it the stream is still reachable from
     // the page and every byte of the picture stays in the file.
@@ -2575,8 +2708,7 @@ pub fn take_paths(
     let data = doc
         .get_page_content_with_limit(page, MAX_CONTENT_BYTES)
         .map_err(|why| format!("the page's content stream could not be read: {why}"))?;
-    let mut content = Content::decode(&data)
-        .map_err(|why| format!("the content stream will not decode: {why}"))?;
+    let mut content = decode_whole(&data, "the page's content stream")?;
 
     let painted = painted_paths(&content);
     if painted.len() != path_objects {
@@ -2609,8 +2741,7 @@ pub fn take_paths(
     let encoded = content
         .encode()
         .map_err(|why| format!("the rewritten content stream will not encode: {why}"))?;
-    doc.change_page_content(page, encoded)
-        .map_err(|why| format!("the page's content could not be replaced: {why}"))?;
+    replace_page_content(doc, page, encoded)?;
 
     Ok(PathsTaken {
         cut,
@@ -7264,5 +7395,169 @@ mod tests {
             None,
             "there is nothing to place, so there is nothing to compare"
         );
+    }
+
+    /// Replaces the bytes of the stream `id` names, uncompressed.
+    fn set_stream(doc: &mut Document, id: lopdf::ObjectId, body: &str) {
+        doc.get_object_mut(id)
+            .and_then(Object::as_stream_mut)
+            .expect("a stream")
+            .set_plain_content(body.as_bytes().to_vec());
+    }
+
+    /// What the stream `id` names holds now, decoded.
+    fn stream_says(doc: &Document, id: lopdf::ObjectId) -> String {
+        let stream = doc.get_object(id).and_then(Object::as_stream).unwrap();
+        let body = stream
+            .decompressed_content()
+            .unwrap_or_else(|_| stream.content.clone());
+        String::from_utf8_lossy(&body).into_owned()
+    }
+
+    /// A content stream `lopdf` cannot read to its end is refused by every
+    /// function that would write it back.
+    ///
+    /// **`Content::decode` answers with the operations before the first token
+    /// it cannot read and says nothing about the rest.** A removal built on
+    /// that re-encodes the part it was given, so everything after the token
+    /// leaves the page with the redaction: here a rule or a line of text
+    /// nobody marked, in a document a table or a whole column. The count the
+    /// correspondence guard compares can still agree, which is why that guard
+    /// is not the one that catches it.
+    ///
+    /// One case per stream that is re-encoded: the page's for text, pictures
+    /// and drawings, and a form's for the same three, of which pictures and
+    /// drawings share one reader. Each runs twice. Without the token the
+    /// removal succeeds, which is what makes the refusal a fact about the token
+    /// and not about a fixture the function would have refused anyway; with it
+    /// the removal is refused and the stream is byte for byte what it was.
+    #[test]
+    fn a_content_stream_that_does_not_parse_to_its_end_is_refused() {
+        // Neither an operand nor an operator, so the parse stops in front of it.
+        const UNREADABLE: &str = "}\n";
+        const AFTER: &str = "0 0 m 987.5 10 l S\n";
+        // The premise, measured rather than assumed: the lenient decode gives
+        // back the part before the token and reports no error.
+        let lenient = Content::decode(format!("BT (name) Tj ET\n{UNREADABLE}{AFTER}").as_bytes())
+            .expect("the lenient decode does not complain");
+        assert_eq!(
+            lenient.operations.len(),
+            3,
+            "and what it returns ends where the token stands"
+        );
+
+        // A fixture is the document, its page and the stream that is rewritten,
+        // made with `token` between what is removed and what follows it.
+        type Fixture = fn(&str) -> (Document, lopdf::ObjectId, lopdf::ObjectId);
+        type Removal = fn(&mut Document, lopdf::ObjectId) -> Result<(), String>;
+        let cases: [(&str, Fixture, Removal); 5] = [
+            (
+                "text on the page",
+                |token| {
+                    let (doc, page) = one_page(&format!("BT (name) Tj ET\n{token}{AFTER}"));
+                    let content = doc.get_page_contents(page)[0];
+                    (doc, page, content)
+                },
+                |doc, page| remove_shows(doc, page, &[0], 1).map(|_| ()),
+            ),
+            (
+                "a picture on the page",
+                |token| {
+                    let (mut doc, page, _) = page_with_images(1);
+                    let content = doc.get_page_contents(page)[0];
+                    set_stream(&mut doc, content, &format!("/Im0 Do\n{token}{AFTER}"));
+                    (doc, page, content)
+                },
+                |doc, page| remove_images(doc, page, &[0], 1).map(|_| ()),
+            ),
+            (
+                "a drawing on the page",
+                |token| {
+                    let (doc, page) = one_page(&format!("0 0 m 5 5 l S\n{token}{AFTER}"));
+                    let content = doc.get_page_contents(page)[0];
+                    (doc, page, content)
+                },
+                // Two paths without the token and one with it, so the count is
+                // the one a lenient read would have agreed with either way.
+                |doc, page| {
+                    let paths = painted_path_count(doc, page)?;
+                    take_paths(doc, page, &[0], &[], paths).map(|_| ())
+                },
+            ),
+            (
+                "text in a form",
+                |token| {
+                    let (mut doc, page, forms) = page_with_forms(1, 1);
+                    set_stream(
+                        &mut doc,
+                        forms[0],
+                        &format!("BT (f0L0) Tj ET\n{token}{AFTER}"),
+                    );
+                    (doc, page, forms[0])
+                },
+                |doc, page| remove_form_shows(doc, page, &[(0, 1)], 0, &[0]).map(|_| ()),
+            ),
+            (
+                "a drawing in a form",
+                |token| {
+                    let (mut doc, page, forms) = page_with_forms(1, 0);
+                    set_stream(
+                        &mut doc,
+                        forms[0],
+                        &format!("0 0 m 5 5 l S\n{token}BT (after) Tj ET\n"),
+                    );
+                    (doc, page, forms[0])
+                },
+                |doc, page| super::take_form_paths(doc, page, &[(0, 1)], 0, &[0], &[]).map(|_| ()),
+            ),
+        ];
+
+        for (what, fixture, removal) in cases {
+            let (mut doc, page, _) = fixture("");
+            removal(&mut doc, page)
+                .unwrap_or_else(|why| panic!("{what}: the control has to be removable: {why}"));
+
+            let (mut doc, page, stream) = fixture(UNREADABLE);
+            let before = stream_says(&doc, stream);
+            let why = removal(&mut doc, page).expect_err(&format!(
+                "{what}: a stream read in part must not be written back"
+            ));
+            assert!(
+                why.contains("does not parse to its end"),
+                "{what}: refused for another reason: {why}"
+            );
+            assert_eq!(
+                stream_says(&doc, stream),
+                before,
+                "{what}: and a refusal leaves the stream as it was"
+            );
+        }
+    }
+
+    /// A page whose content is not a stream is refused, not reported rewritten.
+    ///
+    /// `Document::change_page_content` answers `Ok` here having changed
+    /// nothing, which is the answer a removal then reports its counts under.
+    #[test]
+    fn a_page_whose_content_is_not_a_stream_is_refused_rather_than_reported_rewritten() {
+        let (mut doc, page) = one_page("BT (name) Tj ET\n");
+        let not_a_stream = doc.add_object(dictionary! { "Type" => "Nothing" });
+        doc.get_dictionary_mut(page)
+            .unwrap()
+            .set("Contents", vec![Object::Reference(not_a_stream)]);
+        let why = super::replace_page_content(&mut doc, page, b"BT ET".to_vec())
+            .expect_err("nothing was replaced, so nothing may be claimed");
+        assert!(why.contains("could not be replaced"), "{why}");
+
+        // And a page that names no content at all.
+        doc.get_dictionary_mut(page).unwrap().remove(b"Contents");
+        let why = super::replace_page_content(&mut doc, page, b"BT ET".to_vec())
+            .expect_err("there is nothing to replace");
+        assert!(why.contains("names no content stream"), "{why}");
+
+        // The control: the same call on a page of one stream succeeds.
+        let (mut doc, page) = one_page("BT (name) Tj ET\n");
+        super::replace_page_content(&mut doc, page, b"BT ET".to_vec()).expect("replaced");
+        assert_eq!(doc.get_page_content(page), b"BT ET\n");
     }
 }

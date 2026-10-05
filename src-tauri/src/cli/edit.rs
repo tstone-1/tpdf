@@ -3,16 +3,16 @@
 //! The request is validated in full before a staging file is allocated.
 
 use std::io::{Read, Write};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::time::{Duration, UNIX_EPOCH};
 
 use serde::Deserialize;
 #[cfg(test)]
 use serde_json::json as value;
 
-use super::args::{unknown, value as argument};
+use super::args::{lexically_same, unknown, value as argument};
 use super::fill::SignedState;
-use super::pages::{check_target, read_input, same_sizes, Temporary};
+use super::pages::{check_target, copy_of, publish_copy, read_input, same_sizes, unchanged};
 use super::report::{self, SCHEMA};
 use super::text::{password, variable};
 use super::{json, say, Env, Exit, Failure, Registered, Subcommand};
@@ -124,6 +124,13 @@ fn parse(args: &[String], mode: Mode) -> Result<Edit, String> {
     command.input = paths.remove(0);
     if mode == Mode::Edit && (command.output.as_os_str().is_empty() || command.request.is_empty()) {
         return Err("edit requires --plan <edits.json | -> and -o <out.pdf>".into());
+    }
+    // `-` is standard input here and never a file, so it names nothing.
+    if mode == Mode::Edit
+        && command.request != "-"
+        && lexically_same(Path::new(&command.request), &command.output)
+    {
+        return Err("`-o` names the plan file".into());
     }
     Ok(command)
 }
@@ -630,6 +637,15 @@ impl Subcommand for Edit {
         let request = if self.mode != Mode::Edit {
             None
         } else {
+            // The same file under two names, which the parser cannot see:
+            // with --force the copy would replace the plan it was made from.
+            if self.request != "-" && crate::save::same_file(Path::new(&self.request), &self.output)
+            {
+                return Err(Failure::new(
+                    Exit::Usage,
+                    "-o is the plan file under another name",
+                ));
+            }
             Some(read_request(&self.request)?)
         };
         let key = password(self.password_env.as_deref())?;
@@ -718,44 +734,34 @@ impl Subcommand for Edit {
         let sizes = dimensions(&plan, &before.sizes);
         let inputs = [self.input.clone()];
         check_target(&inputs, &self.output, self.force)?;
-        let fingerprint = before
-            .plan
-            .opened_as
-            .as_ref()
-            .expect("read_input fingerprints the file");
-        fingerprint
-            .agrees_with(&self.input)
-            .map_err(|e| Failure::new(Exit::Refused, e))?;
+        let source = [(self.input.as_path(), before.opened_as())];
+        unchanged(&source)?;
         if !self.dry_run {
-            let staging = Temporary::beside(&self.output)?;
-            let staged = staging.0.join("edited.pdf");
-            let written =
-                crate::save::write_copy(&self.input, &plan, &staged, key.as_deref(), &env.worker())
-                    .map_err(|e| Failure::new(Exit::Refused, e.message))?;
-            if written.changed {
-                return Err(Failure::new(
-                    Exit::Refused,
-                    "source changed while writing; no output was published",
-                ));
-            }
-            let (after, session) = read_input(env, &staged, key.as_deref()).map_err(|e| {
-                Failure::new(
-                    Exit::Internal,
-                    format!("staged output could not be read: {}", e.message),
-                )
-            })?;
-            drop(session);
-            if before.encrypted != after.encrypted || !same_sizes(&after.sizes, &sizes) {
-                return Err(Failure::new(
-                    Exit::Internal,
-                    "staged page sizes or encryption do not match; no output was published",
-                ));
-            }
-            fingerprint
-                .agrees_with(&self.input)
-                .map_err(|e| Failure::new(Exit::Refused, e))?;
-            check_target(&inputs, &self.output, self.force)?;
-            Temporary::publish(&staged, &self.output, self.force)?;
+            publish_copy(
+                &inputs,
+                &source,
+                &self.output,
+                self.force,
+                copy_of(env, &self.input, &plan, key.as_deref()),
+                |staged, ()| {
+                    let (after, session) =
+                        read_input(env, staged, key.as_deref()).map_err(|e| {
+                            Failure::new(
+                                Exit::Internal,
+                                format!("staged output could not be read: {}", e.message),
+                            )
+                        })?;
+                    drop(session);
+                    if before.encrypted != after.encrypted || !same_sizes(&after.sizes, &sizes) {
+                        return Err(Failure::new(
+                            Exit::Internal,
+                            "staged page sizes or encryption do not match; no output was \
+                             published",
+                        ));
+                    }
+                    Ok(())
+                },
+            )?;
         }
         if self.json {
             json(

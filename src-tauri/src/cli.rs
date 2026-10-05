@@ -38,7 +38,11 @@
 //! clock), [`Env::worker`] (a document is parsed only through it), [`opened`]
 //! (the input's handle and length), [`say`] and [`json`] (one write each), and
 //! [`Exit`] and [`Failure`] (the exit-code contract). `identities.rs` is the
-//! smallest example; `sign.rs` the largest.
+//! smallest example; `sign.rs` the largest. A command that writes a copy of a
+//! document hands its writer and its read-back to `pages::publish_copy`, which
+//! is the order they are run in and the only place it is written. Plain output
+//! that quotes the document goes through [`say`], or [`printable`] when a
+//! command writes several lines at once.
 //!
 //! ## Exit codes
 //!
@@ -72,7 +76,9 @@ pub mod search;
 pub mod sign;
 pub mod text;
 pub mod verify;
-pub mod words;
+// The sentences are the window's too (`longterm` refuses in them), so the
+// module lives at the crate root and is named here for the commands.
+pub use crate::words;
 
 use std::io::Write;
 use std::path::{Path, PathBuf};
@@ -310,10 +316,7 @@ fn now() -> u64 {
 
 /// Runs one command line, writing to `out` and `err`. Returns the exit code.
 pub fn run(args: &[String], env: &Env<'_>, out: &mut dyn Write, err: &mut dyn Write) -> i32 {
-    let wants_json = args
-        .iter()
-        .take_while(|arg| *arg != "--")
-        .any(|arg| arg == "--json");
+    let wants_json = args::wants_json(args);
     let mut output = Counted {
         inner: out,
         bytes: 0,
@@ -503,12 +506,41 @@ impl Env<'_> {
 
 /// One line, written whole: `docs/TRAPS.md`, *`eprintln!` is not one write* ---
 /// every worker shares this process's stderr.
+///
+/// Through [`printable`], because a line may quote the document: a title, a
+/// field's name, a comment, the text of a run, a file's name. [`json`] writes
+/// through here too and is not changed by it, since [`ascii_json`] leaves no
+/// character outside ASCII and `serde_json` escapes every control character
+/// inside a string.
 fn say(to: &mut dyn Write, line: &str) {
+    let line = printable(line);
     let mut text = String::with_capacity(line.len() + 1);
-    text.push_str(line);
+    text.push_str(&line);
     text.push('\n');
     let _ = to.write_all(text.as_bytes());
     let _ = to.flush();
+}
+
+/// `text` with every character a terminal acts on rather than shows replaced
+/// by U+FFFD: the C0 controls but the newline and the tab, DEL, and the C1
+/// controls U+0080 to U+009F.
+///
+/// A document chooses its own strings, and a text string stored as UTF-16 can
+/// hold U+001B or U+009B, which begin the sequences that move a terminal's
+/// cursor, retitle its window or rewrite what is already on the screen. Plain
+/// output is read on a terminal; `--json` is not touched, and carries the
+/// string as it is in the file, escaped.
+pub(crate) fn printable(text: &str) -> std::borrow::Cow<'_, str> {
+    // `char::is_control` is the category Cc: U+0000 to U+001F, U+007F, and
+    // U+0080 to U+009F.
+    let acted_on = |c: char| c.is_control() && c != '\n' && c != '\t';
+    if !text.contains(acted_on) {
+        return std::borrow::Cow::Borrowed(text);
+    }
+    text.chars()
+        .map(|c| if acted_on(c) { '\u{fffd}' } else { c })
+        .collect::<String>()
+        .into()
 }
 
 /// JSON, pretty, as one write.
@@ -595,6 +627,9 @@ pub fn usage_for(program: &str, command: &Registered) -> String {
 /// write do not --- each of them compares its output with its input by path,
 /// and refuses to overwrite one with the other, which has no meaning for a
 /// stream --- so they call [`opened`] and answer `-` as a file of that name.
+///
+/// After `--` every word is a file's name, this one too: the parsers hand such
+/// a `-` over as [`args::operand`] writes it, which is not this path.
 ///
 /// A worker reads a document through a file handle, never through this
 /// process, so the stream is spooled to a file nothing else can name and that

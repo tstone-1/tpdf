@@ -931,7 +931,12 @@ the page as it is displayed:
   time. A document carrying no revocation data still passes, as nearly every signed document
   would otherwise fail. A timestamp whose authority's certificate has since expired still counts
   when an archive timestamp later in the document, from an authority this computer trusts,
-  attests it existed while that certificate was in force.
+  attests it existed while that certificate was in force. `--strict` also fails a document
+  when something appended after its last intact signature or document timestamp could not be
+  read, or touches a page other than by listing a signature or timestamp field among that
+  page's annotations. Validation data and an archive timestamp are not such a change. Without
+  `--json`, `verify` prints a line beginning *After the last signature:* under such a
+  document.
 - **`info <file.pdf>...`** describes each document as the properties dialog does: its pages
   and their sizes, PDF version, the metadata in its `/Info` dictionary, encryption and what it
   permits, whether it is tagged, the conformance its XMP metadata claims (PDF/A, PDF/UA, PDF/X
@@ -965,8 +970,8 @@ the page as it is displayed:
   field, or an answer that does not fit visibly are all reported at once — and one of them
   means nothing is written. The copy is written by the application's own save, with an
   appearance for every answer so any reader shows it, and read back: if any answered field
-  does not say what was asked, or any other field changed, the copy is removed and the exit
-  code is 4. **A signed document is refused**, because filling rewrites the document and would
+  does not say what was asked, or any other field changed, nothing is given the output's name
+  and the exit code is 4; a file `--force` would have replaced is left as it was. **A signed document is refused**, because filling rewrites the document and would
   invalidate its signatures; fill the unsigned form, then sign the filled copy with `sign`.
   `-o` must name a new file unless `--force` is given.
 - **`redact <in.pdf> -o <out.pdf>`** removes text and pictures from the document and writes
@@ -1128,7 +1133,7 @@ assert image["width_px"] > 0 and image["height_px"] > 0
 
 `help()`, `info()`, `text()`, `text_runs()`, `fields()`, `comments()`, `fill()`,
 `edit()`, `render()`, `ocr()`, `images()`, `compress()`, `add_fields()`, `protect()`, `unprotect()`, `verify()`, `merge()`, `extract()`, `split()`, `rotate()` and
-`crop()`, `redact()`, `identities()` and `sign()` return parsed reports. Page helpers accept `force=`, `password=` and
+`crop()`, `redact()`, `identities()` and `sign()` return parsed reports. `search()` and `mark_matches()` are described below. Page helpers accept `force=`, `password=` and
 `invalidate_signatures=`; page ranges count from 1 and select pages once in document
 order. Cropping hides content and is not redaction.
 
@@ -1144,7 +1149,8 @@ for part in parts["outputs"]:
 ```
 
 `verify(..., strict=True)` raises `CommandError` when any input is unsigned or any
-signature is not intact and trusted; its report remains available on the exception.
+signature is not intact and trusted, or pages were rewritten after the last signature;
+its report remains available on the exception.
 A failed split can leave published parts: inspect `CommandError.report["outputs"]`
 when that report contains an output list. An error does not imply rollback.
 
@@ -1154,6 +1160,17 @@ Finding nothing is an empty list, not an error:
 ```python
 for file in pdf.search("a.pdf", "b.pdf", texts=["PRIVATE-731"])["files"]:
     print(file["path"], [(match["page"], match["hit"]) for match in file["matches"]])
+```
+
+`mark_matches()` takes the same terms and writes a copy in which every match is marked.
+`kind=` is `"highlight"` (the default), `"underline"`, `"strikeout"` or `"squiggly"`, and
+`color=` is red, green and blue from 0 to 1. It returns the edit report, or `None` when
+nothing matched; no file is written then. A match that has no position on the page raises
+`ValueError` before anything is written.
+
+```python
+marked = pdf.mark_matches("input.pdf", "marked.pdf", texts=["PRIVATE-731"], kind="underline")
+assert marked is None or marked["written"]
 ```
 
 Redaction accepts literal search terms, regular expressions, or rectangles directly:
@@ -1204,7 +1221,8 @@ client timeout. Encrypted inputs are refused. An intact signature is not necessa
 
 `run(command, *arguments)` reaches every CLI command.
 It returns a `Result` carrying
-`report`, `exit_code` and `stderr`. Nonzero exits raise `CommandError`, which retains
+`report`, `exit_code` and `stderr`. `Result.typed` is the same report; the client's methods
+return it under the shape `tpdf.reports` names, and nothing checks that shape at run time. Nonzero exits raise `CommandError`, which retains
 those results; use `check=False` on `run` to inspect a negative verification verdict
 or partial split directly. Malformed or incompatible reports raise `ProtocolError`.
 `password=` passes a password in the child's environment, without changing the
@@ -1422,7 +1440,7 @@ built.
 | Code | Meaning |
 |---|---|
 | 0 | Done. For `verify`, every document was read, whatever the verdicts. |
-| 1 | `verify --strict`: a document with no signature, or a signature that is not both intact and trusted. `redact`: the copy was written and could not be proved clean — it is kept, and every reason is reported. `search`: every document was read and nothing matched. |
+| 1 | `verify --strict`: a document with no signature, or a signature that is not both intact and trusted, or pages rewritten after the last signature. `redact`: the copy was written and could not be proved clean — it is kept, and every reason is reported. `search`: every document was read and nothing matched. |
 | 2 | The command line is malformed: a missing `-o` or `--values`, an output that names the input or the answers or regions file, a bad `--rect` or `--pages`, a `--timestamp` that is not a listed authority or an `http`/`https` address without a password in it, `--long-term` without `--timestamp`, nothing for `redact` to remove or `search` to find, a `--pattern` that does not compile or a query that can match nothing, an unknown option, or a `--password-env` naming a variable that is not set. |
 | 3 | Refused: an identity that is unknown, ambiguous or cannot sign; a document that cannot be read or signed; for `text`, `search`, `fields` and `fill`, a locked document; for `search`, more than 10,000 matches in one document; for `text`, a page past its end; for `fields` and `fill`, an XFA form; for `fill`, a signed document or answers it cannot write, with nothing written; for `sign --timestamp`, an authority that could not be reached, did not answer in time, declined, or answered with a timestamp that does not check out, with nothing written; for `sign --long-term`, a timestamp authority this computer does not trust, or revocation data or an archive timestamp that could not be had, does not check out, or says a certificate is revoked, with nothing written; for `redact`, a signed document without `--invalidate-signatures`, an XFA form, a regions file it cannot read, a page it cannot read, more than 500 matches, matches it cannot mark, or a document the removal cannot rewrite, with nothing written; an output that exists; a key the system would not use, or a prompt that was cancelled. |
 | 4 | tpdf failed: a worker died or did not answer, the certificate store could not be searched, or the written file did not read back as written — for `sign --long-term`, also the validation data tpdf built not reading back as it must, with nothing written; for `fill`, the copy is then removed; for `redact`, a copy that could not be read back or finished is removed. |

@@ -796,6 +796,18 @@ unreachable objects, unused resources and embedded originals, and overwriting in
 leave trailing bytes past the new `%%EOF`. So redaction writes a **fresh file from a
 garbage-collected reachable object graph**, then atomically replaces the target.
 
+**Since 2026-10-05 that holds for every redaction.** The rewrite sweeps whenever the plan
+carries a region. Before, it swept only when an annotation, an outline entry, a field or a
+picture went, so a text or drawing redaction on a page whose `/Contents` is several streams
+left the old streams in the file, unreachable, with the removed glyphs in them, and the needle
+scan answered verified when no single string held the whole needle. A page's content is now
+replaced by `redact::replace_page_content`, which reads the page back and refuses unless it
+holds exactly what was written; `/Contents` as a reference to an array is rewritten like any
+other. A content stream that does not parse to its end is refused by every removal, so a
+partial parse is never written back. The needle scan also compares each needle with every
+string's decoded text (UTF-16BE or PDFDocEncoding), so a note or a bookmark quoting a removed
+line in either encoding is found.
+
 **Evidence** (spike 0.4): a collected `lopdf` rewrite reaches the same verdict as QPDF on
 all eleven hostile fixtures. Two conditions attach, both measured: `lopdf`'s own
 `prune_objects`/`renumber_objects` are quadratic (1.41 s on a 25,583-object graph, against a
@@ -1227,7 +1239,16 @@ are the ones signed and the key in the certificate the signature names made the 
 does not mean the signer is who the certificate says, that the certificate chains to anything,
 was unrevoked, or was in date, and it says nothing about revisions appended after the signed
 range --- a later revision can change every page a reader sees while an earlier signature stays
-`intact`, which is why the dialog states the appendix beside the verdict. A signature tpdf
+`intact`, which is why the dialog states the appendix beside the verdict. Since 2026-10-05 the
+command-line gate has the counterpart: `verify --strict` fails a document when what was appended
+after its last intact signature or document timestamp could not be read, or touches a page other
+than by listing a signature or timestamp field among its annotations. A page counts as touched
+when its object or anything it draws from was added or replaced; until that date only `/Page`
+objects were counted, so a replaced content stream read as no page. Not judged: a change that
+reaches no page (a catalog entry such as form defaults, optional-content configuration or
+document JavaScript), and a change between two signatures, which the later one covers. A
+document signature that carries the ESS `signingCertificateV2` attribute is held to it: one
+naming another certificate than the one it carries is `unchecked`, reason `binding`. A signature tpdf
 cannot fully check is `unchecked` with its reason and is never shown as `intact`; a SHA-1 match
 is `weak`, because a chosen-prefix collision makes it forgeable by whoever prepared the
 document. The attacker this does not stop is the one with their own key: anybody can make a
@@ -2396,9 +2417,11 @@ for a typed answer (values the document influences --- names, options, rectangle
 nobody here: the answers file is JSON from the reader's own account, bounded at 16 MiB, and each
 answer is held to `forms.rs`'s 16 KB); then writes through `save::write_copy`, the window's
 *Save As*: the plan crosses to a writing worker, which re-validates every answer against its own
-scan before `forms::write` touches the object graph, and the copy is staged beside `-o` and
-renamed onto it here. A fresh worker reads the written form back, and a difference removes the
-copy. `tests/cli.rs` holds both commands to the containment check above --- `fill`'s three
+scan before `forms::write` touches the object graph, and the copy is staged in a directory beside `-o`.
+A fresh worker reads the staged form back, and only a copy that agrees is given the output's
+name; an output `--force` would have replaced is left as it was otherwise. Plain output passes
+every document-derived string through `cli::printable`, so a title or a field name cannot send
+a terminal control sequence. `tests/cli.rs` holds both commands to the containment check above --- `fill`'s three
 workers each map PDFium and the tool's process none. `fill` writes one file, refuses the input
 and the answers file under any name as the output, and refuses an existing output without
 `--force`. **It refuses a signed or certified document**, or one whose signatures could not all
@@ -3322,7 +3345,15 @@ its own (above) whose certificates named any `http` or `https` address --- loopb
 reader's LAN --- and the gathering would send up to 16 requests there from the reader's machine,
 reading back only whether an answer checked out: a blind request forgery. The gate above closes
 it: fetching happens only for an authority whose chain the OS trusts, and **a trusted chain is
-what makes those addresses the certificate authority's**. Loopback and private addresses are
+what makes those addresses the certificate authority's**. **That held only for the token's
+signer until 2026-10-05.** The gathering walked every certificate the token carries, and a CMS
+`certificates` set is outside the signature, so a certificate added to a genuine token --- with
+the issuing authority's name and key, an issuer of the attacker's own and addresses of their
+choosing --- was walked and asked about (measured: SecTrust still vouched for the authority with
+the twin present, and the twin's address was fetched). Now every link above the authority's
+certificate must be on the chain the OS vouched for, and every link above the signer's on the
+signature's own set and what the OS builds from it; anything else is refused before any fetch,
+and the token's certificates are no longer handed to the OS for the signer's chain. Loopback and private addresses are
 still allowed, on purpose: a company's own PKI publishes its responder on its network, and a
 CA the store trusts is trusted to name its own. Not: forge a response, which is signed by the issuer or a responder it
 authorised and checked twice, here and in the worker's reading. A malicious or compromised CA
@@ -3718,6 +3749,17 @@ makes "clean" unreachable except through a positive control the engine had to re
 the same probe image, sized from the smallest box the redaction covered — a control drawn larger
 than the redacted text proves only that the engine reads larger text. Every engine failure, and
 a missing control, produce `NotVerified`, never `Illegible`.
+
+**The control is held to script as well as size**, since 2026-10-05. A clean verdict stands only
+when every script in the words the region covered is one the control word is written in;
+otherwise the result is `NotVerified` with the cause `ScriptUnproven`. The gate also asks Vision
+with `automaticallyDetectsLanguage` on, where the request has the selector (macOS 13 and later).
+Measured 2026-10-05 on build 26A434 in the sandboxed worker, 12 pt at 2x: asked plainly, Vision
+returns the control and nothing else for Chinese, Japanese and Thai, which is what the script
+rule now refuses; asked for any script, it reads Chinese, Japanese, Korean and Thai inside the
+profile. Arabic and Devanagari fail there with `CRImageReaderError error 1`, because their models
+compile on first detection and the profile refuses the cache write; Hebrew is read in neither
+mode. All three end `NotVerified`. The warm-up runs both request kinds.
 
 **What the wiring adds to the trust boundaries, and what it deliberately does not.** The gate
 runs in the app process and touches three things:
@@ -4663,6 +4705,15 @@ which is what makes it evidence rather than a milestone.
     the preview names the font it used and marks it *(installed)*, and once applied the
     journal carries the subset, so saving on the computer that previewed it writes what was
     previewed. CFF-outline installed fonts are refused rather than used.
+36. **The redaction gate's script rule reads the text layer, and a region without words has
+    none** (§5.1), added 2026-10-05. The scripts a region held come from the page's character
+    codes, so a page whose codes claim one script while its glyphs draw another is judged by
+    the codes. A region that held no words (a drawing, a scan) has no script to hold the
+    control to: detection catches Chinese, Japanese, Korean and Thai there, Arabic and
+    Devanagari fail closed with an engine error, and Hebrew or any script Vision does not
+    detect can still certify. Below macOS 13 and on Windows there is no detection, so only the
+    script rule protects. A Latin name under a Japanese control, or the reverse, is now
+    `NotVerified`: the control chooser does not prefer a control in the covered script.
 
 ## 8. How to re-verify any of this
 

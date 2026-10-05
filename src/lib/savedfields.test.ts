@@ -4,7 +4,7 @@ import type { Form, FormWidget } from "./forms";
 import { pageId, type MarkView, type PageView } from "./pages";
 import {
   SAVED_BASE, arrangeBoth, asMarks, isSaved, leafName, moved, placed, properties, propertied, removed, renamed,
-  redrawn, shownAt, split, standing,
+  redrawn, removal, shownAt, split, standing,
   type FieldEdited,
 } from "./savedfields";
 
@@ -103,6 +103,23 @@ describe("what a change to a saved field asks for", () => {
     expect(placed(FORM, state(), SAVED_BASE + 99, [1, 2, 3, 4])).toBeNull();
     expect(removed(FORM, state([], [], [PAGES[1]!]), SAVED_BASE + 2)).toBeNull();
     expect(renamed(FORM, state(), 7, "x")).toBeNull();
+  });
+
+  it("removes a mark as a mark and a saved field as a field, and never sends the model a field's id", () => {
+    // Every route that takes a mark off the page asks here: the note's
+    // Remove, the Delete key and the eraser's whole-mark half.
+    expect(removal(FORM, state(), 41)).toEqual({ mark: 41 });
+    expect(removal(null, null, 41)).toEqual({ mark: 41 });
+    expect(removal(FORM, state(), SAVED_BASE + 1)).toEqual({
+      field: { object: [12, 0], page: 5, patch: { removed: true } },
+    });
+    // A field's id with no form to look it up in, or naming no widget, or one
+    // on a page that is gone: nothing, and in particular not `{ mark }`. The
+    // model never issued that id.
+    expect(removal(null, state(), SAVED_BASE + 1)).toBeNull();
+    expect(removal(FORM, null, SAVED_BASE + 1)).toBeNull();
+    expect(removal(FORM, state(), SAVED_BASE + 99)).toBeNull();
+    expect(removal(FORM, state([], [], [PAGES[1]!]), SAVED_BASE + 2)).toBeNull();
   });
 
   it("renames a field, and refuses a name another field will have", () => {

@@ -247,6 +247,16 @@ MUTATIONS = [
     Mutation("picked viewer: keep a mark the model dropped", "src/lib/viewer.ts", "    this.arranging.keep((id) => live.has(id));", "    this.arranging.keep(() => true);", "forgets a picked mark the model no longer has"),
     Mutation("picked viewer: say nothing when a dropped mark leaves the selection", "src/lib/viewer.ts", "    if (this.arranging.count !== before) this.opts.onPicked?.(this.arranging.count);", "", "forgets a picked mark the model no longer has"),
     Mutation("picked viewer: change the selection without telling the host", "src/lib/viewer.ts", "  private pickedChanged(): void {\n    this.opts.onPicked?.(this.arranging.count);", "  private pickedChanged(): void {", "picks one on a plain press and adds others with Shift, in the order pressed"),
+    Mutation("picked viewer: leave the picked page at its old slot after a page edit", "src/lib/viewer.ts", "    this.arranging.repage((slot) => after.slotFrom(before, slot));\n", "", "keeps_what_is_picked_on_its_page_when_a_page_above_is_deleted"),
+    Mutation("picked viewer: add a mark from the page that took the picked page's slot", "src/lib/viewer.ts", "    this.arranging.repage((slot) => after.slotFrom(before, slot));\n", "", "does_not_add_a_mark_from_the_page_that_took_the_picked_page's_slot"),
+    Mutation("picked: keep marks picked on a page that is gone", "src/lib/arrange.ts", "    if (slot === undefined) this.clear();\n    else this.page = slot;", "    if (slot !== undefined) this.page = slot;", "follows its page to another slot, and goes with a page that is gone"),
+    Mutation("picked: ask where no page went with nothing picked", "src/lib/arrange.ts", "    if (this.page === null) return;\n    const slot = now(this.page);", "    const slot = now(this.page ?? 0);", "follows its page to another slot, and goes with a page that is gone"),
+    Mutation("ink viewer: leave a drawing at its old slot after a page edit", "src/lib/viewer.ts", "      if (slot === undefined) this.inking = null;\n      else drawing.slot = slot;", "      if (slot === undefined) this.inking = null;", "ink_started_before_a_deletion_above_is_not_written_to_the_page_that_moved_in"),
+    Mutation("ink viewer: keep a drawing whose page was deleted", "src/lib/viewer.ts", "      if (slot === undefined) this.inking = null;\n      else drawing.slot = slot;", "      if (slot !== undefined) drawing.slot = slot;", "drops ink whose page was deleted before it was finished"),
+    Mutation("match marks: hand rectangles read before a page move to the page now in the slot", "src/lib/viewer.ts", "      if (!this.pages.sameOrder(pages)) return null;\n", "", "matches_asked_for_before_a_page_move_are_not_marked_on_the_page_that_took_the_slot"),
+    Mutation("field panel: change the field with that id in another document", "src/lib/fieldprops.ts", "  if (deps.model() !== model) return false;\n", "", "changeProperties_made_after_the_document_changed_changes_nothing"),
+    Mutation("saved fields: send the model a saved field's id as a mark to remove", "src/lib/savedfields.ts", "  return field ? { field } : null;", "  return field ? { field } : { mark: id };", "removes a mark as a mark and a saved field as a field, and never sends the model a field's id"),
+    Mutation("saved fields: remove every mark as a field", "src/lib/savedfields.ts", "  if (!isSaved(id)) return { mark: id };\n", "", "removes a mark as a mark and a saved field as a field, and never sends the model a field's id"),
     Mutation("arrange viewer: report the marks that did not move too", "src/lib/viewer.ts", "      return to && differs(one.quad, to) ? [{ mark: one.id, rect: this.fileRectOn(slot, to) }] : [];", "      return to ? [{ mark: one.id, rect: this.fileRectOn(slot, to) }] : [];", "reports each mark that moved, with its new rectangle, as one named gesture"),
     Mutation("arrange viewer: reuse the last gesture's name", "src/lib/viewer.ts", "    if (moves.length === 0) return false;\n    this.opts.onMarksArranged?.(moves, ++this.sweeps);", "    if (moves.length === 0) return false;\n    this.opts.onMarksArranged?.(moves, this.sweeps);", "reports each mark that moved, with its new rectangle, as one named gesture"),
     Mutation("arrange viewer: journal an arrangement that moved nothing", "src/lib/viewer.ts", "    if (moves.length === 0) return false;\n    this.opts.onMarksArranged", "    this.opts.onMarksArranged", "says nothing was done when too few are picked or they are already in place"),
@@ -537,6 +547,10 @@ MUTATIONS = [
     Mutation("tabs: add a tab that is already open", "src/lib/documenttabs.ts", "    if (!this.find(tab.doc.id)) this.entries.push(tab);", "    this.entries.push(tab);", "adds a tab behind the one showing, and only once"),
     Mutation("tabs: bring a tab opened behind to the front", "src/lib/documenttabs.ts", "    if (!this.find(tab.doc.id)) this.entries.push(tab);", "    if (!this.find(tab.doc.id)) this.keep(tab);", "adds a tab behind the one showing, and only once"),
     Mutation("tabs: put tabs that were not open last time first", "src/lib/documenttabs.ts", "      return at < 0 ? paths.length : at;", "      return at;", "puts the tabs back in the order they were closed in"),
+    Mutation("tab restore: apply every field at every point of the open", "src/lib/documenttabs.ts", "    if (RESTORED_AT[key] === point) one(key);", "    one(key);", "applies every restored field exactly once across the three points of an open"),
+    Mutation("tab restore: put the redacted copy back before the message that clears it", "src/lib/documenttabs.ts", '  error: "unmounted",\n  offers: "unmounted",\n  notice: "unmounted",\n  redactedCopyPath: "unmounted",\n', '  redactedCopyPath: "unmounted",\n  error: "unmounted",\n  offers: "unmounted",\n  notice: "unmounted",\n', "applies each field at its point, in the order the open depends on"),
+    Mutation("tab restore: restore the search before there is a viewer", "src/lib/documenttabs.ts", '  searchOptions: "mounted",', '  searchOptions: "unmounted",', "applies each field at its point, in the order the open depends on"),
+    Mutation("tab restore: apply a field that another field already took along", "src/lib/documenttabs.ts", "export function restoredWith(_field: keyof FreshState): () => void {\n  return () => {};", "export function restoredWith(_field: keyof FreshState): () => void {\n  return () => { throw new Error(_field); };", "names the field another is applied with, and does nothing for it"),
     Mutation("tab commands: offer both launch choices at once", "src/lib/appcommands.ts", "      enabled: () => !actions.restoreTabs(),", "      enabled: () => true,", "offers only the launch choice that is not the current one"),
     Mutation("tab commands: offer the current launch choice", "src/lib/appcommands.ts", "      enabled: () => actions.restoreTabs(),\n      run: () => actions.setRestoreTabs(false),", "      enabled: () => !actions.restoreTabs(),\n      run: () => actions.setRestoreTabs(false),", "offers only the launch choice that is not the current one"),
     Mutation("tab commands: reopen when nothing is left to reopen", "src/lib/appcommands.ts", "      enabled: () => actions.tabsToReopen() > 0 && available(),", "      enabled: () => available(),", "reopens last time's tabs when some are not open, with or without a document"),
@@ -867,9 +881,19 @@ MUTATIONS = [
         # button is what can.
         "recovery: lead with the offer that spends the journal",
         "src/lib/recovery.ts",
-        '    offers: ["saveCopy", "reload"],\n  };\n}\n\n/**\n * What to say before removing',
-        '    offers: ["reload", "saveCopy"],\n  };\n}\n\n/**\n * What to say before removing',
+        '    offers: ["saveCopy", "reload"],\n  };\n}\n\n/**\n * What the Reload command does',
+        '    offers: ["reload", "saveCopy"],\n  };\n}\n\n/**\n * What the Reload command does',
         "warns before discarding unsaved edits, and offers the copy first",
+    ),
+    Mutation(
+        # Leave out what the settle committed: a form answer still being typed
+        # becomes an edit only when the drafts are settled, so a reload that
+        # does not look afterwards discards it without a word.
+        "recovery: do not look at dirty once the drafts are settled on a reload",
+        "src/lib/recovery.ts",
+        "  return beforeReload(host.dirty() || unsettled);",
+        "  return beforeReload(unsettled);",
+        "settles drafts before it reads dirty",
     ),
     Mutation(
         # Reload without a word, which is what it did until this landed. The
@@ -8487,7 +8511,7 @@ MUTATIONS += [
 
 # --- signing with a certificate the reader has (Phase 6 step 2, 2026-09-26) ---
 # The command-line tool restates the application's verdict sentences in Rust
-# (`src-tauri/src/cli/words.rs`) and writes every case to
+# (`src-tauri/src/words.rs`) and writes every case to
 # `src-tauri/testdata/cli/wording.json`; `cliwording.test.ts` holds the two to
 # each other. These change the application's side alone, which is the drift
 # that test exists for: the tool would go on printing the old words.
@@ -8510,7 +8534,7 @@ MUTATIONS += [
 
 # `tpdf redact` restates the window's route from a search hit to the regions it
 # marks (`src-tauri/src/cli/regions.rs`), and its verdict sentence
-# (`cli/words.rs`); `cliregions.test.ts` and `cliwording.test.ts` hold them to
+# (`words.rs`); `cliregions.test.ts` and `cliwording.test.ts` hold them to
 # the originals. These change the application's side alone.
 MUTATIONS += [
     Mutation("cli regions: the application ends a hit over a break at its own end",
@@ -8561,6 +8585,14 @@ MUTATIONS += [
     Mutation("signing: sign over unsaved edits", "src/lib/signing.ts",
         "  if (shell.dirty()) return UNSAVED;\n", "",
         "refuses unsaved edits before asking the OS anything"),
+    Mutation("signing: read dirty without settling the drafts", "src/lib/signing.ts",
+        "  await shell.settle();\n  if (shell.dirty()) return UNSAVED;\n",
+        "  if (shell.dirty()) return UNSAVED;\n",
+        "signDocument_settles_drafts_before_it_reads_dirty"),
+    Mutation("signing: settle the drafts without waiting for them", "src/lib/signing.ts",
+        "  await shell.settle();\n  if (shell.dirty()) return UNSAVED;\n",
+        "  void shell.settle();\n  if (shell.dirty()) return UNSAVED;\n",
+        "waits for the drafts to settle before it asks anything else"),
     Mutation("signing: go on after the chooser was cancelled", "src/lib/signing.ts",
         "  if (chosen === null) return null;\n", "",
         "stops without a word when the reader cancels either question"),
@@ -8817,9 +8849,28 @@ MUTATIONS += [
         "      if (now === null) return;",
         "says nothing when either stamp could not be read"),
     Mutation("disk watch: drop a report nobody acted on", "src/lib/diskwatch.ts",
-        "      if (this.report(doc)) this.judged = now;",
-        "      this.report(doc);\n      this.judged = now;",
+        "      if (await this.report(doc)) this.judged = now;",
+        "      await this.report(doc);\n      this.judged = now;",
         "reports again when the report was not acted on"),
+    # A promise is truthy, so without the wait every report reads as acted on.
+    Mutation("disk watch: judge a report before it has answered", "src/lib/diskwatch.ts",
+        "      if (await this.report(doc)) this.judged = now;",
+        "      if (this.report(doc)) this.judged = now;",
+        "is waited for by the watch, which reports again after a 'not now'"),
+    Mutation("disk change: reload on the dirty read before the drafts settled", "src/lib/diskwatch.ts",
+        "      await host.settle();\n      dirty = host.dirty();\n",
+        "      await host.settle();\n",
+        "a_draft_the_settle_commits_gets_the_prompt_and_not_the_reload"),
+    Mutation("disk change: reload over a draft that could not be committed", "src/lib/diskwatch.ts",
+        "    } catch {\n      dirty = true;\n    }\n    if (!host.current()) return false;",
+        "    } catch {\n    }\n    if (!host.current()) return false;",
+        "asks about a draft that could not be committed"),
+    Mutation("disk change: act after the wait let another document in", "src/lib/diskwatch.ts",
+        "    if (!host.current()) return false;\n", "",
+        "does nothing, and says it did not act, when the wait let something else in"),
+    Mutation("disk change: settle the drafts to show a prompt", "src/lib/diskwatch.ts",
+        '  if (mode === "reload" && !dirty) {', "  if (!dirty) {",
+        "settles nothing where no reload is coming"),
     Mutation("disk watch: carry one document's verdict to the next", "src/lib/diskwatch.ts",
         "        this.doc = doc;\n        this.seen = null;\n        this.judged = null;\n",
         "        this.doc = doc;\n",

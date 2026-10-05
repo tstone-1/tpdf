@@ -138,7 +138,7 @@ fn main() {
     run_outside_cargo_deps(&argv);
     // The order is load-bearing: never_maps_pdfium asserts this process has
     // not mapped PDFium, so it must precede the in-process PDFium readers.
-    let checks: [Check; 32] = [
+    let checks: [Check; 33] = [
         ("verify agrees with the in-process reader", verify_agrees),
         (
             "a signature made through the tool reads back intact",
@@ -202,6 +202,10 @@ fn main() {
             form_add::adds_fields_that_can_be_filled,
         ),
         ("info agrees with the in-process reader", info_agrees),
+        (
+            "plain output carries no escape from a document string",
+            escapes_stay_out_of_plain_output,
+        ),
         ("text agrees with the in-process extraction", text_agrees),
         ("text beside pdftotext, for information", beside_pdftotext),
         (
@@ -2605,8 +2609,23 @@ fn text_agrees(report: &mut Report) {
         let (_, printed, _) = tool(&["text", &at], &[]);
         report.check(
             "-o writes exactly what stdout would carry, and stdout carries nothing",
-            code == 0 && stdout.is_empty() && std::fs::read_to_string(&out).ok() == Some(printed),
+            code == 0
+                && stdout.is_empty()
+                && std::fs::read_to_string(&out).ok().as_ref() == Some(&printed),
             &format!("exit {code}"),
+        );
+        // Staged beside the output and put in place whole, as a document is.
+        std::fs::write(&out, b"what was there").expect("existing");
+        let (code, _, stderr) = tool(
+            &["text", &at, "-o", &out.display().to_string(), "--force"],
+            &[],
+        );
+        report.check(
+            "-o --force replaces an existing file, and leaves no staging directory",
+            code == 0
+                && std::fs::read_to_string(&out).ok() == Some(printed)
+                && std::fs::read_dir(&dir).expect("scratch").count() == 1,
+            &format!("exit {code}: {stderr}"),
         );
         let _ = std::fs::remove_dir_all(&dir);
     }
@@ -2644,6 +2663,52 @@ fn text_agrees(report: &mut Report) {
             &format!("exit {code}: {stderr}"),
         );
     }
+}
+
+/// A title that holds terminal control characters, through the built tool:
+/// plain output shows neither, and `--json` carries the title as it is.
+fn escapes_stay_out_of_plain_output(report: &mut Report) {
+    use lopdf::{dictionary, Document, Object, StringFormat};
+    let dir = scratch("escapes");
+    let path = dir.join("titled.pdf");
+    pages::fixture(&path, &["Alpha"]);
+    // U+001B and U+009B both begin a control sequence, and a text string
+    // stored as UTF-16 holds either.
+    let title = "Quarterly\u{1b}[2J \u{9b}2J review";
+    let mut doc = Document::load(&path).expect("fixture");
+    let mut bytes = vec![0xfe, 0xff];
+    bytes.extend(title.encode_utf16().flat_map(u16::to_be_bytes));
+    let info = doc.add_object(dictionary! {
+        "Title" => Object::String(bytes, StringFormat::Hexadecimal),
+    });
+    doc.trailer.set("Info", info);
+    doc.save(&path).expect("titled");
+    let at = path.display().to_string();
+
+    let (code, stdout, stderr) = tool(&["info", "--json", &at], &[]);
+    let json: serde_json::Value = serde_json::from_str(&stdout).unwrap_or_default();
+    let carried = json["files"][0]["document"]["metadata"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .any(|field| field["name"] == "Title" && field["value"] == title);
+    // The control: without it, plain output with no escape in it would be
+    // what a reader that dropped the characters prints too.
+    report.check(
+        "info --json carries a title's control characters, escaped",
+        code == 0 && carried && stdout.is_ascii() && stdout.contains("\\u001b"),
+        &format!("exit {code}: {stderr}{stdout}"),
+    );
+    let (code, stdout, stderr) = tool(&["info", &at], &[]);
+    report.check(
+        "info without --json prints the title with neither of them",
+        code == 0
+            && !stdout.contains('\u{1b}')
+            && !stdout.contains('\u{9b}')
+            && stdout.contains("Title: Quarterly\u{fffd}[2J \u{fffd}2J review"),
+        &format!("exit {code}: {stderr}{stdout:?}"),
+    );
+    let _ = std::fs::remove_dir_all(&dir);
 }
 
 // --- 7 ----------------------------------------------------------------------

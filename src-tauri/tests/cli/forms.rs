@@ -806,6 +806,53 @@ pub(super) fn fill_round_trips(report: &mut Report) {
         linked.is_ok() && code == 2 && std::fs::read(&every).ok() == Some(original),
         &format!("exit {code}: {stderr}"),
     );
+    // --force replaces a regular file and nothing else: not a directory, and
+    // not whatever a link names, which the command line never did.
+    let directory = dir.join("a-directory");
+    std::fs::create_dir(&directory).expect("directory");
+    #[allow(unused_mut)]
+    let mut targets = vec![("a directory", directory)];
+    let victim = dir.join("victim.txt");
+    std::fs::write(&victim, b"not this run's").expect("victim");
+    #[cfg(unix)]
+    {
+        let link = dir.join("link.pdf");
+        std::os::unix::fs::symlink(&victim, &link).expect("link");
+        targets.push(("a link", link));
+    }
+    for (what, target) in &targets {
+        let (code, _, stderr) = tool(
+            &[
+                "fill",
+                &s(&every),
+                "-o",
+                &s(target),
+                "--values",
+                &s(&answers_file),
+                "--force",
+            ],
+            &[],
+        );
+        report.check(
+            &format!("--force does not fill onto {what} (3), and what it names is as it was"),
+            code == 3
+                && stderr.contains("--force for a regular file")
+                && std::fs::read(&victim).ok().as_deref() == Some(b"not this run's".as_slice())
+                && target.symlink_metadata().is_ok_and(|data| !data.is_file()),
+            &format!("exit {code}: {stderr}"),
+        );
+    }
+    report.check(
+        "fill leaves no staging directory beside its outputs",
+        std::fs::read_dir(&dir).expect("scratch").all(|entry| {
+            !entry
+                .expect("entry")
+                .file_name()
+                .to_string_lossy()
+                .starts_with(".tpdf-cli-")
+        }),
+        "a .tpdf-cli- directory is left",
+    );
 
     // --- a signed document ------------------------------------------------------------
     let now = now();

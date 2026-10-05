@@ -6,7 +6,7 @@
  * sentence the window shows after a redaction --- the one place a redaction's
  * verdict is worded, so the tool can never say *verified* more strongly than
  * the window does. The tool is Rust and has
- * no webview to ask, so `src-tauri/src/cli/words.rs` restates the functions
+ * no webview to ask, so `src-tauri/src/words.rs` restates the functions
  * below --- and a restatement is a second copy, which drifts. So Rust writes
  * every case it can produce to `src-tauri/testdata/cli/wording.json`
  * (`TPDF_CLI_SAMPLES=write`), and this file asks the originals the same

@@ -19,7 +19,10 @@ const MAX_SUBRS: usize = 65_536;
 const MAX_STACK: usize = 24;
 const MAX_DEPTH: usize = 10;
 // Operations executed for one glyph, subroutines included. Ordinary glyphs
-// use tens to a few hundred; this only stops recursion and loops through Subrs.
+// use tens to a few hundred; this stops recursion and loops through Subrs.
+// It bounds the work as well as the count: every charstring and every Subr is
+// decrypted once, when the font is read, so an operation costs a constant and
+// calling a subroutine copies nothing. The decryption is bounded by the stream.
 const MAX_OPERATIONS: usize = 65_536;
 
 pub(in crate::textedit::fonts) struct Glyph {
@@ -80,7 +83,7 @@ pub(super) fn parse(
     let private = Private::read(private)?;
     let mut glyphs = BTreeMap::new();
     for (name, charstring) in &private.charstrings {
-        let program = private.charstring(charstring)?;
+        let program = plain(private.len_iv, charstring)?;
         // A glyph this interpreter cannot follow is not offered. Its absence
         // refuses any text that uses it; other glyphs remain available.
         if let Ok(glyph) = Interpreter::run(&program, &private) {
@@ -116,6 +119,13 @@ fn decrypt(bytes: &[u8], key: u16) -> Vec<u8> {
             plain
         })
         .collect()
+}
+
+// How many bytes of charstring and Subr this thread has made plain, so a test
+// can hold the parser to a budget in bytes rather than in seconds.
+#[cfg(test)]
+thread_local! {
+    pub(super) static MADE_PLAIN: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
 }
 
 #[cfg(test)]
@@ -378,7 +388,11 @@ fn builtin<'a>(first: Token<'a>, tokens: &mut Tokens<'a>) -> Result<Builtin, Str
 
 struct Private {
     len_iv: Option<usize>,
-    subrs: Vec<Vec<u8>>,
+    // Decrypted when read. A glyph may call one Subr tens of thousands of
+    // times, and decrypting it at each call made the work the product of the
+    // two sizes. None is an entry shorter than lenIV: calling it fails the
+    // glyph, as it always did, and the rest of the font is still offered.
+    subrs: Vec<Option<Vec<u8>>>,
     charstrings: Vec<(Vec<u8>, Vec<u8>)>,
 }
 
@@ -407,7 +421,7 @@ impl Private {
         if let Some(at) = find_token(&bytes[..charstrings_at], b"/Subrs") {
             let mut cursor = Cursor { bytes, at };
             let count = cursor.count(b"array", MAX_SUBRS)?;
-            subrs = vec![Vec::new(); count];
+            subrs = vec![None; count];
             let mut seen = vec![false; count];
             for _ in 0..count {
                 cursor.word(b"dup")?;
@@ -415,7 +429,7 @@ impl Private {
                 if index >= count || std::mem::replace(&mut seen[index], true) {
                     return Err(INVALID.into());
                 }
-                subrs[index] = cursor.binary()?.to_vec();
+                subrs[index] = plain(len_iv, cursor.binary()?).ok();
                 cursor.word_of(&[b"NP", b"|"], Some(b"noaccess put"))?;
             }
             if cursor.at > charstrings_at {
@@ -458,16 +472,21 @@ impl Private {
             charstrings,
         })
     }
+}
 
-    fn charstring(&self, bytes: &[u8]) -> Result<Vec<u8>, String> {
-        match self.len_iv {
-            None => Ok(bytes.to_vec()),
-            Some(skip) => {
-                if bytes.len() < skip {
-                    return Err(INVALID.into());
-                }
-                Ok(decrypt(bytes, 4330)[skip..].to_vec())
+// A charstring or Subr as the interpreter reads it: decrypted, without the
+// lenIV random bytes in front (Adobe Type 1 Font Format 7.2). lenIV -1 means
+// the entries are not encrypted at all.
+fn plain(len_iv: Option<usize>, bytes: &[u8]) -> Result<Vec<u8>, String> {
+    #[cfg(test)]
+    MADE_PLAIN.with(|total| total.set(total.get() + bytes.len()));
+    match len_iv {
+        None => Ok(bytes.to_vec()),
+        Some(skip) => {
+            if bytes.len() < skip {
+                return Err(INVALID.into());
             }
+            Ok(decrypt(bytes, 4330)[skip..].to_vec())
         }
     }
 }
@@ -794,9 +813,10 @@ impl<'a> Interpreter<'a> {
                     if index.fract() != 0. || index < 0. {
                         return Err(INVALID.into());
                     }
-                    let subr = self.private.subrs.get(index as usize).ok_or(INVALID)?;
-                    let subr = self.private.charstring(subr)?;
-                    if self.execute(&subr, depth + 1)? {
+                    let private = self.private;
+                    let subr = private.subrs.get(index as usize).ok_or(INVALID)?;
+                    let subr = subr.as_deref().ok_or(INVALID)?;
+                    if self.execute(subr, depth + 1)? {
                         return Ok(true);
                     }
                 }

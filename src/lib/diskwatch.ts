@@ -98,6 +98,66 @@ export function afterDiskChange(
   return { message: `${name} changed on disk.`, offers: ["reload"] };
 }
 
+/** What {@link onDiskChange} needs from the window. */
+export interface DiskChangeHost {
+  /** The reader's choice. */
+  mode(): DiskChangeMode;
+  /** The document's name, for the sentence. */
+  name(): string;
+  /**
+   * Commits whatever the reader is still typing and waits for the edit that
+   * makes. Rejects when a draft cannot be committed.
+   */
+  settle(): Promise<void>;
+  /** Whether the document has edits that are not in the file. */
+  dirty(): boolean;
+  /**
+   * Whether the document the change was reported for is still the one open,
+   * with nothing opening and no save running. Asked again after the wait.
+   */
+  current(): boolean;
+  /** Reloads the document, warning already given or not needed. */
+  reload(): void;
+  /** Shows a prompt with its offers. */
+  say(prompt: Prompt): void;
+}
+
+/**
+ * Acts on a file that changed on disk, and answers whether it did.
+ *
+ * **Before a reload nobody is asked about, the drafts are settled and `dirty`
+ * is read again.** An answer being typed into a form field, or a note in its
+ * box, is not an edit until something commits it, so the document reads as
+ * unedited with the reader's words on screen --- and the reload itself commits
+ * them, into the model it is about to close. Settling first makes them the
+ * unsaved edit they are, which {@link afterDiskChange} answers with the prompt.
+ * A draft that cannot be committed is work at stake all the same.
+ *
+ * Only on that one route. A prompt reloads nothing, and committing a draft
+ * closes the box it is being typed in, which is not worth doing to a reader
+ * to show them a sentence.
+ *
+ * `false` is "not now": the wait let another document or a save in, so
+ * nothing was done and {@link DiskWatch} reports the change again.
+ */
+export async function onDiskChange(host: DiskChangeHost): Promise<boolean> {
+  const mode = host.mode();
+  let dirty = host.dirty();
+  if (mode === "reload" && !dirty) {
+    try {
+      await host.settle();
+      dirty = host.dirty();
+    } catch {
+      dirty = true;
+    }
+    if (!host.current()) return false;
+  }
+  const next = afterDiskChange(mode, dirty, host.name());
+  if (next === "reload") host.reload();
+  else if (next) host.say(next);
+  return true;
+}
+
 /** The two questions the backend answers. `ipc.ts` has the commands. */
 export interface DiskProbe {
   /**
@@ -134,11 +194,13 @@ export class DiskWatch {
   /**
    * @param report told a document's file changed. Answers whether it acted;
    *   `false` means "not now" (a save is running, another document is open) and
-   *   the change is reported again on a later check.
+   *   the change is reported again on a later check. It may take its time
+   *   answering --- {@link onDiskChange} waits for drafts to settle --- and the
+   *   check is not over until it has.
    */
   constructor(
     private readonly probe: DiskProbe,
-    private readonly report: (doc: number) => boolean,
+    private readonly report: (doc: number) => boolean | Promise<boolean>,
   ) {}
 
   /** One look at `doc`'s file. Never rejects; overlapping calls are dropped. */
@@ -171,7 +233,7 @@ export class DiskWatch {
         this.judged = now;
         return;
       }
-      if (this.report(doc)) this.judged = now;
+      if (await this.report(doc)) this.judged = now;
     } catch {
       // A failed question is no answer. The next check asks again.
     } finally {

@@ -10,73 +10,104 @@ use crate::docmodel::PageSource;
 use crate::edits::{PageView, Plan, PlannedRedaction};
 use crate::save::Refusal;
 
-/// Re-address absolute page rectangles after deletion/reordering and reset edits.
+/// The plan the fill pass runs under: every page of the file the removal pass
+/// wrote, as that file has them, and the regions at the places they are now.
+///
+/// **Built from nothing, and every field is written out.** This was a clone of
+/// the reader's plan with the fields the fill must not repeat cleared one by
+/// one, and a field added to [`Plan`] after that list was written was carried
+/// into the fill without anybody deciding it should be: the form answers
+/// first, then the field changes and the new fields. Each made the removal
+/// pass's work be asked for a second time, of a file that had already had it
+/// done. A literal with no `..` turns the next new field into a compile error
+/// on this function, where the decision has to be made, and the same holds
+/// for the region below.
+///
+/// What the fill needs is short: where the pages are, and where the regions
+/// are on them. It adds appearances and removes, moves and answers nothing.
 pub(crate) fn output_plan(original: &Plan) -> Result<Plan, Refusal> {
     let count = u32::try_from(original.pages.len())
         .map_err(|_| Refusal::from("Too many pages for the redaction fill"))?;
-    let mut result = original.clone();
-    result.baseline = count;
-    result.opened_as = None;
-    result.pages = (0..count)
-        .map(|source| PageView {
-            id: u64::from(source),
-            source: PageSource::Baseline(source),
-            turns: 0,
-            crop: None,
-        })
-        .collect();
-    result.marks.clear();
-    result.notes.clear();
-    result.discards.clear();
-    result.redactions.clear();
-    // **The file this plan is pointed at already holds the inserted pages**,
-    // which the removal pass wrote into it --- so this pass must not be told to
-    // insert them a second time, and must not be made to depend on the other
-    // file still being where it was. `pages` above is already every output page
-    // as a baseline one, so `save::import_pages` has nothing to place; what
-    // these two lines take away is `save::held_sources`, which would reopen
-    // every source file and refuse the black fill if one had been touched or
-    // moved in the meantime --- a refusal about an insert, on a pass that
-    // inserts nothing, arriving after the words are already gone.
-    //
-    // The text edits go for the same reason and one more: they are addressed by
-    // `Edit::source` into the list being cleared, so leaving them would name a
-    // file this plan no longer has. A plan reaching here carries none in any
-    // case --- `save::rewrite` refuses text edits beside a redaction --- which
-    // makes this the belt rather than the braces.
-    result.sources.clear();
-    result.text_edits.clear();
-    // **The form answers go for the same reason as the text edits**: the
-    // removal pass already wrote them. Left here, `forms::write` runs again on a
-    // file the removal changed --- and when the region covered a field the
-    // reader had filled, that field is gone, so the fill refuses with *the form
-    // field is no longer in this document*, after the words have gone and with
-    // the verification's answer discarded. Nothing in the fill writes a field.
-    result.forms.clear();
+    let mut redactions = Vec::new();
     for (slot, page) in original.pages.iter().enumerate() {
         for redaction in &original.redactions {
             if page.source == PageSource::Baseline(redaction.source) {
-                let mut mapped = redaction.clone();
-                mapped.source = u32::try_from(slot)
-                    .map_err(|_| Refusal::from("Too many pages for the redaction fill"))?;
-                mapped.shows.clear();
-                mapped.text_objects = 0;
-                mapped.taking.clear();
-                mapped.images.clear();
-                mapped.image_objects = 0;
-                mapped.paths.clear();
-                mapped.path_objects = 0;
-                mapped.cuts.clear();
-                mapped.form_shows.clear();
-                mapped.form_text_objects.clear();
-                mapped.form_paths = crate::redact::FormPathsPlanned::default();
-                mapped.form_images.clear();
-                mapped.form_image_objects.clear();
-                result.redactions.push(mapped);
+                redactions.push(PlannedRedaction {
+                    source: u32::try_from(slot)
+                        .map_err(|_| Refusal::from("Too many pages for the redaction fill"))?,
+                    areas: redaction.areas.clone(),
+                    // Everything that names content to take. The removal pass
+                    // took it; asked for again, each of these would be looked
+                    // for in a page that pass already changed.
+                    shows: Vec::new(),
+                    text_objects: 0,
+                    taking: Vec::new(),
+                    images: Vec::new(),
+                    image_objects: 0,
+                    paths: Vec::new(),
+                    path_objects: 0,
+                    cuts: Vec::new(),
+                    form_shows: Vec::new(),
+                    form_text_objects: Vec::new(),
+                    form_paths: crate::redact::FormPathsPlanned::default(),
+                    form_images: Vec::new(),
+                    form_image_objects: Vec::new(),
+                });
             }
         }
     }
-    Ok(result)
+    Ok(Plan {
+        baseline: count,
+        // The caller binds the pass to the bytes the verification read.
+        opened_as: None,
+        pages: (0..count)
+            .map(|source| PageView {
+                id: u64::from(source),
+                source: PageSource::Baseline(source),
+                turns: 0,
+                crop: None,
+            })
+            .collect(),
+        redactions,
+        marks: Vec::new(),
+        notes: Vec::new(),
+        discards: Vec::new(),
+        // **The file this plan is pointed at already holds the inserted
+        // pages**, which the removal pass wrote into it --- so this pass must
+        // not be told to insert them a second time, and must not be made to
+        // depend on the other file still being where it was. `pages` above is
+        // already every output page as a baseline one, so `save::import_pages`
+        // has nothing to place; what an empty list takes away is
+        // `save::held_sources`, which would reopen every source file and
+        // refuse the black fill if one had been touched or moved in the
+        // meantime --- a refusal about an insert, on a pass that inserts
+        // nothing, arriving after the words are already gone.
+        sources: Vec::new(),
+        // Addressed by `Edit::source` into the list above, so one left here
+        // would name a file this plan no longer has. A plan reaching here
+        // carries none in any case --- `save::rewrite` refuses text edits
+        // beside a redaction.
+        text_edits: Vec::new(),
+        // **The removal pass already wrote the answers.** Carried here,
+        // `forms::write` runs again on a file the removal changed --- and when
+        // the region covered a field the reader had filled, that field is
+        // gone, so the fill refuses with *the form field is no longer in this
+        // document*, after the words have gone and with the verification's
+        // answer discarded.
+        forms: Vec::new(),
+        // The same twice more. A field the reader removed is gone from the
+        // file the first pass wrote, so removing it again finds no such widget
+        // and refuses the fill; one the reader added is in that file already.
+        field_edits: Vec::new(),
+        new_fields: Vec::new(),
+        // Sorted, shrunk and layered once, by the pass that wrote the file.
+        tab_order: false,
+        compress: crate::compress::Compress::No,
+        text_layers: Vec::new(),
+        // What the file the first pass wrote has, put back: that pass set or
+        // removed the password, and this one writes the same file again.
+        protection: crate::protect::Protection::Keep,
+    })
 }
 
 /// Appends opaque appearances, after existing annotations, in absolute PDF space.
@@ -293,6 +324,70 @@ mod tests {
         let mapped = output_plan(&source).unwrap();
         assert!(mapped.forms.is_empty(), "the removal pass already wrote it");
         assert_eq!(mapped.redactions.len(), 1, "the region still travels");
+    }
+
+    /// The fill pass changes no field, adds none, and repeats nothing else the
+    /// removal pass was asked to do once.
+    ///
+    /// **Every field of the plan that is not the pages and the regions**, set
+    /// to something and expected back empty. A removed field is the one a
+    /// reader meets: the removal pass takes its widget out, the fill pass is
+    /// told to take it out again, finds no such widget and refuses --- after
+    /// the words are gone, with the verification's answer discarded. An added
+    /// field is added twice, a tab order is sorted twice, pictures are shrunk
+    /// twice and a text layer is written over the one already there.
+    #[test]
+    fn the_fill_plan_carries_no_field_changes() {
+        let mut source = PlannedSourceForTest::plan();
+        source.field_edits = vec![crate::formedit::FieldEdit {
+            widget: (12, 0),
+            rect: None,
+            name: None,
+            remove: true,
+            props: Default::default(),
+            value: None,
+        }];
+        source.new_fields = vec![crate::formfields::NewField {
+            name: "Added".into(),
+            kind: crate::formfields::Kind::Text,
+            page: 0,
+            rect: [20.0, 20.0, 100.0, 20.0],
+            tooltip: None,
+            required: false,
+            max_length: None,
+            border: true,
+            options: Vec::new(),
+            text_size: None,
+            default_value: None,
+        }];
+        source.tab_order = true;
+        source.compress = crate::compress::Compress::Lossless;
+        source.protection = crate::protect::Protection::Set("a password".into());
+        source.text_layers = vec![crate::textlayer::Layer {
+            page: 0,
+            words: Vec::new(),
+        }];
+        source.forms = vec![crate::forms::Change {
+            object: (12, 0),
+            value: crate::forms::Value::Text("an answer".into()),
+        }];
+
+        let mapped = output_plan(&source).unwrap();
+        assert!(mapped.field_edits.is_empty(), "no field is changed twice");
+        assert!(mapped.new_fields.is_empty(), "and none is added twice");
+        assert!(!mapped.tab_order);
+        assert_eq!(mapped.compress, crate::compress::Compress::No);
+        assert_eq!(mapped.protection, crate::protect::Protection::Keep);
+        assert!(mapped.text_layers.is_empty());
+        // Everything, said once: the plan is what an empty plan over the
+        // output's pages is, with the regions and nothing else.
+        let mut bare = mapped.clone();
+        bare.redactions.clear();
+        assert!(
+            bare.is_identity(),
+            "without its regions the fill plan asks for nothing at all: {bare:?}"
+        );
+        assert_eq!(mapped.redactions.len(), 1, "and the region still travels");
     }
 
     #[test]

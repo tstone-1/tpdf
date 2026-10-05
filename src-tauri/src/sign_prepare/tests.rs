@@ -1922,6 +1922,61 @@ fn scanned(after: &Document, name: &str) -> crate::forms::Widget {
         .expect("the field")
 }
 
+/// On a certified document a visible signature is refused in a field the
+/// document already has, as it is as a new field --- and says which it is
+/// refusing, since only the new field was measured against another reader.
+/// The field itself can still be signed, without an appearance.
+#[test]
+fn a_visible_signature_in_a_field_of_a_certified_document_is_refused_in_its_own_words() {
+    use lopdf::dictionary;
+    // `with_fields`, certified at the level that permits filling forms and
+    // signing: the catalog's `/Perms /DocMDP` is all the refusal reads, so a
+    // signature dictionary stating the level is the whole of the fixture.
+    let mut doc = Document::load_mem(&with_fields(0)).expect("loads");
+    let certification = doc.add_object(dictionary! {
+        "Type" => "Sig",
+        "Reference" => vec![Object::Dictionary(dictionary! {
+            "Type" => "SigRef",
+            "TransformMethod" => "DocMDP",
+            "TransformParams" => dictionary! { "Type" => "TransformParams", "P" => 2 },
+        })],
+    });
+    let root = doc
+        .trailer
+        .get(b"Root")
+        .and_then(Object::as_reference)
+        .expect("a catalog");
+    doc.get_dictionary_mut(root)
+        .expect("the catalog")
+        .set("Perms", dictionary! { "DocMDP" => certification });
+    let mut original = Vec::new();
+    doc.save_to(&mut original).expect("saved");
+
+    let placed = visible(0, [20.0, 30.0, 170.0, 90.0], None);
+    let in_the_field = prepare_noted(original.clone(), NOW, None, Some(&placed), &into("Witness"))
+        .expect_err("refused");
+    assert!(
+        in_the_field.starts_with("This document is certified")
+            && in_the_field.contains("a field the document already has")
+            && in_the_field.contains("has not been measured")
+            && in_the_field.ends_with("Sign the field without a visible appearance."),
+        "{in_the_field}"
+    );
+    // A new field keeps the sentence it had, which states what was measured.
+    let as_a_new_field =
+        prepare_visible(original.clone(), NOW, None, &placed).expect_err("refused");
+    assert!(
+        as_a_new_field.ends_with("an invisible signature is accepted.")
+            && !as_a_new_field.contains("has not been measured"),
+        "{as_a_new_field}"
+    );
+    // And what each sentence advises is accepted.
+    let unsigned =
+        prepare_noted(original.clone(), NOW, None, None, &into("Witness")).expect("prepared");
+    assert_eq!(unsigned.field, "Witness");
+    assert!(prepare(original, NOW, None).is_ok());
+}
+
 #[test]
 fn a_named_empty_field_takes_the_signature_and_nothing_is_added() {
     let original = with_fields(0);

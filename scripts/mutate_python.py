@@ -418,7 +418,7 @@ MUTATIONS = [
         "wiring: an optional callback dropped from App.svelte's literal",
         "wiring",
         "src/App.svelte",
-        "        onMarkRemove: (mark, sweep) => {\n          if (!isSaved(mark)) return void applyEdit((e) => e.unmark(mark, sweep));\n          const target = scannedForm && edits ? fieldRemoved(scannedForm, edits.state, mark) : null;\n          if (target) void applyEdit((e) => e.refield([target], sweep));\n        },\n",
+        "        onMarkRemove: (mark, sweep) => removeNamed(mark, sweep),\n",
         "",
         red=True,
         says="onMarkRemove",

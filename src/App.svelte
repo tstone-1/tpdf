@@ -3,15 +3,16 @@
   import { FormLayer } from "./lib/forms";
   import { tick } from "svelte";
   import {
-    afterDiskChange,
     DiskWatch,
+    onDiskChange,
     readDiskChangeMode,
     writeDiskChangeMode,
     type DiskChangeMode,
   } from "./lib/diskwatch";
   import { getCurrentWindow } from "@tauri-apps/api/window";
   import {
-    DocumentTabs, DocumentTasks, freshState, keepState, restoredState, type DocumentTab,
+    DocumentTabs, DocumentTasks, freshState, keepState, restore, restoredState, restoredWith,
+    type DocumentTab, type Restore,
   } from "./lib/documenttabs";
   import { TabLabelSize } from "./lib/tablabels";
   import Toolbar from "./Toolbar.svelte";
@@ -70,7 +71,7 @@
     afterMerge,
     afterRefusal,
     refusalOf,
-    beforeReload,
+    reloadAsked,
     beforeRedactingInPlace,
     type Offer,
   } from "./lib/recovery";
@@ -149,7 +150,7 @@
   import { pickedNotice } from "./lib/arrange";
   import {
     arrangeBoth, asMarks, isSaved, moved as fieldMoved, placed as fieldPlaced,
-    removed as fieldRemoved, renamed as fieldRenamed, shownAt,
+    removal, renamed as fieldRenamed, shownAt,
   } from "./lib/savedfields";
   import type { Form } from "./lib/forms";
   import {
@@ -207,8 +208,18 @@
   const changeField = (target: ReturnType<typeof fieldMoved>) => {
     if (target) void applyEdit((e) => e.refield([target]));
   };
+  /**
+   * Removes what the viewer names by `id`, as one step of the gesture `sweep`.
+   * Which of the two kinds of thing the id stands for is `removal`'s answer.
+   */
+  const removeNamed = (id: number, sweep: number) => {
+    const what = removal(scannedForm, edits?.state ?? null, id);
+    if (!what) return;
+    void applyEdit((e) => "mark" in what ? e.unmark(what.mark, sweep) : e.refield([what.field], sweep));
+  };
   /** What the field properties panel is given; the join is `fieldprops.ts`. */
   const propertiesDeps: PropertiesDeps = {
+    model: () => edits,
     picked: () => viewer?.pickedMarks() ?? [],
     form: () => (formEditing ? scannedForm : null),
     state: () => edits?.state ?? null,
@@ -264,11 +275,37 @@
     });
   }
 
-  async function settleDocument(): Promise<void> {
+  /**
+   * Commits what the reader is still typing and waits until the model has it.
+   *
+   * **The first line of everything that writes a file or reads `dirty` to
+   * decide whether it may**, and one function so that the next such flow
+   * cannot leave a line of it out: it was written out by hand in six of them
+   * and missing from the seventh, which signed the file on disk without the
+   * form answer on screen. A form answer commits when its control loses the
+   * keyboard and a note when its box closes, so {@link commitPopups} does
+   * both; the edits that makes are queued, so they are waited for; and the
+   * form layer and the text editor each hold replies of their own.
+   *
+   * **Called before `copyTaskBusy` is set, never after.** {@link applyEdit}
+   * lets a commit made in here past a running document task and past nothing
+   * else, so a caller that raised its own flag first would have the draft
+   * refused in silence. The commit is made in the call itself, before the
+   * first wait, which is what lets a copy task call this, raise its flag and
+   * only then wait: `const settled = settleDrafts(); copyTaskBusy = true;` and
+   * `await settled` inside its `try`.
+   *
+   * Rejects when a draft cannot be committed, with the sentence to show.
+   */
+  async function settleDrafts(): Promise<void> {
     commitPopups();
     await pendingEdit;
     await formLayer?.settle();
     await textEditor?.settle();
+  }
+
+  async function settleDocument(): Promise<void> {
+    await settleDrafts();
     notePlace();
     places.flush();
   }
@@ -284,6 +321,32 @@
     });
     refreshTabs();
   }
+
+  /**
+   * {@link keepActiveTab}'s other half: what restoring each kept field means in
+   * this window. `documenttabs.ts` decides when in an open each one is applied
+   * and that none is left out; an entry missing here does not compile.
+   */
+  const restoring: Restore = {
+    query: (value) => { query = value; },
+    findShown: (value) => { findShown = value; },
+    // The message and its buttons are one fact, shown by one call.
+    error: (value, kept) => say(value, kept.offers),
+    offers: restoredWith("error"),
+    notice: (value) => { notice = value; },
+    redactedCopyPath: (value) => { redactedCopyPath = value; },
+    // Mark ids start again with the model, so an entry kept from the last
+    // document would put its words on this one's first highlight.
+    covered: (value) => {
+      covered.clear();
+      for (const [id, words] of value) covered.set(id, words);
+    },
+    // A search is its words, how they are matched and where, restored by one
+    // call so that a search confined to a selection is not widened on the way.
+    searchOptions: (value, kept) => viewer?.restoreSearch(kept.query, value, kept.searchScope),
+    searchScope: restoredWith("searchOptions"),
+    sidebarTab: (value) => sidebar?.selectTab(value),
+  };
 
   function activateTab(id: number): Promise<void> {
     return documentTasks.idle().then(() => opens.run(async () => {
@@ -742,7 +805,7 @@
     fillForm: () => formLayer?.focus(),
     pageCount: () => status?.pageCount ?? 0,
     openDocument: () => void pickAndOpen(),
-    reloadDocument: () => reloadDocument(),
+    reloadDocument: () => void reloadDocument(),
     diskChangeMode: () => diskChangeMode,
     setDiskChangeMode: (mode) => setDiskChangeMode(mode),
     closeDocument: () => void closeTab(openDoc),
@@ -1874,10 +1937,7 @@
     if (opening) return;
     return documentTasks.run(async () => {
       if (!edits || !openPathName || !viewer) return;
-      commitPopups();
-      await pendingEdit;
-      await formLayer?.settle();
-      await textEditor?.settle();
+      await settleDrafts();
       const path = openPathName;
       const place = currentPlace(false);
       try {
@@ -2014,13 +2074,11 @@
       if (!edits || !openPathName || !viewer || copyTaskBusy) return;
       // Closing the note journals its last text synchronously. Do this before the
       // busy guard starts refusing new edits, then wait for that queued edit below.
-      commitPopups();
+      const settled = settleDrafts();
       copyTaskBusy = true;
       refreshMenu();
       try {
-        await pendingEdit;
-        await formLayer?.settle();
-        await textEditor?.settle();
+        await settled;
         const proceed = await confirmDialog(
           "Creates an image-only PDF. Text will no longer be selectable; links, forms and signatures will not remain interactive/valid. Original unchanged.",
           {
@@ -2074,13 +2132,11 @@
     if (opening) return;
     return documentTasks.run(async () => {
       if (!edits || !openPathName || copyTaskBusy) return;
-      commitPopups();
+      const settled = settleDrafts();
       copyTaskBusy = true;
       refreshMenu();
       try {
-        await pendingEdit;
-        await formLayer?.settle();
-        await textEditor?.settle();
+        await settled;
         if (!edits || !openPathName) return;
         const source = openPathName;
         const working = edits;
@@ -2133,13 +2189,11 @@
     if (opening) return;
     return documentTasks.run(async () => {
       if (!edits || !openPathName || copyTaskBusy) return;
-      commitPopups();
+      const settled = settleDrafts();
       copyTaskBusy = true;
       refreshMenu();
       try {
-        await pendingEdit;
-        await formLayer?.settle();
-        await textEditor?.settle();
+        await settled;
         if (!edits || !openPathName) return;
         const source = openPathName;
         const password = set
@@ -2190,13 +2244,11 @@
     const done: { path?: string; said?: string } = {};
     await documentTasks.run(async () => {
       if (!edits || !openPathName || copyTaskBusy) return;
-      commitPopups();
+      const settled = settleDrafts();
       copyTaskBusy = true;
       refreshMenu();
       try {
-        await pendingEdit;
-        await formLayer?.settle();
-        await textEditor?.settle();
+        await settled;
         if (!edits || !openPathName) return;
         if (edits.dirty) {
           say(SAVE_FIRST);
@@ -2287,10 +2339,7 @@
     if (opening) return;
     return documentTasks.run(async () => {
       if (!edits || !openPathName || !viewer) return;
-      commitPopups();
-      await pendingEdit;
-      await formLayer?.settle();
-      await textEditor?.settle();
+      await settleDrafts();
       const path = openPathName;
       const place = currentPlace(false);
       say(null);
@@ -2511,6 +2560,10 @@
       const source = openPathName;
       try {
         const said = await signing.signDocument({
+          // Inside the task and before anything of this flow's own is raised,
+          // which is where the six other flows that write call it and where
+          // `applyEdit` still takes what it commits.
+          settle: settleDrafts,
           dirty: () => dirty,
           openPath: source,
           list: () => call("sign_identities"),
@@ -2978,7 +3031,7 @@
    * refuses because the app has not noticed yet is worse than one that always
    * does what it says.
    */
-  function reloadDocument() {
+  async function reloadDocument(): Promise<void> {
     const path = openPathName;
     if (!path) return;
     // Reload reopens the file, which closes the document and spends the journal.
@@ -2987,7 +3040,9 @@
     // was written before there was anything to lose, and nothing revisited it
     // when there was. The second press is what confirms: `reloadAnyway` is the
     // offer this prompt carries.
-    const prompt = beforeReload(dirty);
+    const prompt = await reloadAsked({ settle: settleDrafts, dirty: () => dirty });
+    // The wait let another document in: the answer is about one that has gone.
+    if (openPathName !== path) return;
     if (prompt) {
       say(prompt.message, prompt.offers);
       return;
@@ -3010,11 +3065,19 @@
       // Not now, rather than not at all: the watch reports again on its next
       // check. A save's own write is the case that matters --- it changes the
       // file and then reopens it, and must not be answered with a reload.
-      if (doc !== openDoc || opening || documentBusy) return false;
-      const next = afterDiskChange(diskChangeMode, dirty, title);
-      if (next === "reload") reloadAnyway();
-      else if (next) say(next.message, next.offers);
-      return true;
+      const current = () => doc === openDoc && !opening && !documentBusy;
+      if (!current()) return false;
+      // What happens, and the settling that comes before a reload nobody is
+      // asked about, are `onDiskChange`'s.
+      return onDiskChange({
+        mode: () => diskChangeMode,
+        name: () => title,
+        settle: settleDrafts,
+        dirty: () => dirty,
+        current,
+        reload: reloadAnyway,
+        say: (prompt) => say(prompt.message, prompt.offers),
+      });
     },
   );
 
@@ -3744,10 +3807,7 @@
   /** The edit model of a document, whether or not it is the one on screen. */
   function editsFor(doc: DocumentInfo): Edits {
     return new Edits(doc.id, doc.page_count, async (merging = false) => {
-      commitPopups();
-      await pendingEdit;
-      await formLayer?.settle();
-      await textEditor?.settle();
+      await settleDrafts();
       await confirmSignatureSave(() => call("document_properties", { doc: doc.id }),
         askSignatureSave, merging);
     });
@@ -3908,13 +3968,10 @@
       await new Promise(requestAnimationFrame);
       if (!surface || !sidebarHost) throw new Error("no surface to mount into");
 
-      // One record for every restore below, fresh for a document never kept.
+      // One record for every restore below, fresh for a document never kept,
+      // and applied through `restoring` at each of the three points.
       const kept = restoredState(retained);
-      query = kept.query;
-      findShown = kept.findShown;
-      say(kept.error, kept.offers);
-      notice = kept.notice;
-      redactedCopyPath = kept.redactedCopyPath;
+      restore(kept, "unmounted", restoring);
       // Before the panels are built, so nothing carries over from the document
       // that was open a moment ago --- these are answers about a file, and the
       // file has changed.
@@ -3929,8 +3986,20 @@
       redactionPlans.clear();
       properties = null;
       propertiesDialog?.close();
+      // A panel about one field of the document that is closing. Left open, its
+      // Save would look the field up by an id that starts at 1 in every
+      // document; `changeProperties` refuses that too, and closing it is what
+      // the reader sees.
+      fieldPropertiesDialog?.close();
       rawOutline = null;
-      // The form's names are a fact about the document that is closing.
+      // Reset and read again, where the fields above are kept and restored,
+      // and that is the difference between them: these three are not in
+      // `DocumentTab` on purpose. The form and its names are facts about the
+      // file, which the scan after the first paint below reads on every open,
+      // a tab being returned to included, because the controls it builds
+      // belong to the viewer and went with the last one. Changing the fields
+      // is a mode of the window, like an armed tool, and a tool does not
+      // follow a reader to another tab or wait for them in this one.
       formNames = [];
       scannedForm = null;
       formEditing = false;
@@ -4057,10 +4126,7 @@
       const opening = retained?.edits ?? editsFor(doc);
       edits = opening;
       dirty = opening.state.dirty;
-      // Mark ids start again with the model, so an entry kept from the last
-      // document would put its words on this one's first highlight.
-      covered.clear();
-      for (const [id, words] of kept.covered) covered.set(id, words);
+      restore(kept, "model", restoring);
       tabs.keep(retained ?? { doc, path, edits: opening, place: resume, ...freshState() }, replaceId);
       refreshTabs();
       if (replaceId !== undefined && replaceId !== doc.id)
@@ -4153,15 +4219,14 @@
           if (!object || page === undefined) return;
           void applyEdit((e) => e.reply(page, object, comment.rect, body));
         },
-        onMarkRemove: (mark, sweep) => {
-          if (!isSaved(mark)) return void applyEdit((e) => e.unmark(mark, sweep));
-          const target = scannedForm && edits ? fieldRemoved(scannedForm, edits.state, mark) : null;
-          if (target) void applyEdit((e) => e.refield([target], sweep));
-        },
+        onMarkRemove: (mark, sweep) => removeNamed(mark, sweep),
         // A colour picked in the swatch row, or by a `Colour:` command with a
         // note open. A command like the note above it, and undone the same way.
-        onMarkRecolor: (mark, color) =>
-          void applyEdit((e) => e.recolor(mark, color)),
+        // Not for a saved field, which is drawn in one colour to say what it
+        // is and has none of its own to change: its id is not a mark's.
+        onMarkRecolor: (mark, color) => {
+          if (!isSaved(mark)) void applyEdit((e) => e.recolor(mark, color));
+        },
         // A box or a drawing the reader finished. The page id and the shape are
         // already in the file's space --- `Viewer.fileRectOn` does that, because
         // the crop and both rotations are the viewer's and nothing here could
@@ -4203,8 +4268,10 @@
         // The same sweep's other half: a mark with no parts to lose goes whole.
         // `unmark` is what the mark panel's own Remove already calls, so a mark
         // taken by the nib and one taken from the list are one command and one
-        // undo, however the reader asked.
-        onUnmarked: (mark, sweep) => void applyEdit((e) => e.unmark(mark, sweep)),
+        // undo, however the reader asked. The same function as `onMarkRemove`
+        // for that reason, and because a saved field under the nib is removed
+        // as a field there and has to be here.
+        onUnmarked: (mark, sweep) => removeNamed(mark, sweep),
         // **Back and Forward grey when there is nowhere to go, and this is what
         // keeps that honest.** A menu item's enablement is a *pushed* map, so a
         // guard reading state that moves outside the push sites is wrong
@@ -4292,10 +4359,9 @@
       viewer.setRedactions(opening.state.redactions);
       sidebar.thumbnails?.setPages(opening.state.pages.length);
       if (resume) viewer.restore(resume);
-      if (retained) {
-        viewer.restoreSearch(kept.query, kept.searchOptions, kept.searchScope);
-        sidebar.selectTab(kept.sidebarTab);
-      }
+      // Only for a tab being returned to. A document opened for the first time
+      // has no search to put back and opens on the tab the sidebar starts on.
+      if (retained) restore(kept, "mounted", restoring);
       viewer.setNib(markNib.pt);
       // After `restore`, which does not touch the colours, and before `focus`,
       // so the first tiles requested are already the right polarity rather than

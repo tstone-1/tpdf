@@ -1043,6 +1043,9 @@ jobs:
         if: runner.os == 'macOS' && env.APPLE_SIGNING_IDENTITY != ''
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # Through the environment, as the draft step passes it, and never
+          # expanded into the script text.
+          TAG: ${{ github.ref_name }}
         run: |
           set -euo pipefail
           DMG=$(ls ${{ matrix.bundle-dir }}/dmg/*.dmg)
@@ -1056,7 +1059,7 @@ jobs:
           spctl -a -vvv -t open --context context:primary-signature "$DMG" 2>&1 \
             | grep -q "source=Notarized Developer ID" \
             || { echo "::error::DMG is still not notarized after stapling"; exit 1; }
-          gh release upload "${{ github.ref_name }}" "$DMG" --clobber \
+          gh release upload "$TAG" "$DMG" --clobber \
             --repo "$GITHUB_REPOSITORY"
 
       # A skipped notarization does NOT fail the build: with credentials missing

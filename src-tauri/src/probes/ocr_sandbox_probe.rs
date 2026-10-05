@@ -21,18 +21,29 @@ use tpdf_lib::worker_child::apply_sandbox;
 
 /// What a rung reports back, one line of it.
 ///
-/// Deliberately three separate answers rather than a verdict: a rung that cannot
+/// Deliberately separate answers rather than a verdict: a rung that cannot
 /// run Vision and a rung that cannot write a file are different findings, and a
 /// single boolean would make the ladder unable to say which rung failed at what.
+///
+/// **Two readings, because the worker is asked two ways.** The text layer asks
+/// plainly; the redaction gate asks for any script, which turns Vision's language
+/// detection on --- a different request, whose models are a separate question
+/// from the plain one's. On macOS 27 a model the process meets for the first time
+/// inside the profile is a refused cache write and a failed recognition, so each
+/// way of asking has to be shown to work after the boundary on its own.
 struct Answers {
     wrote: String,
     connected: String,
     read: String,
+    any_script: String,
 }
 
 impl Answers {
     fn line(&self) -> String {
-        format!("{}|{}|{}", self.wrote, self.connected, self.read)
+        format!(
+            "{}|{}|{}|{}",
+            self.wrote, self.connected, self.read, self.any_script
+        )
     }
 
     fn parse(line: &str) -> Option<Self> {
@@ -41,6 +52,7 @@ impl Answers {
             wrote: parts.next()?.to_string(),
             connected: parts.next()?.to_string(),
             read: parts.next()?.to_string(),
+            any_script: parts.next()?.to_string(),
         })
     }
 }
@@ -80,7 +92,8 @@ pub fn main() {
         let file = args.get(at + 2).cloned().unwrap_or_default();
         let library = args.get(at + 3).cloned().unwrap_or_default();
         let port: u16 = args.get(at + 4).and_then(|s| s.parse().ok()).unwrap_or(0);
-        child(&rung, Path::new(&file), Path::new(&library), port);
+        let page: u32 = args.get(at + 5).and_then(|s| s.parse().ok()).unwrap_or(0);
+        child(&rung, Path::new(&file), Path::new(&library), port, page);
     }
     parent(&args);
 }
@@ -93,8 +106,8 @@ pub fn main() {
 /// what the parser worker does, and the whole question is what an engine can do
 /// *after* a boundary comes down over a process that has already mapped what it
 /// needs. Sandboxing first would measure a different program.
-fn child(rung: &str, file: &Path, library: &Path, port: u16) -> ! {
-    let pixels = match render_page(file, library) {
+fn child(rung: &str, file: &Path, library: &Path, port: u16, page: u32) -> ! {
+    let pixels = match render_page(file, library, page) {
         Ok(v) => v,
         Err(e) => {
             eprintln!("[rung {rung}] render failed: {e}");
@@ -119,10 +132,15 @@ fn child(rung: &str, file: &Path, library: &Path, port: u16) -> ! {
         std::process::exit(3);
     }
 
+    // The gate's way of asking first: it is the one a redaction verdict rests
+    // on, and read second it would run in a process the plain reading had
+    // already been through.
+    let any_script = try_read(&pixels, true);
     let answers = Answers {
         wrote: try_write(rung),
         connected: try_connect(port),
-        read: try_read(&pixels),
+        read: try_read(&pixels, false),
+        any_script,
     };
     // One write, for the reason `worker_child::main` gives: several processes
     // share this stream and a formatted print is several writes.
@@ -157,14 +175,19 @@ fn try_connect(port: u16) -> String {
 }
 
 /// Running the engine on the page this process rendered before the profile.
-fn try_read(pixels: &Sheet) -> String {
+fn try_read(pixels: &Sheet, any_script: bool) -> String {
     let px = Pixels {
         rgba: &pixels.rgba,
         width: pixels.width,
         height: pixels.height,
         scale: pixels.scale,
     };
-    match Vision.recognise(px, &Options::default()) {
+    let read = if any_script {
+        Vision.recognise_any_script(px, &Options::default())
+    } else {
+        Vision.recognise(px, &Options::default())
+    };
+    match read {
         Ok(items) => format!("{}", items.len()),
         Err(e) => format!("err {e}"),
     }
@@ -175,15 +198,20 @@ fn try_read(pixels: &Sheet) -> String {
 fn parent(args: &[String]) -> ! {
     let mut file = PathBuf::new();
     let mut library = PathBuf::from("vendor/pdfium/lib");
+    // Zero-based. Which page matters since the worker is asked for any script:
+    // what Vision loads then depends on what the page is written in, so a Latin
+    // page passing says nothing about an Arabic one.
+    let mut page = 0_u32;
     let mut rest = args.iter().skip(1);
     while let Some(a) = rest.next() {
         match a.as_str() {
             "--lib" => library = PathBuf::from(rest.next().cloned().unwrap_or_default()),
+            "--page" => page = rest.next().and_then(|s| s.parse().ok()).unwrap_or(0),
             other => file = PathBuf::from(other),
         }
     }
     if file.as_os_str().is_empty() {
-        eprintln!("[ERROR] usage: ocr-sandbox-probe <file.pdf> [--lib DIR]");
+        eprintln!("[ERROR] usage: ocr-sandbox-probe <file.pdf> [--lib DIR] [--page N]");
         std::process::exit(2);
     }
 
@@ -204,16 +232,16 @@ fn parent(args: &[String]) -> ! {
         }
     };
 
-    println!("document   {}", file.display());
+    println!("document   {}, page {page}", file.display());
     println!("engine     {}", Vision.id());
     println!("listener   127.0.0.1:{port}");
     println!();
 
     let mut r = Report::default();
 
-    let bare = run_rung("bare", &file, &library, port);
-    let ocr = run_rung("ocr", &file, &library, port);
-    let parser = run_rung("parser", &file, &library, port);
+    let bare = run_rung("bare", &file, &library, port, page);
+    let ocr = run_rung("ocr", &file, &library, port, page);
+    let parser = run_rung("parser", &file, &library, port, page);
 
     // ------------------------------------------------------------ the control
     // Every assertion below is about a difference from this rung. Without it, a
@@ -230,6 +258,11 @@ fn parent(args: &[String]) -> ! {
                 a.read.parse::<usize>().is_ok_and(|n| n > 0),
                 "bare: vision reads the page",
                 format!("{} span(s)", a.read),
+            );
+            r.check(
+                a.any_script.parse::<usize>().is_ok_and(|n| n > 0),
+                "bare: and reads it asked for any script",
+                format!("{} span(s)", a.any_script),
             );
         }
         other => {
@@ -255,6 +288,11 @@ fn parent(args: &[String]) -> ! {
                 a.read.parse::<usize>().is_ok_and(|n| n > 0),
                 "ocr: vision still reads the page",
                 format!("{} span(s)", a.read),
+            );
+            r.check(
+                a.any_script.parse::<usize>().is_ok_and(|n| n > 0),
+                "ocr: and still reads it asked for any script",
+                format!("{} span(s)", a.any_script),
             );
         }
         other => r.check(false, "ocr: the rung answered at all", other.describe()),
@@ -307,7 +345,7 @@ const FIXED_HOME: &str = "CFFIXED_USER_HOME";
 /// a profile that would have refused the very write it no longer needed --- 7/7 while every
 /// worker the redaction gate spawned failed. A fresh home per rung makes each one pay the
 /// cold compile (about 23 s on 26A428), which is the price of measuring the cold path.
-fn run_rung(rung: &str, file: &Path, library: &Path, port: u16) -> Rung {
+fn run_rung(rung: &str, file: &Path, library: &Path, port: u16, page: u32) -> Rung {
     let exe = match std::env::current_exe() {
         Ok(e) => e,
         Err(e) => return Rung::Unstarted(format!("current_exe: {e}")),
@@ -320,7 +358,7 @@ fn run_rung(rung: &str, file: &Path, library: &Path, port: u16) -> Rung {
     if let Err(e) = std::fs::create_dir_all(&home) {
         return Rung::Unstarted(format!("a fresh home at {}: {e}", home.display()));
     }
-    let rung_result = run_rung_in(&exe, &home, rung, file, library, port);
+    let rung_result = run_rung_in(&exe, &home, rung, file, library, port, page);
     let _ = std::fs::remove_dir_all(&home);
     rung_result
 }
@@ -332,6 +370,7 @@ fn run_rung_in(
     file: &Path,
     library: &Path,
     port: u16,
+    page: u32,
 ) -> Rung {
     let out = std::process::Command::new(exe)
         .env(FIXED_HOME, home)
@@ -340,6 +379,7 @@ fn run_rung_in(
         .arg(file)
         .arg(library)
         .arg(port.to_string())
+        .arg(page.to_string())
         .output();
     let out = match out {
         Ok(o) => o,
@@ -370,14 +410,14 @@ struct Sheet {
     scale: f32,
 }
 
-fn render_page(file: &Path, library: &Path) -> Result<Sheet, String> {
+fn render_page(file: &Path, library: &Path, index: u32) -> Result<Sheet, String> {
     use pdfium_render::prelude::Pdfium;
     let path = Pdfium::pdfium_platform_library_name_at_path(library);
     let bound = progressive::bind_library(&path)
         .map_err(|e| format!("could not load Pdfium from {}: {e}", path.display()))?;
     let bindings = progressive::bindings_of(bound);
     let document = OpenDocument::open(bindings, file, None)?;
-    let page = document.page(0)?;
+    let page = document.page(index)?;
     tile(bindings, &page, 2.0)
 }
 

@@ -15,7 +15,7 @@ use std::path::PathBuf;
 
 use super::args::{lexically_same, unknown, value};
 use super::fill::SignedState;
-use super::pages::{check_target, read_input, same_sizes, Temporary};
+use super::pages::{check_target, copy_of, publish_copy, read_input, same_sizes};
 use super::report::{self, SCHEMA};
 use super::text::{declined, page_list, password, variable};
 use super::{json, say, Env, Exit, Failure, Registered, Subcommand};
@@ -23,7 +23,6 @@ use crate::ocr::Pixels;
 use crate::ocr_layer;
 use crate::ocr_worker::{OcrWorker, PIXELS_CAPACITY};
 use crate::render::{PageSize, TileFormat, TileRequest};
-use crate::save;
 use crate::save_outside::Session;
 use crate::textlayer::Layer;
 use crate::worker_proto::{Reply, Request};
@@ -279,33 +278,6 @@ impl Ocr {
         }
         input.plan.text_layers = read.layers.clone();
 
-        let agrees = |input: &super::pages::Input| {
-            input
-                .plan
-                .opened_as
-                .as_ref()
-                .expect("read_input fingerprints every source")
-                .agrees_with(&self.input)
-                .map_err(|why| Failure::new(Exit::Refused, why))
-        };
-        agrees(&input)?;
-        let staging = Temporary::beside(&self.output)?;
-        let staged = staging.0.join("output.pdf");
-        let result = save::write_copy(
-            &self.input,
-            &input.plan,
-            &staged,
-            key.as_deref(),
-            &env.worker(),
-        )
-        .map_err(|why| Failure::new(Exit::Refused, why.message))?;
-        if result.changed {
-            return Err(Failure::new(
-                Exit::Refused,
-                "the source changed while writing; no output was published",
-            ));
-        }
-
         // The staged file, in a fresh worker: the same pages, the same
         // encryption, and on every page given a layer the characters the layer
         // was written from.
@@ -315,37 +287,45 @@ impl Ocr {
                 format!("the staged file could not be checked: {}", why.message),
             )
         };
-        let (after, mut session) = read_input(env, &staged, key.as_deref()).map_err(checking)?;
-        if after.encrypted != input.encrypted || !same_sizes(&after.sizes, &input.sizes) {
-            return Err(Failure::new(
-                Exit::Internal,
-                "the staged file's pages or encryption did not match the source; no output was \
-                 published",
-            ));
-        }
-        for layer in &read.layers {
-            let reply = session
-                .ask(Request::Text {
-                    page: layer.page,
-                    crop: None,
-                })
-                .map_err(|why| checking(why.into()))?;
-            let back = matches!(&reply, Reply::Text(text) if ocr_layer::reads_back(layer, text));
-            if !back {
-                return Err(Failure::new(
-                    Exit::Internal,
-                    format!(
-                        "page {} of the staged file did not read back with the text that was \
-                         recognised; no output was published",
-                        layer.page + 1
-                    ),
-                ));
-            }
-        }
-        drop(session);
-        agrees(&input)?;
-        check_target(inputs, &self.output, self.force)?;
-        Temporary::publish(&staged, &self.output, self.force)?;
+        publish_copy(
+            inputs,
+            &[(self.input.as_path(), input.opened_as())],
+            &self.output,
+            self.force,
+            copy_of(env, &self.input, &input.plan, key.as_deref()),
+            |staged, ()| {
+                let (after, mut session) =
+                    read_input(env, staged, key.as_deref()).map_err(checking)?;
+                if after.encrypted != input.encrypted || !same_sizes(&after.sizes, &input.sizes) {
+                    return Err(Failure::new(
+                        Exit::Internal,
+                        "the staged file's pages or encryption did not match the source; no \
+                         output was published",
+                    ));
+                }
+                for layer in &read.layers {
+                    let reply = session
+                        .ask(Request::Text {
+                            page: layer.page,
+                            crop: None,
+                        })
+                        .map_err(|why| checking(why.into()))?;
+                    let back =
+                        matches!(&reply, Reply::Text(text) if ocr_layer::reads_back(layer, text));
+                    if !back {
+                        return Err(Failure::new(
+                            Exit::Internal,
+                            format!(
+                                "page {} of the staged file did not read back with the text \
+                                 that was recognised; no output was published",
+                                layer.page + 1
+                            ),
+                        ));
+                    }
+                }
+                Ok(())
+            },
+        )?;
 
         let report = report::Ocr {
             schema: SCHEMA,

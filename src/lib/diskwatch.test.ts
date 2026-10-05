@@ -6,8 +6,10 @@ import {
   DISK_CHANGE_MODES,
   DiskWatch,
   MODE_KEY,
+  onDiskChange,
   readDiskChangeMode,
   writeDiskChangeMode,
+  type DiskChangeHost,
   type DiskProbe,
 } from "./diskwatch";
 
@@ -225,6 +227,87 @@ describe("afterDiskChange", () => {
     const prompt = afterDiskChange("ask", true, "a.pdf");
     expect(prompt).toMatchObject({ offers: ["saveCopy", "reload"] });
     expect((prompt as { message: string }).message).toContain("unsaved edits");
+  });
+});
+
+describe("onDiskChange", () => {
+  /** A window that records what was done to it, with a draft a test can leave typed. */
+  function host(overrides: Partial<DiskChangeHost> = {}) {
+    const state = { dirty: false, draft: false, current: true };
+    const done: string[] = [];
+    const base: DiskChangeHost = {
+      mode: () => "reload",
+      name: () => "a.pdf",
+      settle: async () => {
+        done.push("settle");
+        if (state.draft) state.dirty = true;
+      },
+      dirty: () => state.dirty,
+      current: () => state.current,
+      reload: () => done.push("reload"),
+      say: (prompt) => done.push(`say:${prompt.offers.join("+")}`),
+    };
+    return { state, done, host: { ...base, ...overrides } };
+  }
+
+  it("a_draft_the_settle_commits_gets_the_prompt_and_not_the_reload", async () => {
+    const { state, done, host: h } = host();
+    state.draft = true;
+    expect(await onDiskChange(h)).toBe(true);
+    expect(done).toEqual(["settle", "say:saveCopy+reload"]);
+    expect(done).not.toContain("reload");
+  });
+
+  it("reloads a document with nothing typed, after settling", async () => {
+    // The control for the test above: the same route with no draft does reload.
+    const { done, host: h } = host();
+    expect(await onDiskChange(h)).toBe(true);
+    expect(done).toEqual(["settle", "reload"]);
+  });
+
+  it("asks about a draft that could not be committed", async () => {
+    const { done, host: h } = host({ settle: async () => { throw new Error("refused"); } });
+    expect(await onDiskChange(h)).toBe(true);
+    expect(done).toEqual(["say:saveCopy+reload"]);
+  });
+
+  it("does nothing, and says it did not act, when the wait let something else in", async () => {
+    const { state, done, host: h } = host({
+      settle: async () => { state.current = false; },
+    });
+    expect(await onDiskChange(h)).toBe(false);
+    expect(done).toEqual([]);
+  });
+
+  it("settles nothing where no reload is coming", async () => {
+    // A prompt reloads nothing, and settling closes the box a note is typed in.
+    const asking = host({ mode: () => "ask" });
+    expect(await onDiskChange(asking.host)).toBe(true);
+    expect(asking.done).toEqual(["say:reload"]);
+
+    const ignoring = host({ mode: () => "ignore" });
+    expect(await onDiskChange(ignoring.host)).toBe(true);
+    expect(ignoring.done).toEqual([]);
+
+    const edited = host();
+    edited.state.dirty = true;
+    expect(await onDiskChange(edited.host)).toBe(true);
+    expect(edited.done).toEqual(["say:saveCopy+reload"]);
+  });
+
+  it("is waited for by the watch, which reports again after a 'not now'", async () => {
+    const { state, probe } = scripted();
+    const answers = [false, true];
+    const reported: number[] = [];
+    const watch = new DiskWatch(probe, async (doc) => {
+      reported.push(doc);
+      await Promise.resolve();
+      return answers.shift() ?? true;
+    });
+    state.now = "20:2";
+    for (let i = 0; i < 5; i++) await watch.check(1, "a.pdf");
+    // Seen, reported and not acted on, reported and acted on, then quiet.
+    expect(reported).toEqual([1, 1]);
   });
 });
 

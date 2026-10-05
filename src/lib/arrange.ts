@@ -219,6 +219,21 @@ export class Picked {
     this.page = null;
   }
 
+  /**
+   * Follows the picked marks' page to the slot it is in after a page edit.
+   *
+   * The page is kept as a slot because that is what a press knows, and a page
+   * deleted, inserted or moved above it renumbers the slot without touching a
+   * mark. `now` answers where the page that was in a slot has gone, or
+   * `undefined` when it is no longer in the document; its marks go with it.
+   */
+  repage(now: (slot: number) => number | undefined): void {
+    if (this.page === null) return;
+    const slot = now(this.page);
+    if (slot === undefined) this.clear();
+    else this.page = slot;
+  }
+
   /** Drops every mark `live` no longer answers for: one removed or undone. */
   keep(live: (id: number) => boolean): void {
     this.ids = this.ids.filter(live);

@@ -3,6 +3,11 @@
 //! linking the completed file refuses a destination that appeared mid-command.
 //! Splits stage all parts first; a publication failure reports exactly the
 //! parts already published. No rollback deletes a file another process may use.
+//!
+//! That order is also every other writing command's, and it is written once:
+//! [`checked_copy`] stages, reads back and holds the sources to what was read,
+//! and [`publish_copy`] adds the publication for a command with one output.
+//! A command supplies its writer and its read-back and nothing of the order.
 
 use std::io::Write;
 use std::path::{Path, PathBuf};
@@ -293,8 +298,10 @@ pub(super) fn check_target(inputs: &[PathBuf], target: &Path, force: bool) -> Re
     }
     // symlink_metadata also sees dangling links; --force does not follow
     // them to an unrelated file when the save helper resolves its target.
+    // It describes the link and not what the link names, so `is_file` is
+    // false for a link as it is for a directory.
     if let Ok(metadata) = target.symlink_metadata() {
-        if metadata.file_type().is_symlink() || !metadata.is_file() || !force {
+        if !metadata.is_file() || !force {
             return Err(Failure::new(
                 Exit::Refused,
                 format!(
@@ -372,47 +379,52 @@ impl Pages {
         let base = &inputs[0];
         let staging = Temporary::beside(&self.output)?;
         let staged_base = staging.0.join("output.pdf");
-        unchanged(&inputs, &self.inputs)?;
-        let (staged_paths, sizes, changed) = if self.kind == Kind::Split && targets.len() > 1 {
-            let mut template = base.plan.clone();
-            template.pages.clear();
-            let plans: Vec<Plan> = base
-                .plan
-                .pages
-                .chunks(self.every)
-                .map(|chunk| {
-                    let mut selected = template.clone();
-                    selected.pages = chunk.to_vec();
-                    selected
-                })
-                .collect();
-            let result = save::write_split(
-                &self.inputs[0],
-                &plans,
-                &staged_base,
-                key.as_deref(),
-                &env.worker(),
-            )
-            .map_err(|why| Failure::new(Exit::Refused, why.message))?;
-            (
-                save::split_paths(&staged_base, targets.len()),
-                base.sizes
+        let sources: Vec<Source<'_>> = self
+            .inputs
+            .iter()
+            .zip(&inputs)
+            .map(|(path, input)| (path.as_path(), input.opened_as()))
+            .collect();
+        let write = |staged_base: &Path| {
+            if self.kind == Kind::Split && targets.len() > 1 {
+                let mut template = base.plan.clone();
+                template.pages.clear();
+                let plans: Vec<Plan> = base
+                    .plan
+                    .pages
+                    .chunks(self.every)
+                    .map(|chunk| {
+                        let mut selected = template.clone();
+                        selected.pages = chunk.to_vec();
+                        selected
+                    })
+                    .collect();
+                let result = save::write_split(
+                    &self.inputs[0],
+                    &plans,
+                    staged_base,
+                    key.as_deref(),
+                    &env.worker(),
+                )
+                .map_err(refused)?;
+                let staged = save::split_paths(staged_base, targets.len());
+                let sizes = base
+                    .sizes
                     .chunks(self.every)
                     .map(<[PageSize]>::to_vec)
-                    .collect::<Vec<_>>(),
-                result.changed,
-            )
-        } else {
+                    .collect::<Vec<_>>();
+                return Ok((result.changed, (staged, sizes)));
+            }
             let (expected, changed) = if self.kind == Kind::Merge {
                 let result = save::write_merged(
                     &self.inputs[0],
                     &base.plan,
                     &self.inputs[1..],
-                    &staged_base,
+                    staged_base,
                     key.as_deref(),
                     &env.worker(),
                 )
-                .map_err(|why| Failure::new(Exit::Refused, why.message))?;
+                .map_err(refused)?;
                 (
                     inputs
                         .iter()
@@ -421,37 +433,28 @@ impl Pages {
                     result.changed,
                 )
             } else {
-                let result = save::write_copy(
-                    &self.inputs[0],
-                    &base.plan,
-                    &staged_base,
-                    key.as_deref(),
-                    &env.worker(),
-                )
-                .map_err(|why| Failure::new(Exit::Refused, why.message))?;
-                (base.sizes.clone(), result.changed)
+                let (changed, ()) =
+                    copy_of(env, &self.inputs[0], &base.plan, key.as_deref())(staged_base)?;
+                (base.sizes.clone(), changed)
             };
-            (vec![staged_base], vec![expected], changed)
+            Ok((changed, (vec![staged_base.to_path_buf()], vec![expected])))
         };
-        if changed {
-            return Err(Failure::new(
-                Exit::Refused,
-                "the source changed while writing; no output was published",
-            ));
-        }
-        for (temp, sizes) in staged_paths.iter().zip(&sizes) {
-            let (after, session) = read_input(env, temp, key.as_deref()).map_err(|why| {
-                Failure::new(
-                    Exit::Internal,
-                    format!("the staged file could not be checked: {}", why.message),
-                )
-            })?;
-            drop(session);
-            if after.encrypted != base.encrypted || !same_sizes(&after.sizes, sizes) {
-                return Err(Failure::new(Exit::Internal, "the staged file's pages or encryption did not match the request; no output was published"));
+        let read_back = |(staged, sizes): (Vec<PathBuf>, Vec<Vec<PageSize>>)| {
+            for (temp, sizes) in staged.iter().zip(&sizes) {
+                let (after, session) = read_input(env, temp, key.as_deref()).map_err(|why| {
+                    Failure::new(
+                        Exit::Internal,
+                        format!("the staged file could not be checked: {}", why.message),
+                    )
+                })?;
+                drop(session);
+                if after.encrypted != base.encrypted || !same_sizes(&after.sizes, sizes) {
+                    return Err(Failure::new(Exit::Internal, "the staged file's pages or encryption did not match the request; no output was published"));
+                }
             }
-        }
-        unchanged(&inputs, &self.inputs)?;
+            Ok((staged, sizes))
+        };
+        let (staged_paths, sizes) = checked_copy(&sources, &staged_base, write, read_back)?;
         let result = self.publish(&staged_paths, &sizes, &targets, &mut report);
         let exit = match result {
             Ok(()) => Exit::Ok,
@@ -602,17 +605,123 @@ pub(super) fn same_sizes(actual: &[PageSize], expected: &[PageSize]) -> bool {
         })
 }
 
-fn unchanged(inputs: &[Input], paths: &[PathBuf]) -> Result<(), Failure> {
-    for (input, path) in inputs.iter().zip(paths) {
-        input
-            .plan
+impl Input {
+    /// What the source was when it was read, to hold it to while a copy is
+    /// written.
+    pub(super) fn opened_as(&self) -> &Fingerprint {
+        self.plan
             .opened_as
             .as_ref()
             .expect("read_input fingerprints every source")
-            .agrees_with(path)
-            .map_err(|why| Failure::new(Exit::Refused, why))?;
+    }
+}
+
+/// A source a copy is made from: where it is, and what it was when read.
+pub(super) type Source<'a> = (&'a Path, &'a Fingerprint);
+
+/// Refuses when a source is no longer the file that was read.
+///
+/// The comparison's fact and what follows from it here. The window's advice
+/// about edits that are still open is left out: this process holds no
+/// document open, and has no edits but the ones on its command line.
+pub(super) fn unchanged(sources: &[Source<'_>]) -> Result<(), Failure> {
+    for (path, opened_as) in sources {
+        opened_as.compare_deeply(path).map_err(|fact| {
+            Failure::new(Exit::Refused, format!("{fact}; no output was published"))
+        })?;
     }
     Ok(())
+}
+
+/// Writes a copy into the staging directory and has it read back, holding
+/// every source to what it was before the write and again after the read.
+///
+/// **The one order every command that writes a document keeps**: the sources
+/// are still what was read; `write` stages the copy and says whether the
+/// writer saw its source change; `read_back` opens what was staged, in a fresh
+/// worker, and refuses unless it is what was asked for; the sources are still
+/// what was read. Nothing has been given its final name when this returns ---
+/// that is the caller's last step, [`publish_copy`]'s for one output.
+///
+/// `write` hands `read_back` whatever it learned on the way (which files a
+/// split staged); a failure of either is the command's own sentence.
+pub(super) fn checked_copy<W, T>(
+    sources: &[Source<'_>],
+    staged: &Path,
+    write: impl FnOnce(&Path) -> Result<(bool, W), Failure>,
+    read_back: impl FnOnce(W) -> Result<T, Failure>,
+) -> Result<T, Failure> {
+    unchanged(sources)?;
+    let (changed, written) = write(staged)?;
+    if changed {
+        return Err(source_changed());
+    }
+    let read = read_back(written)?;
+    unchanged(sources)?;
+    Ok(read)
+}
+
+/// [`checked_copy`] for a command with one output, and the publication:
+/// staged beside `output`, checked, and only then given its name.
+///
+/// So a copy that does not read back, or whose source moved under it, leaves
+/// whatever `output` already named as it was, `--force` or not. `inputs` are
+/// the paths the output must not be (`check_target`); `sources` the ones that
+/// are documents this run read, which a list of pictures is not.
+pub(super) fn publish_copy<W, T>(
+    inputs: &[PathBuf],
+    sources: &[Source<'_>],
+    output: &Path,
+    force: bool,
+    write: impl FnOnce(&Path) -> Result<(bool, W), Failure>,
+    read_back: impl FnOnce(&Path, W) -> Result<T, Failure>,
+) -> Result<T, Failure> {
+    let staging = Temporary::beside(output)?;
+    let staged = staging.0.join("output.pdf");
+    let read = checked_copy(sources, &staged, write, |written| {
+        read_back(&staged, written)
+    })?;
+    check_target(inputs, output, force)?;
+    Temporary::publish(&staged, output, force)?;
+    Ok(read)
+}
+
+/// `save::write_copy` of `plan` over `source`, as the `write` of
+/// [`publish_copy`]: the application's writer, in a worker.
+pub(super) fn copy_of<'a>(
+    env: &'a Env<'_>,
+    source: &'a Path,
+    plan: &'a Plan,
+    key: Option<&'a str>,
+) -> impl FnOnce(&Path) -> Result<(bool, ()), Failure> + 'a {
+    move |staged| {
+        save::write_copy(source, plan, staged, key, &env.worker())
+            .map(|written| (written.changed, ()))
+            .map_err(refused)
+    }
+}
+
+/// What a command says when its source moved under the writer.
+fn source_changed() -> Failure {
+    Failure::new(
+        Exit::Refused,
+        "the source changed while writing; no output was published",
+    )
+}
+
+/// A refusal of the application's writer, as a command's failure.
+///
+/// The writer's own sentence, except where what it found is that the source
+/// changed. It words that one for a reader with the document open in a
+/// window, and ends it with what to do about the edits that are still there;
+/// a command line has none, so it says what this module says of the same
+/// event.
+pub(super) fn refused(why: save::Refusal) -> Failure {
+    if why.changed {
+        source_changed()
+    } else {
+        Failure::new(Exit::Refused, why.message)
+    }
 }
 
 /// Owns only a staging directory this process created exclusively; never an output name.
@@ -718,6 +827,222 @@ mod tests {
         assert_eq!(std::fs::read(&target).unwrap(), b"late arrival");
         std::fs::remove_dir_all(root).unwrap();
     }
+    /// A directory of this test's own, by name: two tests in one process
+    /// share its id.
+    fn scratch(name: &str) -> PathBuf {
+        let root = std::env::temp_dir().join(format!("tpdf-page-{name}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).unwrap();
+        root
+    }
+
+    /// Whether a staging directory is still beside what was to be written.
+    fn staging_left(root: &Path) -> bool {
+        std::fs::read_dir(root).unwrap().any(|entry| {
+            entry
+                .unwrap()
+                .file_name()
+                .to_string_lossy()
+                .starts_with(".tpdf-cli-")
+        })
+    }
+
+    #[test]
+    fn force_does_not_write_through_a_symlinked_or_directory_output() {
+        let root = scratch("force-target");
+        let refused = |target: &Path, force: bool| {
+            let failure = check_target(&[], target, force).expect_err("refused");
+            assert_eq!(failure.exit, Exit::Refused, "{}", failure.message);
+            assert!(failure.message.contains("exists"), "{}", failure.message);
+        };
+        // The controls: a name nothing has is free, and a regular file is in
+        // the way until --force says to replace it.
+        let regular = root.join("out.pdf");
+        check_target(&[], &regular, false).expect("a free name");
+        check_target(&[], &regular, true).expect("a free name, with --force");
+        std::fs::write(&regular, b"yesterday's copy").unwrap();
+        refused(&regular, false);
+        check_target(&[], &regular, true).expect("--force replaces a regular file");
+
+        // A directory is not replaced, whatever --force says.
+        let directory = root.join("a-directory");
+        std::fs::create_dir(&directory).unwrap();
+        refused(&directory, false);
+        refused(&directory, true);
+
+        // Nor is a link: publishing with --force resolves its target, and
+        // would replace a file the command line never named.
+        #[cfg(unix)]
+        {
+            let victim = root.join("victim.txt");
+            std::fs::write(&victim, b"not a document of this run").unwrap();
+            let link = root.join("link.pdf");
+            std::os::unix::fs::symlink(&victim, &link).unwrap();
+            refused(&link, false);
+            refused(&link, true);
+            // One that points nowhere is still a link.
+            let dangling = root.join("dangling.pdf");
+            std::os::unix::fs::symlink(root.join("nothing-here"), &dangling).unwrap();
+            refused(&dangling, true);
+
+            // And through the whole order, with a copy that would have been
+            // good: the refusal comes after the staged file was checked, and
+            // what the link names is as it was.
+            let failure = publish_copy(
+                &[],
+                &[],
+                &link,
+                true,
+                |staged| {
+                    std::fs::write(staged, b"a good copy").unwrap();
+                    Ok((false, ()))
+                },
+                |_, ()| Ok(()),
+            )
+            .expect_err("refused");
+            assert_eq!(failure.exit, Exit::Refused);
+            assert_eq!(
+                std::fs::read(&victim).unwrap(),
+                b"not a document of this run"
+            );
+            assert!(link.symlink_metadata().unwrap().file_type().is_symlink());
+        }
+        assert!(!staging_left(&root));
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn a_source_that_changed_during_the_write_publishes_nothing() {
+        let root = scratch("source-changed");
+        let source = root.join("in.pdf");
+        std::fs::write(&source, b"the source as read").unwrap();
+        let opened_as = Fingerprint::of(&source).unwrap();
+        let sources = [(source.as_path(), &opened_as)];
+        let inputs = [source.clone()];
+        let output = root.join("out.pdf");
+        std::fs::write(&output, b"yesterday's copy").unwrap();
+        let kept = |what: &str| {
+            assert_eq!(
+                std::fs::read(&output).unwrap(),
+                b"yesterday's copy",
+                "{what}"
+            );
+            assert!(!staging_left(&root), "{what}");
+        };
+        fn write(changed: bool) -> impl FnOnce(&Path) -> Result<(bool, ()), Failure> {
+            move |staged| {
+                std::fs::write(staged, b"the new copy").unwrap();
+                Ok((changed, ()))
+            }
+        }
+
+        // The writer says its source changed under it: refused, and the copy
+        // is never read back, let alone published.
+        let mut read = false;
+        let failure = publish_copy(&inputs, &sources, &output, true, write(true), |_, ()| {
+            read = true;
+            Ok(())
+        })
+        .expect_err("refused");
+        assert_eq!(failure.exit, Exit::Refused);
+        assert_eq!(
+            failure.message,
+            "the source changed while writing; no output was published"
+        );
+        assert!(!read, "a copy of a source that moved is not worth reading");
+        kept("the writer saw the change");
+
+        // A read-back that disagrees is the command's own failure, unchanged.
+        let failure = publish_copy(&inputs, &sources, &output, true, write(false), |_, ()| {
+            Err::<(), _>(Failure::new(Exit::Internal, "it does not read back"))
+        })
+        .expect_err("refused");
+        assert_eq!(
+            (failure.exit, failure.message.as_str()),
+            (Exit::Internal, "it does not read back")
+        );
+        kept("the read-back disagreed");
+
+        // The control: a copy that reads back, of a source that stayed, is
+        // published --- so the three refusals here are not a function that
+        // publishes nothing at all.
+        let read = publish_copy(
+            &inputs,
+            &sources,
+            &output,
+            true,
+            write(false),
+            |staged, ()| Ok(std::fs::read(staged).unwrap()),
+        )
+        .expect("published");
+        assert_eq!(read, b"the new copy");
+        assert_eq!(std::fs::read(&output).unwrap(), b"the new copy");
+        assert!(!staging_left(&root));
+        std::fs::write(&output, b"yesterday's copy").unwrap();
+
+        // The source changes while the copy is read back, which the writer
+        // could not have seen: the second comparison refuses. The sentence is
+        // the fact and what it means here, without the window's advice about
+        // edits that are still open.
+        let failure = publish_copy(&inputs, &sources, &output, true, write(false), |_, ()| {
+            std::fs::write(&source, b"the source, written again").unwrap();
+            Ok(())
+        })
+        .expect_err("refused");
+        assert_eq!(failure.exit, Exit::Refused);
+        assert!(
+            failure.message.contains("changed on disk")
+                && failure.message.ends_with("; no output was published"),
+            "{}",
+            failure.message
+        );
+        assert!(
+            !failure.message.contains("still here") && !failure.message.contains("another name"),
+            "{}",
+            failure.message
+        );
+        kept("the source changed during the read-back");
+
+        // The writer may find the change itself, and says so as it would to a
+        // reader with the document open. A command says its own sentence.
+        let advice = opened_as.agrees_with(&source).expect_err("it changed");
+        assert!(advice.contains("still here"), "{advice}");
+        let failure = refused(save::Refusal::changed(advice));
+        assert_eq!(failure.exit, Exit::Refused);
+        assert_eq!(
+            failure.message,
+            "the source changed while writing; no output was published"
+        );
+        // Every other refusal of the writer's is passed on as it is.
+        let failure = refused(save::Refusal {
+            message: "the document cannot be rewritten".into(),
+            changed: false,
+        });
+        assert_eq!(
+            (failure.exit, failure.message.as_str()),
+            (Exit::Refused, "the document cannot be rewritten")
+        );
+
+        // And one that had changed before anything was staged writes nothing.
+        let mut wrote = false;
+        let failure = publish_copy(
+            &inputs,
+            &sources,
+            &output,
+            true,
+            |_| {
+                wrote = true;
+                Ok((false, ()))
+            },
+            |_, ()| Ok(()),
+        )
+        .expect_err("refused");
+        assert_eq!(failure.exit, Exit::Refused);
+        assert!(!wrote);
+        kept("the source had changed before the write");
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
     #[test]
     fn partial_publication_names_only_the_files_that_landed() {
         let root = std::env::temp_dir().join(format!("tpdf-page-partial-{}", std::process::id()));

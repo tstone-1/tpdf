@@ -290,6 +290,47 @@ pub fn of_blob_with(
     })
 }
 
+/// [`of_blob_for`], and the chain the store vouched for: the one it assembled
+/// in the evaluation that passed, signer first, DER, the root it ended at
+/// last. Empty unless the answer is [`Standing::Trusted`].
+///
+/// For `longterm`, which fetches revocation data from the addresses the
+/// certificates above a timestamp authority's name. Knowing that the store
+/// vouches is not enough there: a token's set is outside its signature, and a
+/// certificate added to it can pass for an issuer by name and key while being
+/// on no chain the store accepted. One evaluation answers both questions, so
+/// the chain returned is the one the verdict is about, not a second one built
+/// a moment later.
+#[must_use]
+pub fn of_blob_with_chain(
+    blob: &[u8],
+    purpose: Purpose,
+    now: u64,
+    anchors: Anchors<'_>,
+) -> (Trust, Vec<Vec<u8>>) {
+    let Some((leaf, others)) = certificates_with(blob, &[]) else {
+        return (Trust::unchecked(Doubt::Certificate), Vec::new());
+    };
+    let Ok(parsed) = Certificate::from_der(&leaf) else {
+        return (Trust::unchecked(Doubt::Certificate), Vec::new());
+    };
+    let mut chain = Vec::new();
+    let trust = judge_for(&parsed, purpose, now, |at| {
+        let evaluation = platform::evaluate(&leaf, &others, anchors, at)?;
+        chain.clone_from(&evaluation.chain);
+        Ok(evaluation)
+    });
+    // `Trusted` is only ever the answer to the first evaluation, the one at
+    // `now`, so the chain kept is that one's. Anything else --- a chain the
+    // store refused, one that passed inside the certificate's dates and not
+    // now, one whose certificate does not serve the purpose --- is not a
+    // chain vouched for, whatever was assembled.
+    if trust.standing != Standing::Trusted {
+        chain.clear();
+    }
+    (trust, chain)
+}
+
 /// The signer's certificate and the other members of the set, re-encoded,
 /// with `extra` offered as further candidate issuers: the certificates a
 /// document's `/DSS` carries, since 2026-09-28.

@@ -19,7 +19,8 @@
 use std::io::Write;
 use std::path::PathBuf;
 
-use super::args::{lexically_same, unknown, value};
+use super::args::{lexically_same, operand, unknown, value};
+use super::pages::{check_target, publish_copy};
 use super::report::{self, Encoding, Order, SCHEMA};
 use super::{Env, Exit, Failure, Registered, Subcommand};
 use crate::reading;
@@ -89,13 +90,13 @@ pub fn parse(args: &[String]) -> Result<Text, String> {
             (false, flag) if flag.starts_with('-') && flag != "-" => {
                 return Err(unknown("text", flag))
             }
-            (_, path) => {
+            (after, path) => {
                 if input.is_some() {
                     return Err(format!(
                         "`text` takes one document, and `{path}` is a second"
                     ));
                 }
-                input = Some(PathBuf::from(path));
+                input = Some(operand(after, path));
             }
         }
     }
@@ -202,6 +203,8 @@ impl Subcommand for Text {
                     format!("{} exists --- give --force to replace it", output.display()),
                 ));
             }
+            // What --force does not replace: a link, a directory.
+            check_target(std::slice::from_ref(&self.input), output, self.force)?;
         }
         let password = password(self.password_env.as_deref())?;
         let report = read_text(env, self, password.as_deref())?;
@@ -218,12 +221,28 @@ impl Subcommand for Text {
                 let _ = out.write_all(written.as_bytes());
                 let _ = out.flush();
             }
-            Some(path) => std::fs::write(path, written.as_bytes()).map_err(|e| {
-                Failure::new(
-                    Exit::Refused,
-                    format!("could not write {}: {e}", path.display()),
-                )
-            })?,
+            // Staged beside the output and put in place whole, as every
+            // command that writes a file does: a write that fails part-way
+            // leaves an existing file as it was. The text has no second reader
+            // to be read back by, and nothing it was read from is compared,
+            // since the document may have come from a pipe.
+            Some(path) => publish_copy(
+                std::slice::from_ref(&self.input),
+                &[],
+                path,
+                self.force,
+                |staged| {
+                    std::fs::write(staged, written.as_bytes())
+                        .map(|()| (false, ()))
+                        .map_err(|e| {
+                            Failure::new(
+                                Exit::Refused,
+                                format!("could not write {}: {e}", path.display()),
+                            )
+                        })
+                },
+                |_, ()| Ok(()),
+            )?,
         }
         Ok(Exit::Ok)
     }
@@ -433,11 +452,15 @@ pub fn lines(text: &crate::text::PageText, lines: &[Vec<reading::Range>]) -> Vec
 }
 
 /// `text` without `--json`: each page, then a form feed.
+///
+/// The page's text through [`super::printable`]: it is the document's, and
+/// what it keeps of the control characters is the line breaks and the tabs.
+/// The form feed is this function's own and is added after.
 #[must_use]
 pub fn plain(report: &report::Text) -> String {
     let mut out = String::new();
     for page in &report.pages {
-        out.push_str(&page.text);
+        out.push_str(&super::printable(&page.text));
         if !page.text.is_empty() {
             out.push('\n');
         }

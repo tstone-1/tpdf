@@ -12,10 +12,12 @@
 //! **The writer is the save's.** The answers become `Plan::forms` over a plan
 //! that keeps every page as it is, and `save::write_copy` writes it --- the
 //! rewrite the application's *Save As* performs when a document carries form
-//! answers, in a worker, staged beside the output and renamed onto it. Then a
-//! fresh worker reads the written file's form, and every answered field must
-//! say what was asked and every other field what it said before; if not, the
-//! output is removed and the run fails with exit 4.
+//! answers, in a worker --- into a staging directory beside the output. Then a
+//! fresh worker reads the staged file's form, and every answered field must
+//! say what was asked and every other field what it said before. Only a copy
+//! that does is given the output's name (`pages::publish_copy`, the order every
+//! writing command keeps); if not, the run fails with exit 4 and whatever the
+//! output named before is as it was, `--force` or not.
 //!
 //! **A signed document is refused.** That writer is a full rewrite, which
 //! invalidates every existing signature --- the application warns before it
@@ -29,6 +31,7 @@ use std::path::{Path, PathBuf};
 
 use super::args::{lexically_same, unknown, value};
 use super::fields::{ask_form, grouped, kind, multiple, options, state_name, value_json, Grouped};
+use super::pages::{check_target, publish_copy, refused};
 use super::report::{self, FieldKind, Problem, ProblemKind, SCHEMA};
 use super::text::{declined, password, variable};
 use super::{json, opened, say, Env, Exit, Failure, Registered, Subcommand};
@@ -678,19 +681,6 @@ pub(super) fn read_values(values: &Values, noun: &str) -> Result<String, Failure
     Ok(text)
 }
 
-/// Removes a written output that is not to be kept, saying so if it cannot be.
-fn discard(output: &Path, err: &mut dyn Write, program: &str) {
-    if let Err(e) = std::fs::remove_file(output) {
-        say(
-            err,
-            &format!(
-                "{program}: {} could not be removed ({e}); it is not a correctly filled copy",
-                output.display()
-            ),
-        );
-    }
-}
-
 /// The session's three questions: the signatures, the page count, the form.
 fn read_input(
     session: &mut Session,
@@ -770,6 +760,58 @@ fn problems_out(
     count
 }
 
+/// Stages the filled copy, has its form read back, and gives it the output's
+/// name only when every field reads back as [`mismatches`] requires.
+///
+/// `write` and `reread` are the worker's two halves, handed in so that the
+/// order they are held to --- and what a read-back that disagrees leaves
+/// behind, which is nothing --- can be tested without a worker.
+#[allow(clippy::too_many_arguments)]
+pub(super) fn publish_filled(
+    fill: &Fill,
+    opened_as: &crate::fingerprint::Fingerprint,
+    resolved: &[Resolved],
+    before: &Form,
+    write: impl FnOnce(&Path) -> Result<(bool, ()), Failure>,
+    reread: impl FnOnce(&Path) -> Result<Form, Failure>,
+    out: &mut dyn Write,
+    err: &mut dyn Write,
+    program: &str,
+) -> Result<Form, Failure> {
+    let written = fill.output.display().to_string();
+    publish_copy(
+        std::slice::from_ref(&fill.input),
+        &[(fill.input.as_path(), opened_as)],
+        &fill.output,
+        fill.force,
+        write,
+        |staged, ()| {
+            let after = reread(staged).map_err(|failure| {
+                Failure::new(
+                    Exit::Internal,
+                    format!(
+                        "the filled copy could not be checked, so {written} was not written: {}",
+                        failure.message
+                    ),
+                )
+            })?;
+            let wrong = mismatches(resolved, before, &after);
+            if !wrong.is_empty() {
+                let count = problems_out(fill, wrong, out, err, program);
+                return Err(Failure::new(
+                    Exit::Internal,
+                    format!(
+                        "{count} field{} did not read back as filled, so {written} was not \
+                         written",
+                        if count == 1 { "" } else { "s" }
+                    ),
+                ));
+            }
+            Ok(after)
+        },
+    )
+}
+
 fn run_fill(
     env: &Env<'_>,
     fill: &Fill,
@@ -801,6 +843,8 @@ fn run_fill(
             ),
         ));
     }
+    // What --force does not replace: a link, a directory.
+    check_target(std::slice::from_ref(&fill.input), &fill.output, fill.force)?;
     let password = password(fill.password_env.as_deref())?;
     let answers = answers(&read_values(&fill.values, "answers")?)
         .map_err(|why| Failure::new(Exit::Refused, why))?;
@@ -831,63 +875,48 @@ fn run_fill(
         }
     };
 
-    let copied = crate::save::write_copy(
-        &fill.input,
-        &plan(pages, &resolved, opened_as),
-        &fill.output,
-        password.as_deref(),
-        &env.worker(),
-    )
-    .map_err(|refusal| Failure::new(Exit::Refused, format!("{shown}: {}", refusal.message)))?;
-    if copied.changed {
-        discard(&fill.output, err, &env.program);
-        return Err(Failure::new(
-            Exit::Refused,
-            format!("{shown} changed while it was being filled, so the copy was not kept"),
-        ));
-    }
-
-    // Read back by a fresh worker, through the handle of the file just written.
-    let written = fill.output.display().to_string();
-    let after = opened(&fill.output)
-        .map_err(|why| {
-            Failure::new(
-                Exit::Internal,
-                format!("the filled file was written and could not be reopened: {why}"),
+    let plan = plan(pages, &resolved, opened_as.clone());
+    let after = publish_filled(
+        fill,
+        &opened_as,
+        &resolved,
+        &before,
+        |staged| {
+            crate::save::write_copy(
+                &fill.input,
+                &plan,
+                staged,
+                password.as_deref(),
+                &env.worker(),
             )
-        })
-        .and_then(|(file, len)| {
+            .map(|copied| (copied.changed, ()))
+            .map_err(|refusal| {
+                if refusal.changed {
+                    return refused(refusal);
+                }
+                Failure::new(Exit::Refused, format!("{shown}: {}", refusal.message))
+            })
+        },
+        // Read back by a fresh worker, through the handle of the file just
+        // staged.
+        |staged| {
+            let (file, len) = opened(staged).map_err(|why| {
+                Failure::new(
+                    Exit::Internal,
+                    format!("it was written and could not be reopened: {why}"),
+                )
+            })?;
             let mut session = env
                 .worker()
                 .session(&file, len, password.as_deref())
-                .map_err(|why| declined(&written, why, password.is_some()))?;
-            ask_form(&mut session, &written, password.is_some())
-        });
-    let after = match after {
-        Ok(after) => after,
-        Err(failure) => {
-            discard(&fill.output, err, &env.program);
-            return Err(Failure::new(
-                Exit::Internal,
-                format!(
-                    "the filled file could not be checked, so it was removed: {}",
-                    failure.message
-                ),
-            ));
-        }
-    };
-    let wrong = mismatches(&resolved, &before, &after);
-    if !wrong.is_empty() {
-        discard(&fill.output, err, &env.program);
-        let count = problems_out(fill, wrong, out, err, &env.program);
-        return Err(Failure::new(
-            Exit::Internal,
-            format!(
-                "{count} field{} did not read back as filled, so {written} was removed",
-                if count == 1 { "" } else { "s" }
-            ),
-        ));
-    }
+                .map_err(|why| declined("the staged file", why, password.is_some()))?;
+            ask_form(&mut session, "the staged file", password.is_some())
+        },
+        out,
+        err,
+        &env.program,
+    )?;
+    let written = fill.output.display().to_string();
 
     let fields = read_back(&resolved, &after);
     if fill.json {

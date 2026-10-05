@@ -404,6 +404,44 @@ pub(super) fn operations(report: &mut Report) {
     } else {
         report.skip("encrypted page operations", "qpdf is not available");
     }
+    // --force replaces a regular file and nothing else: not a directory, and
+    // not whatever a link names, which the command line never did.
+    let directory = dir.join("a-directory");
+    std::fs::create_dir(&directory).expect("directory");
+    #[allow(unused_mut)]
+    let mut targets = vec![("a directory", directory)];
+    let victim = dir.join("victim.txt");
+    std::fs::write(&victim, b"not this run's").expect("victim");
+    #[cfg(unix)]
+    {
+        let link = dir.join("link.pdf");
+        std::os::unix::fs::symlink(&victim, &link).expect("link");
+        targets.push(("a link", link));
+    }
+    for (what, target) in &targets {
+        let (code, stdout, stderr) = tool(
+            &[
+                "extract",
+                &input,
+                "--pages",
+                "1",
+                "-o",
+                &s(target),
+                "--force",
+                "--json",
+            ],
+            &[],
+        );
+        report.check(
+            &format!("--force does not write onto {what} (3), and what it names is as it was"),
+            code == 3
+                && json(&stdout)["error"]["exit_code"] == 3
+                && stderr.contains("--force for a regular file")
+                && std::fs::read(&victim).ok().as_deref() == Some(b"not this run's".as_slice())
+                && target.symlink_metadata().is_ok_and(|data| !data.is_file()),
+            &format!("exit {code}: {stderr}"),
+        );
+    }
     report.check(
         "page operations leave the source unchanged and no staging files",
         std::fs::read(&source).unwrap() == original

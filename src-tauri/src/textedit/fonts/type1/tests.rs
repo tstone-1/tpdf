@@ -529,6 +529,78 @@ fn textedit_type1_interpreter_limits_have_boundary_controls() {
     }
 }
 
+// The operation budget counts operations, so it bounds the work only while an
+// operation costs a constant. A callsubr that decrypted its subroutine afresh
+// cost the subroutine's length instead: five thousand calls of a 60 KB Subr
+// stay inside the budget and decrypted 300 MB. Counted in bytes, not timed, and
+// counted where a copy without a decryption would show as well.
+#[test]
+fn a_glyph_that_calls_a_large_subroutine_many_times_is_parsed_in_bounded_work() {
+    const CALLS: usize = 5_000;
+    let mut font = Font::new();
+    // Returns at once; the rest is never executed and is only there to be long.
+    let mut large = vec![RETURN];
+    large.extend(vec![N(0); 60_000]);
+    font.subrs.push(large);
+    let mut ops = vec![N(0), N(500), HSBW];
+    for _ in 0..CALLS {
+        ops.extend([N(4), CALLSUBR]);
+    }
+    ops.push(ENDCHAR);
+    font.glyphs.push(("busy".into(), ops));
+
+    let (bytes, length1, length2) = font.program();
+    program::MADE_PLAIN.with(|total| total.set(0));
+    let parsed = program::parse(&bytes, length1, length2, 0).unwrap();
+    let made_plain = program::MADE_PLAIN.with(std::cell::Cell::get);
+
+    // The glyph has to be followed to its end, or a refusal would pass this.
+    assert_eq!(parsed.glyphs[b"busy".as_slice()].width, 500.);
+    // Each Subr and each charstring once, and they all lie inside the private
+    // part. Per call it was four thousand times the stream.
+    assert!(
+        made_plain <= length2,
+        "{made_plain} bytes made plain for a private part of {length2}"
+    );
+    // The control: the counter counts. The long Subr alone is 60 KB.
+    assert!(made_plain >= 60_000, "{made_plain}");
+}
+
+// Subrs are decrypted when the font is read, and one shorter than lenIV has
+// no plaintext. That fails the glyph that calls it and nothing else.
+#[test]
+fn a_subr_shorter_than_leniv_fails_only_the_glyph_that_calls_it() {
+    let mut font = Font::new();
+    font.subrs.push(vec![RETURN]);
+    font.glyphs.push((
+        "calls".into(),
+        vec![N(0), N(500), HSBW, N(4), CALLSUBR, ENDCHAR],
+    ));
+    let whole = program::encrypt(&[7, 7, 7, 7, 11], 4330);
+    let entry = |bytes: &[u8]| {
+        [
+            format!("dup 4 {} RD ", bytes.len()).as_bytes(),
+            bytes,
+            b" NP",
+        ]
+        .concat()
+    };
+    let parsed = |short: bool| {
+        let (bytes, length1, length2) = font.program_with(|private| {
+            if short {
+                swap(private, &entry(&whole), &entry(&whole[..2]))
+            } else {
+                private
+            }
+        });
+        program::parse(&bytes, length1, length2, 0).unwrap()
+    };
+    assert!(parsed(false).glyphs.contains_key(b"calls".as_slice()));
+    let short = parsed(true);
+    assert!(!short.glyphs.contains_key(b"calls".as_slice()));
+    assert!(short.glyphs.contains_key(b"A".as_slice()));
+}
+
 #[test]
 fn textedit_type1_program_refuses_what_it_cannot_read_literally() {
     let refused = |font: &Font| assert!(parse(font).is_err());

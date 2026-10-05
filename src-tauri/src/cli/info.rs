@@ -69,7 +69,7 @@ pub fn parse(args: &[String]) -> Result<Info, String> {
             (false, flag) if flag.starts_with('-') && flag != "-" => {
                 return Err(unknown("info", flag))
             }
-            (_, path) => files.push(PathBuf::from(path)),
+            (after, path) => files.push(super::args::operand(after, path)),
         }
     }
     if files.is_empty() {

@@ -333,6 +333,9 @@ rather than the account.** `docs/RATIONALE.md` has the full version of every one
   CI action installing its own toolchain may set.
 - `pdfium` — the pin was checked against a digest the installer wrote, and the only fact it
   had about the tree was that *something* named `*pdfium*` existed.
+- `subsystems` — the section titles of `docs/SUBSYSTEMS.md` against their index in `AGENTS.md`,
+  as sets both ways and in order. Six sections had been added to the file without a line in
+  the index, which nothing reported.
 - `traps` — `docs/TRAPS.md`'s table of contents against its own `### ` entries, diffed as
   sets both ways, because a tally can be right while the index is three entries short. Since
   2026-08-31 it also holds a bullet to its title, since 2026-09-06 the thirteen group names

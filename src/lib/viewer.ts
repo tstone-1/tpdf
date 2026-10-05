@@ -2796,6 +2796,23 @@ export class Viewer {
     this.closeComment();
     this.turnedLinks = null;
 
+    // Two things a reader has made and not yet handed over are kept under a
+    // slot as well, and they are followed rather than dropped: the strokes are
+    // still on the page they were drawn on, and the picked marks are still
+    // picked. Only when that page is the one that went is there nothing left to
+    // follow. {@link finishDrawing} reads the slot to name the page by id, and
+    // a press with Shift compares it, so an old number in either is another
+    // page's.
+    const drawing = this.inking;
+    if (drawing) {
+      const slot = after.slotFrom(before, drawing.slot);
+      if (slot === undefined) this.inking = null;
+      else drawing.slot = slot;
+    }
+    const picked = this.arranging.count;
+    this.arranging.repage((slot) => after.slotFrom(before, slot));
+    if (this.arranging.count !== picked) this.opts.onPicked?.(this.arranging.count);
+
     // The slot the page the reader was on has moved to, or --- if that is the
     // page they just deleted --- the slot number they were on, which now holds
     // whatever followed it.
@@ -4870,7 +4887,9 @@ export class Viewer {
     // A page that went while the drawing was being made --- deleted from under
     // it, or the document replaced. The strokes are dropped rather than sent to
     // whatever moved into that slot, which is the same reasoning `Annotate`
-    // carries a page *id* for.
+    // carries a page *id* for. {@link setPages} is what keeps the slot read
+    // above on the page that was drawn on, and drops the drawing with its page;
+    // this is what is left for a slot that is in no document at all.
     if (id === undefined) return;
     this.opts.onDrawn?.(
       "ink",
@@ -5884,6 +5903,10 @@ export class Viewer {
     const slots = [...new Set(halves.map((half) => half.slot))].sort(
       (a, b) => a - b,
     );
+    // The order the matches were filed under. A match names a slot, and the
+    // text of that slot is asked for before the wait and its page's id read
+    // after it.
+    const pages = this.pages;
 
     const out: { page: PageId; quads: number[] }[] = [];
     for (let at = 0; at < slots.length; at += COPY_CHUNK) {
@@ -5893,11 +5916,18 @@ export class Viewer {
           text: await this.loadUnturnedOn(slot),
         })),
       );
+      // The pages were edited while this was in flight, so a slot is no longer
+      // the page its text was read from: one deleted or moved above it puts
+      // another page's id beside these rectangles. Reported rather than
+      // translated, for the same reason an unreadable page is --- the matches
+      // themselves are slots of the order that has gone. The order and not the
+      // map, which {@link adoptCrops} compares: a turn or a crop replaces the
+      // map and leaves every page in its slot, and refusing for one would say
+      // a page could not be read when all of them were.
+      if (!this.pages.sameOrder(pages)) return null;
       for (const { slot, text } of chunk) {
         if (!text) return null;
-        const id = this.pages.idOf(slot);
-        // The page went out of the document while this was in flight. Reported
-        // rather than skipped, for the same reason an unreadable one is.
+        const id = pages.idOf(slot);
         if (id === undefined) return null;
         const quads: number[] = [];
         for (const half of halves) {

@@ -7,26 +7,25 @@ Personal cross-repo policy (git workflow, account enforcement, quality gates, pe
 notes) lives in `tstone-1/agent-memory` and is **not** repeated here. This file records
 only what is true of tpdf specifically.
 
-Five things this file does *not* carry in full. The trap list lives in
-[`docs/TRAPS.md`](docs/TRAPS.md) and is indexed by title below; the worked-out account behind
-each rule — the measurements, what they cost, and which earlier sentence they corrected —
-lives in [`docs/RATIONALE.md`](docs/RATIONALE.md), which the three long sections here point at.
-What the text editor admits is [`docs/TEXTEDIT.md`](docs/TEXTEDIT.md), and signatures, forms,
-tabs and the worker's writers and readers are [`docs/SUBSYSTEMS.md`](docs/SUBSYSTEMS.md); both
-moved out of *Stack* on 2026-09-24, when this file and the global instructions together were
-twice the load budget, and *Stack* indexes both. The long-form paragraphs of *Every PDF is
-hostile input*, *Stack*, *Quality gates* and *Known traps* are in
-[`docs/DETAIL.md`](docs/DETAIL.md), moved the same day for the same reason, with a pointer left
-where each stood. None is auto-loaded, on purpose, and the
-indexes exist so that the decision to read an entry is an informed one rather than a guess.
-Code comments and the other documents say "`AGENTS.md` records ..." in about a hundred places;
-those references were written when all of it lived here and are still good in one hop — read
-them as naming whichever of these files carries the paragraph.
+Six files hold what this file does *not* carry in full. None is auto-loaded, on purpose; the
+indexes here exist so that the decision to read an entry is an informed one, not a guess.
+
+- [`docs/TRAPS.md`](docs/TRAPS.md): the trap list, indexed by group below.
+- [`docs/RATIONALE.md`](docs/RATIONALE.md): the worked-out account behind each rule — the
+  measurements, what they cost, and which earlier sentence they corrected.
+- [`docs/TEXTEDIT.md`](docs/TEXTEDIT.md): what the text editor admits.
+- [`docs/SUBSYSTEMS.md`](docs/SUBSYSTEMS.md): signatures, forms, tabs and the worker's writers
+  and readers. *Stack* indexes these two.
+- [`docs/DETAIL.md`](docs/DETAIL.md): the long-form paragraphs of *Every PDF is hostile input*,
+  *Stack*, *Quality gates* and *Known traps*.
+- [`docs/VERIFICATION.md`](docs/VERIFICATION.md): the per-feature verification records.
+
+Code comments and other documents say "`AGENTS.md` records ..." in about 100 places;
+read them as naming whichever of these files carries the paragraph.
 
 No count of the entries is written here. The authority is `grep -c '^### ' docs/TRAPS.md`, the
-*titles* have a gate behind them (`traps` in `scripts/gates.py`, which diffs the two sets), and
-a count in prose has none — which is the whole reason the gate compares sets rather than
-totals, and why three copies of that number here once said 275 and 282 at once.
+*titles* have a gate behind them (`traps` in `scripts/gates.py`, a set diff), and
+a count in prose has none: three copies of that number once said 275 and 282 at once.
 
 ## What tpdf is
 
@@ -44,6 +43,9 @@ Three non-negotiable properties, in priority order:
 2. **Discoverable.** Every command reachable in two keystrokes via the command palette.
 3. **Capable.** Annotations, page operations, forms, signatures, true redaction, and
    eventually in-place text editing.
+
+It also ships `tpdf`, a command-line tool for the same work without the window, with JSON
+reports, and a Python client in `api/python`.
 
 Sibling projects built on the same reasoning: `screenpick` (screenshot tools were
 bloated), `dblitz` (DB Browser for SQLite was missing things).
@@ -144,7 +146,7 @@ boundaries, each threat against the evidence that it is handled, the sandbox pro
 full, and the residual risks in one list. Every claim there is either measured with the
 spike named, or marked untested — keep it that way when adding to it.
 
-The account behind this section — what was measured, what it cost, and which earlier sentence it corrected — is [`docs/RATIONALE.md`](docs/RATIONALE.md) *The process boundary, rung by rung*. That file is not auto-loaded, on the same reasoning as `docs/TRAPS.md`.
+The account behind this section: [`docs/RATIONALE.md`](docs/RATIONALE.md) *The process boundary, rung by rung*.
 
 ---
 
@@ -184,16 +186,28 @@ touching `src-tauri/src/textedit/`. Its topics, in order:
 - `cm` inside a text block, the 1e-6 ink allowance, untagged StructParents, patterns, skewed text.
 - PowerPoint exports.
 
-**Signatures, forms, tabs and the worker's writers and readers are in
-[`docs/SUBSYSTEMS.md`](docs/SUBSYSTEMS.md).** Its topics, in order:
+**[`docs/SUBSYSTEMS.md`](docs/SUBSYSTEMS.md)** has these sections. Each bullet begins with a
+`## ` title there, in order; the `subsystems` gate holds the two equal.
+<!-- subsystems-index -->
 
-- Visual signatures and their Keychain/DPAPI store; the digital-signature warning before any write.
-- Certificate signing: the worker/app split, `sign_prepare.rs`, `sign_cms.rs`, `keystore.rs`; the OS trust check, `trust.rs`.
-- AcroForm filling (`forms.rs`) and choice answers by option index.
-- Document tabs (`documenttabs.ts`), and two Windows worker-cleanup rules.
-- The worker writes with `lopdf`: append, rewrite, copies, print, merge, and `verify::scan`.
-- Password-protected documents: opening, holding the password, saving, every `lopdf` parse taking it.
-- Comments, links and properties are read through `lopdf`; PDFium paints the marks.
+- Signatures, forms and tabs: visual signatures and their Keychain/DPAPI store; the digital-signature warning before any write; certificate signing: the worker/app split, `sign_prepare.rs`, `sign_cms.rs`, `keystore.rs`, timestamps, long-term data; the OS trust check (`trust.rs`); AcroForm filling (`forms.rs`), choice answers by option index, new fields (`formfields.rs`); `documenttabs.ts`; two Windows worker-cleanup rules.
+- What the worker writes and reads, and the password: `lopdf` append, rewrite, copies, print, merge, `verify::scan`; opening, holding the password, saving, every `lopdf` parse taking it; comments, links and properties read through `lopdf`; PDFium paints the marks.
+- A document made from pictures.
+- Setting and removing a password.
+- A smaller copy.
+- A text layer over a scanned page.
+- Drawings under a redaction.
+- A signature image from a file.
+
+**The command-line tool** is `cli/` and a second binary, `bin/tpdf-cli.rs`, in `src-tauri/src/`.
+A subcommand is one module and one line in `COMMANDS` (`cli.rs`, *Adding a command*). Every
+command reaches a document through a sandboxed worker (`Env::worker`) and never parses
+in-process. `--json` output is a contract, `report::SCHEMA`: the samples in
+`src-tauri/testdata/cli/`, regenerated with `TPDF_CLI_SAMPLES=write`, are held against
+`README.md` and the Python types (`api/python/test_reports.py`). Three algorithms exist in Rust
+and TypeScript (`words.rs`, `reading.rs`, `cli/regions.rs`), and
+`src/lib/cli{wording,reading,regions}.test.ts` hold each to its original through the samples.
+Commands: `BUILD.md`, *The command-line tool*.
 
 The **shell is settled**, and since 2026-07-27 so is the **PDF layer** — Phase 0 proved
 each provisional choice and the verdict is recorded per row (see `docs/PLAN.md` §9).
@@ -235,7 +249,8 @@ heavy work while the webview does the UI.
 **Dependencies beyond the table** — the two search crates, the certificate and XMP readers, the signature checkers,
 `fax`, and the four Tauri plugins — are listed with their licences and package costs in
 [`docs/DETAIL.md`](docs/DETAIL.md) *Stack*. The network authorities are two: `tauri-plugin-updater`,
-and `tsa.rs` when a signing asks for a timestamp (`docs/THREAT-MODEL.md` §T9, §T10). Check every new dependency against the
+and signing, which asks a timestamp authority (`tsa.rs`) and, for long-term signing, the OCSP
+and CRL hosts the certificates name (`longterm.rs`); `docs/THREAT-MODEL.md` §T9, §T10. Check every new dependency against the
 licensing constraint with `cargo metadata` over the whole tree, never from its README.
 
 ### What each library is, and is not
@@ -263,7 +278,7 @@ It remains useful as a *behavioural oracle* to test against.
 
 Pure-Rust renderers were considered and are not yet ready to be the primary engine.
 
-The account behind this section — what was measured, what it cost, and which earlier sentence it corrected — is [`docs/RATIONALE.md`](docs/RATIONALE.md) *The PDF layer: what each dependency cost to settle*. That file is not auto-loaded, on the same reasoning as `docs/TRAPS.md`.
+The account behind this section: [`docs/RATIONALE.md`](docs/RATIONALE.md) *The PDF layer: what each dependency cost to settle*.
 
 ---
 
@@ -370,7 +385,7 @@ Every *measurement* in this file is macOS arm64 unless it says otherwise. The tw
 platforms differ enough — on pre-spawn cost, on render constants — that carrying a macOS
 number over is a guess rather than an estimate, so a Windows figure is always labelled.
 
-The account behind this section — what was measured, what it cost, and which earlier sentence it corrected — is [`docs/RATIONALE.md`](docs/RATIONALE.md) *The gates, one at a time*. That file is not auto-loaded, on the same reasoning as `docs/TRAPS.md`.
+The account behind this section: [`docs/RATIONALE.md`](docs/RATIONALE.md) *The gates, one at a time*.
 
 ---
 
@@ -413,15 +428,10 @@ The thirteen groups, and when each is worth opening:
   or the threat model, where the prose is itself a control something else is checked against.
 
 New traps go in `docs/TRAPS.md` in one commit: the entry under a `### ` heading, and its title
-verbatim as a bullet under the matching `## ` group in that file's table of contents. That rule
-has a gate behind it: `traps` in `scripts/gates.py` diffs the two as **sets**, both ways, and
-fails on either side having something the other lacks. It also refuses a bullet that carries a
-parenthetical gloss — a bullet is the title and nothing else, unless the title is named in
-the checker's `ALLOWED_PARENTHETICAL`, which holds one, the title that is actively wrong about
-its own subject. A gloss that restates the entry does not qualify: the warning that a title can
-mislead is three paragraphs up, where it covers every entry at no cost per entry. And it holds
-the thirteen group names above against the `## ` groups over there, both ways, so a group
-cannot be added on one side alone.
+verbatim as a bullet under the matching `## ` group in that file's table of contents. The
+`traps` gate diffs the two as **sets**, both ways. It refuses a bullet
+with a parenthetical gloss, unless the checker's `ALLOWED_PARENTHETICAL` names the
+title, and it holds the thirteen group names above against the `## ` groups there, both ways.
 
 ## Repository facts
 

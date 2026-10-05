@@ -10,7 +10,7 @@ from unittest.mock import patch
 
 from check_packaged_api import ROOT, RUN_SUITE, one
 from check_workflow_parity import packaged_api
-from publish_release import PACKAGE_STEP, PLATFORMS, require_passed
+from publish_release import PACKAGE_STEP, PLATFORMS, require_audited, require_passed
 import publish_release
 
 
@@ -103,8 +103,36 @@ class PackageGateTests(unittest.TestCase):
             with self.assertRaises(RuntimeError):
                 require_passed(wrong, 'v26.9.22', 'abc')
 
+    def test_publish_guard_requires_the_newest_audit_run_to_have_passed(self):
+        green = dict(databaseId=7, headSha='abc', event='push', status='completed',
+                     conclusion='success', createdAt='2026-09-29T10:00:00Z')
+        self.assertEqual(require_audited([green], 'abc')['databaseId'], 7)
+        later = dict(green, databaseId=8, event='schedule', createdAt='2026-09-30T06:17:00Z')
+        # A later green run is the one reported; an older red one does not refuse.
+        self.assertEqual(
+            require_audited([dict(green, conclusion='failure'), later], 'abc')['databaseId'], 8)
+        refused = [
+            [],
+            [dict(green, headSha='other')],
+            [dict(green, event='pull_request')],
+            [dict(green, status='in_progress', conclusion=None)],
+            [dict(green, status='queued', conclusion='')],
+            [dict(green, conclusion='failure')],
+            [dict(green, conclusion='cancelled')],
+            # A newer run overrules an older green one, whatever started it.
+            [green, dict(later, conclusion='failure')],
+            [green, dict(later, status='in_progress', conclusion=None)],
+        ]
+        for runs in refused:
+            with self.subTest(runs=runs), self.assertRaises(RuntimeError):
+                require_audited(runs, 'abc')
+        # An unfinished run is named as unfinished, also when GitHub already
+        # reports a conclusion for it.
+        with self.assertRaisesRegex(RuntimeError, 'not finished'):
+            require_audited([dict(green, status='in_progress')], 'abc')
+
     def test_publish_entry_point_calls_the_guard_before_mutating(self):
-        for mode in ['passed', 'failed', 'moved', 'dry-run']:
+        for mode in ['passed', 'failed', 'moved', 'dry-run', 'unaudited', 'audit-red']:
             calls = []
             reads = 0
             def fake_gh(*args):
@@ -114,6 +142,12 @@ class PackageGateTests(unittest.TestCase):
                     reads += 1
                     sha = 'moved' if mode == 'moved' and reads == 2 else 'abc'
                     return dict(object=dict(type='commit', sha=sha))
+                if args[:2] == ('run', 'list') and 'audit.yml' in args:
+                    if mode == 'unaudited':
+                        return []
+                    return [dict(databaseId=3, headSha='abc', event='push', status='completed',
+                                 conclusion='failure' if mode == 'audit-red' else 'success',
+                                 createdAt='2026-09-29')]
                 if args[:2] == ('run', 'list'):
                     return [dict(databaseId=1, headBranch='v26.9.22', createdAt='2026-09-29')]
                 if args[:2] == ('run', 'view'):
@@ -133,7 +167,7 @@ class PackageGateTests(unittest.TestCase):
                 argv.append('--publish')
             with self.subTest(mode=mode), patch.object(publish_release, 'gh', fake_gh), \
                     patch.object(sys, 'argv', argv), patch('builtins.print'):
-                if mode in ['failed', 'moved']:
+                if mode in ['failed', 'moved', 'unaudited', 'audit-red']:
                     with self.assertRaises(RuntimeError):
                         publish_release.main()
                 else:

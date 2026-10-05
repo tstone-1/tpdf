@@ -839,7 +839,7 @@ MUTATIONS = [
     Mutation("block drawing: count a rule two regions cross as two cuts", "src/redact.rs", "        paths.sort_unstable();\n        paths.dedup();\n        paths.len()\n    }\n\n    /// Whether nothing is asked for.", "        paths.len()\n    }\n\n    /// Whether nothing is asked for.", "the_pages_plan_carries_the_forms_drawings_of_every_region"),
     Mutation("block drawing: plan the change and not make it", "src/save.rs", "        for at in with_drawings {", "        for at in Vec::<usize>::new() {", "a_planned_removal_takes_and_cuts_drawings_in_each_block_it_names_and_in_no_other"),
     Mutation("block drawing: take one block's removals out of every block", "src/save.rs", "                .filter(|(form, _)| *form == at)", "                .filter(|_| true)", "a_planned_removal_takes_and_cuts_drawings_in_each_block_it_names_and_in_no_other"),
-    Mutation("block drawing: ask the fill pass to make the change again", "src/redaction_fill.rs", "                mapped.form_paths = crate::redact::FormPathsPlanned::default();\n", "", "maps_reordered_pages_without_reapplying_turns_crops_or_removals"),
+    Mutation("block drawing: ask the fill pass to make the change again", "src/redaction_fill.rs", "                    form_paths: crate::redact::FormPathsPlanned::default(),\n", "                    form_paths: redaction.form_paths.clone(),\n", "maps_reordered_pages_without_reapplying_turns_crops_or_removals"),
     Mutation("arrange: move the marks before one that is then refused", "src/edits.rs", "            model\n                .can_reshape(id, quad_of(placement.rect))\n                .map_err(describe)?;\n", "", "an_arrangement_that_cannot_be_made_whole_moves_nothing"),
     Mutation("arrange: make a field smaller than a field may be", "src/edits.rs", "            field_fits(model, id, placement.rect)?;\n", "", "an_arrangement_that_cannot_be_made_whole_moves_nothing"),
     Mutation("arrange: place one mark twice", "src/edits.rs", "            if seen.contains(&placement.mark) {", "            if false {", "an_arrangement_that_cannot_be_made_whole_moves_nothing"),
@@ -863,7 +863,8 @@ MUTATIONS = [
     Mutation("field edit: hold a field's old name against a swap", "src/formedit.rs", "            !removed_fields.contains(&other) && names.get(&other).unwrap_or(&has) == name", "            !removed_fields.contains(&other) && has == *name", "a_rename_gives_the_field_its_name_and_two_fields_can_swap"),
     Mutation("field edit: give one field two names", "src/formedit.rs", "            if names.get(&widget.object).is_some_and(|other| other != name) {", "            if false {", "a_change_that_cannot_be_made_changes_nothing"),
     Mutation("field edit: take a name a field may not have", "src/formedit.rs", "            if let Some(why) = crate::formfields::name_problem(name) {\n                return Err(why);\n            }\n            if names", "            if names", "a_change_that_cannot_be_made_changes_nothing"),
-    Mutation("field edit: write the new name somewhere a reader does not look", "src/formedit.rs", "            .set(\"T\", crate::formfields::text(name));", "            .set(\"TU\", crate::formfields::text(name));", "a_rename_gives_the_field_its_name_and_two_fields_can_swap"),
+    Mutation("field edit: write the new name somewhere a reader does not look", "src/formedit.rs", "            .set(\"T\", forms::pdf_string(name));", "            .set(\"TU\", forms::pdf_string(name));", "a_rename_gives_the_field_its_name_and_two_fields_can_swap"),
+    Mutation("field edit: write the new name as bytes with no byte-order mark", "src/formedit.rs", "            .set(\"T\", forms::pdf_string(name));", "            .set(\"T\", Object::string_literal(name.as_str()));", "a_rename_to_a_name_outside_ascii_reads_back_as_that_name"),
     Mutation("field edit: take the field with the first of its widgets", "src/formedit.rs", "        if left > 0 {\n            return Ok(());\n        }\n", "", "a_removal_takes_the_widget_off_its_page_and_the_field_out_of_the_form"),
     Mutation("field edit: leave a removed field in the form's list", "src/formedit.rs", "    take(doc, &beside, gone).ok_or(\"the form's field list could not be changed\")?;\n", "", "a_removal_takes_the_widget_off_its_page_and_the_field_out_of_the_form"),
     Mutation("field edit: leave a removed widget on its page", "src/formedit.rs", "    take(doc, &annots, widget.widget).ok_or(\"the page's annotations could not be changed\")?;\n", "", "a_removal_takes_the_widget_off_its_page_and_the_field_out_of_the_form"),
@@ -1036,7 +1037,7 @@ MUTATIONS = [
     Mutation("block picture: leave block pictures out of the pictures summarised", "src/redact.rs", "            images: self.planned.images.len() + self.planned.form_images.len(),", "            images: self.planned.images.len(),", "the_pages_plan_carries_the_pictures_of_every_region_once"),
     Mutation("block picture: drop how many pictures each block holds", "src/redact.rs", "        form_image_objects = plan.form_image_objects.clone();\n", "", "the_pages_plan_carries_the_pictures_of_every_region_once"),
     Mutation("block picture: plan the removal and not make it", "src/save.rs", "        for (at, ordinal) in &redaction.form_images {\n            pictures_by_form.entry(*at).or_default().push(*ordinal);\n        }", "", "a_planned_removal_takes_a_picture_out_of_a_block_and_its_bytes_out_of_the_file"),
-    Mutation("block picture: ask the fill pass to remove them again", "src/redaction_fill.rs", "                mapped.form_images.clear();\n                mapped.form_image_objects.clear();\n", "", "maps_reordered_pages_without_reapplying_turns_crops_or_removals"),
+    Mutation("block picture: ask the fill pass to remove them again", "src/redaction_fill.rs", "                    form_images: Vec::new(),\n                    form_image_objects: Vec::new(),\n", "                    form_images: redaction.form_images.clone(),\n                    form_image_objects: redaction.form_image_objects.clone(),\n", "maps_reordered_pages_without_reapplying_turns_crops_or_removals"),
     Mutation("border: frame every text field", "src/formfields.rs", "            if field.border {", "            if true {", "a_text_field_asked_for_a_border_draws_one_and_declares_it"),
     Mutation("border: frame no text field", "src/formfields.rs", "            if field.border {", "            if false {", "a_text_field_asked_for_a_border_draws_one_and_declares_it"),
     Mutation("border: draw the line and not declare its colour", "src/formfields.rs", "                look.set(\"BC\", vec![Object::Integer(0)]);\n", "", "a_text_field_asked_for_a_border_draws_one_and_declares_it"),
@@ -1165,7 +1166,7 @@ MUTATIONS = [
     Mutation("new field: refuse a default as long as the limit", "src/formfields.rs", "    if max_length.is_some_and(|most| holds > most as usize) {", "    if max_length.is_some_and(|most| holds >= most as usize) {", "a_text_size_or_a_default_a_field_cannot_have_is_a_problem_and_nothing_is_written"),
     Mutation("new field: take a default longer than the limit", "src/formfields.rs", "    if max_length.is_some_and(|most| holds > most as usize) {", "    if max_length.is_some_and(|_| false) {", "a_text_size_or_a_default_a_field_cannot_have_is_a_problem_and_nothing_is_written"),
     Mutation("new field: find out at the drawing that a default does not fit", "src/formfields.rs", "                if let Some(why) = default_problem(field, rect, turns) {\n                    problems.push(why);\n                }", "                let _ = turns;", "a_text_size_or_a_default_a_field_cannot_have_is_a_problem_and_nothing_is_written"),
-    Mutation("new field: declare no text size", "src/formfields.rs", "            Some(size) => Object::String(\n                forms::sized_appearance(None, size),\n                lopdf::StringFormat::Literal,\n            ),", "            Some(_) => text(DEFAULT_APPEARANCE),", "a_field_is_made_with_its_text_size_and_holding_its_default_value"),
+    Mutation("new field: declare no text size", "src/formfields.rs", "            Some(size) => Object::String(\n                forms::sized_appearance(None, size),\n                lopdf::StringFormat::Literal,\n            ),", "            Some(_) => ascii(DEFAULT_APPEARANCE),", "a_field_is_made_with_its_text_size_and_holding_its_default_value"),
     Mutation("new field: write no default", "src/formfields.rs", "        widget.set(\"DV\", forms::pdf_string(default));", "", "a_field_is_made_with_its_text_size_and_holding_its_default_value"),
     Mutation("new field: leave a field with a default unanswered", "src/formfields.rs", "        append(doc, form, b\"Fields\", id)?;\n        answer_default(doc, id, field)?;", "        append(doc, form, b\"Fields\", id)?;", "a_field_is_made_with_its_text_size_and_holding_its_default_value"),
     Mutation("placed field: make it with no text size", "src/formfields.rs", "        text_size: placed.text_size,\n", "        text_size: None,\n", "a_placed_field_is_answered_with_its_default_once_it_is_on_its_page"),
@@ -3443,8 +3444,8 @@ MUTATIONS = [
         # no widget and refuses the fill after the words are gone.
         "redaction_fill: write the form answers again in the fill pass",
         "src/redaction_fill.rs",
-        "    result.forms.clear();",
-        "    // form answers kept",
+        "        // answer discarded.\n        forms: Vec::new(),",
+        "        // answer discarded.\n        forms: original.forms.clone(),",
         "the_fill_pass_writes_no_form_answer_a_second_time",
     ),
     Mutation(
@@ -3801,8 +3802,8 @@ MUTATIONS = [
         # named the deletion and missed the extract.
         "save: leave a dropped page's content in the file",
         "src/save.rs",
-        "    if !dropped.is_empty()\n        || moved\n        || redacted.annots > 0",
-        "    if false\n        \u0026\u0026 moved\n        || redacted.annots > 0",
+        "    if !dropped.is_empty()\n        || moved\n        || discarded > 0",
+        "    if false\n        \u0026\u0026 moved\n        || discarded > 0",
         "extracting_a_page_leaves_the_other_pages_out_of_the_file",
     ),
     Mutation(
@@ -3811,8 +3812,8 @@ MUTATIONS = [
         # fail, and without a control for it the condition above is decoration.
         "save: sanitize a plain copy as well as a save that removed something",
         "src/save.rs",
-        "    if !dropped.is_empty()\n        || moved\n        || redacted.annots > 0",
-        "    if dropped.is_empty()\n        || !moved\n        || true\n        || redacted.annots > 0",
+        "    if !dropped.is_empty()\n        || moved\n        || discarded > 0",
+        "    if dropped.is_empty()\n        || !moved\n        || true\n        || discarded > 0",
         "a_copy_that_drops_nothing_keeps_the_orphans_it_was_given",
     ),
     Mutation(
@@ -8825,9 +8826,95 @@ MUTATIONS += [
         # the defect `redact-apply-probe` found by grepping pixels.
         "image: leave the unlinked picture for the writer to emit",
         "src/save.rs",
-        "        || redacted.images > 0\n        || discarded > 0\n",
-        "        || discarded > 0\n",
+        "        || (job != Job::RedactionFill \u0026\u0026 !plan.redactions.is_empty())\n",
+        "",
         "a_rewrite_that_removed_a_picture_sweeps_it_out_of_the_file",
+    ),
+    Mutation(
+        # The same clause, for the carrier it was written for: text taken off a
+        # page of several streams leaves the old streams named by nothing, and
+        # without the sweep every removed glyph is written out beside a page
+        # that no longer draws it.
+        "redact: leave the streams a page of several was taken off in the file",
+        "src/save.rs",
+        "        || (job != Job::RedactionFill \u0026\u0026 !plan.redactions.is_empty())\n",
+        "",
+        "a_text_redaction_on_a_page_of_several_streams_leaves_none_of_them",
+    ),
+    Mutation(
+        # Point the page at one of the streams it had instead of the one that
+        # was written. The read back is what refuses: the page does not say
+        # what the removal wrote, so nothing may be reported removed.
+        "redact: leave a page of several streams naming one of the old ones",
+        "src/redact.rs",
+        "                .set(\"Contents\", fresh);\n",
+        "                .set(\"Contents\", streams[0]);\n",
+        "a_page_whose_contents_is_a_reference_to_an_array_loses_the_line_too",
+    ),
+    Mutation(
+        # Read a stream as far as it parses and write that back, which is what
+        # every removal did: whatever follows the first unreadable token leaves
+        # the page with the redaction.
+        "redact: write back a content stream that was read in part",
+        "src/redact.rs",
+        "    Content::decode_strict(data).map_err(|_| {",
+        "    Content::decode(data).map_err(|_| {",
+        "a_content_stream_that_does_not_parse_to_its_end_is_refused",
+    ),
+    Mutation(
+        # Compare a needle with the bytes a string is stored as and nothing
+        # else. A note quoting the removed line in UTF-16BE then reads as clean.
+        "verify: compare a needle with a text string's stored bytes only",
+        "src/verify.rs",
+        "            if !reads_as_stored(bytes) {",
+        "            if false {",
+        "a_needle_in_a_utf16_text_string_is_found",
+    ),
+    Mutation(
+        # Take a byte above the ASCII range for the character it is not. A name
+        # with an umlaut in it, stored in PDFDocEncoding, is then never decoded
+        # and never matches its UTF-8 needle.
+        "verify: take a PDFDocEncoded string for the text it holds",
+        "src/verify.rs",
+        "        .all(|byte| matches!(byte, 0x20..=0x7E | b'\\t' | b'\\n' | b'\\r'))",
+        "        .all(|byte| matches!(byte, 0x20..=0xFD | b'\\t' | b'\\n' | b'\\r'))",
+        "a_needle_outside_ascii_in_a_pdfdocencoded_string_is_found",
+    ),
+    Mutation(
+        # Scale a deflated picture whatever its parameters look like. An array
+        # of one, which `lopdf` does not read, leaves a TIFF predictor in the
+        # samples, and the picture stored is not the one the page drew.
+        "compress: scale a picture whose predictor was not undone",
+        "src/compress.rs",
+        "    if stored == Stored::Flate \u0026\u0026 !parms_are_read(dict) {",
+        "    if false {",
+        "a_deflated_picture_whose_predictor_would_not_be_undone_is_left",
+    ),
+    Mutation(
+        # Believe any number in the parameters, written in place or not.
+        "compress: read a predictor given by reference as none",
+        "src/compress.rs",
+        "            .all(|key| matches!(parms.get(key), Err(_) | Ok(Object::Integer(_)))),",
+        "            .all(|_| true),",
+        "a_deflated_picture_whose_predictor_would_not_be_undone_is_left",
+    ),
+    Mutation(
+        # Hand the fill pass the field changes the removal pass already made.
+        # A removed field is then looked for in a file that no longer has it,
+        # and the fill is refused after the content is gone.
+        "redaction_fill: change the form's fields again in the fill pass",
+        "src/redaction_fill.rs",
+        "        field_edits: Vec::new(),\n        new_fields: Vec::new(),\n        // Sorted",
+        "        field_edits: original.field_edits.clone(),\n        new_fields: Vec::new(),\n        // Sorted",
+        "a_redaction_beside_a_field_change_gets_its_black_fill",
+    ),
+    Mutation(
+        # And the fields it added, which the file it wrote already holds.
+        "redaction_fill: add the new fields again in the fill pass",
+        "src/redaction_fill.rs",
+        "        field_edits: Vec::new(),\n        new_fields: Vec::new(),\n        // Sorted",
+        "        field_edits: Vec::new(),\n        new_fields: original.new_fields.clone(),\n        // Sorted",
+        "the_fill_plan_carries_no_field_changes",
     ),
     Mutation(
         # Read the page even when no picture was marked. The correspondence
@@ -11159,8 +11246,8 @@ MUTATIONS += [
         # already gone.
         "redaction_fill: keep the other files in the fill pass's plan",
         "src/redaction_fill.rs",
-        "    result.sources.clear();\n    result.text_edits.clear();",
-        "",
+        "        sources: Vec::new(),\n        // Addressed by",
+        "        sources: original.sources.clone(),\n        // Addressed by",
         "the_fill_pass_names_no_other_file_and_no_text_edit",
     ),
     Mutation(
@@ -12812,7 +12899,7 @@ MUTATIONS += [
     ),
     Mutation(
         "cli: a word of the tool's own drifts from the application's",
-        "src/cli/words.rs",
+        "src/words.rs",
         '    "Whether that key belongs to the person the certificate names was not checked.";',
         '    "Whether this key belongs to the person the certificate names was not checked.";',
         "every_json_shape_and_the_wording_match_their_committed_samples",
@@ -13066,6 +13153,111 @@ MUTATIONS += [
         "std::fs::hard_link(staged, target).map_err(|e| e.to_string())",
         "std::fs::copy(staged, target).map(|_| ()).map_err(|e| e.to_string())",
         "publication_refuses_a_late_collision_and_cleans_only_owned_staging",
+    ),
+    Mutation(
+        "cli pages: let --force write through a link or onto a directory",
+        "src/cli/pages.rs",
+        "        if !metadata.is_file() || !force {",
+        "        if !force {",
+        "force_does_not_write_through_a_symlinked_or_directory_output",
+    ),
+    Mutation(
+        "cli publish: read back and publish a copy whose source changed during the write",
+        "src/cli/pages.rs",
+        "    let (changed, written) = write(staged)?;\n    if changed {",
+        "    let (changed, written) = write(staged)?;\n    if changed && false {",
+        "a_source_that_changed_during_the_write_publishes_nothing",
+    ),
+    Mutation(
+        "cli publish: publish a copy whose source changed while it was read back",
+        "src/cli/pages.rs",
+        "    let read = read_back(written)?;\n    unchanged(sources)?;\n",
+        "    let read = read_back(written)?;\n",
+        "a_source_that_changed_during_the_write_publishes_nothing",
+    ),
+    Mutation(
+        "cli publish: stage a copy of a source that had already changed",
+        "src/cli/pages.rs",
+        "    unchanged(sources)?;\n    let (changed, written) = write(staged)?;",
+        "    let (changed, written) = write(staged)?;",
+        "a_source_that_changed_during_the_write_publishes_nothing",
+    ),
+    Mutation(
+        "cli publish: advise about edits a command line does not have",
+        "src/cli/pages.rs",
+        "        opened_as.compare_deeply(path).map_err(|fact| {",
+        "        opened_as.agrees_with(path).map_err(|fact| {",
+        "a_source_that_changed_during_the_write_publishes_nothing",
+    ),
+    Mutation(
+        "cli publish: pass on the advice the writer gives a reader with a window",
+        "src/cli/pages.rs",
+        "    if why.changed {\n        source_changed()",
+        "    if why.changed && false {\n        source_changed()",
+        "a_source_that_changed_during_the_write_publishes_nothing",
+    ),
+    Mutation(
+        "cli fill: publish a copy whose fields do not read back as asked",
+        "src/cli/fill.rs",
+        "            if !wrong.is_empty() {",
+        "            if !wrong.is_empty() && false {",
+        "a_fill_that_does_not_read_back_leaves_an_existing_output_as_it_was",
+    ),
+    Mutation(
+        "cli: print a document's control characters to the terminal",
+        "src/cli.rs",
+        "    let acted_on = |c: char| c.is_control() && c != '\\n' && c != '\\t';",
+        "    let acted_on = |_: char| false;",
+        "plain_output_carries_no_escape_from_a_document_string",
+    ),
+    Mutation(
+        "cli: take --help or --json for the option when it is another option's value",
+        "src/cli/args.rs",
+        "        if takes_value(word) {\n            words.next();\n        }\n",
+        "        let _ = &takes_value;\n",
+        "a_help_or_json_word_that_is_an_options_value_is_the_value",
+    ),
+    Mutation(
+        "cli: read standard input for a `-` after the separator",
+        "src/cli/args.rs",
+        '    if after_separator && word == "-" {',
+        '    if after_separator && word == "-" && false {',
+        "a_dash_after_the_separator_is_a_file_and_not_standard_input",
+    ),
+    Mutation(
+        "cli compress: take one name for the preview and the output",
+        "src/cli/compress.rs",
+        "            .is_some_and(|output| lexically_same(output, preview))",
+        "            .is_some_and(|output| false && lexically_same(output, preview))",
+        "an_output_that_names_another_file_of_the_line_is_refused",
+    ),
+    Mutation(
+        "cli compress: replace the preview under another name",
+        "src/cli/compress.rs",
+        "                .is_some_and(|output| save::same_file(output, preview))",
+        "                .is_some_and(|output| false && save::same_file(output, preview))",
+        "an_output_that_names_another_file_of_the_line_is_refused",
+    ),
+    Mutation(
+        "cli edit: take the plan file's name for the output",
+        "src/cli/edit.rs",
+        "        && lexically_same(Path::new(&command.request), &command.output)",
+        "        && false\n        && lexically_same(Path::new(&command.request), &command.output)",
+        "an_output_that_names_another_file_of_the_line_is_refused",
+    ),
+    Mutation(
+        "cli edit: replace the plan file under another name",
+        "src/cli/edit.rs",
+        'if self.request != "-" && crate::save::same_file(',
+        'if self.request != "-" && false && crate::save::same_file(',
+        "an_output_that_names_another_file_of_the_line_is_refused",
+    ),
+    Mutation(
+        "cli text: let --force write through a link or onto a directory",
+        "src/cli/text.rs",
+        "            check_target(std::slice::from_ref(&self.input), output, self.force)?;\n",
+        "",
+        "text_does_not_write_through_a_link_or_onto_a_directory",
     ),
     # `tpdf info` and `tpdf text`. What needs a worker --- the locked answer
     # reaching `verify` and `info` as `locked`, the password crossing to the
@@ -13533,7 +13725,7 @@ MUTATIONS += [
     ),
     Mutation(
         'cli: redact words an unverified copy as verified',
-        'src/cli/words.rs',
+        'src/words.rs',
         '    let verdict = if verified {',
         '    let verdict = if true {',
         'every_json_shape_and_the_wording_match_their_committed_samples',
@@ -14166,8 +14358,8 @@ MUTATIONS += [
     Mutation(
         "longterm: take no issuer from the OS chain",
         "src/longterm.rs",
-        "        for found in os_chain(&der, &known.clone()) {",
-        "        for found in Vec::<Vec<u8>>::new() {",
+        "            above_signer.extend(os_chain(&der, &in_signature));",
+        "            above_signer.extend(os_chain(&der, &in_signature).into_iter().take(0));",
         "an_issuer_nowhere_to_be_found_is_refused",
     ),
     Mutation(
@@ -14302,8 +14494,8 @@ MUTATIONS += [
         # is offered one without the data.
         "sign: hold a revoked signature for writing without the data",
         "src/commands/sign.rs",
-        "            Err(why) if why.revoked() => {",
-        "            Err(why) if false => {",
+        "        Err(Stopped::Unextended { why, .. }) if why.revoked() => {",
+        "        Err(Stopped::Unextended { why, .. }) if false => {",
         "a_revoked_certificate_is_refused_and_nothing_is_held",
     ),
     Mutation(
@@ -14338,7 +14530,7 @@ MUTATIONS += [
 
 # --- the whole chain, read (2026-09-28) --------------------------------------
 #
-# `revocation/chain.rs`, `docinfo.rs`, `cli/verify.rs`, `cli/words.rs` and
+# `revocation/chain.rs`, `docinfo.rs`, `cli/verify.rs`, `words.rs` and
 # `longterm.rs`: the reader judging every certificate above the signer's and
 # the authority's. Each removes one rule of the walk or the combination, and
 # names the test built so only that rule fails it.
@@ -14438,21 +14630,21 @@ MUTATIONS += [
     ),
     Mutation(
         "cli: say the attested moment after the reason again",
-        "src/cli/words.rs",
+        "src/words.rs",
         '            "not trusted{judged} — {why}. So nothing establishes that the key belongs to the \\',
         '            "not trusted — {why}{judged}. So nothing establishes that the key belongs to the \\',
         "every_json_shape_and_the_wording_match_their_committed_samples",
     ),
     Mutation(
         "cli: hide that an untrusted authority was judged at the archive's moment",
-        "src/cli/words.rs",
+        "src/words.rs",
         '            format!("not trusted{judged} — {why}. So nothing establishes who attests this time.")',
         '            format!("not trusted — {why}. So nothing establishes who attests this time.")',
         "every_json_shape_and_the_wording_match_their_committed_samples",
     ),
     Mutation(
         "chain: name the leaf when an issuing certificate decides",
-        "src/cli/words.rs",
+        "src/words.rs",
         "                    &issuing_certificate(judged)\n                )\n            ),",
         "                    leaf_holder(authority)\n                )\n            ),",
         "every_json_shape_and_the_wording_match_their_committed_samples",
@@ -14595,9 +14787,25 @@ MUTATIONS += [
     Mutation(
         "longterm: gather for an authority nobody vouched for",
         "src/longterm.rs",
-        "    vouched(cms, now, vouch)?;",
-        "    let _ = vouch;",
+        "    let vouched_chain = vouched(cms, now, vouch)?;",
+        "    let vouched_chain = vouched(cms, now, vouch).unwrap_or_default();",
         "an_authority_this_computer_does_not_trust_is_refused_before_anything_is_fetched",
+    ),
+    Mutation(
+        # A certificate added to the token's set, which passes for an issuer
+        # by name and key and is on no chain the store accepted.
+        "longterm: take a link the authority was not vouched for by",
+        "src/longterm.rs",
+        "            if at > 0 && !admitted.contains(&der) {",
+        "            if false {",
+        "a_certificate_injected_into_the_token_is_never_asked_about",
+    ),
+    Mutation(
+        "trust: hand back the chain of an answer that is not trusted",
+        "src/trust.rs",
+        "    if trust.standing != Standing::Trusted {\n        chain.clear();",
+        "    if false {\n        chain.clear();",
+        "a_chain_is_handed_back_only_with_a_trusted_answer",
     ),
     Mutation(
         "longterm: take an authority the store could not judge as vouched for",
@@ -14642,26 +14850,157 @@ MUTATIONS += [
         "a_long_term_failure_of_tpdfs_own_is_4_and_every_refusal_3",
     ),
     Mutation(
-        "cli: read back only the signer's revocation after long-term signing",
-        "src/cli/sign.rs",
-        "    }) && (!long_term || crate::longterm::check(signatures, field).is_ok())",
-        "    }) && (!long_term\n"
-        "        || signatures.iter().any(|s| {\n"
-        "            s.field == field\n"
-        "                && s.revocation\n"
-        "                    .as_ref()\n"
-        "                    .is_some_and(|r| r.standing == crate::revocation::Status::Good)\n"
-        "        }))",
+        # The rule is the window's too since the two share one tail, and lives
+        # beside it.
+        "sign: read back only the signer's revocation after long-term signing",
+        "src/commands/sign.rs",
+        "        if let Err(why) = crate::longterm::check(signatures, field) {",
+        "        if let Err(why) = crate::longterm::check(signatures, field).or_else(|why| {\n"
+        "            let signer_good = signatures.iter().any(|s| {\n"
+        "                s.field == field\n"
+        "                    && s.revocation\n"
+        "                        .as_ref()\n"
+        "                        .is_some_and(|r| r.standing == crate::revocation::Status::Good)\n"
+        "            });\n"
+        "            if signer_good { Ok(()) } else { Err(why) }\n"
+        "        }) {",
         "the_command_lines_read_back_asks_what_the_check_before_writing_asks",
+    ),
+    Mutation(
+        "sign: take a timestamp that did not read back as written",
+        "src/commands/sign.rs",
+        "    if timestamp && !stamped {",
+        "    if false {",
+        "a_copy_that_does_not_read_back_as_written_is_refused_in_the_window_too",
+    ),
+    Mutation(
+        # The window's half of the one rule: a copy whose timestamp or
+        # long-term data did not read back is reported as signed.
+        "sign: report a copy that did not read back as signed, in the window",
+        "src/commands/sign.rs",
+        "            if let Some(why) = finished.read_back.sentence(&name, &finished.field) {",
+        "            if let Some(why) = None::<String> {",
+        "the_window_refuses_a_copy_whose_timestamp_did_not_read_back",
+    ),
+    Mutation(
+        # The order both paths share: written before the long-term data came.
+        "sign: write the signed copy before its long-term data is checked",
+        "src/commands/sign.rs",
+        "    let timestamped = cms.is_some();",
+        "    let timestamped = cms.is_some();\n    let _ = write(&bytes);",
+        "the_window_and_the_command_line_take_the_same_steps_in_the_same_order",
+    ),
+    Mutation(
+        "seal: index a document timestamp's revision by a range nobody checked",
+        "src/sign_cms.rs",
+        "    if !framed(range, built_against, update.len()) {",
+        "    if false {",
+        "a_document_timestamp_whose_range_does_not_frame_its_value_is_refused",
+    ),
+    Mutation(
+        # Substitution under a second certificate over the same key.
+        "integrity: call a signature intact under a certificate it does not name",
+        "src/integrity.rs",
+        "        if let Err(why) = token::binds_when_stated(attributes.as_ref(), certificate.as_deref()) {",
+        "        if let Err(why) = Ok::<(), Why>(()).and(Ok(drop((attributes, certificate)))) {",
+        "a_signature_naming_another_certificate_than_the_one_it_carries_is_not_intact",
+    ),
+    Mutation(
+        "integrity: require every signature to name its certificate",
+        "src/integrity/token.rs",
+        "    if !stated {\n        return Ok(());",
+        "    if false {\n        return Ok(());",
+        "a_signature_that_does_not_name_its_certificate_reads_as_before",
+    ),
+    Mutation(
+        "appendix: count only the page objects an append wrote",
+        "src/docinfo.rs",
+        "    touched.extend(pages_drawing_from(&whole, &changed));",
+        "    let _ = pages_drawing_from(&whole, &changed);",
+        "a_content_stream_replaced_after_signing_touches_its_page_and_no_other",
+    ),
+    Mutation(
+        "appendix: walk through a page to whatever names it",
+        "src/docinfo.rs",
+        "            if reaching.insert(*from) && !pages.contains(from) {",
+        "            if reaching.insert(*from) {",
+        "a_page_that_links_to_a_rewritten_page_is_not_touched_by_that",
+    ),
+    Mutation(
+        "appendix: walk on from a rewritten page to whatever names it",
+        "src/docinfo.rs",
+        "        .filter(|id| !pages.contains(id))",
+        "        .filter(|_| true)",
+        "a_page_that_links_to_a_rewritten_page_is_not_touched_by_that",
+    ),
+    Mutation(
+        # One branch written again would touch every page of the document.
+        "appendix: reach the pages beside a branch through a node's kids",
+        "src/docinfo.rs",
+        "        match (tree.contains(id), object.as_dict()) {",
+        "        match (false, object.as_dict()) {",
+        "a_branch_of_the_tree_rewritten_touches_only_the_pages_under_it",
+    ),
+    Mutation(
+        "appendix: ignore the resources a page inherits",
+        "src/docinfo.rs",
+        "const HANDED_DOWN: [&[u8]; 5] = [b\"Parent\", b\"Resources\", b\"MediaBox\", b\"CropBox\", b\"Rotate\"];",
+        "const HANDED_DOWN: [&[u8]; 5] = [b\"Parent\", b\"Parent\", b\"MediaBox\", b\"CropBox\", b\"Rotate\"];",
+        "what_a_page_inherits_touches_every_page_below_it",
+    ),
+    Mutation(
+        "appendix: look no further up the page tree than a page's own parent",
+        "src/docinfo.rs",
+        "const HANDED_DOWN: [&[u8]; 5] = [b\"Parent\", b\"Resources\", b\"MediaBox\", b\"CropBox\", b\"Rotate\"];",
+        "const HANDED_DOWN: [&[u8]; 5] = [b\"Resources\", b\"Resources\", b\"MediaBox\", b\"CropBox\", b\"Rotate\"];",
+        "what_a_page_inherits_touches_every_page_below_it",
+    ),
+    Mutation(
+        "appendix: miss a page taken out of the document",
+        "src/docinfo.rs",
+        "    out.pages_touched = touched.len() + moved;",
+        "    out.pages_touched = touched.len();",
+        "a_page_taken_out_of_the_document_is_counted",
+    ),
+    Mutation(
+        "cli: pass --strict whatever follows the last signature",
+        "src/cli/verify.rs",
+        "            && after.get(at).is_none_or(|after| *after == After::Unchanged)",
+        "            && after.get(at).is_none_or(|_| true)",
+        "strict_fails_a_signature_followed_by_a_rewritten_page",
+    ),
+    Mutation(
+        "cli: read an appendix nobody could read as nothing appended",
+        "src/cli/verify.rs",
+        "        Some(appendix) if appendix.unread => After::Unread,",
+        "        Some(appendix) if false && appendix.unread => After::Unread,",
+        "what_follows_the_last_intact_signature_is_judged_by_the_pages_it_touches",
+    ),
+    Mutation(
+        "cli: fail --strict for a field listed on a page",
+        "src/cli/verify.rs",
+        "                .saturating_sub(appendix.pages_listing.len())",
+        "                .saturating_sub(0)",
+        "what_follows_the_last_intact_signature_is_judged_by_the_pages_it_touches",
+    ),
+    Mutation(
+        "cli: judge what follows a signature that does not hold",
+        "src/cli/verify.rs",
+        "                    .is_some_and(|i| i.verdict == crate::integrity::Verdict::Intact)\n        })\n        .min_by_key(|s| s.appended_bytes);",
+        "                    .is_some()\n        })\n        .min_by_key(|s| s.appended_bytes);",
+        "what_follows_the_last_intact_signature_is_judged_by_the_pages_it_touches",
     ),
     Mutation(
         "sign: gather in the window without asking whether the authority is trusted",
         "src/commands/sign.rs",
-        "            &vouch,",
-        "            &|_: &[u8], _: u64| crate::trust::Trust {\n"
-        "                standing: crate::trust::Standing::Trusted,\n"
-        "                ..crate::trust::Trust::default()\n"
-        "            },",
+        "                asking.vouch,",
+        "                &|_: &[u8], _: u64| crate::longterm::Vouched {\n"
+        "                    trust: crate::trust::Trust {\n"
+        "                        standing: crate::trust::Standing::Trusted,\n"
+        "                        ..crate::trust::Trust::default()\n"
+        "                    },\n"
+        "                    chain: Vec::new(),\n"
+        "                },",
         "an_untrusted_authority_is_held_and_nothing_is_fetched",
     ),
     Mutation(
@@ -14800,7 +15139,7 @@ MUTATIONS += [
     Mutation('gate: size a wordless region from a word too short to read back', 'src/ocr.rs', '            .filter(|word| longest_run(&word.text).chars().count() >= MIN_CONTROL_CHARS)\n            .map(|word| word.rect)', '            .map(|word| word.rect)', 'a_region_over_no_words_is_sized_from_the_smallest_word_left_that_can_be_a_control'),
     Mutation("gate: forget that the size was the page's", 'src/ocr.rs', '        size_pt,\n        from_page,\n    })', '        size_pt,\n        from_page: false,\n    })', 'a_region_over_no_words_is_sized_from_the_smallest_word_left_that_can_be_a_control'),
     Mutation('gate: note every page, sized from the page or not', 'src/ocr_gate.rs', '            choice.from_page.then(|| {', '            true.then(|| {', 'a_page_whose_regions_held_no_text_gets_a_note_naming_the_size'),
-    Mutation('cli wording: drop the note from a clean verdict', 'src/cli/words.rs', '            format!("{clean} Note: {}.", notes.join("; "))', '            clean', 'every_json_shape_and_the_wording_match_their_committed_samples'),
+    Mutation('cli wording: drop the note from a clean verdict', 'src/words.rs', '            format!("{clean} Note: {}.", notes.join("; "))', '            clean', 'every_json_shape_and_the_wording_match_their_committed_samples'),
     Mutation('edge cut: keep the rule inside the region', 'src/pathcut.rs', '        let before = (low, high.min(region_a.0 - pull));', '        let before = (low, high);', 'a_rule_is_cut_at_both_edges_of_the_region_that_crosses_it'),
     Mutation('edge cut: ignore how far a cap reaches', 'src/pathcut.rs', '    let pull = if cap_reaches { half } else { 0.0 };', '    let pull = 0.0;', 'a_cap_that_reaches_past_its_end_is_pulled_back_by_that_reach'),
     Mutation('edge cut: cut a rule the region covers half the thickness of', 'src/pathcut.rs', '        if !(region_p.0 <= p - half + eps && p + half - eps <= region_p.1) {', '        if false {', 'a_region_that_takes_only_part_of_a_rule_s_thickness_is_not_cut'),
@@ -14832,7 +15171,7 @@ MUTATIONS += [
     Mutation('edge cut: leave cuts out of the count a reader is shown', 'src/redact.rs', '    total += cut_paths(&cuts);\n', '', 'two_regions_over_one_rule_cut_it_twice_and_count_it_once'),
     Mutation('edge cut: lose the cuts in the merge', 'src/redact.rs', '        cuts,\n    };\n    PageAggregate {', '        cuts: Vec::new(),\n    };\n    PageAggregate {', 'two_regions_over_one_rule_cut_it_twice_and_count_it_once'),
     Mutation('edge cut: the writer never asks for them', 'src/save.rs', '            &redaction.cuts,\n            redaction.path_objects,', '            &[],\n            redaction.path_objects,', 'a_rewrite_cuts_a_planned_rule_at_the_region_s_edge'),
-    Mutation('edge cut: the fill pass asks for them again', 'src/redaction_fill.rs', '                mapped.cuts.clear();\n', '', 'maps_reordered_pages_without_reapplying_turns_crops_or_removals'),
+    Mutation('edge cut: the fill pass asks for them again', 'src/redaction_fill.rs', '                    cuts: Vec::new(),\n', '                    cuts: redaction.cuts.clone(),\n', 'maps_reordered_pages_without_reapplying_turns_crops_or_removals'),
     Mutation('compress: scale a picture already coarse enough', 'src/compress.rs', '    if at <= dpi * SLACK {', '    if false {', 'a_side_is_scaled_only_past_the_slack_and_never_up'),
     Mutation("compress: read a turned picture's width off the diagonal", 'src/compress.rs', '                        entry.width = entry.width.max(a.hypot(b));', '                        entry.width = entry.width.max(a.abs());', 'a_picture_is_shown_as_large_as_the_largest_matrix_it_is_drawn_under'),
     Mutation('compress: forget the matrix Q restores', 'src/compress.rs', '                        ctm = saved;', '                        let _ = saved;', 'a_picture_is_shown_as_large_as_the_largest_matrix_it_is_drawn_under'),
@@ -14865,6 +15204,95 @@ MUTATIONS += [
     Mutation('compress: ignore --no-jpeg', 'src/cli/compress.rs', '        pictures.jpeg = !no_jpeg;', '        pictures.jpeg = true;', 'a_preset_names_three_numbers_and_each_can_be_given_alone'),
     Mutation('compress: round the share saved up', 'src/cli/compress.rs', '    (before - after) * 100 / before', '    ((before - after) * 100).div_ceil(before)', 'the_share_saved_is_rounded_down_and_never_negative'),
     Mutation('compress: the window sends settings unchecked', 'src/commands/compress.rs', '        Some(pictures) => Compress::Pictures(pictures.checked()?),', '        Some(pictures) => Compress::Pictures(pictures),', 'no_settings_is_lossless_and_settings_are_checked'),
+]
+
+#: The script a control proves. `ocr::hold_to_scripts` lets a clean verdict stand
+#: only for the scripts the control word is written in; before it, a Latin
+#: control read back beside a region still showing a line of Chinese certified
+#: the region, because Vision returns no span at all for one.
+MUTATIONS += [
+    Mutation(
+        # Let a control vouch for every script. This is the gate as it stood:
+        # the engine read "quartz", said nothing about the rest, and the rest
+        # was called unreadable.
+        "scripts: let a control vouch for a script it is not written in",
+        "src/ocr.rs",
+        "    if unproven.is_empty() {\n        return verdict;\n    }",
+        "    if true {\n        return verdict;\n    }",
+        "a_clean_verdict_stands_only_for_the_scripts_the_control_is_written_in",
+    ),
+    Mutation(
+        # Leave the rule out of the gate's verdict. Every test of the rule
+        # itself still passes, and no region is ever held to it.
+        "scripts: leave the script rule out of the gate's verdict",
+        "src/ocr_gate.rs",
+        "            crate::ocr::hold_to_scripts(read, placed, &covered_by(page, region))",
+        "            read",
+        "a_latin_control_does_not_certify_a_region_that_held_another_script",
+    ),
+    Mutation(
+        # Hold a region to every word on its page. Nothing unsafe comes of it,
+        # and every page that mixes two scripts stops being verifiable.
+        "scripts: hold a region to the words of the whole page",
+        "src/ocr_gate.rs",
+        "        .filter(|word| crate::objects::overlaps(word.rect, region))\n        .map(|word| word.text.as_str())",
+        "        .map(|word| word.text.as_str())",
+        "only_the_words_under_the_region_decide_its_script",
+    ),
+    Mutation(
+        # Put every script without a name of its own in one bucket, so a Tamil
+        # control vouches for Telugu.
+        "scripts: read every unnamed script as one",
+        "src/ocr.rs",
+        "        other => Script::Other(other >> 7),",
+        "        _ => Script::Other(0),",
+        "a_character_is_of_one_script_or_of_none",
+    ),
+    Mutation(
+        # Call a digit of any script scriptless, as the European ones are. A
+        # Latin control then vouches for a number set in Arabic-Indic digits.
+        "scripts: read a digit of another script as of none",
+        "src/ocr.rs",
+        "    if !ch.is_alphanumeric() {",
+        "    if !ch.is_alphabetic() {",
+        "a_character_is_of_one_script_or_of_none",
+    ),
+    Mutation(
+        # Answer every request the plain way in the child. The gate asks for
+        # any script, the flag crosses the pipe, and the engine is never told.
+        "scripts: drop the any-script flag in the OCR child",
+        "src/ocr_worker.rs",
+        "    let read = if ask.any_script {",
+        "    let read = if false {",
+        "the_child_asks_the_engine_the_way_the_request_says",
+    ),
+    Mutation(
+        # Slice a page's boxes by its character count, as before. The two
+        # arrays come from a worker; a short one is a panic in the app process.
+        "gate: index a page's boxes without checking there is one",
+        "src/ocr_gate.rs",
+        "        let Some(b) = page.boxes.get(i * 4..i * 4 + 4) else {\n            continue;\n        };",
+        "        let b = &page.boxes[i * 4..i * 4 + 4];",
+        "a_page_with_fewer_boxes_than_characters_places_the_words_it_can",
+    ),
+    Mutation(
+        # Make a subroutine plain again at every call. The operation budget
+        # still holds, and the work behind one operation is the Subr's length.
+        "charstrings: make a subroutine plain at every call",
+        "src/textedit/fonts/type1/program.rs",
+        "                    let subr = subr.as_deref().ok_or(INVALID)?;\n                    if self.execute(subr, depth + 1)? {",
+        "                    let subr = plain(None, subr.as_deref().ok_or(INVALID)?)?;\n                    if self.execute(&subr, depth + 1)? {",
+        "a_glyph_that_calls_a_large_subroutine_many_times_is_parsed_in_bounded_work",
+    ),
+    Mutation(
+        # Run a Subr too short to decrypt as an empty one, so the glyph that
+        # calls it is offered with an outline nobody read.
+        "type1: run a Subr shorter than lenIV as an empty one",
+        "src/textedit/fonts/type1/program.rs",
+        "                subrs[index] = plain(len_iv, cursor.binary()?).ok();",
+        "                subrs[index] = plain(len_iv, cursor.binary()?).ok().or(Some(Vec::new()));",
+        "a_subr_shorter_than_leniv_fails_only_the_glyph_that_calls_it",
+    ),
 ]
 
 if __name__ == "__main__":

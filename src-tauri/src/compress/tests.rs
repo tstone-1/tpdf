@@ -727,3 +727,82 @@ fn a_preset_is_named_by_one_word() {
     assert!(Preset::Screen.quality() < Preset::Balanced.quality());
     assert!(Preset::Balanced.quality() < Preset::Print.quality());
 }
+
+/// A deflated picture whose predictor would not be undone is left as it is.
+///
+/// **The length cannot tell.** A TIFF predictor stores each sample as its
+/// difference from the one to its left and adds no byte to a row, so samples
+/// still differenced are exactly as many as the picture has pixels, and the
+/// one check between the decoder and the scaling passes. `lopdf` undoes a
+/// predictor only when `/DecodeParms` is a dictionary written in place with
+/// its numbers written in place; given an array of one, or a reference, it
+/// inflates and stops. Scaled like that, a half-black half-white picture came
+/// out black with one bright column down the middle, stored as a smaller
+/// picture and counted as shrunk.
+///
+/// The first case is the control and has to be shrunk correctly, which is
+/// what makes the others a fact about how the parameters are spelled.
+#[test]
+fn a_deflated_picture_whose_predictor_would_not_be_undone_is_left() {
+    // Left half black, right half white, each row differenced along itself.
+    let mut differenced = Vec::new();
+    for _ in 0..400 {
+        let mut row = vec![0u8; 400];
+        row[200] = 255;
+        differenced.extend(row);
+    }
+    let stored = deflated(&differenced);
+    // How a fixture spells its parameters, given the dictionary itself.
+    type Spelled = fn(&mut Document, Dictionary) -> Object;
+    let picture_with = |decode_parms: Spelled| {
+        let mut doc = Document::with_version("1.7");
+        let mut dict = image(400, 400, "DeviceGray".into());
+        dict.set("Filter", "FlateDecode");
+        let parms = dictionary! { "Predictor" => 2, "Colors" => 1, "Columns" => 400 };
+        let value = decode_parms(&mut doc, parms);
+        dict.set("DecodeParms", value);
+        let picture = doc.add_object(Stream::new(dict, stored.clone()).with_compression(false));
+        page_with(
+            &mut doc,
+            "q 72 0 0 72 100 100 cm /Im Do Q",
+            &[("Im", picture)],
+        );
+        (doc, picture)
+    };
+
+    // The control: parameters `lopdf` reads, so the samples are the picture.
+    let (mut doc, picture) = picture_with(|_, parms| parms.into());
+    assert_eq!(apply(&mut doc, SCREEN).pictures_changed, 1);
+    assert_eq!(whole(&doc, picture, b"Width"), 110);
+    let pixels = stream(&doc, picture)
+        .decompressed_content_with_limit(1 << 20)
+        .expect("decodes");
+    assert!(
+        pixels
+            .chunks(110)
+            .all(|row| row[..55] == [0; 55] && row[55..] == [255; 55]),
+        "the control is still half black and half white"
+    );
+
+    let cases: [(&str, Spelled); 3] = [
+        ("an array of one", |_, parms| {
+            vec![Object::Dictionary(parms)].into()
+        }),
+        ("a reference", |doc, parms| doc.add_object(parms).into()),
+        ("a predictor given by reference", |doc, mut parms| {
+            let two = doc.add_object(Object::Integer(2));
+            parms.set("Predictor", two);
+            parms.into()
+        }),
+    ];
+    for (what, decode_parms) in cases {
+        let (mut doc, picture) = picture_with(decode_parms);
+        let done = apply(&mut doc, SCREEN);
+        assert_eq!(done.pictures_changed, 0, "{what}: it was scaled");
+        assert_eq!(whole(&doc, picture, b"Width"), 400, "{what}: its size");
+        assert!(
+            stream(&doc, picture).dict.has(b"DecodeParms"),
+            "{what}: and its parameters are still beside it"
+        );
+    }
+}

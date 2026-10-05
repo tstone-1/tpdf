@@ -138,6 +138,27 @@ describe("Picked", () => {
     picked.clear();
     expect(picked.count).toBe(0);
   });
+
+  it("follows its page to another slot, and goes with a page that is gone", () => {
+    const picked = new Picked();
+    picked.toggle(4, 2);
+    picked.toggle(9, 2);
+    // The page moved up one: the marks stay picked, and the next one is added
+    // from the slot the page is in now and not from the one it left.
+    picked.repage((slot) => slot - 1);
+    expect(picked.list()).toEqual([4, 9]);
+    picked.toggle(7, 1);
+    expect(picked.list()).toEqual([4, 9, 7]);
+    picked.toggle(3, 2);
+    expect(picked.list()).toEqual([3]);
+    // The page left the document.
+    picked.repage(() => undefined);
+    expect(picked.count).toBe(0);
+    // Nothing picked is on no page, and is not asked about.
+    let asked = 0;
+    picked.repage(() => { asked += 1; return 0; });
+    expect(asked).toBe(0);
+  });
 });
 
 describe("moving several together", () => {

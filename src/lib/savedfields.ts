@@ -172,6 +172,27 @@ export function removed(form: Form, state: Pick<EditState, "fields" | "pages">, 
 }
 
 /**
+ * What taking the mark the viewer names off the page comes to: the model's own
+ * mark removed, a saved field removed through its widget, or nothing.
+ *
+ * One answer for every route the viewer reports a removal by --- the note's
+ * Remove, the Delete key, the eraser taking a mark whole --- because while the
+ * fields are being changed a saved field is in the viewer's list under an id
+ * the model never issued, and a route that sent that id on as a mark's asked
+ * the backend to remove a mark it has never heard of. `null` is a field's id
+ * that names no field now: the form is not scanned, or its page is gone.
+ */
+export function removal(
+  form: Form | null,
+  state: Pick<EditState, "fields" | "pages"> | null,
+  id: number,
+): { mark: number } | { field: FieldTarget } | null {
+  if (!isSaved(id)) return { mark: id };
+  const field = form && state ? removed(form, state, id) : null;
+  return field ? { field } : null;
+}
+
+/**
  * A saved field renamed, or the reason it cannot have that name.
  *
  * The save refuses a name another field has; asked here first, of the form as

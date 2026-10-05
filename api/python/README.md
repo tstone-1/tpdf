@@ -26,10 +26,16 @@ assert report["written"] and report["verified"]
 
 pdf.merge(["cover.pdf", "report.pdf"], "combined.pdf")
 
+# Highlights every match in a copy. Returns None, and writes nothing, when nothing matched.
+pdf.mark_matches("report.pdf", "report-marked.pdf", texts=["North Pier"])
+
 for file in pdf.search("a.pdf", "b.pdf", texts=["North Pier"])["files"]:
     for match in file["matches"]:
         print(file["path"], match["page"], match["hit"])
 ```
+
+`pdf.run(command, *arguments)` reaches every command and returns a `Result`; its `typed`
+property is the report, which the methods above return under the shape `tpdf.reports` names.
 
 Every method is described in the
 [tpdf README](https://github.com/tstone-1/tpdf#command-line-tool). Requires Python 3.10 or

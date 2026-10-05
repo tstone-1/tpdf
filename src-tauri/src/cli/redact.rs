@@ -778,8 +778,10 @@ fn emit(command: &Redact, out: &mut dyn Write, report: &report::Redacted) {
     if command.json {
         json(out, report);
     } else {
+        // Quoted words and file names are the document's, so they go through
+        // the same filter `say` applies.
         let text = plain(report);
-        let _ = out.write_all(text.as_bytes());
+        let _ = out.write_all(super::printable(&text).as_bytes());
         let _ = out.flush();
     }
 }

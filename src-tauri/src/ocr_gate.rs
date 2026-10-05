@@ -97,6 +97,12 @@ pub const MAX_SCALE: f32 = 8.0;
 /// A character PDFium gave no box for is kept in the text and left out of the
 /// geometry, so a word is placed by the characters that have a position. A word
 /// with no positioned character at all is dropped: it cannot be cropped to.
+///
+/// **A character past the end of `boxes` is one with no box.** The page text
+/// arrives from a worker, and nothing on the way here holds its two arrays to
+/// one length, so the box is looked up rather than sliced: a reply with fewer
+/// boxes than characters places the words it can and drops the rest, where
+/// indexing would have taken the app process down inside a redaction.
 #[must_use]
 pub fn words_from(page: &PageText) -> Vec<ControlWord> {
     let mut out: Vec<ControlWord> = Vec::new();
@@ -110,7 +116,9 @@ pub fn words_from(page: &PageText) -> Vec<ControlWord> {
             continue;
         }
         text.push(ch);
-        let b = &page.boxes[i * 4..i * 4 + 4];
+        let Some(b) = page.boxes.get(i * 4..i * 4 + 4) else {
+            continue;
+        };
         let box_ = [b[0], b[1], b[2], b[3]];
         if box_ == [0.0; 4] || !box_.iter().all(|v| v.is_finite()) {
             continue;
@@ -968,18 +976,64 @@ fn judge(
         height,
         scale,
     };
-    match engine.recognise(image, &crate::ocr::Options::default()) {
-        Ok((id, items)) => crate::ocr::adjudicate(&id, &placed, &Ok(items)),
+    // Asked for any script, because the region is whatever the page still
+    // shows there and nobody can say in advance what that is written in.
+    let answer = engine.recognise_any_script(image, &crate::ocr::Options::default());
+    verdict(page, region, &placed, answer)
+}
+
+/// What one region's answer from the engine comes to.
+///
+/// **Everything [`judge`] decides after the engine has spoken, kept apart from
+/// it so that it can be called.** `judge` needs a render service and a live
+/// worker, so a rule written inside it is one no test reaches --- which is how
+/// the rule this adds went missing in the first place: [`crate::ocr::adjudicate`]
+/// was the last word, and it knows the control and the engine's answer and
+/// nothing about what the region used to hold.
+///
+/// This does. The words `page` placed under `region` before the removal say
+/// which scripts a survivor would be written in, and
+/// [`crate::ocr::hold_to_scripts`] lets a clean verdict stand only for the
+/// ones the control was read back in. It can take a clean verdict away and can
+/// never grant one.
+#[must_use]
+pub fn verdict(
+    page: &GatePage,
+    region: [f32; 4],
+    placed: &crate::ocr::Control,
+    answer: Result<
+        (crate::ocr::EngineId, Vec<crate::ocr::RecognisedItem>),
+        crate::ocr::RecogniseError,
+    >,
+) -> Legibility {
+    match answer {
+        Ok((id, items)) => {
+            let read = crate::ocr::adjudicate(&id, placed, &Ok(items));
+            crate::ocr::hold_to_scripts(read, placed, &covered_by(page, region))
+        }
         Err(e) => unanswered(&e),
     }
 }
 
+/// What the page said a region held before the removal, word by word.
+///
+/// [`crate::objects::overlaps`] decides, as it does for
+/// [`crate::ocr::control_from_page`] and for the removal itself, so the three
+/// cannot come to disagree about whether a word was under a region.
+fn covered_by(page: &GatePage, region: [f32; 4]) -> Vec<&str> {
+    page.words
+        .iter()
+        .filter(|word| crate::objects::overlaps(word.rect, region))
+        .map(|word| word.text.as_str())
+        .collect()
+}
+
 /// The verdict for an engine that did not answer at all.
 ///
-/// **A function rather than two lines inside [`judge`]**, and the reason is
-/// mechanical: `judge` needs a render service and a live worker, so nothing can
-/// reach it from a test and a rule written there is a rule no mutation can aim
-/// at. The first version of this *was* two lines, and the test written for it
+/// **A function rather than two lines inside [`verdict`]**, and the reason is
+/// mechanical: it began inside `judge`, which needs a render service and a live
+/// worker, so nothing could reach it from a test and a rule written there was
+/// one no mutation could aim at. The first version of this *was* two lines, and the test written for it
 /// built its own expected value inline --- a writer agreeing with its own reader.
 /// The mutation harness caught that by surviving.
 ///
@@ -1713,6 +1767,209 @@ mod tests {
             );
             assert_eq!(unanswered(&e), theirs, "the two readings of {e:?} disagree");
         }
+    }
+
+    /// A page with a word under the region and a Latin word left to read back,
+    /// and the control the gate would place for it.
+    fn scripted(covered: &str, control: &str) -> (GatePage, [f32; 4], crate::ocr::Control) {
+        let region = [10.0, 100.0, 200.0, 112.0];
+        let mut words = vec![ControlWord {
+            rect: [10.0, 300.0, 90.0, 310.0],
+            text: control.into(),
+        }];
+        if !covered.is_empty() {
+            words.push(ControlWord {
+                rect: [12.0, 101.0, 80.0, 111.0],
+                text: covered.into(),
+            });
+        }
+        let page = GatePage {
+            page: 0,
+            regions: vec![region],
+            words,
+            taking: covered.into(),
+            width_pt: 600.0,
+            height_pt: 800.0,
+        };
+        let placed = crate::ocr::ControlChoice {
+            crop: [10.0, 300.0, 90.0, 310.0],
+            token: control.into(),
+            size_pt: 10.0,
+            from_page: covered.is_empty(),
+        }
+        .placed([0.0, 30.0, 600.0, 52.0]);
+        (page, region, placed)
+    }
+
+    /// What an engine says when it read the control word back and nothing else.
+    fn only_the_control(
+        token: &str,
+    ) -> Result<(EngineId, Vec<RecognisedItem>), crate::ocr::RecogniseError> {
+        Ok((
+            EngineId {
+                name: "vision",
+                build: "1".into(),
+            },
+            vec![RecognisedItem {
+                text: token.into(),
+                rect: [10.0, 36.0, 90.0, 46.0],
+                confidence: Some(1.0),
+            }],
+        ))
+    }
+
+    fn cause_of(verdict: &Legibility) -> Option<NotVerifiedCause> {
+        match verdict {
+            Legibility::NotVerified { cause, .. } => Some(*cause),
+            _ => None,
+        }
+    }
+
+    #[test]
+    fn a_latin_control_does_not_certify_a_region_that_held_another_script() {
+        // The defect, as the engine produces it: Vision reads the Latin control
+        // and returns no span for a line of Chinese at the same size, so the
+        // region looks empty. What was proved is that it reads Latin.
+        let (page, region, placed) = scripted("\u{5f20}\u{4f1f}", "quartz");
+        let verdict = verdict(&page, region, &placed, only_the_control("quartz"));
+        assert!(
+            !verdict.certifies(),
+            "a Latin control certified a region that held Chinese: {verdict:?}"
+        );
+        assert_eq!(cause_of(&verdict), Some(NotVerifiedCause::ScriptUnproven));
+        let why = reason(0, &verdict).expect("a verdict that does not certify says why");
+        assert!(why.contains("Chinese characters"), "{why}");
+        assert!(why.contains("\"quartz\""), "{why}");
+        assert!(why.contains("Latin"), "{why}");
+    }
+
+    #[test]
+    fn a_latin_control_still_certifies_a_region_that_held_latin() {
+        // The control over the test above: the same page, the same answer from
+        // the engine, and a covered word in the control's own script. Without
+        // it a rule that refused every region would pass.
+        let (page, region, placed) = scripted("Ackerman", "quartz");
+        let verdict = verdict(&page, region, &placed, only_the_control("quartz"));
+        assert!(verdict.certifies(), "{verdict:?}");
+        // Digits and punctuation are of no script and ride on any control.
+        let (page, region, placed) = scripted("120,000.00", "quartz");
+        assert!(verdict_of(&page, region, &placed, "quartz").certifies());
+    }
+
+    fn verdict_of(
+        page: &GatePage,
+        region: [f32; 4],
+        placed: &crate::ocr::Control,
+        read: &str,
+    ) -> Legibility {
+        verdict(page, region, placed, only_the_control(read))
+    }
+
+    #[test]
+    fn a_region_that_held_hebrew_is_not_verified_under_either_control() {
+        // Vision reads Hebrew with or without language detection: not at all.
+        // Under a Latin control that is this rule's refusal. Under a Hebrew
+        // control the engine returns nothing, the control is not read back,
+        // and it is `adjudicate`'s. Neither route certifies.
+        let hebrew = "\u{5e9}\u{5dc}\u{5d5}\u{5dd}";
+        let (page, region, placed) = scripted(hebrew, "quartz");
+        let under_latin = verdict_of(&page, region, &placed, "quartz");
+        assert_eq!(
+            cause_of(&under_latin),
+            Some(NotVerifiedCause::ScriptUnproven)
+        );
+
+        let (page, region, placed) =
+            scripted(hebrew, "\u{5d9}\u{5e8}\u{5d5}\u{5e9}\u{5dc}\u{5d9}\u{5dd}");
+        let silent = Ok((
+            EngineId {
+                name: "vision",
+                build: "1".into(),
+            },
+            Vec::new(),
+        ));
+        let under_hebrew = verdict(&page, region, &placed, silent);
+        assert_eq!(
+            cause_of(&under_hebrew),
+            Some(NotVerifiedCause::ControlUnread)
+        );
+    }
+
+    #[test]
+    fn a_control_in_the_region_s_own_script_certifies_it() {
+        // The other way to be proven: the control is itself Chinese and was
+        // read back, so the engine was shown to read what the region held.
+        let token = "\u{674e}\u{5a1c}\u{738b}\u{82b3}";
+        let (page, region, placed) = scripted("\u{5f20}\u{4f1f}", token);
+        assert!(verdict_of(&page, region, &placed, token).certifies());
+    }
+
+    #[test]
+    fn only_the_words_under_the_region_decide_its_script() {
+        // A Chinese word elsewhere on the page says nothing about a region that
+        // held Latin, and holding it against the region would refuse every
+        // page that mixes two scripts.
+        let (mut page, region, placed) = scripted("Ackerman", "quartz");
+        page.words.push(ControlWord {
+            rect: [10.0, 500.0, 90.0, 510.0],
+            text: "\u{5f20}\u{4f1f}".into(),
+        });
+        assert!(verdict_of(&page, region, &placed, "quartz").certifies());
+    }
+
+    #[test]
+    fn a_region_that_held_no_words_is_judged_on_the_control_alone() {
+        // A drawing or a scan has no text to take a script from, so there is
+        // nothing to hold the control to and the verdict is what it was before
+        // the script rule existed. Pinned because it is the case the rule does
+        // not reach, not because it is the answer one would choose.
+        let (page, region, placed) = scripted("", "quartz");
+        assert!(verdict_of(&page, region, &placed, "quartz").certifies());
+    }
+
+    #[test]
+    fn the_script_rule_leaves_a_survivor_and_a_failure_as_they_were() {
+        // It may only take a clean verdict away. Something read in the region
+        // is still a survivor, and an engine that did not answer still gets
+        // the one sentence `unanswered` writes.
+        let (page, region, placed) = scripted("\u{5f20}\u{4f1f}", "quartz");
+        let mut read = only_the_control("quartz").expect("items");
+        read.1.push(RecognisedItem {
+            text: "\u{5f20}\u{4f1f}".into(),
+            rect: [12.0, 8.0, 80.0, 18.0],
+            confidence: Some(0.4),
+        });
+        let survivor = verdict(&page, region, &placed, Ok(read));
+        assert!(
+            matches!(&survivor, Legibility::Legible { found } if found.len() == 1),
+            "{survivor:?}"
+        );
+        let e = crate::ocr::RecogniseError::Crashed("SIGTRAP".into());
+        assert_eq!(
+            verdict(&page, region, &placed, Err(e.clone())),
+            unanswered(&e)
+        );
+    }
+
+    #[test]
+    fn a_page_with_fewer_boxes_than_characters_places_the_words_it_can() {
+        // The two arrays come from a worker and nothing holds them to one
+        // length. Seven characters and boxes for the first four: indexing took
+        // the process down on the fifth.
+        let mut short = page("ab cdef", &line(7, 100.0, 10.0, 12.0));
+        short.boxes.truncate(4 * 4);
+        let words = words_from(&short);
+        assert_eq!(words.len(), 2);
+        assert_eq!(words[0].rect, [0.0, 100.0, 20.0, 112.0]);
+        // `c` is the last character with a box, so it alone places the word.
+        assert_eq!(words[1].text, "cdef");
+        assert_eq!(words[1].rect, [30.0, 100.0, 40.0, 112.0]);
+        // A box cut off part-way is no box either.
+        short.boxes.truncate(4 * 4 - 1);
+        assert!(words_from(&short).iter().all(|word| word.text != "cdef"));
+        // And none at all is a page with no words, not a panic.
+        short.boxes.clear();
+        assert!(words_from(&short).is_empty());
     }
 
     #[test]

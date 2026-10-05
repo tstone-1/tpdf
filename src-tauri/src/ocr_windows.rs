@@ -228,6 +228,13 @@ impl Recogniser for WindowsOcr {
         // was observed. That is support and not proof --- at both sizes the engine
         // read clean text exactly, so it was never near its limit, and a corrector
         // only shows where a recogniser is struggling.
+        //
+        // And `Recogniser::recognise_any_script` is this same call, for the reason
+        // `languages` gives: there is one language per engine and nothing to
+        // detect with. The redaction gate does not depend on it. Its script rule
+        // (`ocr::hold_to_scripts`) is engine-independent, so a region that held
+        // text in a script the control word is not written in is *not verified*
+        // here whatever this engine did or did not return for it.
         let _ = options;
 
         let bgra = rgba_to_bgra_opaque(pixels.rgba).ok_or_else(|| {

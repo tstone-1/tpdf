@@ -468,14 +468,28 @@ fn build(
     // certification does not permit (`allow_new_visible_after_certify` is off
     // by default, stricter than Acrobat), and the same revision without an
     // appearance as form filling it does. `docs/TRAPS.md` has the measurement.
+    //
+    // **What was measured is a new field, and what is refused is wider**: a
+    // visible signature drawn into an empty field the document already has
+    // adds no widget --- it gives an existing one its appearance --- and no
+    // reader has been measured on that. It is refused all the same, and says
+    // so in its own words: an appearance a validator might read as a
+    // violation of somebody's certification is the direction not to guess in.
     if visible.is_some() && certification(&prev) > 0 {
-        return Err(
+        return Err(if details.field.is_some() {
+            "This document is certified, and tpdf draws no visible signature on a \
+             certified document: one added as a new field is read by at least one widely \
+             used validator as a change the certification does not permit, and whether \
+             one drawn in a field the document already has is read the same way has not \
+             been measured. Sign the field without a visible appearance."
+                .into()
+        } else {
             "This document is certified, and a visible signature added after a \
              certification is read by at least one widely used validator as a change \
              the certification does not permit. Sign it without a visible appearance --- \
              an invisible signature is accepted."
-                .into(),
-        );
+                .into()
+        });
     }
 
     let pages = ordered_pages(&prev);

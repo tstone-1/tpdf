@@ -531,6 +531,49 @@ mod authority_tests {
             );
         }
     }
+
+    /// The chain handed back is the one vouched for, and there is none
+    /// without a `trusted`: not for a chain the store refused, and not for
+    /// one it accepted under a certificate that does not serve the purpose,
+    /// where the store did assemble a chain.
+    #[test]
+    fn a_chain_is_handed_back_only_with_a_trusted_answer() {
+        let tsa = TestTsa::new();
+        let roots = std::slice::from_ref(&tsa.root);
+        let (trust, chain) = of_blob_with_chain(
+            &token(&tsa),
+            Purpose::Timestamping,
+            NOW,
+            Anchors::Only(roots),
+        );
+        assert_eq!(trust, trusted());
+        assert_eq!(chain, [tsa.certificate.clone(), tsa.root.clone()]);
+
+        let (trust, chain) =
+            of_blob_with_chain(&token(&tsa), Purpose::Timestamping, NOW, Anchors::Only(&[]));
+        assert_eq!(trust, untrusted(Doubt::Incomplete));
+        assert!(chain.is_empty(), "{chain:?}");
+
+        let other = TestTsa::with_purposes(Some(&[EMAIL_PROTECTION]));
+        let (trust, chain) = of_blob_with_chain(
+            &token(&other),
+            Purpose::Timestamping,
+            NOW,
+            Anchors::Only(roots),
+        );
+        assert_eq!(trust, untrusted(Doubt::Timestamping));
+        assert!(chain.is_empty(), "{chain:?}");
+        // The same token asked about as a document signer's passes, and has
+        // its chain: the purpose and not the fixture is what emptied it.
+        let (trust, chain) = of_blob_with_chain(
+            &token(&other),
+            Purpose::Documents,
+            NOW,
+            Anchors::Only(roots),
+        );
+        assert_eq!(trust, trusted());
+        assert_eq!(chain.len(), 2);
+    }
 }
 
 // ------------------------------------------------- the order of the questions

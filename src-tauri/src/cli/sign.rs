@@ -10,6 +10,7 @@ use super::identities::{listing, resolve, store_identities, usable_of};
 use super::report::{self, SCHEMA};
 use super::verify::signature_report;
 use super::{json, opened, say, words, Env, Exit, Failure, Registered, Subcommand};
+use crate::commands::sign::{asking_the_world, finish, Asking, Finished, Stage, Stopped};
 use crate::docinfo;
 use crate::save;
 use crate::sign_cms;
@@ -406,29 +407,56 @@ pub(crate) fn long_term_failure(why: &crate::longterm::Refusal) -> Failure {
     Failure::new(exit, format!("{}{next}", why.sentence()))
 }
 
-/// Whether the file just written reads back as it must: ours intact, its
-/// timestamp intact when one was asked for, and --- for long-term data ---
-/// everything `longterm::check` held the same bytes to before they were
-/// written: the signer's and the authority's revocation `good`, and every
-/// certificate above either.
-pub(crate) fn read_back_holds(
-    signatures: &[docinfo::Signature],
-    field: &str,
-    timestamp: bool,
-    long_term: bool,
-) -> bool {
-    let intact = |i: Option<&crate::integrity::Integrity>| {
-        i.is_some_and(|i| i.verdict == crate::integrity::Verdict::Intact)
-    };
-    signatures.iter().any(|s| {
-        s.signed
-            && s.field == field
-            && intact(s.integrity.as_ref())
-            && (!timestamp
-                || s.timestamp
-                    .as_ref()
-                    .is_some_and(|t| intact(t.integrity.as_ref())))
-    }) && (!long_term || crate::longterm::check(signatures, field).is_ok())
+/// The rest of a signing after the OS has signed --- the timestamp, the seal,
+/// the long-term data, the write and a fresh worker's read-back --- which is
+/// the window's own (`commands::sign::finish`), with the tool's endings: a
+/// request that fails is exit 3 with nothing written, since the authority
+/// refused or could not be reached, which is neither tpdf's failure nor a
+/// reason to write a signature the reader did not ask for. There is nobody
+/// here to offer "sign without one" to; running again without the option is
+/// it, and the sentence says so --- except after a revocation, which no
+/// signing should use. A copy written and not read back is tpdf's failure (4).
+///
+/// # Errors
+///
+/// The sentence and the exit code for each way the signing stopped.
+pub(crate) fn concluded(
+    sign: &Sign,
+    made: sign_cms::Made,
+    now: u64,
+    worker: &dyn save::Verifier,
+    asking: Asking<'_>,
+) -> Result<Finished, Failure> {
+    finish(
+        Stage::Made(made),
+        sign.timestamp.as_ref(),
+        sign.long_term,
+        &sign.output,
+        now,
+        worker,
+        asking,
+        &|bytes| save::write_signed(&sign.input, &sign.output, bytes).map_err(|why| why.message),
+    )
+    .map_err(|stopped| match stopped {
+        Stopped::Unstamped { why, .. } => {
+            let host = sign
+                .timestamp
+                .as_ref()
+                .and_then(url::Url::host_str)
+                .unwrap_or_default();
+            Failure::new(
+                Exit::Refused,
+                format!(
+                    "{} --- nothing was written; sign again without --timestamp to sign without \
+                     one",
+                    why.sentence(host)
+                ),
+            )
+        }
+        Stopped::Unextended { why, .. } => long_term_failure(&why),
+        Stopped::Refused(why) | Stopped::Unwritten(why) => Failure::new(Exit::Refused, why),
+        Stopped::Unread(why) => Failure::new(Exit::Internal, why),
+    })
 }
 
 /// The image in the file `--image` names.
@@ -1048,7 +1076,6 @@ fn run_sign(
 
     let original = save::read_to_sign(&sign.input, &opened_as)
         .map_err(|why| Failure::new(Exit::Refused, why.message))?;
-    let field = unsigned.field.clone();
     let made = sign_cms::sign(
         original,
         unsigned,
@@ -1058,92 +1085,17 @@ fn run_sign(
         chosen.key.as_ref(),
     )
     .map_err(|why| Failure::new(Exit::Refused, why))?;
-    // The timestamp, when one was asked for: after the OS has signed, since it
-    // is over the signature's value, and before anything is written. A request
-    // that fails is exit 3 with nothing written --- the authority refused or
-    // could not be reached, which is neither tpdf's failure nor a reason to
-    // write a signature the reader did not ask for. There is nobody here to
-    // offer "sign without one" to; running again without `--timestamp` is it.
-    let stamped = crate::tsa::stamp(&made, sign.timestamp.as_ref(), |url, value| {
-        crate::tsa::ask_blocking(url, value, &crate::tsa::LIMITS)
-    })
-    .map_err(|why| {
-        let host = sign
-            .timestamp
-            .as_ref()
-            .and_then(url::Url::host_str)
-            .unwrap_or_default();
-        Failure::new(
-            Exit::Refused,
-            format!(
-                "{} --- nothing was written; sign again without --timestamp to sign without one",
-                why.sentence(host)
-            ),
-        )
+    // Everything after the OS has signed is the window's own tail. The
+    // authority must be one this computer trusts before anything is fetched
+    // for it: `env.anchors` is the system's store, or a test's own roots.
+    let Finished {
+        field,
+        signatures,
+        read_back,
+    } = asking_the_world(env.anchors, |asking| {
+        concluded(sign, made, env.now, &worker, asking)
     })?;
-    let cms = stamped.clone();
-    let bytes = made
-        .seal(stamped)
-        .map_err(|why| Failure::new(Exit::Refused, why))?;
-    // The long-term data, when it was asked for: after the seal, since it is
-    // about the certificates in the timestamped signature, and before anything
-    // is written. Refused is exit 3 with nothing written; the sentence says how
-    // to sign without it --- except for a revoked certificate, which no
-    // signing should use.
-    let bytes = match (sign.long_term, cms) {
-        (true, Some(cms)) => crate::longterm::extend(
-            &bytes,
-            &cms,
-            &field,
-            env.now,
-            &worker,
-            &crate::longterm::os_chain,
-            // The authority must be one this computer trusts before anything
-            // is fetched for it: `env.anchors` is the system's store, or a
-            // test's own roots.
-            &|token, now| {
-                crate::trust::of_blob_for(
-                    token,
-                    crate::trust::Purpose::Timestamping,
-                    now,
-                    env.anchors,
-                )
-            },
-            &mut crate::longterm::fetch_blocking,
-            // The archive timestamp, from the authority the line named.
-            &mut |pieces| match sign.timestamp.as_ref() {
-                Some(url) => crate::tsa::ask_over_range_blocking(url, pieces, &crate::tsa::LIMITS)
-                    .map_err(|why| why.sentence(url.host_str().unwrap_or_default())),
-                None => Err(crate::longterm::Refusal::NoTimestamp.sentence()),
-            },
-        )
-        .map_err(|why| long_term_failure(&why))?,
-        _ => bytes,
-    };
-    save::write_signed(&sign.input, &sign.output, &bytes)
-        .map_err(|why| Failure::new(Exit::Refused, why.message))?;
-
-    // Read back by a fresh worker, through the handle of the file just
-    // written: the verdict reported is the one the properties dialog gives.
-    let (written, written_len) = opened(&sign.output).map_err(|why| {
-        Failure::new(
-            Exit::Internal,
-            format!("the signed file was written and could not be reopened: {why}"),
-        )
-    })?;
-    let properties = worker
-        .properties(&written, written_len)
-        .map_err(|declined| {
-            Failure::new(
-                Exit::Internal,
-                format!(
-                    "the signed file was written and could not be checked: {}",
-                    declined.message()
-                ),
-            )
-        })?;
-    let found: Vec<&docinfo::Signature> =
-        properties.signatures.iter().filter(|s| s.signed).collect();
+    let found: Vec<&docinfo::Signature> = signatures.iter().filter(|s| s.signed).collect();
     let name = sign.output.file_name().map_or_else(
         || sign.output.display().to_string(),
         |n| n.to_string_lossy().into_owned(),
@@ -1186,12 +1138,7 @@ fn run_sign(
     // bytes and a worker then did not find is a written file that disagrees
     // with what was written, which is tpdf's failure (4). And for long-term
     // data, all that the check before writing held the same bytes to.
-    let ours_intact = read_back_holds(
-        &properties.signatures,
-        &field,
-        sign.timestamp.is_some(),
-        sign.long_term,
-    );
+    let ours_intact = read_back.holds();
     let report = report::Signed {
         schema: SCHEMA,
         command: "sign".into(),

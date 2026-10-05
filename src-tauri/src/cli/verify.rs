@@ -29,8 +29,9 @@ pub struct Verify {
     pub files: Vec<PathBuf>,
     /// `--json`.
     pub json: bool,
-    /// `--strict`: exit 1 unless every document has a signature and every
-    /// signature is intact and trusted.
+    /// `--strict`: exit 1 unless every document has a signature, every
+    /// signature is intact and trusted, and nothing appended after the last
+    /// of them touches a page ([`After`]).
     pub strict: bool,
 }
 
@@ -56,7 +57,7 @@ pub fn parse(args: &[String]) -> Result<Verify, String> {
             (false, flag) if flag.starts_with('-') && flag != "-" => {
                 return Err(unknown("verify", flag))
             }
-            (_, path) => files.push(PathBuf::from(path)),
+            (after, path) => files.push(super::args::operand(after, path)),
         }
     }
     if files.is_empty() {
@@ -277,6 +278,9 @@ pub fn timestamp_report(stamp: &docinfo::Timestamp, document: bool) -> report::T
 /// fail nearly every signed document there is. `--strict` asks whether
 /// anything tpdf checked speaks against the signature, not whether
 /// everything was checked --- `docs/PLAN.md` records the decision.
+///
+/// This is the signature's half. What was appended after the last signature
+/// is the document's, and [`after_last_signature`] answers it.
 #[must_use]
 pub fn passes_strict(signature: &report::Signature) -> bool {
     use crate::trust::Standing;
@@ -302,13 +306,92 @@ pub fn passes_strict(signature: &report::Signature) -> bool {
         })
 }
 
-/// Reads one document's signatures through a worker.
-fn verify_one(env: &Env<'_>, path: &Path) -> report::File {
+/// What a document holds after its last signature that still stands, which no
+/// signature covers.
+///
+/// **Why `--strict` asks.** A signature answers for the bytes in its range and
+/// for nothing after them: a revision appended later can change every page a
+/// reader sees while each signature stays `intact`, trusted and unrevoked. The
+/// properties dialog states the appendix beside the verdict for that reason;
+/// an exit code has nowhere to state it, so `--strict` judges it.
+///
+/// **What it lets pass** is what signing itself appends: validation data
+/// (`/DSS`), which reaches no page, and a signature or timestamp field listed
+/// among a page's annotations with the page otherwise as it was
+/// (`docinfo::Appendix::pages_listing`). tpdf's own long-term revisions are
+/// those two and nothing else.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum After {
+    /// Nothing, or nothing that touches a page other than to list a field.
+    Unchanged,
+    /// This many pages were touched, other than to list a signature or
+    /// timestamp field.
+    Pages(usize),
+    /// Something tpdf could not read, which is never read as nothing.
+    Unread,
+}
+
+/// [`After`] for a document's signatures, as a worker read them.
+///
+/// The last signature that stands is the `intact` one whose range reaches
+/// furthest. One that is not intact answers for nothing, so what follows it is
+/// still judged against the intact one before it --- and `--strict` fails on
+/// the signature that is not intact whatever this says.
+#[must_use]
+pub fn after_last_signature(signatures: &[docinfo::Signature]) -> After {
+    let last = signatures
+        .iter()
+        .filter(|s| {
+            s.signed
+                && s.integrity
+                    .as_ref()
+                    .is_some_and(|i| i.verdict == crate::integrity::Verdict::Intact)
+        })
+        .min_by_key(|s| s.appended_bytes);
+    match last.and_then(|s| s.appendix.as_ref()) {
+        None => After::Unchanged,
+        Some(appendix) if appendix.unread => After::Unread,
+        Some(appendix) => {
+            match appendix
+                .pages_touched
+                .saturating_sub(appendix.pages_listing.len())
+            {
+                0 => After::Unchanged,
+                pages => After::Pages(pages),
+            }
+        }
+    }
+}
+
+/// [`After`] as `verify` says it under a document's signatures, or nothing
+/// when there is nothing to say.
+#[must_use]
+pub fn after_text(after: After) -> Option<String> {
+    let what = match after {
+        After::Unchanged => return None,
+        After::Pages(1) => "1 page was rewritten, which no signature covers".to_string(),
+        After::Pages(pages) => format!("{pages} pages were rewritten, which no signature covers"),
+        After::Unread => {
+            "something was appended that tpdf could not read, and no signature covers it".into()
+        }
+    };
+    Some(format!("  After the last signature: {what}"))
+}
+
+/// Reads one document's signatures through a worker, and what follows the
+/// last of them. A document that could not be read has nothing known to
+/// follow: its error decides the exit code on its own.
+fn verify_one(env: &Env<'_>, path: &Path) -> (report::File, After) {
     let shown = path.display().to_string();
-    let failed = |kind: ErrorKind, message: String| report::File {
-        path: shown.clone(),
-        error: Some(FileError { kind, message }),
-        signatures: Vec::new(),
+    let failed = |kind: ErrorKind, message: String| {
+        (
+            report::File {
+                path: shown.clone(),
+                error: Some(FileError { kind, message }),
+                signatures: Vec::new(),
+            },
+            After::Unchanged,
+        )
     };
     let (file, len) = match super::opened_or_stdin(path) {
         Ok(opened) => opened,
@@ -327,16 +410,20 @@ fn verify_one(env: &Env<'_>, path: &Path) -> report::File {
     if properties.limits.locked {
         return failed(ErrorKind::Locked, locked_sentence(&shown));
     }
-    report::File {
-        path: shown,
-        error: None,
-        signatures: properties
-            .signatures
-            .iter()
-            .filter(|s| s.signed)
-            .map(signature_report)
-            .collect(),
-    }
+    let after = after_last_signature(&properties.signatures);
+    (
+        report::File {
+            path: shown,
+            error: None,
+            signatures: properties
+                .signatures
+                .iter()
+                .filter(|s| s.signed)
+                .map(signature_report)
+                .collect(),
+        },
+        after,
+    )
 }
 
 /// Why a document's signatures were not read: it needs a password.
@@ -370,13 +457,24 @@ pub fn verify_exit(report: &report::Verified, strict: bool) -> Exit {
     }
 }
 
-/// Builds the report for files already read.
+/// Builds the report for files already read, with nothing known to follow
+/// any document's last signature.
 #[must_use]
 pub fn verified(files: Vec<report::File>) -> report::Verified {
-    let strict_passed = files.iter().all(|file| {
+    let after = vec![After::Unchanged; files.len()];
+    verified_after(files, &after)
+}
+
+/// [`verified`], with what follows each document's last signature: `after`
+/// answers for `files` in order, and a document it does not reach has nothing
+/// known to follow.
+#[must_use]
+pub fn verified_after(files: Vec<report::File>, after: &[After]) -> report::Verified {
+    let strict_passed = files.iter().enumerate().all(|(at, file)| {
         file.error.is_none()
             && !file.signatures.is_empty()
             && file.signatures.iter().all(passes_strict)
+            && after.get(at).is_none_or(|after| *after == After::Unchanged)
     });
     report::Verified {
         schema: SCHEMA,
@@ -392,7 +490,9 @@ fn run_verify(
     out: &mut dyn Write,
     err: &mut dyn Write,
 ) -> Result<Exit, Failure> {
-    let report = verified(verify.files.iter().map(|p| verify_one(env, p)).collect());
+    let (files, after): (Vec<report::File>, Vec<After>) =
+        verify.files.iter().map(|p| verify_one(env, p)).unzip();
+    let report = verified_after(files, &after);
     for file in &report.files {
         if let Some(error) = &file.error {
             say(err, &format!("{}: {}", env.program, error.message));
@@ -401,16 +501,25 @@ fn run_verify(
     if verify.json {
         json(out, &report);
     } else {
-        say(out, &verify_text(&report));
+        say(out, &verify_text_after(&report, &after));
     }
     Ok(verify_exit(&report, verify.strict))
 }
 
-/// `verify` without `--json`.
+/// `verify` without `--json`, with nothing known to follow any document's
+/// last signature.
 #[must_use]
 pub fn verify_text(report: &report::Verified) -> String {
+    verify_text_after(report, &[])
+}
+
+/// `verify` without `--json`: each document's signatures, and under them what
+/// follows the last one when that is more than signing appends
+/// ([`after_text`]). `after` answers for the report's files in order.
+#[must_use]
+pub fn verify_text_after(report: &report::Verified, after: &[After]) -> String {
     let mut lines = Vec::new();
-    for file in &report.files {
+    for (at, file) in report.files.iter().enumerate() {
         if file.error.is_some() {
             lines.push(format!("{}: could not be read (see above)", file.path));
             continue;
@@ -419,6 +528,7 @@ pub fn verify_text(report: &report::Verified) -> String {
         for signature in &file.signatures {
             lines.push(signature_text(signature));
         }
+        lines.extend(after.get(at).copied().and_then(after_text));
     }
     lines.join("\n")
 }

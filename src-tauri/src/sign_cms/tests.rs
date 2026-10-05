@@ -819,3 +819,213 @@ fn a_document_timestamp_is_sealed_only_when_it_reads_back_intact() {
     let why = seal_document_timestamp(longer, unsigned, &token).expect_err("refused");
     assert!(why.contains("built against"), "{why}");
 }
+
+// ------------------------------- the certificate a signature says it was made with
+
+/// `original` signed with the CMS `blob_of` makes for the range's digest, and
+/// **not** held to tpdf's own check before it is returned --- which is what
+/// lets a test write a signature the writer would refuse, and ask the reader.
+fn written_with(original: &[u8], blob_of: impl FnOnce(&[u8]) -> Vec<u8>) -> Vec<u8> {
+    let unsigned = crate::sign_prepare::prepare(original.to_vec(), NOW, None).expect("prepared");
+    let digest = check(original, &unsigned).expect("the worker's numbers");
+    let blob = blob_of(&digest);
+    let Unsigned {
+        mut update,
+        built_against,
+        range,
+        ..
+    } = unsigned;
+    splice(&mut update, built_against, range, &blob).expect("spliced");
+    [original, &update[..]].concat()
+}
+
+/// Whether a CMS signer's signed attributes carry `signingCertificateV2`.
+fn states_its_certificate(blob: &[u8]) -> bool {
+    decoded(blob).signer_infos.0.as_slice()[0]
+        .signed_attrs
+        .as_ref()
+        .is_some_and(|attributes| {
+            attributes
+                .iter()
+                .any(|attribute| attribute.oid == SIGNING_CERTIFICATE_V2)
+        })
+}
+
+/// A second certificate over the same key, with the first one's issuer and
+/// serial --- so a signature's `sid` names it as well as the first --- and
+/// another subject: what somebody holding one key presents a signature under
+/// when they would rather it were somebody else's.
+fn twin_of(key: &Soft, issuer: &str, subject: &str) -> Vec<u8> {
+    certificate(
+        key,
+        &Spec {
+            issuer: Some((key, issuer)),
+            ..Spec::new(subject)
+        },
+    )
+}
+
+/// The control: tpdf's own signature states the certificate it was made with,
+/// and reads as intact.
+#[test]
+fn a_signature_naming_the_certificate_it_was_made_with_is_intact() {
+    let original = testkeys::plain_pdf();
+    let key = Soft::p256(3);
+    let cert = own(&key, "Signer");
+    let mut stated = false;
+    let bytes = written_with(&original, |digest| {
+        let blob = build(digest, &cert, &[], &key).expect("built");
+        stated = states_its_certificate(&blob);
+        blob
+    });
+    assert!(stated, "the writer adds signingCertificateV2");
+    let found = verdicts(&bytes);
+    assert_eq!(found[0].1.verdict, Verdict::Intact, "{found:?}");
+}
+
+/// The signature tpdf made, with its certificate swapped for another over the
+/// same key that the signer's identifier names just as well. The key's
+/// arithmetic still holds and the digest still matches, so nothing but the
+/// stated certificate says the signature was made under a different one ---
+/// and that is what the attribute is for. Not intact: not checked, with the
+/// reason.
+#[test]
+fn a_signature_naming_another_certificate_than_the_one_it_carries_is_not_intact() {
+    let original = testkeys::plain_pdf();
+    let key = Soft::p256(3);
+    let cert = own(&key, "Signer");
+    let other = twin_of(&key, "Signer", "Somebody Else");
+    let bytes = written_with(&original, |digest| {
+        let blob = build(digest, &cert, &[], &key).expect("built");
+        let (content_type, mut signed) = super::decoded(&blob).expect("a CMS");
+        signed.certificates = Some(
+            cms::signed_data::CertificateSet::try_from(vec![CertificateChoices::Certificate(
+                Certificate::from_der(&other).expect("the twin"),
+            )])
+            .expect("a set"),
+        );
+        cms::content_info::ContentInfo {
+            content_type,
+            content: der::Any::encode_from(&signed).expect("encoded"),
+        }
+        .to_der()
+        .expect("a blob")
+    });
+    let found = verdicts(&bytes);
+    assert_eq!(
+        (found[0].1.verdict, found[0].1.why),
+        (Verdict::Unchecked, Some(crate::integrity::Why::Binding)),
+        "{found:?}"
+    );
+    // The fixture is the substitution and nothing else: the reader names the
+    // twin as the signer, and the twin is a certificate a signature made
+    // under it reads intact with.
+    let read = crate::docinfo::scan(&bytes, 1, None).expect("scanned");
+    let named = read.signatures[0].certificate.as_ref().expect("a signer");
+    assert_eq!(named.subject_cn, "Somebody Else");
+    assert!(named.matched_signer);
+    let under_the_twin = written_with(&original, |digest| {
+        build(digest, &other, &[], &key).expect("built")
+    });
+    assert_eq!(verdicts(&under_the_twin)[0].1.verdict, Verdict::Intact);
+}
+
+/// A signature that states no certificate reads as it always did: most
+/// signatures made before PAdES carry no such attribute, and it is not this
+/// reader's to require one of them.
+#[test]
+fn a_signature_that_does_not_name_its_certificate_reads_as_before() {
+    let original = testkeys::plain_pdf();
+    let key = Soft::p256(3);
+    let cert = own(&key, "Signer");
+    let mut stated = true;
+    let bytes = written_with(&original, |digest| {
+        // `build`, less the one attribute.
+        let signer = Certificate::from_der(&cert).expect("the certificate");
+        let kind = key_kind(&signer).expect("a key this signs with");
+        let encapsulated = EncapsulatedContentInfo {
+            econtent_type: ID_DATA,
+            econtent: None,
+        };
+        let sha256 = AlgorithmIdentifierOwned {
+            oid: ID_SHA256,
+            parameters: None,
+        };
+        let sid = SignerIdentifier::IssuerAndSerialNumber(IssuerAndSerialNumber {
+            issuer: signer.tbs_certificate.issuer.clone(),
+            serial_number: signer.tbs_certificate.serial_number.clone(),
+        });
+        let signing = Signing {
+            key: &key,
+            kind,
+            refused: RefCell::new(None),
+        };
+        let info =
+            SignerInfoBuilder::new(&signing, sid, sha256.clone(), &encapsulated, Some(digest))
+                .expect("a signer");
+        let mut data = SignedDataBuilder::new(&encapsulated);
+        data.add_digest_algorithm(sha256).expect("a digest");
+        data.add_certificate(CertificateChoices::Certificate(signer.clone()))
+            .expect("a certificate");
+        data.add_signer_info::<Signing<'_>, Value>(info)
+            .expect("signed");
+        let blob = data.build().expect("built").to_der().expect("a blob");
+        stated = states_its_certificate(&blob);
+        blob
+    });
+    assert!(!stated, "this one carries no signingCertificateV2");
+    let found = verdicts(&bytes);
+    assert_eq!(found[0].1.verdict, Verdict::Intact, "{found:?}");
+}
+
+/// A worker's numbers are a worker's: a range that does not frame its own
+/// value in the revision is refused before anything is indexed by it, as the
+/// signing path refuses one (`check`), rather than taking this process down.
+#[test]
+fn a_document_timestamp_whose_range_does_not_frame_its_value_is_refused() {
+    use crate::integrity::test_tsa::{mint, Imprint, TestTsa};
+    let original = testkeys::plain_pdf();
+    let unsigned =
+        crate::sign_prepare::prepare_document_timestamp(original.clone(), None).expect("prepared");
+    let token = mint(
+        Imprint::Sha256,
+        &unsigned.digest,
+        None,
+        NOW,
+        &TestTsa::new(),
+    );
+    let [_, first, second, last] = unsigned.range;
+    let was = original.len() as u64;
+    for (what, range) in [
+        // The first is the one that took the process down: the offset into
+        // the revision is the hole's start less the document's length.
+        ("a hole at the very start of the file", [0, 0, second, last]),
+        (
+            "a hole that begins before the revision",
+            [0, was - 1, second, last],
+        ),
+        (
+            "a hole that begins past the end",
+            [0, u64::MAX, second, last],
+        ),
+        ("a hole of another size", [0, first, second + 2, last - 2]),
+        (
+            "a range that stops short of the end",
+            [0, first, second, last - 1],
+        ),
+        (
+            "a range that does not begin the file",
+            [1, first, second, last],
+        ),
+    ] {
+        let mut wrong = unsigned.clone();
+        wrong.range = range;
+        let why = seal_document_timestamp(original.clone(), wrong, &token).expect_err(what);
+        assert!(
+            why.contains("covers a range that does not frame its own value"),
+            "{what}: {why}"
+        );
+    }
+    // The control: the worker's own numbers, with the same token.
+    seal_document_timestamp(original, unsigned, &token).expect("sealed");
+}

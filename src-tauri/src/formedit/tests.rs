@@ -348,6 +348,28 @@ fn a_rename_gives_the_field_its_name_and_two_fields_can_swap() {
 }
 
 #[test]
+fn a_rename_to_a_name_outside_ascii_reads_back_as_that_name() {
+    // The control: a name inside ASCII reads the same in either encoding, so
+    // it says nothing about which one was written.
+    let mut f = fixture();
+    let name = one(&f.doc, "Name");
+    apply(&mut f.doc, &[named(&name, "Groesse")]).expect("renamed");
+    assert_eq!(one(&f.doc, "Groesse").widget, name.widget);
+
+    // A text string with no byte-order mark is PDFDocEncoding to every
+    // reader, so UTF-8 bytes written bare come back as two letters for each
+    // of these.
+    apply(&mut f.doc, &[named(&name, "Gr\u{f6}\u{df}e")]).expect("renamed");
+    assert_eq!(one(&f.doc, "Gr\u{f6}\u{df}e").widget, name.widget);
+    assert!(widgets(&f.doc, "Groesse").is_empty());
+    // And the name is taken, for the check that reads the file's own string.
+    let notes = one(&f.doc, "Notes");
+    let refused = apply(&mut f.doc, &[named(&notes, "Gr\u{f6}\u{df}e")]).unwrap_err();
+    assert!(refused.contains("another field has this name"), "{refused}");
+    assert_eq!(one(&f.doc, "Notes").widget, notes.widget);
+}
+
+#[test]
 fn a_removal_takes_the_widget_off_its_page_and_the_field_out_of_the_form() {
     let mut f = fixture();
     let refs = |doc: &Document, owner: ObjectId, key: &[u8]| -> Vec<ObjectId> {
@@ -767,7 +789,7 @@ fn a_text_size_is_declared_on_the_field_and_its_answer_is_drawn_at_it() {
     f.doc
         .get_dictionary_mut(now.object)
         .unwrap()
-        .set("DA", crate::formfields::text("/TiRo 11 Tf 0 0 1 rg"));
+        .set("DA", Object::string_literal("/TiRo 11 Tf 0 0 1 rg"));
     assert_eq!(one(&f.doc, "Name").text_size, Some(11.0));
     apply(&mut f.doc, &[with(&now, sized(8.5))]).expect("eight and a half");
     assert_eq!(declared(&f.doc, now.object), "/TiRo 8.5 Tf 0 0 1 rg");
@@ -793,7 +815,7 @@ fn a_field_with_no_text_size_of_its_own_has_the_forms() {
     f.doc
         .get_dictionary_mut(form)
         .unwrap()
-        .set("DA", crate::formfields::text("/Helv 10 Tf 0 g"));
+        .set("DA", Object::string_literal("/Helv 10 Tf 0 g"));
     // Its own says nought, which is its own answer.
     assert_eq!(one(&f.doc, "Name").text_size, None);
     f.doc.get_dictionary_mut(name.object).unwrap().remove(b"DA");

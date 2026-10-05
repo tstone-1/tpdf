@@ -1190,6 +1190,62 @@ describe("drawing freehand", () => {
     expect(turned[1]).not.toBeCloseTo(turned[3] ?? 0, 1);
     viewer.destroy();
   });
+
+  /** A three-page document nobody has edited: slots 0 to 2 hold ids 1 to 3. */
+  function threePages(): Viewer {
+    return new Viewer(dom.root as unknown as HTMLElement, {
+      doc: 1,
+      pageCount: 3,
+      pages: [{ width_pt: 600, height_pt: 800 }],
+      onDrawn: (kind, page, shape) => drawn.push({ kind, page, shape }),
+    });
+  }
+
+  /** One stroke on the page in `slot`, left unfinished. */
+  function strokeOn(viewer: Viewer, slot: number): void {
+    viewer.goToPage(slot);
+    viewer.armDraw("ink");
+    const from = viewer.screenPoint(slot, 100, 100);
+    const to = viewer.screenPoint(slot, 300, 120);
+    scribble([from, to]);
+    expect(viewer.drawnStrokes).toBe(1);
+  }
+
+  it("ink_started_before_a_deletion_above_is_not_written_to_the_page_that_moved_in", async () => {
+    // A drawing is kept under the slot it was started in until Enter, and a
+    // page deleted above it in between renumbers that slot. Finished after the
+    // deletion, the strokes belong to the page they were drawn on, which is one
+    // slot up, and not to the page that moved into the old number.
+    const viewer = threePages();
+    await settle();
+    const [, second, third] = viewer.pageOrder;
+    strokeOn(viewer, 1);
+
+    expect(viewer.setPages([second!, third!])).toBe(true);
+    enter();
+
+    expect(drawn).toHaveLength(1);
+    // Id 2, where an unedited slot 1 would also have said 2: the wrong answer
+    // here is 3, the id now in slot 1.
+    expect(drawn[0]?.page).toBe(second!.id);
+    expect(drawn[0]?.page).not.toBe(third!.id);
+    viewer.destroy();
+  });
+
+  it("drops ink whose page was deleted before it was finished", async () => {
+    const viewer = threePages();
+    await settle();
+    const [first, , third] = viewer.pageOrder;
+    strokeOn(viewer, 1);
+
+    expect(viewer.setPages([first!, third!])).toBe(true);
+    // Gone with its page, and said so: armed with nothing drawn.
+    expect(viewer.drawnStrokes).toBe(0);
+    enter();
+
+    expect(drawn).toEqual([]);
+    viewer.destroy();
+  });
 });
 
 describe("the eraser", () => {

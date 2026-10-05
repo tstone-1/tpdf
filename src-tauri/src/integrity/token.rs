@@ -314,6 +314,25 @@ fn binds(attributes: Option<&Attributes>, certificate: Option<&[u8]>) -> Result<
     Ok(())
 }
 
+/// [`binds`] for a document signature, which need not carry the attribute:
+/// nothing to hold it to when it carries neither form, and exactly what
+/// [`binds`] answers when it carries one.
+pub(super) fn binds_when_stated(
+    attributes: Option<&Attributes>,
+    certificate: Option<&[u8]>,
+) -> Result<(), Why> {
+    let stated = attributes.is_some_and(|attributes| {
+        attributes.iter().any(|attribute| {
+            let oid = attribute.oid.to_string();
+            oid == SIGNING_CERTIFICATE || oid == SIGNING_CERTIFICATE_V2
+        })
+    });
+    if !stated {
+        return Ok(());
+    }
+    binds(attributes, certificate)
+}
+
 /// Whether one `ESSCertID`'s hash is the hash of `certificate`'s DER.
 ///
 /// The DER is the certificate as `x509-cert` re-encodes it, which is the

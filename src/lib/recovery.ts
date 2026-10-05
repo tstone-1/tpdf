@@ -179,6 +179,28 @@ export function beforeReload(dirty: boolean): Prompt | null {
 }
 
 /**
+ * What the Reload command does once it is asked: the prompt to show, or `null`
+ * to reload.
+ *
+ * **Drafts are settled before `dirty` is read.** A form answer or a note still
+ * being typed is not an edit until its box closes, so a `dirty` read first says
+ * there is nothing to lose and the reload then discards the words. A draft that
+ * cannot be committed is work at stake too, and gets the prompt.
+ */
+export async function reloadAsked(host: {
+  settle(): Promise<void>;
+  dirty(): boolean;
+}): Promise<Prompt | null> {
+  let unsettled = false;
+  try {
+    await host.settle();
+  } catch {
+    unsettled = true;
+  }
+  return beforeReload(host.dirty() || unsettled);
+}
+
+/**
  * What to say before removing marked regions from the reader's own file.
  *
  * **Unconditional, where {@link beforeReload} asks whether there is anything to

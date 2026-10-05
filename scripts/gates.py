@@ -94,6 +94,10 @@ drifting; the titles had not, and were three short on the day this was written.
 It compares the two as **sets**, which is the invariant -- a tally goes stale the
 next time an entry is added, and a set diff needs no number at all.
 
+`subsystems` is the same comparison for `docs/SUBSYSTEMS.md` and the list of its
+sections in `AGENTS.md`'s *Stack*, added 2026-10-05 when that list was six
+sections short with nothing red.
+
 `types` is `anchors` asked the other way round, and the distinction is the whole
 of why it exists: `anchors` proves a mutation's `before` is still in the tree,
 and that says nothing about whether its `after` still compiles. A replacement
@@ -182,6 +186,12 @@ def gates() -> "list[tuple[str, list[str], str]]":
             "the docs/TRAPS.md table of contents disagrees with its entries or with "
             "AGENTS.md's group list, carries an unallowlisted parenthetical, or "
             "AGENTS.md is over its size ceiling",
+        ),
+        (
+            "subsystems",
+            [sys.executable, str(ROOT / "scripts" / "check_subsystems_index.py")],
+            "a section of docs/SUBSYSTEMS.md is missing from AGENTS.md's index of it, "
+            "or the index names a section that file does not have",
         ),
         (
             # Cheap, and it guards the instrument every other dated claim in the

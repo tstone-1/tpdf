@@ -39,7 +39,8 @@ process reads the file as bytes, re-derives the digest, has the OS sign it throu
 `keystore.rs` and splices the CMS in (`sign_cms.rs`), `save::write_signed` writes a new file,
 and a fresh worker reads it back (`save::Verifier::signatures`). The worker never holds a key
 and the app process never parses the document. `signing.ts` carries the sequence and every
-sentence; `App.svelte` supplies the chooser, the save panel and the message area. The
+sentence, except the verdict on the read-back, which is Rust's and the same for the window and
+the command-line tool (`commands::sign::finish` and `read_back`); `App.svelte` supplies the chooser, the save panel and the message area. The
 signed-save warning is not shown: signing appends one revision and writes no byte of the
 earlier ones, which `sign-probe` shows pyHanko agreeing with. Unsaved edits, encrypted
 documents and DocMDP `/P 1` are refused. `docs/PLAN.md` §9 has the decisions and the

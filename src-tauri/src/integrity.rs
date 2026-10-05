@@ -184,7 +184,10 @@ pub enum Why {
     /// A timestamp token that does not bind itself to the certificate it
     /// carries: no ESS `signingCertificate` or `signingCertificateV2`
     /// attribute, or one naming a different certificate. RFC 3161 §2.4.1
-    /// requires it. Only ever a token's reason; see [`token`].
+    /// requires it; see [`token`]. Since 2026-10-05 a document signature's
+    /// reason too, for the second half only: one that carries the attribute
+    /// and names a different certificate. A signature carrying none is not
+    /// refused for it.
     Binding,
 }
 
@@ -240,7 +243,23 @@ pub fn check(
     let Some(signer) = Signer::read(blob, Shape::Detached) else {
         return Integrity::unchecked(Why::Unreadable);
     };
-    signer.judge(&pieces, budget)
+    let attributes = signer.attributes.clone();
+    let certificate = signer.certificate.clone();
+    let verdict = signer.judge(&pieces, budget);
+    // A signature that states which certificate it was made with (ESS
+    // `signingCertificate`, which PAdES requires and tpdf's own writer adds)
+    // is held to it. The certificate set is outside what the key signed, so
+    // without this a signature reads as intact under any certificate over
+    // the same key that its `sid` names as well --- another subject, another
+    // issuer's. Asked only of a verdict that would otherwise be good: an
+    // altered or broken signature is that whatever it names, as a token's is.
+    // One that states none reads as before; most made before PAdES do not.
+    if matches!(verdict.verdict, Verdict::Intact | Verdict::Weak) {
+        if let Err(why) = token::binds_when_stated(attributes.as_ref(), certificate.as_deref()) {
+            return Integrity::unchecked(why);
+        }
+    }
+    verdict
 }
 
 /// The two covered pieces of the file, when the range is one this vouches for.

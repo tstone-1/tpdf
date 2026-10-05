@@ -332,7 +332,13 @@ pub const MIN_SIGNATURE: f64 = crate::sign_prepare::appearance::MIN_SIDE;
 /// the reader, black. `Helv` is the name producers use for it.
 const DEFAULT_APPEARANCE: &str = "/Helv 0 Tf 0 g";
 
-pub(crate) fn text(value: &str) -> Object {
+/// `value` as a literal string, byte for byte: for content that is ASCII by
+/// construction, which a default appearance is. A string a reader is shown ---
+/// a name, a tooltip, an answer --- is `forms::pdf_string`, because a text
+/// string with no byte-order mark is PDFDocEncoding to whoever reads it and
+/// anything outside ASCII would come back as other letters.
+fn ascii(value: &str) -> Object {
+    debug_assert!(value.is_ascii(), "{value:?} is not ASCII");
     Object::String(value.as_bytes().to_vec(), lopdf::StringFormat::Literal)
 }
 
@@ -702,7 +708,7 @@ fn ensure_font(doc: &mut Document, form: ObjectId) -> Result<ObjectId, String> {
     let dict = doc.get_dictionary_mut(form).map_err(|e| e.to_string())?;
     dict.set("DR", resources);
     if !has_appearance {
-        dict.set("DA", text(DEFAULT_APPEARANCE));
+        dict.set("DA", ascii(DEFAULT_APPEARANCE));
     }
     Ok(font)
 }
@@ -777,7 +783,7 @@ fn widget(
                 forms::sized_appearance(None, size),
                 lopdf::StringFormat::Literal,
             ),
-            None => text(DEFAULT_APPEARANCE),
+            None => ascii(DEFAULT_APPEARANCE),
         },
     };
     if let Some(default) = field.default_value.as_deref().filter(|d| !d.is_empty()) {

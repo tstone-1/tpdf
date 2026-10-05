@@ -31,6 +31,11 @@ struct Sealed {
 }
 
 fn sealed(pki: &Pki) -> Sealed {
+    sealed_by(pki, &pki.tsa)
+}
+
+/// [`sealed`], timestamped by `tsa` rather than the PKI's own authority.
+fn sealed_by(pki: &Pki, tsa: &crate::integrity::test_tsa::TestTsa) -> Sealed {
     let at = now();
     let original = plain_pdf();
     let key = Soft::p256(pki.signer.seed);
@@ -50,7 +55,7 @@ fn sealed(pki: &Pki) -> Sealed {
         &Imprint::Sha256.digest(&value),
         Some(&[5; 8]),
         at,
-        &pki.tsa,
+        tsa,
     );
     let cms = made.stamped(&token).expect("stamped");
     let field = made.field.clone();
@@ -78,25 +83,26 @@ fn no_os_chain(_: &[u8], _: &[Vec<u8>]) -> Vec<Vec<u8>> {
 /// [`Vouch`] as a reader whose store trusts the test authority's root has it:
 /// the reader's own rule, that root the only anchor --- no keychain or
 /// certificate store is touched.
-fn anchored(token: &[u8], now: u64) -> crate::trust::Trust {
+fn anchored(token: &[u8], now: u64) -> Vouched {
     let root = crate::integrity::test_tsa::TestTsa::new().root;
-    crate::trust::of_blob_for(
+    vouched_under(
         token,
-        crate::trust::Purpose::Timestamping,
         now,
         crate::trust::Anchors::Only(std::slice::from_ref(&root)),
     )
 }
 
+/// [`plan`] as [`extend`] calls it: over the chain the test authority was
+/// vouched for by, and no OS to assemble the signer's.
+fn planned_here(cms: &[u8]) -> Result<(Vec<Subject>, Vec<Vec<u8>>), Refusal> {
+    let chain = vouched(cms, now(), &anchored)?;
+    plan(cms, &no_os_chain, &chain)
+}
+
 /// [`Vouch`] for a reader who trusts no root at all: an authority substituted
 /// by somebody on the path, as far as this computer can tell.
-fn stranger(token: &[u8], now: u64) -> crate::trust::Trust {
-    crate::trust::of_blob_for(
-        token,
-        crate::trust::Purpose::Timestamping,
-        now,
-        crate::trust::Anchors::Only(&[]),
-    )
+fn stranger(token: &[u8], now: u64) -> Vouched {
+    vouched_under(token, now, crate::trust::Anchors::Only(&[]))
 }
 
 /// The archive timestamp, from the test authority: a token over the pieces,
@@ -746,7 +752,7 @@ fn a_responder_that_is_down_silent_or_too_long_leaves_nothing_answered() {
 fn the_whole_gathering_is_bounded_in_time() {
     let pki = Pki::start(good());
     let signed = sealed(&pki);
-    let (subjects, certificates) = plan(&signed.cms, &no_os_chain).expect("planned");
+    let (subjects, certificates) = planned_here(&signed.cms).expect("planned");
     let why =
         gather(&subjects, certificates, now(), Duration::ZERO, &mut quick).expect_err("refused");
     assert!(why.sentence().contains("took longer than"), "{why:?}");
@@ -768,7 +774,7 @@ fn long_term_data_needs_a_timestamp() {
         &Soft::p256(pki.signer.seed),
     )
     .expect("made");
-    let why = plan(&made.unstamped_blob(), &no_os_chain).expect_err("refused");
+    let why = planned_here(&made.unstamped_blob()).expect_err("refused");
     assert_eq!(why, Refusal::NoTimestamp);
 }
 
@@ -797,11 +803,17 @@ fn an_issuer_nowhere_to_be_found_is_refused() {
         &pki.tsa,
     );
     let cms = made.stamped(&token).expect("stamped");
-    let why = plan(&cms, &no_os_chain).expect_err("refused");
+    let why = planned_here(&cms).expect_err("refused");
     assert!(matches!(why, Refusal::NoIssuer(_)), "{why:?}");
     // The OS's chain is a source of issuers.
     let root = pki.root.certificate.clone();
-    plan(&cms, &move |_: &[u8], _: &[Vec<u8>]| vec![root.clone()]).expect("planned");
+    let vouched_chain = vouched(&cms, now(), &anchored).expect("vouched for");
+    plan(
+        &cms,
+        &move |_: &[u8], _: &[Vec<u8>]| vec![root.clone()],
+        &vouched_chain,
+    )
+    .expect("planned");
 }
 
 // ------------------------------------------------------------ the last check
@@ -963,7 +975,7 @@ fn a_certificate_that_needs_no_check_is_not_asked_about() {
         signer_no_check: true,
         ..good()
     });
-    let (subjects, _) = plan(&sealed(&pki).cms, &no_os_chain).expect("planned");
+    let (subjects, _) = planned_here(&sealed(&pki).cms).expect("planned");
     let whose: Vec<Whose> = subjects.iter().map(|s| s.whose).collect();
     assert_eq!(whose, [Whose::Authority]);
 }
@@ -986,7 +998,7 @@ fn a_self_issued_signer_publishes_nothing_and_says_so() {
         at,
         &pki.tsa,
     );
-    let why = plan(&made.stamped(&token).expect("stamped"), &no_os_chain).expect_err("refused");
+    let why = planned_here(&made.stamped(&token).expect("stamped")).expect_err("refused");
     assert!(
         matches!(&why, Refusal::NotPublished(name) if name.contains("A self-made signer")),
         "{why:?}"
@@ -1072,7 +1084,7 @@ fn a_chain_deeper_than_any_real_one_is_refused() {
         at,
         &pki.tsa,
     );
-    let why = plan(&made.stamped(&token).expect("stamped"), &no_os_chain).expect_err("refused");
+    let why = planned_here(&made.stamped(&token).expect("stamped")).expect_err("refused");
     assert!(matches!(why, Refusal::Bound(_)), "{why:?}");
 }
 
@@ -1233,8 +1245,13 @@ fn a_cross_certificate_of_a_root_the_os_holds_ends_the_chain() {
     );
     let cms = made.stamped(&token).expect("stamped");
     let root = pki.root.certificate.clone();
-    let (subjects, carried) =
-        plan(&cms, &move |_: &[u8], _: &[Vec<u8>]| vec![root.clone()]).expect("planned");
+    let vouched_chain = vouched(&cms, now(), &anchored).expect("vouched for");
+    let (subjects, carried) = plan(
+        &cms,
+        &move |_: &[u8], _: &[Vec<u8>]| vec![root.clone()],
+        &vouched_chain,
+    )
+    .expect("planned");
     let whose: Vec<Whose> = subjects.iter().map(|s| s.whose).collect();
     assert_eq!(whose, [Whose::Signer, Whose::Authority]);
     assert!(
@@ -1292,6 +1309,170 @@ fn an_authority_this_computer_does_not_trust_is_refused_before_anything_is_fetch
     let bytes = extended(&signed).expect("extended");
     assert!(bytes.len() > signed.bytes.len());
     assert_eq!(pki.paths(), ["/ocsp/signer", "/ocsp/authority"]);
+}
+
+/// A token's `certificates` set is outside its signature, so anybody on the
+/// path can add to it. Here they add a twin of the authority's issuer --- its
+/// name and its key, under a root of their own, naming a responder of their
+/// choosing --- and that root. The authority is still one this computer
+/// trusts, through the genuine issuer; the twin is on no chain it vouched for,
+/// so the signing is refused before anything is asked of anybody: the twin's
+/// address is never connected to, and nothing is written.
+#[test]
+fn a_certificate_injected_into_the_token_is_never_asked_about() {
+    use crate::integrity::test_tsa::{Published, TestCa, TestTsa};
+    let pki = Pki::start(good());
+    let at = now();
+    let responder = |path: &str| Published {
+        ocsp: vec![format!("{}/ocsp/{path}", pki.base)],
+        ..Published::default()
+    };
+    let root = TestCa::of_tsa();
+    let issuing = root.intermediate_publishing(
+        "tpdf test timestamp issuing authority",
+        0x54,
+        4,
+        &responder("issuing-authority"),
+    );
+    let genuine = TestTsa::under(&issuing, &responder("authority"));
+    let theirs = TestCa::new("tpdf test injected root", 0x5a);
+    let twin = theirs.cross_publishing(&issuing, 3, &responder("twin"));
+    let mut tampered = genuine.clone();
+    tampered.carried.push(twin.clone());
+    tampered.carried.push(theirs.certificate.clone());
+
+    // Every address answers `good`: the certificate authorities', and the
+    // twin's, which is its maker's to answer as they please.
+    let ocsp = |certificate: &[u8], issuer: &TestCa| {
+        mint_ocsp(
+            certificate,
+            issuer,
+            Says::Good,
+            at - 3_600,
+            Some(at + 86_400),
+            Responder::Issuer,
+            &OcspFaults::default(),
+        )
+    };
+    let extended_by = |tsa: &TestTsa| {
+        let signed = sealed_by(&pki, tsa);
+        let mut asked: Vec<String> = Vec::new();
+        let result = extend(
+            &signed.bytes,
+            &signed.cms,
+            &signed.field,
+            at,
+            &crate::save::Here,
+            &no_os_chain,
+            &anchored,
+            &mut |url: &url::Url, body: Option<(&str, Vec<u8>)>, limits: &tsa::Limits| {
+                asked.push(url.path().to_string());
+                match url.path() {
+                    "/ocsp/authority" => Ok(ocsp(&tsa.certificate, &issuing)),
+                    "/ocsp/issuing-authority" => Ok(ocsp(&issuing.certificate, &root)),
+                    "/ocsp/twin" => Ok(ocsp(&twin, &theirs)),
+                    _ => quick(url, body, limits),
+                }
+            },
+            &mut archive,
+        );
+        (signed, asked, result)
+    };
+
+    // The fixture is the attack: the twin stands before the genuine issuer in
+    // the token's set, where a walk over that set meets it first; it passes
+    // for the issuer by name and by key; and the authority is vouched for
+    // all the same.
+    let (signed, asked, result) = extended_by(&tampered);
+    let token = signed_data(&signed.cms)
+        .ok()
+        .and_then(|signed| token_of(&signed))
+        .and_then(|token| signed_data(&token).ok())
+        .expect("the token");
+    let carried: Vec<Vec<u8>> = crate::docinfo::certificates_of(&token)
+        .into_iter()
+        .filter_map(|certificate| certificate.to_der().ok())
+        .collect();
+    let place = |der: &Vec<u8>| carried.iter().position(|c| c == der).expect("carried");
+    assert!(place(&twin) < place(&issuing.certificate), "{carried:?}");
+    let authority = Certificate::from_der(&tampered.certificate).expect("the authority");
+    let twin_parsed = Certificate::from_der(&twin).expect("the twin");
+    assert!(crate::revocation::issuer_of(&authority, &[&twin_parsed]).is_some());
+    let chain = vouched(&signed.cms, at, &anchored).expect("vouched for");
+    assert_eq!(
+        chain,
+        [
+            tampered.certificate.clone(),
+            issuing.certificate.clone(),
+            tampered.root.clone()
+        ],
+        "the chain vouched for is the genuine one"
+    );
+
+    assert_eq!(asked, Vec::<String>::new(), "something was asked");
+    assert!(pki.paths().is_empty(), "{:?}", pki.paths());
+    let why = result.expect_err("refused");
+    assert_eq!(
+        why,
+        Refusal::NoIssuer(format!(
+            "the timestamp authority's certificate ({})",
+            crate::integrity::test_tsa::AUTHORITY
+        ))
+    );
+    assert!(!why.revoked() && !why.tpdf_failed(), "{why:?}");
+
+    // The control: the same authority's token as the authority sent it. The
+    // genuine chain is asked about and written, so the injected certificates
+    // and not the issuing authority are what refused the one above.
+    let (_, asked, result) = extended_by(&genuine);
+    assert_eq!(
+        asked,
+        ["/ocsp/signer", "/ocsp/authority", "/ocsp/issuing-authority"]
+    );
+    let bytes = result.expect("extended");
+    let (certs, _, _) = dss(&bytes);
+    for link in [&genuine.certificate, &issuing.certificate, &genuine.root] {
+        assert!(certs.contains(link), "the authority's chain is in /DSS");
+    }
+    let stamp = read(&bytes).timestamp.expect("a timestamp");
+    assert_eq!(
+        stamp.revocation_chain.map(|chain| chain.standing),
+        Some(Status::Good)
+    );
+}
+
+/// DigiCert's and Sectigo's tokens carry their roots as cross-certificates.
+/// One is not a link: the walk ends at it, at the root the authority was
+/// vouched for by. So whatever it names is not asked, it is not written, and
+/// the signing goes through --- for a genuine cross-certificate and for one
+/// somebody on the path made alike.
+#[test]
+fn a_cross_certificate_of_the_authoritys_root_in_the_token_is_not_asked_about_or_written() {
+    use crate::integrity::test_tsa::{Published, TestCa};
+    let pki = Pki::start(good());
+    let older = TestCa::new("tpdf test older timestamp root", 0x5b);
+    let cross = older.cross_publishing(
+        &TestCa::of_tsa(),
+        7,
+        &Published {
+            ocsp: vec![format!("{}/ocsp/cross", pki.base)],
+            ..Published::default()
+        },
+    );
+    let mut tsa = pki.tsa.clone();
+    tsa.carried.push(cross.clone());
+    tsa.carried.push(older.certificate.clone());
+    let signed = sealed_by(&pki, &tsa);
+    let bytes = extended(&signed).expect("extended");
+    assert_eq!(pki.paths(), ["/ocsp/signer", "/ocsp/authority"]);
+    let (certs, _, _) = dss(&bytes);
+    assert!(certs.contains(&tsa.root), "the anchor is carried");
+    assert!(
+        !certs.contains(&cross) && !certs.contains(&older.certificate),
+        "the cross-certificate is not"
+    );
+    let stamp = read(&bytes).timestamp.expect("a timestamp");
+    assert_eq!(stamp.revocation.map(|r| r.standing), Some(Status::Good));
 }
 
 /// A token is attacker-shaped bytes from the network, and its certificates
@@ -1461,12 +1642,15 @@ fn a_worker_that_dies_while_extending_is_tpdfs_failure() {
 
 // ------------------------------------ the command line's read-back
 
-/// The command line's check of the file it wrote holds the file to what
-/// [`check`] held the same bytes to before writing: the authority's answer
-/// and the chains above, not only the signer's.
+/// The check of the file a signing wrote --- the command line's and, since
+/// 2026-10-05, the window's --- holds the file to what [`check`] held the same
+/// bytes to before writing: the authority's answer and the chains above, not
+/// only the signer's.
 #[test]
 fn the_command_lines_read_back_asks_what_the_check_before_writing_asks() {
-    use crate::cli::sign::read_back_holds;
+    let read_back_holds = |found: &[crate::docinfo::Signature], field: &str, stamped, data| {
+        crate::commands::sign::read_back(found, field, stamped, data).holds()
+    };
     let pki = Pki::start(good());
     let signed = sealed(&pki);
     let at = now();
@@ -1520,4 +1704,133 @@ fn the_command_lines_read_back_asks_what_the_check_before_writing_asks() {
     assert!(!read_back_holds(&above, &signed.field, true, true));
     // Another field is not ours.
     assert!(!read_back_holds(&good, "Signature9", true, true));
+}
+
+// ------------------------------------ what follows the last signature
+
+/// What `verify --strict` makes of `bytes`, read with the fake PKI's two
+/// roots as the only anchors: whether it passes, the exit code, what follows
+/// the last signature, and the text printed.
+fn strict(pki: &Pki, bytes: &[u8]) -> (bool, crate::cli::Exit, crate::cli::verify::After, String) {
+    use crate::cli::verify::{
+        after_last_signature, signature_report, verified_after, verify_exit, verify_text_after,
+    };
+    let roots = [pki.root.certificate.clone(), pki.tsa.root.clone()];
+    let properties =
+        crate::docinfo::scan_at(bytes, crate::trust::Anchors::Only(&roots), now()).expect("read");
+    let after = after_last_signature(&properties.signatures);
+    let file = crate::cli::report::File {
+        path: "signed.pdf".into(),
+        error: None,
+        signatures: properties
+            .signatures
+            .iter()
+            .filter(|s| s.signed)
+            .map(signature_report)
+            .collect(),
+    };
+    // Every signature passes on its own in every case below, so what decides
+    // is what follows the last of them.
+    for signature in &file.signatures {
+        assert!(
+            crate::cli::verify::passes_strict(signature),
+            "{signature:?}"
+        );
+    }
+    let report = verified_after(vec![file], &[after]);
+    let text = verify_text_after(&report, &[after]);
+    (
+        report.strict_passed,
+        verify_exit(&report, true),
+        after,
+        text,
+    )
+}
+
+/// `bytes` with one more revision, which writes the first page's content
+/// stream again and nothing else: no byte of what was signed is changed.
+fn with_a_page_rewritten(bytes: &[u8]) -> Vec<u8> {
+    use lopdf::{dictionary, Document, IncrementalDocument, Object, Stream};
+    let prev = Document::load_mem(bytes).expect("parses");
+    let page = *prev.get_pages().get(&1).expect("a page");
+    let content = prev
+        .get_object(page)
+        .and_then(Object::as_dict)
+        .and_then(|page| page.get(b"Contents"))
+        .and_then(Object::as_reference)
+        .expect("a content stream");
+    let mut incremental = IncrementalDocument::create_from(bytes.to_vec(), prev);
+    incremental.new_document.set_object(
+        content,
+        Stream::new(dictionary! {}, b"0 0 200 200 re f".to_vec()),
+    );
+    let mut out = Vec::new();
+    incremental.save_to(&mut out).expect("saved");
+    assert_eq!(&out[..bytes.len()], bytes, "a revision appended");
+    out
+}
+
+/// The control for the test below: what tpdf's own signing appends is not a
+/// change to a page. The timestamped signature, the one with validation data
+/// after it, and the one with an archive timestamp over both all pass.
+#[test]
+fn strict_passes_tpdfs_own_long_term_signature() {
+    use crate::cli::verify::After;
+    use crate::cli::Exit;
+    let pki = Pki::start(good());
+    let timed = sealed(&pki);
+    let archived = extended(&timed).expect("extended");
+    // The file up to the end of the revision carrying the /DSS: a signature
+    // followed by validation data and no timestamp over it.
+    let marker = b"%%EOF";
+    let ends: Vec<usize> = archived
+        .windows(marker.len())
+        .enumerate()
+        .filter(|(_, window)| window == marker)
+        .map(|(at, _)| at + marker.len())
+        .collect();
+    let checkable = &archived[..ends[ends.len() - 2]];
+    assert!(checkable.len() > timed.bytes.len());
+    for (what, bytes) in [
+        ("timestamped", &timed.bytes[..]),
+        ("with validation data", checkable),
+        ("with an archive timestamp", &archived[..]),
+    ] {
+        let (passed, exit, after, text) = strict(&pki, bytes);
+        assert_eq!(
+            (passed, exit, after),
+            (true, Exit::Ok, After::Unchanged),
+            "{what}: {text}"
+        );
+        assert!(!text.contains("After the last signature"), "{what}: {text}");
+    }
+}
+
+/// A signature stays intact, trusted and unrevoked when a revision appended
+/// after it rewrites a page, because it answers only for the bytes in its
+/// range. `--strict` fails the document, and says what it found.
+#[test]
+fn strict_fails_a_signature_followed_by_a_rewritten_page() {
+    use crate::cli::verify::After;
+    use crate::cli::Exit;
+    let pki = Pki::start(good());
+    let timed = sealed(&pki);
+    let archived = extended(&timed).expect("extended");
+    for (what, bytes) in [
+        ("timestamped", &timed.bytes),
+        ("with an archive timestamp", &archived),
+    ] {
+        let (passed, exit, after, text) = strict(&pki, &with_a_page_rewritten(bytes));
+        assert_eq!(
+            (passed, exit, after),
+            (false, Exit::Strict, After::Pages(1)),
+            "{what}: {text}"
+        );
+        assert!(
+            text.ends_with(
+                "\n  After the last signature: 1 page was rewritten, which no signature covers"
+            ),
+            "{what}: {text}"
+        );
+    }
 }

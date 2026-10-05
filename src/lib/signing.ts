@@ -312,7 +312,13 @@ export function afterSigning(signed: Signed): string {
 
 /** What {@link signDocument} needs from the shell. */
 export interface SigningShell {
-  /** Whether the document has edits that are not in the file. */
+  /**
+   * Commits whatever the reader is still typing --- a form answer with the
+   * caret in it, a note in its box --- and waits for the edit that makes.
+   * Rejects when a draft cannot be committed.
+   */
+  settle(): Promise<void>;
+  /** Whether the document has edits that are not in the file. Asked after {@link settle}. */
   dirty(): boolean;
   /** The file the document was opened from. */
   openPath: string;
@@ -368,6 +374,13 @@ export interface SigningShell {
  * is dragged, and an invisible one is written into it all the same.
  */
 export async function signDocument(shell: SigningShell, field: SignTarget | null = null): Promise<string | null> {
+  // Before `dirty` is read, and that order is the point. What is signed is
+  // the file on disk, and a form answer commits only when its control loses
+  // the keyboard: read first, the document says it is saved while the answer
+  // is on screen, the chooser's dialog then takes the keyboard, and the commit
+  // that makes is refused because a document task is running. The copy would
+  // be signed without the answer and reported intact.
+  await shell.settle();
   if (shell.dirty()) return UNSAVED;
   const choices = await shell.list();
   if (choices.usable.length === 0) return nothingToChoose(choices);

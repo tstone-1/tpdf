@@ -12,7 +12,7 @@
 //! done is a conformance test --- the signed attributes a profile requires,
 //! the algorithms it permits, the order the standard fixes for adding
 //! validation data. A validator does those; this does not, and
-//! [`crate::cli::words::pades_sentence`] ends every answer by saying so.
+//! [`crate::words::pades_sentence`] ends every answer by saying so.
 //!
 //! **Nothing is named for a signature that does not hold.** A level is a
 //! statement about a signature, and one that is broken, altered or unchecked
@@ -40,7 +40,11 @@ pub enum Level {
     /// B-B: a CAdES signature, and nothing that dates it.
     #[serde(rename = "B-B")]
     B,
-    /// B-T: and a trusted time for it.
+    /// B-T: and a time somebody else attests for it --- a timestamp token that
+    /// checks out over it. **Not that this computer trusts the authority that
+    /// made the token**: a level names the parts the document carries, which
+    /// read the same on every computer, and whether the authority is trusted
+    /// is the trust row's answer, said beside it.
     #[serde(rename = "B-T")]
     T,
     /// B-LT: and the revocation data to check it later, in the document.
@@ -221,6 +225,36 @@ mod tests {
         assert_eq!(of(&dated, &[stamp(Status::Good)]), Some(Level::T));
         // And one whose own authority is not answered for does not seal.
         assert_eq!(of(&checkable, &[stamp(Status::None)]), Some(Level::Lt));
+    }
+
+    /// The level is the document's parts, not this computer's opinion of who
+    /// made them: a token that checks out from an authority the store does not
+    /// trust is still the part B-T names, and the trust row says the rest.
+    #[test]
+    fn a_token_from_an_authority_this_computer_does_not_trust_is_still_the_part() {
+        use crate::trust::{Doubt, Standing, Trust};
+        let standing = |standing, why| {
+            Some(Trust {
+                standing,
+                why,
+                ..Trust::default()
+            })
+        };
+        for trust in [
+            standing(Standing::Trusted, None),
+            standing(Standing::Untrusted, Some(Doubt::Root)),
+            standing(Standing::Unchecked, Some(Doubt::Unavailable)),
+            None,
+        ] {
+            let dated = Signature {
+                timestamp: Some(Timestamp {
+                    trust: trust.clone(),
+                    ..token(true, Status::None).expect("a token")
+                }),
+                ..signed()
+            };
+            assert_eq!(of(&dated, &[]), Some(Level::T), "{trust:?}");
+        }
     }
 
     #[test]

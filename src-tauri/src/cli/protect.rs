@@ -14,12 +14,11 @@ use std::path::{Path, PathBuf};
 
 use super::args::{lexically_same, unknown, value};
 use super::fill::SignedState;
-use super::pages::{check_target, read_input, same_sizes, Temporary};
+use super::pages::{check_target, copy_of, publish_copy, read_input, same_sizes};
 use super::report::{self, SCHEMA};
 use super::text::{declined, password, variable};
 use super::{json, opened, say, Env, Exit, Failure, Registered, Subcommand};
 use crate::protect::{self, Protection};
-use crate::save;
 use crate::save_outside::Declined;
 use crate::worker_proto::Request;
 
@@ -170,33 +169,6 @@ impl Protect {
             None => Protection::Remove,
         };
 
-        let agrees = |input: &super::pages::Input| {
-            input
-                .plan
-                .opened_as
-                .as_ref()
-                .expect("read_input fingerprints every source")
-                .agrees_with(&self.input)
-                .map_err(|why| Failure::new(Exit::Refused, why))
-        };
-        agrees(&input)?;
-        let staging = Temporary::beside(&self.output)?;
-        let staged = staging.0.join("output.pdf");
-        let result = save::write_copy(
-            &self.input,
-            &input.plan,
-            &staged,
-            key.as_deref(),
-            &env.worker(),
-        )
-        .map_err(|why| Failure::new(Exit::Refused, why.message))?;
-        if result.changed {
-            return Err(Failure::new(
-                Exit::Refused,
-                "the source changed while writing; no output was published",
-            ));
-        }
-
         // The staged file, in fresh workers, which share no code with the
         // writer's own read-back: PDFium decides whether it opens.
         let unpublished = |what: &str| {
@@ -205,32 +177,40 @@ impl Protect {
                 format!("the staged file {what}; no output was published"),
             )
         };
-        if locked(env, &staged)? != self.set {
-            return Err(unpublished(if self.set {
-                "opens without the password"
-            } else {
-                "still asks for a password"
-            }));
-        }
-        let (after, session) = read_input(env, &staged, new.as_deref()).map_err(|why| {
-            Failure::new(
-                Exit::Internal,
-                format!(
-                    "the staged file could not be opened again: {}; no output was published",
-                    why.message
-                ),
-            )
-        })?;
-        drop(session);
-        if after.encrypted != self.set {
-            return Err(unpublished("is not protected the way that was asked"));
-        }
-        if !same_sizes(&after.sizes, &input.sizes) {
-            return Err(unpublished("does not have the source's pages"));
-        }
-        agrees(&input)?;
-        check_target(inputs, &self.output, self.force)?;
-        Temporary::publish(&staged, &self.output, self.force)?;
+        publish_copy(
+            inputs,
+            &[(self.input.as_path(), input.opened_as())],
+            &self.output,
+            self.force,
+            copy_of(env, &self.input, &input.plan, key.as_deref()),
+            |staged, ()| {
+                if locked(env, staged)? != self.set {
+                    return Err(unpublished(if self.set {
+                        "opens without the password"
+                    } else {
+                        "still asks for a password"
+                    }));
+                }
+                let (after, session) = read_input(env, staged, new.as_deref()).map_err(|why| {
+                    Failure::new(
+                        Exit::Internal,
+                        format!(
+                            "the staged file could not be opened again: {}; no output was \
+                             published",
+                            why.message
+                        ),
+                    )
+                })?;
+                drop(session);
+                if after.encrypted != self.set {
+                    return Err(unpublished("is not protected the way that was asked"));
+                }
+                if !same_sizes(&after.sizes, &input.sizes) {
+                    return Err(unpublished("does not have the source's pages"));
+                }
+                Ok(())
+            },
+        )?;
 
         let report = report::Protected {
             schema: SCHEMA,

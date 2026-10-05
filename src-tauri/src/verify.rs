@@ -6,9 +6,10 @@
 //! sanitizer does not understand is a failure rather than a shrug --- and spike
 //! 0.4 found that rule, taken literally, refuses almost every real document.
 //!
-//! **The refusal rate is the finding, not a detail.** `lopdf` decodes
-//! `FlateDecode`, `LZWDecode` and `ASCII85Decode`, and answers
-//! `Unimplemented("decompression algorithms")` for everything else. Everything
+//! **The refusal rate is the finding, not a detail.** `lopdf` decoded
+//! `FlateDecode`, `LZWDecode` and `ASCII85Decode` when the spike ran, and
+//! answered `Unimplemented("decompression algorithms")` for everything else
+//! (0.45 added three, none of them an image filter; see `DECODABLE`). Everything
 //! else includes `/DCTDecode`, `/CCITTFaxDecode`, `/JBIG2Decode` and
 //! `/JPXDecode`, which is what every scanner on earth emits. On the `filters`
 //! fixture all six of the spike's rewrite routes reported *not verified*,
@@ -78,13 +79,23 @@ use lopdf::{Document, Object};
 /// what a `use` line is for; agreement is what one value is for.
 use crate::encoding::MAX_DECODE;
 
-/// The filters `lopdf` 0.44 can actually decode.
+/// The filters whose decoded bytes this scan reads.
 ///
-/// Read out of `Stream::decode_filters`, which dispatches on exactly these three
-/// and returns `Unimplemented` otherwise. Written down rather than discovered at
-/// run time because the classification below has to distinguish "this failed to
-/// decode" from "this was never going to decode", and only the second is a fact
-/// about the library.
+/// Read out of `lopdf` 0.44's `Stream::decode_filters`, which dispatched on
+/// exactly these three and returned `Unimplemented` otherwise. Written down
+/// rather than discovered at run time because the classification below has to
+/// distinguish "this failed to decode" from "this was never going to decode",
+/// and only the second is a fact about the library.
+///
+/// **Narrower than the library since 0.45, which the lock file now holds.**
+/// 0.45.0 dispatches on six: these, `BrotliDecode`, `ASCIIHexDecode` and
+/// `RunLengthDecode`. This list was not widened with it, so [`classify`] still
+/// answers [`Carrier::Undecodable`] for a stream ending in `ASCIIHexDecode` or
+/// `RunLengthDecode` and [`Carrier::Unrecognised`] for one ending in
+/// `BrotliDecode`, and the scan withholds certification from bytes the library
+/// could hand it. That is the direction this module may err in --- less
+/// reassuring than the file deserves, never more --- and it is recorded here
+/// so that nobody reads the three names as the library's whole answer.
 const DECODABLE: &[&[u8]] = &[b"FlateDecode", b"LZWDecode", b"ASCII85Decode"];
 
 /// How many per-object reasons one report carries before it summarises the rest.
@@ -1066,11 +1077,40 @@ fn flatten_strings(object: &Object) -> Vec<u8> {
     out
 }
 
+/// Whether a string's bytes are already the text it holds.
+///
+/// True for printable ASCII with tabs and line ends, which PDFDocEncoding maps
+/// to themselves and which carries no byte-order mark. Everything else says
+/// something other than its bytes: a UTF-16BE string, a byte above `7E`, and
+/// the control bytes a text string's decoding drops.
+fn reads_as_stored(bytes: &[u8]) -> bool {
+    bytes
+        .iter()
+        .all(|byte| matches!(byte, 0x20..=0x7E | b'\t' | b'\n' | b'\r'))
+}
+
 fn collect_strings(object: &Object, out: &mut Vec<u8>) {
     match object {
         Object::String(bytes, _) => {
             out.extend_from_slice(bytes);
             out.push(b'\n');
+            // **And what the bytes say, when that is something else.** A needle
+            // is the removed words in UTF-8, and a PDF text string is UTF-16BE
+            // behind a byte-order mark or PDFDocEncoding without one. Compared
+            // as stored, a note quoting the line in UTF-16BE never matched ---
+            // not even for ASCII, with a zero byte in front of every letter ---
+            // and a name with an umlaut in it matched in neither encoding.
+            //
+            // Beside the stored bytes rather than instead of them: a string
+            // that is not a text string at all, a show operand's among them,
+            // is still compared as it stands. And only for a string the
+            // decoding would change, so the clean file that is nearly all
+            // plain ASCII pays one pass over each string to learn there is
+            // nothing to decode.
+            if !reads_as_stored(bytes) {
+                out.extend_from_slice(crate::annots::decode_text_string(bytes).as_bytes());
+                out.push(b'\n');
+            }
         }
         Object::Array(items) => {
             for item in items {
@@ -2142,5 +2182,156 @@ mod tests {
             page.set("Resources", vec![Object::Integer(0); many]);
         }
         doc
+    }
+
+    /// A two-page document whose second page carries a note with these bytes
+    /// as its `/Contents`, exactly as given.
+    ///
+    /// The note is on a page nothing was removed from, which is where a copy
+    /// of a redacted line survives a redaction: no removal rule reaches it, so
+    /// the scan is the only thing that can say it is there.
+    fn noted(contents: Vec<u8>) -> Vec<u8> {
+        use lopdf::{dictionary, Document, Object, StringFormat};
+
+        let mut doc = Document::load_mem(&document(&["this page was redacted", "another page"]))
+            .expect("the fixture loads");
+        let page = crate::pagetree::ordered_pages(&doc)[1];
+        let note = doc.add_object(dictionary! {
+            "Type" => "Annot",
+            "Subtype" => "Text",
+            "Rect" => vec![10.into(), 10.into(), 30.into(), 30.into()],
+            "Contents" => Object::String(contents, StringFormat::Hexadecimal),
+        });
+        if let Ok(Object::Dictionary(page)) = doc.get_object_mut(page) {
+            page.set("Annots", vec![Object::Reference(note)]);
+        }
+        let mut bytes = Vec::new();
+        doc.save_to(&mut bytes).expect("serialise the fixture");
+        bytes
+    }
+
+    /// `text` as a PDF text string in UTF-16BE, byte-order mark first.
+    fn utf16(text: &str) -> Vec<u8> {
+        let mut bytes = vec![0xFE, 0xFF];
+        for unit in text.encode_utf16() {
+            bytes.extend_from_slice(&unit.to_be_bytes());
+        }
+        bytes
+    }
+
+    /// A needle in a text string stored as UTF-16BE is found.
+    ///
+    /// **The needle is UTF-8 and the string is not**, so a comparison of bytes
+    /// against bytes misses it even when every character is ASCII: the string
+    /// holds a zero byte in front of each one. LibreOffice writes outline
+    /// titles and the document information this way and many producers write a
+    /// note's body this way, so a note quoting a removed line read as clean
+    /// and the report said *verified*.
+    ///
+    /// Three subjects and the answer has to differ across them. The note that
+    /// quotes the line is found. The same note about something else is not,
+    /// which is the control against a scan that finds everything. And the line
+    /// in plain ASCII is found as it always was, so decoding is an addition to
+    /// the byte comparison and has not replaced it.
+    #[test]
+    fn a_needle_in_a_utf16_text_string_is_found() {
+        const TAKEN: &str = "SECRET-4711";
+        let needles = vec![TAKEN.to_string()];
+
+        let quoting = noted(utf16("the line read SECRET-4711 before"));
+        assert!(
+            !super::find(&quoting, TAKEN.as_bytes()),
+            "the fixture must not hold the needle as plain bytes, or the byte scan answers and \
+             this tests nothing"
+        );
+        let report = super::scan(&quoting, &needles, None);
+        assert!(
+            report.found.contains(TAKEN),
+            "a note quoting the removed line in UTF-16BE is a copy of it: {:?}",
+            report.found
+        );
+        assert!(matches!(report.verdict(), Verdict::NotVerified(_)));
+        assert_eq!(
+            report.located.get(TAKEN),
+            Some(&Located::Pages(super::Placed {
+                pages: vec![1],
+                more: 0
+            })),
+            "and it is placed on the page the note is on"
+        );
+
+        let unrelated = noted(utf16("the line read something else before"));
+        let report = super::scan(&unrelated, &needles, None);
+        assert!(
+            report.found.is_empty(),
+            "a note about something else holds no needle: {:?}",
+            report.found
+        );
+        assert_eq!(report.verdict(), Verdict::Verified);
+
+        let plain = noted(b"the line read SECRET-4711 before".to_vec());
+        assert!(super::scan(&plain, &needles, None).found.contains(TAKEN));
+    }
+
+    /// A needle outside ASCII in a text string stored in PDFDocEncoding is
+    /// found.
+    ///
+    /// The other half of the same comparison: a string with no byte-order mark
+    /// is PDFDocEncoding, where `ö` is the one byte `F6` and an en dash is
+    /// `85`, and the needle spells both in UTF-8. The en dash is in the fixture
+    /// because it is where PDFDocEncoding and Latin-1 part, so a decoder that
+    /// took the string for Latin-1 would find the name and miss the line.
+    #[test]
+    fn a_needle_outside_ascii_in_a_pdfdocencoded_string_is_found() {
+        const TAKEN: &str = "Gr\u{f6}\u{df}e\u{2013}4711";
+        const STORED: &[u8] = b"Gr\xF6\xDFe\x854711";
+        let needles = vec![TAKEN.to_string()];
+
+        let mut body = b"the line read ".to_vec();
+        body.extend_from_slice(STORED);
+        let quoting = noted(body);
+        assert!(
+            !super::find(&quoting, TAKEN.as_bytes()),
+            "the fixture must not hold the needle's UTF-8 bytes"
+        );
+        let report = super::scan(&quoting, &needles, None);
+        assert!(
+            report.found.contains(TAKEN),
+            "a note quoting the removed line in PDFDocEncoding is a copy of it: {:?}",
+            report.found
+        );
+
+        let unrelated = noted(b"the line read Gr\xF6\xDFe and no number".to_vec());
+        let report = super::scan(&unrelated, &needles, None);
+        assert!(
+            report.found.is_empty(),
+            "a note without the line holds no needle: {:?}",
+            report.found
+        );
+    }
+
+    /// A string that is plain ASCII is compared once, as it is stored.
+    ///
+    /// The cost half of the two tests above: nearly every string in nearly
+    /// every file is this one, and decoding it would give back the same bytes.
+    #[test]
+    fn only_a_string_that_decodes_to_something_else_is_decoded() {
+        assert!(super::reads_as_stored(b"plain words, 4711\tand a tab\r\n"));
+        assert!(super::reads_as_stored(b""));
+        assert!(!super::reads_as_stored(&utf16("plain")));
+        assert!(!super::reads_as_stored(b"Gr\xF6\xDFe"));
+        // Below the table, where a byte is dropped rather than kept.
+        assert!(!super::reads_as_stored(b"SEC\x00RET"));
+        // And the one printable-range byte PDFDocEncoding leaves undefined.
+        assert!(!super::reads_as_stored(b"a\x7Fb"));
+
+        let object = lopdf::Object::string_literal("plain words");
+        assert_eq!(super::flatten_strings(&object), b"plain words\n");
+        let object = lopdf::Object::String(utf16("ab"), lopdf::StringFormat::Literal);
+        assert_eq!(
+            super::flatten_strings(&object),
+            b"\xFE\xFF\x00a\x00b\nab\n",
+            "the stored bytes, then what they say"
+        );
     }
 }
