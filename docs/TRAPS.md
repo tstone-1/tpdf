@@ -25695,9 +25695,23 @@ Three things about how it stayed hidden:
   the characters wanted and not read, by code point: `U+002D:+1` on four pages out of five,
   with one `U+0002` among the read codes on each.
 
-**The fifth page is not explained.** It read back five letters short (`e e f o r`) with no
-control character among the codes, no word doubled and no box under a point wide. A word the
-engine reported is not coming back from the page, and why is not known.
+**The fifth page was a second cause, and the first look for it missed.** It read back five
+letters short with no control character among the codes. Vision had reported one six-letter
+word twice, of 180, the second box a point or two inside the first. PDFium takes a character
+drawn over the same character for emboldening and reads one of the two, so five of the six
+letters came back once. `ocr_layer::layer_of` now writes such a word once, which is also what
+a search wants. The first check for a doubled word compared the boxes' corners rounded to
+whole points and answered none: the corners were 300 and 302. Overlap is measured as a share
+of the smaller box.
+
+**With both in place, one page of 186 is still refused, and it is left so.** Every page of the
+measured documents, rendered to a picture and recognised: 185 written and read back, 7 with no
+text recognised, 1 refused. That page has 11,820 characters, many of them in slanted lines, so
+the upright boxes of neighbouring words overlap, and one `e` of one word sits on an `e` of
+another: PDFium reads one of the two, and the page is one character short of 11,820. The
+layer is as right as boxes around slanted text can be. Accepting it would mean a rule for
+which missing characters an overlap excuses, and one page is not enough to write that rule
+from.
 
 Anything else that compares PDFium's characters with characters written has the same mark to
 account for. Search folds text before matching and was not measured against it.

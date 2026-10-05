@@ -27,6 +27,9 @@ have the binary.)
   dropped the mark, and the page came back one character short: no copy was written, with
   "did not read back with the text that was recognised". Hyphenated line ends are common
   in justified text and in German; 9 of 46 real picture pages measured failed this way.
+- **A word the recognition reported twice was written twice.** Vision sometimes reports
+  one word two times in one place. The page then did not read back and no copy was
+  written. Such a word is written once, so a search finds it once.
 
 ### Changed
 

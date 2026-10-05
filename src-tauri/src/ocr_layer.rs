@@ -96,17 +96,42 @@ pub fn render_size(width_pt: f32, height_pt: f32, capacity: usize) -> Option<(u3
 }
 
 /// One page's recognition as the layer to write, or `None` if nothing was read.
+///
+/// A word the engine reports twice in one place is written once. Vision did
+/// that for one word of 180 on a measured page, the two boxes a point or two
+/// apart. Written twice, the word would be found twice by a search, and the
+/// page does not read back: PDFium takes a character drawn over the same
+/// character for emboldening and reads one of the two.
 #[must_use]
 pub fn layer_of(page: u32, items: Vec<RecognisedItem>) -> Option<Layer> {
-    let words: Vec<Word> = items
-        .into_iter()
-        .filter(|item| !item.text.trim().is_empty())
-        .map(|item| Word {
+    let mut words: Vec<Word> = Vec::new();
+    for item in items {
+        if item.text.trim().is_empty() || words.iter().any(|word| repeats(word, &item)) {
+            continue;
+        }
+        words.push(Word {
             text: item.text,
             rect: item.rect,
-        })
-        .collect();
+        });
+    }
     (!words.is_empty()).then_some(Layer { page, words })
+}
+
+/// Whether `item` is `word` again: the same text over at least half of the
+/// smaller of the two boxes.
+fn repeats(word: &Word, item: &RecognisedItem) -> bool {
+    let span = |rect: [f32; 4]| {
+        (
+            rect[0].min(rect[2]),
+            rect[1].min(rect[3]),
+            rect[0].max(rect[2]),
+            rect[1].max(rect[3]),
+        )
+    };
+    let (a, b) = (span(word.rect), span(item.rect));
+    let shared = (a.2.min(b.2) - a.0.max(b.0)).max(0.0) * (a.3.min(b.3) - a.1.max(b.1)).max(0.0);
+    let smaller = ((a.2 - a.0) * (a.3 - a.1)).min((b.2 - b.0) * (b.3 - b.1));
+    word.text == item.text && smaller > 0.0 && shared >= smaller * 0.5
 }
 
 /// What PDFium reads in place of a hyphen that ends a line when the word goes
@@ -234,6 +259,38 @@ mod tests {
         let layer = layer_of(0, vec![item("black"), item("quartz")]).expect("words");
         assert!(reads_back(&layer, &page("blackquartz")));
         assert!(reads_back(&layer, &page("quartz\r\nblack")));
+    }
+
+    #[test]
+    fn a_word_reported_twice_in_one_place_is_written_once() {
+        let at = |text: &str, rect: [f32; 4]| RecognisedItem {
+            text: text.into(),
+            rect,
+            confidence: None,
+        };
+        let texts = |items: Vec<RecognisedItem>| -> Vec<String> {
+            let layer = layer_of(0, items).expect("words");
+            layer.words.into_iter().map(|word| word.text).collect()
+        };
+        // The measured shape: the second box a point or two inside the first.
+        let first = at("quartz", [300.0, 272.0, 368.0, 292.0]);
+        let again = at("quartz", [302.0, 273.0, 368.0, 291.0]);
+        assert_eq!(texts(vec![first.clone(), again]), ["quartz"]);
+        // The same word further along the line is a second word.
+        let later = at("quartz", [380.0, 272.0, 448.0, 292.0]);
+        assert_eq!(texts(vec![first.clone(), later]), ["quartz", "quartz"]);
+        // Just under half of the smaller box shared is still two words, and
+        // half is one.
+        let under = at("quartz", [335.0, 272.0, 403.0, 292.0]);
+        assert_eq!(texts(vec![first.clone(), under]), ["quartz", "quartz"]);
+        let half = at("quartz", [334.0, 272.0, 402.0, 292.0]);
+        assert_eq!(texts(vec![first.clone(), half]), ["quartz"]);
+        // Another word in the same place is not a repeat.
+        let other = at("quarts", [300.0, 272.0, 368.0, 292.0]);
+        assert_eq!(texts(vec![first.clone(), other]), ["quartz", "quarts"]);
+        // A small box inside a large one of the same text is measured by the small one.
+        let inside = at("quartz", [310.0, 275.0, 330.0, 285.0]);
+        assert_eq!(texts(vec![first, inside]), ["quartz"]);
     }
 
     #[test]
