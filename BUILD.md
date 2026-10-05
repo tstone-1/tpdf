@@ -6565,6 +6565,22 @@ looked at before this commit and is checked on the release installer. `docs/THRE
 already stated the redaction sweep and the certificate reader's new module. The release
 notes in `release.yml` were rewritten and lead with the redaction fix.
 
+**26.10.5 publication, 2026-10-05:** `Audit` and CI were green on the release commit
+`681611e3`, both legs, and the tag sits on it; the `sign-probe` step ran on the macOS leg
+for the first time, 18/18 and 20/20 on OpenSSL 3.6.4. The unit tests and the command-line
+suite passed again on Windows 11 on that tree (2,830 and 515). The upload of the stapled
+`.dmg` takes the tag from `env:` since this cycle and no rehearsal tag was cut for it; the
+`Release` run for `v26.10.5` skipped its gates on CI's account and both platform jobs passed
+at the first attempt. The draft held 8 assets, counted with GraphQL, and
+`scripts/publish_release.py v26.10.5 --publish` published it, the first publication its
+`Audit` check ran before. Without authentication the `.dmg`, the `.msi`, the `-setup.exe`
+and the updater archive answer 200 and `latest.json` offers 26.10.5 for `darwin-aarch64` and
+`windows-x86_64`. The downloaded `.dmg` staples, Gatekeeper reads it and the application in
+it as Notarized Developer ID, and the bundled `tpdf-cli` reports 26.10.5. The Homebrew cask
+was set to 26.10.5; `brew audit --cask --online` passed and `brew livecheck` reads 26.10.5.
+winget was not updated. Step 12 and the scrollbar under *Place signature image* on the
+Windows installer are the owner's and are not recorded here yet.
+
 **26.10.4 verification, macOS arm64, 2026-10-04:** all 29 gates passed on the release tree
 (2,706 Rust tests with ten documented ignored, 2,270 frontend tests), and `check_windows.py`
 type-checked the Windows tree. Every Rust and frontend mutation selected `--since v26.10.3`
