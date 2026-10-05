@@ -12,7 +12,10 @@ export default defineConfig(({ mode }) => ({
   server: {
     port: 1420,
     strictPort: true,
-    watch: { ignored: ["**/src-tauri/**", "**/vendor/**"] },
+    // A worktree under `.claude` is a whole second checkout. Watched, every
+    // file written there reloaded the page of a running `tauri dev`: 18 times
+    // in twenty minutes on 2026-10-05, each one dropping what was unsaved.
+    watch: { ignored: ["**/src-tauri/**", "**/vendor/**", "**/.claude/**"] },
   },
   build: {
     target: "safari15",
