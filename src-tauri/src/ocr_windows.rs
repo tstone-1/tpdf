@@ -65,7 +65,50 @@ pub struct WindowsOcr {
     language: String,
 }
 
+/// The recogniser languages installed on this machine, as BCP-47 tags.
+///
+/// What a reader can choose between, and what [`WindowsOcr`] can be asked for.
+/// A stock install answers `en-US` alone (`BUILD.md`, `win-ocr-probe`); more
+/// are added in Settings, under *Time & language*, *Language & region*.
+///
+/// # Errors
+///
+/// [`RecogniseError::Unavailable`] when the platform will not list them.
+pub fn installed_languages() -> Result<Vec<String>, RecogniseError> {
+    let installed = OcrEngine::AvailableRecognizerLanguages()
+        .map_err(|e| RecogniseError::Unavailable(format!("listing languages: {e}")))?;
+    Ok(installed
+        .into_iter()
+        .filter_map(|lang| lang.LanguageTag().ok().map(|t| t.to_string()))
+        .collect())
+}
+
 impl WindowsOcr {
+    /// The installed language `options` asks for, when this engine does not
+    /// already read it.
+    ///
+    /// `None` for no language asked, for one that is not installed, and for
+    /// this engine's own: each of those is read by [`Self::engine`]. A language
+    /// that is not installed is not an error here, because the command-line
+    /// tool has always been allowed to name one and be read with the
+    /// machine's own choice; the window checks its choice against
+    /// [`installed_languages`] before it asks and tells the reader.
+    fn other_language(&self, options: &Options) -> Option<String> {
+        if options.languages.is_empty() {
+            return None;
+        }
+        let installed = installed_languages().ok()?;
+        let tag = crate::ocr::first_offered(&options.languages, &installed)?;
+        (!tag.eq_ignore_ascii_case(&self.language)).then_some(tag)
+    }
+
+    /// An engine for one installed language.
+    fn engine_in(tag: &str) -> Result<OcrEngine, RecogniseError> {
+        Language::CreateLanguage(&HSTRING::from(tag))
+            .and_then(|l| OcrEngine::TryCreateFromLanguage(&l))
+            .map_err(|e| RecogniseError::Unavailable(format!("no engine for {tag}: {e}")))
+    }
+
     /// Creates one, or says why the platform cannot.
     ///
     /// **The fallback exists because two things can be true at once**: packs are
@@ -81,12 +124,7 @@ impl WindowsOcr {
     /// [`RecogniseError::Unavailable`] when no recogniser language is installed,
     /// or when neither route produces an engine.
     pub fn new() -> Result<Self, RecogniseError> {
-        let installed = OcrEngine::AvailableRecognizerLanguages()
-            .map_err(|e| RecogniseError::Unavailable(format!("listing languages: {e}")))?;
-        let tags: Vec<String> = installed
-            .into_iter()
-            .filter_map(|lang| lang.LanguageTag().ok().map(|t| t.to_string()))
-            .collect();
+        let tags = installed_languages()?;
         if tags.is_empty() {
             return Err(RecogniseError::Unavailable(
                 "no OCR recogniser language pack is installed on this machine".into(),
@@ -186,6 +224,13 @@ impl Recogniser for WindowsOcr {
         }
     }
 
+    fn id_for(&self, options: &Options) -> Option<EngineId> {
+        self.other_language(options).map(|tag| EngineId {
+            name: "windows-ocr",
+            build: format!("recogniser language {tag}"),
+        })
+    }
+
     fn recognise(
         &self,
         pixels: Pixels<'_>,
@@ -209,12 +254,16 @@ impl Recogniser for WindowsOcr {
             }
         }
 
-        // **`Options` is honoured in one of its three fields, and saying which is
-        // the point of this comment.**
+        // **`Options` is honoured in two of its fields, and saying which is the
+        // point of this comment.**
         //
-        // `languages` is decided at construction: an `OcrEngine` is created for a
-        // language and cannot be re-pointed, so a per-call list would be a
-        // parameter that silently did nothing. `id()` reports what was chosen.
+        // `languages` chooses the engine. An `OcrEngine` is created for one
+        // language and cannot be re-pointed, so the first language asked for
+        // that is installed gets an engine of its own for this call, and
+        // `id_for` reports it. With none asked, or none of them installed, the
+        // engine made at construction reads, as it always has. The second
+        // engine is made per call and its cost is not measured: this was
+        // written on a Mac and type-checked for Windows, not run there.
         //
         // `deadline_ms` is not passed to anything, because `RecognizeAsync` takes
         // no timeout --- the same hole `ocr_worker::REPLY_DEADLINE` was written to
@@ -235,7 +284,11 @@ impl Recogniser for WindowsOcr {
         // (`ocr::hold_to_scripts`) is engine-independent, so a region that held
         // text in a script the control word is not written in is *not verified*
         // here whatever this engine did or did not return for it.
-        let _ = options;
+        let other = match self.other_language(options) {
+            Some(tag) => Some(Self::engine_in(&tag)?),
+            None => None,
+        };
+        let engine = other.as_ref().unwrap_or(&self.engine);
 
         let bgra = rgba_to_bgra_opaque(pixels.rgba).ok_or_else(|| {
             RecogniseError::MalformedInput(format!(
@@ -266,8 +319,7 @@ impl Recogniser for WindowsOcr {
             SoftwareBitmap::CreateCopyFromBuffer(&buffer, BitmapPixelFormat::Bgra8, width, height)
                 .map_err(|e| RecogniseError::Rejected(format!("CreateCopyFromBuffer: {e}")))?;
 
-        let result = self
-            .engine
+        let result = engine
             .RecognizeAsync(&bitmap)
             .map_err(|e| RecogniseError::Crashed(format!("RecognizeAsync: {e}")))?
             .join()

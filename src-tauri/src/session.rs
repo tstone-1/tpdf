@@ -138,6 +138,15 @@ pub struct Session {
     /// want to read that file.
     #[serde(default)]
     pub invert_pages: bool,
+    /// The language *Recognise text* asks the engine to expect, as a BCP-47
+    /// tag, or `None` for the engine's own choice.
+    ///
+    /// A preference like [`Session::invert_pages`]: a reader whose scans are
+    /// German has said so once, not once a document. Whether the machine still
+    /// offers it is asked when text is recognised, not here --- this file can
+    /// be carried to another computer.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ocr_language: Option<String>,
     /// The documents that were open as tabs, in tab order.
     ///
     /// Beside `places` rather than derived from it: that list is every document
@@ -188,6 +197,21 @@ impl Session {
             ..Self::default()
         }
         .with_tabs(session.tabs, session.active_tab)
+        .with_ocr_language(session.ocr_language)
+    }
+
+    /// Records the language to recognise text in, or `None` for the engine's
+    /// own choice.
+    ///
+    /// Anything that is not shaped like a language tag is `None`: the file is
+    /// on disk where anything can edit it, and what it holds goes to an engine.
+    pub fn set_ocr_language(&mut self, language: Option<String>) {
+        self.ocr_language = language.filter(|tag| crate::ocr_layer::is_language_tag(tag));
+    }
+
+    fn with_ocr_language(mut self, language: Option<String>) -> Self {
+        self.set_ocr_language(language);
+        self
     }
 
     /// Records which documents are open as tabs, and which of them is showing.
@@ -370,6 +394,37 @@ mod tests {
         };
         session.save(&dir.file()).expect("save");
         assert!(Session::load(&dir.file()).invert_pages);
+    }
+
+    #[test]
+    fn the_language_to_recognise_text_in_survives_a_round_trip() {
+        // The same hazard as the inversion: `load` names what it carries.
+        let dir = TempDir::new("ocr-language");
+        let mut session = Session::default();
+        session.set_ocr_language(Some("de-DE".into()));
+        session.save(&dir.file()).expect("save");
+        assert_eq!(
+            Session::load(&dir.file()).ocr_language.as_deref(),
+            Some("de-DE")
+        );
+
+        session.set_ocr_language(None);
+        session.save(&dir.file()).expect("save");
+        assert_eq!(Session::load(&dir.file()).ocr_language, None);
+        let written = std::fs::read_to_string(dir.file()).expect("read");
+        assert!(!written.contains("ocr_language"), "{written}");
+    }
+
+    #[test]
+    fn a_stored_language_that_is_not_a_tag_is_the_engine_s_own_choice() {
+        // Set through the command, and read from a file somebody edited.
+        let mut session = Session::default();
+        session.set_ocr_language(Some("de DE; rm".into()));
+        assert_eq!(session.ocr_language, None);
+
+        let dir = TempDir::new("ocr-language-edited");
+        std::fs::write(dir.file(), br#"{"ocr_language":"../../etc"}"#).expect("write");
+        assert_eq!(Session::load(&dir.file()).ocr_language, None);
     }
 
     fn paths(names: &[&str]) -> Vec<String> {

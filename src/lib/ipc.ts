@@ -45,6 +45,7 @@ import { invoke, type InvokeArgs } from "@tauri-apps/api/core";
 import type { Comments } from "./comments";
 import type { CropGeometry } from "./crop";
 import type { Applied, Copied, EditState, Merged, Split } from "./edits";
+import type { Offered } from "./ocrlanguage";
 import type { Recognised } from "./recognise";
 import type { Links } from "./links";
 import type { MarkColor } from "./markcolors";
@@ -279,10 +280,11 @@ export interface Commands {
   };
   redact_document: { args: { doc: number; source: string }; reply: Applied };
   ocr_copy: {
-    args: { doc: number; source: string; path: string; run: number };
+    args: { doc: number; source: string; path: string; run: number; language: string | null };
     reply: Recognised;
   };
   ocr_cancel: { args: { run: number }; reply: void };
+  ocr_languages: { args: NoArgs; reply: Offered };
   annot_erase: {
     args: { doc: number; mark: number; remove: number[]; sweep: number };
     reply: EditState;
@@ -519,6 +521,7 @@ export interface Commands {
   session_load: { args: NoArgs; reply: Session };
   session_remember: { args: { place: Place }; reply: void };
   session_set_invert_pages: { args: { invert: boolean }; reply: void };
+  session_set_ocr_language: { args: { language: string | null }; reply: void };
   session_set_tabs: { args: { paths: string[]; active: string | null }; reply: void };
   session_set_restore_tabs: { args: { restore: boolean }; reply: void };
   /** Takes one document off the remembered list. The path is never opened. */

@@ -49,6 +49,11 @@ export interface Session {
    * such field, and an older file must not be discarded over a missing one.
    */
   invert_pages?: boolean;
+  /**
+   * The language text is recognised in, as a BCP-47 tag. Absent for the
+   * recogniser's own choice. See `ocrlanguage.ts`.
+   */
+  ocr_language?: string | null;
   /** The documents that were open as tabs, in tab order. See `tabrestore.ts`. */
   tabs?: string[];
   /** The tab that was showing, when it is one of {@link Session.tabs}. */

@@ -114,9 +114,10 @@ pub struct Ask {
     /// Whether to ask through [`crate::ocr::Recogniser::recognise_any_script`].
     ///
     /// Here and not in [`Options`] because it is not something every caller
-    /// chooses: the redaction gate always asks this way and the text layer
-    /// never does. `#[serde(default)]` so a request written before this
-    /// existed asks for what it always got.
+    /// chooses: the redaction gate always asks this way, and the text layer
+    /// does while no language is named ([`OcrWorker::recognise_page`]).
+    /// `#[serde(default)]` so a request written before this existed asks for
+    /// what it always got.
     #[serde(default)]
     pub any_script: bool,
 }
@@ -503,6 +504,29 @@ impl OcrWorker {
         self.ask(pixels, options, true)
     }
 
+    /// What a text layer asks: any script while no language is named, and the
+    /// named languages alone once one is.
+    ///
+    /// Left to its default, Vision reads Latin, Cyrillic and Greek and nothing
+    /// else. Measured 2026-10-05 on 26A434 with pictures of three invented
+    /// sentences each: with no language named and detection off, a Japanese
+    /// page came back as 15 wrong characters and a Chinese one as nothing, so
+    /// no copy was written; with detection on both were read whole, a Russian
+    /// page was read whole either way, and a German page at five sizes and
+    /// resolutions was read word for word the same. A reader who names a
+    /// language has said what the page is, and detection would overrule them.
+    ///
+    /// # Errors
+    ///
+    /// As [`recognise`](Self::recognise).
+    pub fn recognise_page(
+        &mut self,
+        pixels: Pixels<'_>,
+        options: &Options,
+    ) -> Result<(EngineId, Vec<RecognisedItem>), RecogniseError> {
+        self.ask(pixels, options, options.languages.is_empty())
+    }
+
     /// One request and its reply, whichever way it is asked.
     fn ask(
         &mut self,
@@ -826,7 +850,15 @@ fn answer<E: crate::ocr::Recogniser>(engine: &E, named: &Named, pixels: &Shm, as
     };
     match read {
         Ok(items) => Said::Read {
-            engine: named.clone(),
+            // The engine's usual identity, unless these options made another
+            // one do the reading (`Recogniser::id_for`).
+            engine: engine.id_for(&ask.options).map_or_else(
+                || named.clone(),
+                |id| Named {
+                    name: id.name.to_string(),
+                    build: id.build,
+                },
+            ),
             items,
         },
         Err(why) => Said::Failed(why),
@@ -981,6 +1013,33 @@ mod tests {
             self.0.set(Some(true));
             Ok(Vec::new())
         }
+        fn id_for(&self, options: &Options) -> Option<EngineId> {
+            options.languages.first().map(|tag| EngineId {
+                name: "vision",
+                build: format!("test in {tag}"),
+            })
+        }
+    }
+
+    /// A reading another engine made is reported as that engine's. Dropped,
+    /// a Windows reading asked in German would be reported as the engine the
+    /// worker started with, in whatever language that one reads.
+    #[test]
+    fn a_reading_is_reported_under_the_identity_its_options_gave_it() {
+        let mapping = crate::worker_shm::Shm::create(64).expect("a mapping");
+        let named = Named {
+            name: "vision".into(),
+            build: "test".into(),
+        };
+        let engine = Asked(std::cell::Cell::new(None));
+        let build_of = |request: &Ask| match answer(&engine, &named, &mapping, request) {
+            Said::Read { engine, .. } => engine.build,
+            said @ Said::Failed(_) => panic!("{said:?}"),
+        };
+        let mut request = ask(3, 2);
+        assert_eq!(build_of(&request), "test");
+        request.options.languages = vec!["de-DE".into()];
+        assert_eq!(build_of(&request), "test in de-DE");
     }
 
     /// The flag has to reach the engine as the call it names. Dropped in the

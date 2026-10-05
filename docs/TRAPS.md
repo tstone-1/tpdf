@@ -313,6 +313,7 @@ hop through the index.
 
 ## Rust and macOS
 - A locked macOS session cannot be unlocked from a script, so it must be prevented
+- Vision with no language named reads Latin, Cyrillic and Greek only, so "automatic" was not
 - `Instant` on Apple Silicon ticks at 41.67 ns, so "elapsed == 0" is reachable
 - `evict_page` can dangle a live `RawPage`, and the borrow checker allows it
 - A mechanical insert before a declaration can land between an attribute and its item
@@ -25715,3 +25716,28 @@ from.
 
 Anything else that compares PDFium's characters with characters written has the same mark to
 account for. Search folds text before matching and was not measured against it.
+
+### Vision with no language named reads Latin, Cyrillic and Greek only, so "automatic" was not
+
+`VNRecognizeTextRequest` with no `recognitionLanguages` and `automaticallyDetectsLanguage`
+left off is not a recogniser that chooses a language. It reads Latin, Cyrillic and Greek and
+answers everything else with nothing or with a few wrong Latin characters. The text layer asked
+that way from the day it was written, and every fixture it was tested with was English.
+
+Measured 2026-10-05 on 26A434 through `tpdf ocr`, on pictures of three invented sentences
+each: a Japanese page came back as 15 wrong characters and a Chinese page as nothing, exit 3,
+no copy written. Naming `ja-JP` or `zh-Hans` read both whole. With detection on and no language
+named, both were read whole, a Russian page was read whole either way, and a German page at
+two type sizes and four resolutions gave the same words in every mode, byte for byte. Naming
+the wrong language is worse than naming none: `ja-JP` on the Russian page read 3 of 101
+characters.
+
+So the text layer asks with detection while no language is named and with the named
+languages alone once one is (`OcrWorker::recognise_page`), and `tests/cli` reads a scan of
+`multilingual.pdf`'s Japanese page with no language named. The redaction gate already asked
+with detection, which is why this was known about Vision and not applied here.
+
+The German result is the other half. It was measured because the language choice in the window
+was about to be described as reading German better, and it does not on this engine: German,
+English and no language gave identical text. A feature's reason is a claim, and this one was
+false until it was measured.

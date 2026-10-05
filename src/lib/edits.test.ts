@@ -679,6 +679,29 @@ describe("Edits", () => {
     });
   });
 
+  it("sends the chosen language with the recognition", async () => {
+    core.invoke.mockResolvedValue({
+      pages: [], alreadyText: [], nothingRead: [], tooLarge: [], engine: "vision",
+    });
+    const edits = new Edits(17, 3);
+
+    await edits.ocrCopy("scan.pdf", "scan searchable.pdf", 4, "de-DE");
+    expect(core.invoke).toHaveBeenLastCalledWith("ocr_copy", {
+      doc: 17,
+      source: "scan.pdf",
+      path: "scan searchable.pdf",
+      run: 4,
+      language: "de-DE",
+    });
+    // And the recogniser's own choice is sent as null, not left out, so the
+    // arguments have one shape whatever was chosen.
+    await edits.ocrCopy("scan.pdf", "scan searchable.pdf", 5, null);
+    expect(core.invoke).toHaveBeenLastCalledWith(
+      "ocr_copy",
+      expect.objectContaining({ run: 5, language: null }),
+    );
+  });
+
   it("sends the mark's own id when one is removed", async () => {
     // A mark is addressed by identity all the way through: there is no slot
     // that names one, and its position in `marks` moves whenever an earlier
@@ -808,7 +831,7 @@ it("awaits save consent before every writing command and sends nothing when decl
   const writes = [
     (e: Edits)=>e.save("source"), (e: Edits)=>e.saveCopy("source","copy"),
     (e: Edits)=>e.redactCopy("source","copy"), (e: Edits)=>e.redactRasterCopy("source","copy"),
-    (e: Edits)=>e.ocrCopy("source","copy",1),
+    (e: Edits)=>e.ocrCopy("source","copy",1,null),
     (e: Edits)=>e.protectCopy("source","copy","tr0ub4dor"), (e: Edits)=>e.protectCopy("source","copy",null),
     (e: Edits)=>e.compressCopy("source","copy",null),
     (e: Edits)=>e.redactDocument("source"), (e: Edits)=>e.extractPages("source","copy",[0]),

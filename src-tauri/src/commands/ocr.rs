@@ -81,6 +81,50 @@ pub struct Recognised {
     pub too_large: Vec<u32>,
     /// The engine that read them.
     pub engine: String,
+    /// The language the reader had chosen, when this machine no longer offers
+    /// it and the engine chose for itself instead. Not sent otherwise.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub language_unavailable: Option<String>,
+}
+
+/// What the reader can choose between. The reply of [`ocr_languages`].
+#[derive(Debug, Clone, Default, PartialEq, Eq, serde::Serialize)]
+pub struct Offered {
+    /// The languages this machine's engine can be asked to expect, as BCP-47
+    /// tags in the engine's own spelling and order.
+    pub languages: Vec<String>,
+    /// Whether the reader can add to them, which is Windows: a language there
+    /// is installed in Settings, where macOS has a fixed list.
+    pub installable: bool,
+}
+
+/// The languages this machine's engine offers.
+///
+/// Asked in the app process, which recognition never is: no image and no
+/// document goes with the question ([`crate::ocr_vision::Vision::languages`]).
+///
+/// # Errors
+///
+/// The engine's reason for not answering.
+pub fn offered_languages() -> Result<Vec<String>, String> {
+    #[cfg(target_os = "macos")]
+    let listed = crate::ocr_vision::Vision::languages();
+    #[cfg(windows)]
+    let listed = crate::ocr_windows::installed_languages();
+    #[cfg(not(any(target_os = "macos", windows)))]
+    let listed: Result<Vec<String>, crate::ocr::RecogniseError> = Ok(Vec::new());
+    listed.map_err(|why| why.to_string())
+}
+
+/// [`offered_languages`], with whether more can be installed.
+///
+/// A list that cannot be read is an empty one: the reader is then offered the
+/// engine's own choice, which needs no list.
+fn offered() -> Offered {
+    Offered {
+        languages: offered_languages().unwrap_or_default(),
+        installable: cfg!(windows),
+    }
 }
 
 /// The longest any single answer from the render service is waited for.
@@ -186,7 +230,7 @@ fn read(
             scale,
         };
         let (id, items) = worker
-            .recognise(pixels, &options)
+            .recognise_page(pixels, &options)
             .map_err(|why| format!("Page {n} could not be read: {why}"))?;
         if report.engine.is_empty() {
             report.engine = id.to_string();
@@ -274,6 +318,12 @@ fn reads_back(
 /// Blocks: it waits on renders and on the recognition engine. `plan` is the
 /// open document's and must be the file itself --- see the module docs.
 ///
+/// `language` is the one the reader chose, or `None` for the engine's own
+/// choice, and `offered` is what the machine offers now
+/// ([`offered_languages`]). A language that is not among them is not an error:
+/// the engine chooses, and the answer names what was asked
+/// ([`Recognised::language_unavailable`]).
+///
 /// # Errors
 ///
 /// [`UNSAVED`] for a plan that changes the file; [`CANCELLED`]; no engine on
@@ -289,7 +339,8 @@ pub fn ocr_copy_asked(
     out: &Path,
     password: Option<String>,
     library: std::path::PathBuf,
-    languages: Vec<String>,
+    language: Option<&str>,
+    offered: &[String],
     cancelled: &dyn Fn() -> bool,
     progress: &dyn Fn(Progress),
 ) -> Result<Recognised, String> {
@@ -297,7 +348,10 @@ pub fn ocr_copy_asked(
         return Err(UNSAVED.into());
     }
     let pages = plan.baseline;
-    let read = read(service, doc, pages, languages, cancelled, progress)?;
+    // A language the machine has stopped offering is not sent to the engine.
+    let choice = ocr_layer::choose(language, offered);
+    let mut read = read(service, doc, pages, choice.languages, cancelled, progress)?;
+    read.report.language_unavailable = choice.unavailable;
     if read.layers.is_empty() {
         return Err(format!(
             "{} No copy was written.",
@@ -340,6 +394,7 @@ pub async fn ocr_copy(
     source: String,
     path: String,
     run: u64,
+    language: Option<String>,
 ) -> Result<Recognised, String> {
     let plan = edits.plan(doc)?;
     let password = password_for(&service, doc, "ocr_copy").await;
@@ -355,8 +410,13 @@ pub async fn ocr_copy(
             Path::new(&path),
             password,
             library,
-            // No languages: the engine's own choice, which is `tpdf ocr`'s default.
-            Vec::new(),
+            language.as_deref(),
+            // Asked only for a reader who chose a language. With none chosen
+            // the engine decides, which is `tpdf ocr`'s default.
+            &language
+                .as_ref()
+                .map(|_| offered_languages().unwrap_or_default())
+                .unwrap_or_default(),
             &|| stopped.load(Ordering::Relaxed) == run,
             &|at| {
                 let _ = app.emit(PROGRESS_EVENT, at);
@@ -365,6 +425,17 @@ pub async fn ocr_copy(
     })
     .await
     .map_err(|e| format!("Text recognition did not run: {e}"))?
+}
+
+/// The languages the reader can choose between for *Recognise text*.
+///
+/// Takes nothing and names no document. On the pool because the answer is the
+/// operating system's and how long it takes to give it is not ours.
+#[tauri::command]
+pub async fn ocr_languages() -> Result<Offered, String> {
+    tauri::async_runtime::spawn_blocking(offered)
+        .await
+        .map_err(|e| format!("The languages could not be listed: {e}"))
 }
 
 /// Asks recognition number `run` to stop before its next page.
@@ -403,6 +474,7 @@ mod tests {
             nothing_read: vec![3],
             too_large: vec![4],
             engine: "vision".into(),
+            language_unavailable: Some("de-DE".into()),
         })
         .unwrap();
         assert_eq!(
@@ -413,7 +485,21 @@ mod tests {
                 "nothingRead": [3],
                 "tooLarge": [4],
                 "engine": "vision",
+                "languageUnavailable": "de-DE",
             })
+        );
+        let plain = serde_json::to_value(Recognised::default()).unwrap();
+        assert!(plain.get("languageUnavailable").is_none(), "{plain}");
+    }
+
+    #[test]
+    fn only_windows_tells_the_reader_more_languages_can_be_installed() {
+        let listed = offered();
+        assert_eq!(listed.installable, cfg!(windows));
+        assert_eq!(
+            listed.languages,
+            offered_languages().unwrap_or_default(),
+            "the reply is the engine's list"
         );
     }
 }

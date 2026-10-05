@@ -62,6 +62,7 @@
     suggestedName,
     type Progress,
   } from "./lib/recognise";
+  import { RecognitionLanguage } from "./lib/ocrlanguage";
   import {
     afterCopy,
     afterRedaction,
@@ -769,6 +770,8 @@
    * mode back off.
    */
   let invertPages = false;
+  /** The language text is recognised in, and the list held while it is asked. */
+  const recognitionLanguage = new RecognitionLanguage();
   /** Collapses a scroll's worth of positions into at most one write per second. */
   const places = new SessionWriter();
   const tabRecorder = new TabRecorder();
@@ -968,6 +971,13 @@
     redactCopy: () => void redactCopy(),
     redactRasterCopy: () => void redactRasterCopy(),
     recogniseText: () => void recogniseText(),
+    chooseRecognitionLanguage: () => void chooseRecognitionLanguage(),
+    recognitionLanguages: () => {
+      const offered = recognitionLanguage.question();
+      return offered ? { offered, current: recognitionLanguage.language } : null;
+    },
+    setRecognitionLanguage: (raw) => setRecognitionLanguage(raw),
+    dropRecognitionLanguages: () => recognitionLanguage.drop(),
     protectCopy: () => void protectCopy(true),
     unprotectCopy: () => void protectCopy(false),
     compressCopy: () => void compressCopy(),
@@ -2290,7 +2300,7 @@
         recognising = true;
         await tick();
         done.said = afterRecognition(
-          await edits.ocrCopy(source, chosen, recognitionRun),
+          await edits.ocrCopy(source, chosen, recognitionRun, recognitionLanguage.language),
           basename(chosen),
         );
         done.path = chosen;
@@ -2310,6 +2320,39 @@
     say(done.said);
     await openPath(done.path);
     if (openPathName === done.path) say(done.said);
+  }
+
+  /**
+   * Asks which language text is recognised in.
+   *
+   * The list is the machine's and is asked for first, so the palette opens
+   * with it in hand; `ocrlanguage.ts` holds it, decides what an answer means
+   * and has every sentence. A list that cannot be fetched is said and nothing
+   * is asked.
+   */
+  async function chooseRecognitionLanguage(): Promise<void> {
+    try {
+      recognitionLanguage.hold(await call("ocr_languages"));
+    } catch (error) {
+      say(String(error));
+      return;
+    }
+    palette?.askFor("file.recogniseTextLanguage.choice");
+  }
+
+  /**
+   * Takes the palette's answer, says what was chosen and has the session
+   * remember it. A failed write is not said, for `toggleInvert`'s reason: the
+   * choice holds for this launch either way.
+   */
+  function setRecognitionLanguage(raw: string): void {
+    const said = recognitionLanguage.answer(raw);
+    if (said === null) return;
+    // A notice and not `say`: that line is the failure's, and is set in red.
+    notice = said;
+    void call("session_set_ocr_language", { language: recognitionLanguage.language }).catch(
+      () => {},
+    );
   }
 
   /**
@@ -3671,6 +3714,7 @@
       // Read before any document opens, so the first tiles of the first page are
       // requested in the polarity the reader left the application in.
       invertPages = session.invert_pages ?? false;
+      recognitionLanguage.restore(session.ocr_language);
       restoreTabs = session.restore_tabs ?? false;
       const plan = launchPlan(session, handed);
       // Held until the last tab is back, so that quitting halfway through does

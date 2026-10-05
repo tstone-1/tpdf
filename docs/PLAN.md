@@ -17761,8 +17761,10 @@ or after an OS update pays Vision's model compile, 24 s here.
   and written before pages move, so a moved or deleted page would not need the refusal; a
   turned or cropped one would, because the words are placed on the page as the file shows
   it. Narrowing the refusal to those needs the turn applied to the render and a probe.
-- The window names no language. The engine's default read the German fixture word
-  correctly; a language picker, or the system's language list, is not built.
+- ~~The window names no language.~~ **Built 2026-10-05**: *Recognise text: language*
+  takes one language the machine offers, or the engine's own choice, and the session
+  remembers it (`docs/SUBSYSTEMS.md`). Not run in a window yet, and the Windows engine's
+  use of a named language is compiled and not run.
 - A page that has *any* text is left alone, so a scan with a typed header, a fax line or a
   stamp gets no layer. Deciding by coverage rather than by presence needs a measurement first.
 - A page is read at no more than a 16 MiB image allows, about 208 DPI for A4, because that is

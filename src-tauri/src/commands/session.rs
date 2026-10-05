@@ -144,6 +144,26 @@ pub async fn session_set_invert_pages(app: tauri::AppHandle, invert: bool) -> Re
     .map_err(|e| format!("the session write did not run: {e}"))?
 }
 
+/// Records the language *Recognise text* asks for, or `None` for the engine's
+/// own choice.
+///
+/// A preference, so it has a command of its own for
+/// [`session_set_invert_pages`]'s reason and goes through the same lock. What
+/// is not shaped like a language tag is stored as `None`
+/// ([`session::Session::set_ocr_language`]).
+#[tauri::command]
+pub async fn session_set_ocr_language(
+    app: tauri::AppHandle,
+    language: Option<String>,
+) -> Result<(), String> {
+    let path = session_file(&app);
+    tauri::async_runtime::spawn_blocking(move || {
+        with_session(&path, |session| session.set_ocr_language(language))
+    })
+    .await
+    .map_err(|e| format!("the session write did not run: {e}"))?
+}
+
 /// Records which documents are open as tabs, and which one is showing.
 ///
 /// Called whenever a tab opens, closes or takes the front, and whether or not

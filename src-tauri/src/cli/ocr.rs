@@ -93,12 +93,9 @@ fn parse(args: &[String]) -> Result<Ocr, String> {
     Ok(command)
 }
 
-/// A language tag as the engines take it: letters, digits and hyphens.
+/// A language tag as the engines take it ([`ocr_layer::is_language_tag`]).
 fn language(raw: &str) -> Result<String, String> {
-    let plausible = (2..=35).contains(&raw.len())
-        && raw.chars().all(|c| c.is_ascii_alphanumeric() || c == '-')
-        && raw.starts_with(|c: char| c.is_ascii_alphabetic());
-    if plausible {
+    if ocr_layer::is_language_tag(raw) {
         Ok(raw.to_string())
     } else {
         Err(format!(
@@ -220,7 +217,7 @@ impl Ocr {
                 height,
                 scale,
             };
-            let (id, items) = worker.recognise(pixels, &options).map_err(|why| {
+            let (id, items) = worker.recognise_page(pixels, &options).map_err(|why| {
                 Failure::new(Exit::Internal, format!("page {n} could not be read: {why}"))
             })?;
             read.engine.get_or_insert_with(|| id.to_string());

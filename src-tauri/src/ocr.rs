@@ -355,6 +355,36 @@ pub trait Recogniser {
     ) -> Result<Vec<RecognisedItem>, RecogniseError> {
         self.recognise(pixels, options)
     }
+
+    /// The identity to report for a reading asked with `options`, when it is
+    /// not [`id`](Self::id).
+    ///
+    /// For an engine whose identity carries the language it read with:
+    /// `Windows.Media.Ocr` is one engine per language, so a reading asked in an
+    /// installed language other than the engine's own was made by a different
+    /// engine, and reporting the usual identity would name the wrong language.
+    /// `None`, the default, is every other case.
+    fn id_for(&self, options: &Options) -> Option<EngineId> {
+        let _ = options;
+        None
+    }
+}
+
+/// The first of `asked` that is one of `offered`, in `offered`'s spelling.
+///
+/// Tags are compared without regard to case, which is how BCP-47 defines them:
+/// `de-de` asks for `de-DE`. Nothing looser than that --- `de` does not ask for
+/// `de-DE`, because which regional model stands for a bare language is the
+/// engine's decision and not one to make here. The offered spelling is the one
+/// returned because it is the one the engine listed, and so the one it takes.
+#[must_use]
+pub fn first_offered(asked: &[String], offered: &[String]) -> Option<String> {
+    asked.iter().find_map(|want| {
+        offered
+            .iter()
+            .find(|have| have.eq_ignore_ascii_case(want))
+            .cloned()
+    })
 }
 
 // ------------------------------------------------------------------ the gate
@@ -1366,6 +1396,24 @@ impl<'a> RedactedPixels<'a> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_first_language_asked_for_that_is_offered_is_the_one_used() {
+        let offered = ["en-US".to_string(), "de-DE".to_string()];
+        let asked = |tags: &[&str]| -> Vec<String> { tags.iter().map(|t| (*t).into()).collect() };
+        assert_eq!(
+            first_offered(&asked(&["de-de"]), &offered).as_deref(),
+            Some("de-DE")
+        );
+        assert_eq!(
+            first_offered(&asked(&["fr-FR", "de-DE", "en-US"]), &offered).as_deref(),
+            Some("de-DE"),
+            "the order asked decides, not the order offered"
+        );
+        assert_eq!(first_offered(&asked(&["de"]), &offered), None);
+        assert_eq!(first_offered(&asked(&["fr-FR"]), &offered), None);
+        assert_eq!(first_offered(&[], &offered), None);
+    }
 
     #[test]
     fn a_line_is_cut_at_white_space_and_counted_in_utf16_units() {

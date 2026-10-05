@@ -63,6 +63,13 @@ export class Palette {
 
     this.input = document.createElement("input");
     this.input.type = "text";
+    // What is typed here is a command's name, a page range or a language tag,
+    // and the system's suggestions cover the first line of the list: typing
+    // "de" for German put a bubble offering "De" over the answer.
+    this.input.spellcheck = false;
+    this.input.setAttribute("autocorrect", "off");
+    this.input.setAttribute("autocapitalize", "off");
+    this.input.setAttribute("autocomplete", "off");
     this.input.placeholder = "Run a command";
     this.input.setAttribute("aria-label", "Run a command");
     this.input.style.cssText =

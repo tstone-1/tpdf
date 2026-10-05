@@ -429,6 +429,22 @@ behind.
 
 The engine is asked for words with its language model on (`ocr_layer::options`), the opposite
 of what the redaction gate asks: this caller wants recall and is not a safety check.
+
+**The language.** The tool takes `--language` any number of times; the window keeps one, or
+none for the engine's own choice. `ocr_languages` lists what the machine offers
+(`Vision::languages`, `ocr_windows::installed_languages`), asked in the app process because
+no image goes with the question. The choice is `Session::ocr_language`, set by
+`session_set_ocr_language` and sent with `ocr_copy`, where `ocr_layer::choose` holds it
+against the list again: a language the machine has stopped offering is not sent to the
+engine, and `Recognised::language_unavailable` names it for the sentence. On the frontend
+`src/lib/ocrlanguage.ts` has the choice, the list held while the palette asks, what a typed
+answer means and every sentence; `App.svelte` keeps the two `invoke`s. The commands are
+`file.recogniseTextLanguage`, which fetches the list, and `file.recogniseTextLanguage.choice`,
+the palette question it opens, which is `edit.insertPages`' shape. Names are the webview's
+(`Intl.DisplayNames`), not the platform's. On Windows an engine reads one language, so
+`WindowsOcr` makes a second engine for a language that is installed and is not its own
+(`other_language`), and `Recogniser::id_for` reports it; that path is compiled by
+`scripts/check_windows.py` and has not been run.
 `docs/PLAN.md` §9 *Cross-cutting* has the measurements and what is not built, and
 `BUILD.md`'s `textlayer-probe` is the read-back through PDFium.
 

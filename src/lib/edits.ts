@@ -902,11 +902,17 @@ export class Edits {
    * before its signatures are invalidated.
    *
    * `run` numbers this recognition, never 0; `ocr_cancel` with the same number
-   * stops it, also when that call arrives before this one is sent.
+   * stops it, also when that call arrives before this one is sent. `language`
+   * is the reader's choice, or null for the recogniser's own.
    */
-  async ocrCopy(source: string, path: string, run: number): Promise<Recognised> {
+  async ocrCopy(
+    source: string,
+    path: string,
+    run: number,
+    language: string | null,
+  ): Promise<Recognised> {
     await this.beforeWrite();
-    return await call("ocr_copy", { doc: this.doc, source, path, run });
+    return await call("ocr_copy", { doc: this.doc, source, path, run, language });
   }
 
   /**

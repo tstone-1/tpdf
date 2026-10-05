@@ -76,6 +76,8 @@ import type { Shrinkage } from "./compress";
 import Shrinkage_ from "../../src-tauri/testdata/replies/Shrinkage.json";
 import type { Recognised } from "./recognise";
 import Recognised_ from "../../src-tauri/testdata/replies/Recognised.json";
+import type { Offered } from "./ocrlanguage";
+import Offered_ from "../../src-tauri/testdata/replies/Offered.json";
 import type { Outline } from "./outline";
 import type { ScrollBenchConfig } from "./scrollbench";
 import type { PageMapping, PageMatches } from "./search";
@@ -180,7 +182,12 @@ const SCHEMA = {
     nothingRead: ["array"],
     tooLarge: ["array"],
     engine: ["string"],
+    languageUnavailable: ["string"],
   } satisfies Shape<Recognised>,
+  Offered: {
+    languages: ["array"],
+    installable: ["boolean"],
+  } satisfies Shape<Offered>,
   CropGeometry: {
     width_pt: ["number"],
     height_pt: ["number"],
@@ -308,6 +315,7 @@ const SCHEMA = {
   Loaded: {
     places: ["array"],
     invert_pages: ["boolean"],
+    ocr_language: ["string"],
     tabs: ["array"],
     active_tab: ["string"],
     restore_tabs: ["boolean"],
@@ -355,6 +363,7 @@ const SAMPLES: Record<keyof typeof SCHEMA, Record<string, unknown>> = {
   Made: Made_ satisfies Widen<Made>,
   Shrinkage: Shrinkage_ satisfies Widen<Shrinkage>,
   Recognised: Recognised_ satisfies Widen<Recognised>,
+  Offered: Offered_ satisfies Widen<Offered>,
   CropGeometry: CropGeometry_ satisfies Widen<CropGeometry>,
   DocumentInfo: DocumentInfo_ satisfies Widen<DocumentInfo>,
   PageRuns: PageRuns_ satisfies Widen<TextRuns>,

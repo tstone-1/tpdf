@@ -572,6 +572,15 @@ measured the Windows render constants come out 1.5–1.8x worse.
   Pages that already have text are left as they are. A document with unsaved changes is
   asked to be saved first. The engine and its limits are under *Text recognition* below.
   <!-- built: file.recogniseText -->
+- **Recognise text: language** sets the language the recogniser is told to expect. It
+  lists the languages your computer offers; type a tag such as `de-DE`, a name such as
+  `German`, or `automatic` to let the recogniser choose, which is how it starts. The
+  choice is remembered, so it is set once. On macOS the list is fixed by the system. On
+  Windows a language has to be installed first, in Settings under *Time & language*,
+  then *Language & region*; a stock install has English only. If a remembered language
+  is no longer there, the text is recognised with the recogniser's own choice and the
+  line that reports the copy says so.
+  <!-- built: file.recogniseTextLanguage file.recogniseTextLanguage.choice -->
 - **Save a copy with a password** writes a copy that cannot be opened without the
   password you type, encrypted with AES-256. You type it twice. The one password opens
   the copy and nothing in it is restricted. A document that already has a password gets
@@ -1286,8 +1295,8 @@ the page looks exactly as it did. Nothing is uploaded and no recogniser is bundl
 A page that already has any text is left as it is, so running the command on a mixed
 document reads only its scanned pages. `--pages 1-3,7` limits which pages are considered.
 `--language de-DE` names the language to expect, as a BCP-47 tag, and may be repeated with
-the most likely first; on Windows the recogniser uses the languages installed in Settings
-and the option does not change that. A page is read at up to 300 DPI and no finer than a
+the most likely first; on Windows the first of them that is installed in Settings is
+used, and with none installed the recogniser reads with its own. A page is read at up to 300 DPI and no finer than a
 16 MB image allows, which is about 210 DPI for A4; a page too large to read at 100 DPI is
 refused by number. The recogniser can misread, and tpdf does not check its words against
 anything: the layer is for finding and copying text, not a statement of what the page says.
@@ -1298,8 +1307,9 @@ were recognised. If no selected page needs a layer, nothing is written and the c
 exits 3. A signed document needs `--invalidate-signatures`, because adding the layer
 rewrites it. An existing output needs `--force`; the input is never replaced.
 
-The window's *Recognise text and save as* does the same for the open document, with the
-recogniser's own choice of language and every page considered. It skips a page too large
+The window's *Recognise text and save as* does the same for the open document, with every
+page considered and one language or the recogniser's own choice, set by *Recognise text:
+language*. It skips a page too large
 to read where the command refuses it, and says which pages it skipped.
 
 The JSON report carries `schema`, `command`, `input`, `output`, the `engine` that read the

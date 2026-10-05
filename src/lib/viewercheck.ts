@@ -3270,6 +3270,10 @@ async function appCommandChecks(
     redactCopy: () => fired.push("redactCopy"),
     redactRasterCopy: () => fired.push("redactRasterCopy"),
     recogniseText: () => fired.push("recogniseText"),
+    chooseRecognitionLanguage: () => fired.push("chooseRecognitionLanguage"),
+    recognitionLanguages: () => null,
+    setRecognitionLanguage: (raw) => fired.push(`setRecognitionLanguage:${raw}`),
+    dropRecognitionLanguages: () => fired.push("dropRecognitionLanguages"),
     protectCopy: () => fired.push("protectCopy"),
     unprotectCopy: () => fired.push("unprotectCopy"),
     compressCopy: () => fired.push("compressCopy"),
@@ -4195,6 +4199,11 @@ async function appCommandChecks(
       read: () => fired.join(","),
     },
     {
+      id: "file.recogniseTextLanguage",
+      ...shell("chooseRecognitionLanguage"),
+      read: () => fired.join(","),
+    },
+    {
       id: "file.compress",
       ...shell("compressCopy"),
       read: () => fired.join(","),
@@ -4439,6 +4448,12 @@ async function appCommandChecks(
     // palette, answered and dismissed; `appcommands.test.ts` covers the guard
     // and the argument in both directions.
     "edit.insertPages.range": "needs a file waiting to be inserted; the import window phase drives it",
+    // Offered only while `file.recogniseTextLanguage` holds the machine's list
+    // of languages, which these recording actions never fetch.
+    // `appcommands.test.ts` covers the guard and the argument in both
+    // directions, and `ocrlanguage.test.ts` what an answer means.
+    "file.recogniseTextLanguage.choice":
+      "needs this machine's list of languages to be held; no window phase drives it yet",
   };
 
   const registered = registry.all().map((command) => command.id);
@@ -4676,6 +4691,9 @@ async function appCommandChecks(
     // `edit.insertPages` leaves behind. It shipped without its entry here and
     // the Windows run was the first to read the red, on both corpora.
     "edit.insertPages.range",
+    // Guarded on the list of languages `file.recogniseTextLanguage` fetches.
+    // Declared with the command.
+    "file.recogniseTextLanguage.choice",
     // Guarded on the document being edited, which an untouched one is not. It
     // joined this list late: the guard landed with "Save over the file the
     // reader opened" and turned this check red, and the red went unread because

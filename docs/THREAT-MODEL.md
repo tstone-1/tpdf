@@ -3119,6 +3119,37 @@ mark already had, which for a mark read back from a saved file is the file's (§
 reaches the page as the note itself does: drawn on the overlay canvas with `fillText`,
 never assigned to the DOM.
 
+#### T6.37 — The language text is recognised in, added 2026-10-05
+
+*Recognise text: language* lets the reader name one language for the recogniser, or leave
+the choice to it. Two commands are new and one takes a new argument.
+
+`ocr_languages` takes nothing and answers the language tags this machine's recogniser
+offers, with whether more can be installed. It names no document, takes no lock, opens no
+file and reaches no worker. It is the one question put to the recogniser **in the app
+process**: on macOS `VNRecognizeTextRequest.supportedRecognitionLanguages`, on Windows
+`OcrEngine::AvailableRecognizerLanguages`. No image and no document goes with it, so
+nothing a file supplied is processed outside the OCR worker (§5.1); recognition itself
+still happens only there. Measured 2026-10-05 on macOS 26A434: 33 tags in 15 ms. The
+Windows call is the one the OCR worker already made at start; it is compiled for the app
+process by `scripts/check_windows.py` and has not been run there.
+
+`session_set_ocr_language` takes a tag or nothing and stores it in the session file beside
+the other preferences, through the same lock. A value that is not shaped like a language
+tag (`ocr_layer::is_language_tag`: 2 to 35 letters, digits and hyphens, starting with a
+letter) is stored as nothing, and the same rule is applied when the file is read, because
+the file is on disk where anything can edit it.
+
+`ocr_copy` takes the tag as `language`, and `ocr_layer::choose` holds it against what the
+machine offers at that moment: a tag that is offered goes to the engine in the engine's own
+spelling, and one that is not offered goes nowhere, whatever it is. The engine then chooses, and the reply names the tag so the window can say it.
+So the only strings that reach `setRecognitionLanguages:` or `Language::CreateLanguage`
+from the window are ones the platform itself listed.
+
+A compromised webview can therefore set a preference and make a recognition read in a
+language the reader did not choose, which makes the recognised text worse. It gains no
+file, no path and no process.
+
 ### T9 — The updater
 
 **The threat.** The updater is the only code path in tpdf that fetches bytes and then

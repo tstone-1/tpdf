@@ -12,6 +12,7 @@
     }
   ],
   "invert_pages": true,
+  "ocr_language": "de-DE",
   "tabs": [
     "/tmp/one.pdf",
     "/tmp/two.pdf"

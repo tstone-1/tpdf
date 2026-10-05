@@ -17,6 +17,41 @@ as *downloadable*, while the release sat as a draft that GitHub showed to nobody
 are given now because they are different facts, and only the second one means a reader can
 have the binary.)
 
+## [26.10.7] - Unreleased
+
+### Added
+
+- **You can choose the language text is recognised in.** *Recognise text and save as*
+  lets the recogniser work the language out, and that is right for most pages. For a
+  page it gets wrong, *Recognise text: language...*, in the File menu and the command palette, lists the
+  languages your computer offers and takes a tag such as `de-DE`, a name such as
+  `German`, or `automatic` for the recogniser's own choice, which stays the default.
+  The choice is remembered, so it is set once. On Windows a language has to be
+  installed before it is offered, in Settings under *Time & language*, then *Language
+  & region*, and the command says so; a stock install has English only. If a
+  remembered language is no longer on the computer, the text is recognised with the
+  recogniser's own choice and the line that reports the copy names the language that
+  was missing.
+
+### Changed
+
+- **On Windows, `tpdf ocr --language` now chooses the recogniser.** The option was
+  accepted and had no effect there. The first language named that is installed is now
+  the one the page is read with, and the report's `engine` names it. With none of them
+  installed the recogniser reads with its own language, as before. The tests
+  pass on Windows 11; reading with a second installed language was not tried.
+
+### Fixed
+
+- **A scan in Japanese or Chinese is now read.** *Recognise text* and `tpdf ocr`, with
+  no language named, asked the Mac's recogniser in a way that reads Latin, Cyrillic and
+  Greek letters only. A Japanese page came back as a few wrong characters and a Chinese
+  page as nothing, so no copy was written. With no language named the recogniser now
+  works out the script itself. Measured on pictures of invented sentences: Japanese and
+  Chinese pages are read whole, and Russian and German pages are read as before.
+- The command palette's input no longer shows the system's spelling and capital-letter
+  suggestions, which covered the first line under it.
+
 ## [26.10.6] - 2026-10-05
 
 ### Added

@@ -132,6 +132,9 @@ export const MENU_LAYOUT: LayoutSection[] = [
       "file.saveCopy",
       // A copy too, and the one of them that destroys nothing.
       "file.recogniseText",
+      // Under the command it decides, and outside every document guard: the
+      // choice is the reader's and is made with nothing open too.
+      "file.recogniseTextLanguage",
       "file.compress",
       "file.protect",
       "file.unprotect",
@@ -454,6 +457,15 @@ export const NOT_IN_MENU: { prefix: string; reason: string }[] = [
       "the second question Insert pages from file... asks, offered only while " +
       "a file it opened is waiting; a menu item would be greyed at every other " +
       "moment and do nothing the item before it does not",
+  },
+  {
+    // The whole id, for the reason above: `file.recogniseTextLanguage` is in
+    // the File menu.
+    prefix: "file.recogniseTextLanguage.choice",
+    reason:
+      "the question Recognise text: language... asks once this machine's " +
+      "languages are listed, offered only while that list is held; the menu " +
+      "item before it is the way in",
   },
 ];
 

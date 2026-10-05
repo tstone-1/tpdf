@@ -7,6 +7,7 @@
  * `src-tauri/src/commands/ocr.rs`.
  */
 
+import { fellBack } from "./ocrlanguage";
 import { basename } from "./paths";
 
 /**
@@ -34,6 +35,11 @@ export interface Recognised {
   /** Pages too large to render finely enough to read. */
   tooLarge: number[];
   engine: string;
+  /**
+   * The language the reader had chosen, when the machine no longer offers it
+   * and the engine chose instead. Absent otherwise.
+   */
+  languageUnavailable?: string;
 }
 
 /** What a document with unsaved changes is told, before any name is asked for. */
@@ -77,6 +83,7 @@ export function afterRecognition(read: Recognised, name: string): string {
   if (read.tooLarge.length > 0) {
     said.push(`Too large to read: ${pages(read.tooLarge)}.`);
   }
+  if (read.languageUnavailable) said.push(fellBack(read.languageUnavailable));
   return said.join(" ");
 }
 

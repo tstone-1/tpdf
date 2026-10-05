@@ -195,6 +195,42 @@ impl Vision {
     }
 }
 
+impl Vision {
+    /// The languages a text layer can be asked to expect, as Vision spells them.
+    ///
+    /// Asked of a request built the way [`Vision::read`] builds the text
+    /// layer's --- accurate level, no detection --- because the list depends on
+    /// the request: the fast level offers fewer.
+    ///
+    /// **This one call may run in the app process**, which the module docs
+    /// forbid for recognition. It is given no image and no document, so nothing
+    /// a file supplied is processed; it reads a list the system holds. Measured
+    /// 2026-10-05 on 26A434: 33 tags in 15 ms, in a test process that had not
+    /// used Vision before. One of them is `vi-VT`, which is Vision's spelling
+    /// and is passed back to it as given.
+    ///
+    /// The selector arrived with macOS 12 and this binary's deployment target
+    /// is older, so it is sent only where the request answers to it, as
+    /// `setAutomaticallyDetectsLanguage:` is. An older system offers no list,
+    /// and the window then offers the engine's own choice alone.
+    ///
+    /// # Errors
+    ///
+    /// Whatever Vision reports for the question.
+    pub fn languages() -> Result<Vec<String>, RecogniseError> {
+        let request = VNRecognizeTextRequest::new();
+        request.setRecognitionLevel(VNRequestTextRecognitionLevel::Accurate);
+        if !request.respondsToSelector(sel!(supportedRecognitionLanguagesAndReturnError:)) {
+            return Ok(Vec::new());
+        }
+        // SAFETY: the request is a live object that answers to the selector, and
+        // the method takes nothing but the error slot the binding supplies.
+        let listed = unsafe { request.supportedRecognitionLanguagesAndReturnError() }
+            .map_err(|e| RecogniseError::Unavailable(format!("listing languages: {e}")))?;
+        Ok(listed.iter().map(|tag| tag.to_string()).collect())
+    }
+}
+
 impl Recogniser for Vision {
     fn id(&self) -> EngineId {
         EngineId {
@@ -391,6 +427,23 @@ mod tests {
         assert!((r[1] - 45.0).abs() < 0.01, "top: {r:?}");
         assert!((r[2] - 100.0).abs() < 0.01, "right: {r:?}");
         assert!((r[3] - 50.0).abs() < 0.01, "bottom: {r:?}");
+    }
+
+    /// The list is the system's, so only what every supported system has is
+    /// held: English, and tags of the shape the session file will keep.
+    #[test]
+    fn the_engine_lists_the_languages_it_can_be_asked_for() {
+        let started = std::time::Instant::now();
+        let listed = Vision::languages().expect("Vision lists its languages");
+        println!(
+            "{} tags in {:?}: {listed:?}",
+            listed.len(),
+            started.elapsed()
+        );
+        assert!(listed.iter().any(|tag| tag == "en-US"), "{listed:?}");
+        for tag in &listed {
+            assert!(crate::ocr_layer::is_language_tag(tag), "{tag}");
+        }
     }
 
     #[test]

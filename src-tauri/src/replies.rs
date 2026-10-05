@@ -759,6 +759,15 @@ fn samples() -> BTreeMap<&'static str, String> {
             nothing_read: vec![3],
             too_large: vec![4],
             engine: "vision (26A428)".into(),
+            language_unavailable: Some("de-DE".into()),
+        },
+    );
+
+    put(
+        "Offered",
+        &crate::commands::ocr::Offered {
+            languages: vec!["en-US".into(), "de-DE".into()],
+            installable: true,
         },
     );
 
@@ -942,6 +951,7 @@ fn samples() -> BTreeMap<&'static str, String> {
                     page_count: 40,
                 }],
                 invert_pages: true,
+                ocr_language: Some("de-DE".into()),
                 tabs: vec!["/tmp/one.pdf".into(), "/tmp/two.pdf".into()],
                 active_tab: Some("/tmp/one.pdf".into()),
                 restore_tabs: true,

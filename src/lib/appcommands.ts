@@ -42,6 +42,12 @@ import { DISK_CHANGE_MODES, type DiskChangeMode } from "./diskwatch";
 import { PALETTE } from "./markcolors";
 import { message, UI_LOCALE, type UiLocale } from "./i18n";
 import { NIBS } from "./marknibs";
+import {
+  pick as pickLanguage,
+  placeholder as languagePlaceholder,
+  preview as languagePreview,
+  type Offered,
+} from "./ocrlanguage";
 import { PAGE_SIZES, PAGE_SIZE_NAMES, type PageSizeName } from "./pagesizes";
 import type { MarkKind, StampName } from "./pages";
 import type { Tab } from "./sidebar";
@@ -542,6 +548,17 @@ export interface AppActions {
   redactRasterCopy(): void;
   /** Ask for a name and write a copy whose scanned pages can be searched. */
   recogniseText(): void;
+  /** Fetch the languages this machine offers and ask which to recognise in. */
+  chooseRecognitionLanguage(): void;
+  /**
+   * The languages being asked about and the one chosen now, or null when
+   * {@link chooseRecognitionLanguage} has not asked. See `ocrlanguage.ts`.
+   */
+  recognitionLanguages(): { offered: Offered; current: string | null } | null;
+  /** Take the reader's typed answer to that question. */
+  setRecognitionLanguage(raw: string): void;
+  /** The question was dismissed. */
+  dropRecognitionLanguages(): void;
   /** Ask for a new password and a name, and write a copy that needs it. */
   protectCopy(): void;
   /** Ask for a name and write a copy that opens without the password. */
@@ -1808,6 +1825,42 @@ export function registerAppCommands(
       title: "Recognise text and save as...",
       enabled: withDocument,
       run: () => actions.recogniseText(),
+    },
+    {
+      // A preference, not something done to a document, so it is offered with
+      // none open: a reader can set it before the first scan. The ellipsis is
+      // kept by the palette, which asks next; the list it asks about is the
+      // machine's and is fetched first, which is why this is a `run` and the
+      // question is the command below --- `edit.insertPages`' shape.
+      id: "file.recogniseTextLanguage",
+      title: "Recognise text: language...",
+      run: () => actions.chooseRecognitionLanguage(),
+    },
+    {
+      // The question `file.recogniseTextLanguage` asks once the list is here.
+      // Enabled only while that list is held, so it is not listed otherwise.
+      // `dismissed` drops the list: the next question fetches a fresh one, in
+      // which a language installed since is present.
+      id: "file.recogniseTextLanguage.choice",
+      title: "Language for recognising text",
+      enabled: () => actions.recognitionLanguages() !== null,
+      argument: {
+        get placeholder() {
+          return languagePlaceholder(actions.recognitionLanguages()?.current ?? null);
+        },
+        problem: (raw: string) => {
+          const asked = actions.recognitionLanguages();
+          if (!asked) return "No list of languages is waiting";
+          return pickLanguage(raw, asked.offered).problem ?? null;
+        },
+        preview: (raw: string) => {
+          const asked = actions.recognitionLanguages();
+          const picked = asked ? pickLanguage(raw, asked.offered) : null;
+          return picked && picked.problem === undefined ? languagePreview(picked.language) : "";
+        },
+        run: (raw: string) => actions.setRecognitionLanguage(raw),
+        dismissed: () => actions.dropRecognitionLanguages(),
+      },
     },
     {
       // A copy, because shrinking pictures cannot be undone: the open

@@ -29,6 +29,7 @@ import { PALETTE } from "./markcolors";
 import { NIBS } from "./marknibs";
 import type { StampName } from "./pages";
 import { PAGE_SIZE_NAMES } from "./pagesizes";
+import type { Offered } from "./ocrlanguage";
 import type { PreparedImport } from "./pendingimport";
 import { updateLabel } from "./update";
 
@@ -74,6 +75,9 @@ function harness(
   // reader has just chosen a file to insert from: the range question is then
   // withheld, and a test that says nothing about an import exercises that.
   waiting: PreparedImport | null = null,
+  // Null by default for the same reason: no list of languages is held unless
+  // the reader has just asked to choose one.
+  languages: { offered: Offered; current: string | null } | null = null,
 ) {
   const fired: string[] = [];
   let automatic = update.automatic ?? true;
@@ -215,6 +219,10 @@ function harness(
     redactCopy: () => fired.push("redactCopy"),
     redactRasterCopy: () => fired.push("redactRasterCopy"),
     recogniseText: () => fired.push("recogniseText"),
+    chooseRecognitionLanguage: () => fired.push("chooseRecognitionLanguage"),
+    recognitionLanguages: () => languages,
+    setRecognitionLanguage: (raw) => fired.push(`setRecognitionLanguage:${raw}`),
+    dropRecognitionLanguages: () => fired.push("dropRecognitionLanguages"),
     protectCopy: () => fired.push("protectCopy"),
     unprotectCopy: () => fired.push("unprotectCopy"),
     compressCopy: () => fired.push("compressCopy"),
@@ -648,6 +656,10 @@ describe("the commands a document is needed for", () => {
       // A preference about fields placed next, on by default, so turning it
       // off is the one of its pair on offer.
       "edit.fieldBorderOff",
+      // A preference too: which language scans are read in is the reader's,
+      // and is set once, before or after the first scan is opened. Its
+      // question is not here, because no list of languages is held.
+      "file.recogniseTextLanguage",
     ]);
   });
 
@@ -888,7 +900,11 @@ describe("every registered command", () => {
       false,
       // And a file waiting to be inserted, so `edit.insertPages.range` is.
       { pending: 1, pages: 3, name: "other.pdf" },
+      // And a list of languages held, so `file.recogniseTextLanguage.choice` is.
+      { offered: { languages: ["en-US"], installable: false }, current: null },
     );
+    // Every other argument takes a number; a language is a word.
+    const ANSWERS: Record<string, string> = { "file.recogniseTextLanguage.choice": "automatic" };
     // With tabs from last time to reopen, or that command is withheld in both.
     // And three marks picked, so every arrangement is allowed to run.
     // And a form with fields, so changing them is on offer.
@@ -912,7 +928,7 @@ describe("every registered command", () => {
     for (const command of shell) {
       const reached = states.some(({ registry, fired }) => {
         const before = fired.length;
-        registry.run(command.id, command.argument ? "1" : undefined);
+        registry.run(command.id, command.argument ? (ANSWERS[command.id] ?? "1") : undefined);
         return fired.length > before;
       });
       expect(reached, `${command.id} fired nothing in either update state`).toBe(true);
@@ -1228,6 +1244,67 @@ describe("the page operations", () => {
     const closed = harness(false);
     expect(closed.registry.run("file.compress")).toBe(false);
     expect(closed.fired).toEqual([]);
+  });
+
+  describe("the language text is recognised in", () => {
+    const held = {
+      offered: { languages: ["en-US", "de-DE", "zh-Hans", "zh-Hant"], installable: false },
+      current: "de-DE",
+    };
+    const asking = (hasDocument = true) =>
+      harness(
+        hasDocument, {}, {}, false, false, false, {}, false, false, false, false, false, false,
+        null, held,
+      );
+    const choice = (registry: CommandRegistry) =>
+      registry.find("file.recogniseTextLanguage.choice");
+
+    it("is asked for with or without a document, and promises a question", () => {
+      for (const open of [true, false]) {
+        const { registry, fired } = harness(open);
+        expect(registry.find("file.recogniseTextLanguage")?.title).toBe(
+          "Recognise text: language...",
+        );
+        expect(registry.run("file.recogniseTextLanguage")).toBe(true);
+        expect(fired).toEqual(["chooseRecognitionLanguage"]);
+      }
+    });
+
+    it("offers the question only while a list of languages is held", () => {
+      const without = harness().registry;
+      expect(without.search("").map((ranked) => ranked.command.id)).not.toContain(
+        "file.recogniseTextLanguage.choice",
+      );
+      expect(without.run("file.recogniseTextLanguage.choice", "de-DE")).toBe(false);
+      // And asked directly it names no language, whatever is typed.
+      expect(choice(without)?.argument?.problem("de-DE")).toBe("No list of languages is waiting");
+      expect(choice(without)?.argument?.preview("de-DE")).toBe("");
+      const { registry, fired } = asking(false);
+      expect(registry.run("file.recogniseTextLanguage.choice", "de-DE")).toBe(true);
+      expect(fired).toEqual(["setRecognitionLanguage:de-DE"]);
+    });
+
+    it("shows the language chosen now, and what an answer will do", () => {
+      const argument = choice(asking().registry)?.argument;
+      expect(argument?.placeholder).toContain("now: German (Germany), de-DE");
+      expect(argument?.preview("en")).toBe("Recognise text as English (United States), en-US");
+      expect(argument?.preview("automatic")).toBe("Let the recogniser choose the language");
+      expect(argument?.problem("en")).toBeNull();
+    });
+
+    it("refuses an answer that names no language, or more than one", () => {
+      const { registry, fired } = asking();
+      expect(choice(registry)?.argument?.problem("zh")).toContain("Several begin with");
+      expect(choice(registry)?.argument?.problem("fr-FR")).toContain("No language here begins");
+      expect(registry.run("file.recogniseTextLanguage.choice", "fr-FR")).toBe(false);
+      expect(fired).toEqual([]);
+    });
+
+    it("drops the list when the question is dismissed", () => {
+      const { registry, fired } = asking();
+      choice(registry)?.argument?.dismissed?.();
+      expect(fired).toEqual(["dropRecognitionLanguages"]);
+    });
   });
 
   it("sets and removes a password through two commands, on any open document", () => {
@@ -1814,6 +1891,10 @@ describe("the window shortcuts for editing", () => {
       redactCopy: () => fired.push("redactCopy"),
       redactRasterCopy: () => fired.push("redactRasterCopy"),
       recogniseText: () => fired.push("recogniseText"),
+      chooseRecognitionLanguage: () => fired.push("chooseRecognitionLanguage"),
+      recognitionLanguages: () => null,
+      setRecognitionLanguage: (raw) => fired.push(`setRecognitionLanguage:${raw}`),
+      dropRecognitionLanguages: () => fired.push("dropRecognitionLanguages"),
       protectCopy: () => fired.push("protectCopy"),
       unprotectCopy: () => fired.push("unprotectCopy"),
       compressCopy: () => fired.push("compressCopy"),

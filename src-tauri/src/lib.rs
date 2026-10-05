@@ -188,7 +188,9 @@ pub mod redaction {
 /// Public for `tests/cli.rs`, which runs the application's path in-process on
 /// the scan the tool's own `ocr` check is run on.
 pub mod recognition {
-    pub use crate::commands::ocr::{ocr_copy_asked, Progress, Recognised, CANCELLED, UNSAVED};
+    pub use crate::commands::ocr::{
+        ocr_copy_asked, offered_languages, Progress, Recognised, CANCELLED, UNSAVED,
+    };
 }
 
 /// Who creates the window, and what it points at (spike 0.7).
@@ -914,6 +916,7 @@ pub fn run() {
             redact_document,
             ocr_copy,
             ocr_cancel,
+            ocr_languages,
             annot_erase,
             annot_note,
             annot_draft_lines,
@@ -972,6 +975,7 @@ pub fn run() {
             session_load,
             session_remember,
             session_set_invert_pages,
+            session_set_ocr_language,
             session_set_tabs,
             session_set_restore_tabs,
             session_forget,

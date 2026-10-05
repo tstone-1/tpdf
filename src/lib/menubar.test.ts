@@ -233,9 +233,10 @@ describe("buildMenu", () => {
       "command",
       "command",
       "separator",
-      // Save, Save a copy, Recognise text, the smaller copy, the copy with a
-      // password and the one without, Image-only redaction, Redact and save
-      // as, Redact and save, Extract, Split, Merge.
+      // Save, Save a copy, Recognise text and its language, the smaller copy,
+      // the copy with a password and the one without, Image-only redaction,
+      // Redact and save as, Redact and save, Extract, Split, Merge.
+      "command",
       "command",
       "command",
       "command",

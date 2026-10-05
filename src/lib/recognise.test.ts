@@ -48,7 +48,7 @@ describe("what the window shares with the backend by spelling", () => {
     expect(Object.keys(read()).sort()).toEqual(
       ["alreadyText", "engine", "nothingRead", "pages", "tooLarge"].sort(),
     );
-    for (const key of ["alreadyText", "nothingRead", "tooLarge"]) {
+    for (const key of ["alreadyText", "nothingRead", "tooLarge", "languageUnavailable"]) {
       expect(backend).toContain(`"${key}"`);
     }
   });
@@ -71,6 +71,16 @@ describe("afterRecognition", () => {
   it("counts the pages and the words", () => {
     expect(afterRecognition(read(), "a searchable.pdf")).toBe(
       "Saved a searchable.pdf. Text was added to 1 of 1 page (40 words).",
+    );
+  });
+
+  it("says which language was missing when the recogniser had to choose", () => {
+    const said = afterRecognition(read({ languageUnavailable: "de-DE" }), "a.pdf");
+    expect(said).toBe(
+      "Saved a.pdf. Text was added to 1 of 1 page (40 words). " +
+        "German (Germany), de-DE is not available on this computer, " +
+        'so the recogniser chose the language itself. ' +
+        'Choose another with "Recognise text: language...".',
     );
   });
 

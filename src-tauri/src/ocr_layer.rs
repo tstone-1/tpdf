@@ -49,6 +49,57 @@ pub fn options(languages: Vec<String>) -> Options {
     }
 }
 
+/// Whether `raw` has the shape of a language tag as the engines take one:
+/// letters, digits and hyphens, starting with a letter.
+///
+/// The shape only. Whether an engine offers the language is asked of the
+/// engine; this is what keeps anything else out of a request and out of the
+/// session file.
+#[must_use]
+pub fn is_language_tag(raw: &str) -> bool {
+    (2..=35).contains(&raw.len())
+        && raw.chars().all(|c| c.is_ascii_alphanumeric() || c == '-')
+        && raw.starts_with(|c: char| c.is_ascii_alphabetic())
+}
+
+/// What the engine is asked to expect for a reader's remembered language.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Choice {
+    /// What goes into [`options`]: the language, or nothing for the engine's
+    /// own choice.
+    pub languages: Vec<String>,
+    /// The language that was remembered and is not offered any more.
+    pub unavailable: Option<String>,
+}
+
+/// Holds a remembered language against what the machine offers now.
+///
+/// A language is remembered across launches, and a machine can stop offering
+/// one: a Windows language pack is removed, a session file is carried to
+/// another computer. That must not reach the engine, where it would be an
+/// engine's error on some page or a silent reading in another language. So the
+/// recognition goes ahead with the engine's own choice and
+/// [`Choice::unavailable`] names what was asked, for the caller to say.
+#[must_use]
+pub fn choose(remembered: Option<&str>, offered: &[String]) -> Choice {
+    let Some(asked) = remembered else {
+        return Choice {
+            languages: Vec::new(),
+            unavailable: None,
+        };
+    };
+    match crate::ocr::first_offered(&[asked.to_string()], offered) {
+        Some(tag) => Choice {
+            languages: vec![tag],
+            unavailable: None,
+        },
+        None => Choice {
+            languages: Vec::new(),
+            unavailable: Some(asked.to_string()),
+        },
+    }
+}
+
 /// Whether a page already has text of its own.
 ///
 /// Any character that is not white space. A page with one is left alone: a
@@ -204,6 +255,50 @@ mod tests {
         assert!(asked.words, "a layer is written word by word");
         assert!(asked.language_correction, "recall, not a safety gate");
         assert_eq!(asked.languages, ["de-DE"]);
+    }
+
+    #[test]
+    fn a_language_tag_is_letters_digits_and_hyphens_after_a_letter() {
+        for tag in ["en-US", "de", "zh-Hans", "yue-Hant", "es-419"] {
+            assert!(is_language_tag(tag), "{tag}");
+        }
+        for not in ["", "x", "de_DE", "-de", "1de", "de DE", "de/../x"] {
+            assert!(!is_language_tag(not), "{not}");
+        }
+        assert!(is_language_tag(&"a".repeat(35)));
+        assert!(!is_language_tag(&"a".repeat(36)));
+    }
+
+    #[test]
+    fn a_remembered_language_is_asked_for_only_while_the_machine_offers_it() {
+        let offered = ["en-US".to_string(), "de-DE".to_string()];
+        assert_eq!(
+            choose(None, &offered),
+            Choice {
+                languages: vec![],
+                unavailable: None
+            }
+        );
+        assert_eq!(
+            choose(Some("de-de"), &offered),
+            Choice {
+                languages: vec!["de-DE".into()],
+                unavailable: None
+            },
+            "in the engine's own spelling"
+        );
+        assert_eq!(
+            choose(Some("fr-FR"), &offered),
+            Choice {
+                languages: vec![],
+                unavailable: Some("fr-FR".into())
+            },
+            "the engine chooses, and what was asked is named"
+        );
+        assert_eq!(
+            choose(Some("de-DE"), &[]).unavailable.as_deref(),
+            Some("de-DE")
+        );
     }
 
     #[test]

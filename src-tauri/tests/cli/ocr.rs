@@ -17,7 +17,9 @@ use super::{fixture, library_dir, overlap, scratch, tool, words, Report};
 use lopdf::{dictionary, Document, Object, Stream};
 use std::path::Path;
 use std::sync::atomic::AtomicBool;
-use tpdf_lib::recognition::{ocr_copy_asked, Progress, Recognised, CANCELLED, UNSAVED};
+use tpdf_lib::recognition::{
+    ocr_copy_asked, offered_languages, Progress, Recognised, CANCELLED, UNSAVED,
+};
 use tpdf_lib::render::{Backend, RenderService};
 
 /// The resolution the scan is rendered at.
@@ -153,7 +155,12 @@ enum Ask {
     Stopped,
     /// The reader pressed Stop while the last page was being read.
     StoppedReading,
+    /// The reader chose this language for recognised text.
+    In(&'static str),
 }
+
+/// A tag no engine offers: Klingon.
+const NOT_OFFERED: &str = "tlh-Latn";
 
 /// The window's *Recognise text*, in this process: the document opened in a
 /// render service with an edit model beside it, as the application holds it.
@@ -180,6 +187,11 @@ fn app_path(path: &Path, out: &Path, ask: Ask) -> (Result<Recognised, String>, V
     }
     let seen = std::sync::Mutex::new(Vec::new());
     let stop = AtomicBool::new(ask == Ask::Stopped);
+    let language = match ask {
+        Ask::In(tag) => Some(tag),
+        _ => None,
+    };
+    let offered = offered_languages().unwrap_or_default();
     let answer = ocr_copy_asked(
         &service,
         info.id,
@@ -188,7 +200,8 @@ fn app_path(path: &Path, out: &Path, ask: Ask) -> (Result<Recognised, String>, V
         out,
         None,
         library_dir(),
-        Vec::new(),
+        language,
+        &offered,
         &|| stop.load(std::sync::atomic::Ordering::Relaxed),
         &|at| {
             seen.lock().unwrap().push(at);
@@ -233,6 +246,42 @@ fn window_path(report: &mut Report, source: &str, scanned: &str, out: &str, refu
         "the window's copy reads the source's words and finds one where the source has it",
         shared >= ENOUGH && near,
         &format!("{shared:.2}; {ours:?} against {theirs:?}"),
+    );
+
+    // The reader's language. One the machine offers is asked of the engine and
+    // the page still reads; one it does not offer is not an engine's error,
+    // the engine chooses and the answer says which language was not there.
+    let offered = offered_languages().unwrap_or_default();
+    let beside = |name: &str| {
+        Path::new(refused)
+            .with_file_name(name)
+            .display()
+            .to_string()
+    };
+    if offered.iter().any(|tag| tag == "en-US") {
+        let chosen = beside("chosen.pdf");
+        let (answer, _) = app_path(Path::new(scanned), Path::new(&chosen), Ask::In("en-us"));
+        let shared = overlap(&want, &words(&text_of(&chosen)));
+        report.check(
+            "the window's path reads the page in a language the machine offers",
+            answer
+                .as_ref()
+                .is_ok_and(|read| read.language_unavailable.is_none() && read.pages.len() == 1)
+                && shared >= ENOUGH,
+            &format!("{answer:?}; {shared:.2}"),
+        );
+    } else {
+        report.skip("ocr", "this machine's recogniser does not offer en-US");
+    }
+    let stale = beside("stale.pdf");
+    let (answer, _) = app_path(Path::new(scanned), Path::new(&stale), Ask::In(NOT_OFFERED));
+    let shared = overlap(&want, &words(&text_of(&stale)));
+    report.check(
+        "a language the machine does not offer is named, and the page is read all the same",
+        answer.as_ref().is_ok_and(|read| {
+            read.language_unavailable.as_deref() == Some(NOT_OFFERED) && read.pages.len() == 1
+        }) && shared >= ENOUGH,
+        &format!("{answer:?}; {shared:.2}"),
     );
 
     let staging_left = || {
@@ -283,6 +332,70 @@ fn window_path(report: &mut Report, source: &str, scanned: &str, out: &str, refu
             &format!("{answer:?}; {seen:?}"),
         );
     }
+}
+
+/// A Japanese page with no language named.
+///
+/// Left to its default, Vision reads this page as a few wrong Latin characters,
+/// so the layer is asked for with the engine working out the script
+/// (`OcrWorker::recognise_page`). Only on macOS: a stock Windows carries one
+/// recogniser language, and it is not this one.
+fn another_script(report: &mut Report, at: &dyn Fn(&str) -> String) {
+    const WORDS: &str = "日本語";
+    if !cfg!(target_os = "macos") {
+        report.skip("ocr", "a page in another script needs a recogniser for it");
+        return;
+    }
+    let Some(source) = fixture("multilingual.pdf") else {
+        report.skip("ocr", "testdata/multilingual.pdf is not generated");
+        return;
+    };
+    let (picture, scanned, out) = (
+        at("script.png"),
+        at("script-scan.pdf"),
+        at("script-out.pdf"),
+    );
+    let source = source.display().to_string();
+    let rendered = tool(
+        &["render", &source, "-o", &picture, "--dpi", &DPI.to_string()],
+        &[],
+    );
+    if rendered.0 != 0 {
+        report.check(
+            "the Japanese page renders, to make the scan from",
+            false,
+            &rendered.2,
+        );
+        return;
+    }
+    scan(Path::new(&picture), Path::new(&scanned));
+    let (code, _, stderr) = tool(&["ocr", &scanned, "-o", &out], &[]);
+    let read = if code == 0 {
+        text_of(&out)
+    } else {
+        String::new()
+    };
+    report.check(
+        "a Japanese page is read with no language named",
+        text_of(&source).contains(WORDS)
+            && text_of(&scanned).trim().is_empty()
+            && read.contains(WORDS),
+        &format!("exit {code}; {stderr}; read {read:?}"),
+    );
+
+    // The window's command is a second call into the recogniser.
+    let window = at("script-window.pdf");
+    let (answer, _) = app_path(Path::new(&scanned), Path::new(&window), Ask::Plain);
+    let read = if answer.is_ok() {
+        text_of(&window)
+    } else {
+        String::new()
+    };
+    report.check(
+        "and the window's command reads it the same way",
+        read.contains(WORDS),
+        &format!("{:?}; read {read:?}", answer.err()),
+    );
 }
 
 pub(super) fn makes_a_scan_searchable(report: &mut Report) {
@@ -384,6 +497,8 @@ pub(super) fn makes_a_scan_searchable(report: &mut Report) {
         code == 3 && stderr.contains("already has text") && !Path::new(&again).exists(),
         &format!("exit {code}; {stderr}"),
     );
+
+    another_script(report, &at);
 
     let mixed = at("mixed.pdf");
     let merged = tool(&["merge", &scanned, &source, "-o", &mixed], &[]).0 == 0;
