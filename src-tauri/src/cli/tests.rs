@@ -3318,6 +3318,8 @@ fn text_does_not_write_through_a_link_or_onto_a_directory() {
     std::fs::write(&input, crate::sign_cms::testkeys::plain_pdf()).expect("input");
     let directory = dir.join("a-directory");
     std::fs::create_dir(&directory).expect("directory");
+    // Only a Unix build has a link to add.
+    #[cfg_attr(not(unix), allow(unused_mut))]
     let mut targets = vec![directory];
     #[cfg(unix)]
     {
