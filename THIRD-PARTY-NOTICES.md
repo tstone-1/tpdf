@@ -2581,7 +2581,7 @@ SOFTWARE.
 
 ## Rust crates
 
-425 crates are linked into the application binary. Build- and dev-dependencies are excluded: they run at compile time and are not distributed.
+423 crates are linked into the application binary. Build- and dev-dependencies are excluded: they run at compile time and are not distributed.
 
 | Crate | Version | Licence |
 |---|---|---|
@@ -2624,7 +2624,6 @@ SOFTWARE.
 | cbc | 0.1.2 | MIT OR Apache-2.0 |
 | cbc | 0.2.1 | MIT OR Apache-2.0 |
 | cfb | 0.14.0 | MIT |
-| cfb | 0.7.3 | MIT |
 | cfg-if | 1.0.5 | MIT OR Apache-2.0 |
 | chacha20 | 0.10.2 | MIT OR Apache-2.0 |
 | chrono | 0.4.45 | MIT OR Apache-2.0 |
@@ -2741,7 +2740,6 @@ SOFTWARE.
 | image | 0.25.10 | MIT OR Apache-2.0 |
 | indexmap | 1.9.3 | Apache-2.0 OR MIT |
 | indexmap | 2.14.2 | Apache-2.0 OR MIT |
-| infer | 0.19.0 | MIT |
 | infer | 0.22.0 | MIT |
 | inout | 0.1.4 | MIT OR Apache-2.0 |
 | inout | 0.2.2 | MIT OR Apache-2.0 |
@@ -2756,8 +2754,8 @@ SOFTWARE.
 | jsonptr | 0.7.1 | MIT OR Apache-2.0 |
 | keccak | 0.1.6 | Apache-2.0 OR MIT |
 | keyboard-types | 0.8.3 | MIT OR Apache-2.0 |
-| lazy_static | 1.5.0 | MIT OR Apache-2.0 |
-| libc | 0.2.189 | MIT OR Apache-2.0 |
+| lazy_static | 1.5.1 | MIT OR Apache-2.0 |
+| libc | 0.2.190 | MIT OR Apache-2.0 |
 | libloading | 0.9.0 | ISC |
 | libm | 0.2.16 | MIT |
 | litemap | 0.8.3 | Unicode-3.0 |
@@ -2772,7 +2770,7 @@ SOFTWARE.
 | minisign-verify | 0.2.5 | MIT |
 | miniz_oxide | 0.8.9 | MIT OR Zlib OR Apache-2.0 |
 | miniz_oxide | 0.9.1 | MIT OR Zlib OR Apache-2.0 |
-| mio | 1.2.3 | MIT |
+| mio | 1.2.4 | MIT |
 | moxcms | 0.8.1 | BSD-3-Clause OR Apache-2.0 |
 | muda | 0.20.0 | Apache-2.0 OR MIT |
 | multiversion_no_op | 1.0.0 | Apache-2.0 OR MIT |
@@ -2823,7 +2821,7 @@ SOFTWARE.
 | png | 0.17.16 | MIT OR Apache-2.0 |
 | png | 0.18.1 | MIT OR Apache-2.0 |
 | potential_utf | 0.1.6 | Unicode-3.0 |
-| powerfmt | 0.2.0 | MIT OR Apache-2.0 |
+| powerfmt | 0.2.1 | MIT OR Apache-2.0 |
 | ppv-lite86 | 0.2.21 | MIT OR Apache-2.0 |
 | precomputed-hash | 0.1.1 | MIT |
 | primeorder | 0.13.6 | Apache-2.0 OR MIT |
@@ -2909,17 +2907,17 @@ SOFTWARE.
 | system-configuration-sys | 0.6.0 | MIT OR Apache-2.0 |
 | tao | 0.37.1 | Apache-2.0 |
 | tar | 0.4.46 | MIT OR Apache-2.0 |
-| tauri | 2.12.0 | Apache-2.0 OR MIT |
-| tauri-codegen | 2.7.0 | Apache-2.0 OR MIT |
-| tauri-macros | 2.7.0 | Apache-2.0 OR MIT |
-| tauri-plugin-dialog | 2.8.0 | Apache-2.0 OR MIT |
+| tauri | 2.12.1 | Apache-2.0 OR MIT |
+| tauri-codegen | 2.7.1 | Apache-2.0 OR MIT |
+| tauri-macros | 2.7.1 | Apache-2.0 OR MIT |
+| tauri-plugin-dialog | 2.8.1 | Apache-2.0 OR MIT |
 | tauri-plugin-fs | 2.6.0 | Apache-2.0 OR MIT |
 | tauri-plugin-process | 2.4.0 | Apache-2.0 OR MIT |
-| tauri-plugin-single-instance | 2.5.0 | Apache-2.0 OR MIT |
-| tauri-plugin-updater | 2.13.0 | Apache-2.0 OR MIT |
-| tauri-runtime | 2.12.0 | Apache-2.0 OR MIT |
-| tauri-runtime-wry | 2.12.0 | Apache-2.0 OR MIT |
-| tauri-utils | 2.10.0 | Apache-2.0 OR MIT |
+| tauri-plugin-single-instance | 2.5.2 | Apache-2.0 OR MIT |
+| tauri-plugin-updater | 2.13.1 | Apache-2.0 OR MIT |
+| tauri-runtime | 2.12.1 | Apache-2.0 OR MIT |
+| tauri-runtime-wry | 2.12.1 | Apache-2.0 OR MIT |
+| tauri-utils | 2.10.1 | Apache-2.0 OR MIT |
 | tempfile | 3.27.0 | MIT OR Apache-2.0 |
 | tendril | 0.5.1 | MIT OR Apache-2.0 |
 | thiserror | 2.0.21 | MIT OR Apache-2.0 |
@@ -2931,7 +2929,7 @@ SOFTWARE.
 | tinyvec | 1.13.3 | Zlib OR Apache-2.0 OR MIT |
 | tls_codec | 0.4.2 | Apache-2.0 OR MIT |
 | tls_codec_derive | 0.4.2 | Apache-2.0 OR MIT |
-| tokio | 1.53.1 | MIT |
+| tokio | 1.53.2 | MIT |
 | tokio-rustls | 0.26.6 | MIT OR Apache-2.0 |
 | tokio-util | 0.7.19 | MIT |
 | toml | 1.1.6+spec-1.1.0 | MIT OR Apache-2.0 |
@@ -2960,7 +2958,7 @@ SOFTWARE.
 | urlpattern | 0.6.0 | MIT |
 | utf16string | 0.2.0 | MIT OR Apache-2.0 |
 | utf8_iter | 1.0.4 | Apache-2.0 OR MIT |
-| uuid | 1.26.1 | Apache-2.0 OR MIT |
+| uuid | 1.27.0 | Apache-2.0 OR MIT |
 | vecmath | 1.0.0 | MIT |
 | walkdir | 2.5.0 | Unlicense/MIT |
 | want | 0.3.1 | MIT |
@@ -12013,10 +12011,10 @@ Packages whose code is compiled into `dist/`. This list is read from the build's
 
 | Package | Version | Licence |
 |---|---|---|
-| @tauri-apps/api | 2.12.0 | Apache-2.0 OR MIT |
-| @tauri-apps/plugin-dialog | 2.8.0 | MIT OR Apache-2.0 |
+| @tauri-apps/api | 2.12.1 | Apache-2.0 OR MIT |
+| @tauri-apps/plugin-dialog | 2.8.1 | MIT OR Apache-2.0 |
 | @tauri-apps/plugin-process | 2.4.0 | MIT OR Apache-2.0 |
-| @tauri-apps/plugin-updater | 2.13.0 | MIT OR Apache-2.0 |
+| @tauri-apps/plugin-updater | 2.13.1 | MIT OR Apache-2.0 |
 | svelte | 5.57.1 | MIT |
 
 ### Copyright notices

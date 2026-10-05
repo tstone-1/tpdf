@@ -17,7 +17,7 @@ as *downloadable*, while the release sat as a draft that GitHub showed to nobody
 are given now because they are different facts, and only the second one means a reader can
 have the binary.)
 
-## [26.10.6] - Unreleased
+## [26.10.6] - 2026-10-05
 
 ### Added
 
@@ -71,6 +71,8 @@ have the binary.)
 
 ### Changed
 
+- Updated the compatible dependencies: Tauri 2.12.1 with its plugins, Vite 8.3.2,
+  Vitest 5.0.3 and seventeen smaller Rust crates.
 - **The form commands have a menu and a button of their own.** Filling a form, the six
   kinds of field to add, the line round new text fields, changing a document's own
   fields, a field's properties and the tab order were thirteen items spread through the

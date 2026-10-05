@@ -6544,6 +6544,33 @@ which follows the records of past releases and carries the reasons and the comma
 11. [Publish the draft, and check it from outside the account](#release-step-11)
 12. [Apply the update from the previous release, by hand](#release-step-12)
 
+**26.10.6 verification, macOS arm64, 2026-10-05:** all 30 gates passed on the release tree
+(2,823 Rust tests with ten documented ignored, 2,454 frontend tests). Every Rust and
+frontend mutation selected `--near v26.10.5` ran in the mutation worktree and was caught:
+171 Rust and 223 frontend. That run was on the tree before the dependency refresh, which
+moved Tauri to 2.12.1 with its plugins, Vite to 8.3.2, Vitest to 5.0.3 and seventeen smaller
+crates; no major version is held back. `worker-probe` 48/48; `backend-probe` 41/44 on
+`text-heavy.pdf` with three skipped and 42/44 on `vector-heavy.pdf` with two skipped.
+`sign-probe` was not run here; CI runs it on the macOS leg. The unit tests and the
+command-line suite passed on Windows 11 through `scripts/run_on_windows.py` (2,847 unit
+tests, 515 command-line checks), on the release tree. The normal bundle, with the
+development engine hidden: the bundled `tpdf-cli` answered `--version` with 26.10.6,
+`verify` and a text extract, and the application opened and drew a fixture with its workers
+mapping the bundle's PDFium and the application process mapping none. In a development
+window, with real pointer and key events (`cliclick`): the Form button's menu lists its
+thirteen commands, *Add a text field* from it arms a drag, a field's name shows on the page
+while it is typed, and on the blank page the remove button, the Delete key and *Clear recent
+documents* each changed the session file. The menu bar was read through System Events and
+has *Form* between *Arrange* and *Page*. `menu_check.py`, `save_check.py` and the checks
+build's window phases were not run. Whether the tool row, one button longer, stays on one
+line in a Windows window of the default width was not looked at. The five pictures and
+`demo.gif` were regenerated with `scripts/screenshots.py` (7/7) and each was looked at; the
+`--more` set at 1,000 pixels wide and the dark set were looked at too, and the first of them
+showed Form at the head of the *More* menu with Pages and Redact below the fold, so Form
+now comes last there.
+`docs/THREAT-MODEL.md` already stated the three new commands (T6.35, T6.36). The release
+notes in `release.yml` were rewritten.
+
 **26.10.5 verification, macOS arm64, 2026-10-05:** all 30 gates passed on the release tree
 (2,806 Rust tests with ten documented ignored, 2,321 frontend tests), and `check_windows.py`
 type-checked the Windows tree after it found one `mut` that only a Unix build changes. Every

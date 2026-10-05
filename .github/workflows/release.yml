@@ -507,27 +507,27 @@ jobs:
           workers cannot read arbitrary user files or access the network;
           Windows workers use low integrity and resource-limited jobs.
 
-          **Fixed in 26.10.5, and the reason to update.** A redaction could
-          leave the removed text in the file and still be reported as
-          verified, on a page whose content is stored in several parts.
-          Every redaction now rewrites the whole page content, and the
-          check afterwards also reads text stored in other encodings and
-          the notes and bookmarks. If you redacted a document with an
-          earlier version, open the result and search it for the words
-          you removed.
+          **New in 26.10.6.** The blank window lists the documents you
+          opened lately, each with its folder and the page you were on;
+          press one to open it there, or take it off the list. Form
+          commands have a *Form* menu and a *Form* button in the tool row.
+          With two or more fields or boxes picked, a small bar beside
+          them aligns, spaces and sizes them. A text box shows its words
+          on the page while you type them. The box that opens beside a
+          mark can be dragged aside by its heading.
 
-          Also fixed: a form field renamed to a name with characters
-          outside ASCII was stored unreadably. Signing from the menu could
-          sign the file without an answer still being typed. Text in a
-          LibreOffice document that contains a table could not be edited.
-          An error message could be selected and not copied.
+          **Editing text in a table.** Text in a table that states its own
+          bounds can now be edited, as long as the words stay inside them.
 
-          **New in 26.10.5.** A form can hold an empty signature field,
-          and a certificate signature can be placed in one. A field's text
-          size and default value are set in its properties panel. Fields
-          can be placed on a turned page. `tpdf verify` reports what was
-          added to a document after each signature, and `--strict` fails
-          a document whose pages were rewritten after the last one.
+          **Fixed in 26.10.6.** *Recognise text* refused a scanned page
+          whose text ended a line with a hyphen, or on which a word was
+          printed twice in the same place. Both pages now get their text
+          layer.
+
+          **If you redacted with a version before 26.10.5:** that version
+          could leave removed text in the file on a page whose content is
+          stored in several parts. Open the result and search it for the
+          words you removed.
 
           **Editing existing text.** Text can be edited in place in ordinary
           Word, Acrobat, LibreOffice, LiveCycle and PowerPoint exports, LaTeX

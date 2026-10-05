@@ -39,6 +39,9 @@
   const otherGroups = TOOL_GROUPS.filter((group) =>
     ["form", "pages", "redact"].includes(group.id),
   );
+  // Under More, Form comes after the two that were there first: it is the
+  // longest list, and at its head it pushed Pages and Redact below the fold.
+  const moreGroups = [...otherGroups.filter((group) => group.id !== "form"), ...otherGroups.filter((group) => group.id === "form")];
   const options = TOOL_GROUPS.filter((group) =>
     ["color", "width"].includes(group.id),
   );
@@ -258,7 +261,7 @@
     <button data-group="More tools" aria-expanded={open === "More tools"} onclick={() => toggle("More tools")}>More<span class="chevron" aria-hidden="true"></span></button>
     {#if open === "More tools"}
       <div class="popup more">
-        {#each otherGroups as group}
+        {#each moreGroups as group}
           <p class="hint">{group.label}</p>
           {#each group.items as item}
             <button disabled={!enabled(item.id)} title={commandState[item.id]?.title ?? item.label} onclick={() => invoke(item.id)}>{item.label}</button>
