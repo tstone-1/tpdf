@@ -307,7 +307,8 @@ measured the Windows render constants come out 1.5–1.8x worse.
   where you press. Each is a real annotation of its own kind rather than ink pretending to
   be one, so another reader gets a comment they can open and a shape they can select. What
   you have drawn can be dragged to somewhere else on its page afterwards, and a box, an
-  ellipse or a text box can be resized by its lower right corner.
+  ellipse or a text box can be resized by its lower right corner. The words of a text box
+  are typed in the box beside it and appear on the page as you type them.
   <!-- built: edit.draw edit.drawBox edit.drawEllipse edit.addTextBox edit.addComment -->
 - **Add form fields** — *Add a form field: text*, *text on several lines*, *checkbox*,
   *dropdown*, *radio buttons* or *signature*, then drag the rectangle where it goes. A dropdown asks

@@ -33,12 +33,15 @@ describe("MarkPopup", () => {
   let sent: string[];
   /** Every id the box reported opening on, and every close as `null`. */
   let opened: (number | null)[];
+  /** Every text the box reported holding, with the mark it was open on. */
+  let drafts: string[];
   let closed: number;
 
   beforeEach(() => {
     dom = installFakeDom();
     sent = [];
     opened = [];
+    drafts = [];
     closed = 0;
   });
 
@@ -60,6 +63,7 @@ describe("MarkPopup", () => {
       // so folding it in would put a line in front of every assertion below
       // about what the box sends on the reader's behalf.
       onOpen: (id) => opened.push(id),
+      onDraft: (id, note) => drafts.push(`${id}:${note}`),
     });
   }
 
@@ -470,6 +474,55 @@ describe("MarkPopup", () => {
     expect(line.hidden).toBe(true);
     // It is a line of words and sends nothing.
     expect(sent).toEqual([]);
+  });
+
+  /** Types `text` as a keystroke does: the value changes, then the event fires. */
+  function type(note: MarkPopup, text: string): void {
+    const field = note.field as unknown as { value: string; dispatch: (t: string, e: object) => void };
+    field.value = text;
+    field.dispatch("input", {});
+  }
+
+  it("reports what the box holds on every keystroke, and commits nothing by it", () => {
+    const note = popup();
+    note.show(mark({ id: 7, kind: "textbox", note: "was" }), anchor(), true);
+    // Opening is not typing.
+    expect(drafts).toEqual([]);
+    type(note, "h");
+    type(note, "he");
+    type(note, "");
+    expect(drafts).toEqual(["7:h", "7:he", "7:"]);
+    // The model hears once, on close, as it did before there were drafts.
+    expect(sent).toEqual([]);
+    type(note, "hello");
+    note.hide();
+    expect(sent).toEqual(["note:7:hello"]);
+  });
+
+  it("reports nothing from a box that is not open on a mark", () => {
+    const note = popup();
+    type(note, "stray");
+    note.show(mark({ id: 7 }), anchor(), true);
+    note.hide();
+    type(note, "after");
+    expect(drafts).toEqual([]);
+  });
+
+  it("reports the note again when the box is filled again on the mark it is on", () => {
+    // Showing an open mark again puts the model's note back in the field, so
+    // what was typed is gone and the page has to stop drawing it.
+    const note = popup();
+    const subject = mark({ id: 7, kind: "field", note: "Name" });
+    note.show(subject, anchor(), true);
+    type(note, "Surname");
+    note.show(subject, anchor(), true);
+    expect(drafts).toEqual(["7:Surname", "7:Name"]);
+    // Nothing typed, nothing to take back.
+    note.show(subject, anchor(), true);
+    expect(drafts).toEqual(["7:Surname", "7:Name"]);
+    // And another mark taking the box over is an open, not a keystroke.
+    note.show(mark({ id: 8, note: "other" }), anchor(), true);
+    expect(drafts).toEqual(["7:Surname", "7:Name"]);
   });
 
   it("asks to be closed rather than closing itself", () => {

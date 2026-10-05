@@ -291,6 +291,17 @@ export interface Commands {
     args: { doc: number; mark: number; note: string };
     reply: EditState;
   };
+  /**
+   * The lines a text box would draw `note` in, for words still being typed.
+   *
+   * `left` and `right` are the box's edges as the last state carried them. No
+   * document and nothing stored: {@link annot_note} is still what the journal
+   * hears, when the box closes. See `markdraft.ts`.
+   */
+  annot_draft_lines: {
+    args: { note: string; left: number; right: number };
+    reply: string[];
+  };
   annot_rewrite: {
     args: {
       doc: number;

@@ -4266,12 +4266,19 @@
         // The note the reader typed on one of their own marks, committed when
         // its box closed. A command like any other: it lands in the journal, so
         // undo steps over it and the document is dirty until it is saved.
+        //
+        // The edit's promise is handed back, in both branches: the page keeps
+        // drawing what was typed until it settles, which is after `setMarks`
+        // has the model's answer. See `markdraft.ts`.
         onMarkNote: (mark, note) => {
-          if (!isSaved(mark)) return void applyEdit((e) => e.renote(mark, note));
+          if (!isSaved(mark)) return applyEdit((e) => e.renote(mark, note));
           const to = scannedForm && edits ? fieldRenamed(scannedForm, edits.state, mark, note) : null;
-          if (typeof to === "string") say(to);
-          else changeField(to);
+          if (typeof to === "string") return say(to);
+          return to ? applyEdit((e) => e.refield([to])) : undefined;
         },
+        // The lines for a text box's words while they are being typed, from
+        // the function the model wraps with. Nothing is stored by it.
+        onMarkDraft: (note, left, right) => call("annot_draft_lines", { note, left, right }),
         // Somebody else's comment, rewritten. The one edit command addressed by
         // the **object** the file gave the annotation rather than by an id this
         // application issued --- `Comment.id` is a position in one scan, and a

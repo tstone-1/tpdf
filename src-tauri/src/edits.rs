@@ -3496,6 +3496,30 @@ fn too_long(note: &str) -> Result<(), String> {
     Ok(())
 }
 
+/// The lines a text box would draw `note` in, for words still being typed.
+///
+/// What the page shows while the box beside a text box is open. Nothing is
+/// stored and no document is named: the journal hears the note when that box
+/// closes, through [`Edits::renote`], as it always has. The lines are
+/// [`crate::textbox::box_lines`]'s, which is what the model itself calls when
+/// it builds [`MarkView::lines`], so a draft and the note it becomes break in
+/// the same places.
+///
+/// `left` and `right` are the mark's own edges as the last state carried them.
+///
+/// **Not refused for what Helvetica cannot write**, unlike `renote`: a reader
+/// who types a character the file cannot hold is told when the box closes, and
+/// until then the page shows what they typed.
+///
+/// # Errors
+///
+/// The note is longer than [`crate::textbox::MAX_NOTE_CHARS`], the bound
+/// `renote` applies and for its reason.
+pub fn draft_lines(note: &str, left: f32, right: f32) -> Result<Vec<String>, String> {
+    too_long(note)?;
+    Ok(textbox::box_lines(note, left, right))
+}
+
 fn unknown(doc: u32) -> String {
     format!("no open document {doc}")
 }
@@ -3590,11 +3614,13 @@ fn snapshot(model: &Doc) -> EditState {
                 // twice for a highlight would be a second copy of a string the
                 // frontend already has.
                 lines: if mark.kind == MarkKind::TextBox {
-                    let width = model
+                    // `box_lines` and not `wrap`: it is also what wraps words
+                    // still being typed, and the two must not differ.
+                    let (left, right) = model
                         .quads_of(id)
                         .first()
-                        .map_or(0.0, |q| f64::from(q.right - q.left) - textbox::INSET * 2.0);
-                    textbox::wrap(model.note_of(id), textbox::SIZE, width.max(1.0))
+                        .map_or((0.0, 0.0), |q| (q.left, q.right));
+                    textbox::box_lines(model.note_of(id), left, right)
                 } else {
                     Vec::new()
                 },
@@ -7415,6 +7441,53 @@ mod tests {
             .renote(7, mark, "b".repeat(16))
             .expect("an ordinary note");
         assert_eq!(edits.state(7).expect("state").marks[0].note, "b".repeat(16));
+    }
+
+    /// A draft is wrapped as the model wraps the note it becomes.
+    ///
+    /// The model's own lines for a text box, against [`draft_lines`] for the
+    /// same words and the same edges. The words are chosen so that the inset
+    /// decides a break, and the controls say so: wrapped at the box's whole
+    /// width, or at another size, they break somewhere else. A draft that left
+    /// the inset out or set the words at another size would not agree with the
+    /// model here.
+    #[test]
+    fn a_draft_breaks_where_the_model_breaks_the_same_note() {
+        let edits = opened();
+        let page = edits.state(7).expect("state").pages[1].id;
+        let note = "nnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnn nnnn and more words after it";
+        let mut want = of_kind(MarkKind::TextBox, page);
+        want.note = note.to_string();
+        let state = edits.annotate(7, want, stamped()).expect("placed");
+        let mark = &state.marks[0];
+        assert!(mark.lines.len() > 1, "the note wraps: {:?}", mark.lines);
+
+        let (left, right) = (mark.quads[0], mark.quads[2]);
+        assert_eq!(draft_lines(note, left, right).expect("a draft"), mark.lines);
+        let whole = f64::from(right - left);
+        assert_ne!(textbox::wrap(note, textbox::SIZE, whole), mark.lines);
+        assert_ne!(
+            textbox::wrap(note, textbox::SIZE - 1.0, whole - textbox::INSET * 2.0),
+            mark.lines
+        );
+        // And asking stored nothing: the note and its lines are as they were.
+        let after = edits.state(7).expect("state");
+        assert_eq!(after.marks.len(), 1);
+        assert_eq!(after.marks[0].note, note);
+        assert_eq!(after.marks[0].lines, mark.lines);
+    }
+
+    /// A draft is bounded as a note is, and by nothing else.
+    #[test]
+    fn a_draft_past_the_note_bound_is_refused_and_one_at_it_is_not() {
+        let bound = crate::textbox::MAX_NOTE_CHARS;
+        assert!(draft_lines(&"a".repeat(bound + 1), 0.0, 200.0).is_err());
+        assert!(draft_lines(&"a".repeat(bound), 0.0, 200.0).is_ok());
+        // What Helvetica cannot write is still laid out: see `draft_lines`.
+        assert_eq!(
+            draft_lines("Ελληνικά", 0.0, 200.0).expect("a draft"),
+            vec!["Ελληνικά".to_string()]
+        );
     }
 
     #[test]

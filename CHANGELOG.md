@@ -85,6 +85,14 @@ have the binary.)
   Nothing grows a row or the table, so text that needs another line is refused where the
   table has no room below it. Text beside the table is edited as before. With `tpdf
   edit`, a `replace_text` that names a `font` can grow in the same way.
+- **A text box shows its words while you type them.** The words of a text box are typed
+  in the box beside it, and until now the rectangle on the page stayed empty until that
+  box was closed. The page now draws them with every keystroke, broken into the same
+  lines the saved file will have. The name of a form field you placed follows your
+  typing in the same way. Nothing else changed: the note is still recorded once, when
+  the box closes, so one undo takes back the whole of it, and Escape still keeps what
+  you typed. If the document refuses the text when the box closes, for example a
+  character a text box cannot hold, the page shows the words it had before.
 
 ## [26.10.5] - 2026-10-05
 

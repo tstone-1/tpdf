@@ -279,8 +279,8 @@ MUTATIONS = [
         # keeps them all. A check reading only "is there ink" cannot see it.
         "viewer: draw only a text box's first line",
         "src/lib/viewer.ts",
-        "          mark.lines.forEach((line, index) => {",
-        "          mark.lines.slice(0, 1).forEach((line, index) => {",
+        "          this.drafts.linesOf(mark).forEach((line, index) => {",
+        "          this.drafts.linesOf(mark).slice(0, 1).forEach((line, index) => {",
         "a text box draws its words and not its rectangle",
         runner="viewer",
     ),
@@ -1201,8 +1201,8 @@ MUTATIONS = [
         # wiring gate only asks whether the key is *there*.
         "viewer: do not report which mark the note box opened on",
         "src/lib/viewer.ts",
-        "      onOpen: (mark) => this.opts.onMark?.(mark),",
-        "      onOpen: () => {},",
+        "        this.opts.onMark?.(mark);\n",
+        "",
         "pressing a mark on the page selects its row",
         "viewer",
     ),

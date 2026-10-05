@@ -428,6 +428,9 @@ export interface MarkView {
    * different places, so a reader would see three lines and save four. There is
    * one layout, in one language, and this is what it produced.
    *
+   * Words still being typed are no exception: `markdraft.ts` asks the backend
+   * for their lines, from the function that produced these.
+   *
    * Attacker-controlled exactly as {@link MarkView.note} is, and it reaches the
    * page the same way: as text, through the canvas, never as markup.
    */

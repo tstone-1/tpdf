@@ -227,6 +227,25 @@ pub fn wrap(text: &str, size: f64, width: f64) -> Vec<String> {
     lines
 }
 
+/// The lines a text box's words are drawn in, for a box whose rectangle runs
+/// from `left` to `right` in points.
+///
+/// **The one place that turns a box into a wrap width.** The model calls this
+/// for every text box in every state it sends, and the page asks it again for
+/// words that are still being typed (`edits::draft_lines`). The size, the inset
+/// and the floor of one point are here once, so that what a reader sees while
+/// typing and what the model sends when the box closes break in the same
+/// places.
+///
+/// The edges and not a width, and in the `f32` the model holds them in: the
+/// subtraction is then the same operation on the same values for both callers,
+/// where a width worked out by the caller would be a second place to round.
+#[must_use]
+pub fn box_lines(text: &str, left: f32, right: f32) -> Vec<String> {
+    let width = f64::from(right - left) - INSET * 2.0;
+    wrap(text, SIZE, width.max(1.0))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -352,6 +371,27 @@ mod tests {
             wrap("one\n\ntwo", SIZE_PT, 200.0),
             vec!["one".to_string(), String::new(), "two".to_string()]
         );
+    }
+
+    #[test]
+    fn a_box_wraps_at_its_width_less_the_inset_on_both_sides_at_the_fixed_size() {
+        // A line exactly as wide as the room inside the box fits, and one more
+        // letter does not. Both halves, so that neither a missing inset nor an
+        // inset taken twice can pass, and the size is the one the box is set at.
+        let room = 100.0;
+        let mut fits = String::new();
+        while advance(&format!("{fits}n"), SIZE) <= room {
+            fits.push('n');
+        }
+        let (left, right) = (50.0_f32, 154.0_f32);
+        assert!((f64::from(right - left) - INSET * 2.0 - room).abs() < 1e-9);
+        assert_eq!(box_lines(&fits, left, right), vec![fits.clone()]);
+        assert_eq!(box_lines(&format!("{fits}n"), left, right).len(), 2);
+        // A box narrower by the two insets has no room for the same line.
+        assert_eq!(box_lines(&fits, left, right - 4.0).len(), 2);
+        // A box narrower than its own insets still wraps, one letter a line.
+        assert_eq!(box_lines("abc", 10.0, 11.0).len(), 3);
+        assert_eq!(box_lines("abc", 11.0, 10.0).len(), 3);
     }
 
     #[test]

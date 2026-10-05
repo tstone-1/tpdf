@@ -3101,6 +3101,24 @@ answers the home folder's path, which the page uses to write a folder under it a
 The webview already held absolute paths under that folder; the home path is not written
 to the session file.
 
+#### T6.36 — A text box's words on the page while they are typed, added 2026-10-05
+
+The page draws a text box's words, and a placed field's name, as the reader types them
+in the box beside the mark. The model still hears the note once, from `annot_note` when
+that box closes (§T6.4), so nothing about what is journalled or saved has changed.
+
+One command is new, `annot_draft_lines`. It takes a string and two numbers, the left
+and right edge of the box, and answers the lines `textbox.rs` would break the string
+into. It names no document, takes no lock, stores nothing, opens no file and reaches no
+worker. The string is refused past `textbox::MAX_NOTE_CHARS` by `edits::too_long`, the
+function that bounds a note, and the wrap is linear in its length. The numbers decide a
+width that is floored at one point, so no width makes the wrap run without end.
+
+The string is what is in the note field. That is the reader's typing, or the note the
+mark already had, which for a mark read back from a saved file is the file's (§T8). It
+reaches the page as the note itself does: drawn on the overlay canvas with `fillText`,
+never assigned to the DOM.
+
 ### T9 — The updater
 
 **The threat.** The updater is the only code path in tpdf that fetches bytes and then

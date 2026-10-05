@@ -28,6 +28,11 @@
  * clicks away has said what they wanted to say, and the alternative is a box
  * that silently discards it.
  *
+ * **What is typed is reported on every keystroke all the same**, through
+ * `onDraft`, and that is not a commit: it is for the page, which draws a text
+ * box's words and a field's name and shows them as they are typed. Nothing
+ * reaches the journal by it. `markdraft.ts` has the rest.
+ *
  * **Escape commits too.** It is the ordinary "I am done with this box" key here
  * rather than a cancel, because the thing it would cancel is text somebody just
  * typed. What it cannot do is lose work, which a discarding Escape does the
@@ -68,6 +73,17 @@ export interface MarkPopupOptions {
   onSignatureSize?: (mark: number, width: number) => void;
   /** The note was changed and the popup is closing. Only ever with new text. */
   onNote: (mark: number, note: string) => void;
+  /**
+   * What the box holds changed while it is open on this mark.
+   *
+   * Every keystroke, and nothing is committed by it: {@link onNote} is still
+   * the one moment the model hears. This is for the page, which draws a text
+   * box's words and a field's name and would otherwise show the old ones until
+   * the box closed. See `markdraft.ts`.
+   *
+   * Required for {@link onOpen}'s reason.
+   */
+  onDraft: (mark: number, note: string) => void;
   /** Remove this mark. The popup closes without committing its note. */
   onRemove: (mark: number) => void;
   /**
@@ -279,6 +295,9 @@ export class MarkPopup {
       "background:transparent;color:inherit;font:inherit;" +
       "border:1px solid color-mix(in srgb, currentColor 25%, transparent);" +
       "border-radius:5px;padding:0.3rem 0.4rem;";
+    this.input.addEventListener("input", () => {
+      if (this.shown !== null) this.opts.onDraft(this.shown, this.input.value);
+    });
 
     this.signatureSize.textContent = "Size: ";
     for (const [label, factor] of [["Smaller", 0.8], ["Larger", 1.25]] as const) {
@@ -353,7 +372,11 @@ export class MarkPopup {
     this.input.placeholder = label;
     this.input.rows = mark.kind === "field" ? 1 : 3;
     this.was = mark.note;
+    // A box shown again on the mark it is already on is filled again, so what
+    // was typed in it is gone and the page must stop drawing it.
+    const refilled = was === mark.id && this.input.value !== mark.note;
     this.input.value = mark.note;
+    if (refilled) this.opts.onDraft(mark.id, mark.note);
     this.showColor(mark.color);
     this.signatureSize.hidden = mark.kind !== "signature";
     this.syncSignatureSize(mark);

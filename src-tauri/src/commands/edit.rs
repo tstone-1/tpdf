@@ -182,6 +182,17 @@ pub async fn annot_note(
     edits.renote(doc, mark, note)
 }
 
+/// The lines a text box would draw words in that are still being typed.
+///
+/// For the page, which shows a text box's words as the reader types them and
+/// must not measure text itself. No document and no state: see
+/// [`edits::draft_lines`], which wraps as the model does and stores nothing.
+/// The journal hears the note from [`annot_note`], when the box closes.
+#[tauri::command]
+pub async fn annot_draft_lines(note: String, left: f32, right: f32) -> Result<Vec<String>, String> {
+    edits::draft_lines(&note, left, right)
+}
+
 /// Replaces what a comment out of the file says.
 ///
 /// [`annot_note`]'s counterpart for an annotation the reader did not make, and

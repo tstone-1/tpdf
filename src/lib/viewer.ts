@@ -102,6 +102,7 @@ export interface ScreenPoint {
   clientY: number;
 }
 import { MarkPopup } from "./markpopup";
+import { MarkDrafts } from "./markdraft";
 import { ArrangeBar, type BarCommand } from "./arrangebar";
 import { colorFor, sameColor, type MarkColor } from "./markcolors";
 import type { Anchor } from "./popup";
@@ -463,8 +464,25 @@ export interface ViewerOptions {
    * for the reason `onComment` is: a viewer with no model behind it can still be
    * driven, and a mark it cannot save a note for is better than one it refuses
    * to open.
+   *
+   * **What it returns is when the page may draw the model's words again.** The
+   * box has closed and the model has not answered yet, so the page keeps
+   * drawing what was typed until this settles: return the promise of the edit,
+   * settled after its marks reached {@link Viewer.setMarks}. Returning nothing
+   * lets the old words be drawn for the time between. See `markdraft.ts`.
    */
-  onMarkNote?: (mark: number, note: string) => void;
+  onMarkNote?: (mark: number, note: string) => unknown;
+  /**
+   * Called for the lines a text box would draw words in that are still being
+   * typed, for a box running from `left` to `right`.
+   *
+   * The page shows a text box's words as they are typed and may not break
+   * lines itself (`MarkView.lines`), so it asks. A rejection is not an error
+   * to show anybody: the page keeps what it last drew. Optional for
+   * {@link onMarkNote}'s reason; without it a text box shows its words when
+   * its box closes, as it did before.
+   */
+  onMarkDraft?: (note: string, left: number, right: number) => Promise<string[]>;
   /**
    * Called when the reader rewrote a comment that came out of the file.
    *
@@ -1205,6 +1223,15 @@ export class Viewer {
   /** The note shown on the page, built once and reused. */
   private readonly popup: CommentPopup;
   private readonly markNote: MarkPopup;
+  /**
+   * What is being typed in {@link markNote}, for {@link paintMarks} to draw in
+   * place of the model's words. All of it is `markdraft.ts`'s; this only joins
+   * the box, the callback that wraps and the frame loop.
+   */
+  private readonly drafts = new MarkDrafts({
+    wrap: (note, left, right) => this.opts.onMarkDraft?.(note, left, right),
+    changed: () => this.wake(),
+  });
   private readonly arrangeBar: ArrangeBar;
 
   /**
@@ -1602,12 +1629,20 @@ export class Viewer {
     // The reader's own marks get their own box, for the reason `markpopup.ts`
     // gives. Hosted by the root and built once, exactly as above.
     this.markNote = new MarkPopup(root, {
-      onNote: (mark, note) => this.opts.onMarkNote?.(mark, note),
+      onNote: (mark, note) =>
+        this.drafts.committed(mark, note, this.opts.onMarkNote?.(mark, note)),
+      onDraft: (id, note) => {
+        const mark = this.markById(id);
+        if (mark) this.drafts.typed(mark, note);
+      },
       onRecolor: (mark, color) => this.opts.onMarkRecolor?.(mark, color),
       onSignatureSize: (mark, width) => this.opts.onSignatureResize?.(mark, width),
       onRemove: () => this.removeOpenMark(),
       onClose: () => this.closeMark(),
-      onOpen: (mark) => this.opts.onMark?.(mark),
+      onOpen: (mark) => {
+        this.drafts.opened(mark);
+        this.opts.onMark?.(mark);
+      },
     });
 
     // The arrangements for several picked marks, hosted by the root for the
@@ -6198,6 +6233,8 @@ export class Viewer {
     for (const id of this.signatureImages.keys()) if (!live.has(id)) this.signatureImages.delete(id);
     const open = marks.find((mark) => mark.id === this.markNote.openId);
     if (open) this.markNote.syncSignatureSize(open);
+    // A text box resized under its open box has a draft wrapped for the old width.
+    if (open) this.drafts.refit(open);
     // A picked mark that was removed or undone is no longer picked.
     const before = this.arranging.count;
     this.arranging.keep((id) => live.has(id));
@@ -6569,7 +6606,9 @@ export class Viewer {
           ctx.textBaseline = "alphabetic";
           const inset = TEXT_INSET * this.zoom * dpr;
           const leading = size * TEXT_LEADING;
-          mark.lines.forEach((line, index) => {
+          // What is being typed in the open box, when there is any: see
+          // `markdraft.ts`. Those lines are the backend's as well.
+          this.drafts.linesOf(mark).forEach((line, index) => {
             // The same first baseline `save.rs` uses: one size below the top
             // inset, because a baseline placed *at* the top edge hangs the whole
             // line above the box.
@@ -6683,7 +6722,8 @@ export class Viewer {
             ctx.fillStyle = markInk(mark.color, false);
             ctx.font = `${size}px Helvetica, Arial, sans-serif`;
             ctx.textBaseline = "middle";
-            ctx.fillText(mark.note, left + 3 * dpr, top + height / 2);
+            // The name as it is being typed, when its box is open.
+            ctx.fillText(this.drafts.noteOf(mark), left + 3 * dpr, top + height / 2);
           }
           ctx.restore();
         } else {

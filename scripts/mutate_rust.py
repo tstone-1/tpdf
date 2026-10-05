@@ -15414,5 +15414,71 @@ MUTATIONS += [
     Mutation("session: nest the session inside the launch reply", "src/session.rs", "    #[serde(flatten)]\n    pub session: Session,", "    pub session: Session,", "the_launch_reply_carries_home_beside_the_session_s_own_keys"),
 ]
 
+# The lines of a text box's words while they are typed (2026-10-05): one
+# function turns a box into a wrap width, for the model's lines and for a
+# draft's, and a draft is bounded as a note is.
+MUTATIONS += [
+    Mutation(
+        "text box: wrap a box at its whole width",
+        "src/textbox.rs",
+        "    let width = f64::from(right - left) - INSET * 2.0;",
+        "    let width = f64::from(right - left);",
+        "a_box_wraps_at_its_width_less_the_inset_on_both_sides_at_the_fixed_size",
+    ),
+    Mutation(
+        "text box: take the inset off one side only",
+        "src/textbox.rs",
+        "    let width = f64::from(right - left) - INSET * 2.0;",
+        "    let width = f64::from(right - left) - INSET;",
+        "a_box_wraps_at_its_width_less_the_inset_on_both_sides_at_the_fixed_size",
+    ),
+    Mutation(
+        "text box: wrap a box's words at another size",
+        "src/textbox.rs",
+        "    wrap(text, SIZE, width.max(1.0))",
+        "    wrap(text, SIZE - 1.0, width.max(1.0))",
+        "a_box_wraps_at_its_width_less_the_inset_on_both_sides_at_the_fixed_size",
+    ),
+    Mutation(
+        # The draft takes a path of its own, with the inset left out: what a
+        # reader sees while typing breaks somewhere the model will not.
+        "draft: wrap a draft at the box's whole width",
+        "src/edits.rs",
+        "    Ok(textbox::box_lines(note, left, right))",
+        "    Ok(textbox::wrap(note, textbox::SIZE, f64::from(right - left)))",
+        "a_draft_breaks_where_the_model_breaks_the_same_note",
+    ),
+    Mutation(
+        # The same drift from the other side: the model's lines leave the path
+        # the draft takes.
+        "edits: wrap a text box's own lines at its whole width",
+        "src/edits.rs",
+        "                    textbox::box_lines(model.note_of(id), left, right)",
+        "                    textbox::wrap(model.note_of(id), textbox::SIZE, f64::from(right - left))",
+        "a_draft_breaks_where_the_model_breaks_the_same_note",
+    ),
+    Mutation(
+        "edits: wrap a text box's own lines between its top and bottom",
+        "src/edits.rs",
+        "                        .map_or((0.0, 0.0), |q| (q.left, q.right));",
+        "                        .map_or((0.0, 0.0), |q| (q.top, q.bottom));",
+        "a_draft_breaks_where_the_model_breaks_the_same_note",
+    ),
+    Mutation(
+        "draft: wrap a draft of any length",
+        "src/edits.rs",
+        "    too_long(note)?;\n    Ok(textbox::box_lines(note, left, right))",
+        "    Ok(textbox::box_lines(note, left, right))",
+        "a_draft_past_the_note_bound_is_refused_and_one_at_it_is_not",
+    ),
+    Mutation(
+        "draft: refuse a draft Helvetica cannot write",
+        "src/edits.rs",
+        "    too_long(note)?;\n    Ok(textbox::box_lines(note, left, right))",
+        "    too_long(note)?;\n    if !textbox::encodable(note) {\n        return Err(String::new());\n    }\n    Ok(textbox::box_lines(note, left, right))",
+        "a_draft_past_the_note_bound_is_refused_and_one_at_it_is_not",
+    ),
+]
+
 if __name__ == "__main__":
     sys.exit(main())

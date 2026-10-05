@@ -916,6 +916,7 @@ pub fn run() {
             ocr_cancel,
             annot_erase,
             annot_note,
+            annot_draft_lines,
             annot_rewrite,
             annot_discard,
             annot_recolor,
