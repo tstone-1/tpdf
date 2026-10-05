@@ -41,6 +41,16 @@ interface CommandBase {
   keys?: string;
   /** Whether it can run right now. A command with no document is not offered. */
   enabled?: () => boolean;
+  /**
+   * What is missing for it to run, in words that follow its title, or `null`.
+   *
+   * For a control that shows a command it cannot run yet, where a greyed
+   * button with no reason is a puzzle: the arrange bar says "Distribute
+   * horizontally needs three picked". Beside {@link enabled} so that the one
+   * who decides when a command is offered is the one who says why not; a
+   * command that is simply not offered leaves this out.
+   */
+  why?: () => string | null;
 }
 
 /**

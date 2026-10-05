@@ -19,6 +19,30 @@ have the binary.)
 
 ## [26.10.6] - Unreleased
 
+### Added
+
+- **A bar with the arrangements appears beside several picked marks.** With two or more
+  form fields, boxes, ellipses or text boxes picked, a small bar appears above them with
+  a button for each alignment (left, centre, right, top, middle, bottom), for spacing
+  them evenly across and down, and for same width and same height. Until now these were
+  only in the *Arrange* menu and the command palette, and nothing on the page said so.
+  Each button is the command of the same name. One that cannot be used yet is greyed
+  and says what is missing when the pointer rests on it: *Distribute horizontally needs
+  three picked*. The bar follows the marks when the page scrolls or they are dragged,
+  goes below or beside them where there is no room above, never covers them, and does
+  not take the keyboard, so the arrow keys still move what is picked. It goes while the
+  name box of one of the picked marks is open. Same size, duplicate and the two
+  commands that centre on the page stay in the menu and the palette.
+- **The box beside a field says how to pick a second one.** A plain press on a second
+  field picks that one alone, and nothing said that Shift keeps the first. The box of a
+  form field, box, ellipse or text box that is the only one picked now says *Shift-click
+  another to arrange them together*, when its page has another one to pick.
+- **The status line says the same with one picked.** A single press picks a field
+  without opening its box, so the line beside the tools now reads *1 picked. Hold Shift
+  and click another to arrange them together.* when the page has another one. The line
+  about several picked marks used to stay after fewer were picked; it now goes when it
+  stops being true.
+
 ### Fixed
 
 - **Recognising text failed on a page where a line ends in a hyphen.** `tpdf ocr` and

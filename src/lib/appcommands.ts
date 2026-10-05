@@ -53,7 +53,7 @@ import {
   rangePreview,
   type PreparedImport,
 } from "./pendingimport";
-import { needs, type Arrangement } from "./arrange";
+import { lacks, type Arrangement } from "./arrange";
 import { parseChoices, parseGroup } from "./fieldnames";
 
 /** One title per choice, each a whole sentence so the palette reads it alone. */
@@ -608,11 +608,15 @@ export function registerAppCommands(
    */
   const available = () => !(actions.busyDocument?.() ?? false);
   const withDocument = () => actions.viewer() !== null && available();
-  /** When an arrangement is offered, and what it runs. */
-  const arranges = (how: Arrangement) => ({
-    enabled: () => withDocument() && actions.pickedMarks() >= needs(how),
-    run: () => actions.arrange(how),
-  });
+  /** When an arrangement is offered, what is missing when it is not, and what it runs. */
+  const arranges = (how: Arrangement) => {
+    const why = () => lacks(how, actions.pickedMarks());
+    return {
+      enabled: () => withDocument() && why() === null,
+      why,
+      run: () => actions.arrange(how),
+    };
+  };
 
   registry.register(
     {

@@ -259,6 +259,15 @@ const SVG = "http://www.w3.org/2000/svg";
 
 /** One icon as an element, 16 px square and stroked in its text's colour. */
 export function iconElement(name: IconName): SVGSVGElement {
+  return iconFrom(ICONS[name].parts);
+}
+
+/**
+ * The same element from a list of shapes, for a picture that is not in
+ * {@link ICONS}: the arrange bar keeps its ten beside the commands they stand
+ * for, and they are drawn exactly as the toolbar's are.
+ */
+export function iconFrom(parts: readonly IconPart[]): SVGSVGElement {
   const svg = document.createElementNS(SVG, "svg");
   svg.setAttribute("class", "tpdf-icon");
   svg.setAttribute("width", "16");
@@ -272,7 +281,6 @@ export function iconElement(name: IconName): SVGSVGElement {
   svg.setAttribute("aria-hidden", "true");
   svg.setAttribute("focusable", "false");
   svg.style.cssText = "flex:none;display:block;";
-  const parts: readonly IconPart[] = ICONS[name].parts;
   for (const part of parts) {
     if ("d" in part) {
       const path = document.createElementNS(SVG, "path");

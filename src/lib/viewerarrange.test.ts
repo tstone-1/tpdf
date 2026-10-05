@@ -16,6 +16,8 @@ import { pageId, type MarkKind, type MarkView, type PageView } from "./pages";
 import { installFakeDom, settle, type FakeDom } from "./testdom";
 import { Viewer } from "./viewer";
 import { INK_WIDTH } from "./markband";
+import { BAR_HEIGHT, barSpot } from "./arrangebar";
+import type { FakeElement } from "./testdom";
 
 const core = vi.hoisted(() => ({ invoke: vi.fn() }));
 const tiles = vi.hoisted(() => ({
@@ -32,6 +34,8 @@ type Move = { mark: number; rect: [number, number, number, number] };
 let dom: FakeDom;
 let arranged: { moves: Move[]; sweep: number }[];
 let counts: number[];
+/** Beside each count: whether the page had another mark to pick with those. */
+let mores: boolean[];
 let moved: number[];
 let resized: number[];
 let removed: [number, number][];
@@ -40,6 +44,7 @@ beforeEach(() => {
   dom = installFakeDom();
   arranged = [];
   counts = [];
+  mores = [];
   moved = [];
   resized = [];
   removed = [];
@@ -72,7 +77,10 @@ function build(turns = 0): Viewer {
     pageCount: 1,
     pages: [{ width_pt: 600, height_pt: 800 }],
     onMarksArranged: (moves, sweep) => arranged.push({ moves, sweep }),
-    onPicked: (count) => counts.push(count),
+    onPicked: (count, more) => {
+      counts.push(count);
+      mores.push(more);
+    },
     onMarkMoved: (id) => moved.push(id),
     onMarkResized: (id) => resized.push(id),
     onMarkRemove: (id, sweep) => removed.push([id, sweep]),
@@ -117,6 +125,40 @@ describe("picking marks to arrange", () => {
     // Shift on one already picked takes it out.
     press(viewer, 1, true);
     expect(viewer.pickedMarks()).toEqual([2, 3]);
+  });
+
+  it("says with each change whether the page has another mark to pick with those", async () => {
+    const viewer = build();
+    await settle();
+    press(viewer, 2);
+    press(viewer, 1, true);
+    press(viewer, 3, true);
+    // Two left to add, then one, then none: every rectangle of the page is picked.
+    expect(mores).toEqual([true, true, false]);
+    pressPaper();
+    // Nothing picked has no page to look for another on.
+    expect(counts.at(-1)).toBe(0);
+    expect(mores.at(-1)).toBe(false);
+  });
+
+  it("does not count a mark on another page as one to pick with these", async () => {
+    const seen: boolean[] = [];
+    const viewer = new Viewer(dom.root as unknown as HTMLElement, {
+      doc: 1,
+      pageCount: 2,
+      pages: [{ width_pt: 600, height_pt: 800 }],
+      onPicked: (_count, more) => seen.push(more),
+    });
+    const [first, second] = viewer.pageOrder;
+    viewer.setMarks([
+      { ...one(1, "field", [100, 100, 200, 120]), page: first!.id },
+      { ...one(2, "field", [100, 200, 200, 220]), page: second!.id },
+    ]);
+    await settle();
+    press(viewer, 1);
+    expect(viewer.pickedMarks()).toEqual([1]);
+    // Shift adds from the picked mark's own page, and that page has no other.
+    expect(seen).toEqual([false]);
   });
 
   it("opens no note and moves nothing on a press with Shift", async () => {
@@ -523,5 +565,265 @@ describe("removing what is picked", () => {
     viewer.pick([2]);
     key("Backspace");
     expect(removed.map(([id]) => id)).toEqual([1, 2]);
+  });
+});
+
+/**
+ * These two draw frames, which nothing above does, and a frame asks for
+ * tiles. An answer that never comes is all they need: no pixel is read.
+ */
+function framesWithoutTiles(): void {
+  let request = 0;
+  tiles.nextRequestId.mockImplementation(() => ++request);
+  tiles.fetchTile.mockReturnValue(new Promise(() => {}));
+}
+
+describe("the arrange bar in the viewer", () => {
+  beforeEach(framesWithoutTiles);
+
+  /** A viewer whose bar is answered by commands that record and align left. */
+  function wired(marks: MarkView[] = MARKS): { viewer: Viewer; ran: string[] } {
+    const ran: string[] = [];
+    const viewer: Viewer = new Viewer(dom.root as unknown as HTMLElement, {
+      doc: 1,
+      pageCount: 1,
+      pages: [{ width_pt: 600, height_pt: 800 }],
+      onMarksArranged: (moves, sweep) => arranged.push({ moves, sweep }),
+      onPicked: (count) => counts.push(count),
+      onArrangeCommand: (id) => ({
+        title: `Arrange: ${id}`,
+        enabled: viewer.pickedCount >= 2,
+        why: null,
+        run: () => {
+          ran.push(id);
+          viewer.arrangePicked("left");
+        },
+      }),
+    });
+    viewer.setMarks(marks);
+    return { viewer, ran };
+  }
+
+  const bar = (viewer: Viewer): FakeElement => viewer.arrangeBarNode as unknown as FakeElement;
+  const shown = (viewer: Viewer): boolean => bar(viewer).style.display === "flex";
+  const at = (viewer: Viewer): [number, number] => [
+    Number.parseFloat(bar(viewer).style.left ?? ""),
+    Number.parseFloat(bar(viewer).style.top ?? ""),
+  ];
+  /** Where the bar belongs for these marks, from their own anchors. */
+  function expected(viewer: Viewer, ids: number[]): [number, number] {
+    const anchors = ids.map((id) => viewer.markAnchor(id)!);
+    const spot = barSpot(
+      { width: dom.root.clientWidth, height: dom.root.clientHeight },
+      {
+        left: Math.min(...anchors.map((one) => one.left)),
+        top: Math.min(...anchors.map((one) => one.top)),
+        right: Math.max(...anchors.map((one) => one.right)),
+        bottom: Math.max(...anchors.map((one) => one.bottom)),
+      },
+    );
+    if (!spot) throw new Error("the fixture leaves the bar no place");
+    return [Math.round(spot.left), Math.round(spot.top)];
+  }
+
+  it("shows it beside the marks once two are picked, and takes it away at one", async () => {
+    const { viewer } = wired();
+    await settle();
+    dom.runFrames();
+    expect(shown(viewer)).toBe(false);
+    press(viewer, 1);
+    dom.runFrames();
+    expect(shown(viewer)).toBe(false);
+    press(viewer, 2, true);
+    dom.runFrames();
+    expect(shown(viewer)).toBe(true);
+    expect(at(viewer)).toEqual(expected(viewer, [1, 2]));
+    // Above both of them, clear of the upper one.
+    expect(at(viewer)[1] + BAR_HEIGHT).toBeLessThan(viewer.markAnchor(1)!.top);
+    // A third joins and the bar is round all three.
+    press(viewer, 3, true);
+    dom.runFrames();
+    expect(at(viewer)).toEqual(expected(viewer, [1, 2, 3]));
+    // Shift on two of them takes them out again: one left, no bar.
+    press(viewer, 3, true);
+    press(viewer, 2, true);
+    dom.runFrames();
+    expect(viewer.pickedMarks()).toEqual([1]);
+    expect(shown(viewer)).toBe(false);
+    // And none at all after a press on the paper.
+    viewer.pick([1, 2]);
+    dom.runFrames();
+    expect(shown(viewer)).toBe(true);
+    pressPaper();
+    dom.runFrames();
+    expect(shown(viewer)).toBe(false);
+  });
+
+  it("runs the command a button stands for and leaves the marks picked", async () => {
+    const { viewer, ran } = wired();
+    await settle();
+    viewer.pick([2, 1]);
+    dom.runFrames();
+    const left = viewer.arrangeBarButtons.find((one) => one.id === "edit.alignLeft")!;
+    expect(viewer.arrangeBarButtons).toHaveLength(10);
+    const before = counts.length;
+    (left.button as unknown as FakeElement).dispatch("pointerdown", { button: 0 });
+    expect(ran).toEqual(["edit.alignLeft"]);
+    expect(arranged).toHaveLength(1);
+    expect(arranged[0]!.moves.map((move) => move.mark)).toEqual([1]);
+    expect(viewer.pickedMarks()).toEqual([2, 1]);
+    expect(counts.length).toBe(before);
+    // The keyboard was not given to the button, and the arrow keys still
+    // move what is picked.
+    expect((left.button as unknown as FakeElement).focused).toBe(false);
+    key("ArrowRight");
+    expect(arranged).toHaveLength(2);
+    expect(viewer.pickedMarks()).toEqual([2, 1]);
+  });
+
+  it("has no bar when the application answers for no command", async () => {
+    const viewer = build();
+    await settle();
+    viewer.pick([1, 2]);
+    dom.runFrames();
+    expect(shown(viewer)).toBe(false);
+  });
+
+  it("steps aside while the box of one of the picked marks is open", async () => {
+    const { viewer } = wired();
+    await settle();
+    viewer.pick([1, 2]);
+    dom.runFrames();
+    expect(shown(viewer)).toBe(true);
+    // Two presses soon after each other on one of several open its box and
+    // keep the others picked: the one way a box and a bar would meet.
+    press(viewer, 1);
+    press(viewer, 1, false, 200);
+    expect(viewer.markOpen).toBe(1);
+    expect(viewer.pickedMarks()).toEqual([1, 2]);
+    dom.runFrames();
+    expect(shown(viewer)).toBe(false);
+    viewer.closeMark();
+    dom.runFrames();
+    expect(shown(viewer)).toBe(true);
+  });
+
+  it("follows marks that are dragged together, the ones that are not under the hand too", async () => {
+    const { viewer } = wired();
+    await settle();
+    viewer.pick([1, 2]);
+    dom.runFrames();
+    const was = { bar: at(viewer), one: viewer.markAnchor(1)!, two: viewer.markAnchor(2)! };
+    const from = { x: (was.two.left + was.two.right) / 2, y: (was.two.top + was.two.bottom) / 2 };
+    dom.root.dispatch("pointerdown", { button: 0, pointerId: 1, target: dom.root, clientX: from.x, clientY: from.y });
+    dom.root.dispatch("pointermove", { pointerId: 1, clientX: from.x + 30, clientY: from.y + 40 });
+    dom.runFrames();
+    const now = { one: viewer.markAnchor(1)!, two: viewer.markAnchor(2)! };
+    expect(now.two.top - was.two.top).toBeGreaterThan(0);
+    // The mark dragged along is where it is drawn, by the same offset.
+    expect(now.one.left - was.one.left).toBeCloseTo(now.two.left - was.two.left, 6);
+    expect(now.one.top - was.one.top).toBeCloseTo(now.two.top - was.two.top, 6);
+    expect(at(viewer)).toEqual(expected(viewer, [1, 2]));
+    expect(at(viewer)).not.toEqual(was.bar);
+    dom.root.dispatch("pointerup", { pointerId: 1, clientX: from.x + 30, clientY: from.y + 40 });
+  });
+
+  it("goes with the viewer", async () => {
+    const { viewer } = wired();
+    await settle();
+    viewer.pick([1, 2]);
+    dom.runFrames();
+    expect(bar(viewer).parent).toBe(dom.root);
+    viewer.destroy();
+    expect(bar(viewer).parent).toBeNull();
+  });
+});
+
+describe("the line about Shift in a mark's box", () => {
+  beforeEach(framesWithoutTiles);
+
+  const line = (viewer: Viewer): boolean => !(viewer.markTogetherLine as unknown as { hidden: boolean }).hidden;
+
+  /** Opens a placed rectangle's box as a reader does: two presses soon after each other. */
+  function open(viewer: Viewer, id: number): void {
+    press(viewer, id);
+    press(viewer, id, false, 200);
+    expect(viewer.markOpen).toBe(id);
+  }
+
+  it("is shown for a rectangle picked alone on a page that has another", async () => {
+    const viewer = build();
+    await settle();
+    open(viewer, 1);
+    expect(viewer.pickedMarks()).toEqual([1]);
+    expect(line(viewer)).toBe(true);
+  });
+
+  it("is not shown for a mark made of the words under it", async () => {
+    const viewer = build();
+    await settle();
+    press(viewer, 4);
+    expect(viewer.markOpen).toBe(4);
+    expect(line(viewer)).toBe(false);
+  });
+
+  it("is not shown when the page has no other rectangle to pick", async () => {
+    const viewer = build();
+    await settle();
+    // The field, and a highlight that a press with Shift does not pick.
+    viewer.setMarks([MARKS[0]!, MARKS[3]!]);
+    open(viewer, 1);
+    expect(line(viewer)).toBe(false);
+    // Nor when the only other rectangle is on another page.
+    viewer.setMarks([MARKS[0]!, { ...MARKS[1]!, page: pageId(2) }]);
+    viewer.closeMark();
+    open(viewer, 1);
+    expect(line(viewer)).toBe(false);
+    // The control: the same rectangle on this page, and it is.
+    viewer.setMarks([MARKS[0]!, MARKS[1]!]);
+    viewer.closeMark();
+    open(viewer, 1);
+    expect(line(viewer)).toBe(true);
+  });
+
+  it("is not shown with several picked, or with this one not picked", async () => {
+    const viewer = build();
+    await settle();
+    viewer.pick([1, 2]);
+    open(viewer, 1);
+    expect(viewer.pickedMarks()).toEqual([1, 2]);
+    expect(line(viewer)).toBe(false);
+    // Opened from the keyboard walk with another mark picked.
+    viewer.closeMark();
+    viewer.pick([2]);
+    viewer.showMark(1, false);
+    expect(viewer.markOpen).toBe(1);
+    expect(line(viewer)).toBe(false);
+    // And with nothing picked at all.
+    viewer.closeMark();
+    viewer.pick([]);
+    viewer.showMark(1, false);
+    expect(line(viewer)).toBe(false);
+  });
+
+  it("goes when it stops being true under the open box, and comes back", async () => {
+    const viewer = build();
+    await settle();
+    open(viewer, 1);
+    expect(line(viewer)).toBe(true);
+    // Shift on the open mark lets it go; the box stays.
+    press(viewer, 1, true);
+    expect(viewer.markOpen).toBe(1);
+    expect(viewer.pickedMarks()).toEqual([]);
+    dom.runFrames();
+    expect(line(viewer)).toBe(false);
+    press(viewer, 1, true);
+    dom.runFrames();
+    expect(line(viewer)).toBe(true);
+    // The other rectangles are removed under it.
+    viewer.setMarks([MARKS[0]!, MARKS[3]!]);
+    dom.runFrames();
+    expect(viewer.markOpen).toBe(1);
+    expect(line(viewer)).toBe(false);
   });
 });

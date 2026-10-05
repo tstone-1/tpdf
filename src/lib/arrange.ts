@@ -47,6 +47,21 @@ export function needs(how: Arrangement): number {
   return 2;
 }
 
+/** How many, as a reader is told it. */
+const COUNTED = ["none", "one", "two", "three"] as const;
+
+/**
+ * What is missing for an arrangement with this many picked, in words that
+ * follow its name ("Distribute horizontally needs three picked"), or `null`
+ * when enough are. The one comparison against {@link needs}: a command is
+ * offered exactly when this has nothing to say.
+ */
+export function lacks(how: Arrangement, picked: number): string | null {
+  const want = needs(how);
+  if (picked >= want) return null;
+  return `needs ${COUNTED[want] ?? want} picked`;
+}
+
 interface Size {
   width: number;
   height: number;
@@ -243,4 +258,23 @@ export class Picked {
 /** What a reader is told when they have picked several marks. */
 export function pickedNotice(count: number): string {
   return `${count} picked. Arrange aligns, spaces and sizes them; the first one picked is the one the others follow.`;
+}
+
+/** What a reader is told with one mark picked and another on its page to pick with it. */
+export const PICK_ANOTHER = "1 picked. Hold Shift and click another to arrange them together.";
+
+/**
+ * The status line after the picked marks changed.
+ *
+ * `more` is whether the page of the one picked mark has another that can be
+ * picked with it; `current` is what the line says now. A reader who presses
+ * one field and then a second has picked the second alone, and nothing on
+ * screen said that Shift is what adds to the first: so one picked, with
+ * another to add, says so. A line about the picked marks is taken away when
+ * it stops being true, and a line about anything else is left.
+ */
+export function noticeAfterPick(count: number, more: boolean, current: string | null): string | null {
+  if (count > 1) return pickedNotice(count);
+  if (count === 1 && more) return PICK_ANOTHER;
+  return current !== null && /^\d+ picked\. /.test(current) ? null : current;
 }

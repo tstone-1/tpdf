@@ -179,6 +179,9 @@ export function nameOf(kind: MarkKind): string {
   return NAMES[kind];
 }
 
+/** What the box says when a press with Shift would pick another mark to arrange with this one. */
+export const TOGETHER = "Shift-click another to arrange them together";
+
 /** The least room kept between a dragged box and the host's edge, in pixels. */
 const DRAG_MARGIN = 8;
 
@@ -203,6 +206,14 @@ export class MarkPopup {
   private moved = { x: 0, y: 0 };
   /** Where the box was last placed, before {@link moved}. */
   private placed = { left: 0, top: 0 };
+  /**
+   * The line that says Shift picks another mark to arrange with this one.
+   *
+   * A reader who pressed one field and then the next found the first one let
+   * go, and nothing said that Shift keeps it. Shown only while it is true and
+   * useful, which the viewer decides: see {@link offerTogether}.
+   */
+  private readonly together = document.createElement("div");
   /** The header's word, and the button's, both of which name the kind. */
   private readonly title: HTMLElement;
   private readonly remove: HTMLButtonElement;
@@ -278,7 +289,10 @@ export class MarkPopup {
       });
       this.signatureSize.append(button);
     }
-    this.element.append(this.header(), this.colors(), this.signatureSize, this.input, this.actions());
+    this.together.textContent = TOGETHER;
+    this.together.hidden = true;
+    this.together.style.cssText = "margin-top:0.35rem;opacity:0.6;font-size:12px;";
+    this.element.append(this.header(), this.colors(), this.signatureSize, this.input, this.together, this.actions());
     host.appendChild(this.element);
   }
 
@@ -317,8 +331,11 @@ export class MarkPopup {
    * the mark to type on it wants --- unlike the comment popup, where focus would
    * take the arrow keys away from the page for no gain. There is nothing to read
    * here that is not editable.
+   *
+   * `together` is {@link offerTogether}'s answer for this mark as the box
+   * opens; left out, the line is not shown.
    */
-  show(mark: MarkView, at: Anchor, focus: boolean): void {
+  show(mark: MarkView, at: Anchor, focus: boolean, together = false): void {
     // A second mark clicked while the first is open is still a close, and its
     // note has to be committed before this one takes the box over.
     if (this.shown !== null && this.shown !== mark.id) this.commit();
@@ -341,10 +358,28 @@ export class MarkPopup {
     this.signatureSize.hidden = mark.kind !== "signature";
     this.syncSignatureSize(mark);
     for (const button of this.swatches) button.hidden = mark.kind === "signature";
+    this.together.hidden = !together;
     this.element.style.display = "block";
     this.place(at);
     if (focus) this.input.focus();
     if (was !== mark.id) this.opts.onOpen(mark.id);
+  }
+
+  /**
+   * Shows or hides the line about Shift while the box stays open.
+   *
+   * Whether it is true is the viewer's to say and changes under an open box:
+   * the mark is let go with Shift, or the only other one on the page is
+   * removed. So the viewer says it again on every frame, and nothing here
+   * remembers an answer.
+   */
+  offerTogether(on: boolean): void {
+    this.together.hidden = !on;
+  }
+
+  /** The line about Shift. For the check harness. */
+  get togetherLine(): HTMLElement {
+    return this.together;
   }
 
   /** Follow journal updates without replacing the note currently being typed. */

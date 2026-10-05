@@ -1,5 +1,16 @@
 import { describe, expect, it } from "vitest";
-import { ARRANGEMENTS, Picked, arrange, differs, needs, together } from "./arrange";
+import {
+  ARRANGEMENTS,
+  PICK_ANOTHER,
+  Picked,
+  arrange,
+  differs,
+  lacks,
+  needs,
+  noticeAfterPick,
+  pickedNotice,
+  together,
+} from "./arrange";
 import type { Quad } from "./markband";
 
 const q = (left: number, top: number, right: number, bottom: number): Quad => ({ left, top, right, bottom });
@@ -75,6 +86,22 @@ describe("arrange", () => {
     expect(arrange([], "pageCenter", PAGE)).toEqual([]);
     const broken = [first, q(Number.NaN, 0, 10, 10)];
     expect(arrange(broken, "left", PAGE)).toEqual(broken);
+  });
+
+  it("says what is missing with too few picked, and nothing with enough", () => {
+    expect(lacks("left", 1)).toBe("needs two picked");
+    expect(lacks("left", 0)).toBe("needs two picked");
+    expect(lacks("left", 2)).toBeNull();
+    expect(lacks("distributeDown", 2)).toBe("needs three picked");
+    expect(lacks("distributeDown", 3)).toBeNull();
+    expect(lacks("pageCenter", 0)).toBe("needs one picked");
+    expect(lacks("pageCenter", 1)).toBeNull();
+    // Nothing to say exactly when enough are picked, for every arrangement.
+    for (const how of ARRANGEMENTS) {
+      for (let picked = 0; picked <= 4; picked += 1) {
+        expect(lacks(how, picked) === null, `${how} with ${picked}`).toBe(picked >= needs(how));
+      }
+    }
   });
 
   it("says how many marks each arrangement needs", () => {
@@ -188,5 +215,29 @@ describe("moving several together", () => {
     expect(together([], { dx: 5, dy: 5 }, page)).toEqual({ dx: 0, dy: 0 });
     expect(together(two, { dx: Number.NaN, dy: 5 }, page)).toEqual({ dx: 0, dy: 0 });
     expect(together(two, { dx: 5, dy: Number.POSITIVE_INFINITY }, page)).toEqual({ dx: 0, dy: 0 });
+  });
+});
+
+describe("the status line after the picked marks changed", () => {
+  it("says how many are picked when there are several", () => {
+    expect(noticeAfterPick(2, true, null)).toBe(pickedNotice(2));
+    expect(noticeAfterPick(3, false, "Saved")).toBe(pickedNotice(3));
+  });
+
+  it("says that Shift adds another when one is picked and another is there", () => {
+    expect(noticeAfterPick(1, true, null)).toBe(PICK_ANOTHER);
+    expect(noticeAfterPick(1, true, pickedNotice(2))).toBe(PICK_ANOTHER);
+  });
+
+  it("takes its own line away when it stops being true, and leaves any other", () => {
+    // One picked with nothing to add, and none picked.
+    expect(noticeAfterPick(1, false, pickedNotice(2))).toBeNull();
+    expect(noticeAfterPick(0, false, PICK_ANOTHER)).toBeNull();
+    expect(noticeAfterPick(0, true, pickedNotice(12))).toBeNull();
+    expect(noticeAfterPick(1, false, "Saved")).toBe("Saved");
+    expect(noticeAfterPick(0, false, "Saved")).toBe("Saved");
+    expect(noticeAfterPick(0, false, null)).toBeNull();
+    // A line that only begins like one of these is not one.
+    expect(noticeAfterPick(0, false, "2 picked up from the queue")).toBe("2 picked up from the queue");
   });
 });

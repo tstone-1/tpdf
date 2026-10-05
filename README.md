@@ -324,7 +324,8 @@ measured the Windows render constants come out 1.5–1.8x worse.
 - **Change the fields a document already has.** *Form fields: change the document's own
   fields* shows every field of the open form as a named rectangle. Drag one to move it,
   drag its lower right corner to resize it, press it twice to rename it, or pick it and
-  press Delete to remove it; pick several with Shift and the *Arrange* commands line them up. Each change
+  press Delete to remove it; pick several with Shift and the bar that appears beside them,
+  or the *Arrange* commands, line them up. Each change
   is undone like any other and is written when you save. While this is on, the fields
   cannot be filled; *Form fields: finish changing the document's fields* turns it off. A
   text field that is resized is drawn again at its new size with the answer it holds. A
@@ -351,8 +352,15 @@ measured the Windows render constants come out 1.5–1.8x worse.
 - **Arrange what you have placed.** Press a form field, a box, an ellipse or a text box
   to pick it, and press others with Shift held to pick several on the same page; each
   picked one gets a line round it, solid on the first. A second press soon after the
-  first opens its name box, or for a text box its words. The *Arrange* menu, and the same
-  commands in the palette, then align their left, right, top or bottom edges or their
+  first opens its name box, or for a text box its words, and while it is the only one
+  picked and the page has another, that box says *Shift-click another to arrange them
+  together*. With two or more picked, a small bar appears above them, or below or beside
+  them where there is no room above, with a button for each alignment, for spacing
+  across and down, and for same width and same height. Each button is the command of
+  the same name; one that cannot be used yet is greyed and says what is missing when the
+  pointer rests on it, as in *Distribute horizontally needs three picked*. The bar goes
+  while a name box is open on one of the picked. The *Arrange* menu, and the same
+  commands in the palette, align their left, right, top or bottom edges or their
   centres, space them evenly across or down, give them one width, height or size, or
   centre them on the page as a block. The first one picked is the one the others follow:
   *Arrange: align left* moves every left edge to where the first one's is, and *same

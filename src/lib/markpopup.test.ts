@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
-import { MarkPopup } from "./markpopup";
+import { MarkPopup, TOGETHER } from "./markpopup";
 import { DEFAULT_SWATCH, PALETTE } from "./markcolors";
 import { pageId, type MarkView } from "./pages";
 import type { Anchor } from "./popup";
@@ -439,6 +439,37 @@ describe("MarkPopup", () => {
     note.hide();
     note.show(mark({ id: 8 }), anchor(), false);
     expect(drawn(note)).toEqual([310, 200]);
+  });
+
+  it("says Shift picks another only when it is told so, and for that opening only", () => {
+    const note = popup();
+    const line = note.togetherLine as unknown as { hidden: boolean; textContent: string; parent: unknown };
+    expect(line.textContent).toBe(TOGETHER);
+    expect(TOGETHER).toBe("Shift-click another to arrange them together");
+    expect(line.parent).toBe(note.node);
+    expect(line.hidden).toBe(true);
+
+    note.show(mark({ id: 7, kind: "field" }), anchor(), false, true);
+    expect(line.hidden).toBe(false);
+    // The same mark shown again without it, as when it is no longer true.
+    note.show(mark({ id: 7, kind: "field" }), anchor(), false, false);
+    expect(line.hidden).toBe(true);
+    // And the next mark does not inherit the last one's line.
+    note.show(mark({ id: 7, kind: "field" }), anchor(), false, true);
+    note.show(mark({ id: 8, kind: "highlight" }), anchor(), false);
+    expect(line.hidden).toBe(true);
+  });
+
+  it("shows and hides the line about Shift under an open box", () => {
+    const note = popup();
+    const line = note.togetherLine as unknown as { hidden: boolean };
+    note.show(mark({ id: 7, kind: "field" }), anchor(), false);
+    note.offerTogether(true);
+    expect(line.hidden).toBe(false);
+    note.offerTogether(false);
+    expect(line.hidden).toBe(true);
+    // It is a line of words and sends nothing.
+    expect(sent).toEqual([]);
   });
 
   it("asks to be closed rather than closing itself", () => {

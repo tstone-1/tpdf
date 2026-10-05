@@ -147,7 +147,8 @@
   import {
     canOrderTabs, placing, readFieldBorder, writeFieldBorder,
   } from "./lib/fieldnames";
-  import { pickedNotice } from "./lib/arrange";
+  import { noticeAfterPick } from "./lib/arrange";
+  import { barCommand } from "./lib/arrangebar";
   import {
     arrangeBoth, asMarks, isSaved, moved as fieldMoved, placed as fieldPlaced,
     removal, renamed as fieldRenamed, shownAt,
@@ -4259,10 +4260,13 @@
           void applyEdit((e) => arrangeBoth(scannedForm, e.state, e, moves, sweep)),
         // The Arrange commands are offered by how many are picked, and a menu
         // item's enablement is pushed, so every change is pushed too.
-        onPicked: (count) => {
-          if (count > 1) notice = pickedNotice(count);
+        onPicked: (count, more) => {
+          notice = noticeAfterPick(count, more, notice);
           refreshMenu();
         },
+        // The bar beside several picked marks asks the registry for each of
+        // its buttons, so a button and its menu item are one command.
+        onArrangeCommand: (id) => barCommand(commands, id),
         onErased: (mark, remove, sweep) =>
           void applyEdit((e) => e.erase(mark, remove, sweep)),
         // The same sweep's other half: a mark with no parts to lose goes whole.

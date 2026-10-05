@@ -102,6 +102,7 @@ export interface ScreenPoint {
   clientY: number;
 }
 import { MarkPopup } from "./markpopup";
+import { ArrangeBar, type BarCommand } from "./arrangebar";
 import { colorFor, sameColor, type MarkColor } from "./markcolors";
 import type { Anchor } from "./popup";
 import { hitTest, onPage, turnedFor, viewRect, type Comment } from "./comments";
@@ -568,7 +569,17 @@ export interface ViewerOptions {
     sweep: number,
   ) => void;
   /** How many marks are picked for arranging changed. */
-  onPicked?: (count: number) => void;
+  onPicked?: (count: number, more: boolean) => void;
+  /**
+   * The command with this id, as it is now: its title, whether it can run,
+   * what is missing when it cannot, and how to run it.
+   *
+   * Asked by the bar that appears beside several picked marks, for each of its
+   * buttons on every frame it is shown and again when one is pressed, so the
+   * bar holds no rule of its own. The viewer has no commands; the application
+   * answers out of its registry. Without an answer there is no bar.
+   */
+  onArrangeCommand?: (id: string) => BarCommand | undefined;
 
   /**
    * One sweep of the eraser: which drawing, and which of its strokes went.
@@ -1194,6 +1205,7 @@ export class Viewer {
   /** The note shown on the page, built once and reused. */
   private readonly popup: CommentPopup;
   private readonly markNote: MarkPopup;
+  private readonly arrangeBar: ArrangeBar;
 
   /**
    * The tool a reader armed. See {@link ArmedTool}, which carries the reasoning.
@@ -1596,6 +1608,12 @@ export class Viewer {
       onRemove: () => this.removeOpenMark(),
       onClose: () => this.closeMark(),
       onOpen: (mark) => this.opts.onMark?.(mark),
+    });
+
+    // The arrangements for several picked marks, hosted by the root for the
+    // reason the two boxes above are.
+    this.arrangeBar = new ArrangeBar(root, {
+      command: (id) => this.opts.onArrangeCommand?.(id),
     });
 
     // The keyboard's position on the page, drawn as an outline over the focused
@@ -2132,6 +2150,7 @@ export class Viewer {
     this.syncAccessibleText(visible);
     this.syncComment(visible);
     this.syncMark(visible);
+    this.syncArrangeBar();
     if (this.focusedLink) this.placeRing();
     this.paintOverlay(visible);
     this.paintThumb();
@@ -2811,7 +2830,7 @@ export class Viewer {
     }
     const picked = this.arranging.count;
     this.arranging.repage((slot) => after.slotFrom(before, slot));
-    if (this.arranging.count !== picked) this.opts.onPicked?.(this.arranging.count);
+    if (this.arranging.count !== picked) this.opts.onPicked?.(this.arranging.count, this.morePickable());
 
     // The slot the page the reader was on has moved to, or --- if that is the
     // page they just deleted --- the slot number they were on, which now holds
@@ -3930,9 +3949,21 @@ export class Viewer {
     return { dx: (to[0] ?? 0) - (at[0] ?? 0), dy: (to[1] ?? 0) - (at[1] ?? 0) };
   }
 
+  /** Whether the page of the picked marks has another mark to pick with them. */
+  private morePickable(): boolean {
+    const picked = this.marks.find((mark) => this.arranging.has(mark.id));
+    return (
+      picked !== undefined &&
+      this.marks.some(
+        (other) =>
+          !this.arranging.has(other.id) && other.page === picked.page && isResizable(other.kind),
+      )
+    );
+  }
+
   /** Tells the host and repaints after the picked marks changed. */
   private pickedChanged(): void {
-    this.opts.onPicked?.(this.arranging.count);
+    this.opts.onPicked?.(this.arranging.count, this.morePickable());
     this.wake();
   }
 
@@ -4387,7 +4418,10 @@ export class Viewer {
     // did --- so an anchor that ignored the offset would leave the box pointing
     // at the place the mark has left.
     // A corner drag leaves the mark where it is, so the box stays put too.
-    const shift = this.moving?.id === mark.id && !this.moving.grow ? this.moving : null;
+    // A mark dragged along with the one under the hand moves as that one does,
+    // which is what keeps the arrange bar clear of all of them.
+    const live = this.moving;
+    const shift = live && !live.grow && (live.id === mark.id || live.others.includes(mark.id)) ? live : null;
     const ox = shift ? shift.dx * this.zoom : 0;
     const oy = shift ? shift.dy * this.zoom : 0;
     return {
@@ -5185,8 +5219,55 @@ export class Viewer {
     // Re-read after the scroll above, which moves it.
     const at = this.anchorForMark(mark);
     if (!at) return;
-    this.markNote.show(mark, at, focus);
+    this.markNote.show(mark, at, focus, this.pickableWith(mark));
     this.wake();
+  }
+
+  /**
+   * Whether a press with Shift on another mark would arrange it with this one.
+   *
+   * Two things, and the box's line about Shift is shown only with both: this
+   * is the one mark picked, since with none picked a press with Shift starts
+   * with the other mark alone, and with several the bar is already there; and
+   * its page has another placed rectangle to press. The mark's own kind is
+   * not asked, because only a placed rectangle is ever picked.
+   */
+  private pickableWith(mark: MarkView): boolean {
+    if (this.arranging.count !== 1 || !this.arranging.has(mark.id)) return false;
+    return this.marks.some(
+      (other) => other.id !== mark.id && other.page === mark.page && isResizable(other.kind),
+    );
+  }
+
+  /** The line about Shift in the note box, so the check harness can look at it. */
+  get markTogetherLine(): HTMLElement {
+    return this.markNote.togetherLine;
+  }
+
+  /** The arrange bar's element, so the check harness can look at it. */
+  get arrangeBarNode(): HTMLElement {
+    return this.arrangeBar.node;
+  }
+
+  /** The arrange bar's buttons with the command each stands for. For the check harness. */
+  get arrangeBarButtons(): readonly { id: string; button: HTMLButtonElement }[] {
+    return this.arrangeBar.buttons;
+  }
+
+  /**
+   * Keeps the arrange bar beside the picked marks, or takes it away.
+   *
+   * Every frame, as {@link syncMark} is. With the note box open the bar steps
+   * aside: see `arrangebar.ts`'s `sync`.
+   */
+  private syncArrangeBar(): void {
+    const at: Anchor[] = [];
+    for (const id of this.arranging.list()) {
+      const mark = this.markById(id);
+      const anchor = mark ? this.anchorForMark(mark) : null;
+      if (anchor) at.push(anchor);
+    }
+    this.arrangeBar.sync(at, this.markNote.openId !== null);
   }
 
   /**
@@ -5357,6 +5438,7 @@ export class Viewer {
       return;
     }
     this.markNote.place(at);
+    this.markNote.offerTogether(this.pickableWith(mark));
   }
 
   /**
@@ -6119,7 +6201,7 @@ export class Viewer {
     // A picked mark that was removed or undone is no longer picked.
     const before = this.arranging.count;
     this.arranging.keep((id) => live.has(id));
-    if (this.arranging.count !== before) this.opts.onPicked?.(this.arranging.count);
+    if (this.arranging.count !== before) this.opts.onPicked?.(this.arranging.count, this.morePickable());
     // `wake` rather than a repaint: the overlay is drawn from the frame loop,
     // which may be idle when a mark is made from the menu bar with nothing
     // scrolling. Painting here as well would draw the same rectangles twice.

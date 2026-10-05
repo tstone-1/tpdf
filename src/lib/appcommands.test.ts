@@ -750,6 +750,15 @@ describe("the commands a document is needed for", () => {
     // And none without a document, however many a stale count says.
     const closed = harness(false, { picked: 3 });
     expect(ids.filter((id) => closed.registry.all().find((c) => c.id === id)?.enabled?.() !== false)).toEqual([]);
+    // What is missing is said by the command that is not offered, and only
+    // about how many are picked: a closed document has nothing to add.
+    const why = (picked: number, id: string, open = true) =>
+      harness(open, { picked }).registry.find(id)?.why?.();
+    expect(why(2, "edit.distributeAcross")).toBe("needs three picked");
+    expect(why(1, "edit.alignLeft")).toBe("needs two picked");
+    expect(why(2, "edit.alignLeft")).toBeNull();
+    expect(why(3, "edit.distributeAcross")).toBeNull();
+    expect(why(3, "edit.alignLeft", false)).toBeNull();
     // Each runs its own arrangement.
     const { registry, fired } = harness(true, { picked: 3 });
     for (const [how, id] of ARRANGE_COMMANDS) {
