@@ -197,13 +197,8 @@ impl Subcommand for Text {
                     "-o is the document being read, under another name",
                 ));
             }
-            if !self.force && output.exists() {
-                return Err(Failure::new(
-                    Exit::Refused,
-                    format!("{} exists --- give --force to replace it", output.display()),
-                ));
-            }
-            // What --force does not replace: a link, a directory.
+            // An output that exists needs --force, and --force does not
+            // replace a link or a directory.
             check_target(std::slice::from_ref(&self.input), output, self.force)?;
         }
         let password = password(self.password_env.as_deref())?;

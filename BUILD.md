@@ -7385,6 +7385,31 @@ starts at 0 and increments within the month.
    test changed: 381 Rust and 260 frontend on that same tree, the blunted one among them.
    `scripts/mutation_since.py --self-test` is its control.
 
+   **Since 2026-10-05 a test counts as changed only where a test can be.** The rule looked
+   for each test's name in every changed file, and the tables and `docs/VERIFICATION.md`
+   name tests in quotes, so an edit to either selected them: on the 26.10.5 tree 853 Rust
+   mutations where the corrected rule selects 743. That run took 75 minutes and found one
+   mutation not caught: `tpdf text -o` checked for an existing output twice, so removing
+   the older check changed nothing.
+
+   **Run the tables in a checkout of their own, so this one stays free.** A harness edits
+   source files while it runs, and for that hour nothing else may build, test or run the
+   window here. A worktree has its own `target`, and the generated inputs are copied in
+   because git does not carry them:
+
+   ```
+   W=~/.cache/tpdf/mutations
+   git worktree add --detach "$W" HEAD            # the first time
+   git -C "$W" checkout --detach "$(git rev-parse HEAD)"   # afterwards
+   rsync -a vendor/pdfium/ "$W/vendor/pdfium/" && rsync -a testdata/ "$W/testdata/"
+   (cd "$W" && npm ci --ignore-scripts)
+   (cd "$W" && python3 scripts/mutate_rust.py --near <last tag>)
+   ```
+
+   It runs a commit. For work not yet committed, `git stash create` prints a commit of the
+   tracked changes without touching the tree; check that out there. The first build is cold,
+   about a minute on an M5. A push does not wait for the tables; the tag does.
+
    **What that gives up is run afterwards, not dropped.** A change far from a mutation, in
    the same file, can still blunt the test for it, and only the file rule finds that. So
    once the release is out, run `--since <the tag before>` with `--resume` on all three

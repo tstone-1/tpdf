@@ -248,6 +248,21 @@ def _tests_in(text: str, wanted: "set[str]") -> "dict[str, tuple[int, int]]":
     return found
 
 
+#: Where a test can be. A table names every test it expects in quotes, and so
+#: does a document that records a run; a change there is not a change to the
+#: test. Until 2026-10-05 it counted as one: on the 26.10.5 tree 346 Rust
+#: mutations were selected through `scripts/mutate_rust.py` and 72 through
+#: `docs/VERIFICATION.md`, of 853.
+_TEST_SUFFIXES = (".rs", ".ts", ".svelte", ".js", ".mjs", ".py")
+
+
+def _holds_tests(path: str) -> bool:
+    name = path.rsplit("/", 1)[-1]
+    return path.endswith(_TEST_SUFFIXES) and not (
+        name.startswith("mutate_") and path.startswith("scripts/")
+    )
+
+
 def pick_near(mutations, changed, read, prefix: str = "", reach: int = NEAR_LINES) -> list:
     """The mutations whose target is within `reach` lines of a change, or whose test changed.
 
@@ -268,6 +283,8 @@ def pick_near(mutations, changed, read, prefix: str = "", reach: int = NEAR_LINE
     wanted = {m.expect.split("::")[-1] for m in mutations}
     moved: "set[str]" = set()
     for path, ranges in changed.items():
+        if not _holds_tests(path):
+            continue
         text = text_of(path)
         if text is None:
             continue
@@ -401,6 +418,20 @@ def self_test() -> int:
                         only_code, read, prefix="src/")) == ["in crate"],
     )
     check("nothing changed selects nothing", pick_near(table, {}, read) == [])
+    # The same text as the test file, where it is not a test: a table that
+    # names the test, and a document that quotes it.
+    elsewhere = dict(files, **{"scripts/mutate_rust.py": tests, "docs/RUNS.md": tests})
+    for path in ("scripts/mutate_rust.py", "docs/RUNS.md"):
+        check(
+            f"a test named in {path} is not a test that changed",
+            pick_near(table, {path: [(5, 5)]}, elsewhere.get) == [],
+            str(names(pick_near(table, {path: [(5, 5)]}, elsewhere.get))),
+        )
+    check(
+        "and a Python file that is no table can hold a changed test",
+        names(pick_near(table, {"scripts/test_x.py": [(5, 5)]},
+                        dict(files, **{"scripts/test_x.py": tests}).get)) == ["far, test changed"],
+    )
 
     with tempfile.TemporaryDirectory() as scratch:
         root = Path(scratch)

@@ -13302,8 +13302,11 @@ MUTATIONS += [
     Mutation(
         "cli: replace an existing text output without --force",
         "src/cli/text.rs",
-        "            if !self.force && output.exists() {",
-        "            if false {",
+        # Re-aimed 2026-10-05. `text` had a check of its own before the shared
+        # one, and since the shared one arrived removing it changed nothing:
+        # the release's own run reported this entry as not caught.
+        "            check_target(std::slice::from_ref(&self.input), output, self.force)?;",
+        "            check_target(std::slice::from_ref(&self.input), output, true)?;",
         "text_refusals_that_need_no_worker_exit_before_one_is_asked_for",
     ),
     Mutation(
