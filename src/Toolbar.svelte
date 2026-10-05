@@ -304,7 +304,7 @@
   .options { margin-left: auto; }
   .dropdown { position: relative; }
   .chevron { display: inline-block; width: 5px; height: 5px; border-bottom: 1px solid; border-right: 1px solid; transform: rotate(45deg); margin: 0 2px 3px 2px; }
-  .popup { position: absolute; top: calc(100% + 4px); left: 0; z-index: 50; display: flex; flex-direction: column; min-width: 175px; max-width: min(310px, calc(100vw - 24px)); max-height: min(65vh, 440px); overflow-y: auto; scrollbar-width: thin; padding: 5px; border: 1px solid color-mix(in srgb, CanvasText 25%, Canvas); background: Canvas; border-radius: 6px; box-shadow: 0 4px 16px #0003; }
+  .popup { position: absolute; top: calc(100% + 4px); left: 0; z-index: 50; display: flex; flex-direction: column; width: max-content; min-width: 175px; max-width: min(310px, calc(100vw - 24px)); max-height: min(65vh, 440px); overflow-y: auto; scrollbar-width: thin; padding: 5px; border: 1px solid color-mix(in srgb, CanvasText 25%, Canvas); background: Canvas; border-radius: 6px; box-shadow: 0 4px 16px #0003; }
   /* flex: none, because a menu that scrolls would otherwise shrink a wrapped item to one line's height and print it over the next. */
   .popup button { text-align: left; white-space: normal; flex: none; }
   .swatch { display: inline-block; width: 16px; height: 16px; flex: none; box-sizing: border-box; border-radius: 50%; border: 1px solid color-mix(in srgb, CanvasText 45%, transparent); vertical-align: -3px; }
@@ -324,5 +324,5 @@
   .tool-state > button, .tool-state .dropdown > button { flex-shrink: 0; border-color: color-mix(in srgb, CanvasText 20%, Canvas); }
   .finish { color: HighlightText; background: Highlight; }
   @media (max-width: 1195px) { .secondary { display: none; } .compact { display: block; } }
-  @media (max-width: 680px) { .tools { gap: 1px; padding-inline: 5px; } button { padding-inline: 6px; } .options { margin-left: 0; } .popup { position: fixed; top: auto; left: 8px; right: 8px; min-width: 0; max-width: none; } .options .popup, .more { left: 8px; right: 8px; } }
+  @media (max-width: 680px) { .tools { gap: 1px; padding-inline: 5px; } button { padding-inline: 6px; } .options { margin-left: 0; } .popup { position: fixed; top: auto; left: 8px; right: 8px; width: auto; min-width: 0; max-width: none; } .options .popup, .more { left: 8px; right: 8px; } }
 </style>

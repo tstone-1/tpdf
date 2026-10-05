@@ -78,6 +78,9 @@ have the binary.)
   *Arrange* and *Page*, and a *Form* button in the tool row with the same list. In a
   narrow window the button's commands are under *More*. *Sign in the signature field*
   stays in the File menu.
+- **A menu on the tool row is as wide as its longest item**, up to 310 px. It used to
+  take the least width it could, so *Rotate page counterclockwise* and other long
+  items broke over two lines and a long menu had to be scrolled.
 - **The box beside a mark can be dragged aside.** The box that opens beside a form field,
   a note or any other mark, with its name or note, its colours and its Remove button,
   could cover the next field or the text being worked from. Its heading now drags it. It
