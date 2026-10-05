@@ -3085,6 +3085,22 @@ At launch each path is opened through the ordinary open path, so each document i
 in a worker like any other, and one that will not open does not stop the others. The
 record has no field for a password, so a protected document asks for it again.
 
+#### T6.35 — The blank window lists recent documents, added 2026-10-05
+
+The window with no document open shows the newest eight reading places of the session
+record: file name, folder and page. The rows are drawn from the record alone. No file is
+opened, read or looked for to draw them, so a path in the record reaches no parser until
+the reader picks its row, and then through the ordinary open path. Paths are written
+into the page as text.
+
+The webview can now remove from the record as well as add to it: `session_forget` drops
+the place of one path, and `session_clear_places` drops every place. Both compare the
+path as a string and open nothing; neither can change the preferences or the list of
+open tabs, and neither can write anywhere but the session file. `session_load` now also
+answers the home folder's path, which the page uses to write a folder under it as `~`.
+The webview already held absolute paths under that folder; the home path is not written
+to the session file.
+
 ### T9 — The updater
 
 **The threat.** The updater is the only code path in tpdf that fetches bytes and then

@@ -113,6 +113,10 @@ export interface AppActions {
   tabsToReopen(): number;
   /** Open them, behind the document on screen. */
   reopenLastTabs(): void;
+  /** How many remembered documents the palette and the blank page offer. */
+  recentDocuments(): number;
+  /** Forget every remembered document. See `startpage.ts`. */
+  clearRecentDocuments(): void;
   /** The document tabs' label size, read for the resize commands' guards. */
   tabLabels(): { canGrow: boolean; canShrink: boolean; isDefault: boolean };
   /** Make the tab labels a step larger (1), smaller (-1) or the default (0). */
@@ -654,6 +658,15 @@ export function registerAppCommands(
       title: "At launch: reopen only the last document",
       enabled: () => actions.restoreTabs(),
       run: () => actions.setRestoreTabs(false),
+    },
+    {
+      // Not withheld while a document is busy: it changes a list, and no
+      // document. Withheld when the list is empty, so that a reader who runs
+      // it sees it go, which is the only sign it worked that the palette has.
+      id: "file.clearRecents",
+      title: "Clear recent documents",
+      enabled: () => actions.recentDocuments() > 0,
+      run: () => actions.clearRecentDocuments(),
     },
     {
       id: "view.tabLabelsLarger",

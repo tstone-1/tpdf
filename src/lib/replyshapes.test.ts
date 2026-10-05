@@ -101,7 +101,7 @@ import PreparedImport_ from "../../src-tauri/testdata/replies/PreparedImport.jso
 import Properties_ from "../../src-tauri/testdata/replies/Properties.json";
 import RegionPlan_ from "../../src-tauri/testdata/replies/RegionPlan.json";
 import ScrollBenchConfig_ from "../../src-tauri/testdata/replies/ScrollBenchConfig.json";
-import Session_ from "../../src-tauri/testdata/replies/Session.json";
+import Loaded_ from "../../src-tauri/testdata/replies/Loaded.json";
 import Split_ from "../../src-tauri/testdata/replies/Split.json";
 import Choices_ from "../../src-tauri/testdata/replies/Choices.json";
 import Signing_ from "../../src-tauri/testdata/replies/Signing.json";
@@ -304,12 +304,14 @@ const SCHEMA = {
     pages: ["number"],
     name: ["string"],
   } satisfies Shape<PreparedImport>,
-  Session: {
+  // `session_load` answers the session with the home folder beside it.
+  Loaded: {
     places: ["array"],
     invert_pages: ["boolean"],
     tabs: ["array"],
     active_tab: ["string"],
     restore_tabs: ["boolean"],
+    home: ["string"],
   } satisfies Shape<Session>,
   Split: {
     changed: ["boolean"],
@@ -368,7 +370,7 @@ const SAMPLES: Record<keyof typeof SCHEMA, Record<string, unknown>> = {
   RegionPlan: RegionPlan_ satisfies Widen<RegionPlan>,
   ScrollBenchConfig: ScrollBenchConfig_ satisfies Widen<ScrollBenchConfig>,
   PreparedImport: PreparedImport_ satisfies Widen<PreparedImport>,
-  Session: Session_ satisfies Widen<Session>,
+  Loaded: Loaded_ satisfies Widen<Session>,
   Split: Split_ satisfies Widen<Split>,
   Choices: Choices_ satisfies Widen<Choices>,
   Signing: Signing_ satisfies Widen<SignOutcome>,

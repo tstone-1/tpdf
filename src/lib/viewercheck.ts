@@ -3139,6 +3139,8 @@ async function appCommandChecks(
     setRestoreTabs: (restore) => fired.push(`setRestoreTabs:${restore}`),
     tabsToReopen: () => 0,
     reopenLastTabs: () => fired.push("reopenLastTabs"),
+    recentDocuments: () => 0,
+    clearRecentDocuments: () => fired.push("clearRecentDocuments"),
     tabLabels: () => ({ canGrow: true, canShrink: true, isDefault: false }),
     resizeTabLabels: (direction: -1 | 0 | 1) => fired.push(`resizeTabLabels:${direction}`),
     nextDocument: (delta) => fired.push(`nextDocument:${delta}`),
@@ -4353,6 +4355,7 @@ async function appCommandChecks(
     "file.reopenLastTabs": "needs a previous launch; the session check's tabs phase drives it",
     "file.reopenTabsAtLaunch": "a stored preference; the session check's tabs phase covers the launch",
     "file.reopenLastDocumentAtLaunch": "a stored preference; appcommands.test.ts covers the pair",
+    "file.clearRecents": "empties the session's list, and this check must not; appcommands.test.ts and session.rs",
     "view.tabLabelsLarger": "a stored display preference; tablabels.test.ts covers stepping and storage",
     "view.tabLabelsSmaller": "a stored display preference; tablabels.test.ts covers stepping and storage",
     "view.tabLabelsDefault": "a stored display preference; tablabels.test.ts covers stepping and storage",
@@ -4594,6 +4597,8 @@ async function appCommandChecks(
     // run of this check after them, on 2026-10-04, found it.
     "file.reopenLastTabs",
     "file.reopenLastDocumentAtLaunch",
+    // This fixture remembers no documents, so there is nothing to clear.
+    "file.clearRecents",
     // This fixture's disk-change mode is `ask`, so that choice is the one not
     // offered. In registry order, as the whole list is.
     "file.onDiskChange.ask",

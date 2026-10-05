@@ -166,6 +166,20 @@ describe("SessionWriter", () => {
     expect(sent.map((p) => p.page)).toEqual([2, 3]);
   });
 
+  it("writes the same place again once told the store has forgotten it", async () => {
+    // The control is the test two above: without being told, it does not.
+    const { sent, send } = recorder();
+    const writer = new SessionWriter(send, 1000);
+
+    writer.note(place({ page: 2 }));
+    await vi.advanceTimersByTimeAsync(1000);
+    writer.forgotten();
+    writer.note(place({ page: 2 }));
+    await settle();
+
+    expect(sent.map((p) => p.page)).toEqual([2, 2]);
+  });
+
   it("flushes an outstanding note without waiting for the interval", async () => {
     const { sent, send } = recorder();
     const writer = new SessionWriter(send, 1000);

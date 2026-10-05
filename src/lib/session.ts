@@ -55,6 +55,14 @@ export interface Session {
   active_tab?: string | null;
   /** Whether a launch reopens every tab rather than the last document alone. */
   restore_tabs?: boolean;
+  /**
+   * The reader's home folder on this machine, when the platform names one.
+   *
+   * Not in the file: `session_load` adds it to what it read, so the list of
+   * remembered documents can write a folder under it as `~` without a second
+   * round trip at launch. See `startpage.ts`.
+   */
+  home?: string | null;
 }
 
 /**
@@ -197,6 +205,18 @@ export class SessionWriter {
    */
   settled(): Promise<void> {
     return this.queue.then(() => undefined, () => undefined);
+  }
+
+  /**
+   * Told that the store no longer holds what was last written.
+   *
+   * Clearing the remembered documents removes the one on screen with the rest,
+   * and it is still being read. Without this the next note would compare equal
+   * to a place the store has dropped and be suppressed, so a reader who cleared
+   * the list and quit without scrolling would not get their document back.
+   */
+  forgotten(): void {
+    this.written = null;
   }
 
   /** Stops accepting notes, and drops any scheduled write. */

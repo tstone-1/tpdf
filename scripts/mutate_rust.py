@@ -15403,5 +15403,16 @@ MUTATIONS += [
     ),
 ]
 
+# Forgetting remembered documents (2026-10-05): one place, or all of them, and
+# nothing else the session holds.
+MUTATIONS += [
+    Mutation("session: forgetting a document forgets nothing", "src/session.rs", "        self.places.retain(|kept| kept.path != path);\n", "", "forgetting_a_document_removes_its_place_and_no_other"),
+    Mutation("session: forget every document whose path begins the same way", "src/session.rs", "        self.places.retain(|kept| kept.path != path);", "        self.places.retain(|kept| !kept.path.starts_with(path));", "forgetting_a_document_that_is_not_remembered_changes_nothing"),
+    Mutation("session: forgetting a document closes its tab", "src/session.rs", "        self.places.retain(|kept| kept.path != path);", "        self.places.retain(|kept| kept.path != path);\n        self.tabs.retain(|kept| kept != path);", "forgetting_a_document_leaves_it_open_as_a_tab"),
+    Mutation("session: clearing the places resets the whole session", "src/session.rs", "        self.places.clear();", "        *self = Self::default();", "clearing_the_places_keeps_the_preferences_and_the_tabs"),
+    Mutation("session: clearing the places clears nothing", "src/session.rs", "        self.places.clear();\n", "", "clearing_the_places_keeps_the_preferences_and_the_tabs"),
+    Mutation("session: nest the session inside the launch reply", "src/session.rs", "    #[serde(flatten)]\n    pub session: Session,", "    pub session: Session,", "the_launch_reply_carries_home_beside_the_session_s_own_keys"),
+]
+
 if __name__ == "__main__":
     sys.exit(main())

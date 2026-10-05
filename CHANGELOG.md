@@ -21,6 +21,20 @@ have the binary.)
 
 ### Added
 
+- **The blank window lists the documents you read lately.** With no document open, the
+  window showed one sentence. It now has an *Open a PDF…* button and, under it, the
+  eight most recent documents, the same ones the command palette offers: the file name,
+  its folder (with the home folder written `~` on macOS) and the page you left it on.
+  A click or Enter opens one where you left it; Down enters the list, and Up, Down,
+  Home and End move in it. The × on a row, or Delete or Backspace on a focused row,
+  takes that document off the list. tpdf does not check at launch whether the files are
+  still there; a document that will not open shows the usual message, and its row then
+  says *could not be opened* and can be removed.
+- ***Clear recent documents***, in the File menu and the command palette, takes every
+  document off that list. The open tabs, the inverted-pages setting and the choice to
+  reopen tabs at launch are kept. A document that is on screen is put back on the list
+  at once, because it is being read.
+
 - **A bar with the arrangements appears beside several picked marks.** With two or more
   form fields, boxes, ellipses or text boxes picked, a small bar appears above them with
   a button for each alignment (left, centre, right, top, middle, bottom), for spacing

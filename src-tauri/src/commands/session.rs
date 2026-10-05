@@ -33,9 +33,20 @@ fn session_file(app: &tauri::AppHandle) -> PathBuf {
 /// Synchronous on purpose: it is asked for during startup, where the whole
 /// application budget is ~50 ms, and reading a few kilobytes costs microseconds
 /// against the round trip that would be needed to hand it back later.
+///
+/// The home folder rides along rather than having a command of its own, for the
+/// same budget: the window would otherwise ask twice. Asking the platform for
+/// it reads an environment variable and touches no disk.
 #[tauri::command]
-pub fn session_load(app: tauri::AppHandle) -> session::Session {
-    session::Session::load(&session_file(&app))
+pub fn session_load(app: tauri::AppHandle) -> session::Loaded {
+    session::Loaded {
+        session: session::Session::load(&session_file(&app)),
+        home: app
+            .path()
+            .home_dir()
+            .ok()
+            .map(|home| home.to_string_lossy().into_owned()),
+    }
 }
 
 /// Serializes the session file's read-modify-write cycles.
@@ -158,6 +169,32 @@ pub async fn session_set_restore_tabs(app: tauri::AppHandle, restore: bool) -> R
     let path = session_file(&app);
     tauri::async_runtime::spawn_blocking(move || {
         with_session(&path, |session| session.restore_tabs = restore)
+    })
+    .await
+    .map_err(|e| format!("the session write did not run: {e}"))?
+}
+
+/// Forgets one remembered document.
+///
+/// The path is compared, never opened: this cannot tell whether the file
+/// exists, and a row for a document that has been deleted is exactly the one a
+/// reader most wants to be able to remove.
+#[tauri::command]
+pub async fn session_forget(app: tauri::AppHandle, path: String) -> Result<(), String> {
+    let file = session_file(&app);
+    tauri::async_runtime::spawn_blocking(move || {
+        with_session(&file, |session| session.forget(&path))
+    })
+    .await
+    .map_err(|e| format!("the session write did not run: {e}"))?
+}
+
+/// Forgets every remembered document, and nothing else the session holds.
+#[tauri::command]
+pub async fn session_clear_places(app: tauri::AppHandle) -> Result<(), String> {
+    let path = session_file(&app);
+    tauri::async_runtime::spawn_blocking(move || {
+        with_session(&path, session::Session::clear_places)
     })
     .await
     .map_err(|e| format!("the session write did not run: {e}"))?

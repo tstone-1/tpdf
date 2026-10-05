@@ -233,6 +233,27 @@ impl Session {
         self.places.truncate(CAPACITY);
     }
 
+    /// Forgets where one document was left, and that it was read at all.
+    ///
+    /// The places and nothing else. [`Session::tabs`] is a different list with a
+    /// different owner: a document that is open as a tab stays one, and is
+    /// remembered again by the next [`Session::remember`] its reader causes.
+    ///
+    /// A path with no place is not an error. Two windows can ask for the same
+    /// row to go, and the second finds it gone, which is what it asked for.
+    pub fn forget(&mut self, path: &str) {
+        self.places.retain(|kept| kept.path != path);
+    }
+
+    /// Forgets every place.
+    ///
+    /// What the reader prefers and which documents are open are not places, so
+    /// both are left as they were: clearing a list of documents must not turn
+    /// the pages back to their own colours or stop the tabs coming back.
+    pub fn clear_places(&mut self) {
+        self.places.clear();
+    }
+
     /// Writes the session, replacing any previous one atomically.
     ///
     /// Through a temporary file and a rename, so a crash or a full disk during
@@ -254,6 +275,24 @@ impl Session {
         fs::write(&temp, serde_json::to_vec_pretty(self)?)?;
         fs::rename(&temp, path)
     }
+}
+
+/// What the window is handed at launch: the session, and where home is.
+///
+/// The home folder is a fact about this machine and not about the session, so
+/// it is not a field of [`Session`] and never reaches the file. It travels with
+/// the session because the one thing that reads it is the list of remembered
+/// documents, which shortens a folder under it to `~`, and because a second
+/// round trip at launch for one string is a cost on the path a reader watches.
+///
+/// Flattened, so the reply has the session's own keys beside `home` and
+/// everything that already read a session reads this unchanged.
+#[derive(Clone, Debug, Serialize)]
+pub struct Loaded {
+    #[serde(flatten)]
+    pub session: Session,
+    /// The reader's home folder, when the platform names one.
+    pub home: Option<String>,
 }
 
 /// A scratch name in the same directory as `path`.
@@ -426,6 +465,116 @@ mod tests {
         session.remember(place("/tmp/b.pdf"));
         assert_eq!(session.tabs, paths(&["/tmp/a.pdf", "/tmp/b.pdf"]));
         assert_eq!(session.active_tab.as_deref(), Some("/tmp/a.pdf"));
+    }
+
+    #[test]
+    fn forgetting_a_document_removes_its_place_and_no_other() {
+        let mut session = Session::default();
+        session.remember(place("/Users/reader/Documents/report.pdf"));
+        session.remember(place("/Users/reader/Documents/notes.pdf"));
+        session.remember(place("C:\\Users\\reader\\spec.pdf"));
+
+        session.forget("/Users/reader/Documents/notes.pdf");
+
+        let kept: Vec<&str> = session.places.iter().map(|p| p.path.as_str()).collect();
+        assert_eq!(
+            kept,
+            [
+                "C:\\Users\\reader\\spec.pdf",
+                "/Users/reader/Documents/report.pdf"
+            ],
+            "the other two, in the order they had"
+        );
+    }
+
+    #[test]
+    fn forgetting_a_document_that_is_not_remembered_changes_nothing() {
+        let mut session = Session::default();
+        session.remember(place("/Users/reader/Documents/report.pdf"));
+        let before = session.places.clone();
+
+        session.forget("/Users/reader/Documents/absent.pdf");
+        // A path that merely begins the same way is another document.
+        session.forget("/Users/reader/Documents/report");
+
+        assert_eq!(session.places, before);
+    }
+
+    #[test]
+    fn forgetting_a_document_leaves_it_open_as_a_tab() {
+        let mut session = Session::default();
+        session.remember(place("/Users/reader/Documents/report.pdf"));
+        session.set_tabs(
+            paths(&["/Users/reader/Documents/report.pdf"]),
+            Some("/Users/reader/Documents/report.pdf".into()),
+        );
+
+        session.forget("/Users/reader/Documents/report.pdf");
+
+        assert!(session.places.is_empty());
+        assert_eq!(session.tabs, paths(&["/Users/reader/Documents/report.pdf"]));
+        assert_eq!(
+            session.active_tab.as_deref(),
+            Some("/Users/reader/Documents/report.pdf")
+        );
+    }
+
+    #[test]
+    fn clearing_the_places_keeps_the_preferences_and_the_tabs() {
+        // Through the file, because that is where a cleared session has to
+        // still say what the reader prefers: the next launch reads it there.
+        let dir = TempDir::new("clear");
+        let mut session = Session {
+            invert_pages: true,
+            restore_tabs: true,
+            ..Session::default()
+        };
+        session.remember(place("/Users/reader/Documents/report.pdf"));
+        session.remember(place("/Users/reader/Documents/notes.pdf"));
+        let open = paths(&[
+            "/Users/reader/Documents/notes.pdf",
+            "/Users/reader/Documents/report.pdf",
+        ]);
+        session.set_tabs(
+            open.clone(),
+            Some("/Users/reader/Documents/report.pdf".into()),
+        );
+
+        session.clear_places();
+        session.save(&dir.file()).expect("save");
+        let loaded = Session::load(&dir.file());
+
+        assert!(loaded.places.is_empty(), "every place is gone");
+        assert!(loaded.invert_pages, "the inversion is the reader's");
+        assert!(loaded.restore_tabs, "so is the choice to reopen tabs");
+        assert_eq!(loaded.tabs, open);
+        assert_eq!(
+            loaded.active_tab.as_deref(),
+            Some("/Users/reader/Documents/report.pdf")
+        );
+    }
+
+    #[test]
+    fn the_launch_reply_carries_home_beside_the_session_s_own_keys() {
+        // Flattened: a reader of the old reply finds every key where it was.
+        let mut session = Session::default();
+        session.remember(place("/Users/reader/Documents/report.pdf"));
+        let loaded = super::Loaded {
+            session,
+            home: Some("/Users/reader".into()),
+        };
+
+        let wire = serde_json::to_value(&loaded).expect("serialize");
+
+        assert_eq!(wire["home"], "/Users/reader");
+        assert_eq!(
+            wire["places"][0]["path"],
+            "/Users/reader/Documents/report.pdf"
+        );
+        assert!(wire.get("session").is_none(), "not nested");
+        // And the file does not learn it: a session saved is a session only.
+        let saved = serde_json::to_value(&loaded.session).expect("serialize");
+        assert!(saved.get("home").is_none());
     }
 
     #[test]

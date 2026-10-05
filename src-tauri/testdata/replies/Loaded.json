@@ -17,5 +17,6 @@
     "/tmp/two.pdf"
   ],
   "active_tab": "/tmp/one.pdf",
-  "restore_tabs": true
+  "restore_tabs": true,
+  "home": "/Users/reader"
 }

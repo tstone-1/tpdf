@@ -162,6 +162,10 @@ a viewer once the first page is drawn. `scripts/session_check.py --only tabs` dr
 copies. On Windows, run an isolated build (`TAURI_CONFIG` with a distinct `identifier`)
 when the installed app is running, since single-instance forwarding otherwise absorbs it.
 The restart session still restores the most recent document, not the full tab list.
+With no document open the window lists the session's newest places (`src/lib/startpage.ts`):
+its rows are what the palette's `file.recent.N` commands are built from, a row runs its
+command through the registry, and `session_forget` and `session_clear_places` remove
+places without touching the tabs or the preferences.
 Restoration keeps the saved absolute point until the target page's lazy geometry
 arrives; ordinary scrolling over estimated pages still keeps its relative position.
 Fit uses the visible sheet, which can differ from the page at the viewport's top.

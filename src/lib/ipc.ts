@@ -510,6 +510,10 @@ export interface Commands {
   session_set_invert_pages: { args: { invert: boolean }; reply: void };
   session_set_tabs: { args: { paths: string[]; active: string | null }; reply: void };
   session_set_restore_tabs: { args: { restore: boolean }; reply: void };
+  /** Takes one document off the remembered list. The path is never opened. */
+  session_forget: { args: { path: string }; reply: void };
+  /** Empties the remembered list, leaving the preferences and the open tabs. */
+  session_clear_places: { args: NoArgs; reply: void };
   print_document: {
     args: {
       path: string;

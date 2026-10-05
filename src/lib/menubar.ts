@@ -126,6 +126,7 @@ export const MENU_LAYOUT: LayoutSection[] = [
       "file.reopenLastTabs",
       "file.reopenTabsAtLaunch",
       "file.reopenLastDocumentAtLaunch",
+      "file.clearRecents",
       SEPARATOR,
       "file.save",
       "file.saveCopy",

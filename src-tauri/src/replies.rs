@@ -927,22 +927,25 @@ fn samples() -> BTreeMap<&'static str, String> {
     );
 
     put(
-        "Session",
-        &session::Session {
-            places: vec![session::Place {
-                path: "/tmp/one.pdf".into(),
-                page: 3,
-                top_pt: 120.5,
-                zoom: 1.25,
-                fit: session::Fit::Page,
-                turns: 2,
-                sidebar: true,
-                page_count: 40,
-            }],
-            invert_pages: true,
-            tabs: vec!["/tmp/one.pdf".into(), "/tmp/two.pdf".into()],
-            active_tab: Some("/tmp/one.pdf".into()),
-            restore_tabs: true,
+        "Loaded",
+        &session::Loaded {
+            home: Some("/Users/reader".into()),
+            session: session::Session {
+                places: vec![session::Place {
+                    path: "/tmp/one.pdf".into(),
+                    page: 3,
+                    top_pt: 120.5,
+                    zoom: 1.25,
+                    fit: session::Fit::Page,
+                    turns: 2,
+                    sidebar: true,
+                    page_count: 40,
+                }],
+                invert_pages: true,
+                tabs: vec!["/tmp/one.pdf".into(), "/tmp/two.pdf".into()],
+                active_tab: Some("/tmp/one.pdf".into()),
+                restore_tabs: true,
+            },
         },
     );
 

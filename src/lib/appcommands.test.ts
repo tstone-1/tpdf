@@ -43,7 +43,7 @@ function harness(
   hasDocument = true,
   update: {
     available?: boolean; ready?: boolean; automatic?: boolean; disk?: DiskChangeMode;
-    restoreTabs?: boolean; reopenable?: number; fieldBorder?: boolean; picked?: number; fieldPicked?: boolean; formEditing?: boolean; savedFields?: number; canOrderTabs?: boolean; signable?: number;
+    restoreTabs?: boolean; reopenable?: number; recents?: number; fieldBorder?: boolean; picked?: number; fieldPicked?: boolean; formEditing?: boolean; savedFields?: number; canOrderTabs?: boolean; signable?: number;
   } = {},
   journal: { undo?: boolean; redo?: boolean } = {},
   selected = false,
@@ -108,6 +108,8 @@ function harness(
     setRestoreTabs: (restore) => { restoring = restore; fired.push(`setRestoreTabs:${restore}`); },
     tabsToReopen: () => update.reopenable ?? 0,
     reopenLastTabs: () => fired.push("reopenLastTabs"),
+    recentDocuments: () => update.recents ?? 0,
+    clearRecentDocuments: () => fired.push("clearRecentDocuments"),
     tabLabels: () => ({ canGrow: true, canShrink: true, isDefault: false }),
     resizeTabLabels: (direction: -1 | 0 | 1) => fired.push(`resizeTabLabels:${direction}`),
     nextDocument: (delta) => fired.push(`nextDocument:${delta}`),
@@ -461,6 +463,28 @@ describe("the commands that bring tabs back", () => {
     );
     expect(busy.registry.run("file.reopenLastTabs")).toBe(false);
     expect(busy.registry.run("file.reopenTabsAtLaunch")).toBe(true);
+  });
+});
+
+describe("clearing the recent documents", () => {
+  it("is offered while there are some, with or without a document", () => {
+    for (const open of [true, false]) {
+      const none = harness(open);
+      expect(none.registry.run("file.clearRecents"), String(open)).toBe(false);
+      expect(none.fired).toEqual([]);
+      const some = harness(open, { recents: 1 });
+      expect(some.registry.run("file.clearRecents"), String(open)).toBe(true);
+      expect(some.fired).toEqual(["clearRecentDocuments"]);
+    }
+  });
+
+  it("is not withheld while a document is busy", () => {
+    // It changes a list and no document, as the launch preference beside it.
+    const busy = harness(
+      true, { recents: 2 }, {}, false, false, false, {}, false, false, false, false, false, true,
+    );
+    expect(busy.registry.run("file.reopenLastTabs")).toBe(false);
+    expect(busy.registry.run("file.clearRecents")).toBe(true);
   });
 });
 
@@ -836,7 +860,7 @@ describe("every registered command", () => {
     // themselves are asserted above in both directions.
     const built = (update: {
       available?: boolean; ready?: boolean; disk?: DiskChangeMode;
-      restoreTabs?: boolean; reopenable?: number; fieldBorder?: boolean; picked?: number; fieldPicked?: boolean; formEditing?: boolean; savedFields?: number; canOrderTabs?: boolean; signable?: number;
+      restoreTabs?: boolean; reopenable?: number; recents?: number; fieldBorder?: boolean; picked?: number; fieldPicked?: boolean; formEditing?: boolean; savedFields?: number; canOrderTabs?: boolean; signable?: number;
     }) => harness(
       true,
       update,
@@ -869,7 +893,8 @@ describe("every registered command", () => {
     // And three marks picked, so every arrangement is allowed to run.
     // And a form with fields, so changing them is on offer.
     // And an empty signature field, so signing in it is.
-    const found = built({ available: true, reopenable: 1, picked: 3, savedFields: 2, signable: 1 });
+    // And a remembered document, so clearing the list has something to clear.
+    const found = built({ available: true, reopenable: 1, recents: 1, picked: 3, savedFields: 2, signable: 1 });
     // The second state also holds the other disk-change mode, for the reason
     // the update pair needs two: each `file.onDiskChange.*` command is withheld
     // while its mode is the current one, so no single state offers all three.
@@ -1698,6 +1723,8 @@ describe("the window shortcuts for editing", () => {
     setRestoreTabs: (restore) => fired.push(`setRestoreTabs:${restore}`),
     tabsToReopen: () => 0,
     reopenLastTabs: () => fired.push("reopenLastTabs"),
+    recentDocuments: () => 0,
+    clearRecentDocuments: () => fired.push("clearRecentDocuments"),
     tabLabels: () => ({ canGrow: true, canShrink: true, isDefault: false }),
     resizeTabLabels: (direction: -1 | 0 | 1) => fired.push(`resizeTabLabels:${direction}`),
     nextDocument: (delta) => fired.push(`nextDocument:${delta}`),

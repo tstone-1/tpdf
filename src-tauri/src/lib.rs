@@ -973,6 +973,8 @@ pub fn run() {
             session_set_invert_pages,
             session_set_tabs,
             session_set_restore_tabs,
+            session_forget,
+            session_clear_places,
             print_document,
             process_elapsed_ms,
             autobench_path,

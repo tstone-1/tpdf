@@ -158,6 +158,16 @@ project conventions.
   asked for at launch; *Reopen the tabs from last time* asks. Unsaved edits are not
   restored.
   <!-- built: file.reopenLastTabs file.reopenTabsAtLaunch file.reopenLastDocumentAtLaunch -->
+- **The documents you read lately are on the blank window.** With no document open, the
+  window lists the eight most recent ones under an *Open a PDF…* button: the file name,
+  its folder, and the page you left it on. Click one, or press Down and Enter, and it
+  opens where you left it. The same eight are in the command palette as *Open* followed
+  by the name. The × on a row, or Delete on a focused row, takes that document off the
+  list; *Clear recent documents* takes them all off, and leaves your open tabs and your
+  settings alone. The document on screen stays on the list. tpdf does not look for the
+  files until you open one, so a document that has been moved or deleted is still listed;
+  when it will not open, its row says so.
+  <!-- built: file.clearRecents -->
 - **A document behind a password opens**: tpdf asks for one and retries, and holds it for
   as long as the document is open, because every worker that renders it meets the same
   encryption.

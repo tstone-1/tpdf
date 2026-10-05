@@ -136,7 +136,10 @@
   } from "./lib/pages";
   import { dimensionsOf, type PageSizeName } from "./lib/pagesizes";
   import { nameOf } from "./lib/markpopup";
-  import { labelsFor, MAX_RECENTS, recentCommandId, RECENT_PREFIX } from "./lib/recents";
+  import { labelsFor, RECENT_PREFIX } from "./lib/recents";
+  import {
+    behindWrites, focusAfterRemoval, recentCommands, StartPage, startMove, type StartRow,
+  } from "./lib/startpage";
   import {
     clampPlace,
     loadSession,
@@ -378,6 +381,7 @@
         });
         const next = tabs.find(tabs.active);
         if (wasActive && next) await openDocument(next.path, false, null, next);
+        else if (wasActive) void refreshStartPage();
       } catch (e) { say(String(e)); }
       finally { opening = false; refreshMenu(); }
     }));
@@ -411,6 +415,7 @@
             console.warn(`could not release document ${id}: ${e}`);
           });
         }
+        void refreshStartPage();
       } catch (e) { say(String(e)); }
       finally { opening = false; refreshMenu(); }
     }));
@@ -746,8 +751,16 @@
   let openPathName = "";
   /** Its page count, so a place can record what the document had when written. */
   let openPageCount = 0;
-  /** Places read at launch. Read once: the file is ours and nothing else writes it. */
+  /**
+   * The session read at launch. Its tabs and preferences are that launch's for
+   * the whole run; its places are replaced whenever the recent documents are
+   * re-read, so a document opened from that list lands where the list said.
+   */
   let session: Session = { places: [] };
+  /** The rows of the blank page. The state behind them is `startpage.ts`'s. */
+  let startRows = $state<StartRow[]>([]);
+  const startPage = new StartPage((rows) => { startRows = rows; });
+  let startHost = $state<HTMLDivElement | null>(null);
   /**
    * Whether pages are shown inverted.
    *
@@ -815,6 +828,8 @@
     setRestoreTabs: (restore) => setRestoreTabs(restore),
     tabsToReopen: () => tabsToReopen(session, isOpenTab).length,
     reopenLastTabs: () => void reopenLastTabs(),
+    recentDocuments: () => startRows.length,
+    clearRecentDocuments: () => void clearRecents(),
     tabLabels: () => tabLabelSize,
     resizeTabLabels: (direction) => { tabLabelPx = tabLabelSize.step(direction); refreshMenu(); },
     nextDocument: (delta) => { const next = tabs.neighbour(delta); if (next) void activateTab(next.doc.id); },
@@ -3021,11 +3036,11 @@
    * Opens the current document's path again.
    *
    * The place is captured here and handed to the open, rather than left to the
-   * lookup that a launch restore uses. `session` is the snapshot loaded at
-   * startup and is never updated --- `places.note` writes over IPC to Rust ---
-   * so reopening the current path would put the reader back where they were
-   * when the *application* started, which on a long session is nowhere near
-   * where they are now.
+   * lookup that a launch restore uses. `session` holds the places as they were
+   * when the recent documents were last re-read --- `places.note` writes over
+   * IPC to Rust --- so reopening the current path would put the reader back
+   * where they were then, which on a long session is nowhere near where they
+   * are now.
    *
    * Nothing is guarded on the file having changed. Reload is also what someone
    * reaches for when they know they have changed it, and a command that
@@ -3182,18 +3197,14 @@
    * that is not mounted right now is one a reader may well want offered.
    */
   function offerRecents(from: Session) {
-    const paths = from.places.slice(0, MAX_RECENTS).map((place) => place.path);
-    const labels = labelsFor(paths);
+    // The places an open restores from are the ones the rows were written
+    // from, or a row saying "page 12" would open on whatever page the document
+    // was on when the application started.
+    session = { ...session, places: from.places };
+    // The rows first and the commands from them: `startpage.ts` has why.
     commands.replace(
       RECENT_PREFIX,
-      paths.map((path, index) => ({
-        id: recentCommandId(index),
-        // Prefixed with the verb so the row reads as a command next to "Zoom
-        // in" rather than as a stray filename. Ranking is subsequence matching,
-        // so typing part of the name still finds it.
-        title: `Open ${labels[index] ?? path}`,
-        run: () => void openPath(path),
-      })),
+      recentCommands(startPage.offer(from), (path) => void openPath(path)),
     );
   }
 
@@ -3203,6 +3214,81 @@
     // The palette may have been opened while this was in flight, or closed
     // again, or moved into argument mode. `reload` is a no-op in the last two.
     palette?.reload();
+    refreshMenu();
+  }
+
+  /**
+   * Re-reads the list for the blank page a closing document leaves behind.
+   *
+   * Behind that document's last place, which `settleDocument` has issued and
+   * the store may not have answered: read before it, the document just closed
+   * would be missing from the top of the list it belongs at the top of.
+   */
+  async function refreshStartPage() {
+    await behindWrites(places, refreshRecents);
+  }
+
+  /** Runs what a control on the blank page names, as the palette would. */
+  function runStartCommand(id: string) {
+    commands.run(id);
+    refreshMenu();
+  }
+
+  /** Puts the focus on a row of the blank page, or on its button for -1. */
+  function focusStartRow(index: number) {
+    const target = index < 0
+      ? startHost?.querySelector<HTMLElement>(".start-open")
+      : startHost?.querySelectorAll<HTMLElement>(".recent-open")[index];
+    target?.focus();
+  }
+
+  /** Takes one document off the list, and keeps the keyboard in it. */
+  async function forgetRecent(row: StartRow, index: number) {
+    const said = await behindWrites(places, () => call("session_forget", { path: row.path }));
+    if (said) say(said);
+    await refreshRecents();
+    await tick();
+    focusStartRow(focusAfterRemoval(index, startRows.length));
+  }
+
+  /**
+   * Forgets every remembered document but the one on screen.
+   *
+   * That one is being read, so it is noted again at once: the writer is told
+   * the store dropped it, or the note would compare equal to the last one
+   * written and be suppressed. The blank page is not showing while a document
+   * is, so nothing on screen goes and comes back.
+   */
+  async function clearRecents() {
+    const said = await behindWrites(places, () => call("session_clear_places"));
+    if (said) say(said);
+    places.forgotten();
+    notePlace();
+    await refreshStartPage();
+    if (!said) notice = "Recent documents cleared.";
+  }
+
+  /**
+   * The blank page's keys. `at` is the focused row, or -1 for none.
+   *
+   * @returns whether the key was this page's.
+   */
+  function startPageKey(event: KeyboardEvent, at: number): boolean {
+    const move = startMove(event, at, startRows.length);
+    if (!move) return false;
+    event.preventDefault();
+    if ("focus" in move) focusStartRow(move.focus);
+    else {
+      const row = startRows[move.remove];
+      if (row) void forgetRecent(row, move.remove);
+    }
+    return true;
+  }
+
+  /** Which row of the blank page an event came from, or -1. */
+  function startRowOf(event: Event): number {
+    const item = (event.target as HTMLElement | null)?.closest<HTMLElement>("[data-start-row]");
+    return item ? Number(item.dataset.startRow) : -1;
   }
 
   function focusFind() {
@@ -3319,6 +3405,11 @@
       event.preventDefault();
       return;
     }
+    // The first Down on a blank page enters its list. Only with nothing
+    // focused: a key pressed inside the page is the page's own handler's, and
+    // one pressed in the palette or a dialog is not this page's at all.
+    const focused = document.activeElement;
+    if (!title && (focused === null || focused === document.body) && startPageKey(event, -1)) return;
     handleWindowKey(event, {
       actions: appActions,
       palette: () => palette,
@@ -3953,6 +4044,7 @@
       title = basename(path);
       openPathName = path;
       openPageCount = doc.page_count;
+      startPage.opened(path);
 
       // Fitted to the document as it is now, not as it was: the file may have
       // been rebuilt shorter since, and a viewer scrolled past its own last page
@@ -4532,6 +4624,9 @@
       // A document that was open last time and is not there now is not a
       // failure the reader caused, so the window simply comes up empty.
       if (!resuming) error = isOpenRefusal(e) ? e.reason : String(e);
+      // Whether or not it is reported: a row for a document that would not
+      // open says so from here on, and keeps its control for removing it.
+      startPage.failed(path, e);
     } finally {
       opening = false;
       // In the `finally`, so that a failed open greys the menu back out. Every
@@ -4773,8 +4868,35 @@
       <div class="surface" bind:this={surface}></div>
     </div>
   {:else}
+    <!--
+      The blank page. Laid out from the top rather than centred, so that the
+      rows arriving a moment after the window does push nothing: the sentence
+      and the button are above them, and the version is pinned to the bottom.
+      What the rows are and what each control runs is `startpage.ts`'s.
+    -->
     <div class="empty">
-      <p>Open a PDF, or drop one here.</p>
+      <div class="start" role="presentation" bind:this={startHost}
+        onkeydown={(event) => startPageKey(event, startRowOf(event))}>
+      <p class="invite">Open a PDF, or drop one here.</p>
+      <button class="start-open" disabled={opening || copyTaskBusy || documentBusy}
+        onclick={() => runStartCommand("file.open")}
+        >Open a PDF… <span class="start-keys">{label("file.open")}</span></button>
+      {#if startRows.length}
+        <ul class="recent" aria-label="Recently opened">
+          {#each startRows as row, index (row.path)}
+            <li class:unopened={row.trouble !== ""} data-start-row={index}>
+              <button class="recent-open" title={row.path}
+                onclick={() => runStartCommand(row.command)}>
+                <span class="recent-name">{row.label}</span>
+                <span class="recent-where"><span class="recent-folder">{row.folder}</span>{#if row.page}<span class="recent-page">{row.page}</span>{/if}{#if row.trouble}<span class="recent-trouble">{row.trouble}</span>{/if}</span>
+              </button>
+              <button class="recent-remove" title={row.removing} aria-label={row.removing}
+                onclick={() => void forgetRecent(row, index)}><span class="icon" use:icon={"close"}></span></button>
+            </li>
+          {/each}
+        </ul>
+      {/if}
+      </div>
       <!--
         The version, where there is room for it and nothing to cover. A reader
         asking "which one am I on" is usually asking because something is wrong,
@@ -5039,10 +5161,75 @@
   }
   .empty {
     flex: 1;
-    display: grid;
-    place-items: center;
-    opacity: 0.5;
+    min-height: 0;
+    overflow-y: auto;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
   }
+  /* A quarter of the way down, which is where the sentence sat when it was one
+     of two centred lines; from the top, so nothing above the rows moves when
+     they arrive. */
+  .empty::before { content: ""; flex: 0 1 22%; }
+  .start {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    width: min(520px, calc(100% - 2rem));
+    flex: none;
+  }
+  .invite, .version { margin: 0; opacity: 0.5; }
+  .version { margin-top: auto; padding: 1.2rem 0 0.9rem; flex: none; }
+  .start-open {
+    margin-top: 0.9rem;
+    padding: 0.4rem 0.9rem;
+    border-color: color-mix(in srgb, CanvasText 25%, transparent);
+  }
+  .start-keys, .recent-where { opacity: 0.6; }
+  .recent {
+    list-style: none;
+    margin: 1.4rem 0 0;
+    padding: 0;
+    align-self: stretch;
+  }
+  .recent li { display: flex; align-items: center; gap: 2px; border-radius: 6px; }
+  .recent li:hover, .recent li:focus-within { background: color-mix(in srgb, CanvasText 6%, Canvas); }
+  .recent-open {
+    flex: 1 1 auto;
+    min-width: 0;
+    min-height: 44px;
+    padding: 0.35rem 0.7rem;
+    flex-direction: column;
+    align-items: stretch;
+    justify-content: center;
+    gap: 0;
+    text-align: left;
+  }
+  .recent-open:hover:not(:disabled) { background: transparent; }
+  .recent-name, .recent-folder {
+    display: block;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  /* The folder gives way and the page and the trouble beside it do not: in one
+     clipped line a long folder took "page 5" out with it. `startpage.ts` cuts
+     a long folder at its start, so this clips only in a narrow window. */
+  .recent-where { display: flex; min-width: 0; white-space: nowrap; }
+  .recent-folder { flex: 0 1 auto; }
+  .recent-page, .recent-trouble { flex: none; }
+  .recent-name { font-weight: 600; }
+  .recent-where { font-size: 0.92em; }
+  .recent-page::before, .recent-trouble::before { content: " · "; }
+  .unopened .recent-name { font-weight: 400; opacity: 0.6; }
+  .recent-trouble { color: var(--tpdf-problem); }
+  /* There for a pointer over the row and for the keyboard inside it, and
+     otherwise out of the way. Hidden by opacity rather than `display`, so it
+     keeps its place in the tab order and the row does not change width. */
+  .recent-remove { opacity: 0; margin-right: 4px; padding: 0.25rem 0.4rem; }
+  .recent li:hover .recent-remove, .recent li:focus-within .recent-remove { opacity: 0.75; }
+  .recent li .recent-remove:hover, .recent li .recent-remove:focus-visible { opacity: 1; }
   .error {
     margin: 0;
     padding: 0.5rem 0.7rem;
