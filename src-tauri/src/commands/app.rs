@@ -75,6 +75,22 @@ pub async fn command_line_tool(install: bool) -> Result<String, String> {
         .map_err(|e| format!("the command-line tool change did not run: {e}"))?
 }
 
+/// What the two commands above would find, so the window can grey the one
+/// that has nothing to do.
+///
+/// Reads and changes nothing: on macOS what the two fixed paths in
+/// `/usr/local/bin` hold, on Windows whether the tool's folder is on the
+/// user's own `PATH`; `None` anywhere else, where there is nothing to read.
+/// Takes no argument, so the webview cannot ask about another path. An error
+/// is "not known", and the window then greys neither command --- the answer
+/// that counts is still the one `command_line_tool` reads when it runs.
+#[tauri::command]
+pub async fn command_line_tool_state() -> Result<Option<crate::clitool::ToolState>, String> {
+    tauri::async_runtime::spawn_blocking(crate::clitool::state)
+        .await
+        .map_err(|e| format!("the command-line tool could not be looked for: {e}"))?
+}
+
 /// *Make tpdf the default PDF app*.
 ///
 /// Run only when the reader chooses it; nothing asks at start (`defaultapp.rs`).

@@ -227,6 +227,82 @@ pub fn apply(install: bool) -> Result<String, String> {
     }
 }
 
+/// What the two commands would find, read and not changed: what the window
+/// greys them by.
+///
+/// **It decides nothing.** [`apply`] reads the filesystem again each time a
+/// command runs and answers from what it finds then; this is only whether a
+/// command is worth offering, and it is built from [`plan`] so that the two
+/// cannot read a link differently.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
+pub struct ToolState {
+    /// This copy's tool is what a terminal gets under both names, so
+    /// installing has nothing to do.
+    pub installed: bool,
+    /// One of the two paths holds something: a link of tpdf's, to this copy or
+    /// to another, which removing takes away, or a file that is not tpdf's,
+    /// which removing leaves alone and says so. False only when both paths are
+    /// empty, which is when removing has nothing to do and nothing to say.
+    pub occupied: bool,
+}
+
+/// [`ToolState`] over what `link` and `alias` hold, where `tool` is this
+/// application's tool. Reads the two paths and writes nothing.
+///
+/// A path that cannot be read counts as held and not as installed, so both
+/// commands stay offered and the one that is run says what is wrong.
+#[must_use]
+pub fn state_of(link: &Path, alias: &Path, tool: &Path) -> ToolState {
+    ToolState {
+        installed: [link, alias]
+            .into_iter()
+            .all(|path| plan(true, path, tool) == Step::Present),
+        occupied: [link, alias]
+            .into_iter()
+            .any(|path| plan(false, path, tool) != Step::Absent),
+    }
+}
+
+/// [`ToolState`] of this machine: the two links on macOS.
+///
+/// # Errors
+///
+/// The tool cannot be found, for [`tool`]'s reasons. The caller then knows
+/// nothing and greys nothing.
+#[cfg(target_os = "macos")]
+pub fn state() -> Result<Option<ToolState>, String> {
+    let tool = tool()?;
+    Ok(Some(state_of(Path::new(LINK), Path::new(ALIAS), &tool)))
+}
+
+/// [`ToolState`] of this machine: whether the tool's folder is on the user's own
+/// `PATH`, which is what both commands change on Windows. Read through a
+/// handle that can only be asked (`userpath::stored`).
+///
+/// # Errors
+///
+/// The tool is not beside the application, or the `PATH` could not be read.
+#[cfg(windows)]
+pub fn state() -> Result<Option<ToolState>, String> {
+    let on = crate::userpath::stored(&folder()?)?;
+    Ok(Some(ToolState {
+        installed: on,
+        occupied: on,
+    }))
+}
+
+/// Neither macOS nor Windows: both commands only say a sentence, so there is
+/// no state and nothing to grey.
+///
+/// # Errors
+///
+/// None; the signature is the other platforms'.
+#[cfg(not(any(target_os = "macos", windows)))]
+#[allow(clippy::unnecessary_wraps)]
+pub fn state() -> Result<Option<ToolState>, String> {
+    Ok(None)
+}
+
 /// Which of the two paths installing or removing has to change, the link first.
 ///
 /// A path holding something that is not tpdf's is never among them.
@@ -552,6 +628,118 @@ mod tests {
             .expect("said")
             .contains("still there"));
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// Every name in `dir` and what it holds, so a read can be shown to have
+    /// changed nothing.
+    #[cfg(unix)]
+    fn held(dir: &Path) -> Vec<(PathBuf, Option<PathBuf>)> {
+        let mut all: Vec<_> = std::fs::read_dir(dir)
+            .expect("listing")
+            .map(|entry| entry.expect("entry").path())
+            .map(|path| (path.clone(), std::fs::read_link(&path).ok()))
+            .collect();
+        all.sort();
+        all
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn the_state_is_read_from_both_links_and_reading_changes_neither() {
+        let dir = scratch("state");
+        let tool = dir.join("tpdf.app/Contents/MacOS").join(TOOL);
+        std::fs::write(&tool, b"#!").expect("tool");
+        let (link, alias) = (dir.join("tpdf"), dir.join("tpdf-cli"));
+        let old = PathBuf::from("/Volumes/Old/tpdf.app/Contents/MacOS").join(TOOL);
+        let state = |installed, occupied| ToolState {
+            installed,
+            occupied,
+        };
+        let read = || {
+            let before = held(&dir);
+            let read = state_of(&link, &alias, &tool);
+            assert_eq!(held(&dir), before, "reading changed what is there");
+            read
+        };
+
+        // Nothing there: install is offered, uninstall has nothing to do.
+        assert_eq!(read(), state(false, false));
+
+        // An installation from before the second name: installing still owes
+        // the alias, so it is not installed yet.
+        std::os::unix::fs::symlink(&tool, &link).expect("link");
+        assert_eq!(read(), state(false, true));
+
+        // Both names, this copy: installed.
+        std::os::unix::fs::symlink(&tool, &alias).expect("alias");
+        assert_eq!(read(), state(true, true));
+
+        // The alias alone is as little installed as the link alone.
+        std::fs::remove_file(&link).expect("unlink");
+        assert_eq!(read(), state(false, true));
+
+        // Both names, another copy of tpdf: installing repoints, removing removes.
+        std::fs::remove_file(&alias).expect("unlink");
+        std::os::unix::fs::symlink(&old, &link).expect("link");
+        std::os::unix::fs::symlink(&old, &alias).expect("alias");
+        assert_eq!(read(), state(false, true));
+
+        // One name this copy's and one another copy's is not installed either.
+        std::fs::remove_file(&link).expect("unlink");
+        std::os::unix::fs::symlink(&tool, &link).expect("link");
+        assert_eq!(read(), state(false, true));
+
+        // Somebody else's file at either path, with nothing of tpdf's: both
+        // stay offered, because running either is what explains it.
+        std::fs::remove_file(&link).expect("unlink");
+        std::fs::remove_file(&alias).expect("unlink");
+        std::fs::write(&link, b"somebody's script").expect("file");
+        assert_eq!(read(), state(false, true));
+        std::fs::remove_file(&link).expect("unlink");
+        std::os::unix::fs::symlink("/opt/other/bin/tpdf-cli", &alias).expect("alias");
+        assert_eq!(read(), state(false, true));
+
+        // This copy's link beside somebody else's `tpdf-cli`: not installed
+        // under both names, so installing stays offered.
+        std::os::unix::fs::symlink(&tool, &link).expect("link");
+        assert_eq!(read(), state(false, true));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_path_that_cannot_be_read_greys_neither_command() {
+        let dir = scratch("unreadable");
+        let tool = dir.join("tpdf.app/Contents/MacOS").join(TOOL);
+        std::fs::write(&tool, b"#!").expect("tool");
+        // A file where the folder should be: asking about a name inside it
+        // fails, and not with "nothing is there".
+        let blocked = dir.join("bin");
+        std::fs::write(&blocked, b"not a folder").expect("file");
+        let (link, alias) = (blocked.join("tpdf"), blocked.join("tpdf-cli"));
+        let error = std::fs::symlink_metadata(&link).expect_err("unreadable");
+        assert_ne!(error.kind(), std::io::ErrorKind::NotFound, "{error}");
+        assert_eq!(
+            state_of(&link, &alias, &tool),
+            ToolState {
+                installed: false,
+                occupied: true,
+            }
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn the_state_crosses_to_the_window_under_the_names_it_reads() {
+        let sent = serde_json::to_value(ToolState {
+            installed: true,
+            occupied: false,
+        })
+        .expect("json");
+        assert_eq!(
+            sent,
+            serde_json::json!({ "installed": true, "occupied": false })
+        );
     }
 
     #[test]

@@ -970,6 +970,7 @@ pub fn run() {
             launch_open_event,
             app_version,
             command_line_tool,
+            command_line_tool_state,
             default_pdf_app,
             take_launch_paths,
             session_load,

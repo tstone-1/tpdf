@@ -765,6 +765,14 @@ fn samples() -> BTreeMap<&'static str, String> {
     );
 
     put(
+        "ToolState",
+        &crate::clitool::ToolState {
+            installed: true,
+            occupied: true,
+        },
+    );
+
+    put(
         "Offered",
         &crate::commands::ocr::Offered {
             languages: vec!["en-US".into(), "de-DE".into()],

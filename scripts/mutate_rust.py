@@ -16244,5 +16244,67 @@ MUTATIONS += [
     ),
 ]
 
+# --- which of the command-line tool's two commands has something to do -------
+# `clitool::state_of`, read by the window to grey a command. The two state
+# tests are `#[cfg(unix)]`; the Windows half reads the registry and is held by
+# `userpath::tests` on Windows, where no mutation is run against the real PATH.
+MUTATIONS += [
+    Mutation(
+        # An installation from before the second name greys Install, which is
+        # how it would have gained the name.
+        "cli tool state: one name of the two counts as installed",
+        "src/clitool.rs",
+        "            .all(|path| plan(true, path, tool) == Step::Present),",
+        "            .any(|path| plan(true, path, tool) == Step::Present),",
+        "the_state_is_read_from_both_links_and_reading_changes_neither",
+        only_on="macos",
+    ),
+    Mutation(
+        # A link to an older copy greys Install, which is what repoints it.
+        "cli tool state: another copy of tpdf counts as installed",
+        "src/clitool.rs",
+        "            .all(|path| plan(true, path, tool) == Step::Present),",
+        "            .all(|path| plan(false, path, tool) == Step::Remove),",
+        "the_state_is_read_from_both_links_and_reading_changes_neither",
+        only_on="macos",
+    ),
+    Mutation(
+        # One link left of two greys Uninstall, which is what removes it.
+        "cli tool state: one name of the two counts as nothing to remove",
+        "src/clitool.rs",
+        "            .any(|path| plan(false, path, tool) != Step::Absent),",
+        "            .all(|path| plan(false, path, tool) != Step::Absent),",
+        "the_state_is_read_from_both_links_and_reading_changes_neither",
+        only_on="macos",
+    ),
+    Mutation(
+        # Uninstall is greyed over a file it would have explained.
+        "cli tool state: somebody else's file counts as nothing there",
+        "src/clitool.rs",
+        "            .any(|path| plan(false, path, tool) != Step::Absent),",
+        "            .any(|path| plan(false, path, tool) == Step::Remove),",
+        "the_state_is_read_from_both_links_and_reading_changes_neither",
+        only_on="macos",
+    ),
+    Mutation(
+        # A failed read greys Uninstall instead of leaving it to say why.
+        "cli tool state: a path that cannot be read counts as empty",
+        "src/clitool.rs",
+        "        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {",
+        "        Err(_) => {",
+        "a_path_that_cannot_be_read_greys_neither_command",
+        only_on="macos",
+    ),
+    Mutation(
+        # The window reads `occupied`; under another name it reads nothing and
+        # greys Uninstall for ever.
+        "cli tool state: the second answer crosses under another name",
+        "src/clitool.rs",
+        "    pub occupied: bool,\n}",
+        '    #[serde(rename = "removable")]\n    pub occupied: bool,\n}',
+        "the_state_crosses_to_the_window_under_the_names_it_reads",
+    ),
+]
+
 if __name__ == "__main__":
     sys.exit(main())

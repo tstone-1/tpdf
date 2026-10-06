@@ -11,6 +11,12 @@
 //! administrator and is what a per-user install can change. Its type is kept
 //! (`REG_EXPAND_SZ` entries such as `%USERPROFILE%\bin` stay unexpanded), and
 //! every other entry is kept byte for byte and in order.
+//!
+//! **A reading cannot write.** The value is read through a handle opened for
+//! `KEY_QUERY_VALUE` alone and written through a second one opened for
+//! `KEY_SET_VALUE`, so [`stored`] --- which the window asks whenever it comes
+//! to the front, to grey a command with nothing to do --- holds nothing a
+//! write could go through.
 
 /// A folder as `PATH` compares them: case ignored, quotes and a trailing
 /// separator dropped.
@@ -83,7 +89,7 @@ pub fn apply(dir: &str, add: bool) -> Result<Outcome, String> {
 }
 
 /// Whether `dir` is on the user's `PATH` as stored, whatever a terminal that
-/// was opened earlier still holds.
+/// was opened earlier still holds. Reads only: see the module's last paragraph.
 ///
 /// # Errors
 ///
@@ -97,8 +103,9 @@ pub fn stored(dir: &str) -> Result<bool, String> {
 mod windows {
     use windows_sys::Win32::Foundation::{ERROR_FILE_NOT_FOUND, ERROR_SUCCESS};
     use windows_sys::Win32::System::Registry::{
-        RegCloseKey, RegCreateKeyExW, RegQueryValueExW, RegSetValueExW, HKEY, HKEY_CURRENT_USER,
-        KEY_QUERY_VALUE, KEY_SET_VALUE, REG_EXPAND_SZ, REG_OPTION_NON_VOLATILE, REG_SZ,
+        RegCloseKey, RegCreateKeyExW, RegOpenKeyExW, RegQueryValueExW, RegSetValueExW, HKEY,
+        HKEY_CURRENT_USER, KEY_QUERY_VALUE, KEY_SET_VALUE, REG_EXPAND_SZ, REG_OPTION_NON_VOLATILE,
+        REG_SZ,
     };
     use windows_sys::Win32::UI::WindowsAndMessaging::{
         SendMessageTimeoutW, HWND_BROADCAST, SMTO_ABORTIFHUNG, WM_SETTINGCHANGE,
@@ -117,18 +124,45 @@ mod windows {
         }
     }
 
-    fn open() -> Result<Key, String> {
+    /// The key the user's `PATH` is a value of.
+    const ENVIRONMENT: &str = "Environment";
+
+    /// `subkey` of the user's hive, to be asked and never written: the handle
+    /// carries `KEY_QUERY_VALUE` and nothing else, and a key that is not there
+    /// is not made. `None` when it is not there.
+    fn reading(subkey: &str) -> Result<Option<Key>, String> {
+        let mut key: HKEY = std::ptr::null_mut();
+        // SAFETY: every pointer is to a live local; the key name is
+        // NUL-terminated.
+        let status = unsafe {
+            RegOpenKeyExW(
+                HKEY_CURRENT_USER,
+                wide(subkey).as_ptr(),
+                0,
+                KEY_QUERY_VALUE,
+                &raw mut key,
+            )
+        };
+        match status {
+            ERROR_SUCCESS => Ok(Some(Key(key))),
+            ERROR_FILE_NOT_FOUND => Ok(None),
+            _ => Err(format!("your PATH could not be opened (error {status})")),
+        }
+    }
+
+    /// `subkey` of the user's hive, to be written; made when it is not there.
+    fn writing(subkey: &str) -> Result<Key, String> {
         let mut key: HKEY = std::ptr::null_mut();
         // SAFETY: every pointer is to a live local; the key name is
         // NUL-terminated.
         let status = unsafe {
             RegCreateKeyExW(
                 HKEY_CURRENT_USER,
-                wide("Environment").as_ptr(),
+                wide(subkey).as_ptr(),
                 0,
                 std::ptr::null(),
                 REG_OPTION_NON_VOLATILE,
-                KEY_QUERY_VALUE | KEY_SET_VALUE,
+                KEY_SET_VALUE,
                 std::ptr::null(),
                 &raw mut key,
                 std::ptr::null_mut(),
@@ -144,7 +178,9 @@ mod windows {
     /// The value and its type. A value that is not there reads as empty, to be
     /// created as `REG_EXPAND_SZ`, which is what Windows itself writes.
     pub fn read() -> Result<(String, u32), String> {
-        let key = open()?;
+        let Some(key) = reading(ENVIRONMENT)? else {
+            return Ok((String::new(), REG_EXPAND_SZ));
+        };
         let name = wide("Path");
         let (mut kind, mut bytes) = (0u32, 0u32);
         // SAFETY: a size query; the data pointer is null and `bytes` is live.
@@ -194,7 +230,11 @@ mod windows {
     }
 
     pub fn write(value: &str, kind: u32) -> Result<(), String> {
-        let key = open()?;
+        set(&writing(ENVIRONMENT)?, "Path", value, kind)
+    }
+
+    /// Sets one text value through `key`.
+    fn set(key: &Key, name: &str, value: &str, kind: u32) -> Result<(), String> {
         let data = wide(value);
         let bytes = u32::try_from(data.len() * 2).map_err(|_| "your PATH is too long")?;
         // SAFETY: `data` is `bytes` bytes long, NUL included, and outlives the
@@ -202,7 +242,7 @@ mod windows {
         let status = unsafe {
             RegSetValueExW(
                 key.0,
-                wide("Path").as_ptr(),
+                wide(name).as_ptr(),
                 0,
                 kind,
                 data.as_ptr().cast(),
@@ -233,6 +273,70 @@ mod windows {
                 2000,
                 std::ptr::null_mut(),
             );
+        }
+    }
+
+    /// What the tests below need and nothing else does: when a key was last
+    /// written, a scratch key of their own to write, and a write attempted
+    /// through the reading handle.
+    #[cfg(test)]
+    pub mod probe {
+        use super::{reading, set, wide, writing, ENVIRONMENT};
+        use windows_sys::Win32::Foundation::{ERROR_SUCCESS, FILETIME};
+        use windows_sys::Win32::System::Registry::{
+            RegDeleteKeyW, RegQueryInfoKeyW, HKEY_CURRENT_USER, REG_SZ,
+        };
+
+        /// The key the user's `PATH` is in.
+        pub const PATH_KEY: &str = ENVIRONMENT;
+
+        /// When `subkey` was last written, in the registry's own clock. A
+        /// `RegSetValueExW` that changes a value moves it; one that stores the
+        /// bytes already there was measured not to.
+        pub fn written(subkey: &str) -> u64 {
+            let key = reading(subkey).expect("opened").expect("the key exists");
+            let mut at = FILETIME {
+                dwLowDateTime: 0,
+                dwHighDateTime: 0,
+            };
+            // SAFETY: every out-pointer but the last is null, which the call
+            // allows; `at` is live.
+            let status = unsafe {
+                RegQueryInfoKeyW(
+                    key.0,
+                    std::ptr::null_mut(),
+                    std::ptr::null_mut(),
+                    std::ptr::null(),
+                    std::ptr::null_mut(),
+                    std::ptr::null_mut(),
+                    std::ptr::null_mut(),
+                    std::ptr::null_mut(),
+                    std::ptr::null_mut(),
+                    std::ptr::null_mut(),
+                    std::ptr::null_mut(),
+                    &raw mut at,
+                )
+            };
+            assert_eq!(status, ERROR_SUCCESS, "the key's times could not be read");
+            (u64::from(at.dwHighDateTime) << 32) | u64::from(at.dwLowDateTime)
+        }
+
+        /// Writes one value into `subkey`, making the key.
+        pub fn write(subkey: &str, value: &str) {
+            let key = writing(subkey).expect("scratch key");
+            set(&key, "value", value, REG_SZ).expect("written");
+        }
+
+        /// The same write, attempted through the handle a reading uses.
+        pub fn write_through_reading(subkey: &str, value: &str) -> Result<(), String> {
+            let key = reading(subkey).expect("opened").expect("the key exists");
+            set(&key, "value", value, REG_SZ)
+        }
+
+        /// Removes a scratch key.
+        pub fn remove(subkey: &str) {
+            // SAFETY: the name is NUL-terminated and outlives the call.
+            unsafe { RegDeleteKeyW(HKEY_CURRENT_USER, wide(subkey).as_ptr()) };
         }
     }
 }
@@ -287,5 +391,62 @@ mod tests {
             without(&format!("{longer};{DIR}"), DIR).as_deref(),
             Some(longer.as_str())
         );
+    }
+
+    /// A scratch key of this test's own, away from the user's environment.
+    #[cfg(windows)]
+    fn scratch(name: &str) -> String {
+        let key = format!(r"Software\tpdf-test-{}-{name}", std::process::id());
+        super::windows::probe::remove(&key);
+        super::windows::probe::write(&key, "first");
+        // The registry's clock moves in steps of up to 16 ms, so a write made
+        // straight after is not told from the one that made the key.
+        std::thread::sleep(std::time::Duration::from_millis(100));
+        key
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn asking_whether_a_folder_is_stored_writes_nothing() {
+        use super::windows::probe::{remove, write, written, PATH_KEY};
+        // The control: the instrument sees a write that changes the value.
+        // It does not see one that stores the bytes already there --- measured
+        // on Windows 11, 2026-10-06, where that left the key's time alone ---
+        // which is why the test below, of the handle, is the one that rules a
+        // write out and this one only shows that nothing changed.
+        let key = scratch("control");
+        let before = written(&key);
+        write(&key, "second");
+        assert_ne!(written(&key), before, "a write did not move the key's time");
+        remove(&key);
+
+        // The user's real `PATH`, asked about and never written by a test.
+        let before = written(PATH_KEY);
+        let (value, kind) = super::windows::read().expect("the PATH is readable");
+        for dir in [DIR, r"C:\Windows", ""] {
+            assert_eq!(
+                stored(dir).expect("asked"),
+                with(&value, dir).is_none(),
+                "{dir}"
+            );
+        }
+        assert_eq!(written(PATH_KEY), before, "asking wrote the key");
+        assert_eq!(
+            super::windows::read().expect("still readable"),
+            (value, kind)
+        );
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn the_handle_a_reading_holds_cannot_write() {
+        use super::windows::probe::{remove, write_through_reading, written};
+        let key = scratch("handle");
+        let before = written(&key);
+        let refused = write_through_reading(&key, "second").expect_err("a reading handle wrote");
+        // 5 is ERROR_ACCESS_DENIED.
+        assert!(refused.contains("(error 5)"), "{refused}");
+        assert_eq!(written(&key), before);
+        remove(&key);
     }
 }

@@ -26,6 +26,7 @@ import {
 import { CommandRegistry } from "./commands";
 import { DISK_CHANGE_MODES, type DiskChangeMode } from "./diskwatch";
 import { PALETTE } from "./markcolors";
+import { menuEnablement } from "./menubar";
 import { NIBS } from "./marknibs";
 import type { StampName } from "./pages";
 import { PAGE_SIZE_NAMES } from "./pagesizes";
@@ -45,6 +46,10 @@ function harness(
   update: {
     available?: boolean; ready?: boolean; automatic?: boolean; disk?: DiskChangeMode;
     restoreTabs?: boolean; reopenable?: number; recents?: number; fieldBorder?: boolean; picked?: number; fieldPicked?: boolean; formEditing?: boolean; savedFields?: number; canOrderTabs?: boolean; signable?: number;
+    // One flag for each of the command-line tool's pair, so that swapping the
+    // two guards is seen. Both offered by default: that is "not known", the
+    // state the window starts in.
+    tool?: { install?: boolean; uninstall?: boolean };
   } = {},
   journal: { undo?: boolean; redo?: boolean } = {},
   selected = false,
@@ -133,6 +138,8 @@ function harness(
     about: () => fired.push("about"),
     checkForUpdates: () => fired.push("checkForUpdates"),
     commandLineTool: (install) => fired.push(`commandLineTool:${install}`),
+    commandLineToolOffered: (install) =>
+      (install ? update.tool?.install : update.tool?.uninstall) ?? true,
     makeDefaultPdfApp: () => fired.push("makeDefaultPdfApp"),
     automaticUpdates: () => automatic,
     setAutomaticUpdates: (enabled) => { automatic = enabled; fired.push(`setAutomaticUpdates:${enabled}`); },
@@ -820,6 +827,27 @@ describe("the commands a document is needed for", () => {
     expect(registry.run("app.installCommandLineTool")).toBe(true);
     expect(registry.run("app.uninstallCommandLineTool")).toBe(true);
     expect(fired).toEqual(["commandLineTool:true", "commandLineTool:false"]);
+  });
+
+  it("withholds each of the command-line tool's pair by its own answer, in the palette and the menu bar", () => {
+    const [installId, uninstallId] = ["app.installCommandLineTool", "app.uninstallCommandLineTool"];
+    for (const [install, uninstall] of [[true, true], [false, true], [true, false], [false, false]] as const) {
+      const { registry, fired } = harness(false, { tool: { install, uninstall } });
+      const offered = registry.search("").map((ranked) => ranked.command.id);
+      expect(offered.includes(installId)).toBe(install);
+      expect(offered.includes(uninstallId)).toBe(uninstall);
+      // The native menu's two items are greyed from the same guards.
+      const menu = menuEnablement(registry);
+      expect(menu[installId]).toBe(install);
+      expect(menu[uninstallId]).toBe(uninstall);
+      // And a withheld one does not run, whatever asks.
+      expect(registry.run(installId)).toBe(install);
+      expect(registry.run(uninstallId)).toBe(uninstall);
+      expect(fired).toEqual([
+        ...(install ? ["commandLineTool:true"] : []),
+        ...(uninstall ? ["commandLineTool:false"] : []),
+      ]);
+    }
   });
 
   it("offers the rest once one is open", () => {
@@ -1821,7 +1849,8 @@ describe("the window shortcuts for editing", () => {
       about: () => fired.push("about"),
       checkForUpdates: () => fired.push("checkForUpdates"),
       commandLineTool: (install) => fired.push(`commandLineTool:${install}`),
-    makeDefaultPdfApp: () => fired.push("makeDefaultPdfApp"),
+      commandLineToolOffered: () => true,
+      makeDefaultPdfApp: () => fired.push("makeDefaultPdfApp"),
       automaticUpdates: () => true,
       setAutomaticUpdates: (enabled) => fired.push(`setAutomaticUpdates:${enabled}`),
       applyUpdate: () => fired.push("applyUpdate"),

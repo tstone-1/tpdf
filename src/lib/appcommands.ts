@@ -173,6 +173,11 @@ export interface AppActions {
    */
   commandLineTool(install: boolean): void;
   /**
+   * Whether installing (`install`) or uninstalling it has anything to do or to
+   * say, as last read; true while that is not known (`clitoolstate.ts`).
+   */
+  commandLineToolOffered(install: boolean): boolean;
+  /**
    * Make tpdf the application that opens PDFs; on Windows, open Settings where
    * that is chosen. Only ever run from this command: tpdf does not ask.
    */
@@ -826,23 +831,37 @@ export function registerAppCommands(
       run: () => actions.restartForUpdate(),
     },
     {
-      // Always enabled, and the pair is not guarded on whether the link exists:
-      // the answer to "is it installed" is in the filesystem, and the backend
-      // reads it there each time rather than trusting a state this side kept.
-      // Installing twice says so; removing what is not there says so. No
-      // binding, like every command a reader runs once.
+      // Each of the pair is withheld when it has nothing to do, since
+      // 2026-10-06: Install once this copy's tool is what a terminal gets,
+      // Uninstall when there is nothing at the tool's paths (on Windows, when
+      // its folder is not on the PATH). Until then both were always live, on
+      // the argument that the answer is in the filesystem and not on this
+      // side --- and that half still holds. The backend reads the filesystem
+      // again each time either one runs and decides from what it finds then;
+      // the guard is a hint read beforehand (`clitoolstate.ts`), asked again
+      // after either command and whenever the window comes to the front.
+      //
+      // It errs towards offering. Not known --- before the first answer, after
+      // a read that failed, on a platform with nothing to read --- is live. A
+      // link to another copy of tpdf leaves Install live, because installing
+      // repoints it. Somebody else's file at a path leaves both live, because
+      // running either is what says the file is there and was left alone, and
+      // a greyed item says nothing. No binding, like every command a reader
+      // runs once.
       id: "app.installCommandLineTool",
       title: "Install command-line tool…",
+      enabled: () => actions.commandLineToolOffered(true),
       run: () => actions.commandLineTool(true),
     },
     {
       id: "app.uninstallCommandLineTool",
       title: "Uninstall command-line tool…",
+      enabled: () => actions.commandLineToolOffered(false),
       run: () => actions.commandLineTool(false),
     },
     {
-      // Always enabled, for the pair's reason: whether tpdf is the default is
-      // the system's to say, and the backend asks it each time.
+      // Always enabled: whether tpdf is the default is the system's to say,
+      // and the backend asks it each time.
       id: "app.makeDefaultPdfApp",
       title: "Make tpdf the default PDF app",
       run: () => actions.makeDefaultPdfApp(),

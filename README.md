@@ -741,7 +741,9 @@ command-line tool…** in the tpdf menu (or the command palette): it links
 `/usr/local/bin/tpdf` and `/usr/local/bin/tpdf-cli` to the tool inside `tpdf.app`, and macOS
 asks for an administrator password if that folder needs one. **Uninstall command-line
 tool…** removes both links. A file already at either path that tpdf did not put there is
-left alone. Because it is a link, the
+left alone. Each of the two commands is greyed, and left out of the command palette, while
+it has nothing to do: **Install** once both links run this copy's tool, **Uninstall** when
+neither path holds anything. Because it is a link, the
 tool updates with the application. On Windows both installers put `tpdf-cli.exe` beside
 `tpdf.exe`, in the folder tpdf is installed in. The `-setup.exe` installer, which installs
 for you alone and needs no administrator, also adds that folder to your `PATH`, so a
@@ -749,7 +751,8 @@ terminal opened afterwards runs `tpdf-cli` by name; uninstalling takes it out ag
 the `.msi` installer, choose **Install command-line tool…** once, or run
 `tpdf-cli path --add` by its full path: both add the folder to your own `PATH`, not the
 computer's. **Uninstall command-line tool…** and `tpdf-cli path --remove` take it out, and
-`tpdf-cli path` says whether it is there. Every other entry of your `PATH` is kept as it
+`tpdf-cli path` says whether it is there, and of the two commands the one with nothing to do
+is greyed here too. Every other entry of your `PATH` is kept as it
 was written. The examples below say `tpdf`; on Windows it is `tpdf-cli`. `tpdf-cli` is
 the name that works on both: a script meant for both platforms should use it. (A macOS
 installation made before 26.10.2 has only `tpdf`; choose **Install command-line tool…**

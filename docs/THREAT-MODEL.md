@@ -72,7 +72,7 @@ Five principals, each trusting only what is below it in the table; the command-l
 
 | Principal | Authority it holds | Authority it does not |
 |---|---|---|
-| **Webview** (Svelte) | Draws, receives tiles, issues commands — fifteen of which write files on its behalf (§T6.1), drives the updater's optional launch check and can ask for the process to be ended and started again once an update is applied (§T9), can ask for a document web link to be opened (§T8), reads signature images explicitly selected through its file input (§T6.17), can ask for a second PDF to be opened for reading so its pages can be inserted (§T6.20), can ask for the command-line tool's link in `/usr/local/bin` to be made or removed (§T6.23), and can ask for tpdf to be made the default application for PDFs (§T6.27) | No general filesystem access, no network reach of its own and no PDF parsing. It can name an address only in two ways: a document web link the reader confirms (§T8), and the timestamp authority `sign_document` and `sign_resume` are handed --- any `http` or `https` host without credentials, loopback and private addresses included on purpose (§T10) |
+| **Webview** (Svelte) | Draws, receives tiles, issues commands — fifteen of which write files on its behalf (§T6.1), drives the updater's optional launch check and can ask for the process to be ended and started again once an update is applied (§T9), can ask for a document web link to be opened (§T8), reads signature images explicitly selected through its file input (§T6.17), can ask for a second PDF to be opened for reading so its pages can be inserted (§T6.20), can ask for the command-line tool's link in `/usr/local/bin` to be made or removed (§T6.23) and whether it is there, which changes nothing (§T6.38), and can ask for tpdf to be made the default application for PDFs (§T6.27) | No general filesystem access, no network reach of its own and no PDF parsing. It can name an address only in two ways: a document web link the reader confirms (§T8), and the timestamp authority `sign_document` and `sign_resume` are handed --- any `http` or `https` host without credentials, loopback and private addresses included on purpose (§T10) |
 | **Coordinator** (Rust, the Tauri process) | Opens files the user chose, owns the window, spawns and kills workers, owns every shared mapping; asks the OS key store to sign one digest when the reader signs a document (§T6.21); asks the timestamp authority the reader chose for a token over that signature, when they chose one, and the certificate authorities for revocation data, when they also asked for long-term data (§T10) | Parses no PDF syntax on the *viewing* path — with one exception, printing, described below; holds no private key, and parses no part of a document it signs |
 | **Command-line tool** (`tpdf-cli`, the same crate) | A coordinator without a window, run by the reader's own account: opens the files named on its command line, spawns and kills the same workers, asks the OS key store to sign one digest, writes signed, filled or redacted copies, page-operation outputs or a document's text, and reads a document's password from an environment variable it is told the name of (§T6.23) | The coordinator's limits exactly --- parses no part of a document, holds no private key --- and no webview, no updater, and no network but the timestamp authority `sign --timestamp` names and the certificate authorities `--long-term` asks (§T10) |
 | **Worker** (Rust + PDFium) | Parses and renders whatever bytes it is handed | No path to the document and cannot create a file, on both platforms; no filesystem and no network on **macOS** — on Windows, no writes, and reads and sockets are the disclosed ceiling |
@@ -2519,7 +2519,8 @@ same build with the warm-up removed exits 1 with the OCR reason (`docs/TRAPS.md`
 the OCR worker's Vision refuses every image*).
 
 **The link.** *Install command-line tool…* (`command_line_tool`) makes `/usr/local/bin/tpdf` a
-symbolic link to the bundled tool, and its sibling removes it. The webview names no path: the
+symbolic link to the bundled tool, and its sibling removes it. (What the window reads to grey
+the two commands is §T6.38; it is not what this decides by.) The webview names no path: the
 link and the target are both fixed in `clitool.rs`, so the widest thing it can ask for is that
 one link made or removed. A file at that path that is not a link to a `tpdf-cli` in the
 `Contents/MacOS` of a folder named `*.app` is never replaced or removed --- the bundle's name
@@ -3149,6 +3150,45 @@ from the window are ones the platform itself listed.
 A compromised webview can therefore set a preference and make a recognition read in a
 language the reader did not choose, which makes the recognised text worse. It gains no
 file, no path and no process.
+
+#### T6.38 — Asking whether the command-line tool is installed, added 2026-10-06
+
+*Install command-line tool…* and *Uninstall command-line tool…* are each greyed when they
+have nothing to do, so the window has to know what is installed. One command is new,
+`command_line_tool_state`, and it is the first request about the tool that changes nothing.
+
+It takes no argument. On macOS it reads what the two fixed paths `/usr/local/bin/tpdf` and
+`/usr/local/bin/tpdf-cli` hold --- `symlink_metadata` and `read_link` on each, through
+`clitool::plan`, the same reading the two commands decide by --- and compares a link's
+target with the tool beside the running executable. On Windows it reads the user's own
+`PATH` (`HKCU\Environment\Path`) through `userpath::stored` and looks for the folder of the
+running executable in it. Since this change that value is read through a handle opened for
+`KEY_QUERY_VALUE` alone, and written, by the two commands only, through a second handle
+opened for `KEY_SET_VALUE`. Elsewhere it reads nothing. It names no document, opens no
+file's contents, reaches no worker and starts no process.
+
+The answer is two booleans, or nothing where there is nothing to read: whether this copy's
+tool is what a terminal gets, and whether either path holds anything (on Windows both are
+whether the folder is on the `PATH`). No path, link target or `PATH` entry crosses to the
+webview. The window asks once after launch, after either command finishes, and each time it
+comes to the front.
+
+**The answer decides nothing.** `command_line_tool` reads the filesystem or the `PATH` again
+when it runs and acts on what it finds then (§T6.23), and nothing the webview holds is passed
+to it. A compromised webview could ask this as often as it likes and learn the two booleans;
+it could also ignore the answer and offer a greyed command, which then runs exactly as it
+did before this change. A failed read, or one that has not answered, greys nothing.
+
+**Measured, and not.** The reading over the two paths is held by
+`clitool::tests::the_state_is_read_from_both_links_and_reading_changes_neither`, which lists
+a scratch folder before and after every read, and by
+`a_path_that_cannot_be_read_greys_neither_command`; the real links on the machine this was
+written on read as installed (`docs/VERIFICATION.md`, *The command-line tool's two commands
+are greyed by what is installed*). That a Windows read writes nothing is
+`userpath::tests::asking_whether_a_folder_is_stored_writes_nothing`, which compares the
+registry key's last-write time across the read, and
+`the_handle_a_reading_holds_cannot_write`; the same record says where they ran. The command
+has not been driven from a window on Windows.
 
 ### T9 — The updater
 

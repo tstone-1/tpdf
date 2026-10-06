@@ -77,6 +77,8 @@ import Shrinkage_ from "../../src-tauri/testdata/replies/Shrinkage.json";
 import type { Recognised } from "./recognise";
 import Recognised_ from "../../src-tauri/testdata/replies/Recognised.json";
 import type { Offered } from "./ocrlanguage";
+import type { ToolState } from "./clitoolstate";
+import ToolState_ from "../../src-tauri/testdata/replies/ToolState.json";
 import Offered_ from "../../src-tauri/testdata/replies/Offered.json";
 import type { Outline } from "./outline";
 import type { ScrollBenchConfig } from "./scrollbench";
@@ -189,6 +191,10 @@ const SCHEMA = {
     languages: ["array"],
     installable: ["boolean"],
   } satisfies Shape<Offered>,
+  ToolState: {
+    installed: ["boolean"],
+    occupied: ["boolean"],
+  } satisfies Shape<ToolState>,
   CropGeometry: {
     width_pt: ["number"],
     height_pt: ["number"],
@@ -365,6 +371,7 @@ const SAMPLES: Record<keyof typeof SCHEMA, Record<string, unknown>> = {
   Shrinkage: Shrinkage_ satisfies Widen<Shrinkage>,
   Recognised: Recognised_ satisfies Widen<Recognised>,
   Offered: Offered_ satisfies Widen<Offered>,
+  ToolState: ToolState_ satisfies Widen<ToolState>,
   CropGeometry: CropGeometry_ satisfies Widen<CropGeometry>,
   DocumentInfo: DocumentInfo_ satisfies Widen<DocumentInfo>,
   PageRuns: PageRuns_ satisfies Widen<TextRuns>,

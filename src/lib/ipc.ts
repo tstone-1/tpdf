@@ -42,6 +42,7 @@
 
 import { invoke, type InvokeArgs } from "@tauri-apps/api/core";
 
+import type { ToolState } from "./clitoolstate";
 import type { Comments } from "./comments";
 import type { CropGeometry } from "./crop";
 import type { Applied, Copied, EditState, Merged, Split } from "./edits";
@@ -512,6 +513,11 @@ export interface Commands {
    * The reply is the sentence to show; a refusal is the error.
    */
   command_line_tool: { args: { install: boolean }; reply: string };
+  /**
+   * What `command_line_tool` would find, read and not changed: no argument, and
+   * `null` where there is nothing to read (`clitoolstate.ts` has what it greys).
+   */
+  command_line_tool_state: { args: NoArgs; reply: ToolState | null };
   /**
    * Makes tpdf the default application for PDFs (`defaultapp.rs`); on Windows,
    * opens Settings where the reader chooses. The reply is the sentence to show.

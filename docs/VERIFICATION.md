@@ -6516,3 +6516,50 @@ at +50% on the signed document, for the page's edge, was not looked into. A para
 line wraps at the room its line had, which on these pages is the edge of the sheet and not
 the right margin. No LibreOffice 26.2 export was made. Of the 1,006 edits newly accepted on
 the public sample, 48 were saved and 31 were confirmed, by the glyph comparison or by eye.
+
+### The command-line tool's two commands are greyed by what is installed — measured 2026-10-06
+
+*Install command-line tool…* is greyed once this copy's tool is what a terminal gets, and
+*Uninstall command-line tool…* when nothing is at the tool's paths. The reading is
+`clitool::state_of` (macOS, over `clitool::plan`) and `userpath::stored` (Windows), asked
+through `command_line_tool_state`; what is known and when it is asked again is
+`src/lib/clitoolstate.ts`. The commands themselves are unchanged and still read the
+filesystem or the `PATH` when they run.
+
+**macOS.** `cargo test --locked --lib clitool::` runs 8 tests, all passing; the state tests
+build every arrangement of the two names in a scratch folder --- nothing, one name, both,
+another copy of tpdf, somebody else's file, a path that cannot be read --- and list the
+folder before and after each read. As a control on the real paths, a test added for the
+purpose and removed again read `/usr/local/bin/tpdf` and `/usr/local/bin/tpdf-cli` on a
+machine where both link to the released application: asked with that application's tool
+it answered installed, in 247 µs, and asked with a tool path of another copy it answered
+not installed with something there. `python3 scripts/mutate_rust.py --only 'cli tool state'`
+runs 6 mutations, each red in the test named for it.
+
+**The window's side.** `npx vitest run src/lib/clitoolstate.test.ts src/lib/appcommands.test.ts`
+passes; the first holds the rule, a failed read, two reads that cross and the look taken
+after a command, and reads `App.svelte`'s source for the join. The second holds that each
+command is withheld by its own answer in the palette and in the map the menu bar is greyed
+from. `python3 scripts/mutate_frontend.py --only 'cli tool'` runs 23 mutations, each red.
+The two booleans cross as `ToolState`, held to the window's mirror by the committed sample
+`src-tauri/testdata/replies/ToolState.json`.
+
+**Windows**, on a Windows 11 desktop through `scripts/run_on_windows.py --suite all`: the
+unit tests pass, 2,891 of them, among them
+`userpath::tests::the_handle_a_reading_holds_cannot_write` --- a write through the handle a
+reading opens is refused with error 5 --- and
+`asking_whether_a_folder_is_stored_writes_nothing`, which compares the last-write time of
+`HKCU\Environment` across three reads. That test's control failed on its first run: a
+`RegSetValueExW` storing the bytes already there does not move a key's last-write time, so
+the control now writes a changed value and the handle test is the one that rules a write
+out. `scripts/check_windows.py` passes. The command-line suite passed 517 of 517 in three
+runs of four; in the other, `-o --force replaces an existing file` failed once with an
+access refusal on a temporary file, in code this change does not touch.
+
+**Not done.** No window was opened on either platform: the greying of the two items in the
+macOS tpdf menu, the palette leaving a greyed one out, and the second look after a command
+and on coming back to the window have been tested as modules and read in the source, not
+seen. Neither command was run, because installing asks for an administrator password and
+changes the machine. On Windows the command has not been asked from a window; the
+test holds the reading to the stored value for three folders and does not say which of
+them were there.

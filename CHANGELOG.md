@@ -17,6 +17,21 @@ as *downloadable*, while the release sat as a draft that GitHub showed to nobody
 are given now because they are different facts, and only the second one means a reader can
 have the binary.)
 
+## [26.10.10] - Unreleased
+
+### Changed
+
+- **Install command-line tool… and Uninstall command-line tool… are greyed when they have
+  nothing to do.** Both were always live. Now *Install* is greyed in the tpdf menu, and
+  left out of the command palette, once `tpdf` and `tpdf-cli` in a terminal already run
+  this copy's tool, and *Uninstall* is greyed when neither is there. On Windows the same
+  holds for the tool's folder and your `PATH`. tpdf looks again after either command, and
+  each time its window comes to the front, so a change made in a terminal is picked up.
+  When another copy of tpdf is installed, *Install* stays live and points the links at this
+  copy. A file at either path that tpdf did not put there leaves both commands live:
+  running one says the file is there and was left alone. If tpdf cannot find out what is
+  installed, both stay live, as before. What each command does when it runs is unchanged.
+
 ## [26.10.9] - 2026-10-06
 
 ### Fixed

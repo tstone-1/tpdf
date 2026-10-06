@@ -3185,6 +3185,8 @@ async function appCommandChecks(
     about: () => fired.push("about"),
     checkForUpdates: () => fired.push("checkForUpdates"),
     commandLineTool: (install) => fired.push(`commandLineTool:${install}`),
+    // Not known, which is what a check that asks no backend has: both offered.
+    commandLineToolOffered: () => true,
     makeDefaultPdfApp: () => fired.push("makeDefaultPdfApp"),
     automaticUpdates: () => true,
     setAutomaticUpdates: (enabled) => fired.push(`setAutomaticUpdates:${enabled}`),

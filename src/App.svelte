@@ -63,6 +63,7 @@
     type Progress,
   } from "./lib/recognise";
   import { RecognitionLanguage } from "./lib/ocrlanguage";
+  import { CommandLineTool } from "./lib/clitoolstate";
   import {
     afterCopy,
     afterRedaction,
@@ -857,12 +858,9 @@
     // The backend reads the filesystem back after the change and answers with
     // the sentence; a refusal --- somebody else's file at the path, a cancelled
     // administrator prompt --- arrives as the error and is shown the same way.
-    commandLineTool: (install) => {
-      void call("command_line_tool", { install }).then(
-        (said) => (notice = said),
-        (why: unknown) => (notice = String(why)),
-      );
-    },
+    // `clitoolstate.ts` shows it and then asks what is there now.
+    commandLineTool: (install) => void commandLineTool.run(install),
+    commandLineToolOffered: (install) => commandLineTool.offered(install),
     makeDefaultPdfApp: () => {
       void call("default_pdf_app").then(
         (said) => (notice = said),
@@ -2768,6 +2766,16 @@
     },
   );
 
+  // Which of the command-line tool's two commands has something to do. The
+  // backend is asked; this holds the answer and greys by it, and the menu is
+  // re-read each time the answer moves.
+  const commandLineTool = new CommandLineTool({
+    read: () => call("command_line_tool_state"),
+    apply: (install) => call("command_line_tool", { install }),
+    say: (text) => (notice = text),
+    changed: () => refreshMenu(),
+  });
+
   const commands = new CommandRegistry();
   registerAppCommands(commands, appActions);
   let toolState = $state(toolbarState(commands));
@@ -3673,6 +3681,9 @@
       // reader coming back from the program that wrote it is not kept waiting.
       window.setInterval(checkDisk, 1000);
       window.addEventListener("focus", checkDisk);
+      // The link, or the PATH, can be changed from a terminal while tpdf is
+      // open, and a greyed command cannot be run to find that out.
+      window.addEventListener("focus", () => void commandLineTool.refresh());
 
       // Reopening the last document is the whole of the feature: a reader that
       // starts empty every morning is not the one someone reaches for. It runs
@@ -3726,6 +3737,9 @@
       // not record the half that had opened as the whole list.
       if (plan.behind.length) tabRecorder.hold();
       for (const path of plan.show) await openPath(path, plan.resuming);
+      // After the document the reader is waiting for has been asked for, and
+      // not awaited: until it answers, both of the tool's commands are offered.
+      void commandLineTool.refresh();
       // After the first page, not before it: the tabs behind are not what the
       // reader is waiting for, and each one is an open the first page would
       // otherwise queue behind.
