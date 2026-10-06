@@ -757,6 +757,7 @@ fn samples() -> BTreeMap<&'static str, String> {
             pages: vec![crate::commands::ocr::LayerPage { page: 1, words: 40 }],
             already_text: vec![2],
             nothing_read: vec![3],
+            refused: vec![5],
             too_large: vec![4],
             engine: "vision (26A428)".into(),
             language_unavailable: Some("de-DE".into()),

@@ -32,6 +32,8 @@ export interface Recognised {
   alreadyText: number[];
   /** Pages the engine found no words on. */
   nothingRead: number[];
+  /** Pages whose picture the engine would not read. */
+  refused: number[];
   /** Pages too large to render finely enough to read. */
   tooLarge: number[];
   engine: string;
@@ -45,6 +47,13 @@ export interface Recognised {
 /** What a document with unsaved changes is told, before any name is asked for. */
 export const SAVE_FIRST =
   "Save your changes first. Text is recognised on the pages of the saved file.";
+
+/**
+ * What a refused page usually is. `REFUSED_MEANS` in `ocr_layer.rs`, which has
+ * the measurements; `recognise.test.ts` holds the two spellings together.
+ */
+export const REFUSED_MEANS =
+  "which usually means a script it cannot read or a scan too unclear to tell the script";
 
 /** The line shown before the first page has been reported. */
 export const STARTING = "Recognising text...";
@@ -69,7 +78,11 @@ export function progressLine(at: Progress): string {
 export function afterRecognition(read: Recognised, name: string): string {
   const words = read.pages.reduce((sum, page) => sum + page.words, 0);
   const total =
-    read.pages.length + read.alreadyText.length + read.nothingRead.length + read.tooLarge.length;
+    read.pages.length +
+    read.alreadyText.length +
+    read.nothingRead.length +
+    read.refused.length +
+    read.tooLarge.length;
   const said = [
     `Saved ${name}. Text was added to ${read.pages.length} of ${count(total, "page")} ` +
       `(${count(words, "word")}).`,
@@ -79,6 +92,9 @@ export function afterRecognition(read: Recognised, name: string): string {
   }
   if (read.nothingRead.length > 0) {
     said.push(`No text was recognised on ${pages(read.nothingRead)}.`);
+  }
+  if (read.refused.length > 0) {
+    said.push(`The recogniser refused ${pages(read.refused)}, ${REFUSED_MEANS}.`);
   }
   if (read.tooLarge.length > 0) {
     said.push(`Too large to read: ${pages(read.tooLarge)}.`);

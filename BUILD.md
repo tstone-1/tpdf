@@ -6571,6 +6571,35 @@ now comes last there.
 `docs/THREAT-MODEL.md` already stated the three new commands (T6.35, T6.36). The release
 notes in `release.yml` were rewritten.
 
+**26.10.8 verification, macOS arm64, 2026-10-06:** all 30 gates passed on the release tree
+(2,836 Rust tests with ten documented ignored, 2,491 frontend tests) and `check_windows.py`
+type-checked the Windows tree. Every mutation selected `--near v26.10.7` ran and was caught,
+23 Rust and 12 frontend. The command-line suite's new checks, a two-page scan with a Latin
+page and the Arabic page of `multilingual.pdf` through `tpdf ocr` and through the window's
+own command, were shown red by six reversions made by hand. Those checks, like the rest of
+the suite's OCR part, do not run on a hosted runner, which cannot generate
+`text-base14.pdf`; they ran here. `worker-probe` 48/48; `backend-probe` 41/44 on
+`text-heavy.pdf` with three skipped and 42/44 on `vector-heavy.pdf` with two skipped. The
+unit tests and the command-line suite passed on Windows 11 through
+`scripts/run_on_windows.py` on the release tree (2,859 unit tests, 517 command-line checks
+with three skipped, the three being checks that need the Mac's recogniser). The normal
+bundle, with the development engine hidden: the bundled `tpdf-cli` answered `--version`
+with 26.10.8 and `verify`, and on the two-page scan gave page 1 its text, named page 2 as
+refused in its report and in `--json`, and exited 0. In the bundle's window, with real key events and the save panel answered by typing a
+path: a Latin page with an Arabic page gave the copy, opened it and said *Text was added to
+1 of 2 pages (30 words). The recogniser refused page 2, ...* on two lines, and the Arabic
+page alone gave *No page was given text. ...* and no file. That check found the commands
+left grey after the second case until a tab was switched, which is older than this
+release; the task queue now asks for the commands again when it goes idle, and the same
+run in a rebuilt bundle left Print and *Recognise text* enabled. Both closing lines are set
+in the failure line's red, the first of them for a copy that was written; that was left.
+`v26.10.7` was built and tagged and its draft deleted unpublished: letting Vision
+work out the script lets it take a very poor scan for a script whose model the worker
+cannot load, and in that version one such page cost a document its copy. A rule to refuse a
+Greek or Armenian page, which gets wrong text, was measured on 345 pages and not built; the
+trap entry has the table. The window harnesses were not run and the README pictures were
+not retaken. The release notes in `release.yml` were rewritten.
+
 **26.10.7 verification, macOS arm64, 2026-10-05:** all 30 gates passed on the release tree
 (2,831 Rust tests with ten documented ignored, 2,489 frontend tests) and `check_windows.py`
 type-checked the Windows tree. Every mutation selected `--near v26.10.6` ran and was caught,

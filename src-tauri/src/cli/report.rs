@@ -55,6 +55,10 @@ pub struct Ocr {
     pub already_text: Vec<u32>,
     /// Selected pages without text on which nothing was recognised.
     pub nothing_read: Vec<u32>,
+    /// Selected pages without text whose image the recogniser would not read:
+    /// usually a script it cannot read, or a scan too unclear to tell the script.
+    /// They are left as they are and the other pages are still read.
+    pub refused: Vec<u32>,
     /// Number of source signatures affected by this rewrite.
     pub signatures_invalidated: usize,
     /// Signature enumeration was incomplete.

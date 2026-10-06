@@ -20,6 +20,9 @@
   "nothing_read": [
     3
   ],
+  "refused": [
+    5
+  ],
   "signatures_invalidated": 1,
   "signatures_unknown": false
 }

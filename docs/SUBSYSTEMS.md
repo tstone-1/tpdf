@@ -430,6 +430,16 @@ behind.
 The engine is asked for words with its language model on (`ocr_layer::options`), the opposite
 of what the redaction gate asks: this caller wants recall and is not a safety check.
 
+**A page the engine will not read.** `ocr_layer::outcome_of` turns each page's answer into a
+layer, nothing, or *refused*, and it is the one place that decides which engine errors are a
+page's own: `RecogniseError::Rejected` only. `Unavailable`, `Crashed`, `TimedOut` and
+`MalformedInput` stop the run in both callers. A refused page is `refused` in the tool's
+report and in `Recognised`, the sentence is `ocr_layer::REFUSED_MEANS` with
+`recognise.ts` holding the same words, and a document none of whose pages got a layer is
+still not written. `tests/cli/ocr.rs` holds the tool and the window to each other on a scan
+with an Arabic page, since each walks the pages in code of its own. No page is refused for
+the engine's low confidence: `docs/TRAPS.md` has why that rule was measured and not built.
+
 **The language.** The tool takes `--language` any number of times; the window keeps one, or
 none for the engine's own choice. `ocr_languages` lists what the machine offers
 (`Vision::languages`, `ocr_windows::installed_languages`), asked in the app process because

@@ -345,6 +345,9 @@ class OcrReport(TypedDict):
     already_text: list[int]
     # Selected pages without text on which nothing was recognised.
     nothing_read: list[int]
+    # Selected pages without text whose image the recogniser would not read:
+    # usually a script it cannot read, or a scan too unclear to tell the script.
+    refused: list[int]
     signatures_invalidated: int
     signatures_unknown: bool
 

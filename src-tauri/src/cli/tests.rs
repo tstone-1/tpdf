@@ -2184,6 +2184,7 @@ fn samples() -> Vec<(&'static str, String)> {
                 ],
                 already_text: vec![2],
                 nothing_read: vec![3],
+                refused: vec![5],
                 signatures_invalidated: 1,
                 signatures_unknown: false,
             }),

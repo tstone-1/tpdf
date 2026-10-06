@@ -15592,5 +15592,109 @@ MUTATIONS += [
     ),
 ]
 
+# A page the recogniser refuses (26.10.8). `ocr_layer::outcome_of` decides which
+# of the engine's errors is one page's own, and the two callers file the page
+# and say so. What needs an engine --- that a refused page costs the page
+# beside it nothing, and that the tool's walk and the window's file it alike
+# --- is `tests/cli/ocr.rs`, which this table cannot select. Six mutations were
+# run there by hand on 2026-10-06, each restored byte for byte, each red:
+# `outcome_of` without its `Rejected` arm (the two checks that a copy is
+# written); `Outcome::Refused` pushed to `nothing_read` in `cli/ocr.rs` and then
+# in `commands/ocr.rs` (the check that holds the two to each other); and the
+# three `refused.is_empty()` tests below turned off (the three wording checks).
+MUTATIONS += [
+    Mutation(
+        "ocr refused: fail the document for a page the engine rejected",
+        "src/ocr_layer.rs",
+        "        Err(RecogniseError::Rejected(_)) => Ok(Outcome::Refused),\n",
+        "",
+        "only_a_page_the_engine_rejected_is_passed_over",
+    ),
+    Mutation(
+        "ocr refused: pass over a page whatever the engine reported",
+        "src/ocr_layer.rs",
+        "        Err(other) => Err(other),\n",
+        "        Err(_) => Ok(Outcome::Refused),\n",
+        "only_a_page_the_engine_rejected_is_passed_over",
+    ),
+    Mutation(
+        "ocr refused: call a refused page an empty one",
+        "src/ocr_layer.rs",
+        "        Err(RecogniseError::Rejected(_)) => Ok(Outcome::Refused),\n",
+        "        Err(RecogniseError::Rejected(_)) => Ok(Outcome::Nothing),\n",
+        "only_a_page_the_engine_rejected_is_passed_over",
+    ),
+    Mutation(
+        "ocr refused: put every layer on the first page",
+        "src/ocr_layer.rs",
+        "        Ok(items) => Ok(layer_of(page, items).map_or(Outcome::Nothing, Outcome::Layer)),",
+        "        Ok(items) => Ok(layer_of(0, items).map_or(Outcome::Nothing, Outcome::Layer)),",
+        "an_answer_is_a_layer_on_its_own_page_or_nothing",
+    ),
+    Mutation(
+        "ocr refused: name every page however many there are",
+        "src/ocr_layer.rs",
+        "    const SHOWN: usize = 8;\n",
+        "    const SHOWN: usize = 8000;\n",
+        "pages_are_named_up_to_eight",
+    ),
+    Mutation(
+        "ocr refused: say pages for one page",
+        "src/ocr_layer.rs",
+        '        1 => format!("page {head}"),\n',
+        '        0 => format!("page {head}"),\n',
+        "pages_are_named_up_to_eight",
+    ),
+    Mutation(
+        "ocr refused: say what a refusal means in other words",
+        "src/ocr_layer.rs",
+        '    "which usually means a script it cannot read or a scan too unclear to tell the script";',
+        '    "which means a script it cannot read";',
+        "the_sentences_name_what_was_left_alone_and_why",
+    ),
+    Mutation(
+        "ocr refused: the tool says nothing about a refused page",
+        "src/cli/ocr.rs",
+        "    if !report.refused.is_empty() {",
+        "    if false {",
+        "the_sentences_name_what_was_left_alone_and_why",
+    ),
+    Mutation(
+        "ocr refused: the tool leaves refused pages out of the count",
+        "src/cli/ocr.rs",
+        "            + report.nothing_read.len()\n            + report.refused.len(),",
+        "            + report.nothing_read.len(),",
+        "the_sentences_name_what_was_left_alone_and_why",
+    ),
+    Mutation(
+        "ocr refused: the tool writes no copy without naming the refusal",
+        "src/cli/ocr.rs",
+        "    if !read.refused.is_empty() {",
+        "    if false {",
+        "a_document_with_no_layer_says_when_pages_were_refused",
+    ),
+    Mutation(
+        "ocr refused: the tool's report leaves the list out",
+        "src/cli/report.rs",
+        "    pub refused: Vec<u32>,\n    /// Number of source signatures",
+        "    #[serde(skip)]\n    pub refused: Vec<u32>,\n    /// Number of source signatures",
+        "every_json_shape_and_the_wording_match_their_committed_samples",
+    ),
+    Mutation(
+        "ocr refused: the window writes no copy without naming the refusal",
+        "src/commands/ocr.rs",
+        "    if !report.refused.is_empty() {",
+        "    if false {",
+        "the_reason_nothing_was_added_names_the_pages_the_recogniser_refused",
+    ),
+    Mutation(
+        "ocr refused: the window's reply leaves the list out",
+        "src/commands/ocr.rs",
+        "    pub refused: Vec<u32>,\n    /// Pages too large",
+        "    #[serde(skip)]\n    pub refused: Vec<u32>,\n    /// Pages too large",
+        "the_report_reaches_the_window_in_its_own_spelling",
+    ),
+]
+
 if __name__ == "__main__":
     sys.exit(main())

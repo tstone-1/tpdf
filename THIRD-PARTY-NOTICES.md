@@ -2961,7 +2961,7 @@ SOFTWARE.
 | uuid | 1.27.0 | Apache-2.0 OR MIT |
 | vecmath | 1.0.0 | MIT |
 | walkdir | 2.5.0 | Unlicense/MIT |
-| want | 0.3.1 | MIT |
+| want | 0.3.2 | MIT |
 | web-time | 1.1.0 | MIT OR Apache-2.0 |
 | web_atoms | 0.2.6 | MIT OR Apache-2.0 |
 | webview2-com | 0.39.1 | MIT |
@@ -2995,7 +2995,7 @@ SOFTWARE.
 | xattr | 1.6.1 | MIT OR Apache-2.0 |
 | yoke | 0.8.3 | Unicode-3.0 |
 | yoke-derive | 0.8.4 | Unicode-3.0 |
-| zerocopy | 0.8.59 | BSD-2-Clause OR Apache-2.0 OR MIT |
+| zerocopy | 0.8.60 | BSD-2-Clause OR Apache-2.0 OR MIT |
 | zerofrom | 0.1.8 | Unicode-3.0 |
 | zerofrom-derive | 0.1.8 | Unicode-3.0 |
 | zeroize | 1.9.0 | Apache-2.0 OR MIT |

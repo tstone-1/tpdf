@@ -507,16 +507,19 @@ jobs:
           workers cannot read arbitrary user files or access the network;
           Windows workers use low integrity and resource-limited jobs.
 
-          **Fixed in 26.10.7, and the reason to update.** *Recognise text*
+          **Fixed in 26.10.8, and the reason to update.** *Recognise text*
           could not read a scan in Japanese or Chinese on a Mac: the page
           came back as a few wrong characters or as nothing, and no copy
           was written. With no language named, the recogniser now works
           out the script itself, and Korean and Thai are read too. Scans
           in Latin and Cyrillic letters are read as before. Not read on
           a Mac: Greek and Armenian, which come out as wrong letters,
-          and Hebrew, Arabic and the scripts of India.
+          and Hebrew, Arabic and the scripts of India. A page the
+          recogniser refuses is now named and left as it is, and the
+          other pages still get their text; it used to cost the whole
+          document its copy.
 
-          **New in 26.10.7.** *Recognise text: language...* lets you name
+          **New in 26.10.8.** *Recognise text: language...* lets you name
           the language a scan is in, from the languages your computer
           offers; the choice is remembered. On Windows, `tpdf ocr
           --language` now chooses among the installed recognisers.

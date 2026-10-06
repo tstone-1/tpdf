@@ -569,7 +569,8 @@ measured the Windows render constants come out 1.5–1.8x worse.
   into a copy as an invisible layer, so the pages look as they did and can be searched,
   selected and copied from. The copy is read back before it gets its name, and then
   opened. A line in the toolbar shows which page is being read and has a Stop button.
-  Pages that already have text are left as they are. A document with unsaved changes is
+  Pages that already have text are left as they are, and so is a page the recogniser
+  refuses, which the closing line names. A document with unsaved changes is
   asked to be saved first. The engine and its limits are under *Text recognition* below.
   <!-- built: file.recogniseText -->
 - **Recognise text: language** sets the language the recogniser is told to expect. It
@@ -1301,21 +1302,36 @@ used, and with none installed the recogniser reads with its own. A page is read 
 refused by number. The recogniser can misread, and tpdf does not check its words against
 anything: the layer is for finding and copying text, not a statement of what the page says.
 
+The recogniser does not read every script, and it does not always say so. Measured on
+macOS 26 with no language named: languages in Latin letters, Cyrillic, Japanese, Chinese,
+Korean and Thai are read. A Greek or Armenian page comes back as Latin letters of a similar
+shape, in a copy that is written all the same, and nothing in the report marks it; check
+such a copy by searching it for a word you can see on the page. A Hebrew or Georgian page
+comes back empty and is listed as not recognised. An Arabic, Persian, Hindi, Bengali or
+Tamil page is refused by the recogniser, and so, now and then, is a very poor scan in any
+script. A refused page is named in the report and left as it is, and the other pages still
+get their layer. Windows OCR reads the languages installed in Settings; other scripts were
+not measured there.
+
 The copy is staged and read back before it is published: its pages and encryption must
 match the source, and every page given a layer must read back with the characters that
-were recognised. If no selected page needs a layer, nothing is written and the command
-exits 3. A signed document needs `--invalidate-signatures`, because adding the layer
+were recognised. If no selected page gets a layer, nothing is written and the command
+exits 3; its message names the pages the recogniser refused, when there were any. A
+recogniser that stops working or does not answer ends the command with exit 4 and no
+copy. A signed document needs `--invalidate-signatures`, because adding the layer
 rewrites it. An existing output needs `--force`; the input is never replaced.
 
 The window's *Recognise text and save as* does the same for the open document, with every
 page considered and one language or the recogniser's own choice, set by *Recognise text:
 language*. It skips a page too large
-to read where the command refuses it, and says which pages it skipped.
+to read where the command refuses it, and says which pages it skipped. A page the
+recogniser refused is named in the same closing line.
 
 The JSON report carries `schema`, `command`, `input`, `output`, the `engine` that read the
 pages, `pages` (each with `page` and the number of `words` written), `already_text` (pages
 left alone because they had text), `nothing_read` (pages without text on which nothing was
-recognised), `signatures_invalidated` and `signatures_unknown`.
+recognised), `refused` (pages without text that the recogniser would not read),
+`signatures_invalidated` and `signatures_unknown`.
 
 **A document from pictures.** `tpdf images front.jpg plan.png -o album.pdf` writes a
 document with one page for each PNG or JPEG file, in the order given. A page is the

@@ -3,7 +3,9 @@
 //! Each selected page that has no text of its own is rendered by the sandboxed
 //! worker, read by the operating system's recogniser in the OCR worker, and
 //! the words are written into the copy as an invisible layer
-//! (`textlayer.rs`). A page that already has text is left as it is.
+//! (`textlayer.rs`). A page that already has text is left as it is, and so is
+//! a page whose image the recogniser will not read, which is named in the
+//! report while the other pages get their layer (`ocr_layer::outcome_of`).
 //!
 //! The copy is staged beside its destination and read back before it is
 //! published: the page sizes and the encryption must be the source's, and
@@ -20,7 +22,7 @@ use super::report::{self, SCHEMA};
 use super::text::{declined, page_list, password, variable};
 use super::{json, say, Env, Exit, Failure, Registered, Subcommand};
 use crate::ocr::Pixels;
-use crate::ocr_layer;
+use crate::ocr_layer::{self, Outcome};
 use crate::ocr_worker::{OcrWorker, PIXELS_CAPACITY};
 use crate::render::{PageSize, TileFormat, TileRequest};
 use crate::save_outside::Session;
@@ -30,7 +32,7 @@ use crate::worker_proto::{Reply, Request};
 pub const COMMAND: Registered = Registered {
     name: "ocr",
     usage: "ocr <in.pdf> -o <out.pdf> [--pages 1-3,7] [--language TAG]...\n        [--password-env VAR] [--invalidate-signatures] [--force] [--json]",
-    summary: "Writes a copy in which scanned pages can be searched and selected:\n            pages without text are read by the system's text recogniser and\n            the words are added as an invisible layer. Pages that already\n            have text are left as they are. --language takes a BCP-47 tag such\n            as de-DE, most preferred first.",
+    summary: "Writes a copy in which scanned pages can be searched and selected:\n            pages without text are read by the system's text recogniser and\n            the words are added as an invisible layer. Pages that already\n            have text are left as they are. --language takes a BCP-47 tag such\n            as de-DE, most preferred first. A page the recogniser refuses is\n            named and left as it is. Not every script is read, and a page in\n            one that is not can get wrong letters without a warning: on macOS\n            that is Greek and Armenian, while Hebrew and Georgian get nothing\n            and Arabic, Persian, Hindi, Bengali and Tamil are refused.",
     parse: |args| parse(args).map(|p| Box::new(p) as Box<dyn Subcommand>),
 };
 
@@ -157,6 +159,7 @@ struct Read {
     layers: Vec<Layer>,
     already_text: Vec<u32>,
     nothing_read: Vec<u32>,
+    refused: Vec<u32>,
     engine: Option<String>,
 }
 
@@ -217,13 +220,19 @@ impl Ocr {
                 height,
                 scale,
             };
-            let (id, items) = worker.recognise_page(pixels, &options).map_err(|why| {
+            // A page the engine will not read is this page's alone; anything
+            // else it reports stops the run (`ocr_layer::outcome_of`).
+            let answer = worker.recognise_page(pixels, &options).map(|(id, items)| {
+                read.engine.get_or_insert_with(|| id.to_string());
+                items
+            });
+            let outcome = ocr_layer::outcome_of(page, answer).map_err(|why| {
                 Failure::new(Exit::Internal, format!("page {n} could not be read: {why}"))
             })?;
-            read.engine.get_or_insert_with(|| id.to_string());
-            match ocr_layer::layer_of(page, items) {
-                Some(layer) => read.layers.push(layer),
-                None => read.nothing_read.push(*n),
+            match outcome {
+                Outcome::Layer(layer) => read.layers.push(layer),
+                Outcome::Nothing => read.nothing_read.push(*n),
+                Outcome::Refused => read.refused.push(*n),
             }
         }
         Ok(read)
@@ -258,20 +267,7 @@ impl Ocr {
         let read = self.read(&mut session, &input.sizes, &selection, key.is_some())?;
         drop(session);
         if read.layers.is_empty() {
-            return Err(Failure::new(
-                Exit::Refused,
-                match (read.already_text.is_empty(), read.nothing_read.is_empty()) {
-                    (false, true) => "every selected page already has text, so there is nothing \
-                                      to add; no copy was written"
-                        .to_string(),
-                    (true, false) => "no text was recognised on any selected page; no copy was \
-                                      written"
-                        .to_string(),
-                    _ => "the selected pages either have text already or none was recognised on \
-                          them; no copy was written"
-                        .to_string(),
-                },
-            ));
+            return Err(Failure::new(Exit::Refused, nothing_to_add(&read)));
         }
         input.plan.text_layers = read.layers.clone();
 
@@ -340,6 +336,7 @@ impl Ocr {
                 .collect(),
             already_text: read.already_text,
             nothing_read: read.nothing_read,
+            refused: read.refused,
             signatures_invalidated: match input.signed {
                 Some(SignedState::Signed(n)) => n,
                 _ => 0,
@@ -355,6 +352,32 @@ impl Ocr {
     }
 }
 
+/// Why no selected page got a layer, and so no copy was written.
+///
+/// A page the recogniser refused is named with what that usually means: it is
+/// the one cause here a reader can act on, by leaving the page out or scanning
+/// it again, and "none was recognised" would send them looking for a blank page.
+fn nothing_to_add(read: &Read) -> String {
+    if !read.refused.is_empty() {
+        return format!(
+            "no selected page was given text; the recogniser refused {}, {}; no copy was written",
+            ocr_layer::pages_named(&read.refused),
+            ocr_layer::REFUSED_MEANS
+        );
+    }
+    match (read.already_text.is_empty(), read.nothing_read.is_empty()) {
+        (false, true) => "every selected page already has text, so there is nothing to add; no \
+                          copy was written"
+            .to_string(),
+        (true, false) => {
+            "no text was recognised on any selected page; no copy was written".to_string()
+        }
+        _ => "the selected pages either have text already or none was recognised on them; no \
+              copy was written"
+            .to_string(),
+    }
+}
+
 /// The report as sentences.
 fn plain(report: &report::Ocr) -> String {
     let words: usize = report.pages.iter().map(|page| page.words).sum();
@@ -362,7 +385,10 @@ fn plain(report: &report::Ocr) -> String {
         "{}: text added to {} of {} pages, {words} words",
         report.output,
         report.pages.len(),
-        report.pages.len() + report.already_text.len() + report.nothing_read.len(),
+        report.pages.len()
+            + report.already_text.len()
+            + report.nothing_read.len()
+            + report.refused.len(),
     )];
     if !report.already_text.is_empty() {
         lines.push(format!(
@@ -374,6 +400,13 @@ fn plain(report: &report::Ocr) -> String {
         lines.push(format!(
             "No text was recognised on: {}",
             numbers(&report.nothing_read)
+        ));
+    }
+    if !report.refused.is_empty() {
+        lines.push(format!(
+            "The recogniser refused {}, {}",
+            ocr_layer::pages_named(&report.refused),
+            ocr_layer::REFUSED_MEANS
         ));
     }
     if report.signatures_invalidated > 0 || report.signatures_unknown {
@@ -459,15 +492,43 @@ mod tests {
             ],
             already_text: vec![2],
             nothing_read: vec![3, 5],
+            refused: vec![6, 7],
             signatures_invalidated: 1,
             signatures_unknown: false,
         };
         assert_eq!(
             plain(&report),
-            "out.pdf: text added to 2 of 5 pages, 42 words\n\
+            "out.pdf: text added to 2 of 7 pages, 42 words\n\
              Already had text and were left as they are: page 2\n\
              No text was recognised on: pages 3, 5\n\
+             The recogniser refused pages 6, 7, which usually means a script it cannot read or \
+             a scan too unclear to tell the script\n\
              The rewrite invalidates existing signatures."
         );
+    }
+
+    #[test]
+    fn a_document_with_no_layer_says_when_pages_were_refused() {
+        let read = |already: &[u32], nothing: &[u32], refused: &[u32]| Read {
+            already_text: already.to_vec(),
+            nothing_read: nothing.to_vec(),
+            refused: refused.to_vec(),
+            ..Read::default()
+        };
+        assert_eq!(
+            nothing_to_add(&read(&[], &[], &[1])),
+            "no selected page was given text; the recogniser refused page 1, which usually \
+             means a script it cannot read or a scan too unclear to tell the script; no copy \
+             was written"
+        );
+        // Named beside the other causes too, not folded into "none was recognised".
+        let mixed = nothing_to_add(&read(&[1], &[2], &[3, 4]));
+        assert!(mixed.contains("refused pages 3, 4, which"), "{mixed}");
+        // Without a refused page the three sentences are the ones they were.
+        assert!(nothing_to_add(&read(&[1], &[], &[])).starts_with("every selected page already"));
+        assert!(nothing_to_add(&read(&[], &[1], &[])).starts_with("no text was recognised"));
+        let both = nothing_to_add(&read(&[1], &[2], &[]));
+        assert!(both.starts_with("the selected pages either"), "{both}");
+        assert!(!both.contains("refused"), "{both}");
     }
 }

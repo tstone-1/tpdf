@@ -681,7 +681,7 @@ describe("Edits", () => {
 
   it("sends the chosen language with the recognition", async () => {
     core.invoke.mockResolvedValue({
-      pages: [], alreadyText: [], nothingRead: [], tooLarge: [], engine: "vision",
+      pages: [], alreadyText: [], nothingRead: [], refused: [], tooLarge: [], engine: "vision",
     });
     const edits = new Edits(17, 3);
 

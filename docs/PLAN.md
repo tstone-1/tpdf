@@ -17772,6 +17772,14 @@ or after an OS update pays Vision's model compile, 24 s here.
 - The boxes are the engine's. Trimming each to the ink inside it would make a selection as
   tall as the type.
 - The Windows path is compiled by `scripts/check_windows.py` and has not been run.
+- **A page in a script the engine cannot read still gets wrong text and no warning**: Greek
+  and Armenian on macOS. Refusing a page whose words carry a low confidence was measured on
+  345 pages on 2026-10-06 and not built, because clean Ukrainian, Belarusian, Bulgarian,
+  Serbian and Icelandic pages are read correctly at the same confidence
+  (`docs/TRAPS.md`, *Vision with no language named reads Latin and Cyrillic only, so
+  "automatic" was not*). A page the engine *refuses* is
+  passed over and named since 26.10.8 (`ocr_layer::outcome_of`). What is left for the
+  Greek page is a check that does not come from the engine, and none is designed.
 
 ---
 

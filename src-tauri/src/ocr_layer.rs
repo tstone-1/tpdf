@@ -11,7 +11,7 @@
 //! caller is the other one that module's docs name: it wants recall, an engine
 //! that misses a word makes the copy worse, and nothing is unsafe.
 
-use crate::ocr::{Options, RecognisedItem};
+use crate::ocr::{Options, RecogniseError, RecognisedItem};
 use crate::text::PageText;
 use crate::textlayer::{Layer, Word};
 
@@ -166,6 +166,73 @@ pub fn layer_of(page: u32, items: Vec<RecognisedItem>) -> Option<Layer> {
         });
     }
     (!words.is_empty()).then_some(Layer { page, words })
+}
+
+/// What became of one page that was handed to the engine.
+#[derive(Debug, Clone, PartialEq)]
+pub enum Outcome {
+    /// Words were read, and this is the layer to write.
+    Layer(Layer),
+    /// The engine read the page and found no words on it.
+    Nothing,
+    /// The engine would not read this page's image. The other pages are still
+    /// read.
+    Refused,
+}
+
+/// What one page's answer from the engine comes to, or the error that stops
+/// the whole recognition.
+///
+/// **Only [`RecogniseError::Rejected`] is this page's alone.** It is the
+/// engine saying no to one image, with the process still there to read the
+/// next. Measured 2026-10-06 on macOS 26A434: Vision asked for any script
+/// answers an Arabic, Persian, Hindi, Bengali or Tamil page that way, because
+/// the model it picks cannot be loaded in the worker, and it answers the same
+/// for some pages in scripts it does read once they are scanned badly enough
+/// (`docs/TRAPS.md` has the count). Until then one such page failed the
+/// document, and a Latin page beside it got no layer.
+///
+/// Every other variant says something about the run and not about the page: no
+/// engine ([`RecogniseError::Unavailable`]), a process that died or was killed
+/// at its deadline ([`RecogniseError::Crashed`], [`RecogniseError::TimedOut`]),
+/// or a request this program built wrongly
+/// ([`RecogniseError::MalformedInput`]). The next page would meet the same, so
+/// they stop the recognition as they always have.
+///
+/// # Errors
+///
+/// The engine's error, for every variant but `Rejected`.
+pub fn outcome_of(
+    page: u32,
+    answer: Result<Vec<RecognisedItem>, RecogniseError>,
+) -> Result<Outcome, RecogniseError> {
+    match answer {
+        Ok(items) => Ok(layer_of(page, items).map_or(Outcome::Nothing, Outcome::Layer)),
+        Err(RecogniseError::Rejected(_)) => Ok(Outcome::Refused),
+        Err(other) => Err(other),
+    }
+}
+
+/// What a refused page usually is, for the sentence that names it.
+///
+/// Both halves are measured ([`outcome_of`]) and the engine's answer does not
+/// say which it was, so the sentence gives both. `src/lib/recognise.ts` says
+/// the same words, and `recognise.test.ts` holds the two together.
+pub const REFUSED_MEANS: &str =
+    "which usually means a script it cannot read or a scan too unclear to tell the script";
+
+/// `page 2`, or `pages 2, 5 and 3 more`: at most eight are named, so a long
+/// document does not fill a line with numbers. Pages count from 1.
+#[must_use]
+pub fn pages_named(pages: &[u32]) -> String {
+    const SHOWN: usize = 8;
+    let head: Vec<String> = pages.iter().take(SHOWN).map(u32::to_string).collect();
+    let head = head.join(", ");
+    match pages.len() {
+        1 => format!("page {head}"),
+        n if n > SHOWN => format!("pages {head} and {} more", n - SHOWN),
+        _ => format!("pages {head}"),
+    }
 }
 
 /// Whether `item` is `word` again: the same text over at least half of the
@@ -347,6 +414,46 @@ mod tests {
         let layer = layer_of(3, vec![item("  "), item("word")]).expect("one word");
         assert_eq!(layer.page, 3);
         assert_eq!(layer.words.len(), 1);
+    }
+
+    #[test]
+    fn only_a_page_the_engine_rejected_is_passed_over() {
+        assert_eq!(
+            outcome_of(2, Err(RecogniseError::Rejected("no model".into()))),
+            Ok(Outcome::Refused)
+        );
+        // Each of these is about the run, and the next page would meet it too.
+        for stops in [
+            RecogniseError::Unavailable("no language pack".into()),
+            RecogniseError::Crashed("SIGTRAP".into()),
+            RecogniseError::TimedOut("30 s".into()),
+            RecogniseError::MalformedInput("short buffer".into()),
+        ] {
+            assert_eq!(outcome_of(2, Err(stops.clone())), Err(stops));
+        }
+    }
+
+    #[test]
+    fn an_answer_is_a_layer_on_its_own_page_or_nothing() {
+        assert_eq!(outcome_of(2, Ok(Vec::new())), Ok(Outcome::Nothing));
+        assert_eq!(outcome_of(2, Ok(vec![item(" ")])), Ok(Outcome::Nothing));
+        let Ok(Outcome::Layer(layer)) = outcome_of(2, Ok(vec![item("word")])) else {
+            panic!("a word is a layer");
+        };
+        assert_eq!((layer.page, layer.words.len()), (2, 1));
+    }
+
+    #[test]
+    fn pages_are_named_up_to_eight() {
+        assert_eq!(pages_named(&[2]), "page 2");
+        assert_eq!(pages_named(&[2, 5]), "pages 2, 5");
+        let eight: Vec<u32> = (1..=8).collect();
+        assert_eq!(pages_named(&eight), "pages 1, 2, 3, 4, 5, 6, 7, 8");
+        let eleven: Vec<u32> = (1..=11).collect();
+        assert_eq!(
+            pages_named(&eleven),
+            "pages 1, 2, 3, 4, 5, 6, 7, 8 and 3 more"
+        );
     }
 
     #[test]

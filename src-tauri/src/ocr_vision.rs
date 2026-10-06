@@ -271,8 +271,10 @@ impl Vision {
     /// Greek had not been measured: a page of four Greek sentences comes back as Latin
     /// and Cyrillic letters of the same shape, 4 of 187 characters right, with detection
     /// on, with it off and with any language named, because Vision offers no Greek
-    /// (`docs/TRAPS.md` has the table). Armenian is misread the same way, and both are
-    /// answered with a confidence of 0.3 to 0.5 where a page it reads gets 1.0.
+    /// (`docs/TRAPS.md` has the table). Armenian is misread the same way. Both are
+    /// answered with a confidence of 0.3 to 0.5, and that is no test for them: a clean
+    /// Ukrainian, Belarusian or Icelandic page is read correctly at the same values
+    /// (345 pages, the same entry), so no page is refused for its confidence.
     ///
     /// Measured 2026-10-05 on 26A434 in the gate's own probe
     /// image, 12 pt type at 2x, with the request built as it is here --- accurate level,

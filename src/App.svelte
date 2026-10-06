@@ -191,6 +191,11 @@
     documentBusy = busy;
     formLayer?.setBusy(busy);
     textEditor?.setBusy(busy);
+    // The commands are guarded by this, and a task's own `refreshMenu` runs
+    // while it is still set. A copy that failed opened no tab, so nothing
+    // asked again, and Print, Comment and the rest stayed grey until the
+    // reader switched tabs.
+    refreshMenu();
   });
   const tabs = new DocumentTabs<DocumentTab>();
   let tabRows = $state<{ id: number; path: string; dirty: boolean }[]>([]);

@@ -17,7 +17,50 @@ as *downloadable*, while the release sat as a draft that GitHub showed to nobody
 are given now because they are different facts, and only the second one means a reader can
 have the binary.)
 
+## [26.10.8] - 2026-10-06
+
+### Changed
+
+- Updated Vite to 8.3.3 and three small Rust crates (`want`, `zerocopy`, `zerocopy-derive`).
+- **`tpdf ocr --json` has a new list, `refused`,** with the pages the recogniser would
+  not read, beside `nothing_read`. Nothing was renamed or removed, so the schema number
+  stays 1. The Python client's `OcrReport` has the list too. A script that took exit 4
+  to mean "a page in another script" now sees exit 0 and that list, or exit 3 when no
+  page got text.
+- **`tpdf help ocr` and the README say which scripts are not read.** A Greek or Armenian
+  scan still gets a copy with wrong Latin letters in it and no warning. A check for that
+  was measured and not built: the recogniser's own confidence, the only signal there is,
+  is as low on clean Ukrainian, Belarusian, Bulgarian, Serbian and Icelandic pages that
+  it reads correctly as it is on Greek, so a rule that refused the Greek page would have
+  refused those. Search such a copy for a word you can see on the page before relying on
+  it.
+
+### Fixed
+
+- **One page the recogniser refuses no longer costs the whole document its text.** On a
+  Mac, a scan with an Arabic, Persian, Hindi, Bengali or Tamil page among its pages made
+  *Recognise text and save as* and `tpdf ocr` stop with an error and write no copy, also
+  when every other page could be read. Such a page is now left as it is and named, and
+  the other pages get their text. The closing line in the window and the tool's report
+  both say: "The recogniser refused page 2, which usually means a script it cannot read
+  or a scan too unclear to tell the script." A very poor scan in any script can be
+  refused in the same way; in the measurements that was 5 of 238 pages, four of them
+  scanned far worse than an office scanner does and one a poor photocopy. If no page at
+  all gets text, no copy is written: the window says so and `tpdf ocr` exits 3, and the
+  message names the refused pages. A recogniser that stops working, does not answer in
+  time or is not there still ends the run with an error.
+- **Commands come back after a copy that could not be made.** When *Recognise text*, a
+  smaller copy or another copy ended with a message and no new tab, Print, Comment, Text
+  box and other commands stayed grey in the tool row and the menus until you switched
+  tabs. With one tab open there was no tab to switch to. They are now live again as soon
+  as the task ends.
+
 ## [26.10.7] - 2026-10-06
+
+Built and tagged, and not published. Letting the recogniser work out the script, the fix
+below, also lets it take a very poor scan for a script it cannot read, and in this version
+one such page cost the whole document its text. 26.10.8 has the repair and is the first
+version to offer what is listed here.
 
 ### Added
 

@@ -180,6 +180,7 @@ const SCHEMA = {
     pages: ["array"],
     alreadyText: ["array"],
     nothingRead: ["array"],
+    refused: ["array"],
     tooLarge: ["array"],
     engine: ["string"],
     languageUnavailable: ["string"],

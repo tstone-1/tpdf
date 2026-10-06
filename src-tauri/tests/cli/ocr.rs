@@ -398,6 +398,188 @@ fn another_script(report: &mut Report, at: &dyn Fn(&str) -> String) {
     );
 }
 
+/// A page the engine will not read, beside one it reads.
+///
+/// The second page is a picture of `multilingual.pdf`'s Arabic page. Vision in
+/// the worker cannot load the model it picks for Arabic and rejects the image
+/// (`docs/TRAPS.md`), and until 26.10.8 that failed the document: exit 4, no
+/// copy, and the Latin page beside it got nothing.
+///
+/// **What is held on every machine is the property, not the refusal.** Whether
+/// a recogniser reads Arabic is the machine's: a system that has the model
+/// gives the page a layer, and that is as right as naming it. So the copy must
+/// be written, page 1 must read as the source does, and page 2 must be
+/// accounted for exactly once. The wording of a refusal is checked only where
+/// one happened, and said to be skipped where none did.
+///
+/// **The tool and the window are held to each other**, because each walks the
+/// pages in code of its own and "accounted for" alone would pass a walk that
+/// filed a refused page under *nothing recognised*. They are given the same
+/// picture and ask the same engine, so what one calls refused the other must.
+fn a_page_the_engine_refuses(
+    report: &mut Report,
+    at: &dyn Fn(&str) -> String,
+    source: &str,
+    scanned: &str,
+) {
+    if !cfg!(target_os = "macos") {
+        report.skip(
+            "ocr",
+            "a page the recogniser refuses is known for Vision only",
+        );
+        return;
+    }
+    let Some(other) = fixture("multilingual.pdf") else {
+        report.skip("ocr", "testdata/multilingual.pdf is not generated");
+        return;
+    };
+    let (picture, arabic, two) = (at("arabic.png"), at("arabic-scan.pdf"), at("two.pdf"));
+    let other = other.display().to_string();
+    let dpi = DPI.to_string();
+    let rendered = tool(
+        &[
+            "render", &other, "-o", &picture, "--page", "2", "--dpi", &dpi,
+        ],
+        &[],
+    );
+    if rendered.0 != 0 {
+        report.check(
+            "the Arabic page renders, to make the scan from",
+            false,
+            &rendered.2,
+        );
+        return;
+    }
+    scan(Path::new(&picture), Path::new(&arabic));
+    let merged = tool(&["merge", scanned, &arabic, "-o", &two], &[]);
+    // The control: both pages are pictures, so neither is skipped for having
+    // text, and the source of the second page is the Arabic one.
+    report.check(
+        "the control: a Latin scan and an Arabic scan, neither with any text",
+        merged.0 == 0
+            && text_of(&two).trim().is_empty()
+            && tool(&["text", &other, "--pages", "2"], &[])
+                .1
+                .contains("البحر"),
+        &merged.2,
+    );
+    let first_page = |file: &str| tool(&["text", file, "--pages", "1"], &[]).1;
+    let second_page = |file: &str| tool(&["text", file, "--pages", "2"], &[]).1;
+    let want = words(&text_of(source));
+
+    let out = at("two-out.pdf");
+    let (code, json, stderr) = tool(&["ocr", &two, "-o", &out, "--json"], &[]);
+    let result: serde_json::Value = serde_json::from_str(&json).unwrap_or_default();
+    let numbers = |key: &str| -> Vec<u64> {
+        result[key]
+            .as_array()
+            .map(|pages| pages.iter().filter_map(serde_json::Value::as_u64).collect())
+            .unwrap_or_default()
+    };
+    let layered: Vec<u64> = result["pages"]
+        .as_array()
+        .map(|pages| pages.iter().filter_map(|p| p["page"].as_u64()).collect())
+        .unwrap_or_default();
+    let (refused, nothing) = (numbers("refused"), numbers("nothing_read"));
+    let mut accounted: Vec<u64> = [&layered[..], &refused[..], &nothing[..]].concat();
+    accounted.sort_unstable();
+    let shared = if code == 0 {
+        overlap(&want, &words(&first_page(&out)))
+    } else {
+        0.0
+    };
+    report.check(
+        "a page the engine may refuse does not cost the other page its layer",
+        code == 0
+            && Path::new(&out).exists()
+            && layered.contains(&1)
+            && shared >= ENOUGH
+            && accounted == [1, 2],
+        &format!("exit {code}; {stderr}; {shared:.2}; {json}"),
+    );
+    if refused == [2] {
+        let plain = at("two-plain.pdf");
+        let (code, said, _) = tool(&["ocr", &two, "-o", &plain], &[]);
+        report.check(
+            "the refused page is named with what that usually means, and gets no text",
+            code == 0
+                && said.contains("text added to 1 of 2 pages")
+                && said.contains(&format!(
+                    "The recogniser refused page 2, {}",
+                    tpdf_lib::ocr_layer::REFUSED_MEANS
+                ))
+                && second_page(&out).trim().is_empty(),
+            &said,
+        );
+        // With no page left to give a layer to, nothing is written, and the
+        // reason is the refusal and not an empty page.
+        let none = at("arabic-out.pdf");
+        let (code, _, stderr) = tool(&["ocr", &arabic, "-o", &none], &[]);
+        report.check(
+            "a document whose only page is refused is not written, and the reason says so",
+            code == 3
+                && stderr.contains("the recogniser refused page 1")
+                && stderr.contains("no copy was written")
+                && !Path::new(&none).exists(),
+            &format!("exit {code}; {stderr}"),
+        );
+    } else {
+        report.skip(
+            "ocr",
+            "this machine's recogniser did not refuse the Arabic page, so the refusal's wording was not checked",
+        );
+    }
+
+    // The window's command, which walks the pages itself.
+    let as_u32 = |pages: &[u64]| -> Vec<u32> { pages.iter().map(|n| *n as u32).collect() };
+    let (tool_refused, tool_nothing) = (as_u32(&refused), as_u32(&nothing));
+    let window = at("two-window.pdf");
+    let (answer, seen) = app_path(Path::new(&two), Path::new(&window), Ask::Plain);
+    let shared = if answer.is_ok() {
+        overlap(&want, &words(&first_page(&window)))
+    } else {
+        0.0
+    };
+    report.check(
+        "the window's command gives the other page its layer too, and files page 2 as the tool does",
+        answer.as_ref().is_ok_and(|read| {
+            let mut accounted: Vec<u32> = read
+                .pages
+                .iter()
+                .map(|page| page.page)
+                .chain(read.refused.iter().copied())
+                .chain(read.nothing_read.iter().copied())
+                .collect();
+            accounted.sort_unstable();
+            read.pages.iter().any(|page| page.page == 1 && page.words > 0)
+                && accounted == [1, 2]
+                && read.refused == tool_refused
+                && read.nothing_read == tool_nothing
+        }) && seen == [Progress { page: 1, of: 2 }, Progress { page: 2, of: 2 }]
+            && shared >= ENOUGH,
+        &format!("{answer:?}; {seen:?}; {shared:.2}; the tool refused {tool_refused:?}"),
+    );
+    if tool_refused == [2] {
+        let none = at("arabic-window.pdf");
+        let (answer, _) = app_path(Path::new(&arabic), Path::new(&none), Ask::Plain);
+        report.check(
+            "the window's command names a refused page when it writes nothing",
+            second_page(&window).trim().is_empty()
+                && answer.as_ref().is_err_and(|why| {
+                    why.contains("The recogniser refused page 1")
+                        && why.contains("No copy was written.")
+                })
+                && !Path::new(&none).exists(),
+            &format!("{answer:?}"),
+        );
+    } else {
+        report.skip(
+            "ocr",
+            "the recogniser did not refuse the Arabic page, so the window's refusal was not checked",
+        );
+    }
+}
+
 pub(super) fn makes_a_scan_searchable(report: &mut Report) {
     let Some(source) = fixture("text-base14.pdf") else {
         report.skip("ocr", "testdata/text-base14.pdf is not generated");
@@ -499,6 +681,7 @@ pub(super) fn makes_a_scan_searchable(report: &mut Report) {
     );
 
     another_script(report, &at);
+    a_page_the_engine_refuses(report, &at, &source, &scanned);
 
     let mixed = at("mixed.pdf");
     let merged = tool(&["merge", &scanned, &source, "-o", &mixed], &[]).0 == 0;

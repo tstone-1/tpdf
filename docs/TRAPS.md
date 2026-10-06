@@ -25808,3 +25808,71 @@ lost its first line at 16 px and was whole at 12 and at 20; Traditional Chinese 
 `tour` at 30 and 40 px and correctly at 12, 16 and 20. Vision asked directly gave the same
 answers on the same pictures, so these are the engine's and not the tool's, and they do not
 grow steadily as the type shrinks.
+
+**2026-10-06, later: the confidence was measured on poor scans, and it is not a rule.** The
+paragraph above ends on what had not been measured, and the question was whether a page whose
+characters mostly carry a confidence of 0.5 or less could be refused as "probably a script
+the recogniser cannot read". Measured on 26A434 through `tpdf ocr` itself, with one line
+added for the run that wrote out each `RecognisedItem` as the tool received it from the OCR
+worker; 345 pages of invented sentences drawn with CoreText and then spoiled with Pillow. A
+page's text was scored against what was drawn (`difflib` ratio, white space removed), and
+its *low share* is the share of its characters in words at 0.5 or less. Vision gives a
+line one of three values, 0.3, 0.5 or 1.0, and every word of the line carries it.
+
+| Pages | Run | Given a layer | Text score | Low share |
+|---|---|---|---|---|
+| Greek: 3 texts, 5 faces, type of 21 to 75 px, and 14 kinds of damage | 56 | 55 | 0.01 to 0.11 | 0.75 to 1.00 |
+| Armenian: 2 texts, 2 faces, the same | 36 | 21 | 0.00 | 1.00 on 20, **0.00 on 1** |
+| English, German, Russian, Japanese: clean, 50 to 100 DPI, skew of 2 and 5 degrees, grey noise, light grey type, JPEG, 1-bit, small type | 80 | 79 | 0.93 to 1.00 | **0.00 on all 79** |
+| The same four made far worse (30 and 36 DPI, blur, heavy noise, 1-bit at 45 and 60 DPI, JPEG at its coarsest), and nine other pages at 30 DPI | 81 | 64 | 0.13 to 1.00 | 0.00 on 50, up to 1.00 |
+| Five handwriting faces, a letter with a stamp, a logo and a signature, a form, a drawing, numbers, symbols, one word, a picture of noise | 21 | 19 | 0.71 to 1.00 | 0.00 on all 19 |
+| Turkish, Czech, Dutch, Finnish, Hungarian, Romanian, Latin, Polish, Vietnamese, Korean, Thai, Chinese, a second Russian text, and English in capitals and in two more faces, at 72 to 300 DPI | 40 | 39 | 0.95 to 1.00 | 0.00 on all 39 |
+| **Ukrainian**, four texts, clean and at 72 to 100 DPI | 9 | 9 | **0.99 to 1.00** | **0.40 to 1.00** |
+| **Belarusian, Icelandic**, clean and at 100 DPI | 4 | 4 | **0.93 to 0.96** | **1.00** |
+| **Bulgarian, Serbian**, clean and at 100 DPI | 4 | 4 | **0.98 to 0.99** | **0.61 to 0.67** |
+| English beside Greek on one page, in six proportions | 6 | 6 | 0.26 to 0.91 | 0.17 to 0.85 |
+| Hebrew, Georgian, clean and at 30 to 100 DPI | 8 | 1 | 0.00 | 1.00 |
+
+The first six rows are the rule one would hope for: no page of Greek below 0.75, no page
+that reads well above 0.00, and nothing in between. The next three end it. A clean page of
+Ukrainian is read 0.99 right and every word of it carries 0.5; Belarusian is read 0.96
+right at 0.3 throughout, the same value a Greek line gets; Icelandic is at 0.5 throughout.
+Of the 195 pages in scripts Vision reads that scored 0.9 or better, 19 had characters at
+0.5 or less and 9 had nothing else. Any share that refuses Greek refuses those: at 0.5 it
+takes 75 of the 76 wrong pages and 16 of the 195 right ones, and at 1.0 it takes 72 and 9.
+The confidence says how sure the recogniser was of the *language*, and Greek is merely one
+of the cases where it was not sure. So no page is refused for it, and `README.md` and
+`tpdf help ocr` say which scripts are not read. A heuristic on the shape of the text that
+came back was not tried, by decision. `Windows.Media.Ocr` reports no confidence at all
+(`RecognisedItem::confidence` is `None` there), so the rule would have been one platform's
+in any case.
+
+Two smaller things from the same pages. A wrong line can carry 1.0: three Greek pages had
+one, and an Armenian page came back as the single word `ap` at 1.0, which is the one wrong
+page no share would have caught. And a readable page's confidence does not fall with its
+quality: a page in a looping display face scored 0.71 at 1.0 throughout, and the English
+and German pages kept 1.0 on every word down to a text score of 0.75.
+
+**The engine also refuses poor scans, and since 26.10.8 a refusal is the page's and not the
+document's.** `RecogniseError::Rejected` was written down above for Arabic and Hindi. In the
+345 pages it was the answer for 8. Five were among the 238 in scripts Vision reads: an
+English, a Russian and two German pages, one at 36 DPI, one under a heavy blur and two as
+JPEG at its coarsest at 50 and 72 DPI, and a Japanese page at 100 DPI with skew, noise and JPEG together, which the
+other three scripts read 0.99 right. The other three were a Hebrew, a Georgian and an
+Armenian page at 30 to 50 DPI.
+Detection takes a page it can make little of for Arabic or Devanagari, and the worker cannot
+load those models. So a refusal says "a script it cannot read, or a scan too unclear to tell
+the script", and it cannot say which. `ocr_layer::outcome_of` now passes over a page whose
+answer is `Rejected` and stops for every other error, a document with a Latin page and an
+Arabic one gets its Latin page read, and both callers name the refused page. Measured after
+the change with two-, four- and one-page scans in both orders: the page after a refused one
+is read by the same worker, so a rejection leaves the worker usable.
+
+What a check of this must not do is depend on this machine refusing Arabic. Another system
+may have the model, and then the page is read and that is right. `tests/cli/ocr.rs` asserts
+the property that holds either way --- a copy, page 1 read, page 2 accounted for once, and
+the tool and the window agreeing on what page 2 was --- and the wording of a refusal only
+where one happened, with a `[SKIP]` line where none did. The agreement between the two
+callers is what makes it able to fail: each walks the pages in code of its own, and filing
+a refused page under *nothing recognised* in either one turned it red, where "accounted
+for" alone stayed green.

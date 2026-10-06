@@ -6,10 +6,12 @@
 import { describe, expect, it } from "vitest";
 
 import backend from "../../src-tauri/src/commands/ocr.rs?raw";
+import layer from "../../src-tauri/src/ocr_layer.rs?raw";
 import {
   afterRecognition,
   PROGRESS_EVENT,
   progressLine,
+  REFUSED_MEANS,
   SAVE_FIRST,
   suggestedName,
   type Recognised,
@@ -20,6 +22,7 @@ function read(over: Partial<Recognised> = {}): Recognised {
     pages: [{ page: 1, words: 40 }],
     alreadyText: [],
     nothingRead: [],
+    refused: [],
     tooLarge: [],
     engine: "vision",
     ...over,
@@ -46,11 +49,26 @@ describe("what the window shares with the backend by spelling", () => {
     // `the_report_reaches_the_window_in_its_own_spelling` pins the same keys
     // from the other side; a field added there and not here is red in one.
     expect(Object.keys(read()).sort()).toEqual(
-      ["alreadyText", "engine", "nothingRead", "pages", "tooLarge"].sort(),
+      ["alreadyText", "engine", "nothingRead", "pages", "refused", "tooLarge"].sort(),
     );
-    for (const key of ["alreadyText", "nothingRead", "tooLarge", "languageUnavailable"]) {
+    for (const key of [
+      "alreadyText",
+      "nothingRead",
+      "refused",
+      "tooLarge",
+      "languageUnavailable",
+    ]) {
       expect(backend).toContain(`"${key}"`);
     }
+  });
+});
+
+describe("what the window shares with the layer's rules by spelling", () => {
+  it("says what a refused page usually is in the backend's own words", () => {
+    const declared = /pub const REFUSED_MEANS: &str =\s*"([^"]+)";/.exec(layer)?.[1];
+    // The control, as above: no match would compare against `undefined`.
+    expect(declared).toBeDefined();
+    expect(REFUSED_MEANS).toBe(declared);
   });
 });
 
@@ -104,6 +122,21 @@ describe("afterRecognition", () => {
         "No text was recognised on pages 3, 5. " +
         "Too large to read: page 4.",
     );
+  });
+
+  it("names the pages the recogniser refused, says what that usually means, and counts them", () => {
+    const one = read({ refused: [2] });
+    expect(afterRecognition(one, "a.pdf")).toBe(
+      "Saved a.pdf. Text was added to 1 of 2 pages (40 words). " +
+        "The recogniser refused page 2, which usually means a script it cannot read " +
+        "or a scan too unclear to tell the script.",
+    );
+    const more = read({ nothingRead: [3], refused: [2, 4] });
+    const said = afterRecognition(more, "a.pdf");
+    expect(said).toContain("1 of 4 pages");
+    expect(said).toContain("No text was recognised on page 3. The recogniser refused pages 2, 4, which");
+    // Nothing is said about refusing when no page was refused.
+    expect(afterRecognition(read(), "a.pdf")).not.toContain("refused");
   });
 
   it("does not list three hundred pages", () => {

@@ -21,7 +21,7 @@ use tauri::Emitter;
 
 use super::{outside_at, password_for};
 use crate::ocr::Pixels;
-use crate::ocr_layer;
+use crate::ocr_layer::{self, Outcome};
 use crate::ocr_worker::{OcrWorker, PIXELS_CAPACITY};
 use crate::render::{RenderService, TileFormat, TileOutcome, TileRequest};
 use crate::textlayer::Layer;
@@ -77,6 +77,8 @@ pub struct Recognised {
     pub already_text: Vec<u32>,
     /// Pages the engine read and found no words on.
     pub nothing_read: Vec<u32>,
+    /// Pages whose image the engine would not read ([`Outcome::Refused`]).
+    pub refused: Vec<u32>,
     /// Pages too large to render finely enough to read.
     pub too_large: Vec<u32>,
     /// The engine that read them.
@@ -229,21 +231,26 @@ fn read(
             height,
             scale,
         };
-        let (id, items) = worker
-            .recognise_page(pixels, &options)
+        // A page the engine will not read is this page's alone; anything else
+        // it reports stops the run (`ocr_layer::outcome_of`).
+        let answer = worker.recognise_page(pixels, &options).map(|(id, items)| {
+            if report.engine.is_empty() {
+                report.engine = id.to_string();
+            }
+            items
+        });
+        let outcome = ocr_layer::outcome_of(page, answer)
             .map_err(|why| format!("Page {n} could not be read: {why}"))?;
-        if report.engine.is_empty() {
-            report.engine = id.to_string();
-        }
-        match ocr_layer::layer_of(page, items) {
-            Some(layer) => {
+        match outcome {
+            Outcome::Layer(layer) => {
                 report.pages.push(LayerPage {
                     page: n,
                     words: layer.words.len(),
                 });
                 layers.push(layer);
             }
-            None => report.nothing_read.push(n),
+            Outcome::Nothing => report.nothing_read.push(n),
+            Outcome::Refused => report.refused.push(n),
         }
     }
     // A stop asked for during the last page is still a stop.
@@ -254,7 +261,17 @@ fn read(
 }
 
 /// Why a document none of whose pages got a layer is not written.
+///
+/// A page the recogniser refused is named with what that usually means,
+/// whatever became of the others: it is the cause a reader can act on.
 fn nothing_to_add(report: &Recognised) -> String {
+    if !report.refused.is_empty() {
+        return format!(
+            "No page was given text. The recogniser refused {}, {}.",
+            ocr_layer::pages_named(&report.refused),
+            ocr_layer::REFUSED_MEANS
+        );
+    }
     let read = !report.nothing_read.is_empty();
     let had = !report.already_text.is_empty();
     let large = !report.too_large.is_empty();
@@ -327,7 +344,8 @@ fn reads_back(
 /// # Errors
 ///
 /// [`UNSAVED`] for a plan that changes the file; [`CANCELLED`]; no engine on
-/// this platform; no page given a layer; everything
+/// this platform; an engine that died, did not answer in time or was handed a
+/// malformed request, on any page; no page given a layer; everything
 /// [`save::write_checked_copy`] refuses; or a copy that did not read back. No
 /// path leaves a file under `out` that was not there before.
 #[allow(clippy::too_many_arguments)]
@@ -458,6 +476,23 @@ mod tests {
     }
 
     #[test]
+    fn the_reason_nothing_was_added_names_the_pages_the_recogniser_refused() {
+        let refused = |already: &[u32], pages: &[u32]| Recognised {
+            refused: pages.to_vec(),
+            ..report(already, &[], &[])
+        };
+        assert_eq!(
+            nothing_to_add(&refused(&[], &[1])),
+            "No page was given text. The recogniser refused page 1, which usually means a \
+             script it cannot read or a scan too unclear to tell the script."
+        );
+        let mixed = nothing_to_add(&refused(&[1], &[2, 3]));
+        assert!(mixed.contains("refused pages 2, 3, which"), "{mixed}");
+        // Without one, nothing is said about refusing.
+        assert!(!nothing_to_add(&report(&[1], &[2], &[])).contains("refused"));
+    }
+
+    #[test]
     fn the_reason_nothing_was_added_names_the_one_cause_when_there_is_one() {
         assert!(nothing_to_add(&report(&[1, 2], &[], &[])).contains("already has text"));
         assert!(nothing_to_add(&report(&[], &[1], &[])).contains("No text was recognised"));
@@ -472,6 +507,7 @@ mod tests {
             pages: vec![LayerPage { page: 2, words: 7 }],
             already_text: vec![1],
             nothing_read: vec![3],
+            refused: vec![5],
             too_large: vec![4],
             engine: "vision".into(),
             language_unavailable: Some("de-DE".into()),
@@ -483,6 +519,7 @@ mod tests {
                 "pages": [{ "page": 2, "words": 7 }],
                 "alreadyText": [1],
                 "nothingRead": [3],
+                "refused": [5],
                 "tooLarge": [4],
                 "engine": "vision",
                 "languageUnavailable": "de-DE",
