@@ -507,22 +507,25 @@ jobs:
           workers cannot read arbitrary user files or access the network;
           Windows workers use low integrity and resource-limited jobs.
 
-          **Fixed in 26.10.8, and the reason to update.** *Recognise text*
-          could not read a scan in Japanese or Chinese on a Mac: the page
-          came back as a few wrong characters or as nothing, and no copy
-          was written. With no language named, the recogniser now works
-          out the script itself, and Korean and Thai are read too. Scans
-          in Latin and Cyrillic letters are read as before. Not read on
-          a Mac: Greek and Armenian, which come out as wrong letters,
-          and Hebrew, Arabic and the scripts of India. A page the
-          recogniser refuses is now named and left as it is, and the
-          other pages still get their text; it used to cost the whole
-          document its copy.
+          **Fixed in 26.10.9, and the reason to update.** A document
+          exported from LibreOffice Writer with a numbered or bulleted
+          list in it showed no text to edit on any page. The text of its
+          list is now edited like any other. A page signed with Acrobat's
+          *Fill & Sign* is no longer refused either. A line that is full
+          takes more words: the paragraph wraps at its right margin and
+          what is below moves down, bullets and line-end hyphens with
+          it. Still read-only on such a page: the bullets themselves, a
+          justified paragraph, and the header and footer. A line that
+          ends at a hyphen LibreOffice added takes no more words.
 
-          **New in 26.10.8.** *Recognise text: language...* lets you name
-          the language a scan is in, from the languages your computer
-          offers; the choice is remembered. On Windows, `tpdf ocr
-          --language` now chooses among the installed recognisers.
+          **New in 26.10.8.** *Recognise text* reads scans in Japanese,
+          Chinese, Korean and Thai on a Mac, and a page the recogniser
+          refuses is named and left as it is while the other pages get
+          their text. Not read on a Mac: Greek and Armenian, which come
+          out as wrong letters, and Hebrew, Arabic and the scripts of
+          India. *Recognise text: language...* lets you name the
+          language a scan is in; the choice is remembered. On Windows,
+          `tpdf ocr --language` chooses among the installed recognisers.
 
           **New in 26.10.6.** The blank window lists the documents you
           opened lately. Form commands have a *Form* menu and a *Form*

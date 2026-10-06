@@ -6571,6 +6571,33 @@ now comes last there.
 `docs/THREAT-MODEL.md` already stated the three new commands (T6.35, T6.36). The release
 notes in `release.yml` were rewritten.
 
+**26.10.9 verification, macOS arm64, 2026-10-06:** all 30 gates passed on the release tree
+(2,865 Rust tests with ten documented ignored, 2,491 frontend tests) and `check_windows.py`
+type-checked the Windows tree. `--near v26.10.8` selected 247 Rust mutations and no frontend
+one, since no frontend file changed. 246 were caught by the test named for them. The one
+that was not, `wrap: the measure is the page`, was red in two other tests and not in its
+own: a paragraph of several lines now gets the same measure from the page's paragraphs,
+its own among them, when its own reading is taken away, so an edit past the page edge
+breaks where it did. The entry names the test that pins a last line's own measure, and is
+red there through the harness. `worker-probe` 48/48; `backend-probe` 41/44 on
+`text-heavy.pdf` with three skipped and 42/44 on `vector-heavy.pdf` with two skipped. The
+unit tests and the command-line suite passed on Windows 11 through
+`scripts/run_on_windows.py` on the release tree (2,888 unit tests, 517 command-line checks
+with three skipped, which need the Mac's recogniser). Two crates moved in the refresh,
+`embed-resource` to 3.0.12 and `winreg` to 0.56.0; no npm package was behind and no major
+version is held back. The normal bundle, with the development engine hidden: the bundled
+`tpdf-cli` answered `--version` with 26.10.9 and `verify`, and `text-runs` offered 32 runs
+on the LibreOffice fixture and 83 on the document the work was measured on, which 26.10.8
+refuses. The bundle's own window was not opened. The window checks of this cycle were made
+in a development window against the dev server, on a scratch copy of that document, and
+`docs/VERIFICATION.md` has what each found: two defects no probe had shown, both fixed
+before this commit. Not looked at in a window: the last line of an item of several growing
+past its measure, and anything on Windows. The window harnesses were not run and the README
+pictures were not retaken; no picture shows text being edited in a list. `scripts/text_list_check.py`
+passed on the fixture. `docs/THREAT-MODEL.md` needed no change: the cycle added no command,
+no request and no authority. The release notes in `release.yml` were rewritten and lead
+with the fix.
+
 **26.10.8 verification, macOS arm64, 2026-10-06:** all 30 gates passed on the release tree
 (2,836 Rust tests with ten documented ignored, 2,491 frontend tests) and `check_windows.py`
 type-checked the Windows tree. Every mutation selected `--near v26.10.7` ran and was caught,
