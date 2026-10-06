@@ -6609,6 +6609,8 @@ downloaded `.dmg` staples and Gatekeeper reads it as Notarized Developer ID. The
 cask went from 26.10.8 to 26.10.9; `brew audit --cask --online` passed and `brew livecheck`
 reads 26.10.9. winget was not updated. The update from 26.10.8 (step 12) was not applied
 by hand before this was written.
+Afterwards every Rust mutation in a file changed since `v26.10.8` ran, 863, and all were
+caught; no frontend file had changed.
 
 **26.10.8 verification, macOS arm64, 2026-10-06:** all 30 gates passed on the release tree
 (2,836 Rust tests with ten documented ignored, 2,491 frontend tests) and `check_windows.py`
