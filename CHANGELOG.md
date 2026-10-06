@@ -17,6 +17,38 @@ as *downloadable*, while the release sat as a draft that GitHub showed to nobody
 are given now because they are different facts, and only the second one means a reader can
 have the binary.)
 
+## [26.10.9] - Unreleased
+
+### Fixed
+
+- **Text in a numbered or bulleted list of a LibreOffice document can be edited.** A
+  tagged PDF exported from LibreOffice Writer with a list in it showed no text to edit at
+  all, on any page: *Edit existing text* and `tpdf text-runs` answered *unsupported or
+  inconsistent tagged text structure*. LibreOffice writes each list item's paragraph as a
+  block of its own inside the item, and tpdf read only items that hold their words
+  directly. Such a paragraph is now read, under its own name or the name of its paragraph
+  style, also with a sublist beside it. The item's number or bullet, its bold first words
+  and the rest of its paragraph are edited like any other text, and the structure of the
+  document is written back as it was.
+- **One bullet in a footer no longer makes the page's body text read-only.** LibreOffice
+  embeds each font with a list of its own of the characters it shows. When that list held
+  one character tpdf does not write in such a font, a bullet between the parts of an
+  address for example, every word set in that font could be read and not edited. Only the
+  text that shows that character stays read-only now; the rest of the font's text is
+  edited.
+- **A page signed with Acrobat's Fill & Sign can be edited.** A signature picture put on a
+  page that way was a reason to refuse the whole page, twice over: for the mark Acrobat
+  puts around what it adds, and for the way it writes the picture's frame. The picture is
+  kept as it is and the page's own text is offered.
+
+What still cannot be edited on such a page: the bullets themselves, a hyphen LibreOffice
+added at the end of a line (a shorter word before it leaves a gap before the hyphen), a
+justified paragraph, and the header and footer. A list item made of two paragraphs still
+keeps the document's text from being edited. A font whose no-break space is drawn the way
+Liberation Sans draws it still has all its text read-only when the document uses that
+space. A centred line is edited in the window, where it stays centred; `tpdf edit` needs
+`"font"` on that operation.
+
 ## [26.10.8] - 2026-10-06
 
 ### Changed

@@ -1364,6 +1364,208 @@ fn textedit_a_font_tpdf_cannot_read_keeps_its_text_read_only() {
     }
 }
 
+// A symbolic subset whose map names one character this path does not write:
+// LibreOffice sets a footer's bullets in the body font, and that one glyph
+// used to make every word in the font read-only. The code is kept instead. A
+// run that shows it is read-only and written back byte for byte, the other
+// runs in the font are edited, and nothing can write the kept character.
+#[test]
+fn textedit_symbolic_codes_keep_a_character_they_cannot_write_read_only() {
+    // Code 15 shows the synthetic B. `target` is what the map calls it, and
+    // the second line shows it between its two words.
+    let bulleted = |target: &str| {
+        let (mut doc, font, program) = custom_fixture();
+        let map = doc
+            .get_dictionary(font)
+            .unwrap()
+            .get(b"ToUnicode")
+            .unwrap()
+            .as_reference()
+            .unwrap();
+        let source = doc.get_object_mut(map).unwrap().as_stream_mut().unwrap();
+        let text = String::from_utf8(source.content.clone()).unwrap();
+        assert!(text.contains("<0F> <0042>"));
+        source.content = text
+            .replace("<0F> <0042>", &format!("<0F> <{target}>"))
+            .into_bytes();
+        let page = crate::pagetree::ordered_pages(&doc)[0];
+        let mut content =
+            lopdf::content::Content::decode_strict(&doc.get_page_content(page)).unwrap();
+        let show = content
+            .operations
+            .iter_mut()
+            .filter(|op| op.operator == "Tj")
+            .nth(1)
+            .unwrap();
+        let bytes: Vec<u8> = show.operands[0]
+            .as_str()
+            .unwrap()
+            .iter()
+            .map(|&code| if code == 9 { 15 } else { code })
+            .collect();
+        show.operands[0] = Object::string_literal(bytes);
+        let stream = doc.add_object(Stream::new(Dictionary::new(), content.encode().unwrap()));
+        doc.get_dictionary_mut(page)
+            .unwrap()
+            .set("Contents", stream);
+        (doc, font, program)
+    };
+    let offered = |doc: &Document| {
+        textedit::scan(doc, 0).map(|page| {
+            page.runs
+                .into_iter()
+                .map(|run| run.text)
+                .collect::<Vec<_>>()
+        })
+    };
+    // The control: named as the letter it is, the glyph is text like any other.
+    assert_eq!(
+        offered(&bulleted("0042").0).unwrap(),
+        ["SYNTHETIC FIRST", "SYNTHETICBSECOND"]
+    );
+    for target in ["2022", "00e4", "f0b7"] {
+        let (mut doc, font, program) = bulleted(target);
+        assert_eq!(offered(&doc).unwrap(), ["SYNTHETIC FIRST"], "{target}");
+        let before = doc.objects.clone();
+        let page = crate::pagetree::ordered_pages(&doc)[0];
+        let shown = |doc: &Document| {
+            lopdf::content::Content::decode_strict(&doc.get_page_content(page))
+                .unwrap()
+                .operations
+                .into_iter()
+                .filter(|op| op.operator == "Tj")
+                .nth(1)
+                .unwrap()
+                .operands
+        };
+        let kept = shown(&doc);
+        let update = change(&doc, "EDITED FIRST");
+        textedit::write(&mut doc, &[update]).unwrap();
+        assert_eq!(offered(&doc).unwrap(), ["EDITED FIRST"], "{target}");
+        assert_eq!(shown(&doc), kept, "{target}");
+        assert_eq!(doc.objects[&font], before[&font]);
+        assert_eq!(doc.objects[&program], before[&program]);
+        // Neither the letter the glyph draws nor the character the map names
+        // can be written with it.
+        for absent in ["B", "\u{2022}", "\u{e4}"] {
+            let state = doc.objects.clone();
+            let edit = change(&doc, absent);
+            assert!(textedit::write(&mut doc, &[edit]).is_err(), "{absent}");
+            assert_eq!(doc.objects, state);
+        }
+    }
+    // A kept glyph's ink is held to an offered glyph's limits, and joins the
+    // font's vertical extent: here it hangs 0.4 em below the baseline, which
+    // every run in the font then allows for. Half an em is the limit.
+    let hanging = |bottom: i16| {
+        let (mut doc, _, program) = bulleted("2022");
+        let stream = doc
+            .get_object_mut(program)
+            .unwrap()
+            .as_stream_mut()
+            .unwrap();
+        stream.content = super::ink_tests::with_components(
+            stream.content.clone(),
+            [('B', 0, bottom, 16384), ('D', 0, 0, 16384)],
+        );
+        doc
+    };
+    let deep = |doc: &Document| textedit::scan(doc, 0).unwrap().runs[0].minimum_height;
+    assert_eq!(deep(&bulleted("2022").0), None);
+    assert!(deep(&hanging(-400)).is_some());
+    assert_eq!(offered(&hanging(-500)).unwrap(), ["SYNTHETIC FIRST"]);
+    assert!(offered(&hanging(-501)).is_err());
+    // A kept glyph that draws nothing is proved blank, like an offered space:
+    // here the font's space is named as a no-break space.
+    let (mut doc, font, _) = custom_fixture();
+    let map = doc
+        .get_dictionary(font)
+        .unwrap()
+        .get(b"ToUnicode")
+        .unwrap()
+        .as_reference()
+        .unwrap();
+    let source = doc.get_object_mut(map).unwrap().as_stream_mut().unwrap();
+    let text = String::from_utf8(source.content.clone()).unwrap();
+    assert!(text.contains("<09> <0020>"));
+    source.content = text.replace("<09> <0020>", "<09> <00A0>").into_bytes();
+    let page = crate::pagetree::ordered_pages(&doc)[0];
+    let stream = doc.add_object(Stream::new(
+        Dictionary::new(),
+        b"BT /F1 12 Tf 40 180 Td <010203040506040708> Tj ET \
+          BT /F1 12 Tf 40 140 Td <0A090B> Tj ET"
+            .to_vec(),
+    ));
+    doc.get_dictionary_mut(page)
+        .unwrap()
+        .set("Contents", stream);
+    assert_eq!(offered(&doc).unwrap(), ["SYNTHETIC"]);
+    // A kept glyph is measured as exactly as an offered one. One whose width
+    // disagrees with its program, or that the program does not have, refuses
+    // the font as it did before codes were kept; the font's text is then
+    // read-only as a whole, which leaves this page nothing to edit.
+    let (mut doc, font, _) = bulleted("2022");
+    doc.get_dictionary_mut(font)
+        .unwrap()
+        .get_mut(b"Widths")
+        .unwrap()
+        .as_array_mut()
+        .unwrap()[15] = Object::Integer(10);
+    assert_eq!(
+        offered(&doc).unwrap_err(),
+        "embedded font widths disagree with its glyph metrics"
+    );
+    let (mut doc, _, program) = bulleted("2022");
+    let bytes = &mut doc
+        .get_object_mut(program)
+        .unwrap()
+        .as_stream_mut()
+        .unwrap()
+        .content;
+    let hole = bytes.len() - 256 + 15;
+    bytes[hole] = 0;
+    assert!(offered(&doc).is_err());
+    // A kept code past the font's widths has no width to hold its glyph to.
+    // Beside text in another font, the refusal shows as what it is: this
+    // font's text is read-only and the other's is offered, where skipping the
+    // code would have refused the page for a code with no meaning.
+    let (mut doc, font, _) = bulleted("2022");
+    doc.get_dictionary_mut(font).unwrap().set("LastChar", 14);
+    doc.get_dictionary_mut(font)
+        .unwrap()
+        .get_mut(b"Widths")
+        .unwrap()
+        .as_array_mut()
+        .unwrap()
+        .pop();
+    let descriptor = doc
+        .get_dictionary(font)
+        .unwrap()
+        .get(b"FontDescriptor")
+        .unwrap()
+        .as_reference()
+        .unwrap();
+    // What the read-only reading of the font advances such a code by.
+    doc.get_dictionary_mut(descriptor)
+        .unwrap()
+        .set("MissingWidth", 600);
+    let helvetica = doc.add_object(dictionary! {
+        "Type" => "Font", "Subtype" => "Type1", "BaseFont" => "Helvetica"
+    });
+    let page = crate::pagetree::ordered_pages(&doc)[0];
+    doc.get_dictionary_mut(page).unwrap().set(
+        "Resources",
+        dictionary! { "Font" => dictionary! { "F1" => font, "F2" => helvetica } },
+    );
+    let mut content = doc.get_page_content(page);
+    content.extend(b" BT /F2 12 Tf 40 100 Td (THIRD) Tj ET");
+    let stream = doc.add_object(Stream::new(Dictionary::new(), content));
+    doc.get_dictionary_mut(page)
+        .unwrap()
+        .set("Contents", stream);
+    assert_eq!(offered(&doc).unwrap(), ["THIRD"]);
+}
+
 // ZapfDingbats and Symbol, named without a program as ReportLab sets bullets,
 // keep their text read-only from Adobe's widths for their built-in encodings,
 // and the rest of the page edits. An encoding of the document's own, or a

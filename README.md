@@ -691,6 +691,8 @@ or pattern-filled text can remain read-only beside editable text, and so can let
 outside Latin, such as Cyrillic, that a font's encoding names.
 A centred line with no other text on it, such as a slide title, is edited about its
 centre and stays centred; right-aligned and justified text stays read-only.
+In a numbered or bulleted list from LibreOffice the items' text is edited, while the
+bullets, and the hyphens LibreOffice adds at line ends, stay read-only.
 Supported images and vector artwork remain unchanged. Unchanged Word, LibreOffice, Edge,
 Acrobat, PowerPoint, pdfTeX, XeLaTeX, LuaTeX and Typst exports are included in the verified
 examples; this does not mean every export from those applications is editable. Where a

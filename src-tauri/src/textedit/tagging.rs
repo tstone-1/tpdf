@@ -15,6 +15,10 @@ mod header_tests;
 #[cfg(test)]
 mod inline_tests;
 #[cfg(test)]
+mod libreoffice_tests;
+#[cfg(test)]
+mod list_body_tests;
+#[cfg(test)]
 mod list_tests;
 #[cfg(test)]
 mod nested_list_tests;
@@ -814,6 +818,10 @@ fn groups<'a>(
     // figure in a figure, it goes back to the walk, which keeps it read-only.
     let in_paragraph = text_block(plain.tag)
         || (!standard_role(plain.tag) && text_block(role(scope.roles, plain.tag)?));
+    // What a list body holds besides sublists: its paragraph blocks, and
+    // whether it has inline leaves of its own (`body_holds_one_thing`).
+    let mut paragraphs = 0;
+    let mut leaves = false;
     while let Some((item, parent, lifted_pins)) = work.pop() {
         if let Object::Reference(id) = item {
             // Word and Acrobat nest a sublist inside the list body rather than
@@ -883,7 +891,13 @@ fn groups<'a>(
             // shape's Figure. The words belong to the drawing, so they are
             // kept, pinned, and the rest of the page stays editable.
             let in_figure = plain.tag == b"Figure";
-            if annotation_owner(plain.tag)
+            // LibreOffice writes a list item's paragraph as a block of its own
+            // inside the body, under `P` or the paragraph style's name. It is
+            // admitted where a cell's paragraph is, and counted against the
+            // body's own leaves (`body_holds_one_thing`).
+            if plain.tag == b"LBody" && block {
+                paragraphs += 1;
+            } else if annotation_owner(plain.tag)
                 || (!matches!(tag, b"NonStruct" | b"Span")
                     && !annotation_owner(tag)
                     && !(plain.tag == b"LI" && matches!(tag, b"Lbl" | b"LBody"))
@@ -891,6 +905,7 @@ fn groups<'a>(
             {
                 return Err(INVALID.into());
             }
+            leaves |= plain.tag == b"LBody" && !block;
             // A label's or body's layout attributes were checked by `element`
             // like a paragraph's, and any pin they carry joins the group's.
             let items = kids(doc, child)?;
@@ -996,9 +1011,13 @@ fn groups<'a>(
             // Cell -> paragraph -> optional Span/NonStruct leaf. Only the cell
             // branch recurses, so this adds one bounded level, not arbitrary trees.
             // LI -> LBody -> optional Link/Form leaf is the same single extra
-            // level; LBody is a leaf target, so this cannot recurse further.
+            // level. LibreOffice writes the item's paragraph as a block of its
+            // own inside the body, LI -> LBody -> paragraph -> leaf, which is
+            // the cell's shape one level down: a paragraph matches none of the
+            // three arms, so the recursion ends there.
             if (matches!(plain.tag, b"TD" | b"TH") && block)
                 || (plain.tag == b"LI" && tag == b"LBody")
+                || (plain.tag == b"LBody" && block)
             {
                 groups.extend(self::groups(doc, group, scope, ids, nested)?);
             } else {
@@ -1008,10 +1027,23 @@ fn groups<'a>(
             plain.items.push(item);
         }
     }
+    if !body_holds_one_thing(paragraphs, leaves || !plain.items.is_empty()) {
+        return Err(INVALID.into());
+    }
     if !plain.items.is_empty() || groups.is_empty() {
         groups.push(plain);
     }
     Ok(groups)
+}
+
+// A list body holds its own words (marked content and inline leaves, what
+// Chrome, Word and PowerPoint write) or one paragraph block that holds them
+// (LibreOffice), never both and never two paragraphs. Every MCID of an item is
+// one block to a wrap, its label included (`Tags::blocks`): two paragraphs in
+// one body would be re-laid as one, and words beside a paragraph would be lines
+// of it. A sublist is neither; it goes back to the walk before it is counted.
+fn body_holds_one_thing(paragraphs: usize, own: bool) -> bool {
+    paragraphs == 0 || (paragraphs == 1 && !own)
 }
 
 // Table 344: an element's ink bounds, a rectangle in default user space.

@@ -466,3 +466,232 @@ fn textedit_preserved_form_images_share_the_page_image_budget() {
         }
     }
 }
+
+// What Acrobat's Fill & Sign appends to a page: `/ADBE_FillSign BMC ... EMC`
+// around a form that holds a form that draws the signature picture, each form
+// carrying Fill & Sign's own record, the innermost with its box given as
+// `[0 1 1 0]`. `content` is what the marked sequence holds.
+fn filled(content: &str) -> (Document, ObjectId, ObjectId, ObjectId) {
+    let (mut doc, page, outer) = fixture(false);
+    let image = doc.add_object(Stream::new(
+        dictionary! { "Type" => "XObject", "Subtype" => "Image", "Width" => 8, "Height" => 2, "BitsPerComponent" => 8, "ColorSpace" => "DeviceGray" },
+        vec![0; 16],
+    ));
+    let inner = doc.add_object(Stream::new(
+        dictionary! {
+            "Type" => "XObject", "Subtype" => "Form", "FormType" => 1,
+            "BBox" => vec![0.into(), 1.into(), 1.into(), 0.into()],
+            "Matrix" => vec![40.into(), 0.into(), 0.into(), 30.into(), 0.into(), 0.into()],
+            "Resources" => dictionary! { "XObject" => dictionary! { "Im0" => image } },
+            "ADBE_FillSign" => dictionary! {
+                "Type" => "FillSignData", "Subtype" => "signature",
+                "AssetID" => Object::string_literal("SYNTHETIC"),
+                "FieldColor" => vec![0.into(), 0.into(), 0.into()],
+            },
+        },
+        b"q /Im0 Do Q".to_vec(),
+    ));
+    let stream = doc.get_object_mut(outer).unwrap().as_stream_mut().unwrap();
+    stream.set_content(b"q 0 Tc 0 Tw 0 Ts 100 Tz 0 Tr /Fm0 Do Q".to_vec());
+    stream.dict.set(
+        "Resources",
+        dictionary! { "XObject" => dictionary! { "Fm0" => inner } },
+    );
+    stream.dict.set(
+        "ADBE_FillSign",
+        dictionary! { "Type" => "FillSignData", "Subtype" => "page" },
+    );
+    let content = doc.add_object(Stream::new(
+        Dictionary::new(),
+        format!("q BT /F1 12 Tf 40 180 Td (FIRST) Tj ET /ADBE_FillSign BMC {content} EMC")
+            .into_bytes(),
+    ));
+    doc.get_dictionary_mut(page)
+        .unwrap()
+        .set("Contents", content);
+    (doc, page, outer, inner)
+}
+
+fn offered(doc: &Document) -> Result<Vec<String>, String> {
+    textedit::scan(doc, 0).map(|page| page.runs.into_iter().map(|run| run.text).collect())
+}
+
+#[test]
+fn textedit_fill_and_sign_additions_are_kept_and_the_page_is_edited() {
+    let (mut doc, page, _, _) = filled("Q q 1 g /Form Do Q");
+    let before = textedit::scan(&doc, 0).unwrap();
+    assert_eq!(offered(&doc).unwrap(), ["FIRST"]);
+    let objects = doc.objects.clone();
+    textedit::write(
+        &mut doc,
+        &[Change {
+            page: 0,
+            layout: None,
+            revision: before.revision,
+            operator: before.runs[0].operator,
+            original: "FIRST".into(),
+            replacement: "IN".into(),
+        }],
+    )
+    .unwrap();
+    assert_eq!(offered(&doc).unwrap(), ["IN"]);
+    for (id, value) in objects {
+        if id != page {
+            assert_eq!(doc.objects[&id], value);
+        }
+    }
+    let written = String::from_utf8(doc.get_page_content(page)).unwrap();
+    assert!(
+        written.contains("/ADBE_FillSign BMC") && written.contains("/Form Do"),
+        "{written}"
+    );
+    // Text Fill & Sign typed straight onto the page is the addition's, not
+    // the document's: kept, and never offered.
+    let typed = "Q BT /F1 12 Tf 40 140 Td (SECOND) Tj ET";
+    assert_eq!(offered(&filled(typed).0).unwrap(), ["FIRST"]);
+    let control = filled("Q q").0;
+    let page = crate::pagetree::ordered_pages(&control)[0];
+    let mut control = control;
+    let plain = control.add_object(Stream::new(
+        Dictionary::new(),
+        b"q BT /F1 12 Tf 40 180 Td (FIRST) Tj ET Q BT /F1 12 Tf 40 140 Td (SECOND) Tj ET".to_vec(),
+    ));
+    control
+        .get_dictionary_mut(page)
+        .unwrap()
+        .set("Contents", plain);
+    assert_eq!(offered(&control).unwrap(), ["FIRST", "SECOND"]);
+    for (content, reason) in [
+        // Nothing opens inside the addition, and it has to close.
+        (
+            "/ADBE_FillSign BMC /Artifact BMC 0 0 10 10 re f EMC EMC",
+            "marked content inside a Fill & Sign addition is not editable yet",
+        ),
+        (
+            "/ADBE_FillSign BMC /Span << /ActualText (A) >> BDC EMC EMC",
+            "marked content inside a Fill & Sign addition is not editable yet",
+        ),
+        (
+            "/ADBE_FillSign BMC 0 0 10 10 re f",
+            "unterminated Fill & Sign marked content",
+        ),
+        // Only that tag, without properties, and only outside a text object.
+        (
+            "/ADBE_Other BMC 0 0 10 10 re f EMC",
+            "marked content has no supported structure tree",
+        ),
+        (
+            "/FillSign BMC 0 0 10 10 re f EMC",
+            "marked content has no supported structure tree",
+        ),
+        (
+            "/ADBE_FillSign << >> BDC 0 0 10 10 re f EMC",
+            "unsupported ActualText marked-content sequence",
+        ),
+    ] {
+        let (mut doc, page, _, _) = filled("Q q");
+        let stream = doc.add_object(Stream::new(
+            Dictionary::new(),
+            format!("BT /F1 12 Tf 40 180 Td (FIRST) Tj ET {content}").into_bytes(),
+        ));
+        doc.get_dictionary_mut(page)
+            .unwrap()
+            .set("Contents", stream);
+        assert_eq!(offered(&doc).unwrap_err(), reason, "{content}");
+    }
+    let (mut doc, page, _, _) = filled("Q q");
+    let stream = doc.add_object(Stream::new(
+        Dictionary::new(),
+        // The second line is there so that the page would have text to
+        // offer if the first were merely kept read-only.
+        b"BT /F1 12 Tf 40 180 Td /ADBE_FillSign BMC (FIRST) Tj EMC ET \
+          BT /F1 12 Tf 40 140 Td (SECOND) Tj ET"
+            .to_vec(),
+    ));
+    doc.get_dictionary_mut(page)
+        .unwrap()
+        .set("Contents", stream);
+    assert!(offered(&doc).is_err());
+}
+
+#[test]
+fn textedit_fill_and_sign_records_and_reversed_boxes_are_read_as_what_they_are() {
+    let bounds = |doc: &Document, page: ObjectId| {
+        let resources = doc
+            .get_dictionary(page)
+            .unwrap()
+            .get(b"Resources")
+            .unwrap()
+            .as_dict()
+            .unwrap();
+        check(doc, resources, b"Form", textedit::MAX_IMAGES).map(|form| form.unwrap().bounds)
+    };
+    let (doc, page, outer, inner) = filled("Q q 1 g /Form Do Q");
+    assert_eq!(offered(&doc).unwrap(), ["FIRST"]);
+    let reversed = bounds(&doc, page).unwrap();
+    // Either pair of opposite corners names the same rectangle.
+    for corners in [[0, 0, 1, 1], [1, 0, 0, 1], [1, 1, 0, 0]] {
+        let mut doc = doc.clone();
+        doc.get_object_mut(inner)
+            .unwrap()
+            .as_stream_mut()
+            .unwrap()
+            .dict
+            .set("BBox", corners.map(Object::from).to_vec());
+        assert_eq!(bounds(&doc, page).unwrap(), reversed, "{corners:?}");
+    }
+    // The outer form's own box, turned over, is the same box under its matrix.
+    let upright = bounds(&doc, page).unwrap();
+    let mut turned = doc.clone();
+    turned
+        .get_object_mut(outer)
+        .unwrap()
+        .as_stream_mut()
+        .unwrap()
+        .dict
+        .set("BBox", vec![40.into(), 30.into(), 0.into(), 0.into()]);
+    assert_eq!(bounds(&turned, page).unwrap(), upright);
+    assert_eq!(upright, [65., 170., 105., 200.]);
+    // A box with no area paints nothing and is still refused.
+    for corners in [[0, 1, 1, 1], [0, 0, 0, 1], [1, 1, 1, 1]] {
+        let mut doc = doc.clone();
+        doc.get_object_mut(inner)
+            .unwrap()
+            .as_stream_mut()
+            .unwrap()
+            .dict
+            .set("BBox", corners.map(Object::from).to_vec());
+        assert_eq!(offered(&doc).unwrap_err(), INVALID, "{corners:?}");
+    }
+    // The record is Fill & Sign's own: a dictionary that says so.
+    for record in [
+        Object::Dictionary(dictionary! { "Subtype" => "page" }),
+        Object::Dictionary(dictionary! { "Type" => "Metadata" }),
+        Object::Name(b"FillSignData".to_vec()),
+        Object::Null,
+    ] {
+        let mut doc = doc.clone();
+        doc.get_object_mut(inner)
+            .unwrap()
+            .as_stream_mut()
+            .unwrap()
+            .dict
+            .set("ADBE_FillSign", record.clone());
+        let refusal = offered(&doc).unwrap_err();
+        assert!(
+            refusal == INVALID
+                || (record.as_dict().is_err() && refusal == "invalid text resources"),
+            "{record:?}: {refusal}"
+        );
+    }
+    // A key of some other application's is not this one.
+    let mut other = doc.clone();
+    other
+        .get_object_mut(inner)
+        .unwrap()
+        .as_stream_mut()
+        .unwrap()
+        .dict
+        .set("ADBE_Other", dictionary! { "Type" => "FillSignData" });
+    assert_eq!(offered(&other).unwrap_err(), INVALID);
+}

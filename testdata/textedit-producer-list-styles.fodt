@@ -1,0 +1,169 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<office:document xmlns:office="urn:oasis:names:tc:opendocument:xmlns:office:1.0" xmlns:style="urn:oasis:names:tc:opendocument:xmlns:style:1.0" xmlns:text="urn:oasis:names:tc:opendocument:xmlns:text:1.0" xmlns:table="urn:oasis:names:tc:opendocument:xmlns:table:1.0" xmlns:draw="urn:oasis:names:tc:opendocument:xmlns:drawing:1.0" xmlns:fo="urn:oasis:names:tc:opendocument:xmlns:xsl-fo-compatible:1.0" xmlns:xlink="http://www.w3.org/1999/xlink" xmlns:svg="urn:oasis:names:tc:opendocument:xmlns:svg-compatible:1.0" xmlns:loext="urn:org:documentfoundation:names:experimental:office:xmlns:loext:1.0" office:version="1.3" office:mimetype="application/vnd.oasis.opendocument.text">
+ <office:meta><dc:title xmlns:dc="http://purl.org/dc/elements/1.1/">Example Declaration (synthetic test document)</dc:title></office:meta>
+<!--
+  A synthetic Writer document for the text editor's tagged-list checks: every
+  name in it is invented. It has the shapes a LibreOffice document with lists in
+  paragraph styles of its own gives a tagged PDF: a numbered list and a bulleted
+  one, items that begin with bold words, a sublist inside an item, hyphenated
+  lines, centred lines, a justified paragraph, a two-column table without
+  borders, a picture in the header, and bullets and a link in the footer. It is
+  set in Liberation Sans (SIL Open Font License 1.1), which LibreOffice ships.
+
+  The export is committed as
+  src-tauri/src/textedit/tagging/fixtures/libreoffice-list.pdf, because a hosted
+  runner has no LibreOffice. It was made with LibreOffice 26.8.0.3 on macOS by
+  the command in docs/VERIFICATION.md, "A LibreOffice list in paragraph styles of its
+  own";
+  scripts/text_list_check.py edits the export and reads it back.
+-->
+ <office:font-face-decls>
+  <style:font-face style:name="Liberation Sans" svg:font-family="'Liberation Sans'" style:font-family-generic="swiss" style:font-pitch="variable"/>
+ </office:font-face-decls>
+ <office:styles>
+  <style:default-style style:family="paragraph">
+   <style:paragraph-properties fo:hyphenation-ladder-count="no-limit" style:writing-mode="lr-tb"/>
+   <style:text-properties style:font-name="Liberation Sans" fo:font-size="9pt" fo:language="en" fo:country="GB" fo:hyphenate="false"/>
+  </style:default-style>
+  <style:style style:name="Standard" style:family="paragraph" style:class="text">
+   <style:text-properties fo:language="en" fo:country="US"/>
+  </style:style>
+  <style:style style:name="Numbers" style:display-name="Example Numbers" style:family="paragraph" style:parent-style-name="Standard" style:list-style-name="ExampleNumbering">
+   <style:paragraph-properties fo:margin-top="0pt" fo:margin-bottom="3pt" fo:text-align="start"/>
+   <style:text-properties fo:hyphenate="true" fo:hyphenation-remain-char-count="2" fo:hyphenation-push-char-count="2"/>
+  </style:style>
+  <style:style style:name="Bullets" style:display-name="Example Bullets" style:family="paragraph" style:parent-style-name="Standard" style:list-style-name="ExampleBulleting">
+   <style:paragraph-properties fo:margin-top="0pt" fo:margin-bottom="2pt"/>
+   <style:text-properties fo:hyphenate="true" fo:hyphenation-remain-char-count="2" fo:hyphenation-push-char-count="2"/>
+  </style:style>
+  <style:style style:name="Header" style:family="paragraph" style:parent-style-name="Standard" style:class="extra"/>
+  <style:style style:name="Footer" style:family="paragraph" style:parent-style-name="Standard" style:class="extra">
+   <style:paragraph-properties fo:text-align="center"/>
+   <style:text-properties fo:font-size="7pt"/>
+  </style:style>
+  <style:style style:name="Internet_20_link" style:display-name="Internet link" style:family="text">
+   <style:text-properties fo:color="#000080" style:text-underline-style="solid" style:text-underline-width="auto" style:text-underline-color="font-color"/>
+  </style:style>
+  <text:list-style style:name="ExampleNumbering">
+   <text:list-level-style-number text:level="1" style:num-suffix="." style:num-format="1">
+    <style:list-level-properties text:list-level-position-and-space-mode="label-alignment">
+     <style:list-level-label-alignment text:label-followed-by="listtab" text:list-tab-stop-position="18pt" fo:text-indent="-18pt" fo:margin-left="18pt"/>
+    </style:list-level-properties>
+   </text:list-level-style-number>
+   <text:list-level-style-bullet text:level="2" text:bullet-char="&#x2022;">
+    <style:list-level-properties text:list-level-position-and-space-mode="label-alignment">
+     <style:list-level-label-alignment text:label-followed-by="listtab" text:list-tab-stop-position="36pt" fo:text-indent="-12pt" fo:margin-left="36pt"/>
+    </style:list-level-properties>
+    <style:text-properties style:font-name="Liberation Sans"/>
+   </text:list-level-style-bullet>
+  </text:list-style>
+  <text:list-style style:name="ExampleBulleting">
+   <text:list-level-style-bullet text:level="1" text:bullet-char="&#x2022;">
+    <style:list-level-properties text:list-level-position-and-space-mode="label-alignment">
+     <style:list-level-label-alignment text:label-followed-by="listtab" text:list-tab-stop-position="36pt" fo:text-indent="-12pt" fo:margin-left="36pt"/>
+    </style:list-level-properties>
+    <style:text-properties style:font-name="Liberation Sans"/>
+   </text:list-level-style-bullet>
+   <text:list-level-style-bullet text:level="2" text:bullet-char="&#x2022;">
+    <style:list-level-properties text:list-level-position-and-space-mode="label-alignment">
+     <style:list-level-label-alignment text:label-followed-by="listtab" text:list-tab-stop-position="36pt" fo:text-indent="-12pt" fo:margin-left="36pt"/>
+    </style:list-level-properties>
+    <style:text-properties style:font-name="Liberation Sans"/>
+   </text:list-level-style-bullet>
+  </text:list-style>
+ </office:styles>
+ <office:automatic-styles>
+  <style:style style:name="PCentre" style:family="paragraph" style:parent-style-name="Standard">
+   <style:paragraph-properties fo:text-align="center"/>
+   <style:text-properties fo:font-size="12pt" fo:font-weight="bold"/>
+  </style:style>
+  <style:style style:name="PCentreSmall" style:family="paragraph" style:parent-style-name="Standard">
+   <style:paragraph-properties fo:text-align="center" fo:margin-bottom="8pt"/>
+  </style:style>
+  <style:style style:name="PJustify" style:family="paragraph" style:parent-style-name="Standard">
+   <style:paragraph-properties fo:text-align="justify" fo:margin-top="6pt"/>
+  </style:style>
+  <style:style style:name="PPlain" style:family="paragraph" style:parent-style-name="Standard">
+   <style:paragraph-properties fo:margin-bottom="6pt"/>
+  </style:style>
+  <style:style style:name="PRight" style:family="paragraph" style:parent-style-name="Header">
+   <style:paragraph-properties fo:text-align="end"/>
+  </style:style>
+  <style:style style:name="TBold" style:family="text">
+   <style:text-properties fo:font-weight="bold"/>
+  </style:style>
+  <style:style style:name="Pairs" style:family="table">
+   <style:table-properties style:width="360pt" table:align="left"/>
+  </style:style>
+  <style:style style:name="Pairs.A" style:family="table-column">
+   <style:table-column-properties style:column-width="120pt"/>
+  </style:style>
+  <style:style style:name="Pairs.B" style:family="table-column">
+   <style:table-column-properties style:column-width="240pt"/>
+  </style:style>
+  <style:style style:name="Pairs.Cell" style:family="table-cell">
+   <style:table-cell-properties fo:padding="1pt" fo:border="none"/>
+  </style:style>
+  <style:style style:name="Logo" style:family="graphic">
+   <style:graphic-properties style:wrap="none" style:vertical-pos="top" style:horizontal-pos="right" style:horizontal-rel="paragraph" fo:border="none"/>
+  </style:style>
+  <style:page-layout style:name="pm1">
+   <style:page-layout-properties fo:page-width="595pt" fo:page-height="842pt" fo:margin-top="36pt" fo:margin-bottom="36pt" fo:margin-left="72pt" fo:margin-right="72pt"/>
+   <style:header-style><style:header-footer-properties fo:min-height="40pt" fo:margin-bottom="10pt"/></style:header-style>
+   <style:footer-style><style:header-footer-properties fo:min-height="20pt" fo:margin-top="10pt"/></style:footer-style>
+  </style:page-layout>
+ </office:automatic-styles>
+ <office:master-styles>
+  <style:master-page style:name="Standard" style:page-layout-name="pm1">
+   <style:header>
+    <text:p text:style-name="PRight"><draw:frame draw:style-name="Logo" draw:name="Logo" text:anchor-type="as-char" svg:width="60pt" svg:height="30pt"><draw:image draw:mime-type="image/svg+xml"><office:binary-data>PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSIxMjAiIGhlaWdodD0iNjAiIHZpZXdCb3g9IjAgMCAxMjAgNjAiPjxyZWN0IHg9IjIiIHk9IjIiIHdpZHRoPSIxMTYiIGhlaWdodD0iNTYiIGZpbGw9IiMxZDZmYTUiLz48Y2lyY2xlIGN4PSIzMCIgY3k9IjMwIiByPSIxOCIgZmlsbD0iI2ZmZDE2NiIvPjxyZWN0IHg9IjYwIiB5PSIxOCIgd2lkdGg9IjQ0IiBoZWlnaHQ9IjI0IiBmaWxsPSIjZmZmZmZmIi8+PC9zdmc+</office:binary-data></draw:image><svg:title>Synthetic logo</svg:title></draw:frame></text:p>
+   </style:header>
+   <style:footer>
+    <text:p text:style-name="Footer">ACME Ltd &#x2022; Sample Street 1 &#x2022; 00000 Exampletown &#x2022; <text:a xlink:type="simple" xlink:href="https://example.com/" text:style-name="Internet_20_link">example.com</text:a></text:p>
+   </style:footer>
+  </style:master-page>
+ </office:master-styles>
+ <office:body>
+  <office:text>
+   <text:p text:style-name="PCentre">Example Declaration</text:p>
+   <text:p text:style-name="PCentreSmall">Synthetic sample for testing, issued by ACME Ltd</text:p>
+   <text:p text:style-name="PPlain">This invented document declares nothing. Every name in it is made up.</text:p>
+   <text:list text:style-name="ExampleNumbering">
+    <text:list-item><text:p text:style-name="Numbers"><text:span text:style-name="TBold">Sample maker:</text:span> ACME Ltd, Sample Street 1, 00000 Exampletown, which manufactures demonstration widgets for representative documentation and characterisation purposes, straightforwardly and comprehensively, without exception.</text:p></text:list-item>
+    <text:list-item><text:p text:style-name="Numbers"><text:span text:style-name="TBold">Sample product:</text:span> Example Widget, model EX-1.</text:p></text:list-item>
+    <text:list-item><text:p text:style-name="Numbers">The widget described above meets the invented requirements listed here:</text:p>
+     <text:list>
+      <text:list-item><text:p text:style-name="Bullets"><text:span text:style-name="TBold">Rule one</text:span> of the Example Widget Rulebook, first edition.</text:p></text:list-item>
+      <text:list-item><text:p text:style-name="Bullets">Rule two of the same rulebook.</text:p></text:list-item>
+     </text:list>
+    </text:list-item>
+    <text:list-item><text:p text:style-name="Numbers"><text:span text:style-name="TBold">Further remarks:</text:span> none, because this is a sample.</text:p></text:list-item>
+   </text:list>
+   <text:list text:style-name="ExampleBulleting">
+    <text:list-item><text:p text:style-name="Bullets">A separate bulleted list follows the numbered one.</text:p></text:list-item>
+    <text:list-item><text:p text:style-name="Bullets">Its second item ends the lists.</text:p></text:list-item>
+   </text:list>
+   <text:p text:style-name="PJustify">Signed for and on behalf of ACME Ltd, an invented company that exists only so that this paragraph has enough words to be set justified over more than one line of the page.</text:p>
+   <table:table table:name="Pairs" table:style-name="Pairs">
+    <table:table-column table:style-name="Pairs.A"/>
+    <table:table-column table:style-name="Pairs.B"/>
+    <table:table-row>
+     <table:table-cell table:style-name="Pairs.Cell" office:value-type="string"><text:p text:style-name="Standard">Place of issue:</text:p></table:table-cell>
+     <table:table-cell table:style-name="Pairs.Cell" office:value-type="string"><text:p text:style-name="Standard">Exampletown</text:p></table:table-cell>
+    </table:table-row>
+    <table:table-row>
+     <table:table-cell table:style-name="Pairs.Cell" office:value-type="string"><text:p text:style-name="Standard">Name:</text:p></table:table-cell>
+     <table:table-cell table:style-name="Pairs.Cell" office:value-type="string"><text:p text:style-name="Standard">Jane Example</text:p></table:table-cell>
+    </table:table-row>
+    <table:table-row>
+     <table:table-cell table:style-name="Pairs.Cell" office:value-type="string"><text:p text:style-name="Standard"/></table:table-cell>
+     <table:table-cell table:style-name="Pairs.Cell" office:value-type="string"><text:p text:style-name="Standard"/></table:table-cell>
+    </table:table-row>
+    <table:table-row>
+     <table:table-cell table:style-name="Pairs.Cell" office:value-type="string"><text:p text:style-name="Standard">Signature:</text:p></table:table-cell>
+     <table:table-cell table:style-name="Pairs.Cell" office:value-type="string"><text:p text:style-name="Standard">______________________</text:p></table:table-cell>
+    </table:table-row>
+   </table:table>
+  </office:text>
+ </office:body>
+</office:document>

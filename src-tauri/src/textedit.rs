@@ -1021,6 +1021,9 @@ fn inspect_pinning(
     if marked.placed > 0 {
         return Err("unterminated placed-artwork marked content".into());
     }
+    if marked.filled {
+        return Err("unterminated Fill & Sign marked content".into());
+    }
     if object.inside {
         return Err("unterminated text block".into());
     }

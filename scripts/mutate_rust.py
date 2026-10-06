@@ -15694,6 +15694,247 @@ MUTATIONS += [
         "    #[serde(skip)]\n    pub refused: Vec<u32>,\n    /// Pages too large",
         "the_report_reaches_the_window_in_its_own_spelling",
     ),
+    # A list item whose body holds its paragraph as a block of its own, the
+    # shape LibreOffice writes (`docs/TEXTEDIT.md`, *Lists in paragraph styles
+    # of their own*). `--only 'list paragraph:'` runs the set.
+    Mutation(
+        "list paragraph: refuse a paragraph in a list body",
+        "src/textedit/tagging.rs",
+        '            if plain.tag == b"LBody" && block {\n                paragraphs += 1;',
+        '            if false {\n                paragraphs += 1;',
+        "textedit_list_bodies_hold_one_paragraph_under_its_own_or_a_producer_name",
+    ),
+    Mutation(
+        # Whatever a body holds is taken for its paragraph. A name the RoleMap
+        # does not make a text block is still refused, as a leaf beside the
+        # paragraph it was counted as, so what goes red is the body's own
+        # inline leaf, the list every other producer writes.
+        "list paragraph: any element in a list body is its paragraph",
+        "src/textedit/tagging.rs",
+        '            if plain.tag == b"LBody" && block {\n                paragraphs += 1;',
+        '            if plain.tag == b"LBody" {\n                paragraphs += 1;',
+        "textedit_list_bodies_still_validate_their_own_inline_leaves",
+    ),
+    Mutation(
+        # The paragraph is claimed without being read, so a Span that holds its
+        # words reaches the walk as a reference where marked content belongs.
+        "list paragraph: its leaves are not read",
+        "src/textedit/tagging.rs",
+        '                || (plain.tag == b"LBody" && block)\n',
+        "",
+        "textedit_a_list_paragraph_holds_leaves_and_no_block",
+    ),
+    Mutation(
+        "list paragraph: a second paragraph shares the body",
+        "src/textedit/tagging.rs",
+        "    paragraphs == 0 || (paragraphs == 1 && !own)",
+        "    paragraphs == 0 || !own",
+        "textedit_list_bodies_refuse_a_second_paragraph_and_words_beside_one",
+    ),
+    Mutation(
+        "list paragraph: the body's words sit beside its paragraph",
+        "src/textedit/tagging.rs",
+        "    paragraphs == 0 || (paragraphs == 1 && !own)",
+        "    paragraphs == 0 || paragraphs == 1",
+        "textedit_list_bodies_refuse_their_own_words_beside_a_paragraph",
+    ),
+    Mutation(
+        "list paragraph: an inline leaf beside it is not counted",
+        "src/textedit/tagging.rs",
+        '            leaves |= plain.tag == b"LBody" && !block;\n',
+        "",
+        "textedit_list_bodies_refuse_a_second_paragraph_and_words_beside_one",
+    ),
+    Mutation(
+        "list paragraph: the body's own marked content is not counted",
+        "src/textedit/tagging.rs",
+        "body_holds_one_thing(paragraphs, leaves || !plain.items.is_empty())",
+        "body_holds_one_thing(paragraphs, leaves)",
+        "textedit_list_bodies_refuse_their_own_words_beside_a_paragraph",
+    ),
+    Mutation(
+        # The paragraph becomes a block apart from its label, which a wrap would
+        # then move without it. Nothing in `groups` knows the block; the walk
+        # stamps the element it popped, and this stamps the claiming leaf.
+        "list paragraph: its text is a block apart from its item",
+        "src/textedit/tagging.rs",
+        "                    blocks[mcid] = Some(block);",
+        "                    blocks[mcid] = Some(if tag == b\"Standard\" { id } else { block });",
+        "textedit_a_list_paragraph_belongs_to_its_item",
+    ),
+    # Acrobat's Fill & Sign: the marked sequence it appends to a page, and the
+    # forms inside it. `--only 'fill and sign:'` runs the set.
+    Mutation(
+        "fill and sign: refuse the sequence it appends",
+        "src/textedit/inspect.rs",
+        '("BMC", [tag]) if !inside && tag.as_name().ok() == Some(FILL_SIGN) => {',
+        '("BMC", [tag]) if false && tag.as_name().ok() == Some(FILL_SIGN) => {',
+        "textedit_fill_and_sign_additions_are_kept_and_the_page_is_edited",
+    ),
+    Mutation(
+        "fill and sign: the same tag on a tagged page is refused",
+        "src/textedit/inspect.rs",
+        '("BMC", [tag]) if !inside && tag.as_name().ok() == Some(FILL_SIGN) => {',
+        '("BMC", [tag]) if false && tag.as_name().ok() == Some(FILL_SIGN) => {',
+        "textedit_a_libreoffice_list_stays_editable_under_a_fill_and_sign_addition",
+    ),
+    Mutation(
+        "fill and sign: the sequence opens inside a text object",
+        "src/textedit/inspect.rs",
+        '("BMC", [tag]) if !inside && tag.as_name().ok() == Some(FILL_SIGN) => {',
+        '("BMC", [tag]) if tag.as_name().ok() == Some(FILL_SIGN) => {',
+        "textedit_fill_and_sign_additions_are_kept_and_the_page_is_edited",
+    ),
+    Mutation(
+        "fill and sign: the text it added is offered",
+        "src/textedit/inspect.rs",
+        "        let read_only = read_only || marked.filled;\n",
+        "",
+        "textedit_fill_and_sign_additions_are_kept_and_the_page_is_edited",
+    ),
+    Mutation(
+        "fill and sign: marked content opens inside it",
+        "src/textedit/inspect.rs",
+        '        if self.filled && matches!(op.operator.as_str(), "BDC" | "BMC") {',
+        "        if false && self.filled {",
+        "textedit_fill_and_sign_additions_are_kept_and_the_page_is_edited",
+    ),
+    Mutation(
+        "fill and sign: a sequence left open is accepted",
+        "src/textedit.rs",
+        '    if marked.filled {\n        return Err("unterminated Fill & Sign marked content".into());\n    }\n',
+        "",
+        "textedit_fill_and_sign_additions_are_kept_and_the_page_is_edited",
+    ),
+    Mutation(
+        "fill and sign: a form with its record is refused",
+        "src/textedit/forms.rs",
+        '(b"ADBE_FillSign", _) => {',
+        '(b"ADBE_FillSign_", _) => {',
+        "textedit_fill_and_sign_records_and_reversed_boxes_are_read_as_what_they_are",
+    ),
+    Mutation(
+        "fill and sign: any dictionary under its key is its record",
+        "src/textedit/forms.rs",
+        'if data.get(b"Type").and_then(Object::as_name).ok() != Some(b"FillSignData") {',
+        "if false {",
+        "textedit_fill_and_sign_records_and_reversed_boxes_are_read_as_what_they_are",
+    ),
+    Mutation(
+        "fill and sign: a form's box is read as its corners are written",
+        "src/textedit/forms.rs",
+        "        bounds[0].min(bounds[2]),\n        bounds[1].min(bounds[3]),\n        bounds[0].max(bounds[2]),\n        bounds[1].max(bounds[3]),\n",
+        "        bounds[0],\n        bounds[1],\n        bounds[2],\n        bounds[3],\n",
+        "textedit_fill_and_sign_records_and_reversed_boxes_are_read_as_what_they_are",
+    ),
+    Mutation(
+        "fill and sign: a form's box with no area is accepted",
+        "src/textedit/forms.rs",
+        "    if bounds[0] >= bounds[2] || bounds[1] >= bounds[3] {",
+        "    if false {",
+        "textedit_fill_and_sign_records_and_reversed_boxes_are_read_as_what_they_are",
+    ),
+    # A code of a symbolic TrueType subset whose character the path does not
+    # write is kept read-only, where it used to refuse the font. `--only 'kept
+    # code:'` runs the set.
+    Mutation(
+        "kept code: a character outside the repertoire refuses the map",
+        "src/textedit/fonts/mapping.rs",
+        "written(ch) || (keeps && char::from_u32(ch).is_some_and(|ch| !ch.is_control()))",
+        "written(ch) || (false && keeps && char::from_u32(ch).is_some())",
+        "textedit_mapping_keeps_a_character_outside_the_repertoire",
+    ),
+    Mutation(
+        "kept code: a control character is kept",
+        "src/textedit/fonts/mapping.rs",
+        "written(ch) || (keeps && char::from_u32(ch).is_some_and(|ch| !ch.is_control()))",
+        "written(ch) || (keeps && char::from_u32(ch).is_some())",
+        "textedit_mapping_keeps_a_character_outside_the_repertoire",
+    ),
+    Mutation(
+        "kept code: a code named twice is kept",
+        "src/textedit/fonts/mapping.rs",
+        "let Some(kept) = kept.as_mut().filter(|_| !twice) else {",
+        "let Some(kept) = kept.as_mut().filter(|_| !twice || true) else {",
+        "textedit_mapping_keeps_a_character_outside_the_repertoire",
+    ),
+    Mutation(
+        "kept code: a kept code is offered under a second name",
+        "src/textedit/fonts/mapping.rs",
+        "\n                    || kept.as_ref().is_some_and(|kept| kept[code as usize]);",
+        ";",
+        "textedit_mapping_keeps_a_character_outside_the_repertoire",
+    ),
+    Mutation(
+        "kept code: the other single-byte paths keep codes too",
+        "src/textedit/fonts/mapping.rs",
+        "    parse_single(stream, true, true, false, None)",
+        "    parse_single(stream, true, true, false, Some(&mut [false; 256]))",
+        "textedit_mapping_keeps_a_character_outside_the_repertoire",
+    ),
+    Mutation(
+        # The strict map is what the font path reads: one bullet refuses the
+        # font again, and every word set in it is read-only.
+        "kept code: the font path reads the strict map",
+        "src/textedit/fonts.rs",
+        "            kept = unwritten;\n",
+        "            if unwritten.contains(&true) {\n                return Err(invalid());\n            }\n",
+        "textedit_symbolic_codes_keep_a_character_they_cannot_write_read_only",
+    ),
+    Mutation(
+        "kept code: the export's body font is read-only again",
+        "src/textedit/fonts.rs",
+        "            kept = unwritten;\n",
+        "            if unwritten.contains(&true) {\n                return Err(invalid());\n            }\n",
+        "textedit_a_libreoffice_list_in_its_own_paragraph_styles_is_offered",
+    ),
+    Mutation(
+        "kept code: its width is not held to its glyph",
+        "src/textedit/fonts.rs",
+        "            if width <= 0. || width > 2000. || (width - advance).abs() > 1. {\n                return Err(\"embedded font widths disagree with its glyph metrics\".into());\n            }\n            let (overhang",
+        "            let (overhang",
+        "textedit_symbolic_codes_keep_a_character_they_cannot_write_read_only",
+    ),
+    Mutation(
+        # Skipped, the code has neither a slot nor a glyph, and a run showing
+        # it refuses the page as an unmapped code where the font alone should
+        # have gone read-only.
+        "kept code: a code past the font's widths is skipped",
+        "src/textedit/fonts.rs",
+        "            if i64::from(code_byte) < first || i64::from(code_byte) > last {\n                return Err(invalid());\n            }\n",
+        "            if i64::from(code_byte) < first || i64::from(code_byte) > last {\n                continue;\n            }\n",
+        "textedit_symbolic_codes_keep_a_character_they_cannot_write_read_only",
+    ),
+    Mutation(
+        "kept code: its ink may reach anywhere",
+        "src/textedit/fonts.rs",
+        "    (left >= -250. && right <= width + 250. && bottom >= -500. && top <= 1000.)\n",
+        "    (bottom.is_finite())\n",
+        "textedit_symbolic_codes_keep_a_character_they_cannot_write_read_only",
+    ),
+    Mutation(
+        "kept code: its ink leaves the font's extent as it was",
+        "src/textedit/fonts.rs",
+        "            vertical_bounds = [vertical_bounds[0].min(low), vertical_bounds[1].max(high)];\n",
+        "            let _ = (low, high);\n",
+        "textedit_symbolic_codes_keep_a_character_they_cannot_write_read_only",
+    ),
+    Mutation(
+        "kept code: a glyph that draws nothing is not proved blank",
+        "src/textedit/fonts.rs",
+        "        return empty_glyph(face, glyph)?.then_some(([0.; 2], [0.; 2]));",
+        "        return None;",
+        "textedit_symbolic_codes_keep_a_character_they_cannot_write_read_only",
+    ),
+    Mutation(
+        # The run that shows a kept glyph is measured from nothing and offered
+        # as text, the glyph read as whatever slot zero says.
+        "kept code: nothing is measured for it",
+        "src/textedit/fonts.rs",
+        "        opaque: kept.contains(&true).then_some(opaque),",
+        "        opaque: None,",
+        "textedit_symbolic_codes_keep_a_character_they_cannot_write_read_only",
+    ),
 ]
 
 if __name__ == "__main__":

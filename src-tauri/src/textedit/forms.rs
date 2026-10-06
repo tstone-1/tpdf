@@ -105,6 +105,16 @@ fn visit(
                 dictionary(doc, value)?;
             }
             (b"LastModified", Object::String(bytes, _)) if bytes.len() <= 127 => {}
+            // Acrobat's Fill & Sign keeps its own record on every form it adds
+            // (the page's additions, a typed line, a signature picture), under
+            // its registered prefix: a dictionary of `/Type /FillSignData`. It
+            // is private data like PieceInfo, never painted, and carried as is.
+            (b"ADBE_FillSign", _) => {
+                let data = dictionary(doc, value)?;
+                if data.get(b"Type").and_then(Object::as_name).ok() != Some(b"FillSignData") {
+                    return Err(INVALID.into());
+                }
+            }
             // pdfTeX's record of an included figure: the file, its page and
             // that file's Info dictionary. None is painted.
             (b"PTEX.FileName", Object::String(bytes, _)) if bytes.len() <= 4096 => {}
@@ -141,6 +151,15 @@ fn visit(
         return Err(INVALID.into());
     }
     let bounds = bounds.iter().map(number).collect::<Result<Vec<_>, _>>()?;
+    // ISO 32000-1 7.9.5: a rectangle may name either pair of opposite corners,
+    // and a reader normalises it. Acrobat's Fill & Sign gives the form around a
+    // signature picture as `[0 1 1 0]`. A box with no area still paints nothing.
+    let bounds = [
+        bounds[0].min(bounds[2]),
+        bounds[1].min(bounds[3]),
+        bounds[0].max(bounds[2]),
+        bounds[1].max(bounds[3]),
+    ];
     if bounds[0] >= bounds[2] || bounds[1] >= bounds[3] {
         return Err(INVALID.into());
     }

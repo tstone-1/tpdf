@@ -996,12 +996,19 @@ pub(super) fn embedded(doc: &Document, font: &Dictionary) -> Result<Metrics, Str
     if custom && cmap.subtables.len() != 1 {
         return Err(invalid());
     }
+    // Codes of a custom map whose character this path does not write, a bullet
+    // among them (`mapping::parse_keeping`). Each is measured below like an
+    // offered code and kept as an opaque glyph, so a run showing one is
+    // read-only with its ink reserved and the rest of the font is edited.
+    let mut kept = Box::new([false; 256]);
     let codes = if custom || named_unicode {
         let stream = crate::encoding::resolve(doc, font.get(b"ToUnicode").map_err(|_| invalid())?)
             .as_stream()
             .map_err(|_| invalid())?;
         Some(if custom {
-            mapping::parse(stream)?
+            let (codes, unwritten) = mapping::parse_keeping(stream)?;
+            kept = unwritten;
+            codes
         } else {
             mapping::parse_named(stream)?
         })
@@ -1032,7 +1039,31 @@ pub(super) fn embedded(doc: &Document, font: &Dictionary) -> Result<Metrics, Str
     // Standard maps share ASCII codes; symbolic maps select the PDF code and
     // its Unicode value separately. WinAnsi's nonbreaking-space/soft-hyphen aliases,
     // extended glyph names and custom ToUnicode maps require separate proof.
+    let mut opaque = Box::new([None; 256]);
     for code_byte in 0_u8..=255 {
+        if kept[code_byte as usize] {
+            // A kept code that cannot be measured as exactly as an offered one
+            // refuses the font, which is what it did before codes were kept:
+            // its text is then read-only through `read_only`, never unmeasured.
+            // Whatever glyph the program draws for the code is the one
+            // measured, `.notdef` included: nothing is ever written with it.
+            let glyph = primary
+                .glyph_index(u32::from(code_byte))
+                .ok_or_else(invalid)?;
+            if i64::from(code_byte) < first || i64::from(code_byte) > last {
+                return Err(invalid());
+            }
+            let width = number(&widths[(i64::from(code_byte) - first) as usize])?;
+            let advance = f64::from(face.glyph_hor_advance(glyph).ok_or_else(invalid)?) * unit;
+            if width <= 0. || width > 2000. || (width - advance).abs() > 1. {
+                return Err("embedded font widths disagree with its glyph metrics".into());
+            }
+            let (overhang, [low, high]) =
+                kept_ink(&face, glyph, width, unit).ok_or_else(invalid)?;
+            vertical_bounds = [vertical_bounds[0].min(low), vertical_bounds[1].max(high)];
+            opaque[code_byte as usize] = Some(Opaque { width, overhang });
+            continue;
+        }
         let byte = if let Some(codes) = &codes {
             let Some(byte) = codes[code_byte as usize] else {
                 continue;
@@ -1105,7 +1136,7 @@ pub(super) fn embedded(doc: &Document, font: &Dictionary) -> Result<Metrics, Str
     }
     Ok(Metrics {
         restricted: false,
-        opaque: None,
+        opaque: kept.contains(&true).then_some(opaque),
         unicode: None,
         vertical_bounds: Some(vertical_bounds),
         widths: result,
@@ -1113,6 +1144,27 @@ pub(super) fn embedded(doc: &Document, font: &Dictionary) -> Result<Metrics, Str
         codes: codes.map(Codes::Single),
     }
     .restricted(restricted))
+}
+
+/// The ink of a kept code's glyph in thousandths of an em: how far it reaches
+/// past its advance on either side, and from below the baseline to above it.
+/// The limits are an offered glyph's own, so keeping a code never widens what
+/// the font's text may occupy. `None` when the glyph has neither an outline
+/// within them nor a proof that it draws nothing: a composite glyph that only
+/// places an empty one, as Liberation Sans draws its no-break space, is such a
+/// glyph, and still costs the font.
+fn kept_ink(
+    face: &Face<'_>,
+    glyph: GlyphId,
+    width: f64,
+    unit: f64,
+) -> Option<([f64; 2], [f64; 2])> {
+    let Some(ink) = outlines::bounds(face, glyph) else {
+        return empty_glyph(face, glyph)?.then_some(([0.; 2], [0.; 2]));
+    };
+    let [left, bottom, right, top] = ink.map(|edge| edge * unit);
+    (left >= -250. && right <= width + 250. && bottom >= -500. && top <= 1000.)
+        .then_some(([left.min(0.), (right - width).max(0.)], [bottom, top]))
 }
 
 fn program(doc: &Document, descriptor: &Dictionary) -> Result<Vec<u8>, String> {

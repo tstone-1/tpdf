@@ -693,3 +693,72 @@ fn unicode_cid_labels_are_a_closed_grammar() {
         assert!(unicode_cid(&stream(&header(&labels))).is_err(), "{labels}");
     }
 }
+
+// A symbolic subset's map may name a character the simple TrueType path does
+// not write: LibreOffice sets a footer's bullets in the body font. That code is
+// kept, never offered; the strict `parse` above still refuses the same map.
+#[test]
+fn textedit_mapping_keeps_a_character_outside_the_repertoire() {
+    let marked = |kept: &[bool; 256]| {
+        kept.iter()
+            .enumerate()
+            .filter(|(_, kept)| **kept)
+            .map(|(code, _)| code)
+            .collect::<Vec<_>>()
+    };
+    for target in ["2022", "00e4", "00a0", "00ad", "f0b7", "0394"] {
+        let map = MAP.replace("<0042>", &format!("<{target}>"));
+        assert!(parse(&stream(&map)).is_err(), "{target}");
+        let (codes, kept) = parse_keeping(&stream(&map)).unwrap();
+        assert_eq!(codes[1], Some(b'A'), "{target}");
+        assert_eq!(codes[2], None, "{target}");
+        assert_eq!(marked(&kept), [2], "{target}");
+    }
+    // Nothing is kept of a map that stays inside the repertoire.
+    let (codes, kept) = parse_keeping(&stream(MAP)).unwrap();
+    assert_eq!((codes[1], codes[2]), (Some(b'A'), Some(b'B')));
+    assert!(marked(&kept).is_empty());
+    // A range keeps each code it reaches outside the repertoire: the figure
+    // dash and the em dash either side of the en dash this path writes.
+    let range = MAP.replace(
+        "2 beginbfchar\n<01> <0041>\n<02> <0042>\nendbfchar",
+        "1 beginbfrange\n<01> <03> <2012>\nendbfrange",
+    );
+    let (codes, kept) = parse_keeping(&stream(&range)).unwrap();
+    assert_eq!((codes[1], codes[2], codes[3]), (None, Some(0x96), None));
+    assert_eq!(marked(&kept), [1, 3]);
+    // One that reaches a control character (U+007F) is refused whole.
+    assert!(parse_keeping(&stream(&range.replace("<2012>", "<007d>"))).is_err());
+    assert!(parse_keeping(&stream(
+        &range.replace("<01> <03> <2012>", "<01> <02> <007d>")
+    ))
+    .is_ok());
+    // Still refused: a control character, a surrogate, a sequence, and a code
+    // named twice, whichever of its two names would have been kept.
+    for (from, to) in [
+        ("<0042>", "<0007>"),
+        ("<0042>", "<007f>"),
+        ("<0042>", "<0085>"),
+        ("<0042>", "<d800>"),
+        ("<0042>", "<20222022>"),
+        ("<0042>", "<00412022>"),
+        ("<02> <0042>", "<01> <2022>"),
+        ("<01> <0041>\n<02> <0042>", "<01> <2022>\n<01> <0042>"),
+        ("<01> <0041>\n<02> <0042>", "<01> <2022>\n<01> <2023>"),
+    ] {
+        assert!(
+            parse_keeping(&stream(&MAP.replace(from, to))).is_err(),
+            "accepted {from} -> {to}"
+        );
+    }
+    // Two codes may show the same kept character: neither is ever written, so
+    // there is no choice between them to get wrong.
+    let twice = MAP.replace("<0041>", "<2022>").replace("<0042>", "<2022>");
+    let (codes, kept) = parse_keeping(&stream(&twice)).unwrap();
+    assert_eq!((codes[1], codes[2]), (None, None));
+    assert_eq!(marked(&kept), [1, 2]);
+    // The other single-byte paths keep nothing: each proves its own repertoire.
+    let greek = MAP.replace("<0042>", "<0394>");
+    assert!(parse_cff(&stream(&greek)).is_err());
+    assert!(parse_named(&stream(&greek)).is_err());
+}

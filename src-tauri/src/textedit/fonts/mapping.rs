@@ -261,18 +261,43 @@ fn blocks_with_header(
     Ok(ops[start..end].to_vec())
 }
 
+/// The metric slot each single-byte code is offered under, where it is offered.
+pub(super) type Slots = Box<[Option<u8>; 256]>;
+
+/// The strict form of [`parse_keeping`]: a map that names nothing outside the
+/// repertoire. The tests hold the repertoire to it.
+#[cfg(test)]
 pub(super) fn parse(stream: &Stream) -> Result<Box<[Option<u8>; 256]>, String> {
-    parse_single(stream, false, false, false)
+    let (codes, kept) = parse_keeping(stream)?;
+    if kept.contains(&true) {
+        return Err("unsupported or ambiguous single-byte character map".into());
+    }
+    Ok(codes)
+}
+
+/// A symbolic TrueType subset's own map, as LibreOffice and Word write one:
+/// each code names the character its glyph shows. The second array marks the
+/// codes whose character is outside the repertoire this path writes (ASCII and
+/// the en dash): one character, not a control. Such a code is *kept*: it is
+/// never offered and never written, and the caller measures its glyph so that
+/// a run showing it stays read-only (`fonts::embedded`). Until 2026-10-06 one
+/// such code refused the whole map, so a bullet in a footer made every word
+/// set in that font read-only. A sequence, a surrogate and a control character
+/// are still refused, and so is a code named twice, kept or not.
+pub(super) fn parse_keeping(stream: &Stream) -> Result<(Slots, Box<[bool; 256]>), String> {
+    let mut kept = Box::new([false; 256]);
+    let codes = parse_single(stream, false, false, false, Some(&mut kept))?;
+    Ok((codes, kept))
 }
 
 // CFF glyph-name agreement is checked by the caller. Other font paths keep
 // their independently verified repertoire and do not inherit these additions.
 pub(super) fn parse_cff(stream: &Stream) -> Result<Box<[Option<u8>; 256]>, String> {
-    parse_single(stream, true, true, false)
+    parse_single(stream, true, true, false, None)
 }
 
 pub(super) fn parse_named(stream: &Stream) -> Result<Box<[Option<u8>; 256]>, String> {
-    let codes = parse_single(stream, false, true, true)?;
+    let codes = parse_single(stream, false, true, true, None)?;
     // A WinAnsi font's ToUnicode may only restate WinAnsi itself: each code's
     // slot is its own code. 0xA0 and 0xAD are the space and hyphen aliases,
     // whose Unicode meaning is ambiguous, and 0x80 is the minus slot.
@@ -291,6 +316,9 @@ fn parse_single(
     cff: bool,
     padded: bool,
     winansi: bool,
+    // Where to mark a code whose character is outside the repertoire, when the
+    // caller keeps such codes read-only (`parse_keeping`); `None` refuses them.
+    mut kept: Option<&mut [bool; 256]>,
 ) -> Result<Box<[Option<u8>; 256]>, String> {
     let ops = blocks_with_header(stream, false, padded, false)?;
     let invalid = || "unsupported or ambiguous single-byte character map".to_string();
@@ -358,6 +386,14 @@ fn parse_single(
                             .and_then(super::super::character_slot)
                             .is_some())
             };
+            // What this path writes. Where the caller keeps codes, anything
+            // else gets past the check below too if it is one character and
+            // not a control, and is marked rather than given a slot.
+            let written = allowed;
+            let keeps = kept.is_some();
+            let allowed = |ch: u32| {
+                written(ch) || (keeps && char::from_u32(ch).is_some_and(|ch| !ch.is_control()))
+            };
             if last < first || !(u32::from(target)..=end_target).all(allowed) {
                 return Err(invalid());
             }
@@ -365,9 +401,19 @@ fn parse_single(
                 let ch = super::super::character_slot(
                     char::from_u32(u32::from(target) + u32::from(code - first))
                         .ok_or_else(invalid)?,
-                )
-                .ok_or_else(invalid)?;
-                if result[code as usize].is_some() || unicode[ch as usize] {
+                );
+                // A code is named once, whether it is offered or kept.
+                let twice = result[code as usize].is_some()
+                    || kept.as_ref().is_some_and(|kept| kept[code as usize]);
+                if !written(u32::from(target) + u32::from(code - first)) {
+                    let Some(kept) = kept.as_mut().filter(|_| !twice) else {
+                        return Err(invalid());
+                    };
+                    kept[code as usize] = true;
+                    continue;
+                }
+                let ch = ch.ok_or_else(invalid)?;
+                if twice || unicode[ch as usize] {
                     return Err(invalid());
                 }
                 result[code as usize] = Some(ch);

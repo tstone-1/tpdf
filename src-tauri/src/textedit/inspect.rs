@@ -313,6 +313,16 @@ impl TextObject {
     }
 }
 
+/// The tag Acrobat's Fill & Sign puts around what it adds to a page: a tick, a
+/// typed line or a drawn signature, appended to the content as
+/// `/ADBE_FillSign BMC ... EMC` after the page's own. It names no structure
+/// element and has no property list, so it says nothing an edit could make
+/// stale, on a tagged page or an untagged one. What is inside is kept as it is:
+/// its text is read-only, like an unmarked addition's on a tagged page, and its
+/// paths, images and forms pass the ordinary checks. It opens outside a text
+/// object, and nothing may open inside it, which lets the next `EMC` close it.
+const FILL_SIGN: &[u8] = b"ADBE_FillSign";
+
 /// The marked-content sequences open at an operator, and the ActualText spans
 /// already closed. They balance independently of text objects.
 pub(super) struct Marked {
@@ -326,6 +336,8 @@ pub(super) struct Marked {
     // Open placed-artwork sequences (`placed_content`): one, or one with its
     // metadata sequence inside. Text in them is kept read-only.
     pub placed: u8,
+    // Inside what Acrobat's Fill & Sign added to the page (`FILL_SIGN`).
+    pub filled: bool,
     pub actual_spans: Vec<actual::Span>,
 }
 
@@ -338,6 +350,7 @@ impl Marked {
             actual: None,
             layer: false,
             placed: 0_u8,
+            filled: false,
             actual_spans: Vec::new(),
         }
     }
@@ -364,6 +377,9 @@ impl Marked {
         if self.placed > 0 && !metadata && matches!(op.operator.as_str(), "BDC" | "BMC") {
             return Err("marked content inside placed artwork is not editable yet".into());
         }
+        if self.filled && matches!(op.operator.as_str(), "BDC" | "BMC") {
+            return Err("marked content inside a Fill & Sign addition is not editable yet".into());
+        }
         match (op.operator.as_str(), op.operands.as_slice()) {
             // Marked content and text objects are independently balanced (ISO
             // 32000-1, 14.6.1). MCIDs use the same ownership checks inside BT;
@@ -388,6 +404,10 @@ impl Marked {
                 self.placed += 1;
             }
             ("EMC", []) if self.placed > 0 => self.placed -= 1,
+            ("BMC", [tag]) if !inside && tag.as_name().ok() == Some(FILL_SIGN) => {
+                self.filled = true;
+            }
+            ("EMC", []) if self.filled => self.filled = false,
             ("BDC", [tag, properties])
                 if tag.as_name().ok() == Some(b"Artifact")
                     && !properties.as_dict().is_ok_and(|dict| dict.has(b"MCID")) =>
@@ -771,6 +791,7 @@ impl Found {
             || (matches!(state.render, 1 | 2)
                 && !matches!(state.stroke_components, patterns::Colour::Solid(_)));
         let read_only = read_only || marked.placed > 0;
+        let read_only = read_only || marked.filled;
         // The colours the mode paints with; an invisible run paints nothing.
         if let Some(paint) = [Some("f"), Some("S"), Some("B"), None][state.render as usize] {
             patterns::paint(paint, state.fill_components, state.stroke_components)?;

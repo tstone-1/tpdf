@@ -371,8 +371,10 @@ both accepted aliases and refused standard-name remaps through the worker.
 symbolic generator covers aliases and metadata references. The browser generator's
 `--headings` exports an unchanged Document/Art/NonStruct tree with H1/P blocks;
 ordinary native textedit checks and PDFKit `--browser` read it back.
-Lists admit literal L/LI with Lbl, LBody or neutral NonStruct content leaves;
-LBody children that are themselves blocks remain refused. Nested L containers
+Lists admit literal L/LI with Lbl, LBody or neutral NonStruct content leaves.
+An LBody child that is itself a block is the body's one paragraph, as LibreOffice
+writes it (*Lists in paragraph styles of their own* below; refused until
+2026-10-06); any other block in a body remains refused. Nested L containers
 may occur directly inside LI; each item must retain its own content. The same
 iterative queue, depth/count bounds and explicit page ownership apply at every
 level. The browser generator uses `--nested-list`; native `textedit` edits the
@@ -833,6 +835,131 @@ holds ten runs on seven lines, all with outlines): no run's ink crosses the boun
 0.100 pt inside on the left, 0.041 pt at the bottom, 5.70 pt at the top and 111.7 pt on the
 right, and every run has at least that 111.7 pt to grow into. The page went from 41 offered
 runs to 51.
+
+## Lists in paragraph styles of their own
+
+Measured 2026-10-06 on a one-page LibreOffice 26.2 Writer document with a numbered list in a
+paragraph style of its own, which had afterwards been through Acrobat's Fill & Sign, and on
+the LibreOffice 26.8.0.3 export of `testdata/textedit-producer-list-styles.fodt`, committed
+as `src-tauri/src/textedit/tagging/fixtures/libreoffice-list.pdf`. Both were refused as
+*unsupported or inconsistent tagged text structure*. Four things stood between such a page
+and its text, met in this order; each is held as tightly as its neighbours.
+
+**What LibreOffice writes.** A paragraph in a list is a block of its own inside the body,
+under the paragraph style's name, which the RoleMap makes a `P`:
+
+```
+L (ListNumbering)
+  LI
+    Lbl                      one marked-content sequence: the number or the bullet
+    LBody
+      <style name> -> P      A: Layout, Placement Block, StartIndent, TextIndent, SpaceBefore
+        Span (Lang)          where the text's language is not the document's
+          MCID ...           one sequence a line, and one more where the font changes
+          Span (ActualText)  a hyphen LibreOffice added at a line end, U+00AD
+      L                      a sublist, beside the paragraph
+```
+
+Bold first words are not a Span: the font changes inside the paragraph's own sequences.
+
+**The paragraph in a body** (`tagging::groups`, `body_holds_one_thing`).
+
+- A child of an `LBody` that is a text block is admitted: `P`, `H`, `H1`-`H6`, or a name that
+  is not a standard one and that the RoleMap makes one of those. A standard name keeps its
+  own meaning whatever the RoleMap says, as in a cell.
+- A body holds **one** paragraph, and then nothing else of its own: no marked content, no
+  `Span` or `NonStruct` leaf, no `Link` or `Form`. Sublists may sit beside the paragraph,
+  any number of them; each goes back to the walk, as a sublist beside a body's own words
+  does. A body with no paragraph is the list every other producer writes and is read as
+  before.
+- The paragraph is read as a cell's paragraph is. Its attributes are a paragraph's
+  (`Placement` Block, the indents and spacing, `TextIndent`, `TextAlign`, `LineHeight`,
+  `WritingMode` LrTb; a `BBox` is refused). It holds marked content, `Span` and `NonStruct`
+  leaves, a `Span` in a `Span` (pinned: the hyphen above), `Link` and `Form` leaves
+  (read-only), and a `Figure`, which goes back to the walk. It holds no block: the
+  recursion is `LI` -> `LBody` -> paragraph and ends there.
+- What pins a paragraph pins it here: `/Alt`, `/ActualText`, a non-empty `/T`, `TextAlign`
+  End or Justify. The same on the body reaches the paragraph inside it. The label is
+  neither's and stays as it was.
+- **One block.** Every sequence of the item, the label's and the paragraph's and its
+  leaves', has the `LI` as its block (`Tags::blocks`), exactly as when the body owns the
+  words. A wrap therefore sees the item as it always has: the label on the first line, the
+  continuation lines at the hanging position, and a cascade that moves the item whole,
+  label with paragraph. This is why a body holds one paragraph: two would be lines of one
+  block, and words beside a paragraph would be lines of it. Each item of a sublist is a
+  block of its own, below its parent's paragraph.
+- Nothing holds an edit inside the item beyond what holds any edit. A list states no bounds.
+  A change without a layout fits the source's own advance and ink, so it cannot reach the
+  label, the next item or the sublist; one with a layout meets them as the other text they
+  are, and is refused where it would land on them or moved with them where a wrap may.
+
+Still refused: two paragraphs in one body; a paragraph beside words of the body's own; a
+block inside the paragraph; a paragraph in a label; a body child under a name the RoleMap
+maps to anything but a text block, or does not map; aliases for the list roles themselves.
+
+**What Acrobat's Fill & Sign adds** (`inspect::FILL_SIGN`, `forms.rs`). A signature picture
+put on a page with Fill & Sign is appended to the content as
+`/ADBE_FillSign BMC Q q ... /Fm0 Do Q EMC`: a form holding a form holding a form that draws
+the picture, each with an `/ADBE_FillSign` dictionary of `/Type /FillSignData`, the
+innermost with the box `[0 1 1 0]`.
+
+- `/ADBE_FillSign BMC ... EMC` is accepted outside a text object, on a tagged page and an
+  untagged one. It names no structure element and has no properties. Nothing may open
+  inside it. Text shown inside is read-only, as text appended to a tagged page without marks
+  is, and its paths, images and forms pass the ordinary checks. A sequence left open is
+  refused. No other tag is admitted this way: any other `BMC` without an MCID is still
+  *marked content without MCID must be an Artifact*.
+- A preserved form may carry `/ADBE_FillSign`, a dictionary whose `/Type` is
+  `/FillSignData`. It is private data like `/PieceInfo` and is carried unchanged.
+- A form's `/BBox` may name either pair of opposite corners (ISO 32000-1 7.9.5), as an
+  element's may. It is normalised before its matrix is applied; a box with no area is still
+  refused.
+
+**A character the body font cannot write** (`mapping::parse_keeping`, `fonts::embedded`,
+`fonts::kept_ink`). LibreOffice embeds each font as a symbolic TrueType subset with a map of
+its own, and the simple TrueType path writes ASCII and the en dash and nothing else. Until
+2026-10-06 one code outside that repertoire refused the whole map, and the font's text was
+then read-only through `fonts::read_only`: a footer whose separators are bullets, set in
+the body font, cost a page every word in that font (the measured document offered 18 runs
+where it now offers 83). Such a code is now *kept*:
+
+- the map may name, for a code, one character that is not a control and is outside the
+  repertoire. The code gets no slot, so it is never offered and never written. A sequence,
+  a surrogate and a control character are refused as before, and so is a code named twice,
+  kept or not. Two codes may show the same kept character;
+- the kept code's glyph is measured as an offered one is: the program's glyph for the code,
+  its advance within one unit of the PDF width, its ink within an offered glyph's limits
+  (a quarter em past the advance either side, half an em below the baseline, one em above)
+  or proved blank. Its ink joins the font's vertical extent;
+- a run that shows a kept code reads `fonts::OPAQUE` there and is read-only, its bytes
+  written back as they were; the other runs in the font are edited;
+- a kept code that cannot be measured that way refuses the font, which then falls back to
+  `fonts::read_only` exactly as before. Keeping a code never makes a page worse than it was.
+
+Only this path keeps codes. The CFF and WinAnsi maps prove their repertoire by glyph name
+and still refuse a character outside it.
+
+**What stays read-only on such a page.** The bullets of a bulleted list (a kept code, or a
+symbol font whose map names a private-use character); the hyphens LibreOffice adds at line
+ends, so a shorter word before one leaves a gap before the hyphen; a justified paragraph;
+the header and the footer, which are artifacts or elements nothing reaches; what Fill & Sign
+added. A centred line is edited about its centre and needs a layout (*Centred lines*).
+
+**Not done.** A kept code whose glyph is a composite of an empty glyph is not proved blank,
+and still costs the font: Liberation Sans draws its no-break space that way. A list item of
+two paragraphs is refused, and with it every page of its document, since the structure
+tree is read whole. Neither was in the measured document.
+
+On the measured document the page went from refused to 108 of its 125 shown strings offered
+(83 runs), and the other 17 are read-only for the reasons above. That document also shows
+each of its 24 no-break spaces as one glyph inside an inline `/Span` whose ActualText is
+U+00A0; those pass the ActualText rules there already were. `tagging/list_body_tests.rs`
+holds the synthetic shapes, `tagging/libreoffice_tests.rs` the committed export,
+`forms/tests.rs` and `fonts/tests.rs` the Fill & Sign and kept-code cases;
+`python3 scripts/mutate_rust.py --only 'list paragraph:' --only 'fill and sign:' --only
+'kept code:'` is the mutation set, and `scripts/text_list_check.py` edits the export and
+reads it back with pypdf, PDFium and PDFKit (`docs/VERIFICATION.md`, *A LibreOffice list in
+paragraph styles of its own*).
 
 ## PowerPoint for Microsoft 365
 

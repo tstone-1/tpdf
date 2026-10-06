@@ -6202,3 +6202,97 @@ which passes its own arguments. A `PATH` stored as `REG_EXPAND_SZ`; the code kee
 it reads. `tpdf-cli path` without an option was reworded after these runs to say what is stored
 as well as what the terminal holds, and that wording has only been type-checked for Windows.
 The `.msi` installer does not change `PATH`.
+
+### A LibreOffice list in paragraph styles of its own — measured 2026-10-06
+
+`docs/TEXTEDIT.md`, *Lists in paragraph styles of their own*, has the rules. This is what
+was measured, on macOS arm64 with a debug build.
+
+**The document that was refused.** One page, LibreOffice 26.2 Writer, tagged, a numbered
+list in a paragraph style of its own, then a signature picture from Acrobat's Fill & Sign
+and a document timestamp. It is not public and nothing of it is in this repository; only
+its refusals, tag names, operator names and counts were read. `tpdf-cli text-runs` exited 3.
+With a throwaway build that names the refusing line, the refusals came in this order, each
+found only once the one before was gone:
+
+| | Refusal | What it was |
+| --- | --- | --- |
+| 1 | *unsupported or inconsistent tagged text structure* | a paragraph element under `LBody`, named after its style, which the RoleMap makes a `P` |
+| 2 | *marked content without MCID must be an Artifact* | `/ADBE_FillSign BMC`, once, at the end of the content |
+| 3 | *unsupported preserved Form XObject* | the key `/ADBE_FillSign` on each of three nested forms |
+| 4 | *unsupported preserved Form XObject* | the innermost form's `/BBox [0 1 1 0]` |
+| 5 | none: 18 runs offered of a page of text | the body font's map names U+2022, used in the footer, so the font was read-only |
+
+After the change: exit 0, 83 runs offered, which are 108 of the page's 125 shown strings; 17
+are read-only. One same-length change through `tpdf-cli edit` to a scratch copy: exit 0, the
+copy re-read with 83 runs, one of them the replacement, still tagged. The copy was deleted.
+The timestamp's revision and its signature field played no part in any refusal.
+
+**The fixture.** `testdata/textedit-producer-list-styles.fodt` is a synthetic Writer document,
+every name in it invented, set in Liberation Sans (SIL Open Font License 1.1, shipped with
+LibreOffice). Its export is committed, because a hosted runner has no LibreOffice:
+`src-tauri/src/textedit/tagging/fixtures/libreoffice-list.pdf`, 50,926 bytes, SHA-256
+`8f7e3f4514c568989892003a3170af06ff9134c7d826347067777e95a5fe62fb`, made by LibreOffice
+26.8.0.3 on macOS with
+
+```
+soffice --headless \
+  --convert-to 'pdf:writer_pdf_Export:{"UseTaggedPDF":{"type":"boolean","value":"true"}}' \
+  --outdir <directory> testdata/textedit-producer-list-styles.fodt
+```
+
+`tpdf-cli info` says `Tagged: yes`. An export repeats neither its creation date nor its file
+identifier, so a new export has another digest; replace the committed file, the digest in
+`tagging/libreoffice_tests.rs` and in `scripts/text_list_check.py`, and this paragraph
+together. Before the change the export was refused at the same line as the document above,
+for the same pair (a style-named paragraph under `LBody`), and with the font change undone
+it offers 5 runs, the bold ones, for the same reason that document offered 18.
+
+What the export holds that the document did, by structure: `LI > LBody > <style> > Span(Lang)`
+with a `Span` carrying `/ActualText` U+00AD for each of two hyphens; centred `Standard`
+paragraphs; a justified one; a table with a `BBox`, block rows and inline cells; a bullet
+(U+2022) in the body font's map. What it holds that the document did not: a sublist inside
+a body beside its paragraph (the document's bulleted list was a list of its own between two
+numbered ones); a header picture drawn as paths in a `Figure` sequence whose element nothing
+in the tree reaches, where LibreOffice 26.2 wrote an artifact; a footer in an artifact with
+a property list, where 26.2 wrote `/Artifact BMC`. What it lacks: anything from
+Fill & Sign, which no tool here writes; those shapes are built by hand in `forms/tests.rs`
+and appended to the export in `tagging/libreoffice_tests.rs`.
+
+**In the suite.** `tagging/libreoffice_tests.rs` (4 tests) loads the export: the 27 runs
+offered, by text; the 10 read-only shows with text (4 bullets, 2 hyphens, 2 lines of the
+justified paragraph, 2 of the footer); the item as one block; four edits in one write (a list
+paragraph, bold first words, a sublist bullet, a centred line with the editor's layout),
+after which every other run is where it was, every structure object, the role map and the
+parent tree are the objects that were read, and no font program changed.
+
+**Round trip, read back three ways.** `uv run --with pypdf scripts/text_list_check.py
+<text-edit-probe> <tpdf-cli> <new-directory>`: the four edits go through
+`text-edit-probe --roundtrip` (preview and save agree pixel for pixel, and so does everything
+outside the edits), and the saved copy is read by pypdf (the page's text; 930 values of the
+structure graph, role map and parent tree compared one by one; 4 font programs by digest;
+the annotations), by PDFium (`tpdf-cli text`) and by PDFKit. All three show the four
+replacements and no other change. The script first runs its comparisons where they must
+fail, the unedited source and a copy whose list paragraph is renamed `P`, and both are
+refused. The same four changes through `tpdf-cli edit --plan`, the centred one with
+`"font":"auto"`: exit 0, 27 runs re-read, `verify` exit 0.
+
+One thing the readers showed that the tests had not: a shorter word before a hyphenated line
+end leaves a gap before the hyphen, which is a read-only run of its own and does not move.
+The script edits a line that ends its paragraph.
+
+**Mutations.** `python3 scripts/mutate_rust.py --only 'list paragraph:' --only 'fill and
+sign:' --only 'kept code:'`: 31, each red in the test named for it. Two guards went out
+instead of being covered. A filter refusing a kept code whose glyph is `.notdef` could not
+be reached through a format 0 character map, and is not needed: whatever glyph the program
+draws for a code nobody writes is the one to measure. A draft mutation that took any element
+in a body for its paragraph was caught, but by the test for a body's own inline leaf and not
+by the one written for it; it is listed under that test.
+
+**Not done.** No window was opened: the check that needs a screen is *Edit existing text* on
+the export, for the list paragraph's box, a wrap of a list paragraph (the item's label should
+stay on the first line, the continuation lines start under the paragraph's text, and the
+items below move down whole), and the centred line. Nothing ran on Windows beyond
+`scripts/check_windows.py`. LibreOffice 26.2's own export of the fixture was not made; 26.8
+is the version installed here. No document with a two-paragraph list item or a composite
+no-break space was measured, and both are still refused or read-only as before.
