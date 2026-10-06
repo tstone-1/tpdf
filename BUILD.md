@@ -6598,6 +6598,18 @@ passed on the fixture. `docs/THREAT-MODEL.md` needed no change: the cycle added 
 no request and no authority. The release notes in `release.yml` were rewritten and lead
 with the fix.
 
+**26.10.9 publication, 2026-10-06:** `Audit` and CI were green on the release commit
+`68c36934`, both legs, and the tag sits on it. Only the text of the release notes had
+changed in `release.yml`, so no rehearsal tag was cut; the `Release` run for `v26.10.9`
+skipped its gates on CI's account and both platform jobs passed at the first attempt. The
+draft held 8 assets and `scripts/publish_release.py v26.10.9 --publish` published it.
+Without authentication the `.dmg`, the `.msi`, the `-setup.exe` and the updater archive
+answer 200 and `latest.json` offers 26.10.9 for `darwin-aarch64` and `windows-x86_64`. The
+downloaded `.dmg` staples and Gatekeeper reads it as Notarized Developer ID. The Homebrew
+cask went from 26.10.8 to 26.10.9; `brew audit --cask --online` passed and `brew livecheck`
+reads 26.10.9. winget was not updated. The update from 26.10.8 (step 12) was not applied
+by hand before this was written.
+
 **26.10.8 verification, macOS arm64, 2026-10-06:** all 30 gates passed on the release tree
 (2,836 Rust tests with ten documented ignored, 2,491 frontend tests) and `check_windows.py`
 type-checked the Windows tree. Every mutation selected `--near v26.10.7` ran and was caught,
