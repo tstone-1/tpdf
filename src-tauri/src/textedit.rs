@@ -729,11 +729,24 @@ struct Inspection {
     groups: BTreeMap<u32, Vec<u32>>,
     compound_run_clips: BTreeMap<u32, (Vec<clipping::Region>, [f64; 4])>,
     contexts: BTreeMap<u32, layout::Context>,
+    /// The layout context of each read-only show a wrap may move with its
+    /// line or its block: text the tags keep (a pinned Span or paragraph, a
+    /// link's words) and a run with a glyph the editor cannot write. Its bytes
+    /// are never rewritten; a wrap draws them at another position
+    /// (`layout::wrap::drawn`). Read-only text that is where it is for a
+    /// reason the scan does not read -- turned, patterned, in a layer, placed
+    /// artwork, a Fill & Sign addition -- has no entry and never moves.
+    held: BTreeMap<u32, layout::Context>,
     expanded: BTreeMap<usize, layout::Prepared>,
     /// The block element owning every show on a tagged page -- editable,
     /// read-only and spacer shows alike -- so that a wrap can find all of its
     /// paragraph's text, including what it may not move (`layout::wrap`).
     blocks: BTreeMap<u32, ObjectId>,
+    /// The shows of a list item's label on a tagged page, its number or its
+    /// bullet: the item is one block with its label, and a wrap of an item of
+    /// one line starts its new lines under the item's words, not under the
+    /// label (`layout::wrap::plan`).
+    labels: BTreeSet<u32>,
     /// The shows a wrap moves down its paragraph, each with the operations
     /// that draw it there (`layout::Prepared::lowered`), gathered across the
     /// batch so that `write` can refuse two edits that move one show.
@@ -1064,8 +1077,10 @@ fn inspect_pinning(
         groups: BTreeMap::new(),
         compound_run_clips: found.compound_run_clips,
         contexts: found.contexts,
+        held: found.held,
         expanded: BTreeMap::new(),
         blocks: found.blocks,
+        labels: found.labels,
         lowered: BTreeMap::new(),
         annotations: annotation_rects(doc, id).ok(),
         links: BTreeMap::new(),
@@ -1686,6 +1701,9 @@ mod push_tests;
 mod blocks_tests;
 #[cfg(test)]
 mod wrap_tests;
+
+#[cfg(test)]
+mod carried_tests;
 
 #[cfg(test)]
 mod rotation_tests;

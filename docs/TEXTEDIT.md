@@ -48,16 +48,26 @@ it, and a move that would land on text staying where it is gets refused:
 - **Along the line.** A replacement that grows past the room before the next run pushes the
   rest of the line along (`textedit/push_tests.rs`), and stops at the next column
   (`BUILD.md`, *Columns on tagged pages, the gutter, and the space before a pushed word*).
+  The line ends at the page's edge, at a clip, or at the bounds its table states, whichever
+  is nearest, and only the page's edge and a column are where it may wrap. A clip that ends
+  the line within half a point of the page's edge is the page's edge (`layout::PAGE_CLIP`):
+  LibreOffice Writer draws every page under a clip of the sheet's own size less a rounding.
+  A clip further in is a box its producer cut the text to, and still refuses with *the
+  document clips the space after it*.
 - **Down the page.** A wrapped replacement moves every block below it down by the lines it
   added, cutting the next run at a space where only part of it fits (*The blocks below a
   wrapped paragraph move down with it*; *A run after the edit is cut at a space*). A
   paragraph break keeps its blank line unless the page has no other room: then each break
   may give up half a pitch (`layout::BREAK_GIVE`; *Half a paragraph break when the page is
-  full*).
+  full*). A list item of one line starts its new lines under its words, the first text
+  after its label, and not under the label (`wrap::plan`, `Inspection::labels`).
 - **With the line.** A link annotation over a moved line moves with it (*Links over lines a
   wrap moves*), and so does a thin painted rule inside the line's box, such as the
   rectangle Word draws for an underline, up to a quarter of the line's depth
-  (`layout::UNDERLINE`; *Underlines move with their lines*).
+  (`layout::UNDERLINE`; *Underlines move with their lines*). Read-only text of a line or a
+  block that moves goes with it, drawn from the bytes it had at another position
+  (`wrap::carried`; *What moves with a wrap on such a page* below has the rule and what it
+  leaves out).
 - **Never twice.** Two wraps in one batch that would each move the same run or rule are
   refused with the wrap-conflict message (`two_wraps_that_both_move_one_paragraph_are_refused`
   in `textedit/wrap_tests.rs`); until 2026-09-26 the second move silently replaced the first
@@ -944,22 +954,106 @@ symbol font whose map names a private-use character); the hyphens LibreOffice ad
 ends, so a shorter word before one leaves a gap before the hyphen; a justified paragraph;
 the header and the footer, which are artifacts or elements nothing reaches; what Fill & Sign
 added. A centred line is edited about its centre and needs a layout (*Centred lines*).
+Read-only is not the same as fixed in place: the first three move down with a wrap above
+them, as the next part says.
+
+**What moves with a wrap on such a page** (`layout::wrap::carried`, `Inspection::held`,
+`layout::PAGE_CLIP`; measured 2026-10-06). Until then no full line of such a page took one
+more word. Two things refused it, the second found only once the first was gone:
+
+- *The line never reached the page.* The page's content is drawn under a clip of the
+  sheet's size less a rounding (`0 0.028 594.964 841.975 re W* n` on a sheet 594.992 wide),
+  so every line ended 0.028 pt before the page's edge, at a clip, and a line a clip ends
+  does not wrap. A clip that close to the edge is now the edge (*Along the line* above).
+- *What is below could not move.* A wrap moved only text the writer may rewrite, and on
+  this page the text below a list item is partly not that. It now moves with its line or
+  its block, **position only**: the show's own operator is drawn from a `Tm` at the new
+  place, and the line matrix and the cursor are put back for what follows
+  (`wrap::drawn`, the writer a moved editable line has always used). That holds whatever
+  positioned the show: `Td`, `TD`, `T*`, `Tm`, or the cursor of the show before it, since
+  the scan records where each show is drawn and each is moved on its own. A kerned `TJ`
+  keeps its array; a leading number, which says where the run starts, is dropped because
+  the `Tm` already says it.
+
+What moves so:
+
+- text the tags keep read-only and that a block owns: a paragraph or a Span pinned by
+  `/Alt`, `/ActualText`, `/T` or its alignment (the hyphen LibreOffice adds at a line end,
+  a justified paragraph), and the words of a `Link` leaf, whose rectangle moves with them
+  when it lies around them (*Links over lines a wrap moves*) and refuses the wrap when it
+  lies only partly over the lines that move;
+- a run with a glyph the editor cannot write (a bullet as a kept code, or in a font that
+  is read-only as a whole), on a tagged page and on one whose blocks are read off its
+  lines;
+- a show inside an inline ActualText span, moved **inside its span**: the position is
+  written between the span's `BDC` and `EMC`, and the ActualText still describes what is
+  shown. Until 2026-10-06 such a block refused every wrap above it.
+
+What does not move, and refuses a wrap that would land on it or leave it behind, in the
+words it always had (*its lines would move onto what is below it*; *part of it below cannot
+be moved*): an artifact (a header, a footer) and anything no element owns; read-only text
+that is where it is for a reason the scan does not read, which is text in a layer, turned
+or reflected, under a turned clip, drawing back over itself, painted with a pattern (a
+pattern is anchored to the page, so the same glyphs lower down would show another part of
+it), placed artwork and what Fill & Sign added; a show under a compound clip; a spacer in
+an ActualText span, whose grammar admits one position and one show; a table row that would
+leave the bounds its table states (*The table states its bounds, and this text would leave
+them*). Everything that moves is held to the page, to the clip in force over it and to its
+table's bounds exactly as an editable line is, and text that stays in the middle of a
+read-only line that moves refuses the wrap by name.
+
+A read-only block is offered to the wrap like any block, and a wrap that is refused with
+every block that can move offered is tried once more with only the blocks the writer may
+rewrite: on the public sample 46 wraps had been accepted with a read-only block left where
+it was, and moving it was refused for text beside it (`layout::prepare`, `plain`).
+
+Read-only text moves **down with a line, never along one**. A run after the edit on the
+edited line flows onto the edit's new lines only where the writer may rewrite it, so a line
+that ends at an added hyphen takes no more words (*other text follows it*, or *the text
+after it cannot be moved* once the line's own text has been pushed up to the hyphen): the
+hyphen would have to stay at a line end, and the flow does not know one.
+
+An item of one line has no second line to read the hanging position from, and its left edge
+is its label's. Its new lines start under its words, the first text after the label
+(`Inspection::labels`, the shows of an `Lbl`).
+
+A block of one line has shown no measure of its own, so it wraps at the one the page shows
+(`wrap::borrowed`): the furthest any line reaches in the page's other tagged blocks of
+several lines, set in the run's direction. Only a block its producer broke counts, since a
+line an earlier edit grew into the margin is no measure. The room the line has still holds
+the answer, so this narrows a wrap and never widens one. A line that already reaches past
+that measure keeps the room it had, and so does a page with no paragraph of several lines:
+there the first line reaches the edge of the sheet as before
+(`textedit_a_one_line_item_wraps_at_the_measure_of_the_paragraphs_beside_it`).
+Its pitch is borrowed the same way (`wrap::borrowed_pitch`): the least distance between
+two lines of the nearest other tagged block that has two, among text of the run's own
+size, inside `PITCH_EM`. The editor's own 1.25 em stays for a page that shows none.
+
+A line that may break is broken where its ink fits, not only its advance
+(`layout::line_breaks` is given the larger of the two when the shape wraps). The lines
+were already held to their ink afterwards, so a last glyph reaching a tenth of a point
+past its advance refused a wrap that one word fewer on the line would have made
+(`textedit_a_wrapped_line_breaks_before_a_glyph_whose_ink_leaves_the_box`). One line has
+nowhere to break and is measured by its advance as before.
 
 **Not done.** A kept code whose glyph is a composite of an empty glyph is not proved blank,
 and still costs the font: Liberation Sans draws its no-break space that way. A list item of
 two paragraphs is refused, and with it every page of its document, since the structure
-tree is read whole. Neither was in the measured document.
+tree is read whole. Neither was in the measured document. A line that ends at an added
+hyphen does not wrap.
 
 On the measured document the page went from refused to 108 of its 125 shown strings offered
 (83 runs), and the other 17 are read-only for the reasons above. That document also shows
 each of its 24 no-break spaces as one glyph inside an inline `/Span` whose ActualText is
 U+00A0; those pass the ActualText rules there already were. `tagging/list_body_tests.rs`
 holds the synthetic shapes, `tagging/libreoffice_tests.rs` the committed export,
-`forms/tests.rs` and `fonts/tests.rs` the Fill & Sign and kept-code cases;
+`forms/tests.rs` and `fonts/tests.rs` the Fill & Sign and kept-code cases,
+`textedit/carried_tests.rs` what a wrap carries;
 `python3 scripts/mutate_rust.py --only 'list paragraph:' --only 'fill and sign:' --only
-'kept code:'` is the mutation set, and `scripts/text_list_check.py` edits the export and
-reads it back with pypdf, PDFium and PDFKit (`docs/VERIFICATION.md`, *A LibreOffice list in
-paragraph styles of its own*).
+'kept code:' --only 'carried:' --only 'page clip:' --only 'item:'` is the mutation set, and
+`scripts/text_list_check.py` edits the export and reads it back with pypdf, PDFium and
+PDFKit, and its three wraps with pdfplumber as well (`docs/VERIFICATION.md`, *A LibreOffice
+list in paragraph styles of its own* and *A wrap on a LibreOffice page*).
 
 ## PowerPoint for Microsoft 365
 

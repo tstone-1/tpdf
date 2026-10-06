@@ -35,6 +35,13 @@ pub(super) struct Context {
     pub transform: [f64; 6],
 }
 
+/// The context of a show that can be drawn somewhere else: one the writer may
+/// rewrite, or read-only text the scan recorded a position for
+/// (`Inspection::held`), which only a wrap moves (`wrap::carried`).
+fn context_of(page: &Inspection, show: u32) -> Option<&Context> {
+    page.contexts.get(&show).or_else(|| page.held.get(&show))
+}
+
 pub(super) struct Prepared {
     pub operations: Vec<Operation>,
     pub fallback: Option<fonts::fallback::Font>,
@@ -194,8 +201,11 @@ enum Around<'a> {
     /// A discovered run the writer may rewrite, so a candidate for being pushed
     /// along its line. Whether it really is one is [`pushable`]'s question.
     Run(u32, &'a [f32; 4]),
-    /// Text the editor keeps byte for byte: read-only text, and the text a
-    /// preserved Form XObject draws.
+    /// Read-only text, which the editor keeps byte for byte, with its show: a
+    /// wrap may move it down with its line (`wrap::carried`), and nothing
+    /// else moves it.
+    Kept(u32, &'a [f32; 4]),
+    /// The text a preserved Form XObject draws, which nothing moves.
     Fixed(&'a [f32; 4]),
 }
 
@@ -219,7 +229,7 @@ fn obstacles<'a>(page: &'a Inspection, run: &'a Run) -> impl Iterator<Item = Aro
             page.preserved
                 .iter()
                 .filter(|other| !other.text.trim().is_empty())
-                .map(|other| Around::Fixed(&other.display_rect)),
+                .map(|other| Around::Kept(other.operator, &other.display_rect)),
         )
         .chain(page.form_text_bounds.iter().map(Around::Fixed))
 }
@@ -227,7 +237,7 @@ fn obstacles<'a>(page: &'a Inspection, run: &'a Run) -> impl Iterator<Item = Aro
 impl Around<'_> {
     fn rect(&self) -> &[f32; 4] {
         match self {
-            Around::Run(_, rect) | Around::Fixed(rect) => rect,
+            Around::Run(_, rect) | Around::Kept(_, rect) | Around::Fixed(rect) => rect,
         }
     }
 }
@@ -396,26 +406,54 @@ impl Axis {
 
     /// How far along the axis the page allows, and a clip and the bounds a
     /// table states if there are any; the nearest is what stops the line.
+    ///
+    /// A clip that ends the line within [`PAGE_CLIP`] of where the page does
+    /// still ends it there, that hair before the page, and is named as the
+    /// page: that is the edge the reader sees, and the one a line wraps at.
     fn ahead(
         &self,
         page: [f64; 4],
         clip: Option<[f64; 4]>,
         table: Option<[f64; 4]>,
     ) -> (f64, Room) {
-        let mut free = self.at(self.edge(page, true));
+        let sheet = self.edge(page, true);
+        let mut free = self.at(sheet);
         let mut stop = Room::Page;
         for (held, kind) in [(clip, Room::Clip), (table, Room::Table)] {
             if let Some(held) = held {
-                let limit = self.at(self.edge(held, true));
+                let edge = self.edge(held, true);
+                let limit = self.at(edge);
                 if limit < free {
                     free = limit;
-                    stop = kind;
+                    if kind != Room::Clip || (sheet - edge).abs() > PAGE_CLIP {
+                        stop = kind;
+                    }
                 }
             }
         }
         (free, stop)
     }
 }
+
+/// How far before the page's edge a clip may end a line, in points, and the
+/// line still have reached the page: LibreOffice Writer draws every page under
+/// a clip of the sheet's own size less a rounding, `0 0.028 594.964 841.975 re
+/// W* n` on a sheet 594.992 wide, which ends each line 0.028 pt before the
+/// page does. Named as a clip, that hair refused every full line of such a
+/// page a wrap, with *the document clips the space after it*, though the page
+/// is all that is in the way.
+///
+/// Half a point is far past such a rounding and far short of any margin: a
+/// frame, a cell or a column that its producer cut text to ends well inside
+/// the page, keeps [`Room::Clip`] and is refused as before, because wraps were
+/// measured against pages and columns and not against boxes drawn inside them.
+/// A clip that ends exactly at the page's edge, or beyond it, was the page
+/// already; this makes the rule the same a hair either side of that edge.
+///
+/// Only the edge the line runs into is asked. Where a wrap's own lines and the
+/// lines it moves may go is asked of each of them against the clip in force
+/// over it (`prepare`'s `lay_out`, [`wrap_room`]), whatever ended the line.
+const PAGE_CLIP: f64 = 0.5;
 
 /// A run the push would move: its hit rectangle, the clip in force over it, and
 /// the bounds its table states (`Context::table`).
@@ -824,7 +862,7 @@ fn free_width(
                     match other {
                         Around::Run(id, _) if columns.contains(&id) => Room::Column,
                         Around::Run(..) => Room::Line,
-                        Around::Fixed(_) => Room::Fixed,
+                        Around::Kept(..) | Around::Fixed(_) => Room::Fixed,
                     },
                 )
             }),
@@ -1206,6 +1244,7 @@ fn left_behind(
         .runs
         .runs
         .iter()
+        .chain(&page.preserved)
         .filter(|other| below.contains(&other.operator) && !other.text.trim().is_empty())
         .map(|other| other.display_rect.map(f64::from))
         .collect();
@@ -1493,6 +1532,7 @@ fn cascade(
             page.runs
                 .runs
                 .iter()
+                .chain(&page.preserved)
                 .filter(|other| shows.contains(&other.operator) && !other.text.trim().is_empty())
                 .map(|other| (other.operator, other.display_rect.map(f64::from)))
                 .collect()
@@ -1851,17 +1891,17 @@ fn wrap_room(
         .iter()
         .zip(reach)
         .map(|((operator, rect, by), reach)| {
-            let context = &page.contexts[operator];
-            (
+            let context = context_of(page, *operator).ok_or("missing text layout context")?;
+            Ok((
                 *operator,
                 *rect,
                 *by,
                 *reach,
                 context.clip.map(|clip| display(clip).map(f64::from)),
                 context.table.map(|table| display(table).map(f64::from)),
-            )
+            ))
         })
-        .collect();
+        .collect::<Result<_, String>>()?;
     let (width, depth) = (f64::from(geometry.width), f64::from(geometry.height));
     let mut placed = Vec::new();
     for (operator, old, by, reach, clip, table) in &moving {
@@ -2040,6 +2080,16 @@ const UNDERLINE: f64 = 0.25;
 
 /// Each run a wrap moves, with its hit rectangle where it ends up.
 type Placed = Vec<(u32, [f32; 4])>;
+/// What one attempt at a wrap made: the edit's operations, its lines, its box,
+/// each moved show with what replaces it, and where the moved runs are, where
+/// the runs that flowed were, and the links that moved.
+type Wrapped = (
+    Vec<Operation>,
+    usize,
+    [f32; 4],
+    Vec<(u32, Vec<Operation>)>,
+    (Placed, Vec<[f32; 4]>, Links),
+);
 /// The links a wrap moves, each with how far on the displayed page.
 type Links = Vec<(ObjectId, [f64; 2])>;
 
@@ -2392,10 +2442,21 @@ pub(super) fn prepare(
                 (shape.first, shape.rest),
                 shape.wrap,
                 too_wide,
+                // Where a line may break, the ink as well as the advance, as
+                // the lines are held to below: a last glyph that reaches a
+                // tenth of a point past its advance refused a wrap whose line
+                // could have broken a word earlier. One line has nowhere to
+                // break and keeps the advance, which the ink check then judges.
                 |text| {
                     metrics
                         .gapped_layout(text.trim_end_matches(' '), size, spacing, word_spacing, gap)
-                        .map(|(width, _)| width)
+                        .map(|(width, ink)| {
+                            if shape.wrap {
+                                width.max(ink[1] + (-ink[0]).max(0.))
+                            } else {
+                                width
+                            }
+                        })
                 },
             )?
         };
@@ -2640,270 +2701,306 @@ pub(super) fn prepare(
             Err(wrap::Refused::NotApplicable) => {}
             Err(wrap::Refused::Blocked(reason)) => return Err(reason.into()),
             Ok(plan) => {
-                let below: BTreeSet<u32> = plan.below.iter().copied().collect();
-                let flowing: BTreeSet<u32> = plan
-                    .after
+                // The blocks below that would have moved before read-only text
+                // could: every show one the writer may rewrite, none inside an
+                // ActualText span. Tried when the wrap is refused with every
+                // block that can move offered, so that no wrap accepted before
+                // is refused now. A read-only block offered to the cascade is
+                // moved as soon as a break above it would close, like any
+                // other, and its move can then be refused for text beside it
+                // that stays, where leaving the block alone was accepted: 46
+                // verdicts on three files of the public sample, 2026-10-06.
+                let plain: Vec<Vec<u32>> = plan
+                    .beneath
                     .iter()
-                    .flat_map(|unit| unit.shows.iter().copied())
-                    .collect();
-                let moving: BTreeSet<u32> = below.union(&flowing).copied().collect();
-                // Every show of every edit in the batch, grouped members
-                // included: a replacement is written where its source was, so
-                // one this wrap moved would land on the wrap's own lines.
-                if placement
-                    .edited
-                    .iter()
-                    .flat_map(|edited| shows_of(page, *edited))
-                    .any(|show| moving.contains(&show))
-                {
-                    return Err(wrap::CONFLICT.into());
-                }
-                // The hit list with every run that moves flagged. The blocks
-                // below that may move with the paragraph are flagged too until
-                // the edit's lines are known, and only the ones something lands
-                // on are then (`cascade`).
-                let flag = |moves: &BTreeSet<u32>| -> Vec<([f64; 4], bool)> {
-                    obstacles(page, run)
-                        .map(|other| match other {
-                            Around::Run(id, rect) => (
-                                rect.map(f64::from),
-                                shows_of(page, id).iter().any(|show| moves.contains(show)),
-                            ),
-                            other => (other.rect().map(f64::from), false),
+                    .filter(|shows| {
+                        shows.iter().all(|show| {
+                            page.contexts.contains_key(show) && !page.actual_text.contains_key(show)
                         })
-                        .collect()
-                };
-                let may: BTreeSet<u32> = plan.beneath.iter().flatten().copied().collect();
-                let hits = flag(&moving.union(&may).copied().collect());
-                // Only the lines below: the runs after the edit leave a line
-                // whose start stays, and what stays there is the block's own.
-                left_behind(page, &below, &hits)?;
-                let shape = Shape {
-                    first: plan.first,
-                    start: plan.start,
-                    rest: plan.rest,
-                    wrap: true,
-                    pitch: Some(plan.pitch),
-                };
-                let (operations, lines, used, end, inks) = lay_out(None, &shape, true, &hits, 0.)
-                    .map_err(|error| {
-                    if error.starts_with("Text would overlap another line") {
-                        wrap::NO_ROOM.to_string()
-                    } else {
-                        error
-                    }
-                })?;
-                // A run after the edit wider than a whole line of the block
-                // cannot flow anywhere, and the edit keeps the refusal it had.
-                let cuts: Vec<Cut> = plan
-                    .after
-                    .iter()
-                    .map(|unit| unit_words(doc, resources, page, unit))
+                    })
+                    .cloned()
                     .collect();
-                let spans: Vec<Vec<(f64, f64)>> =
-                    cuts.iter().map(|(spans, _)| spans.clone()).collect();
-                let places = wrap::flow(&plan, &spans, run.advance, (lines.saturating_sub(1), end))
-                    .ok_or_else(|| had.unwrap_or(Room::Page).refusal().to_string())?;
-                // How far the block's lines below go: the lines this edit and
-                // the text after it added, at the block's own pitch, down the
-                // run's own text axis.
-                let added = places
-                    .iter()
-                    .map(|piece| piece.line)
-                    .fold(lines.saturating_sub(1), usize::max);
-                let drop = added as f64 * plan.pitch;
-                // A distance in the run's own text space, as the page-space
-                // vector `wrap::lowered` takes and as the displayed one the
-                // hit rectangles move by.
-                let along = |dx: f64, dy: f64| {
-                    (
-                        dx * run.matrix[0] + dy * run.matrix[2],
-                        dx * run.matrix[1] + dy * run.matrix[3],
-                    )
-                };
-                let corner = |dx: f64, dy: f64| {
-                    let (to, from) = (
-                        display(text_bounds(run.matrix, [dx, dy, dx, dy])),
-                        display(text_bounds(run.matrix, [0., 0., 0., 0.])),
-                    );
-                    [
-                        f64::from(to[0]) - f64::from(from[0]),
-                        f64::from(to[1]) - f64::from(from[1]),
-                    ]
-                };
-                // Every moved hit rectangle: a whole run where its source was,
-                // with how far it goes, or one piece of a run cut at a space.
-                let mut moving: Vec<(u32, [f64; 4], [f64; 2])> = Vec::new();
-                let whole = |operator: u32| {
-                    page.runs
-                        .runs
+                let attempt = |beneath: &[Vec<u32>]| -> Result<Wrapped, String> {
+                    let below: BTreeSet<u32> = plan.below.iter().copied().collect();
+                    let flowing: BTreeSet<u32> = plan
+                        .after
                         .iter()
-                        .find(|other| other.operator == operator && !other.text.trim().is_empty())
-                        .map(|other| other.display_rect.map(f64::from))
-                };
-                let mut lowered = Vec::new();
-                for show in &plan.below {
-                    moving.extend(whole(*show).map(|rect| (*show, rect, corner(0., -drop))));
-                    lowered.push((*show, wrap::lowered(page, *show, along(0., -drop))?));
-                }
-                // Where one text-space position along the edited line is on the
-                // displayed page, along the display axis the line runs on.
-                let unit_x = corner(1., 0.);
-                let axis = usize::from(unit_x[1].abs() > unit_x[0].abs());
-                for (index, unit) in plan.after.iter().enumerate() {
-                    let mine: Vec<&wrap::Piece> =
-                        places.iter().filter(|piece| piece.unit == index).collect();
-                    let dy = |piece: &wrap::Piece| -(piece.line as f64) * plan.pitch;
-                    if let [piece @ wrap::Piece { words: None, .. }] = mine[..] {
-                        let dx = piece.at - unit.start;
-                        for show in &unit.shows {
-                            moving.extend(
-                                whole(*show).map(|rect| (*show, rect, corner(dx, dy(piece)))),
-                            );
-                            lowered
-                                .push((*show, wrap::lowered(page, *show, along(dx, dy(piece)))?));
-                        }
-                        continue;
-                    }
-                    // Cut: one show (`unit_words`), drawn once per piece.
-                    let show = unit.shows[0];
-                    let (spans, items) = &cuts[index];
-                    let source = whole(show).ok_or("text run no longer exists")?;
-                    let mut drawn = Vec::new();
-                    for piece in &mine {
-                        let words = piece.words.clone().ok_or("invalid text patch")?;
-                        let (from, to) = (spans[words.start].0, spans[words.end - 1].1);
-                        // The piece's own stretch of the run's rectangle.
-                        let at = |x: f64| {
-                            let base = if unit_x[axis] > 0. {
-                                source[axis]
-                            } else {
-                                source[axis + 2]
-                            };
-                            base + unit_x[axis] * (x - unit.start)
-                        };
-                        let mut rect = source;
-                        (rect[axis], rect[axis + 2]) = (at(from).min(at(to)), at(from).max(at(to)));
-                        moving.push((show, rect, corner(piece.at - from, dy(piece))));
-                        drawn.push((
-                            along(piece.at - unit.start, dy(piece)),
-                            kerning::joined(items, words),
-                        ));
-                    }
-                    let pieces: Vec<wrap::Drawn<'_>> = drawn
-                        .iter()
-                        .map(|(offset, items)| (*offset, Some(items.as_slice())))
+                        .flat_map(|unit| unit.shows.iter().copied())
                         .collect();
-                    lowered.push((show, wrap::drawn(page, show, &pieces)?));
-                }
-                // The blocks below that the paragraph's moved lines, or the
-                // edit's own lines, would land on move down with it.
-                // With no line of the paragraph below the edit, its bottom is
-                // the edited line, moved down to the edit's new last line.
-                let edge = (plan.below.is_empty() && drop > 0.)
-                    .then(|| (run.display_rect.map(f64::from), corner(0., -drop)));
-                // A page full to its footer has no break with a blank line to
-                // spare. Only when the wrap was refused with every break kept
-                // whole may each give up part of its blank line ([`BREAK_GIVE`]).
-                let settle = |give: f64| -> Result<(Placed, Links, Vec<_>), String> {
-                    let mut moving = moving.clone();
-                    let mut lowered = lowered.clone();
-                    let mut reach = Vec::new();
-                    let (carried, paragraph) = cascade(
-                        page,
-                        &plan.beneath,
-                        (&mut moving, &mut reach),
-                        (&inks, free.own, edge),
-                        (corner(0., -drop), corner(0., -plan.pitch), give),
-                    )
-                    .ok_or(wrap::NO_ROOM)?;
-                    let hits = if carried.is_empty() {
-                        flag(&below.union(&flowing).copied().collect())
-                    } else {
-                        if placement
-                            .edited
+                    let moving: BTreeSet<u32> = below.union(&flowing).copied().collect();
+                    // Every show of every edit in the batch, grouped members
+                    // included: a replacement is written where its source was, so
+                    // one this wrap moved would land on the wrap's own lines.
+                    if placement
+                        .edited
+                        .iter()
+                        .flat_map(|edited| shows_of(page, *edited))
+                        .any(|show| moving.contains(&show))
+                    {
+                        return Err(wrap::CONFLICT.into());
+                    }
+                    // The hit list with every run that moves flagged. The blocks
+                    // below that may move with the paragraph are flagged too until
+                    // the edit's lines are known, and only the ones something lands
+                    // on are then (`cascade`).
+                    let flag = |moves: &BTreeSet<u32>| -> Vec<([f64; 4], bool)> {
+                        obstacles(page, run)
+                            .map(|other| match other {
+                                Around::Run(id, rect) => (
+                                    rect.map(f64::from),
+                                    shows_of(page, id).iter().any(|show| moves.contains(show)),
+                                ),
+                                // Read-only text a wrap carries with its line.
+                                Around::Kept(id, rect) => {
+                                    (rect.map(f64::from), moves.contains(&id))
+                                }
+                                other => (other.rect().map(f64::from), false),
+                            })
+                            .collect()
+                    };
+                    let may: BTreeSet<u32> = beneath.iter().flatten().copied().collect();
+                    let hits = flag(&moving.union(&may).copied().collect());
+                    // Only the lines below: the runs after the edit leave a line
+                    // whose start stays, and what stays there is the block's own.
+                    left_behind(page, &below, &hits)?;
+                    let shape = Shape {
+                        first: plan.first,
+                        start: plan.start,
+                        rest: plan.rest,
+                        wrap: true,
+                        pitch: Some(plan.pitch),
+                    };
+                    let (operations, lines, used, end, inks) =
+                        lay_out(None, &shape, true, &hits, 0.).map_err(|error| {
+                            if error.starts_with("Text would overlap another line") {
+                                wrap::NO_ROOM.to_string()
+                            } else {
+                                error
+                            }
+                        })?;
+                    // A run after the edit wider than a whole line of the block
+                    // cannot flow anywhere, and the edit keeps the refusal it had.
+                    let cuts: Vec<Cut> = plan
+                        .after
+                        .iter()
+                        .map(|unit| unit_words(doc, resources, page, unit))
+                        .collect();
+                    let spans: Vec<Vec<(f64, f64)>> =
+                        cuts.iter().map(|(spans, _)| spans.clone()).collect();
+                    let places =
+                        wrap::flow(&plan, &spans, run.advance, (lines.saturating_sub(1), end))
+                            .ok_or_else(|| had.unwrap_or(Room::Page).refusal().to_string())?;
+                    // How far the block's lines below go: the lines this edit and
+                    // the text after it added, at the block's own pitch, down the
+                    // run's own text axis.
+                    let added = places
+                        .iter()
+                        .map(|piece| piece.line)
+                        .fold(lines.saturating_sub(1), usize::max);
+                    let drop = added as f64 * plan.pitch;
+                    // A distance in the run's own text space, as the page-space
+                    // vector `wrap::lowered` takes and as the displayed one the
+                    // hit rectangles move by.
+                    let along = |dx: f64, dy: f64| {
+                        (
+                            dx * run.matrix[0] + dy * run.matrix[2],
+                            dx * run.matrix[1] + dy * run.matrix[3],
+                        )
+                    };
+                    let corner = |dx: f64, dy: f64| {
+                        let (to, from) = (
+                            display(text_bounds(run.matrix, [dx, dy, dx, dy])),
+                            display(text_bounds(run.matrix, [0., 0., 0., 0.])),
+                        );
+                        [
+                            f64::from(to[0]) - f64::from(from[0]),
+                            f64::from(to[1]) - f64::from(from[1]),
+                        ]
+                    };
+                    // Every moved hit rectangle: a whole run where its source was,
+                    // with how far it goes, or one piece of a run cut at a space.
+                    let mut moving: Vec<(u32, [f64; 4], [f64; 2])> = Vec::new();
+                    let whole = |operator: u32| {
+                        page.runs
+                            .runs
                             .iter()
-                            .flat_map(|edited| shows_of(page, *edited))
-                            .any(|show| carried.contains_key(&show))
-                        {
-                            return Err(wrap::CONFLICT.into());
+                            .chain(&page.preserved)
+                            .find(|other| {
+                                other.operator == operator && !other.text.trim().is_empty()
+                            })
+                            .map(|other| other.display_rect.map(f64::from))
+                    };
+                    let mut lowered = Vec::new();
+                    for show in &plan.below {
+                        moving.extend(whole(*show).map(|rect| (*show, rect, corner(0., -drop))));
+                        lowered.push((*show, wrap::lowered(page, *show, along(0., -drop))?));
+                    }
+                    // Where one text-space position along the edited line is on the
+                    // displayed page, along the display axis the line runs on.
+                    let unit_x = corner(1., 0.);
+                    let axis = usize::from(unit_x[1].abs() > unit_x[0].abs());
+                    for (index, unit) in plan.after.iter().enumerate() {
+                        let mine: Vec<&wrap::Piece> =
+                            places.iter().filter(|piece| piece.unit == index).collect();
+                        let dy = |piece: &wrap::Piece| -(piece.line as f64) * plan.pitch;
+                        if let [piece @ wrap::Piece { words: None, .. }] = mine[..] {
+                            let dx = piece.at - unit.start;
+                            for show in &unit.shows {
+                                moving.extend(
+                                    whole(*show).map(|rect| (*show, rect, corner(dx, dy(piece)))),
+                                );
+                                lowered.push((
+                                    *show,
+                                    wrap::lowered(page, *show, along(dx, dy(piece)))?,
+                                ));
+                            }
+                            continue;
                         }
-                        for (show, part) in &carried {
-                            lowered.push((
-                                *show,
-                                wrap::lowered(page, *show, along(0., -drop * part))?,
+                        // Cut: one show (`unit_words`), drawn once per piece.
+                        let show = unit.shows[0];
+                        let (spans, items) = &cuts[index];
+                        let source = whole(show).ok_or("text run no longer exists")?;
+                        let mut drawn = Vec::new();
+                        for piece in &mine {
+                            let words = piece.words.clone().ok_or("invalid text patch")?;
+                            let (from, to) = (spans[words.start].0, spans[words.end - 1].1);
+                            // The piece's own stretch of the run's rectangle.
+                            let at = |x: f64| {
+                                let base = if unit_x[axis] > 0. {
+                                    source[axis]
+                                } else {
+                                    source[axis + 2]
+                                };
+                                base + unit_x[axis] * (x - unit.start)
+                            };
+                            let mut rect = source;
+                            (rect[axis], rect[axis + 2]) =
+                                (at(from).min(at(to)), at(from).max(at(to)));
+                            moving.push((show, rect, corner(piece.at - from, dy(piece))));
+                            drawn.push((
+                                along(piece.at - unit.start, dy(piece)),
+                                kerning::joined(items, words),
                             ));
                         }
-                        let carried: BTreeSet<u32> = carried.keys().copied().collect();
-                        let lower: BTreeSet<u32> = below.union(&carried).copied().collect();
-                        let hits = flag(&lower.union(&flowing).copied().collect());
-                        left_behind(page, &lower, &hits)?;
-                        hits
-                    };
-                    let (placed, links, carried) = wrap_room(
-                        page,
-                        &Moving {
-                            moves: &moving,
-                            reach: &reach,
-                            edge,
-                            paragraph,
-                            give,
-                        },
-                        &hits,
-                        corner(0., -plan.pitch),
-                        &geometry,
-                        &display,
-                    )?;
-                    // An underline goes with its line: its path is drawn
-                    // under a translation that moves it as far.
-                    for (index, by) in carried {
-                        let path = page.paths[&index];
-                        let rect = page.graphics[index];
-                        let from = crate::text::from_device(
-                            geometry.turns,
-                            geometry.width,
-                            geometry.height,
-                            rect,
-                        );
-                        let to = crate::text::from_device(
-                            geometry.turns,
-                            geometry.width,
-                            geometry.height,
-                            shift(rect.map(f64::from), by).map(|value| value as f32),
-                        );
-                        lowered.extend(wrap::translated(
-                            page,
-                            path.operations,
-                            path.transform,
-                            (to[0] - from[0], to[1] - from[1]),
-                        )?);
+                        let pieces: Vec<wrap::Drawn<'_>> = drawn
+                            .iter()
+                            .map(|(offset, items)| (*offset, Some(items.as_slice())))
+                            .collect();
+                        lowered.push((show, wrap::drawn(page, show, &pieces)?));
                     }
-                    Ok((placed, links, lowered))
+                    // The blocks below that the paragraph's moved lines, or the
+                    // edit's own lines, would land on move down with it.
+                    // With no line of the paragraph below the edit, its bottom is
+                    // the edited line, moved down to the edit's new last line.
+                    let edge = (plan.below.is_empty() && drop > 0.)
+                        .then(|| (run.display_rect.map(f64::from), corner(0., -drop)));
+                    // A page full to its footer has no break with a blank line to
+                    // spare. Only when the wrap was refused with every break kept
+                    // whole may each give up part of its blank line ([`BREAK_GIVE`]).
+                    let settle = |give: f64| -> Result<(Placed, Links, Vec<_>), String> {
+                        let mut moving = moving.clone();
+                        let mut lowered = lowered.clone();
+                        let mut reach = Vec::new();
+                        let (carried, paragraph) = cascade(
+                            page,
+                            beneath,
+                            (&mut moving, &mut reach),
+                            (&inks, free.own, edge),
+                            (corner(0., -drop), corner(0., -plan.pitch), give),
+                        )
+                        .ok_or(wrap::NO_ROOM)?;
+                        let hits = if carried.is_empty() {
+                            flag(&below.union(&flowing).copied().collect())
+                        } else {
+                            if placement
+                                .edited
+                                .iter()
+                                .flat_map(|edited| shows_of(page, *edited))
+                                .any(|show| carried.contains_key(&show))
+                            {
+                                return Err(wrap::CONFLICT.into());
+                            }
+                            for (show, part) in &carried {
+                                lowered.push((
+                                    *show,
+                                    wrap::lowered(page, *show, along(0., -drop * part))?,
+                                ));
+                            }
+                            let carried: BTreeSet<u32> = carried.keys().copied().collect();
+                            let lower: BTreeSet<u32> = below.union(&carried).copied().collect();
+                            let hits = flag(&lower.union(&flowing).copied().collect());
+                            left_behind(page, &lower, &hits)?;
+                            hits
+                        };
+                        let (placed, links, carried) = wrap_room(
+                            page,
+                            &Moving {
+                                moves: &moving,
+                                reach: &reach,
+                                edge,
+                                paragraph,
+                                give,
+                            },
+                            &hits,
+                            corner(0., -plan.pitch),
+                            &geometry,
+                            &display,
+                        )?;
+                        // An underline goes with its line: its path is drawn
+                        // under a translation that moves it as far.
+                        for (index, by) in carried {
+                            let path = page.paths[&index];
+                            let rect = page.graphics[index];
+                            let from = crate::text::from_device(
+                                geometry.turns,
+                                geometry.width,
+                                geometry.height,
+                                rect,
+                            );
+                            let to = crate::text::from_device(
+                                geometry.turns,
+                                geometry.width,
+                                geometry.height,
+                                shift(rect.map(f64::from), by).map(|value| value as f32),
+                            );
+                            lowered.extend(wrap::translated(
+                                page,
+                                path.operations,
+                                path.transform,
+                                (to[0] - from[0], to[1] - from[1]),
+                            )?);
+                        }
+                        Ok((placed, links, lowered))
+                    };
+                    let (placed, links, lowered) = match settle(0.) {
+                        Err(error) if error == wrap::NO_ROOM => settle(BREAK_GIVE),
+                        settled => settled,
+                    }?;
+                    let rect = display(text_bounds(
+                        run.matrix,
+                        [
+                            plan.start.min(0.),
+                            run.size - height - lines.saturating_sub(1) as f64 * plan.pitch,
+                            used.max(width),
+                            run.size,
+                        ],
+                    ));
+                    // Where the runs that flowed were: a run leaving the end of the
+                    // edit's line for the start of the next is outside both the box
+                    // and where it lands, so the preview names the place it left.
+                    let vacated: Vec<[f32; 4]> = page
+                        .runs
+                        .runs
+                        .iter()
+                        .filter(|other| flowing.contains(&other.operator))
+                        .map(|other| other.display_rect)
+                        .collect();
+                    Ok((operations, lines, rect, lowered, (placed, vacated, links)))
                 };
-                let (placed, links, lowered) = match settle(0.) {
-                    Err(error) if error == wrap::NO_ROOM => settle(BREAK_GIVE),
-                    settled => settled,
-                }?;
-                let rect = display(text_bounds(
-                    run.matrix,
-                    [
-                        plan.start.min(0.),
-                        run.size - height - lines.saturating_sub(1) as f64 * plan.pitch,
-                        used.max(width),
-                        run.size,
-                    ],
-                ));
-                // Where the runs that flowed were: a run leaving the end of the
-                // edit's line for the start of the next is outside both the box
-                // and where it lands, so the preview names the place it left.
-                let vacated: Vec<[f32; 4]> = page
-                    .runs
-                    .runs
-                    .iter()
-                    .filter(|other| flowing.contains(&other.operator))
-                    .map(|other| other.display_rect)
-                    .collect();
-                wrapped = Some((operations, lines, rect, lowered, (placed, vacated, links)));
+                wrapped = Some(match attempt(&plan.beneath) {
+                    Err(first) if plain != plan.beneath => attempt(&plain).map_err(|_| first)?,
+                    done => done?,
+                });
             }
         }
     }

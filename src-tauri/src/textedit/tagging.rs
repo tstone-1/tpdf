@@ -1937,6 +1937,15 @@ impl Tags {
             .and_then(|mcid| self.blocks.get(mcid).copied().flatten())
     }
 
+    /// Whether the marked content now open is a list item's label: its number
+    /// or its bullet, which stays on the item's first line when the item
+    /// wraps (`layout::wrap`).
+    pub(super) fn label(&self) -> bool {
+        self.active
+            .flatten()
+            .is_some_and(|mcid| self.names[mcid] == b"Lbl")
+    }
+
     /// Whether the marked content now open is centred in its block.
     pub(super) fn centred(&self) -> bool {
         self.active

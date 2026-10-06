@@ -40,10 +40,36 @@ have the binary.)
   page that way was a reason to refuse the whole page, twice over: for the mark Acrobat
   puts around what it adds, and for the way it writes the picture's frame. The picture is
   kept as it is and the page's own text is offered.
+- **A full line in a LibreOffice document takes more words.** Typing past the end of a
+  line that already reaches the right-hand side was refused on every page LibreOffice
+  Writer exports, with *the document clips the space after it*: such a page is drawn
+  inside a frame the size of the sheet, a hair smaller, and tpdf took that frame for
+  something in the way. It is now read as the edge of the page, so the paragraph wraps
+  onto a new line and the text below moves down, as it does in a document from Word.
+- **Text that cannot be edited moves down with the text around it.** When a paragraph
+  gains a line, what is below it has to move, and some of that tpdf does not rewrite: the
+  bullets of a list, a hyphen LibreOffice added at the end of a line, a justified
+  paragraph, the words of a link, and text that carries a description of itself for screen
+  readers. Such text used to stay where it was, and the edit was refused because the new
+  line would have been written on top of it. It now moves with its line or its paragraph,
+  unchanged. A header, a footer and a table that states its own size still do not move,
+  and an edit that would run into them is refused as before.
+- **A list item of one line wraps under its own text.** Its second line started under the
+  number or the bullet; it now starts where the item's words start.
+- **A paragraph of one line wraps at the right margin.** It ran its first line as far as
+  the edge of the page before it broke, because one line does not show where lines end.
+  It now breaks where the page's paragraphs of several lines end theirs, and sets its
+  new line as far below as the nearest of them sets its own.
+- **A wrapped line breaks one word earlier where its last letter would not fit.** A line
+  was broken by the width of its letters' spacing and then refused when the last letter's
+  shape reached a little further, with *it reaches the edge of the page*.
 
 What still cannot be edited on such a page: the bullets themselves, a hyphen LibreOffice
 added at the end of a line (a shorter word before it leaves a gap before the hyphen), a
-justified paragraph, and the header and footer. A list item made of two paragraphs still
+justified paragraph, and the header and footer. A line that ends at such a hyphen takes no
+more words than fit before it. A few words added to a short line are set on that line,
+through the right margin if they reach it; only a line full to the edge of the page
+wraps. A list item made of two paragraphs still
 keeps the document's text from being edited. A font whose no-break space is drawn the way
 Liberation Sans draws it still has all its text read-only when the document uses that
 space. A centred line is edited in the window, where it stays centred; `tpdf edit` needs

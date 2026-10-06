@@ -715,6 +715,7 @@ hop through the index.
 - `--only cli` also runs every `clip` mutation: a harness name filter is a substring
 - Several processes' dyld lines share one stderr and interleave mid-line
 - Restoring a mutated source does not restore the binary built from it
+- Two readers each changed their reading of text that had only moved, and comparing whole readings blamed the edit
 
 ## Windows and portability
 - The gates had never run on the platform where they fail
@@ -25876,3 +25877,35 @@ where one happened, with a `[SKIP]` line where none did. The agreement between t
 callers is what makes it able to fail: each walks the pages in code of its own, and filing
 a refused page under *nothing recognised* in either one turned it red, where "accounted
 for" alone stayed green.
+
+### Two readers each changed their reading of text that had only moved, and comparing whole readings blamed the edit
+
+2026-10-06, `scripts/text_list_check.py`, the first run of its three wraps on the LibreOffice
+export. The script's four plain edits are checked by asking each reader for the page's text
+and comparing the whole of it with the source's, the replacements made. A wrap moves text
+down the page without changing a byte of it, and two of the three readers answered
+differently for text that had only moved:
+
+- **pypdf read `repre -` where the page shows `repre-`.** It reads the stream in order and
+  guesses a space from each change of the text matrix. A show a wrap moves is drawn from a
+  `Tm` of its own (`wrap::drawn`), so the hyphen after a moved line gained a space that no
+  glyph shows. PDFium, PDFKit and pdfplumber place glyphs and read no space there.
+- **`tpdf-cli text` moved the list's numbers.** On the source it read `1.`, `2.`, `3.` as a
+  column before the items; on a copy whose second item had gained a line it read each number
+  before its own item. Its reading order is a rule about geometry (`reading.rs`), and the
+  geometry had changed. The same rule read the two exports of this one source differently
+  before any edit: on the first, `1.` beside its item and `4.` on a line of its own.
+
+Compared whole, both read as *text outside the edited item changed*, which is the finding
+the check exists to make. Neither was one. What the script compares for a wrap is narrower
+and says so (`flow`, `wrapped`): the page's words in order, without the list labels, and
+for the reader in stream order the characters without the spaces. It is then run where it
+must fail, on the unedited source and on a reading with two lines exchanged, because a
+comparison loosened until it passes is the next thing to check; and the question the
+loosening gave up, whether a glyph is where it should be, is asked of pdfplumber's glyphs
+by `text_wrap_check.py --compare`, which pairs every one of them and counts overlaps.
+
+The rule: a reader's text is its opinion about spaces, lines and order as well as about
+characters. Before holding an edit to *the whole reading is unchanged*, find out which of
+those the reader derives from positions, because an edit that moves text changes them all
+without changing the text.

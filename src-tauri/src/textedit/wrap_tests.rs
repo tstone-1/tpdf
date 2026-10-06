@@ -119,7 +119,7 @@ fn run(doc: &Document, text: &str) -> Run {
     scan(doc, 0).unwrap().runs[index_of(doc, text)].clone()
 }
 
-fn refusal(doc: &Document, text: &str, replacement: &str) -> String {
+pub(super) fn refusal(doc: &Document, text: &str, replacement: &str) -> String {
     let mut copy = doc.clone();
     let before = copy.objects.clone();
     let error = write(
@@ -131,7 +131,7 @@ fn refusal(doc: &Document, text: &str, replacement: &str) -> String {
     error
 }
 
-fn wrapped(doc: &Document, text: &str, replacement: &str) -> Document {
+pub(super) fn wrapped(doc: &Document, text: &str, replacement: &str) -> Document {
     let mut copy = doc.clone();
     write(
         &mut copy,
@@ -482,13 +482,18 @@ fn a_block_reaching_above_the_edited_line_is_not_moved() {
 }
 
 // A block the writer cannot move stays, and the wrap is refused as though it
-// were any other text: here its text is inside an ActualText span, and then a
-// second line of it is set on a skewed matrix, which the editor keeps
-// read-only -- the block's first line is what the moved lines land on.
+// were any other text: here one of its shows is a spacer, a tab's space inside
+// an ActualText span whose grammar admits one position and one show, and then
+// a second line of it is set on a skewed matrix, which the editor keeps
+// read-only where it is -- the block's first line is what the moved lines land
+// on. Text an ActualText span describes does move, inside its span
+// (`carried_tests`); until 2026-10-06 that was the first case here.
 #[test]
 fn a_block_below_that_cannot_be_moved_refuses_the_wrap() {
     for next in [
-        format!("/P <</MCID 3>> BDC /Span <</ActualText ({NEXT})>> BDC ({NEXT}) Tj EMC EMC"),
+        "/P <</MCID 3>> BDC (SECOND) Tj /Span <</ActualText (\t)>> BDC ( ) Tj EMC \
+         (BRANCH) Tj EMC"
+            .to_string(),
         format!("/P <</MCID 3>> BDC ({NEXT}) Tj 1 0 0.2 1 20 100 Tm (BY) Tj EMC"),
     ] {
         let doc = tagged(
@@ -2042,13 +2047,15 @@ fn placements_outline_the_text_that_flowed_after_the_edit() {
 
 // A link set in the paragraph's last line is the paragraph's text as far as a
 // wrap is concerned, though the structure tree gives it an element of its own:
-// the paragraph's walk takes it in as one of its leaves. The wrap is refused
-// because that line cannot move. Were the link text of no block, the wrap would
-// move nothing, leave the link where it is, and set the new line on top of it.
-// The link's rectangle is put elsewhere on purpose, so that it is the text and
-// not the annotation that refuses.
+// the paragraph's walk takes it in as one of its leaves. Its words are
+// read-only, and they move down with the line they are: drawn from the bytes
+// they had, one pitch lower. Were the link text of no block, the wrap would
+// move nothing, leave the link where it is, and set the new line on top of it;
+// until 2026-10-06 the wrap was refused instead, because read-only text could
+// not move. The link's rectangle is put elsewhere on purpose, so that it is
+// the text and not the annotation that is asked about, and it stays there.
 #[test]
-fn a_link_in_a_line_below_the_edit_is_part_of_the_paragraph_and_refuses_the_wrap() {
+fn a_link_in_a_line_below_the_edit_is_part_of_the_paragraph_and_moves_with_it() {
     let mut doc = paragraph(52.);
     let page = crate::pagetree::ordered_pages(&doc)[0];
     let catalog = doc.trailer.get(b"Root").unwrap().as_reference().unwrap();
@@ -2119,10 +2126,34 @@ fn a_link_in_a_line_below_the_edit_is_part_of_the_paragraph_and_refuses_the_wrap
             .all(|run| run.text != LAST),
         "the link's text is offered for editing"
     );
-    let error = refusal(&doc, WIDEST, LONGER);
-    assert!(
-        error.contains("part of it below cannot be moved"),
-        "{error}"
+    let kept = |doc: &Document| -> Vec<(String, f64, f64)> {
+        inspect(doc, 0)
+            .unwrap()
+            .preserved
+            .iter()
+            .filter(|run| !run.text.trim().is_empty())
+            .map(|run| (run.text.clone(), run.matrix[4], run.matrix[5]))
+            .collect()
+    };
+    assert_eq!(kept(&doc), [(LAST.to_string(), 20., 172.)]);
+    let saved = wrapped(&doc, WIDEST, LONGER);
+    let moved = kept(&saved);
+    assert_eq!(moved.len(), 1, "{moved:?}");
+    assert!(near((moved[0].1, moved[0].2), (20., 158.)), "{moved:?}");
+    assert!(shows(&saved).contains(&Object::string_literal(LAST)));
+    // The next paragraph, placed from the line the link's show leaves, is
+    // where it was, and so is the link's rectangle.
+    assert_eq!(at(&placed_runs(&saved), NEXT), (20., 120.));
+    assert_eq!(
+        saved
+            .get_dictionary(annotation)
+            .unwrap()
+            .get(b"Rect")
+            .unwrap(),
+        doc.get_dictionary(annotation)
+            .unwrap()
+            .get(b"Rect")
+            .unwrap()
     );
 }
 

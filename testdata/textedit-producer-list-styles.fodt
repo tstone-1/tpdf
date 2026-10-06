@@ -81,7 +81,7 @@
    <style:paragraph-properties fo:text-align="center" fo:margin-bottom="8pt"/>
   </style:style>
   <style:style style:name="PJustify" style:family="paragraph" style:parent-style-name="Standard">
-   <style:paragraph-properties fo:text-align="justify" fo:margin-top="6pt"/>
+   <style:paragraph-properties fo:text-align="justify" fo:margin-top="6pt" fo:margin-bottom="36pt"/>
   </style:style>
   <style:style style:name="PPlain" style:family="paragraph" style:parent-style-name="Standard">
    <style:paragraph-properties fo:margin-bottom="6pt"/>
@@ -138,6 +138,7 @@
      </text:list>
     </text:list-item>
     <text:list-item><text:p text:style-name="Numbers"><text:span text:style-name="TBold">Further remarks:</text:span> none, because this is a sample.</text:p></text:list-item>
+    <text:list-item><text:p text:style-name="Numbers">The demonstration widget is described here for illustration only and the sample maker gives no undertaking; the characterisation that comes with it was written for representative documentation purposes, and it represents nothing at all.</text:p></text:list-item>
    </text:list>
    <text:list text:style-name="ExampleBulleting">
     <text:list-item><text:p text:style-name="Bullets">A separate bulleted list follows the numbered one.</text:p></text:list-item>

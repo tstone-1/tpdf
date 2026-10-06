@@ -13,14 +13,18 @@
 //! its paragraph, a `Span` naming the language around every paragraph's words
 //! with a `Span` for each hyphen inside it, centred lines, a justified
 //! paragraph, a table that states its bounds, a header and a footer no element
-//! reaches, and a bullet in the font the body is set in.
+//! reaches, and a bullet in the font the body is set in. Every page's content
+//! is drawn under a clip the size of the page, and its fifth item is a
+//! paragraph whose first line ends at a space and whose second ends at a
+//! hyphen: the shapes a wrap of a list item meets (`docs/TEXTEDIT.md`, *What
+//! moves with a wrap on such a page*).
 use crate::textedit::{self, Change, EditFont, Layout};
 use lopdf::{Document, Object};
 use sha2::{Digest, Sha256};
 
 const EXPORT: &[u8] = include_bytes!("fixtures/libreoffice-list.pdf");
 
-const OFFERED: [&str; 27] = [
+const OFFERED: [&str; 32] = [
     "Example Declaration",
     "Synthetic sample for testing, issued by ACME Ltd",
     "This invented document declares nothing. Every name in it is made up.",
@@ -40,6 +44,11 @@ const OFFERED: [&str; 27] = [
     "4.",
     "Further remarks:",
     " none, because this is a sample.",
+    "5.",
+    "The demonstration widget is described here for illustration only and the sample maker gives no undertaking;",
+    " ",
+    "the characterisation that comes with it was written for representative documentation purposes, and it repre",
+    "sents nothing at all.",
     "A separate bulleted list follows the numbered one.",
     "Its second item ends the lists.",
     "Place of issue:",
@@ -70,13 +79,13 @@ fn textedit_a_libreoffice_list_in_its_own_paragraph_styles_is_offered() {
         .map(|byte| format!("{byte:02x}"))
         .collect::<String>();
     assert_eq!(
-        digest, "8f7e3f4514c568989892003a3170af06ff9134c7d826347067777e95a5fe62fb",
+        digest, "558ff52a4bc29f8f4f07b320af70a699ff302a966f15b4a812f517e007ae5930",
         "the committed export changed; see docs/VERIFICATION.md before replacing it"
     );
     let doc = export();
     assert_eq!(offered(&doc), OFFERED);
     // Read-only, and counted so that a run going missing is not a run offered:
-    // four bullets and two hyphens, the two lines of the justified paragraph,
+    // four bullets and three hyphens, the two lines of the justified paragraph,
     // and the footer's two shows, its link and the words before it.
     let page = textedit::inspect(&doc, 0).unwrap();
     let kept: Vec<&str> = page
@@ -87,7 +96,7 @@ fn textedit_a_libreoffice_list_in_its_own_paragraph_styles_is_offered() {
         .collect();
     assert_eq!(
         kept.iter().filter(|text| **text == "-").count(),
-        2,
+        3,
         "{kept:?}"
     );
     assert_eq!(
@@ -109,7 +118,7 @@ fn textedit_a_libreoffice_list_in_its_own_paragraph_styles_is_offered() {
         kept.iter().any(|text| text.starts_with("ACME Ltd ")),
         "{kept:?}"
     );
-    assert_eq!(kept.len(), 10, "{kept:?}");
+    assert_eq!(kept.len(), 11, "{kept:?}");
     // An item is one block: its label, its bold first words and the rest of
     // its paragraph. The sublist's items are blocks of their own.
     let block = |text: &str| {
@@ -275,4 +284,223 @@ fn textedit_a_libreoffice_list_stays_editable_under_a_fill_and_sign_addition() {
         textedit::scan(&added("ADBE_Other"), 0).unwrap_err(),
         "marked content without MCID must be an Artifact"
     );
+}
+
+/// Every show with text on the page, offered or read-only, in the order the
+/// stream draws them: its text and where it starts.
+fn shown(doc: &Document) -> Vec<(String, f64, f64)> {
+    let page = textedit::inspect(doc, 0).unwrap();
+    let mut all: Vec<_> = page
+        .runs
+        .runs
+        .iter()
+        .chain(&page.preserved)
+        .filter(|run| !run.text.trim().is_empty())
+        .map(|run| (run.operator, run.text.clone(), run.matrix[4], run.matrix[5]))
+        .collect();
+    all.sort_by_key(|(operator, ..)| *operator);
+    all.into_iter()
+        .map(|(_, text, x, y)| (text, x, y))
+        .collect()
+}
+
+/// The export with `added` typed at the end of the run `text`, in the box the
+/// editor opens, set in the document's own font.
+fn typed(text: &str, added: &str) -> Result<Document, String> {
+    typed_in(export(), text, added)
+}
+
+/// The same in a document that may have been edited before: `text` is the
+/// whole of the run as it now reads.
+fn typed_in(mut doc: Document, text: &str, added: &str) -> Result<Document, String> {
+    let before = textedit::scan(&doc, 0).unwrap();
+    let run = before.runs.iter().find(|run| run.text == text).unwrap();
+    textedit::write(
+        &mut doc,
+        &[Change {
+            layout: Some(Layout::opened(run, EditFont::Original)),
+            page: 0,
+            revision: before.revision.clone(),
+            operator: run.operator,
+            original: run.text.clone(),
+            replacement: format!("{text}{added}"),
+        }],
+    )?;
+    Ok(doc)
+}
+
+// A list item that is full to the page takes more words: it wraps, and what is
+// below goes down with it, read-only or not. Three items, each with something
+// under it the editor cannot rewrite: the bullets of a sublist, the hyphen its
+// producer set at a line end, the justified paragraph. Each of those is drawn
+// from the bytes it had, one distance lower, beside the text it belongs to.
+// The table, which states its bounds, and the footer stay where they were.
+#[test]
+fn textedit_a_libreoffice_list_item_wraps_and_carries_what_is_below() {
+    let source = shown(&export());
+    let at = |shows: &[(String, f64, f64)], text: &str| {
+        let found: Vec<_> = shows.iter().filter(|(shown, ..)| shown == text).collect();
+        assert_eq!(found.len(), 1, "{text}");
+        (found[0].1, found[0].2)
+    };
+    let table = at(&source, "Place of issue:").1;
+    // (the run, what is typed after it, the new line, how far a line is)
+    for (text, added, tail, pitch) in [
+        (
+            // One line, so the pitch is the nearest paragraph's: item 1's,
+            // and not the editor's own 1.25 em, which is 11.25 here.
+            // And no measure of its own: it breaks where the items beside
+            // it end their lines, not at the paper's edge two words later.
+            " Example Widget, model EX-1.",
+            " It is described here for illustration only and it represents nothing at all, as the \
+             sample maker gives no undertaking.",
+            "nothing at all, as the sample maker gives no undertaking.",
+            10.35,
+        ),
+        (
+            OFFERED[12],
+            " The same rulebook is described here for illustration only and represents nothing.",
+            "here for illustration only and represents nothing.",
+            10.35,
+        ),
+        (
+            // Three lines, at the paragraph's own pitch.
+            OFFERED[20],
+            " the sample maker gives no undertaking for the demonstration widget described.",
+            "the sample maker gives no undertaking for the demonstration widget described.",
+            10.35,
+        ),
+    ] {
+        let (_, line) = at(&source, text);
+        let saved = typed(text, added).unwrap_or_else(|error| panic!("{text}: {error}"));
+        let after = shown(&saved);
+        // The new line starts under the item's words, where its producer
+        // hangs a second line, and not under its number.
+        let item = source
+            .iter()
+            .filter(|(_, x, y)| *y == line && *x > 80.)
+            .map(|(_, x, _)| *x)
+            .fold(f64::INFINITY, f64::min);
+        assert!((item - 90.1).abs() < 0.001, "{text}: {item}");
+        let (x, y) = at(&after, tail);
+        assert!(
+            (x - item).abs() < 0.001 && (y - (line - pitch)).abs() < 0.001,
+            "{text}: the new line is at {x} {y}"
+        );
+        // Everything else, in the order it was drawn: where it was, or one
+        // line lower when it was between the edited line and the table.
+        let rest: Vec<_> = after
+            .iter()
+            .filter(|(shown, ..)| shown != tail && !shown.starts_with(text))
+            .collect();
+        let was: Vec<_> = source.iter().filter(|(shown, ..)| shown != text).collect();
+        assert_eq!(rest.len(), was.len(), "{text}");
+        let mut moved = Vec::new();
+        for ((old, x0, y0), (new, x1, y1)) in was.iter().zip(&rest) {
+            assert_eq!(old, new, "{text}");
+            assert!(
+                (x0 - x1).abs() < 0.001,
+                "{text}: {old} moved along its line"
+            );
+            let below = *y0 < line - 1. && *y0 > table + 1.;
+            let down = if below { pitch } else { 0. };
+            assert!(
+                (y0 - y1 - down).abs() < 0.001,
+                "{text}: {old} went from {y0} to {y1}"
+            );
+            if below {
+                moved.push(old.as_str());
+            }
+        }
+        // What moved holds what the editor cannot rewrite: bullets, and both
+        // lines of the justified paragraph, and a hyphen for the last item.
+        let bullets = moved
+            .iter()
+            .filter(|text| text.chars().all(|ch| ch == textedit::fonts::OPAQUE))
+            .count();
+        assert!(bullets >= 2, "{text}: {moved:?}");
+        assert!(moved.iter().any(|text| text.contains("Signed for")));
+        assert!(moved.iter().any(|text| text.contains("words to be set")));
+        if text == OFFERED[20] {
+            // The hyphen is still at the end of its line, on that line.
+            let hyphens: Vec<_> = rest.iter().filter(|(shown, ..)| shown == "-").collect();
+            let (_, y) = at(&after, OFFERED[22]);
+            assert_eq!(hyphens.len(), 3);
+            assert!((hyphens[2].2 - y).abs() < 0.001 && (y - (line - 2. * pitch)).abs() < 0.001);
+            assert_eq!(moved.iter().filter(|text| **text == "-").count(), 1);
+        }
+        // And the page is still the tagged page it was: scanned again, it
+        // reads, and every run it offered is offered still.
+        assert!(offered(&saved).len() > OFFERED.len(), "{text}");
+    }
+}
+
+// A one-line item breaks where the page's paragraphs end their lines, and that
+// is read from paragraphs of several lines only. Item 3 is first made longer
+// on its line, into the right margin, which the page allows. Item 2, wrapped
+// after that, still breaks where it broke before: a line that long is no
+// measure. And item 3 itself, made longer again until the page ends it, is
+// past what the paragraphs show, so its first line keeps what it holds and
+// only the new words go to the next line.
+#[test]
+fn textedit_a_one_line_item_wraps_at_the_measure_of_the_paragraphs_beside_it() {
+    let long = format!("{} The same rulebook is described here", OFFERED[12]);
+    let grown = typed(OFFERED[12], " The same rulebook is described here").unwrap();
+    let lines = |doc: &Document| {
+        shown(doc)
+            .into_iter()
+            .map(|(text, ..)| text)
+            .collect::<Vec<_>>()
+    };
+    assert!(lines(&grown).contains(&long));
+    let second = typed_in(
+        grown.clone(),
+        " Example Widget, model EX-1.",
+        " It is described here for illustration only and it represents nothing at all, as the \
+         sample maker gives no undertaking.",
+    )
+    .unwrap();
+    let second = lines(&second);
+    assert!(second.contains(
+        &" Example Widget, model EX-1. It is described here for illustration only and it represents "
+            .to_string()
+    ));
+    assert!(
+        second.contains(&"nothing at all, as the sample maker gives no undertaking.".to_string())
+    );
+    let third = typed_in(
+        grown,
+        &long,
+        " for illustration only and represents nothing.",
+    )
+    .unwrap();
+    let third = lines(&third);
+    assert!(third.contains(&format!("{long} for illustration ")));
+    assert!(third.contains(&"only and represents nothing.".to_string()));
+}
+
+// What a wrap may not move still refuses it, each in its own words. The table
+// states its bounds, and its rows do not leave them: the space above it and
+// inside its bounds takes three more lines of the item and not a fourth. And a line that ends at a hyphen its producer
+// added has that hyphen after it, which is read-only and moves with a line,
+// never along one: such a line takes no more words.
+#[test]
+fn textedit_a_libreoffice_list_refuses_a_wrap_it_cannot_carry() {
+    let long = " the sample maker gives no undertaking for the demonstration widget described.";
+    assert!(typed(OFFERED[20], &long.repeat(3)).is_ok());
+    let refused = typed(OFFERED[20], &long.repeat(4)).unwrap_err();
+    assert_eq!(
+        refused,
+        "The table states its bounds, and this text would leave them. Reduce the box or font \
+         size to keep the text inside."
+    );
+    for text in [OFFERED[5], OFFERED[6], OFFERED[22]] {
+        let refused = typed(text, long).unwrap_err();
+        assert!(
+            refused.starts_with("There is no room for more text on this line: ")
+                && (refused.contains("other text follows it")
+                    || refused.contains("the text after it cannot be moved")),
+            "{text}: {refused}"
+        );
+    }
 }

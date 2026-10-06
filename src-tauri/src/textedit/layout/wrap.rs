@@ -22,9 +22,16 @@
 //! with no such gap, each break may give up half its blank line instead
 //! (`layout::BREAK_GIVE`), tried only once the whole-break layout is refused. Only a
 //! whole block moves, and only one that is entirely below the edited line and
-//! that the writer can move ([`Plan::beneath`]); text that is not such a block
-//! -- untagged, read-only, beside the paragraph -- stays, and an edit whose
-//! lines would land on it is refused with the reason.
+//! whose every show can be drawn somewhere else ([`Plan::beneath`],
+//! [`carried`]); text that is not such a block -- untagged, an artifact, fixed
+//! where it is, beside the paragraph -- stays, and an edit whose lines would
+//! land on it is refused with the reason.
+//!
+//! Moving is not rewriting. Text the editor keeps read-only -- a bullet it
+//! cannot write, a hyphen or a paragraph the tags pin, a link's words, what an
+//! ActualText span describes -- goes down with its line or its block like any
+//! other, from the bytes it has ([`carried`]). It never flows along the edited
+//! line: only text the writer may rewrite does.
 //!
 //! Text of the block after the edit on its own line flows too, a run at a
 //! time: each run after the edit keeps its gap to the one before it and stays
@@ -219,6 +226,115 @@ fn span(run: &Run, other: &Run) -> Option<((f64, f64), f64)> {
         .then_some((origin, origin.0 + other.advance * axis.0))
 }
 
+/// Whether a wrap may draw this show lower, with its line or with its block:
+/// its bytes kept and only its position written ([`drawn`]).
+///
+/// That is a show the writer may rewrite, and also read-only text the scan
+/// recorded a position for (`Inspection::held`): a bullet in a font whose
+/// bullet the editor cannot write, a hyphen its producer added at a line end
+/// and pinned under a Span, a justified paragraph. Moving one changes nothing
+/// the editor could not read, because nothing of it is read again: the same
+/// operator is drawn from an explicit `Tm`, and the line matrix and cursor are
+/// put back for whatever follows. A show inside an inline ActualText span is
+/// moved the same way, inside its span, whose ActualText still describes it.
+///
+/// Not a show under a compound clip, a set of rectangles with holes that no
+/// moved rectangle is checked against; not a show with no run at all, a
+/// spacer whose span admits one position and one show; and not read-only text
+/// with no recorded position (turned, patterned, in a layer, placed artwork).
+/// Those stay, and what would land on them or leave them behind is refused.
+pub(super) fn carried(page: &Inspection, show: u32) -> bool {
+    context_of(page, show).is_some() && !page.compound_run_clips.contains_key(&show)
+}
+
+/// The measure a block of one line wraps at: the furthest any line reaches in
+/// the page's other tagged blocks of several lines, set the same way as the
+/// run. A paragraph its producer broke shows where lines end on this page, and
+/// a one-line item of a list ends its lines where the items beside it do.
+/// Without it the line ran on to the room it had, which on a page whose only
+/// limit is the sheet is the paper's edge, through the right margin.
+///
+/// `None` when no block has several lines (the run's own has one, or this is
+/// not asked), and when the line already
+/// reaches past what the others show: then that measure is not this line's.
+/// The caller holds the answer to the room the line has, so this narrows a
+/// wrap and never widens one.
+fn borrowed(
+    page: &Inspection,
+    run: &Run,
+    known: &BTreeMap<u32, &Run>,
+    leader: &BTreeMap<u32, u32>,
+) -> Option<f64> {
+    let tolerance = SAME_LINE_EM * run.size;
+    // (a baseline, whether another was seen, the furthest end) per block.
+    let mut seen: BTreeMap<ObjectId, (f64, bool, f64)> = BTreeMap::new();
+    for (&show, &owner) in &page.blocks {
+        let Some(other) = known.get(leader.get(&show).unwrap_or(&show)) else {
+            continue;
+        };
+        if other.text.trim().is_empty() {
+            continue;
+        }
+        let Some(((_, y), end)) = span(run, other) else {
+            continue;
+        };
+        let entry = seen.entry(owner).or_insert((y, false, end));
+        entry.1 |= (y - entry.0).abs() > tolerance;
+        entry.2 = entry.2.max(end);
+    }
+    seen.values()
+        .filter(|(_, several, _)| *several)
+        .map(|(.., end)| *end)
+        .fold(None, |far: Option<f64>, end| {
+            Some(far.map_or(end, |far| far.max(end)))
+        })
+        .filter(|far| *far + tolerance >= run.advance)
+}
+
+/// The pitch a block of one line wraps at: the least distance between two
+/// lines of the nearest of the page's other tagged blocks that has two, among
+/// text of the run's own size set the same way. One line shows no pitch, and the editor's own, 1.25
+/// em, set a wrapped item's lines closer together than every paragraph around
+/// it where the producer spaced them wider. `None` when the page shows none
+/// inside [`PITCH_EM`], and the editor's own is used as before.
+fn borrowed_pitch(
+    page: &Inspection,
+    run: &Run,
+    known: &BTreeMap<u32, &Run>,
+    leader: &BTreeMap<u32, u32>,
+) -> Option<f64> {
+    let tolerance = SAME_LINE_EM * run.size;
+    let mut baselines: BTreeMap<ObjectId, Vec<f64>> = BTreeMap::new();
+    for (&show, &owner) in &page.blocks {
+        let Some(other) = known.get(leader.get(&show).unwrap_or(&show)) else {
+            continue;
+        };
+        if other.text.trim().is_empty() || other.size != run.size {
+            continue;
+        }
+        if let Some(((_, y), _)) = span(run, other) {
+            baselines.entry(owner).or_default().push(y);
+        }
+    }
+    // The nearest such block's own: the items beside a list item, not a
+    // heading's or a footnote's further away.
+    baselines
+        .values_mut()
+        .filter_map(|lines| {
+            lines.sort_by(f64::total_cmp);
+            let pitch = lines
+                .windows(2)
+                .map(|pair| pair[1] - pair[0])
+                .filter(|gap| *gap > tolerance)
+                .filter(|gap| (PITCH_EM.0 * run.size..=PITCH_EM.1 * run.size).contains(gap))
+                .min_by(f64::total_cmp)?;
+            let away = lines.iter().map(|y| y.abs()).min_by(f64::total_cmp)?;
+            Some((away, pitch))
+        })
+        .min_by(|a, b| a.0.total_cmp(&b.0))
+        .map(|(_, pitch)| pitch)
+}
+
 /// The plan, or why there is none.
 ///
 /// `room` is how far the line allows with the text after the run where it is,
@@ -259,6 +375,9 @@ pub(super) fn plan(
     // (baseline, start, end) of every run of the block with text, in the
     // edited run's text space; the run's own line is baseline zero.
     let mut lines: Vec<(f64, f64, f64)> = Vec::new();
+    // Where the label of a list item starts, when the block is one: the
+    // number or the bullet, set before the item's words on its first line.
+    let mut label = f64::NEG_INFINITY;
     let mut after: BTreeMap<u32, Unit> = BTreeMap::new();
     for (&show, &owner) in &page.blocks {
         if owner != block || own.contains(&show) {
@@ -293,16 +412,16 @@ pub(super) fn plan(
                 });
             }
         } else if y < 0. {
-            if !page.contexts.contains_key(&show)
-                || page.actual_text.contains_key(&show)
-                || page.compound_run_clips.contains_key(&show)
-            {
+            if !carried(page, show) {
                 return Err(Refused::Blocked(UNMOVABLE));
             }
             below.push(show);
         }
         if !other.text.trim().is_empty() {
             lines.push((y, x, end));
+            if page.labels.contains(&show) {
+                label = label.max(x);
+            }
         }
     }
     lines.push((0., 0., run.advance));
@@ -333,7 +452,7 @@ pub(super) fn plan(
     } else if previous.is_finite() {
         previous
     } else {
-        run.size * 1.25
+        borrowed_pitch(page, run, &known, &leader).unwrap_or(run.size * 1.25)
     };
     if !(PITCH_EM.0 * run.size..=PITCH_EM.1 * run.size).contains(&pitch) {
         return Err(Refused::NotApplicable);
@@ -348,8 +467,9 @@ pub(super) fn plan(
     if !several && blocks::geometric_page(page) {
         return Err(Refused::NotApplicable);
     }
-    // The block's measure is the furthest any of its lines reaches; a block of
-    // one line has none, and its first line keeps the room it had.
+    // The block's measure is the furthest any of its lines reaches. A block of
+    // one line has none of its own and borrows the page's (`borrowed`); where
+    // the page shows none either, its first line keeps the room it had.
     let far = if several {
         lines
             .iter()
@@ -357,15 +477,19 @@ pub(super) fn plan(
             .fold(run.advance, f64::max)
             .min(first)
     } else {
-        first
+        borrowed(page, run, &known, &leader).map_or(first, |measure| measure.min(first))
     };
     // Continuation lines start where the block's lines after its first do:
     // that is the body margin under a first-line indent, and the hanging
-    // position of a list item.
+    // position of a list item. An item of one line has no such line to read
+    // it from, and its left edge is its label's: its new lines start under
+    // its words instead, the first text after the label, as its producer
+    // hangs them. Without this a one-line item wrapped under its own number.
     let start = lines
         .iter()
         .filter(|(y, ..)| !several || *y < top - tolerance)
         .map(|(_, x, _)| *x)
+        .filter(|x| several || *x > label)
         .fold(f64::INFINITY, f64::min);
     let rest = far - start;
     if !start.is_finite() || !rest.is_finite() || rest <= 0. || far <= 0. {
@@ -399,9 +523,7 @@ fn beneath(
     let mut blocks: BTreeMap<ObjectId, Option<Vec<u32>>> = BTreeMap::new();
     for (&show, &owner) in &page.blocks {
         let entry = blocks.entry(owner).or_insert_with(|| Some(Vec::new()));
-        let movable = page.contexts.contains_key(&show)
-            && !page.actual_text.contains_key(&show)
-            && !page.compound_run_clips.contains_key(&show)
+        let movable = carried(page, show)
             && known
                 .get(leader.get(&show).unwrap_or(&show))
                 .and_then(|other| span(run, other))
@@ -499,10 +621,7 @@ pub(super) fn drawn(
     show: u32,
     pieces: &[Drawn<'_>],
 ) -> Result<Vec<Operation>, String> {
-    let context = page
-        .contexts
-        .get(&show)
-        .ok_or("missing text layout context")?;
+    let context = context_of(page, show).ok_or("missing text layout context")?;
     let operation = page
         .content
         .operations

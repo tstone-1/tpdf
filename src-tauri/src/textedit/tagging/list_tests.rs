@@ -322,3 +322,86 @@ fn textedit_lists_refuse_wrong_roles_owners_cycles_and_semantic_overrides() {
         refused(doc);
     }
 }
+
+/// [`list`] with other content: the first item's body is `body`, drawn inside
+/// one text object that starts at x 60 on the label's line.
+fn item(body: &str) -> Document {
+    let (mut doc, ids, ..) = list();
+    let content = format!(
+        "/Lbl <</MCID 0>> BDC BT /F1 12 Tf 40 180 Td (1.) Tj ET EMC\n\
+         /LBody <</MCID 1>> BDC BT /F1 12 Tf 60 180 Td {body} ET EMC\n\
+         /Lbl <</MCID 2>> BDC BT /F1 12 Tf 40 100 Td (2.) Tj ET EMC\n\
+         /LBody <</MCID 3>> BDC BT /F1 12 Tf 60 100 Td (SECOND) Tj ET EMC"
+    );
+    let stream = doc.add_object(Stream::new(lopdf::Dictionary::new(), content.into_bytes()));
+    doc.get_dictionary_mut(ids[0])
+        .unwrap()
+        .set("Contents", stream);
+    doc
+}
+
+/// Where each run with text starts after `text` has been given more words
+/// than its line has room for, in the box the editor opens.
+fn wrapped(doc: &Document, text: &str) -> Vec<(String, f64, f64)> {
+    let mut doc = doc.clone();
+    let page = textedit::scan(&doc, 0).unwrap();
+    let run = page.runs.iter().find(|run| run.text == text).unwrap();
+    textedit::write(
+        &mut doc,
+        &[Change {
+            layout: Some(textedit::Layout::opened(run, textedit::EditFont::Auto)),
+            page: 0,
+            revision: page.revision.clone(),
+            operator: run.operator,
+            original: text.into(),
+            replacement: format!("{text} AND MORE WORDS THAN THE LINE HAS ROOM FOR NOW"),
+        }],
+    )
+    .unwrap();
+    textedit::scan(&doc, 0)
+        .unwrap()
+        .runs
+        .iter()
+        .filter(|run| !run.text.trim().is_empty())
+        .map(|run| (run.text.clone(), run.matrix[4], run.matrix[5]))
+        .collect()
+}
+
+// An item is one block with its label, so the left edge of an item of one line
+// is its label's. Its new line starts under its words all the same, as its
+// producer would hang it: the first text after the label.
+#[test]
+fn textedit_a_one_line_list_item_wraps_under_its_words_not_its_label() {
+    let runs = wrapped(&item("(FIRST) Tj"), "FIRST");
+    let below: Vec<_> = runs
+        .iter()
+        .filter(|(_, _, y)| *y < 180. && *y > 100.)
+        .collect();
+    assert_eq!(below.len(), 1, "{runs:?}");
+    assert!((below[0].1 - 60.).abs() < 0.001, "{runs:?}");
+}
+
+// An item of several lines says itself where its lines start, and that is
+// where the new ones go: here at the label's own left edge, which is how a
+// list without a hanging indent is set. The label decides nothing there.
+#[test]
+fn textedit_a_list_item_of_several_lines_wraps_where_its_own_lines_start() {
+    const SECOND: &str = "AND A SECOND LINE THAT IS";
+    let doc = item(&format!("(FIRST) Tj -20 -14 Td ({SECOND}) Tj"));
+    let runs = wrapped(&doc, "FIRST");
+    let new: Vec<_> = runs
+        .iter()
+        .filter(|(text, _, y)| *y < 180. && *y > 100. && text != SECOND)
+        .collect();
+    assert!(!new.is_empty(), "{runs:?}");
+    for (text, x, _) in &new {
+        assert!((x - 40.).abs() < 0.001, "{text} in {runs:?}");
+    }
+    // The item's own second line went down by the lines that were added.
+    let second = runs.iter().find(|(text, ..)| text == SECOND).unwrap();
+    assert!(
+        (second.1 - 40.).abs() < 0.001
+            && (second.2 - (166. - 14. * new.len() as f64)).abs() < 0.001,
+        "{runs:?}"
+    );
+}

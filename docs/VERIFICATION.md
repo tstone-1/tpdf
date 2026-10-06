@@ -6231,8 +6231,8 @@ The timestamp's revision and its signature field played no part in any refusal.
 **The fixture.** `testdata/textedit-producer-list-styles.fodt` is a synthetic Writer document,
 every name in it invented, set in Liberation Sans (SIL Open Font License 1.1, shipped with
 LibreOffice). Its export is committed, because a hosted runner has no LibreOffice:
-`src-tauri/src/textedit/tagging/fixtures/libreoffice-list.pdf`, 50,926 bytes, SHA-256
-`8f7e3f4514c568989892003a3170af06ff9134c7d826347067777e95a5fe62fb`, made by LibreOffice
+`src-tauri/src/textedit/tagging/fixtures/libreoffice-list.pdf`, 52,116 bytes, SHA-256
+`558ff52a4bc29f8f4f07b320af70a699ff302a966f15b4a812f517e007ae5930`, made by LibreOffice
 26.8.0.3 on macOS with
 
 ```
@@ -6244,7 +6244,13 @@ soffice --headless \
 `tpdf-cli info` says `Tagged: yes`. An export repeats neither its creation date nor its file
 identifier, so a new export has another digest; replace the committed file, the digest in
 `tagging/libreoffice_tests.rs` and in `scripts/text_list_check.py`, and this paragraph
-together. Before the change the export was refused at the same line as the document above,
+together. That was done once, later the same day: the source gained a fifth list item and
+36 pt of space above the table for *A wrap on a LibreOffice page* below, and the export
+named here is that second one. The first was 50,926 bytes, SHA-256
+`8f7e3f4514c568989892003a3170af06ff9134c7d826347067777e95a5fe62fb`, and the counts in the
+rest of this section are its counts: 27 runs, 10 read-only shows, 930 structure values,
+where the second export has 32, 11 and 1,033.
+Before the change the export was refused at the same line as the document above,
 for the same pair (a style-named paragraph under `LBody`), and with the font change undone
 it offers 5 runs, the bold ones, for the same reason that document offered 18.
 
@@ -6296,3 +6302,195 @@ items below move down whole), and the centred line. Nothing ran on Windows beyon
 `scripts/check_windows.py`. LibreOffice 26.2's own export of the fixture was not made; 26.8
 is the version installed here. No document with a two-paragraph list item or a composite
 no-break space was measured, and both are still refused or read-only as before.
+
+### A wrap on a LibreOffice page — measured 2026-10-06
+
+`docs/TEXTEDIT.md`, *What moves with a wrap on such a page*, has the rules. On the page of
+the section above, and on the export, a line that was full could be given no more words:
+the wrap that works on a Word export was never tried, and when it was tried it was refused.
+Measured on macOS arm64; the counts are `text-edit-probe --growth` in `app` mode, which
+types 10, 25 and 50% more characters at the end of every run with visible text, in the box
+the editor opens.
+
+**Two causes, in order.** (1) LibreOffice draws the page under a clip the size of the sheet
+less a rounding (`0 0.028 594.964 841.975 re W* n` on the export), so every line ended at a
+clip 0.028 pt before the page's edge, and only a line the page or a column ends is offered
+a wrap. With that alone changed, every one of the text editor's unit tests still passed,
+which is how it was known that none covered it. (2) The wrap was then refused: its moved
+lines landed on text that stays, or a line of the paragraph could not move. Only text the
+writer may rewrite moved, and below a list item there are bullets, added hyphens and a
+justified paragraph.
+
+**The source and its export.** `testdata/textedit-producer-list-styles.fodt` gained a fifth
+numbered item, a paragraph of three lines whose first ends at a space and whose second
+ends at an added hyphen, and 36 pt of space under the justified paragraph. The space is
+there because the table below states its bounds: without it every wrap on the page was
+refused, rightly, with *The table states its bounds, and this text would leave them*, and
+no wrap could be measured. The export was made again with the command of the section
+above (same LibreOffice, 26.8.0.3) and replaces the first: 52,116 bytes, 32 runs offered,
+11 read-only shows with text (4 bullets, 3 hyphens, 2 lines of the justified paragraph, 2
+of the footer).
+
+**Counts, before (commit `68d351cd`) and after.** The export, 31 runs tried:
+
+| | +10% | +25% | +50% |
+| --- | ---: | ---: | ---: |
+| accepted, before | 27 | 26 | 26 |
+| accepted, after | 27 | 27 | 27 |
+| *the document clips the space after it*, before | 0 | 1 | 1 |
+| the same, after | 0 | 0 | 0 |
+| *other text follows it*, before and after | 3 | 3 | 3 |
+| *the text after it cannot be moved*, before and after | 1 | 1 | 1 |
+
+A LibreOffice export that was signed afterwards, the one page of the section above, not
+public and read here for counts and the tool's own messages only, 81 runs tried:
+
+| | +10% | +25% | +50% |
+| --- | ---: | ---: | ---: |
+| accepted, before | 69 | 60 | 51 |
+| accepted, after | 69 | 69 | 68 |
+| *the document clips the space after it*, before | 0 | 9 | 18 |
+| the same, after | 0 | 0 | 0 |
+| *it reaches the edge of the page*, after | 0 | 0 | 1 |
+| *other text follows it*, before and after | 7 | 7 | 7 |
+| *the text after it cannot be moved*, before and after | 5 | 5 | 5 |
+
+The untagged export of the same source (37 runs tried, blocks read off the lines): 32
+accepted at +25% and at +50% before, 5 refused for the clip; 35 after, and 2 refused as
+*part of it below cannot be moved*.
+
+The growth instrument types a quarter or a half more, which fills a long line and leaves a
+short list item short. A one-line item is wrapped by `scripts/text_list_check.py` instead,
+with a sentence.
+
+**Every newly accepted edit, saved and read back.** Each of the 26 on the signed document
+(9 at +25%, 17 at +50%), the 2 on the export and the 6 on its untagged twin went through
+`text-edit-probe --roundtrip`, which holds the worker's preview and the saved page to the
+same pixels, and then through `scripts/text_wrap_check.py --compare`, which pairs every
+glyph before and after as pdfplumber reads them: 34 of 34 passed. In each, every glyph of
+the page either stayed or moved straight down with its line, the page gained exactly the
+glyphs the request adds, and no pair of glyphs overlaps (0 before, 0 after, every time). On
+the signed document between 151 and 2,084 glyphs moved, by 14.0 pt in 23 of the 26, by
+11.0 and 11.3 pt in 2 and by 14.8 pt in 1.
+
+**The public sample, so that nothing accepted before is refused now.** The change is not
+about LibreOffice alone: read-only text and text in ActualText spans move on every page,
+and a clip near the page's edge is the page on every page. `scripts/textedit_growth.py`
+over the 31 files of `testdata/textedit-public-corpus.json`, 52,894 runs, release probes
+built from `68d351cd` and from this tree, `app` mode, with `--records` and `--compare`:
+
+| trial | before | after |
+| --- | ---: | ---: |
+| +10% | 45,773 | 45,920 |
+| +25% | 42,893 | 43,251 |
+| +50% | 40,251 | 40,740 |
+
+1,006 verdicts went from refused to accepted, on eleven files, and none the other way. The
+first run of the comparison had 46 the other way, on three files, nearly all on an
+untagged XeLaTeX manual: wraps that had been accepted with a read-only block left where it
+was were now refused, because that block was offered to the cascade, moved as soon as the
+break above it would close, and its move was refused for text beside it that stays. A wrap
+refused with every movable block offered is therefore tried once more with only the blocks
+the writer may rewrite, which is the wrap as it was (`layout::prepare`, `plain`); with that
+the 46 are accepted again and the 1,006 are unchanged.
+
+Of the 1,006, 54 were taken evenly from the eleven files and saved. Six are on files of
+more than 128 pages, which `--roundtrip` refuses to open. The other 48 all pass the round
+trip (preview and saved page agree, nothing outside the edit's envelope changes); 29 of them
+pass `text_wrap_check.py --compare` and 19 fail it, in the shapes the earlier wrap records
+list for this checker: a replacement set in a fallback font, glyphs of the edited run on two
+baselines, a cascade over many distances. Two of the 19 were rendered before and after and
+are right on the page, each line below one pitch lower with its formula glyphs and its link
+text in place. The other 17 were not looked at.
+
+**Three wraps on the export, read by three readers.** `uv run --with pypdf --with pdfplumber
+scripts/text_list_check.py <text-edit-probe> <tpdf-cli> <new-directory>` now also types a
+sentence after a one-line item, after an item above a bulleted sublist, and after the first
+line of the fifth item, one round trip each. pypdf, PDFium (`tpdf-cli text`) and PDFKit
+each show the item's text with the sentence after it and every other line of the page as
+it was and in the order it was; the structure (1,033 values), the 4 font programs and the
+annotations are unchanged; and the glyph comparison passes: 597, 533 and 322 glyphs moved
+down, by 11.3, 11.3 and 10.4 pt, with 99, 70 and 67 glyphs added and no overlap. Each
+comparison is first run where it must fail: on the unedited source, and on a reading with
+two lines exchanged. Two readers changed their reading of text that had only moved, and
+the comparison says what it holds each to (`docs/TRAPS.md`, *Two readers each changed their
+reading of text that had only moved, and comparing whole readings blamed the edit*). The
+three saved pages were rendered with `tpdf-cli render` and looked at: the new line hangs
+under the item's words, the sublist's bullets, the hyphen at the end of the fifth item's
+second line and the justified paragraph are each one line lower beside their text, and the
+table and the footer are where they were. The first line of each of the two one-line items
+runs on through the right margin to the edge of the sheet, which is the room its line had
+(*Not done*).
+
+**In the suite.** `textedit/carried_tests.rs` (7 tests): a pinned block below moves with
+its bytes and what follows it starts at the bits it did; a show in an inline ActualText span
+moves inside its span and is edited afterwards; a read-only line of the edited paragraph
+moves and is held to the page; text that stays in the middle of a read-only line refuses
+the wrap by name; a line under a clip the size of the page wraps and one under a clip 0.6 pt
+in does not; the rule as geometry, in the four directions a line runs; and a wrap a
+read-only block cannot follow, made without it.
+`tagging/libreoffice_tests.rs` (6 tests, 2 of them new): the three wraps above with every
+other show where it was or one line lower, and what is still refused, with its wording.
+`tagging/list_tests.rs` (2 new): where a one-line item and an item of several lines start
+a new line. Two tests in `wrap_tests.rs` changed, because what they pinned is the refusal
+this change removes: a block below whose text is inside an ActualText span now moves (its
+place there is taken by a spacer, which does not), and a link's words in a line of the
+paragraph move with the line where the wrap was refused.
+
+**Mutations.** `python3 scripts/mutate_rust.py --only 'carried:' --only 'page clip:' --only
+'item:'`: 22, each red in the test named for it. The first run had 2 of them red in another
+test than the one named: a constant moved by a tenth of a point, which a float comparison
+decided differently in each direction, and a mutation of the several-line case that no
+test of that case existed for; the first is now a larger step and the second has a test.
+18 older entries were re-aimed at the same guards where the lines moved, and each is red
+again. `beneath: text in an ActualText span may move` left the table: that text moves now,
+and `carried: a show in an ActualText span stays where it is` is its reverse.
+
+**The measure of a one-line block.** A one-line item wrapped only where its line ran out
+of room, which on these pages is the edge of the sheet, through the right margin. It now
+wraps at the furthest any line reaches in the page's other tagged blocks of several lines
+(`wrap::borrowed`). In the fixture item 2 with a sentence added broke two words earlier
+than before, at the measure of the items beside it. One test in
+`tagging/libreoffice_tests.rs` is new: item 3 is first grown on its line into the margin,
+then item 2 still breaks where it did (a block of one line is no measure), and item 3,
+grown again until the page ends it, keeps its first line (a line past the measure is not
+held to it). Three mutations under `measure:`, each applied by hand and red in the test
+named for it. The growth probe's accepted counts on the fixture and on the measured
+document are the same with and without this.
+
+**In a window, and what it found.** A debug build against the dev server, on a scratch
+copy of the measured document, a sentence typed onto the end of a one-line list item.
+Three things came out of it that no probe had shown:
+
+- The edit was refused as reaching the edge of the page, although the writer accepted the
+  same sentence when the probe appended it. The difference was one character: the reader
+  replaced the item's full stop, so the run's own bytes were not kept whole and the line
+  was laid out afresh. `line_breaks` broke by the advance, the last glyph's ink reached
+  0.1 pt past the borrowed measure (433.26 against 433.16), and the ink check refused the
+  line. The break now measures the ink where a line may break. A search of 15,625
+  replacements on the fixture found none that differ, since Liberation Sans has no such
+  overhang at 9 pt; the test uses the overhang font of `fonts/ink_tests.rs` in a box the
+  reader wraps, and the mutation `ink break:` is red in it.
+- The item's two lines stood 11.25 pt apart among paragraphs set wider. The pitch is now
+  borrowed from the nearest block of several lines; the mutation `measure: a one-line
+  block wraps at the editor's own pitch` is red in the fixture's wrap test, whose two
+  one-line cases moved from 11.25 to 10.35. `wrap: the single-block pitch` was re-aimed
+  and is red again.
+- After both, the item wrapped at the right margin at the document's own pitch, the items
+  below moved down, the signature block and the footer stayed, the save warned about the
+  digital signature, `pdftotext` read the new words once and `qpdf --check` passed.
+
+**Still open from that check.** Fewer words than fill the line to the edge of the sheet
+are set on one line, through the right margin: growth along a line is held to the room,
+not to the measure, and only a full line wraps. A wrap leaves an empty run behind for each
+line it moved (32 runs became 53 on the fixture, the 21 new ones empty). The size test in
+`borrowed_pitch` has no test that fails without it: the fixture has no block of several
+lines at another size.
+
+**Not done.** No window was opened. Nothing ran on Windows beyond `scripts/check_windows.py`.
+A line that ends at an added hyphen still takes no more words: that is the 7 and the 5 of
+the signed document and the 3 and the 1 of the export, unchanged. The one edit still refused
+at +50% on the signed document, for the page's edge, was not looked into. A paragraph of one
+line wraps at the room its line had, which on these pages is the edge of the sheet and not
+the right margin. No LibreOffice 26.2 export was made. Of the 1,006 edits newly accepted on
+the public sample, 48 were saved and 31 were confirmed, by the glyph comparison or by eye.

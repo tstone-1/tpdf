@@ -1394,7 +1394,7 @@ MUTATIONS = [
     Mutation('gaps: measure the wrong gap', 'src/textedit/fonts.rs', 'let shift = gap * size / 1000.;', 'let shift = gap * size / 100.;', 'textedit_type1_gapped_layout_matches_the_written_words'),
     Mutation('opaque: forget word spacing on code 32', 'src/textedit/fonts.rs', '.map(|glyph| (glyph.width, glyph.overhang, code == 32))', '.map(|glyph| (glyph.width, glyph.overhang, false))', 'textedit_type1_opaque_glyphs_measure_read_only_text'),
     Mutation('opaque: decode an unmapped code', 'src/textedit/fonts.rs', '                if self.opaque(code).is_none() {\n                    return Err("text contains an unmapped font code".into());\n                }\n', '', 'textedit_cff_maps_ascii_by_glyph_name_and_preserves_resources'),
-    Mutation('opaque: offer text the editor cannot write', 'src/textedit/inspect.rs', '            || text.contains(fonts::OPAQUE)\n', '', 'textedit_type1_to_unicode_narrows_but_never_contradicts_names'),
+    Mutation('opaque: offer text the editor cannot write', 'src/textedit/inspect.rs', '        let kept = marked.tags.read_only() || text.contains(fonts::OPAQUE);', '        let kept = marked.tags.read_only();', 'textedit_type1_to_unicode_narrows_but_never_contradicts_names'),
     Mutation('lead: refuse a leading adjustment', 'src/textedit.rs', '[lead @ (Object::Integer(_) | Object::Real(_)), rest @ ..] => (Some(lead), rest),', '[] => (None, values),', 'textedit_type1_word_gaps_read_and_write_as_spaces'),
     Mutation('lead: ignore where the run starts', 'src/textedit/inspect.rs', '                object.cursor -= number(lead)? * size / 1000.0;\n', '                object.cursor -= 0.0 * number(lead)? * size / 1000.0;\n', 'textedit_type1_word_gaps_read_and_write_as_spaces'),
     Mutation('lead: drop it on save', 'src/textedit.rs', '            show.operator = "TJ".into();\n            led(lead, items)\n        } else {', '            show.operator = "TJ".into();\n            led(None, items)\n        } else {', 'textedit_type1_word_gaps_read_and_write_as_spaces'),
@@ -1434,7 +1434,7 @@ MUTATIONS = [
     Mutation('source items: no second try', 'src/textedit/layout.rs', '        if outcome.is_ok() {\n            break;\n        }', '        break;', 'textedit_an_edit_the_source_positioning_cannot_place_is_laid_out_afresh'),
     # The room after a run, which a box the reader has not sized grows into.
     # The four `room` entries aim at the pure geometry; the rest at the writer.
-    Mutation('room: no page edge', 'src/textedit/layout.rs', '        let mut free = self.at(self.edge(page, true));', '        let mut free = self.at(self.edge([page[0] - 100., page[1] - 100., page[2] + 100., page[3] + 100.], true));', 'the_room_after_a_run_reaches_the_page_edge_and_stops_short_of_a_neighbour'),
+    Mutation('room: no page edge', 'src/textedit/layout.rs', '        let sheet = self.edge(page, true);', '        let sheet = self.edge([page[0] - 100., page[1] - 100., page[2] + 100., page[3] + 100.], true);', 'the_room_after_a_run_reaches_the_page_edge_and_stops_short_of_a_neighbour'),
     Mutation('room: the leading edge is always the far one', 'src/textedit/layout.rs', '        rect[if (self.sign > 0.) == ahead {\n            self.axis + 2\n        } else {\n            self.axis\n        }]', '        rect[self.axis + 2]', 'the_room_after_a_run_reaches_the_page_edge_and_stops_short_of_a_neighbour'),
     Mutation('room: ignore the clip', 'src/textedit/layout.rs', '[(clip, Room::Clip), (table, Room::Table)]', '[(None, Room::Clip), (table, Room::Table)]', 'the_room_after_a_run_stops_at_a_clip_and_a_nearer_neighbour_wins'),
     Mutation('room: ignore the neighbour', 'src/textedit/layout.rs', '        if near + 0.000_000_001 >= width && near < free {', '        if false {', 'the_room_after_a_run_reaches_the_page_edge_and_stops_short_of_a_neighbour'),
@@ -1517,8 +1517,8 @@ MUTATIONS = [
     Mutation('cut: outline only the last piece', 'src/textedit/layout.rs', '        match placed.iter_mut().find(|(other, _)| other == operator) {', '        match None::<&mut (u32, [f32; 4])> {', 'placements_outline_both_pieces_of_a_cut_run'),
     Mutation('wrap room: the line above may not keep its overlap', 'src/textedit/layout.rs', '    allowed[cross] = allowed[cross].max(sliver + 0.001);\n', '', 'text_sliding_along_its_line_may_keep_the_overlap_the_line_above_had'),
     Mutation('cut: a grouped run is cut', 'src/textedit/layout.rs', '        let [show] = unit.shows[..] else {', '        let Some(&show) = unit.shows.first() else {', 'a_grouped_run_after_the_edit_moves_whole'),
-    Mutation('wrap: read-only text below is left behind', 'src/textedit/layout/wrap.rs', '            if !page.contexts.contains_key(&show)\n                || page.actual_text', '            if false && !page.contexts.contains_key(&show)\n                || page.actual_text', 'read_only_text_of_the_paragraph_below_the_edit_refuses_the_wrap'),
-    Mutation('wrap: the single-block pitch', 'src/textedit/layout/wrap.rs', '        run.size * 1.25\n    };', '        run.size * 1.2\n    };', 'a_single_line_paragraph_wraps_at_the_room_it_had_at_the_default_pitch'),
+    Mutation('wrap: read-only text below is left behind', 'src/textedit/layout/wrap.rs', '            if !carried(page, show) {\n                return Err(Refused::Blocked(UNMOVABLE));', '            if false {\n                return Err(Refused::Blocked(UNMOVABLE));', 'read_only_text_of_the_paragraph_below_the_edit_refuses_the_wrap'),
+    Mutation('wrap: the single-block pitch', 'src/textedit/layout/wrap.rs', '.unwrap_or(run.size * 1.25)\n    };', '.unwrap_or(run.size * 1.2)\n    };', 'a_single_line_paragraph_wraps_at_the_room_it_had_at_the_default_pitch'),
     Mutation('wrap: any distance is a pitch', 'src/textedit/layout/wrap.rs', 'const PITCH_EM: (f64, f64) = (0.8, 3.0);', 'const PITCH_EM: (f64, f64) = (0.8, 4.0);', 'a_line_three_ems_below_is_not_a_pitch_to_wrap_at'),
     Mutation('wrap: three ems is too far', 'src/textedit/layout/wrap.rs', 'const PITCH_EM: (f64, f64) = (0.8, 3.0);', 'const PITCH_EM: (f64, f64) = (0.8, 2.9);', 'a_line_three_ems_below_is_not_a_pitch_to_wrap_at'),
     Mutation('wrap: the measure is the page', 'src/textedit/layout/wrap.rs', '    let far = if several {', '    let far = if false {', 'an_edit_past_the_page_edge_wraps_and_moves_the_rest_of_its_paragraph_down'),
@@ -1528,14 +1528,14 @@ MUTATIONS = [
     Mutation('wrap: leave the cursor where the move put it', 'src/textedit/layout/wrap.rs', '            Object::Real(adjustment),', '            Object::Real(0.),', 'a_show_continuing_a_moved_line_from_the_cursor_stays_where_it_was'),
     Mutation('wrap: at another size', 'src/textedit/layout.rs', '    if full && placement.inherited == 0. && size == run.size && !centred {', '    if full && placement.inherited == 0. && !centred {', 'a_different_size_or_a_run_already_pushed_keeps_the_page_edge_refusal'),
     Mutation('wrap: after a push', 'src/textedit/layout.rs', '    if full && placement.inherited == 0. && size == run.size && !centred {', '    if full && size == run.size && !centred {', 'a_different_size_or_a_run_already_pushed_keeps_the_page_edge_refusal'),
-    Mutation('wrap: move another pending edit', 'src/textedit/layout.rs', '                    .any(|show| moving.contains(&show))\n                {\n                    return Err(wrap::CONFLICT.into());', '                    .any(|show| moving.contains(&show) && false)\n                {\n                    return Err(wrap::CONFLICT.into());', 'a_wrap_that_moves_another_pending_edit_is_refused_in_either_order'),
+    Mutation('wrap: move another pending edit', 'src/textedit/layout.rs', '                        .any(|show| moving.contains(&show))\n                    {\n                        return Err(wrap::CONFLICT.into());', '                        .any(|show| moving.contains(&show) && false)\n                    {\n                        return Err(wrap::CONFLICT.into());', 'a_wrap_that_moves_another_pending_edit_is_refused_in_either_order'),
     Mutation('wrap: an edit of the text that flows is not in the way', 'src/textedit/layout.rs', '                    .any(|show| moving.contains(&show))\n', '                    .any(|show| below.contains(&show))\n', 'a_wrap_that_moves_the_text_after_it_refuses_an_edit_of_that_text'),
     Mutation('wrap: nothing is left behind', 'src/textedit/layout.rs', '                left_behind(page, &below, &hits)?;\n', '', 'another_blocks_text_inside_a_moved_line_refuses_the_wrap'),
     Mutation('wrap: land on the moved lines', 'src/textedit/layout.rs', '                                shows_of(page, id).iter().any(|show| moves.contains(show)),', '                                false,', 'an_edit_past_the_page_edge_wraps_and_moves_the_rest_of_its_paragraph_down'),
     Mutation('wrap: land on the text that flows', 'src/textedit/layout.rs', '                                shows_of(page, id).iter().any(|show| moves.contains(show)),', '                                shows_of(page, id).iter().any(|show| moves.contains(show) && !flowing.contains(show)),', 'the_text_after_the_edit_on_its_line_flows_after_it'),
     Mutation('wrap: move the lines by a pitch too few', 'src/textedit/layout.rs', '                    .fold(lines.saturating_sub(1), usize::max);', '                    .fold(lines.saturating_sub(2), usize::max);', 'an_edit_past_the_page_edge_wraps_and_moves_the_rest_of_its_paragraph_down'),
     Mutation('wrap: move the lines by the edit\'s own lines only', 'src/textedit/layout.rs', '                    .fold(lines.saturating_sub(1), usize::max);', '                    .fold(lines.saturating_sub(1), |lines, _| lines);', 'text_after_the_edit_that_does_not_fit_its_last_line_is_cut_at_a_space'),
-    Mutation('wrap: the text that flows stays where it was', 'src/textedit/layout.rs', '                                .push((*show, wrap::lowered(page, *show, along(dx, dy(piece)))?));', '                                .push((*show, wrap::lowered(page, *show, (0., 0.))?));', 'the_text_after_the_edit_on_its_line_flows_after_it'),
+    Mutation('wrap: the text that flows stays where it was', 'src/textedit/layout.rs', '                                    wrap::lowered(page, *show, along(dx, dy(piece)))?,', '                                    wrap::lowered(page, *show, (0., 0.))?,', 'the_text_after_the_edit_on_its_line_flows_after_it'),
     Mutation('wrap room: the text that flows is not checked or outlined', 'src/textedit/layout.rs', '                                whole(*show).map(|rect| (*show, rect, corner(dx, dy(piece)))),', '                                None::<(u32, [f64; 4], [f64; 2])>,', 'placements_outline_the_text_that_flowed_after_the_edit'),
     Mutation('wrap: the flowed text lands a line off', 'src/textedit/layout.rs', '                    let dy = |piece: &wrap::Piece| -(piece.line as f64) * plan.pitch;', '                    let dy = |piece: &wrap::Piece| -(piece.line as f64 + 1.) * plan.pitch;', 'the_text_after_the_edit_on_its_line_flows_after_it'),
     Mutation('wrap: new lines past the foot of the page', 'src/textedit/layout.rs', 'if (shape.pitch.is_some() || back != 0.)', 'if (false || back != 0.)', 'at_the_foot_of_the_page_there_is_no_room_below'),
@@ -1588,9 +1588,8 @@ MUTATIONS = [
     Mutation('cascade: a carried block is not written lower', 'src/textedit/layout.rs', '                    for (show, part) in &carried {\n', '                    for (show, part) in carried.iter().filter(|_| false) {\n', 'the_next_paragraph_moves_down_when_the_lines_would_land_on_it'),
     Mutation('cascade: an edit of a carried block is no conflict', 'src/textedit/layout.rs', '                        .any(|show| carried.contains_key(&show))', '                        .any(|show| carried.contains_key(&show) && false)', 'a_wrap_that_moves_the_next_paragraph_refuses_an_edit_of_it'),
     Mutation('beneath: a block reaching above the line may move', 'src/textedit/layout/wrap.rs', '                .is_some_and(|((_, y), _)| y < -tolerance);', '                .is_some();', 'a_block_reaching_above_the_edited_line_is_not_moved'),
-    Mutation('beneath: text in an ActualText span may move', 'src/textedit/layout/wrap.rs', '            && !page.actual_text.contains_key(&show)\n            && !page.compound_run_clips.contains_key(&show)\n            && known', '            && !page.compound_run_clips.contains_key(&show)\n            && known', 'a_block_below_that_cannot_be_moved_refuses_the_wrap'),
-    Mutation('beneath: text under a compound clip may move', 'src/textedit/layout/wrap.rs', '            && !page.compound_run_clips.contains_key(&show)\n            && known', '            && known', 'a_block_below_that_cannot_be_moved_refuses_the_wrap'),
-    Mutation('beneath: a show with no layout context may move', 'src/textedit/layout/wrap.rs', '        let movable = page.contexts.contains_key(&show)\n', '        let movable = true\n', 'a_block_below_that_cannot_be_moved_refuses_the_wrap'),
+    Mutation('beneath: text under a compound clip may move', 'src/textedit/layout/wrap.rs', '    context_of(page, show).is_some() && !page.compound_run_clips.contains_key(&show)\n', '    context_of(page, show).is_some()\n', 'a_block_below_that_cannot_be_moved_refuses_the_wrap'),
+    Mutation('beneath: a show with no layout context may move', 'src/textedit/layout/wrap.rs', '        let movable = carried(page, show)\n', '        let movable = true\n', 'a_block_below_that_cannot_be_moved_refuses_the_wrap'),
     Mutation('keep breaks: a paragraph break may close', 'src/textedit/layout.rs', '    ahead && !level && after < blank - 0.1', '    ahead && !level && after < -f64::MAX', 'a_paragraph_with_no_room_below_is_refused_with_the_reason'),
     Mutation('keep breaks: text behind counts too', 'src/textedit/layout.rs', '    ahead && !level && after < blank - 0.1', '    (ahead || true) && !level && after < blank - 0.1', 'the_next_paragraph_moves_down_when_the_lines_would_land_on_it'),
     Mutation('keep breaks: text clipped away counts', 'src/textedit/layout.rs', '        || other[cross + 2] - other[cross] <= 0.1\n', '', 'a_clip_over_the_paragraph_stops_the_lines_it_would_move'),
@@ -1621,7 +1620,7 @@ MUTATIONS = [
     Mutation('half breaks: a full page keeps every break whole', 'src/textedit/layout.rs', 'const BREAK_GIVE: f64 = 0.5;', 'const BREAK_GIVE: f64 = 0.;', 'a_full_page_takes_a_wrap_in_half_of_two_paragraph_breaks'),
     Mutation('half breaks: breaks give up half before the page is full', 'src/textedit/layout.rs', '                let (placed, links, lowered) = match settle(0.) {', '                let (placed, links, lowered) = match settle(BREAK_GIVE) {', 'text_after_the_edit_that_does_not_fit_its_last_line_is_cut_at_a_space'),
     Mutation('half breaks: the blocks below still move the whole way', 'src/textedit/layout.rs', '(corner(0., -drop), corner(0., -plan.pitch), give),', '(corner(0., -drop), corner(0., -plan.pitch), 0.),', 'a_full_page_takes_a_wrap_in_half_of_two_paragraph_breaks'),
-    Mutation('half breaks: a moved line still keeps a whole blank line', 'src/textedit/layout.rs', '                            paragraph,\n                            give,\n', '                            paragraph,\n                            give: 0.,\n', 'a_full_page_takes_a_wrap_in_half_of_two_paragraph_breaks'),
+    Mutation('half breaks: a moved line still keeps a whole blank line', 'src/textedit/layout.rs', '                                paragraph,\n                                give,\n', '                                paragraph,\n                                give: 0.,\n', 'a_full_page_takes_a_wrap_in_half_of_two_paragraph_breaks'),
     Mutation('half breaks: a break may give up more than half', 'src/textedit/layout.rs', '    let blank = pitch - (slack[cross] - 0.1) - give * pitch;', '    let blank = pitch - (slack[cross] - 0.1) - 2. * give * pitch;', 'a_full_page_takes_a_wrap_in_half_of_two_paragraph_breaks'),
     Mutation('spread: a thousandth of a point is a move', 'src/textedit/layout.rs', 'const NO_MOVE: f64 = 0.01;', 'const NO_MOVE: f64 = 1e-6;', 'a_block_left_a_few_thousandths_to_go_stays'),
     Mutation('spread: every block moves the whole distance', 'src/textedit/layout.rs', '            (gone - spare).max(0.)', '            gone.max(spare * 0.)', 'the_added_lines_are_spread_over_the_breaks_below'),
@@ -1786,7 +1785,7 @@ MUTATIONS = [
     Mutation('pptx: a noisy closing segment counts as exact', 'src/textedit/clipping.rs', '                inexact = true;\n            }\n            points.push(end);', '            }\n            points.push(end);', 'textedit_a_nearly_axis_aligned_clip_is_held_to_its_limits'),
     Mutation('pptx: the outer rectangle', 'src/textedit/clipping.rs', '                    .filter(|v| *v <= low + slack)\n                    .fold(f64::NEG_INFINITY, f64::max),', '                    .filter(|v| *v <= low + slack)\n                    .fold(f64::INFINITY, f64::min),', 'textedit_a_nearly_axis_aligned_clip_is_its_inner_rectangle'),
     Mutation('pptx: the closing point is left out', 'src/textedit/clipping.rs', '            points.push(end);\n            index += 1;\n        }\n        // ISO', '            index += 1;\n        }\n        // ISO', 'textedit_a_nearly_axis_aligned_clip_is_its_inner_rectangle'),
-    Mutation('pptx: text under a turned clip is editable', 'src/textedit/inspect.rs', '            || marked.layer\n            || state.turned_clip', '            || marked.layer', 'textedit_text_under_a_turned_clip_is_read_only'),
+    Mutation('pptx: text under a turned clip is editable', 'src/textedit/inspect.rs', '        let fixed = marked.layer\n            || state.turned_clip', '        let fixed = marked.layer', 'textedit_text_under_a_turned_clip_is_read_only'),
     Mutation('pptx: a turned clip outlives its scope', 'src/textedit/inspect.rs', '*self = saved.pop().ok_or("unmatched graphics-state restore")?;', '*self = Graphics { turned_clip: self.turned_clip, ..saved.pop().ok_or("unmatched graphics-state restore")? };', 'textedit_text_under_a_turned_clip_is_read_only'),
     Mutation('pptx: any quadrilateral is a turned clip', 'src/textedit/clipping.rs', 'if !(turns.iter().all(|t| *t > 0.) || turns.iter().all(|t| *t < 0.)) {', 'if false {', 'textedit_a_turned_clip_is_one_convex_quadrilateral'),
     Mutation('pptx: a turned clip may close anywhere', 'src/textedit/clipping.rs', '        if end != points[0] {\n            return Ok(None);\n        }\n        index += 1;', '        let _ = end;\n        index += 1;', 'textedit_a_turned_clip_is_one_convex_quadrilateral'),
@@ -1826,7 +1825,7 @@ MUTATIONS = [
     Mutation('pptx: edge spaces carried the wrong way', 'src/textedit/actual.rs', '(count + self.actual[side]).saturating_sub(self.painted[side])', '(count + self.painted[side]).saturating_sub(self.actual[side])', 'a_spans_actual_text_differs_from_its_words_only_at_the_ends'),
     Mutation('pptx: an all-space replacement keeps only its spaces', 'src/textedit/actual.rs', 'let count = replacement.len() + self.actual[0] + self.actual[1];', 'let count = replacement.len();', 'a_spans_actual_text_differs_from_its_words_only_at_the_ends'),
     Mutation('powerpoint: bounded spacing need not be numbers', 'src/textedit/tagging.rs', '            if let Ok(value) = attributes.get(key) {\n                super::number(value)?;\n            }', '            if let Ok(value) = attributes.get(key) {\n                let _ = value;\n            }', 'textedit_read_only_owners_keep_their_layout_attributes'),
-    Mutation('placed artwork: text inside is editable', 'src/textedit/inspect.rs', 'let read_only = read_only || marked.placed > 0;', 'let read_only = read_only;', 'textedit_placed_artwork_keeps_its_text_read_only'),
+    Mutation('placed artwork: text inside is editable', 'src/textedit/inspect.rs', '            || marked.placed > 0\n', '', 'textedit_placed_artwork_keeps_its_text_read_only'),
     Mutation('placed artwork: marked content may open inside', 'src/textedit/inspect.rs', 'if self.placed > 0 && !metadata && matches!', 'if false && self.placed > 0 && !metadata && matches!', 'textedit_placed_artwork_keeps_its_text_read_only'),
     Mutation('placed artwork: metadata nests in metadata', 'src/textedit/inspect.rs', 'let metadata = self.placed == 1', 'let metadata = self.placed >= 1', 'textedit_placed_artwork_keeps_its_text_read_only'),
     Mutation('placed artwork: metadata opens on its own', 'src/textedit/inspect.rs', 'let metadata = self.placed == 1', 'let metadata = self.placed <= 1', 'textedit_placed_artwork_keeps_its_text_read_only'),
@@ -1839,7 +1838,7 @@ MUTATIONS = [
     Mutation('placed artwork: the packet need not be a stream', 'src/textedit.rs', '        || crate::encoding::resolve(doc, packet).as_stream().is_err()\n', '        || false\n', 'textedit_placed_artwork_keeps_its_text_read_only'),
     Mutation('placed artwork: left open at the end', 'src/textedit.rs', '    if marked.placed > 0 {\n        return Err("unterminated placed', '    if false {\n        return Err("unterminated placed', 'textedit_placed_artwork_keeps_its_text_read_only'),
     Mutation('layer: any properties resource is a layer', 'src/textedit.rs', 'Some(b"OCG" | b"OCMD") => Ok(()),', '_ => Ok(()),', 'textedit_optional_content_keeps_its_text_read_only'),
-    Mutation('layer: text inside is editable', 'src/textedit/inspect.rs', '        let read_only = marked.tags.read_only()\n            || marked.layer\n', '        let read_only = marked.tags.read_only()\n', 'textedit_optional_content_keeps_its_text_read_only'),
+    Mutation('layer: text inside is editable', 'src/textedit/inspect.rs', '        let fixed = marked.layer\n            || state.turned_clip', '        let fixed = state.turned_clip', 'textedit_optional_content_keeps_its_text_read_only'),
     Mutation('layer: marked content may open inside', 'src/textedit/inspect.rs', 'if self.layer && matches!(op.operator.as_str(), "BDC" | "BMC") {', 'if false && self.layer {', 'textedit_optional_content_keeps_its_text_read_only'),
     Mutation('backtrack: a backtracking run is editable', 'src/textedit/inspect.rs', '            || state.turned_clip\n            || backtracks\n', '            || state.turned_clip\n', 'textedit_kerning_refuses_malformed_unbounded_and_retreating_arrays'),
     Mutation('backtrack: a string that ends early is not flagged', 'src/textedit.rs', '            backtracks |= advance < furthest;\n            furthest = furthest.max(advance);', '            furthest = furthest.max(advance);', 'textedit_kerning_refuses_malformed_unbounded_and_retreating_arrays'),
@@ -1926,12 +1925,12 @@ MUTATIONS = [
     Mutation('bounded figure: offer the text in its Span', 'src/textedit/tagging.rs', 'let inherited = plain.pinned || lifted_pins || in_figure;', 'let inherited = plain.pinned || lifted_pins;', 'textedit_bounded_figures_keep_their_text_read_only'),
     Mutation('bounded figure: leave its content editable', 'src/textedit/tagging.rs', '                        bounded_slots.entry(owner).or_default().insert(mcid);\n', '', 'textedit_bounded_figures_keep_their_text_read_only'),
     Mutation('bounded figure: offer its text anyway', 'src/textedit/tagging.rs', '|| self.bounded.contains(&mcid)', '|| false', 'textedit_bounded_figures_keep_their_text_read_only'),
-    Mutation('bounded table: the ink its text had outside is refused (left)', 'src/textedit/inspect.rs', '                        stated[0].min(ink[0] - stroke),\n', '                        stated[0],\n', 'textedit_bounded_tables_allow_the_ink_their_text_already_had_outside'),
-    Mutation('bounded table: the ink its text had outside is refused (bottom)', 'src/textedit/inspect.rs', '                        stated[1].min(ink[1] - stroke),\n', '                        stated[1],\n', 'textedit_bounded_tables_allow_the_ink_their_text_already_had_outside'),
-    Mutation('bounded table: the ink its text had outside is refused (right)', 'src/textedit/inspect.rs', '                        stated[2].max(ink[2] + stroke),\n', '                        stated[2],\n', 'textedit_bounded_tables_allow_the_ink_their_text_already_had_outside'),
-    Mutation('bounded table: the ink its text had outside is refused (top)', 'src/textedit/inspect.rs', '                        stated[3].max(ink[3] + stroke),\n', '                        stated[3],\n', 'textedit_bounded_tables_allow_the_ink_their_text_already_had_outside'),
-    Mutation('bounded table: a stroke is not ink its text had (left, bottom)', 'src/textedit/inspect.rs', '                        stated[0].min(ink[0] - stroke),\n                        stated[1].min(ink[1] - stroke),\n', '                        stated[0].min(ink[0]),\n                        stated[1].min(ink[1]),\n', 'textedit_bounded_tables_allow_the_ink_their_text_already_had_outside'),
-    Mutation('bounded table: a stroke is not ink its text had (right, top)', 'src/textedit/inspect.rs', '                        stated[2].max(ink[2] + stroke),\n                        stated[3].max(ink[3] + stroke),\n', '                        stated[2].max(ink[2]),\n                        stated[3].max(ink[3]),\n', 'textedit_bounded_tables_allow_the_ink_their_text_already_had_outside'),
+    Mutation('bounded table: the ink its text had outside is refused (left)', 'src/textedit/inspect.rs', '                    stated[0].min(ink[0] - stroke),\n', '                    stated[0],\n', 'textedit_bounded_tables_allow_the_ink_their_text_already_had_outside'),
+    Mutation('bounded table: the ink its text had outside is refused (bottom)', 'src/textedit/inspect.rs', '                    stated[1].min(ink[1] - stroke),\n', '                    stated[1],\n', 'textedit_bounded_tables_allow_the_ink_their_text_already_had_outside'),
+    Mutation('bounded table: the ink its text had outside is refused (right)', 'src/textedit/inspect.rs', '                    stated[2].max(ink[2] + stroke),\n', '                    stated[2],\n', 'textedit_bounded_tables_allow_the_ink_their_text_already_had_outside'),
+    Mutation('bounded table: the ink its text had outside is refused (top)', 'src/textedit/inspect.rs', '                    stated[3].max(ink[3] + stroke),\n', '                    stated[3],\n', 'textedit_bounded_tables_allow_the_ink_their_text_already_had_outside'),
+    Mutation('bounded table: a stroke is not ink its text had (left, bottom)', 'src/textedit/inspect.rs', '                    stated[0].min(ink[0] - stroke),\n                    stated[1].min(ink[1] - stroke),\n', '                    stated[0].min(ink[0]),\n                    stated[1].min(ink[1]),\n', 'textedit_bounded_tables_allow_the_ink_their_text_already_had_outside'),
+    Mutation('bounded table: a stroke is not ink its text had (right, top)', 'src/textedit/inspect.rs', '                    stated[2].max(ink[2] + stroke),\n                    stated[3].max(ink[3] + stroke),\n', '                    stated[2].max(ink[2]),\n                    stated[3].max(ink[3]),\n', 'textedit_bounded_tables_allow_the_ink_their_text_already_had_outside'),
     Mutation('bounded table: its bounds do not end the line', 'src/textedit/layout.rs', '[(clip, Room::Clip), (table, Room::Table)]', '[(clip, Room::Clip), (None, Room::Table)]', 'the_room_after_a_run_stops_at_the_bounds_its_table_states'),
     Mutation('bounded table: its bounds are called a clip', 'src/textedit/layout.rs', '[(clip, Room::Clip), (table, Room::Table)]', '[(clip, Room::Clip), (table, Room::Clip)]', 'the_room_after_a_run_stops_at_the_bounds_its_table_states'),
     Mutation('bounded table: ink may leave its bounds', 'src/textedit/layout.rs', 'clipping::contains(context.table, ink).map_err(|_| TABLE_BOUNDS)?;', 'clipping::contains(None, ink).map_err(|_| TABLE_BOUNDS)?;', 'textedit_bounded_tables_refuse_text_that_would_leave_their_bounds'),
@@ -15788,8 +15787,8 @@ MUTATIONS += [
     Mutation(
         "fill and sign: the text it added is offered",
         "src/textedit/inspect.rs",
-        "        let read_only = read_only || marked.filled;\n",
-        "",
+        "            || marked.placed > 0\n            || marked.filled;\n",
+        "            || marked.placed > 0;\n",
         "textedit_fill_and_sign_additions_are_kept_and_the_page_is_edited",
     ),
     Mutation(
@@ -15934,6 +15933,246 @@ MUTATIONS += [
         "        opaque: kept.contains(&true).then_some(opaque),",
         "        opaque: None,",
         "textedit_symbolic_codes_keep_a_character_they_cannot_write_read_only",
+    ),
+]
+
+# Read-only text a wrap carries, and the clip that is the page (2026-10-06).
+# `beneath: text in an ActualText span may move` left the table with this
+# change: that text does move now, inside its span, and the first entry below
+# is its reverse. Each was run with `--only 'carried:' --only 'page clip:'
+# --only 'item:'` and was red in the test named.
+MUTATIONS += [
+    Mutation(
+        # The refusal as it was: a show an ActualText span describes stays.
+        "carried: a show in an ActualText span stays where it is",
+        "src/textedit/layout/wrap.rs",
+        "    context_of(page, show).is_some() && !page.compound_run_clips.contains_key(&show)\n",
+        "    context_of(page, show).is_some()\n"
+        "        && !page.actual_text.contains_key(&show)\n"
+        "        && !page.compound_run_clips.contains_key(&show)\n",
+        "a_show_in_an_actualtext_span_moves_with_its_block_inside_its_span",
+    ),
+    Mutation(
+        "carried: no position is recorded for read-only text",
+        "src/textedit/inspect.rs",
+        "            if carried {\n                self.held.insert(index as u32, context);",
+        "            if false {\n                self.held.insert(index as u32, context);",
+        "a_read_only_block_below_moves_down_with_the_wrap",
+    ),
+    Mutation(
+        # Turned, patterned, layered and placed text would be drawn lower as
+        # though only its position were its own.
+        "carried: read-only text moves whatever keeps it where it is",
+        "src/textedit/inspect.rs",
+        "            carried: !fixed,\n",
+        "            carried: true,\n",
+        "a_block_below_that_cannot_be_moved_refuses_the_wrap",
+    ),
+    Mutation(
+        "carried: only shows the writer may rewrite have a context to move by",
+        "src/textedit/layout.rs",
+        "    page.contexts.get(&show).or_else(|| page.held.get(&show))\n",
+        "    page.contexts.get(&show)\n",
+        "a_read_only_block_below_moves_down_with_the_wrap",
+    ),
+    Mutation(
+        # The moved block is still in the hit list where it was, and the
+        # paragraph's own line is refused for landing on it.
+        "carried: read-only text that moves is still in the way",
+        "src/textedit/layout.rs",
+        "                                    (rect.map(f64::from), moves.contains(&id))\n",
+        "                                    (rect.map(f64::from), false && moves.contains(&id))\n",
+        "a_read_only_block_below_moves_down_with_the_wrap",
+    ),
+    Mutation(
+        # The block has shows and no rectangle, so nothing lands on it and
+        # nothing moves it.
+        "carried: a read-only block below has no rectangle to be landed on",
+        "src/textedit/layout.rs",
+        "                .chain(&page.preserved)\n"
+        "                .filter(|other| shows.contains(&other.operator) && !other.text.trim().is_empty())",
+        "                .filter(|other| shows.contains(&other.operator) && !other.text.trim().is_empty())",
+        "a_read_only_block_below_moves_down_with_the_wrap",
+    ),
+    Mutation(
+        # Lowered and never checked: it is drawn off the page.
+        "carried: a read-only line that moves is checked against nothing",
+        "src/textedit/layout.rs",
+        "                            .chain(&page.preserved)\n                            .find(|other| {",
+        "                            .find(|other| {",
+        "a_read_only_line_of_the_paragraph_moves_and_is_held_to_the_page",
+    ),
+    Mutation(
+        "carried: text in the middle of a read-only line is left behind",
+        "src/textedit/layout.rs",
+        "        .chain(&page.preserved)\n"
+        "        .filter(|other| below.contains(&other.operator) && !other.text.trim().is_empty())",
+        "        .filter(|other| below.contains(&other.operator) && !other.text.trim().is_empty())",
+        "text_that_stays_in_the_middle_of_a_read_only_line_refuses_the_wrap",
+    ),
+    Mutation(
+        # Read-only text after the edit on its line would flow with it: a
+        # hyphen its producer set at the line's end, moved into the line.
+        "carried: read-only text after the edit flows onto its lines",
+        "src/textedit/layout/wrap.rs",
+        "                if !page.contexts.contains_key(&show)\n"
+        "                    || page.actual_text.contains_key(&show)\n"
+        "                    || page.compound_run_clips.contains_key(&show)\n"
+        "                {\n"
+        "                    return Err(Refused::NotApplicable);",
+        "                if !carried(page, show) {\n                    return Err(Refused::NotApplicable);",
+        "text_after_the_edit_that_cannot_be_moved_keeps_the_refusal",
+    ),
+    Mutation(
+        "page clip: a clip a hair inside the page is a clip",
+        "src/textedit/layout.rs",
+        "const PAGE_CLIP: f64 = 0.5;",
+        "const PAGE_CLIP: f64 = 0.0;",
+        "a_line_that_a_clip_the_size_of_the_page_ends_wraps_at_the_page_edge",
+    ),
+    Mutation(
+        "page clip: a clip well inside the page is the page",
+        "src/textedit/layout.rs",
+        "const PAGE_CLIP: f64 = 0.5;",
+        "const PAGE_CLIP: f64 = 50.0;",
+        "a_clip_within_half_a_point_of_the_page_edge_is_the_page",
+    ),
+    Mutation(
+        "page clip: just past the allowance is still the page",
+        "src/textedit/layout.rs",
+        "const PAGE_CLIP: f64 = 0.5;",
+        "const PAGE_CLIP: f64 = 0.7;",
+        "a_clip_within_half_a_point_of_the_page_edge_is_the_page",
+    ),
+    Mutation(
+        "page clip: every clip is the page",
+        "src/textedit/layout.rs",
+        "                    if kind != Room::Clip || (sheet - edge).abs() > PAGE_CLIP {",
+        "                    if kind != Room::Clip {",
+        "a_grown_box_stops_at_a_clip_the_document_has_in_force",
+    ),
+    Mutation(
+        "page clip: the bounds a table states near the page edge are the page",
+        "src/textedit/layout.rs",
+        "                    if kind != Room::Clip || (sheet - edge).abs() > PAGE_CLIP {",
+        "                    if (sheet - edge).abs() > PAGE_CLIP {",
+        "a_clip_within_half_a_point_of_the_page_edge_is_the_page",
+    ),
+    Mutation(
+        # Measured against the far edge of the page whichever way the line runs.
+        "page clip: the allowance is measured from the wrong edge",
+        "src/textedit/layout.rs",
+        "                    if kind != Room::Clip || (sheet - edge).abs() > PAGE_CLIP {",
+        "                    if kind != Room::Clip || (page[self.axis + 2] - edge).abs() > PAGE_CLIP {",
+        "a_clip_within_half_a_point_of_the_page_edge_is_the_page",
+    ),
+    Mutation(
+        "item: a one-line item wraps under its label",
+        "src/textedit/layout/wrap.rs",
+        "        .filter(|x| several || *x > label)\n",
+        "",
+        "textedit_a_libreoffice_list_item_wraps_and_carries_what_is_below",
+    ),
+    Mutation(
+        "item: no show is a label",
+        "src/textedit/inspect.rs",
+        "        if marked.tags.label() {\n            self.labels.insert(index as u32);",
+        "        if false {\n            self.labels.insert(index as u32);",
+        "textedit_a_libreoffice_list_item_wraps_and_carries_what_is_below",
+    ),
+    Mutation(
+        # Every show of the item would be its label, and no line would be left
+        # to start a new one under.
+        "item: every show of a list is a label",
+        "src/textedit/tagging.rs",
+        '            .is_some_and(|mcid| self.names[mcid] == b"Lbl")',
+        "            .is_some()",
+        "textedit_a_libreoffice_list_item_wraps_and_carries_what_is_below",
+    ),
+    Mutation(
+        # A list set without a hanging indent starts its lower lines at its
+        # label's left edge, and an item of several lines would then have
+        # nowhere to start a new one.
+        "item: an item of several lines is asked about its label too",
+        "src/textedit/layout/wrap.rs",
+        "        .filter(|x| several || *x > label)\n",
+        "        .filter(|x| *x > label)\n",
+        "textedit_a_list_item_of_several_lines_wraps_where_its_own_lines_start",
+    ),
+    Mutation(
+        "item: the label itself is where a one-line item starts its lines",
+        "src/textedit/layout/wrap.rs",
+        "        .filter(|x| several || *x > label)\n",
+        "        .filter(|x| several || *x >= label)\n",
+        "textedit_a_one_line_list_item_wraps_under_its_words_not_its_label",
+    ),
+]
+
+MUTATIONS += [
+    Mutation(
+        # A wrap accepted while read-only text could not move is refused,
+        # because the block now offered moves and has nowhere to go.
+        "carried: a wrap is not tried again without the read-only blocks",
+        "src/textedit/layout.rs",
+        "                    Err(first) if plain != plan.beneath => attempt",
+        "                    Err(first) if false => attempt",
+        "a_wrap_a_read_only_block_cannot_follow_is_made_without_it",
+    ),
+    Mutation(
+        # The second attempt would offer the read-only blocks again.
+        "carried: the second attempt keeps the read-only blocks",
+        "src/textedit/layout.rs",
+        "                            page.contexts.contains_key(show) && !page.actual_text.contains_key(show)\n",
+        "                            wrap::carried(page, *show)\n",
+        "a_wrap_a_read_only_block_cannot_follow_is_made_without_it",
+    ),
+]
+
+# A block of one line wraps at the measure the page's paragraphs show.
+MUTATIONS += [
+    Mutation(
+        # The line runs on to the paper's edge before it breaks.
+        "measure: a one-line block wraps at the room its line had",
+        "src/textedit/layout/wrap.rs",
+        "        borrowed(page, run, &known, &leader).map_or(first, |measure| measure.min(first))",
+        "        first",
+        "textedit_a_libreoffice_list_item_wraps_and_carries_what_is_below",
+    ),
+    Mutation(
+        # A line grown into the margin becomes every other line's measure.
+        "measure: a block of one line is a measure too",
+        "src/textedit/layout/wrap.rs",
+        "        .filter(|(_, several, _)| *several)\n",
+        "",
+        "textedit_a_one_line_item_wraps_at_the_measure_of_the_paragraphs_beside_it",
+    ),
+    Mutation(
+        # A line already past the measure is broken short of what it holds.
+        "measure: a line past the measure is held to it",
+        "src/textedit/layout/wrap.rs",
+        "        .filter(|far| *far + tolerance >= run.advance)\n",
+        "",
+        "textedit_a_one_line_item_wraps_at_the_measure_of_the_paragraphs_beside_it",
+    ),
+    Mutation(
+        # A wrapped one-line item sets its lines at the editor's 1.25 em.
+        "measure: a one-line block wraps at the editor's own pitch",
+        "src/textedit/layout/wrap.rs",
+        "        borrowed_pitch(page, run, &known, &leader).unwrap_or(run.size * 1.25)",
+        "        run.size * 1.25",
+        "textedit_a_libreoffice_list_item_wraps_and_carries_what_is_below",
+    ),
+]
+
+# A line that may break is broken where its ink fits.
+MUTATIONS += [
+    Mutation(
+        # The line is broken by its advance, and its ink is refused afterwards.
+        "ink break: a wrapped line is broken by its advance alone",
+        "src/textedit/layout.rs",
+        "                            if shape.wrap {\n                                width.max(ink[1] + (-ink[0]).max(0.))",
+        "                            if false {\n                                width.max(ink[1] + (-ink[0]).max(0.))",
+        "textedit_a_wrapped_line_breaks_before_a_glyph_whose_ink_leaves_the_box",
     ),
 ]
 

@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """Edit a LibreOffice list in paragraph styles of its own, and read it back three ways.
 
-uv run --with pypdf scripts/text_list_check.py <text-edit-probe> <tpdf-cli> <new-directory>
-    [--source <export.pdf>]
+uv run --with pypdf --with pdfplumber scripts/text_list_check.py <text-edit-probe> <tpdf-cli>
+    <new-directory> [--source <export.pdf>]
 
 The source is the committed export of testdata/textedit-producer-list-styles.fodt,
 src-tauri/src/textedit/tagging/fixtures/libreoffice-list.pdf, a synthetic document
@@ -27,14 +27,30 @@ the comparisons are run where they must fail: the unedited source read as the
 result, and a copy whose list paragraph has been renamed. A check that passes on
 those has checked nothing.
 
+Then three list items that are full to the page are given a sentence more, one
+round trip each, since each wraps onto a new line and moves what is below it: an
+item of one line, an item above a bulleted sublist, and an item whose paragraph
+ends a later line at a hyphen its producer added. What is below is partly text
+the editor cannot rewrite (bullets, that hyphen, a justified paragraph), and it
+has to move with the rest. Each saved copy is read by the same three readers:
+the item's text with the sentence after it, and every other line of the page as
+it was and in the order it was. `text_wrap_check.py --compare` then pairs every
+glyph before and after as pdfplumber reads them: a glyph stayed or moved straight
+down with its line, the page gained exactly the glyphs the sentence adds, and no
+more pairs of glyphs overlap than did before. Those comparisons are run where
+they must fail as well: on the unedited source, and on a reading with two lines
+below the edit exchanged.
+
 Exit 0 only when every reader agrees. Run it from outside the checkout's
-environment (`uv run` makes none here: it needs `--with pypdf` and nothing else).
+environment (`uv run` makes none here: it needs `--with pypdf --with pdfplumber`
+and nothing else).
 """
 import argparse
 import hashlib
 import json
 import math
 import platform
+import re
 import shutil
 import subprocess
 import sys
@@ -43,16 +59,30 @@ from pathlib import Path
 from pypdf import PdfReader, PdfWriter
 from pypdf.generic import ArrayObject, DictionaryObject, IndirectObject, NameObject, StreamObject
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import text_wrap_check  # noqa: E402
+
 ROOT = Path(__file__).resolve().parent.parent
 FIXTURE = ROOT / "src-tauri/src/textedit/tagging/fixtures/libreoffice-list.pdf"
-DIGEST = "8f7e3f4514c568989892003a3170af06ff9134c7d826347067777e95a5fe62fb"
+DIGEST = "558ff52a4bc29f8f4f07b320af70a699ff302a966f15b4a812f517e007ae5930"
 # (a substring naming one run, what replaces it, whether the run is centred)
 EDITS = [
     ("without exception", "without objection", False),
-    ("maker", "rules", False),
+    ("Sample maker", "Sample rules", False),
     ("Rule two", "Rule six", False),
     ("Declaration", "Exception", True),
 ]
+# (a substring naming one run, the sentence typed after it): each run is full
+# to the page with it, so each wraps. Only letters the embedded subset has.
+WRAPS = [
+    ("model EX-1.", " It is described here for illustration only and it represents nothing at "
+     "all, as the sample maker gives no undertaking."),
+    ("requirements listed here:", " The same rulebook is described here for illustration only "
+     "and represents nothing."),
+    ("gives no undertaking;", " the sample maker gives no undertaking for the demonstration "
+     "widget described."),
+]
+LABEL = re.compile(r"^(?:\d+\.|\u2022)(?:\s+|$)")
 SWIFT = """import Foundation
 import PDFKit
 guard let document = PDFDocument(url: URL(fileURLWithPath: CommandLine.arguments[1])),
@@ -143,6 +173,40 @@ def reads(text, source_text, reader):
     return None
 
 
+def flow(text):
+    """A reading as one line of words, without the list labels.
+
+    Readers differ on where a label goes: beside its item, on a line of its own,
+    or with the other labels as a column, and the same reader may change its
+    mind when an item gains a line. The words of the page and their order are
+    what every reader has to agree on."""
+    lines = (LABEL.sub("", line.strip()) for line in text.splitlines())
+    return " ".join(" ".join(line.split()) for line in lines if line.strip())
+
+
+def wrapped(text, source_text, run_text, added, reader):
+    """Why a reading is not the source's with `added` after `run_text`, or None.
+
+    PDFium and PDFKit place every glyph and are held to the words and the
+    spaces between them. pypdf reads the stream in order and guesses a space
+    from each change of the text matrix: a show a wrap moved is drawn from a
+    `Tm` of its own, and pypdf then reads a space before it that no glyph
+    shows (`repre -` for `repre-`). It is held to the characters and their
+    order, which is what a reader in stream order can say."""
+    before, after = flow(source_text), flow(text)
+    old = " ".join(run_text.split())
+    new = old + " " + " ".join(added.split())
+    if reader == "pypdf":
+        before, after, old, new = ("".join(part.split()) for part in (before, after, old, new))
+    if before.count(old) != 1:
+        return f"{reader}: the source does not show the edited run exactly once"
+    if after.count(new) != 1:
+        return f"{reader}: the item does not read as its text and the sentence after it"
+    if after != before.replace(old, new):
+        return f"{reader}: text outside the edited item changed or is out of order"
+    return None
+
+
 def run(*command):
     done = subprocess.run([str(part) for part in command], capture_output=True, text=True)
     if done.returncode != 0:
@@ -227,7 +291,67 @@ def main():
         print("[OK] PDFKit: the four replacements and no other change")
     else:
         print("[SKIP] PDFKit: needs macOS and swift")
+    wraps(options, source, found, before, source_text)
     print("[OK] a LibreOffice list in paragraph styles of its own is edited and read back")
+
+
+def wraps(options, source, found, before, source_text):
+    """Each of `WRAPS` in a round trip of its own, read back and compared."""
+    swift = platform.system() == "Darwin" and shutil.which("swift")
+    script = options.directory / "read.swift"
+    kit_source = run("swift", script, source) if swift else None
+    for index, (old, added) in enumerate(WRAPS):
+        runs = [item for item in found["runs"] if old in item["text"]]
+        if len(runs) != 1:
+            fail(f"{old!r} names {len(runs)} runs, not one")
+        text = runs[0]["text"]
+        up = lambda value: math.ceil(value * 1000) / 1000
+        size = runs[0]["size"]
+        # `original` is not the probe's to read; `text_wrap_check` counts with it.
+        request = {"page": 0, "operator": runs[0]["operator"], "replacement": text + added,
+                   "original": text,
+                   "layout": {"width": max(up(runs[0]["advance"]), 0.1),
+                              "height": up(size * 1.25), "size": up(size), "wrap": False,
+                              "font": "original", "grow": True}}
+        plan = options.directory / f"wrap{index}.json"
+        plan.write_text(json.dumps([request]), encoding="utf-8")
+        result = options.directory / f"wrap{index}"
+        run(options.probe, "--roundtrip", source, plan, result)
+        edited = result / "edited.pdf"
+        after = describe(edited)
+        for part in ("structure", "fonts", "annotations", "pages"):
+            if after[part] != before[part]:
+                fail(f"wrap {index}: pypdf: the {part} changed")
+        readings = [("pypdf", PdfReader(str(edited)).pages[0].extract_text(),
+                     PdfReader(str(source)).pages[0].extract_text()),
+                    ("PDFium", run(options.cli, "text", edited), source_text)]
+        if swift:
+            readings.append(("PDFKit", run("swift", script, edited), kit_source))
+        for reader, reading, original in readings:
+            # Where the comparison must fail: nothing typed, and two lines of
+            # the page below the edit exchanged.
+            if wrapped(original, original, text, added, reader) is None:
+                fail(f"wrap {index}: {reader}: the unedited source passed as the result")
+            lines = reading.splitlines()
+            long = [number for number, line in enumerate(lines) if len(line.split()) > 3]
+            lines[long[-1]], lines[long[-2]] = lines[long[-2]], lines[long[-1]]
+            if wrapped("\n".join(lines), original, text, added, reader) is None:
+                fail(f"wrap {index}: {reader}: two lines exchanged passed as the result")
+            why = wrapped(reading, original, text, added, reader)
+            if why:
+                fail(f"wrap {index}: {why}")
+        try:
+            text_wrap_check.compare(source, edited, 0, plan)
+        except AssertionError as error:
+            fail(f"wrap {index}: pdfplumber: {error}")
+        try:
+            text_wrap_check.compare(source, source, 0, plan)
+        except AssertionError:
+            pass
+        else:
+            fail(f"wrap {index}: pdfplumber: the unedited source passed as the result")
+        print(f"[OK] wrap {index}: {len(readings)} readers show the sentence after its item "
+              "and every other line as it was, in order; structure, fonts and annotations kept")
 
 
 def walk(value):

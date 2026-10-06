@@ -658,11 +658,16 @@ pub(super) struct Found {
     pub font_operators: BTreeMap<u32, usize>,
     pub horizontal_bounds: BTreeMap<u32, [f64; 2]>,
     pub blocks: BTreeMap<u32, ObjectId>,
+    pub labels: BTreeSet<u32>,
     pub text_spacing: BTreeMap<u32, (f64, f64)>,
     pub leads: BTreeMap<u32, Object>,
     pub gaps: BTreeMap<u32, f64>,
     pub compound_run_clips: BTreeMap<u32, (Vec<clipping::Region>, [f64; 4])>,
     pub contexts: BTreeMap<u32, layout::Context>,
+    // The same for each read-only show a wrap may move with its line, bytes
+    // unchanged (`Inspection::held`). Kept apart from `contexts`, whose keys
+    // are the shows the writer may rewrite.
+    pub held: BTreeMap<u32, layout::Context>,
     // Each structure Span with rewritable ActualText: its shows, and whether
     // none of them is inside an ActualText span of its own. A read-only or
     // spacer show never becomes a run, which the comparison in `settle_spans` sees.
@@ -688,6 +693,8 @@ struct Shown<'a> {
     shown_matrix: [f64; 6],
     page_matrix: [f64; 6],
     read_only: bool,
+    // Whether a wrap may draw the show lower with its line (`Found::held`).
+    carried: bool,
     // Half the line width, in page units, around stroked glyphs.
     stroke: f64,
 }
@@ -708,11 +715,13 @@ impl Found {
             font_operators: BTreeMap::new(),
             horizontal_bounds: BTreeMap::new(),
             blocks: BTreeMap::new(),
+            labels: BTreeSet::new(),
             text_spacing: BTreeMap::new(),
             leads: BTreeMap::new(),
             gaps: BTreeMap::new(),
             compound_run_clips: BTreeMap::new(),
             contexts: BTreeMap::new(),
+            held: BTreeMap::new(),
             span_shows: BTreeMap::new(),
             preserved: Vec::new(),
             centred: BTreeSet::new(),
@@ -754,6 +763,9 @@ impl Found {
         if let Some(block) = marked.tags.block() {
             self.blocks.insert(index as u32, block);
         }
+        if marked.tags.label() {
+            self.labels.insert(index as u32);
+        }
         let (name, size, font_operator) = state.selected_font.ok_or("text has no explicit font")?;
         if !object.positioned {
             self.continued.insert(
@@ -778,20 +790,28 @@ impl Found {
         } else {
             compose_affine(state.page_transform, shown_matrix)?
         };
-        // A glyph whose text the editor cannot write keeps its whole run.
-        let read_only = marked.tags.read_only()
-            || marked.layer
+        // Text the editor may not rewrite and can still draw somewhere else,
+        // byte for byte: what the tags keep (a pinned paragraph or Span, a
+        // link's words), and a glyph whose text the editor cannot write, which
+        // keeps its whole run.
+        let kept = marked.tags.read_only() || text.contains(fonts::OPAQUE);
+        // Text that is where it is for a reason the editor does not read, and
+        // that no wrap moves: a layer's, a turned or reflected run, one that
+        // draws back over itself, a pattern's paint (anchored to the page, so
+        // the same glyphs lower down would show another part of it), placed
+        // artwork, a Fill & Sign addition.
+        let fixed = marked.layer
             || state.turned_clip
             || backtracks
-            || text.contains(fonts::OPAQUE)
             || !diagonal(state.page_transform)
             || !orthogonal(page_matrix)
             || page_matrix[0] * page_matrix[3] - page_matrix[1] * page_matrix[2] <= 0.0
             || !matches!(state.fill_components, patterns::Colour::Solid(_))
             || (matches!(state.render, 1 | 2)
-                && !matches!(state.stroke_components, patterns::Colour::Solid(_)));
-        let read_only = read_only || marked.placed > 0;
-        let read_only = read_only || marked.filled;
+                && !matches!(state.stroke_components, patterns::Colour::Solid(_)))
+            || marked.placed > 0
+            || marked.filled;
+        let read_only = kept || fixed;
         // The colours the mode paints with; an invisible run paints nothing.
         if let Some(paint) = [Some("f"), Some("S"), Some("B"), None][state.render as usize] {
             patterns::paint(paint, state.fill_components, state.stroke_components)?;
@@ -820,6 +840,7 @@ impl Found {
             shown_matrix,
             page_matrix,
             read_only,
+            carried: !fixed,
             stroke,
         };
         let bounds = self.bounds(&shown, state, checked)?;
@@ -1004,6 +1025,7 @@ impl Found {
             shown_matrix,
             page_matrix,
             read_only,
+            carried,
             stroke,
         } = shown;
         if let Some(span) = marked.tags.actual() {
@@ -1018,7 +1040,45 @@ impl Found {
         if let Some(span) = &mut marked.actual {
             span.show(index as u32, &text, metrics.vertical_bounds.is_some())?;
         }
+        // Where the show is and how to draw it somewhere else: what an edit of
+        // it needs, and all a wrap needs to move it with its line unchanged.
+        let context = layout::Context {
+            line_origin: object.line_origin,
+            shown: shown_matrix,
+            cursor_after: object.cursor,
+            clip: state.clip,
+            regions: state.compound_clips.clone(),
+            table: marked.tags.table().map(|stated| {
+                // The run's ink as `layout::prepare` measures a
+                // replacement's, so the two compare like with like.
+                let [bottom, top] = metrics.vertical_bounds.unwrap_or([-250., 1000.]);
+                let ink = text_bounds(
+                    page_matrix,
+                    [
+                        horizontal[0],
+                        bottom * size / 1000.,
+                        horizontal[1],
+                        top * size / 1000.,
+                    ],
+                );
+                [
+                    stated[0].min(ink[0] - stroke),
+                    stated[1].min(ink[1] - stroke),
+                    stated[2].max(ink[2] + stroke),
+                    stated[3].max(ink[3] + stroke),
+                ]
+            }),
+            stroke,
+            size,
+            scale: page_matrix[0].hypot(page_matrix[1]),
+            transform: state.page_transform,
+        };
         if read_only {
+            // Read-only text keeps its bytes; a wrap may still draw them lower
+            // with their line (`layout::wrap`), where `carried` allows.
+            if carried {
+                self.held.insert(index as u32, context);
+            }
             self.preserved.push(Run {
                 display_rect,
                 minimum_height: None,
@@ -1035,40 +1095,7 @@ impl Found {
         self.horizontal_bounds.insert(index as u32, horizontal);
         self.text_spacing
             .insert(index as u32, (state.spacing, state.word_spacing));
-        self.contexts.insert(
-            index as u32,
-            layout::Context {
-                line_origin: object.line_origin,
-                shown: shown_matrix,
-                cursor_after: object.cursor,
-                clip: state.clip,
-                regions: state.compound_clips.clone(),
-                table: marked.tags.table().map(|stated| {
-                    // The run's ink as `layout::prepare` measures a
-                    // replacement's, so the two compare like with like.
-                    let [bottom, top] = metrics.vertical_bounds.unwrap_or([-250., 1000.]);
-                    let ink = text_bounds(
-                        page_matrix,
-                        [
-                            horizontal[0],
-                            bottom * size / 1000.,
-                            horizontal[1],
-                            top * size / 1000.,
-                        ],
-                    );
-                    [
-                        stated[0].min(ink[0] - stroke),
-                        stated[1].min(ink[1] - stroke),
-                        stated[2].max(ink[2] + stroke),
-                        stated[3].max(ink[3] + stroke),
-                    ]
-                }),
-                stroke,
-                size,
-                scale: page_matrix[0].hypot(page_matrix[1]),
-                transform: state.page_transform,
-            },
-        );
+        self.contexts.insert(index as u32, context);
         if marked.tags.centred() {
             self.centred.insert(index as u32);
         }

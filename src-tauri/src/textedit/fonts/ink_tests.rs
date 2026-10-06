@@ -409,6 +409,50 @@ fn textedit_overhanging_source_ink_fits_its_own_default_box_unmoved() {
     }
 }
 
+// A line that may break is broken where its ink fits, not only its advance. D's
+// ink ends past its advance, so in a box that holds the advance of two glyphs
+// and not the ink of the second, AD is two lines and no refusal: breaking by
+// the advance alone put both on one line, which the ink check then refused.
+#[test]
+fn textedit_a_wrapped_line_breaks_before_a_glyph_whose_ink_leaves_the_box() {
+    let (source, font) = simple_overhang_fixture(0, -10, 250);
+    let metrics = embedded(&source, source.get_dictionary(font).unwrap()).unwrap();
+    let mut doc = source.clone();
+    set_content(&mut doc, "", &metrics.encode("AA").unwrap());
+    let before = textedit::scan(&doc, 0).unwrap();
+    let run = &before.runs[0];
+    let layout = |wrap| textedit::Layout {
+        // The advance of two glyphs, which D's ink reaches past.
+        width: (run.advance * 1000.).ceil() / 1000.,
+        height: run.size * 2.5,
+        size: run.size,
+        wrap,
+        font: textedit::EditFont::Auto,
+        grow: false,
+        installed: None,
+    };
+    let change = |wrap| Change {
+        page: 0,
+        revision: before.revision.clone(),
+        operator: run.operator,
+        original: "AA".into(),
+        replacement: "AD".into(),
+        layout: Some(layout(wrap)),
+    };
+    // One line has nowhere to break, and its ink is refused as before.
+    let refusal = textedit::write(&mut doc.clone(), &[change(false)]).unwrap_err();
+    assert!(refusal.contains("ink exceeds the box"), "{refusal}");
+    textedit::write(&mut doc, &[change(true)]).unwrap();
+    let after = textedit::scan(&doc, 0).unwrap();
+    let lines: Vec<_> = after
+        .runs
+        .iter()
+        .map(|run| run.text.as_str())
+        .filter(|text| !text.is_empty())
+        .collect();
+    assert_eq!(lines, ["A", "D"]);
+}
+
 // A clip that already cuts a run (Word draws one around many lines) hides the
 // same part of it after an edit whose ink stays within the source's, as the
 // byte-patch writer has always allowed; ink the edit adds beyond the source's
