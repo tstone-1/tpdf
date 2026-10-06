@@ -313,7 +313,7 @@ hop through the index.
 
 ## Rust and macOS
 - A locked macOS session cannot be unlocked from a script, so it must be prevented
-- Vision with no language named reads Latin, Cyrillic and Greek only, so "automatic" was not
+- Vision with no language named reads Latin and Cyrillic only, so "automatic" was not
 - `Instant` on Apple Silicon ticks at 41.67 ns, so "elapsed == 0" is reachable
 - `evict_page` can dangle a live `RawPage`, and the borrow checker allows it
 - A mechanical insert before a declaration can land between an attribute and its item
@@ -25717,10 +25717,10 @@ from.
 Anything else that compares PDFium's characters with characters written has the same mark to
 account for. Search folds text before matching and was not measured against it.
 
-### Vision with no language named reads Latin, Cyrillic and Greek only, so "automatic" was not
+### Vision with no language named reads Latin and Cyrillic only, so "automatic" was not
 
 `VNRecognizeTextRequest` with no `recognitionLanguages` and `automaticallyDetectsLanguage`
-left off is not a recogniser that chooses a language. It reads Latin, Cyrillic and Greek and
+left off is not a recogniser that chooses a language. It reads Latin and Cyrillic and
 answers everything else with nothing or with a few wrong Latin characters. The text layer asked
 that way from the day it was written, and every fixture it was tested with was English.
 
@@ -25741,3 +25741,70 @@ The German result is the other half. It was measured because the language choice
 was about to be described as reading German better, and it does not on this engine: German,
 English and no language gave identical text. A feature's reason is a claim, and this one was
 false until it was measured.
+
+**2026-10-06, the other scripts, and this entry was wrong about Greek.** Measured
+on 26A434 through `tpdf ocr` of 26.10.7, one page per script, three or four invented
+sentences drawn with CoreText at 30 px and declared 144 DPI. Pillow was not used for the
+pictures: its wheel has no `libraqm`, so it cannot join Arabic or shape Devanagari. The Arabic
+and Hebrew pictures were looked at, and Vision asked directly read the Arabic one 138 of 138
+in logical order. A Latin page scored 159 of 159 and a blank page exited 3. Characters are
+counted with white space removed. Windows was not measured.
+
+| Script | Expected | No language named | Language named | Result |
+|---|---|---|---|---|
+| English, German | 159, 172 | all, exit 0 | all (`en-US`, `de-DE`) | read |
+| Vietnamese, Turkish, Polish, Russian | 148, 175, 188, 129 | all, exit 0 | all | read |
+| Ukrainian | 189 | 186, exit 0 | 186 (`uk-UA`) | read; `ґ` comes back as `г` |
+| Czech | 167 | 165, exit 0 | 165 (`cs-CZ`) | read; `ť` and `ď` lose the caron |
+| Japanese, both Chinese, Korean, Thai | 55, 57, 39, 77, 140 | all, exit 0 | all | read |
+| **Greek** | 187 | **4, exit 0, 179 written** | no tag exists | **wrong and written** |
+| **Armenian** | 125 | **0, exit 0, 66 written** | no tag exists | **wrong and written** |
+| Hebrew, Georgian | 116, 129 | 0, exit 3 | no tag exists | refused, empty |
+| Arabic, Hindi | 138, 151 | exit 4 | exit 4 (`ar-SA`, `hi-IN`) | refused as an error |
+| Persian, Bengali, Tamil | 94, 110, 157 | exit 4 | exit 4 or no tag | refused as an error |
+| English and Japanese on separate lines | 111 | all | all (`ja-JP`) | read |
+| English and Japanese in one line | 114 | 99, exit 0 | all (`ja-JP`) | wrong words unless named |
+| German and Arabic on separate lines | 164 | exit 4 | exit 4; 92 with `de-DE` | refused as an error |
+| German and Arabic in one line | 141 | 107, exit 0 | exit 4 with `ar-SA` | Arabic words wrong and written |
+
+A page took 0.2 to 0.3 s in every row, the worker's start included.
+
+Three things follow, and the first corrects this entry. **Vision does not read Greek.** Its
+list of 33 languages has none, and a Greek page comes back as Latin and Cyrillic letters of
+the same shape (`To TpÉvo yıa Tv aKTń` for `Το τρένο για την ακτή`), with detection on, with
+it off, and with `en-US`, `ru-RU` or `uk-UA` named. "Latin, Cyrillic and Greek" had been
+written in this entry's title and first paragraph and in the comments of `ocr_vision.rs`,
+`ocr_worker.rs` and `ocr.rs`, and nothing here records a Greek page being read; all of them
+now say Latin and Cyrillic. The 26.10.7 section of `CHANGELOG.md` says it too and is left as
+released. Armenian is misread the same way. These two are the only pages
+that were written wrong while looking like a success: exit 0, a copy, and a layer nobody can
+search. Vision's own confidence tells them apart on these pages, 0.3 to 0.5 for every Greek
+and Armenian line against 1.0 for every line of a page it reads, and
+`RecognisedItem::confidence` already carries it. That was not measured on a poor scan of a
+script it does read, which is the page such a rule would also drop.
+
+**Arabic and Hindi are not read by the tool at all, and one such page stops the whole
+document.** `Vision::warm` records why the model cannot be loaded inside the worker's
+profile; what was not written down is what the text layer does with it. The page is an error
+and not an empty answer, so `tpdf ocr` exits 4 with `page 2 could not be read` and writes no
+copy, where a Hebrew page in the same place is listed as not recognised and the other pages
+get their layer. Naming `ar-SA` or `hi-IN` does not help; it fails with a different message
+(`__objc2.missingError`). Vision asked outside the profile read both pages whole, after 13.0 s
+and 11.3 s for the first request, and the tool still failed afterwards, so another process
+having loaded the model is no help to the worker. Detection sends Persian, Bengali and Tamil
+to the same two models: inside the worker they fail the same way, and outside it Persian is
+read 82 of 94 and Bengali and Tamil come back as wrong Devanagari. So loading those models
+in the worker would turn two refusals into two more pages that are written wrong.
+
+**A word of another script inside a line is misread, and detection does not help.** In a
+line that starts in English, `会議` came back as `i` and `三十日以内` as `EtER`; the line
+that starts in Japanese was read whole, and naming `ja-JP` read all three lines. Arabic
+words inside German lines came back as `bäll` and `öll`.
+
+Size, with the picture declared 300 DPI so that the engine is given the picture's own pixels:
+Korean, Thai and Vietnamese were read whole at 40, 30, 20, 16 and 12 px. Japanese
+lost its first line at 16 px and was whole at 12 and at 20; Traditional Chinese was whole at
+16, lost one character at 30 and returned nothing at 12, exit 3. English read `four` as
+`tour` at 30 and 40 px and correctly at 12, 16 and 20. Vision asked directly gave the same
+answers on the same pictures, so these are the engine's and not the tool's, and they do not
+grow steadily as the type shrinks.

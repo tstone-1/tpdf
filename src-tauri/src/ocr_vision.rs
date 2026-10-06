@@ -266,15 +266,25 @@ impl Recogniser for Vision {
 impl Vision {
     /// One recognition, with or without Vision working out the language for itself.
     ///
-    /// **`any_script` is `automaticallyDetectsLanguage`, and without it Vision is a Latin,
-    /// Cyrillic and Greek reader.** Measured 2026-10-05 on 26A434 in the gate's own probe
+    /// **`any_script` is `automaticallyDetectsLanguage`, and without it Vision is a Latin
+    /// and Cyrillic reader.** This said "Latin, Cyrillic and Greek" until 2026-10-06, and
+    /// Greek had not been measured: a page of four Greek sentences comes back as Latin
+    /// and Cyrillic letters of the same shape, 4 of 187 characters right, with detection
+    /// on, with it off and with any language named, because Vision offers no Greek
+    /// (`docs/TRAPS.md` has the table). Armenian is misread the same way, and both are
+    /// answered with a confidence of 0.3 to 0.5 where a page it reads gets 1.0.
+    ///
+    /// Measured 2026-10-05 on 26A434 in the gate's own probe
     /// image, 12 pt type at 2x, with the request built as it is here --- accurate level,
     /// correction off, no languages named: a line of Chinese, Japanese or Thai comes back
     /// as **no span at all**, and one of Korean, Arabic or Devanagari as nothing or as a
     /// few misread characters, depending on the word. With detection on, Chinese,
     /// Japanese, Korean and Thai are read, and so are Arabic and Devanagari where their
     /// models can be loaded ([`Vision::warm`] has where they cannot). Hebrew is read in
-    /// neither mode. For a text layer that is recall lost; for the redaction gate an
+    /// neither mode, and neither is Georgian; both come back empty. Where the Arabic or
+    /// Devanagari model cannot be loaded the request is an error and not an empty answer,
+    /// and detection sends Persian, Bengali and Tamil to those two models as well, so
+    /// they fail the same way. For a text layer that is recall lost; for the redaction gate an
     /// empty answer is the claim, which is why the gate asks this way and why it does not
     /// rest on the answer alone ([`crate::ocr::hold_to_scripts`]).
     ///

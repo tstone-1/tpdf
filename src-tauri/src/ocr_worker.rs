@@ -507,8 +507,9 @@ impl OcrWorker {
     /// What a text layer asks: any script while no language is named, and the
     /// named languages alone once one is.
     ///
-    /// Left to its default, Vision reads Latin, Cyrillic and Greek and nothing
-    /// else. Measured 2026-10-05 on 26A434 with pictures of three invented
+    /// Left to its default, Vision reads Latin and Cyrillic and nothing else
+    /// (Greek was named here too until it was measured, 2026-10-06: it is
+    /// misread as Latin letters either way). Measured 2026-10-05 on 26A434 with pictures of three invented
     /// sentences each: with no language named and detection off, a Japanese
     /// page came back as 15 wrong characters and a Chinese one as nothing, so
     /// no copy was written; with detection on both were read whole, a Russian

@@ -511,8 +511,10 @@ jobs:
           could not read a scan in Japanese or Chinese on a Mac: the page
           came back as a few wrong characters or as nothing, and no copy
           was written. With no language named, the recogniser now works
-          out the script itself. Scans in Latin, Cyrillic and Greek
-          letters are read as before.
+          out the script itself, and Korean and Thai are read too. Scans
+          in Latin and Cyrillic letters are read as before. Not read on
+          a Mac: Greek and Armenian, which come out as wrong letters,
+          and Hebrew, Arabic and the scripts of India.
 
           **New in 26.10.7.** *Recognise text: language...* lets you name
           the language a scan is in, from the languages your computer

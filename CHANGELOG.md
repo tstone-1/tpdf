@@ -45,11 +45,15 @@ have the binary.)
 ### Fixed
 
 - **A scan in Japanese or Chinese is now read.** *Recognise text* and `tpdf ocr`, with
-  no language named, asked the Mac's recogniser in a way that reads Latin, Cyrillic and
-  Greek letters only. A Japanese page came back as a few wrong characters and a Chinese
+  no language named, asked the Mac's recogniser in a way that reads Latin and Cyrillic
+  letters only. A Japanese page came back as a few wrong characters and a Chinese
   page as nothing, so no copy was written. With no language named the recogniser now
   works out the script itself. Measured on pictures of invented sentences: Japanese and
   Chinese pages are read whole, and Russian and German pages are read as before.
+  Korean, Thai and Vietnamese are read too. Not read on a Mac, in this version or any
+  earlier: Greek and Armenian, which come back as wrong Latin letters in a copy that is
+  written all the same; Hebrew and Georgian, which are reported as not recognised; and
+  Arabic, Persian, Hindi, Bengali and Tamil, where the command stops with an error.
 - The command palette's input no longer shows the system's spelling and capital-letter
   suggestions, which covered the first line under it.
 

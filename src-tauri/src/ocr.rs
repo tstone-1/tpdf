@@ -330,8 +330,8 @@ pub trait Recogniser {
     /// [`recognise`](Self::recognise), for a caller that cannot say which
     /// script the image holds and must not be answered as though it held none.
     ///
-    /// The redaction gate is that caller. Vision reads Latin, Cyrillic and
-    /// Greek by default and returns **no span at all** for a line of Chinese,
+    /// The redaction gate is that caller. Vision reads Latin and Cyrillic
+    /// by default and returns **no span at all** for a line of Chinese,
     /// Japanese or Thai of the same size, unless it is asked to detect the
     /// language first --- so a region still showing one read as empty beside a
     /// Latin control that was read back perfectly. An engine with such a
@@ -1524,7 +1524,8 @@ mod tests {
         assert!(hold_to_scripts(clean(), &control(), &[]).certifies());
         // Each of these is a line Vision either needs language detection to
         // read or does not read at all, and Greek and Cyrillic besides: it
-        // reads those by default, and a Latin control still did not show it.
+        // reads Cyrillic by default and misreads Greek as Latin letters, and
+        // a Latin control showed neither.
         for other in [
             "\u{5f20}\u{4f1f}",
             "\u{305f}\u{306a}\u{304b}",
