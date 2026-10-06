@@ -17,7 +17,7 @@ as *downloadable*, while the release sat as a draft that GitHub showed to nobody
 are given now because they are different facts, and only the second one means a reader can
 have the binary.)
 
-## [26.10.7] - Unreleased
+## [26.10.7] - 2026-10-06
 
 ### Added
 
@@ -35,6 +35,7 @@ have the binary.)
 
 ### Changed
 
+- Updated `objc2` to 0.6.5.
 - **On Windows, `tpdf ocr --language` now chooses the recogniser.** The option was
   accepted and had no effect there. The first language named that is installed is now
   the one the page is read with, and the report's `engine` names it. With none of them

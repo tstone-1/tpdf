@@ -507,22 +507,24 @@ jobs:
           workers cannot read arbitrary user files or access the network;
           Windows workers use low integrity and resource-limited jobs.
 
+          **Fixed in 26.10.7, and the reason to update.** *Recognise text*
+          could not read a scan in Japanese or Chinese on a Mac: the page
+          came back as a few wrong characters or as nothing, and no copy
+          was written. With no language named, the recogniser now works
+          out the script itself. Scans in Latin, Cyrillic and Greek
+          letters are read as before.
+
+          **New in 26.10.7.** *Recognise text: language...* lets you name
+          the language a scan is in, from the languages your computer
+          offers; the choice is remembered. On Windows, `tpdf ocr
+          --language` now chooses among the installed recognisers.
+
           **New in 26.10.6.** The blank window lists the documents you
-          opened lately, each with its folder and the page you were on;
-          press one to open it there, or take it off the list. Form
-          commands have a *Form* menu and a *Form* button in the tool row.
-          With two or more fields or boxes picked, a small bar beside
-          them aligns, spaces and sizes them. A text box shows its words
-          on the page while you type them. The box that opens beside a
-          mark can be dragged aside by its heading.
-
-          **Editing text in a table.** Text in a table that states its own
-          bounds can now be edited, as long as the words stay inside them.
-
-          **Fixed in 26.10.6.** *Recognise text* refused a scanned page
-          whose text ended a line with a hyphen, or on which a word was
-          printed twice in the same place. Both pages now get their text
-          layer.
+          opened lately. Form commands have a *Form* menu and a *Form*
+          button in the tool row. With two or more fields or boxes
+          picked, a small bar beside them aligns, spaces and sizes them.
+          A text box shows its words on the page while you type them.
+          Text in a table that states its own bounds can be edited.
 
           **If you redacted with a version before 26.10.5:** that version
           could leave removed text in the file on a page whose content is

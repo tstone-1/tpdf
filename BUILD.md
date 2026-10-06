@@ -6571,6 +6571,30 @@ now comes last there.
 `docs/THREAT-MODEL.md` already stated the three new commands (T6.35, T6.36). The release
 notes in `release.yml` were rewritten.
 
+**26.10.7 verification, macOS arm64, 2026-10-05:** all 30 gates passed on the release tree
+(2,831 Rust tests with ten documented ignored, 2,489 frontend tests) and `check_windows.py`
+type-checked the Windows tree. Every mutation selected `--near v26.10.6` ran and was caught,
+28 Rust and 43 frontend. The command-line suite's two new checks, a scan of the Japanese
+page of `multilingual.pdf` read with no language named by `tpdf ocr` and by the window's own
+command, were each shown red by putting that call back to the plain one. `worker-probe`
+48/48; `backend-probe` 41/44 on `text-heavy.pdf` with three skipped and 42/44 on
+`vector-heavy.pdf` with two skipped. The unit tests and the command-line suite passed on
+Windows 11 through `scripts/run_on_windows.py` (2,854 unit tests, 517 command-line checks
+with two skipped) at `737a4bf8`, the commit before this one; this tree differs from it in
+version files, `objc2` 0.6.5, which Windows does not build, and prose. The run on the
+release tree itself did not happen: the Windows machine was offline. The normal bundle,
+with the development engine hidden: the bundled `tpdf-cli` answered `--version` with
+26.10.7 and `verify`, and read the Japanese scan with no language named. In a development
+window, with real key events: *Recognise text: language...* is in the File menu and enabled
+with no document open, an ambiguous beginning names its candidates, an unknown one lists
+what the computer offers, and an answer is stored in the session file. That check found the
+system's spelling suggestions covering the answer and the confirmation set as a failure;
+both are corrected. Reading with a second installed recogniser language on Windows was not
+tried, and neither was a relaunch with a remembered language. The window harnesses were not
+run and the README pictures were not retaken; no picture shows the changed menu.
+`docs/THREAT-MODEL.md` states the two new commands (T6.37). The release notes in
+`release.yml` were rewritten and lead with the fix.
+
 **26.10.6 publication, 2026-10-05:** `Audit` and CI were green on the release commit
 `a3a39e7a`, both legs, and the tag sits on it. Only the text of the release notes had
 changed in `release.yml`, so no rehearsal tag was cut; the `Release` run for `v26.10.6`
@@ -6581,6 +6605,8 @@ answer 200 and `latest.json` offers 26.10.6 for `darwin-aarch64` and `windows-x8
 downloaded `.dmg` staples and Gatekeeper reads it as Notarized Developer ID. The Homebrew
 cask was set to 26.10.6; `brew audit --cask --online` passed and `brew livecheck` reads
 26.10.6. The update from 26.10.5 (step 12) was not applied by hand before this was written.
+Afterwards every mutation in a file changed since `v26.10.5` ran, 680 Rust and 549
+frontend, and all were caught.
 
 **26.10.5 verification, macOS arm64, 2026-10-05:** all 30 gates passed on the release tree
 (2,806 Rust tests with ten documented ignored, 2,321 frontend tests), and `check_windows.py`

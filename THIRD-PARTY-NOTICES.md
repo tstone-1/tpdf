@@ -2781,7 +2781,7 @@ SOFTWARE.
 | num-integer | 0.1.47 | MIT OR Apache-2.0 |
 | num-iter | 0.1.46 | MIT OR Apache-2.0 |
 | num-traits | 0.2.19 | MIT OR Apache-2.0 |
-| objc2 | 0.6.4 | MIT |
+| objc2 | 0.6.5 | MIT |
 | objc2-app-kit | 0.3.2 | Zlib OR Apache-2.0 OR MIT |
 | objc2-cloud-kit | 0.3.2 | Zlib OR Apache-2.0 OR MIT |
 | objc2-core-data | 0.3.2 | Zlib OR Apache-2.0 OR MIT |
