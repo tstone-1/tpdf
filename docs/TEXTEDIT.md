@@ -1029,6 +1029,18 @@ Its pitch is borrowed the same way (`wrap::borrowed_pitch`): the least distance 
 two lines of the nearest other tagged block that has two, among text of the run's own
 size, inside `PITCH_EM`. The editor's own 1.25 em stays for a page that shows none.
 
+A line need not be full to the page to wrap. Words that take it past its paragraph's
+measure and not as far as the sheet's edge wrap at the measure as well (`grown` in
+`layout::prepare`), where before they were set on, through the right margin. Four limits,
+each with a test: nothing after the run on its line, which a push moves along the line; the
+page is what ends the line's room, since beside a column a line may take its share of the
+gutter (`GUTTER_SHARE`); a tagged page, since blocks read off the lines do not state a
+measure; and a box the editor opened, not one the reader asked to wrap within. Words that
+stay within the measure keep the run's own items and are not laid out afresh. Where the
+wrap cannot be planned or made, the words stay on their line as they did: only a line the
+page has filled is refused for what a wrap cannot do
+(`textedit_a_line_grown_past_its_measure_wraps_there_or_stays`).
+
 A line that may break is broken where its ink fits, not only its advance
 (`layout::line_breaks` is given the larger of the two when the shape wraps). The lines
 were already held to their ink afterwards, so a last glyph reaching a tenth of a point

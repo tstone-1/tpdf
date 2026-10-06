@@ -6480,9 +6480,31 @@ Three things came out of it that no probe had shown:
   below moved down, the signature block and the footer stayed, the save warned about the
   digital signature, `pdftotext` read the new words once and `qpdf --check` passed.
 
-**Still open from that check.** Fewer words than fill the line to the edge of the sheet
-are set on one line, through the right margin: growth along a line is held to the room,
-not to the measure, and only a full line wraps. A wrap leaves an empty run behind for each
+**A few words past the measure.** After that check, fewer words than fill the line to the
+edge of the sheet were still set on one line, through the right margin. They now wrap at
+the measure, on a tagged page, where the page ends the line's room and nothing follows the
+run on its line; where no wrap can be planned or made they stay on their line, so no edit
+accepted before is refused. A first version without those limits turned five tests red,
+and each was a decision already made: a push moves text along its line, a line beside a
+column may take half the gutter, and a wrap after a push is refused. On the fixture three
+cases are pinned (a one-line item, the last line of an item of several, and the item with
+the room above the table spent, which stays), and the growth probe's accepted counts are
+unchanged on the fixture (27 at each step) and on the measured document (69, 69, 68).
+`scripts/text_list_check.py` passes as before. Eight mutations under `margin:`, each
+applied by hand and red in the test named for it; `wrap: at another size` and `wrap: after
+a push` were re-aimed at the same guards and are red again. A guard for a box that does
+not grow was written and removed: no such box reaches that code, and nothing went red
+without it. In a window, on a scratch copy of the measured document: thirty characters
+added to a one-line item, which ran to the edge of the sheet on one line before, previewed
+as two lines and were applied as two, broken at the right margin at the document's pitch,
+with the items below one line lower; ten characters added to the last line of an item of
+several stayed on that line, inside the measure; the copy saved, `pdftotext` read the new
+words and `qpdf --check` passed. The last line of an item of several growing past its
+measure was not reached in the window: the typing automation lost characters in that
+field after an arrow key, three times. The fixture test covers it. Not measured: the
+public sample.
+
+**Still open.** A wrap leaves an empty run behind for each
 line it moved (32 runs became 53 on the fixture, the 21 new ones empty). The size test in
 `borrowed_pitch` has no test that fails without it: the fixture has no block of several
 lines at another size.

@@ -248,6 +248,39 @@ fn text_that_stays_in_the_middle_of_a_read_only_line_refuses_the_wrap() {
         error.contains("part of it below cannot be moved"),
         "{error}"
     );
+    // That refusal is for a line the page has filled. Five letters that take
+    // the line past its paragraph's measure and not to the page's edge wrap
+    // where they can, and stay on their line where they cannot, as they did
+    // before a line wrapped at its measure at all.
+    let few = "FIFTY NINE ONCE AND DONE THEN";
+    let texts = |doc: &Document| -> Vec<String> {
+        scan(doc, 0)
+            .unwrap()
+            .runs
+            .into_iter()
+            .map(|run| run.text)
+            .collect()
+    };
+    let broken = texts(&wrapped(&line(""), WIDEST, few));
+    assert!(broken.contains(&"THEN".to_string()), "{broken:?}");
+    let stays = texts(&wrapped(&line("(BY) Tj"), WIDEST, few));
+    assert!(stays.contains(&few.to_string()), "{stays:?}");
+    // And where no wrap can be planned at all: a tab's spacer in a line of
+    // the paragraph below, which has one position and nothing can move.
+    let spacer = tagged(
+        &content(52., "").replace(
+            &format!("({LAST}) Tj"),
+            &format!("({LAST}) Tj /Span <</ActualText (\t)>> BDC ( ) Tj EMC (BY) Tj"),
+        ),
+        &[&[0, 1, 2], &[3]],
+    );
+    let error = refusal(&spacer, WIDEST, LONGER);
+    assert!(
+        error.contains("part of it below cannot be moved"),
+        "{error}"
+    );
+    let stays = texts(&wrapped(&spacer, WIDEST, few));
+    assert!(stays.contains(&few.to_string()), "{stays:?}");
 }
 
 // LibreOffice Writer draws a page under a clip of the page's own size less a

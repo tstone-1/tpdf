@@ -2685,8 +2685,30 @@ pub(super) fn prepare(
         _ => None,
     };
     let full = had.is_some();
+    // Or the line is not full and has grown: then it may have grown past its
+    // paragraph's measure, into the margin, where its producer would have
+    // broken it. The plan says where the measure is, and such a line wraps
+    // there if it can. If it cannot, it stays on its line as it always did:
+    // only a full line is refused for what a wrap cannot do. Only with no
+    // text after the run on its line, which a push moves along the line and
+    // whose place is that line; and only on a tagged page, where the tags say
+    // what a paragraph is. And only where the page is what ends the line's
+    // room: beside a column a line may reach into the gutter before it wraps
+    // (`GUTTER_SHARE`), and that share is the measure there.
+    let grown = match &outcome {
+        Ok((_, _, used, ..))
+            if !settings.wrap
+                && *used > width
+                && free.line.is_empty()
+                && stop == Room::Page
+                && !blocks::geometric_page(page) =>
+        {
+            Some(*used)
+        }
+        _ => None,
+    };
     let mut wrapped = None;
-    if full && placement.inherited == 0. && size == run.size && !centred {
+    if (full || grown.is_some()) && placement.inherited == 0. && size == run.size && !centred {
         // The room the line has without pushing anything along it.
         let room = if free.line.is_empty() {
             ceiling
@@ -2699,7 +2721,10 @@ pub(super) fn prepare(
         let whole = free.whole.min((14400. / xscale).max(width)).max(width);
         match wrap::plan(page, run, (room.max(width), whole), &free.line) {
             Err(wrap::Refused::NotApplicable) => {}
-            Err(wrap::Refused::Blocked(reason)) => return Err(reason.into()),
+            Err(wrap::Refused::Blocked(reason)) if full => return Err(reason.into()),
+            Err(wrap::Refused::Blocked(_)) => {}
+            // Within the measure: the line grows along itself, as before.
+            Ok(plan) if grown.is_some_and(|used| used <= plan.first + 0.001) => {}
             Ok(plan) => {
                 // The blocks below that would have moved before read-only text
                 // could: every show one the writer may rewrite, none inside an
@@ -2997,10 +3022,15 @@ pub(super) fn prepare(
                         .collect();
                     Ok((operations, lines, rect, lowered, (placed, vacated, links)))
                 };
-                wrapped = Some(match attempt(&plan.beneath) {
-                    Err(first) if plain != plan.beneath => attempt(&plain).map_err(|_| first)?,
-                    done => done?,
-                });
+                let done = match attempt(&plan.beneath) {
+                    Err(first) if plain != plan.beneath => attempt(&plain).map_err(|_| first),
+                    done => done,
+                };
+                match done {
+                    Ok(done) => wrapped = Some(done),
+                    Err(error) if full => return Err(error),
+                    Err(_) => {}
+                }
             }
         }
     }

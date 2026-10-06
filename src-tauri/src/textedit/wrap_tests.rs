@@ -553,6 +553,16 @@ fn an_untagged_paragraph_wraps_by_the_blocks_its_lines_give() {
     let tagged = placed_runs(&wrapped(&paragraph(52.), WIDEST, LONGER));
     assert_eq!(untagged, tagged);
     assert!(near(at(&untagged, LAST), (20., 158.)), "{untagged:?}");
+    // Short of the page's edge the two differ. Five letters past the widest
+    // line wrap on the tagged page, whose tags say this is a paragraph and
+    // that its widest line is its measure. Blocks read off the lines are not
+    // trusted that far: the line grows along itself, as it always did.
+    let few = "FIFTY NINE ONCE AND DONE THEN";
+    let untagged = placed_runs(&wrapped(&doc, WIDEST, few));
+    assert!(near(at(&untagged, few), (20., 186.)), "{untagged:?}");
+    assert!(near(at(&untagged, LAST), (20., 172.)), "{untagged:?}");
+    let tagged = placed_runs(&wrapped(&paragraph(52.), WIDEST, few));
+    assert!(near(at(&tagged, LAST), (20., 158.)), "{tagged:?}");
 }
 
 // A run set a little below the line it is in -- the lowered E of the TeX

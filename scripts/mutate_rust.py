@@ -1526,8 +1526,8 @@ MUTATIONS = [
     Mutation('wrap: move a leading displacement twice', 'src/textedit/layout/wrap.rs', '        items.remove(0);\n', '', 'a_moved_line_that_opens_with_a_displacement_is_moved_once'),
     Mutation('wrap: leave the line matrix where the move put it', 'src/textedit/layout/wrap.rs', '    operations.extend(restore_line(\n        &page.content.operations,\n        context.line_origin,\n        show as usize,\n    )?);', '', 'an_edit_past_the_page_edge_wraps_and_moves_the_rest_of_its_paragraph_down'),
     Mutation('wrap: leave the cursor where the move put it', 'src/textedit/layout/wrap.rs', '            Object::Real(adjustment),', '            Object::Real(0.),', 'a_show_continuing_a_moved_line_from_the_cursor_stays_where_it_was'),
-    Mutation('wrap: at another size', 'src/textedit/layout.rs', '    if full && placement.inherited == 0. && size == run.size && !centred {', '    if full && placement.inherited == 0. && !centred {', 'a_different_size_or_a_run_already_pushed_keeps_the_page_edge_refusal'),
-    Mutation('wrap: after a push', 'src/textedit/layout.rs', '    if full && placement.inherited == 0. && size == run.size && !centred {', '    if full && size == run.size && !centred {', 'a_different_size_or_a_run_already_pushed_keeps_the_page_edge_refusal'),
+    Mutation('wrap: at another size', 'src/textedit/layout.rs', ' && placement.inherited == 0. && size == run.size && !centred {', ' && placement.inherited == 0. && !centred {', 'a_different_size_or_a_run_already_pushed_keeps_the_page_edge_refusal'),
+    Mutation('wrap: after a push', 'src/textedit/layout.rs', ' && placement.inherited == 0. && size == run.size && !centred {', ' && size == run.size && !centred {', 'a_different_size_or_a_run_already_pushed_keeps_the_page_edge_refusal'),
     Mutation('wrap: move another pending edit', 'src/textedit/layout.rs', '                        .any(|show| moving.contains(&show))\n                    {\n                        return Err(wrap::CONFLICT.into());', '                        .any(|show| moving.contains(&show) && false)\n                    {\n                        return Err(wrap::CONFLICT.into());', 'a_wrap_that_moves_another_pending_edit_is_refused_in_either_order'),
     Mutation('wrap: an edit of the text that flows is not in the way', 'src/textedit/layout.rs', '                    .any(|show| moving.contains(&show))\n', '                    .any(|show| below.contains(&show))\n', 'a_wrap_that_moves_the_text_after_it_refuses_an_edit_of_that_text'),
     Mutation('wrap: nothing is left behind', 'src/textedit/layout.rs', '                left_behind(page, &below, &hits)?;\n', '', 'another_blocks_text_inside_a_moved_line_refuses_the_wrap'),
@@ -16173,6 +16173,74 @@ MUTATIONS += [
         "                            if shape.wrap {\n                                width.max(ink[1] + (-ink[0]).max(0.))",
         "                            if false {\n                                width.max(ink[1] + (-ink[0]).max(0.))",
         "textedit_a_wrapped_line_breaks_before_a_glyph_whose_ink_leaves_the_box",
+    ),
+]
+
+# A line that grows past its paragraph's measure wraps there, or stays.
+MUTATIONS += [
+    Mutation(
+        # The words run on through the right margin.
+        "margin: a line grown past its measure is never wrapped",
+        "src/textedit/layout.rs",
+        "    if (full || grown.is_some()) && placement.inherited == 0.",
+        "    if full && placement.inherited == 0.",
+        "textedit_a_line_grown_past_its_measure_wraps_there_or_stays",
+    ),
+    Mutation(
+        # The run's own items are not kept for words that fit.
+        "margin: a line within its measure is laid out afresh",
+        "src/textedit/layout.rs",
+        "            Ok(plan) if grown.is_some_and(|used| used <= plan.first + 0.001) => {}\n",
+        "",
+        "textedit_a_line_grown_past_its_measure_wraps_there_or_stays",
+    ),
+    Mutation(
+        # An edit accepted before is refused.
+        "margin: a wrap that fails refuses the words",
+        "src/textedit/layout.rs",
+        "                    Err(error) if full => return Err(error),",
+        "                    Err(error) if true => return Err(error),",
+        "textedit_a_line_grown_past_its_measure_wraps_there_or_stays",
+    ),
+    Mutation(
+        # An edit accepted before is refused.
+        "margin: a wrap that cannot be planned refuses the words",
+        "src/textedit/layout.rs",
+        "            Err(wrap::Refused::Blocked(reason)) if full => return Err(reason.into()),",
+        "            Err(wrap::Refused::Blocked(reason)) if true => return Err(reason.into()),",
+        "text_that_stays_in_the_middle_of_a_read_only_line_refuses_the_wrap",
+    ),
+    Mutation(
+        # The text after the run leaves its line.
+        "margin: a line a push moves along is wrapped",
+        "src/textedit/layout.rs",
+        "                && free.line.is_empty()\n",
+        "",
+        "a_line_pushed_by_one_edit_and_moved_down_by_a_wrap_is_refused",
+    ),
+    Mutation(
+        # The share of the gutter a line may take is lost.
+        "margin: a line beside a column wraps short of the gutter",
+        "src/textedit/layout.rs",
+        "                && stop == Room::Page\n",
+        "",
+        "a_line_stops_before_the_gutter_and_wraps_at_its_columns_measure",
+    ),
+    Mutation(
+        # An untagged page's line breaks at a measure nothing states.
+        "margin: blocks read off the lines are wrapped at their widest",
+        "src/textedit/layout.rs",
+        "                && !blocks::geometric_page(page) =>",
+        "                =>",
+        "an_untagged_paragraph_wraps_by_the_blocks_its_lines_give",
+    ),
+    Mutation(
+        # The reader's box is taken from them.
+        "margin: a box the reader wraps within is wrapped at the measure",
+        "src/textedit/layout.rs",
+        "            if !settings.wrap\n                && *used > width",
+        "            if *used > width",
+        "textedit_a_line_grown_past_its_measure_wraps_there_or_stays",
     ),
 ]
 

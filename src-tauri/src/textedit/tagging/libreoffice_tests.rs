@@ -435,23 +435,51 @@ fn textedit_a_libreoffice_list_item_wraps_and_carries_what_is_below() {
     }
 }
 
+/// The same in a box the reader widened by `wider` and did not let grow: the
+/// text stays on its line, whatever the paragraph's measure.
+fn typed_wide(mut doc: Document, text: &str, added: &str, wider: f64) -> Result<Document, String> {
+    let before = textedit::scan(&doc, 0).unwrap();
+    let run = before.runs.iter().find(|run| run.text == text).unwrap();
+    let opened = Layout::opened(run, EditFont::Original);
+    textedit::write(
+        &mut doc,
+        &[Change {
+            layout: Some(Layout {
+                width: opened.width + wider,
+                grow: false,
+                ..opened
+            }),
+            page: 0,
+            revision: before.revision.clone(),
+            operator: run.operator,
+            original: run.text.clone(),
+            replacement: format!("{text}{added}"),
+        }],
+    )?;
+    Ok(doc)
+}
+
+fn lines(doc: &Document) -> Vec<String> {
+    shown(doc).into_iter().map(|(text, ..)| text).collect()
+}
+
 // A one-line item breaks where the page's paragraphs end their lines, and that
 // is read from paragraphs of several lines only. Item 3 is first made longer
-// on its line, into the right margin, which the page allows. Item 2, wrapped
-// after that, still breaks where it broke before: a line that long is no
-// measure. And item 3 itself, made longer again until the page ends it, is
+// on its line, into the right margin, in a box the reader widened. Item 2,
+// wrapped after that, still breaks where it broke before: a line that long is
+// no measure. And item 3 itself, made longer again until the page ends it, is
 // past what the paragraphs show, so its first line keeps what it holds and
 // only the new words go to the next line.
 #[test]
 fn textedit_a_one_line_item_wraps_at_the_measure_of_the_paragraphs_beside_it() {
     let long = format!("{} The same rulebook is described here", OFFERED[12]);
-    let grown = typed(OFFERED[12], " The same rulebook is described here").unwrap();
-    let lines = |doc: &Document| {
-        shown(doc)
-            .into_iter()
-            .map(|(text, ..)| text)
-            .collect::<Vec<_>>()
-    };
+    let grown = typed_wide(
+        export(),
+        OFFERED[12],
+        " The same rulebook is described here",
+        200.,
+    )
+    .unwrap();
     assert!(lines(&grown).contains(&long));
     let second = typed_in(
         grown.clone(),
@@ -477,6 +505,76 @@ fn textedit_a_one_line_item_wraps_at_the_measure_of_the_paragraphs_beside_it() {
     let third = lines(&third);
     assert!(third.contains(&format!("{long} for illustration ")));
     assert!(third.contains(&"only and represents nothing.".to_string()));
+}
+
+// A few words that take a line past its paragraph's measure and not as far as
+// the edge of the sheet wrap at the measure too: the line was set on, through
+// the right margin, since only a line the page had filled wrapped. Words that
+// stay within the measure are set on the line as before. And where the wrap
+// cannot be made, here because the table below states its bounds and three
+// lines of room above it are spent, the words stay on their line as they did:
+// only a line that is full is refused for what a wrap cannot do.
+#[test]
+fn textedit_a_line_grown_past_its_measure_wraps_there_or_stays() {
+    let within = typed(OFFERED[12], " The same").unwrap();
+    assert!(lines(&within).contains(&format!("{} The same", OFFERED[12])));
+    // Written as it is in a box the reader widened, which is never wrapped:
+    // the run's own items kept, and no line laid out afresh.
+    let saved = |doc: &Document| {
+        let mut out = Vec::new();
+        doc.clone().save_to(&mut out).unwrap();
+        out
+    };
+    let boxed = typed_wide(export(), OFFERED[12], " The same", 60.).unwrap();
+    assert!(saved(&within) == saved(&boxed));
+    // A block of one line, at the measure it borrows.
+    let added = " The same rulebook is described here";
+    let past = lines(&typed(OFFERED[12], added).unwrap());
+    assert!(past.contains(&format!("{} The same rulebook is described ", OFFERED[12])));
+    assert!(past.contains(&"here".to_string()));
+    // The last line of a paragraph of several, at the paragraph's own.
+    let last = lines(
+        &typed(
+            OFFERED[7],
+            " It is described here for illustration only and it represents nothing at all, as \
+             said here.",
+        )
+        .unwrap(),
+    );
+    assert!(last.contains(&format!(
+        "{} It is described here for illustration only and it represents nothing at all, as said ",
+        OFFERED[7]
+    )));
+    assert!(last.contains(&"here.".to_string()));
+    // A box the reader asked to wrap within is theirs, and is not wrapped at
+    // the measure for them: the words stay on the line it grew along.
+    let mut ticked = export();
+    let before = textedit::scan(&ticked, 0).unwrap();
+    let run = before
+        .runs
+        .iter()
+        .find(|run| run.text == OFFERED[12])
+        .unwrap();
+    textedit::write(
+        &mut ticked,
+        &[Change {
+            layout: Some(Layout {
+                wrap: true,
+                ..Layout::opened(run, EditFont::Original)
+            }),
+            page: 0,
+            revision: before.revision.clone(),
+            operator: run.operator,
+            original: run.text.clone(),
+            replacement: format!("{}{added}", run.text),
+        }],
+    )
+    .unwrap();
+    assert!(lines(&ticked).contains(&format!("{}{added}", OFFERED[12])));
+    let long = " the sample maker gives no undertaking for the demonstration widget described.";
+    let spent = typed(OFFERED[20], &long.repeat(3)).unwrap();
+    let stays = lines(&typed_in(spent, OFFERED[12], added).unwrap());
+    assert!(stays.contains(&format!("{}{added}", OFFERED[12])));
 }
 
 // What a wrap may not move still refuses it, each in its own words. The table

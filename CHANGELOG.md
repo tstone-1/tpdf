@@ -60,6 +60,10 @@ have the binary.)
   the edge of the page before it broke, because one line does not show where lines end.
   It now breaks where the page's paragraphs of several lines end theirs, and sets its
   new line as far below as the nearest of them sets its own.
+- **A few words too many wrap at the right margin.** Words that took a line past the
+  right margin and not as far as the edge of the page were set on that line, through the
+  margin, because only a line full to the page wrapped. On a tagged page they now go to a
+  new line. Where the paragraph cannot wrap they stay on their line as before.
 - **A wrapped line breaks one word earlier where its last letter would not fit.** A line
   was broken by the width of its letters' spacing and then refused when the last letter's
   shape reached a little further, with *it reaches the edge of the page*.
@@ -67,9 +71,7 @@ have the binary.)
 What still cannot be edited on such a page: the bullets themselves, a hyphen LibreOffice
 added at the end of a line (a shorter word before it leaves a gap before the hyphen), a
 justified paragraph, and the header and footer. A line that ends at such a hyphen takes no
-more words than fit before it. A few words added to a short line are set on that line,
-through the right margin if they reach it; only a line full to the edge of the page
-wraps. A list item made of two paragraphs still
+more words than fit before it. A list item made of two paragraphs still
 keeps the document's text from being edited. A font whose no-break space is drawn the way
 Liberation Sans draws it still has all its text read-only when the document uses that
 space. A centred line is edited in the window, where it stays centred; `tpdf edit` needs
