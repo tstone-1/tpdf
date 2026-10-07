@@ -61,7 +61,7 @@ jobs:
           if ($LASTEXITCODE -ne 0) { exit 1 }
           ssign --version
           # The wrapper release.yml gives to Tauri, found where ssign is found.
-          Copy-Item (Join-Path $env:GITHUB_WORKSPACE 'scripts\sign-windows.cmd') (Split-Path (Get-Command ssign).Source)
+          Copy-Item (Join-Path $env:GITHUB_WORKSPACE 'scripts\sign-windows.cmd'), (Join-Path $env:GITHUB_WORKSPACE 'scripts\sign-windows.ps1') (Split-Path (Get-Command ssign).Source)
 
       - name: Fetch the files to sign
         shell: pwsh
@@ -91,10 +91,25 @@ jobs:
           if (-not $env:CERTUM_EMAIL -or -not $env:CERTUM_OTP) { Write-Output '::error::CERTUM_EMAIL or CERTUM_OTP_URI is not set in the signing environment'; exit 1 }
           # One file at a time and stop at the first failure: a second attempt
           # with the same account is a second login.
+          #
+          # The plain executable is held open for twenty seconds by another
+          # process that lets nobody write to it, which is the state a release
+          # build left tpdf.exe in. Signing it has to wait and then succeed.
+          $held = (Resolve-Path work\plain.exe).Path
+          $holder = Start-Job -ArgumentList $held -ScriptBlock {
+            param($path)
+            $file = [IO.File]::Open($path, 'Open', 'Read', 'Read')
+            Start-Sleep -Seconds 20
+            $file.Dispose()
+          }
+          Start-Sleep -Seconds 3
           foreach ($file in Get-ChildItem work -File | Sort-Object Name) {
             sign-windows.cmd $file.FullName
             if ($LASTEXITCODE -ne 0) { Write-Output "::error::signing failed on $($file.Name)"; exit 1 }
           }
+          $waited = @(Select-String -Path (Join-Path $env:RUNNER_TEMP 'ssign.log') -Pattern '^attempt \d+:').Count
+          Write-Output "write attempts that had to wait: $waited"
+          if ($waited -lt 1) { Write-Output '::error::the held file was written at once, so the wait was not exercised'; exit 1 }
 
       - name: Show what the signing client said
         if: always()
@@ -108,7 +123,7 @@ jobs:
         shell: pwsh
         run: |
           $places = @((Join-Path ([IO.Path]::GetTempPath()) 'ssign'))
-          if ($env:HOME) { $places += Join-Path $env:HOME '.cache\ssign' }
+          foreach ($root in $env:HOME, $env:USERPROFILE) { if ($root) { $places += Join-Path $root '.cache\ssign' } }
           foreach ($place in $places) { Write-Output "$place present: $(Test-Path $place)"; Remove-Item -Recurse -Force $place -ErrorAction SilentlyContinue }
 
       - name: Read every signature back

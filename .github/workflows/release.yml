@@ -1056,7 +1056,7 @@ jobs:
           if ($LASTEXITCODE -ne 0) { exit 1 }
           ssign --version
           # Tauri is given the wrapper and finds it where it finds ssign.
-          Copy-Item (Join-Path $env:GITHUB_WORKSPACE 'scripts\sign-windows.cmd') (Split-Path (Get-Command ssign).Source)
+          Copy-Item (Join-Path $env:GITHUB_WORKSPACE 'scripts\sign-windows.cmd'), (Join-Path $env:GITHUB_WORKSPACE 'scripts\sign-windows.ps1') (Split-Path (Get-Command ssign).Source)
 
       - name: Build and publish release
         uses: tauri-apps/tauri-action@84b9d35b5fc46c1e45415bdb6144030364f7ebc5 # v0 (action-v0.6.2)
@@ -1146,7 +1146,7 @@ jobs:
         shell: pwsh
         run: |
           $places = @((Join-Path ([IO.Path]::GetTempPath()) 'ssign'))
-          if ($env:HOME) { $places += Join-Path $env:HOME '.cache\ssign' }
+          foreach ($root in $env:HOME, $env:USERPROFILE) { if ($root) { $places += Join-Path $root '.cache\ssign' } }
           foreach ($place in $places) { Write-Output "$place present: $(Test-Path $place)"; Remove-Item -Recurse -Force $place -ErrorAction SilentlyContinue }
 
       # Tauri prints nothing of a sign command that failed, so this is where a
