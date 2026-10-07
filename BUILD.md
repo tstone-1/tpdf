@@ -6528,6 +6528,73 @@ GitHub-hosted jobs leading to OSS signing, so local or self-hosted builds are no
 substitutes. Also disclose the automatic update check: the Foundation's example
 privacy sentence about network activity only on request does not describe tpdf.
 
+### Signing with the Certum certificate
+
+Since 2026-10-07 there is a certificate: Certum *Open Source Code Signing in the Cloud*,
+subject `CN=Open Source Developer Timo Stein`, issued by *Certum Code Signing 2021
+CA*, valid until 2027-10-07. The key is in Certum's SimplySign service and cannot be
+exported. Certum supports one way to use it: log in to its desktop program with the
+account's e-mail address and a six-digit code, after which the certificate appears in the
+user's certificate store and `signtool` can use it. That works, and it
+is the fallback when everything below does not:
+
+```
+signtool sign /sha1 <thumbprint> /fd sha256 /tr http://time.certum.pl /td sha256 <file>
+scripts/verify_signature.ps1 -Signer 'Open Source Developer Timo Stein' -Path <file>
+```
+
+The six-digit code comes from the `otpauth://` address Certum shows once, at activation.
+Keep the whole address and not only its `secret`: `ssign` reads `algorithm`, `digits` and
+`period` from it and assumes SHA-256, 6 and 30 where it names none, and an authenticator
+that assumes SHA-1 shows six digits that are refused.
+
+**A release is signed by the workflow, without the desktop program.** `release.yml` builds
+`ssign`, an unofficial client for the SimplySign service, from a pinned commit and names it
+as Tauri's `signCommand` through `src-tauri/tauri.signing.conf.json`, on the Windows leg
+only. The login is two secrets of the GitHub environment `signing`: `CERTUM_EMAIL` and
+`CERTUM_OTP_URI`, the whole `otpauth://` address. The environment accepts the `main` branch
+and `v*` tags. After the build the leg reads the signatures back, of the installer and of
+`tpdf.exe`, `tpdf-cli.exe` and `pdfium.dll` unpacked from it, and fails unless each is
+valid, timestamped and by that signer. `docs/THREAT-MODEL.md` §T9, residual 6, has what the
+login is worth to somebody who steals it.
+
+`sign-rehearsal.yml` proves the build of `ssign` and the login without building tpdf: it
+signs a plain executable and the installer of a published release, reads both back and
+installs from the signed installer. Run it before a release whenever `SSIGN_REV` changed,
+and when a release leg fails in the build step with a login error:
+
+```
+gh workflow run sign-rehearsal.yml --ref main
+gh run list --workflow sign-rehearsal.yml --limit 1
+```
+
+Measured on 2026-10-07, `windows-2025`:
+
+| Run | Result |
+|---|---|
+| 37631357684 | Login and a plain executable passed. The `.msi` was refused: `not a PE (no MZ signature)`. `ssign` 0.1.7 signs executables only |
+| 37633778247 | A plain executable and the 26.10.9 installer signed; both read back valid, timestamped and by the signer; the signed installer installed with exit code 0 |
+
+**Three rules the login brings.** One code is good for one login, so two jobs that log in
+within the same 30 seconds make the second fail, and repeated failed logins can lock the
+account: everything that signs is in the concurrency group `certum-signing`. Do not log in
+to the desktop program while a signing job runs, for the same reason. And `ssign` keeps its
+session in `%TEMP%\ssign\session.json` for twenty minutes; both workflows remove it.
+
+**There is no `.msi` from the release after 26.10.10 on**, because `ssign` cannot sign one
+and a release with a signed installer beside an unsigned package is worse than one without
+the package. The `.msi` had one download in each of 26.10.6, 26.10.8 and 26.10.9. What that
+costs somebody who installed from it was measured on Windows on 2026-10-07: with the 26.10.10
+`.msi` installed, the 26.10.10 `-setup.exe` run as the updater runs it (`/S /UPDATE`) ended
+with exit code 0 and left the `.msi` registered beside its own entry. The updater of such
+a copy finds no `windows-x86_64-msi` in `latest.json`, falls back to `windows-x86_64` and
+runs that installer, so it ends with two installed copies. The release notes say to
+uninstall the `.msi` once. `signpath-onboarding.yml` still builds one, with `--bundles`.
+
+**Not measured:** a release built this way. The first rehearsal tag after this was written
+is the measurement, and until it has passed nothing here says that `signCommand` reaches
+`pdfium.dll` or that the updater signature is over the signed installer.
+
 ## Cutting a release
 
 **The twelve steps, one line each.** Each line links to its step in the list further down,
@@ -8538,8 +8605,9 @@ starts at 0 and increments within the month.
     a failed draft that way.
 
     **Count the assets before publishing, and count them with GraphQL.** A complete release
-    is **8** files: the `.dmg`, `tpdf_aarch64.app.tar.gz` and its `.sig`, the `.msi` and
-    `-setup.exe` with their two `.sig`s, and `latest.json`. Fewer than that is half a
+    is **6** files: the `.dmg`, `tpdf_aarch64.app.tar.gz` and its `.sig`, the
+    `-setup.exe` and its `.sig`, and `latest.json`. It was 8 up to 26.10.10, which was the
+    last release with an `.msi`. Fewer than that is half a
     release, and the two instruments that look right for this both fail: `gh release view
     <tag>` returns *a* release for the tag with no way to say which, so with two drafts it
     reports one of them as though it were the release; and `gh api

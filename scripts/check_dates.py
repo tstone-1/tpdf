@@ -56,6 +56,14 @@ EXEMPT: "dict[tuple[str, str], str]" = {
         "2031-07-26",
     ): "when the Developer ID signing certificate expires",
     (
+        "docs/THREAT-MODEL.md",
+        "2027-10-07",
+    ): "when the Windows code signing certificate expires",
+    (
+        "BUILD.md",
+        "2027-10-07",
+    ): "the same certificate's expiry, in the section on signing with it",
+    (
         "src-tauri/src/docinfo.rs",
         "2030-01-01",
     ): "the generated signing fixture's certificate validity, asserted by the reader",

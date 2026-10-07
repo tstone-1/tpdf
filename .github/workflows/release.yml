@@ -3,11 +3,13 @@ name: Release
 # Builds installers and publishes them to a GitHub Release.
 #
 # macOS is signed with a Developer ID identity and notarized by Apple, so it
-# opens without a Gatekeeper bypass. Windows has no Authenticode certificate and
-# is unsigned; SmartScreen warns on first launch.
+# opens without a Gatekeeper bypass. Windows is signed with a Certum Open Source
+# Code Signing certificate, whose key is in Certum's SimplySign service; the
+# `Sign in to the Windows signing service` step has the detail.
 #
-# Signing is conditional on the Apple secrets being present, so a checkout
-# without them still builds -- ad-hoc signed and unnotarized.
+# Apple signing is conditional on the Apple secrets being present, so a checkout
+# without them still builds -- ad-hoc signed and unnotarized. Windows signing is
+# not conditional: a Windows leg that cannot sign fails.
 #
 # Trigger by pushing a CalVer tag:
 #   git tag v26.8.0 && git push origin v26.8.0
@@ -697,9 +699,10 @@ jobs:
           is only ever as current as the last person who read it, which is why
           step 11 of the release checklist says to read it here.)
 
-          **Which file to take.** macOS: the `.dmg`. Windows: the `.msi`, or
-          the `-setup.exe` if you prefer an installer that asks fewer
-          questions — either one installs the same application.
+          **Which file to take.** macOS: the `.dmg`. Windows: the
+          `-setup.exe`. There is no `.msi` from this release on: if you
+          installed tpdf from one, uninstall it once in Windows *Settings* →
+          *Apps* and install the `-setup.exe`.
 
           **Updating.** tpdf checks for a newer version once per launch and
           offers it in the toolbar; nothing is downloaded or installed until
@@ -713,8 +716,9 @@ jobs:
 
           [Code signing policy](https://github.com/tstone-1/tpdf#code-signing-policy)
 
-          **Windows** — unsigned. SmartScreen warns on first launch: choose
-          *More info* → *Run anyway*.
+          **Windows** — signed; the publisher reads *Open Source Developer
+          Timo Stein*. The certificate is new, so SmartScreen can still warn
+          on first launch: choose *More info* → *Run anyway*.
           NOTES
 
           FOUND=$(find_drafts)
@@ -837,11 +841,28 @@ jobs:
           - platform: macos-latest
             label: macOS (Apple Silicon)
             bundle-dir: src-tauri/target/release/bundle
+            signing-config: ''
+          # The second overlay names the program Tauri signs every Windows
+          # executable with. It is an overlay for the reason the updater one
+          # is: in `tauri.conf.json` it would make every build on a development
+          # machine ask for a signing login.
           - platform: windows-2025
             label: Windows (x64)
             bundle-dir: src-tauri/target/release/bundle
+            signing-config: --config ${{ github.workspace }}/src-tauri/tauri.signing.conf.json
 
     runs-on: ${{ matrix.platform }}
+    # The Certum login is in this environment and in no other place, and the
+    # environment accepts the main branch and `v*` tags only. Both legs name it
+    # because a job has one environment; only the Windows leg reads its secrets.
+    environment: signing
+    # One SimplySign token is good for one login. A second job logging in
+    # inside the same 30 seconds fails, and repeated failed logins can lock the
+    # account, so everything that signs shares this group and nothing in it is
+    # cancelled. `sign-rehearsal.yml` is the other member.
+    concurrency:
+      group: certum-signing
+      cancel-in-progress: false
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5 (v5.1.0)
         with:
@@ -1019,10 +1040,36 @@ jobs:
           codesign -dv --verbose=4 "$DYLIB" 2>&1 | grep -q "flags=.*runtime" \
             || { echo "::error::vendored PDFium lacks the hardened runtime"; exit 1; }
 
+      # Windows files are signed by ssign, an unofficial client (MIT) for
+      # Certum's SimplySign service: Certum supports a login from its desktop
+      # program only, and that program needs a person and a phone. Built from a
+      # pinned commit of its source, and a commit and not a tag, so that a later
+      # change to the tool cannot reach the login without a change here. Built
+      # outside the checkout, so this repository's toolchain pin does not decide
+      # which compiler builds somebody else's program. `sign-rehearsal.yml`
+      # proves the same build and login without building tpdf.
+      - name: Build the Windows signing client
+        if: runner.os == 'Windows'
+        shell: pwsh
+        working-directory: ${{ runner.temp }}
+        env:
+          # ssign v0.1.7
+          SSIGN_REV: 5fd4daf22155b19b645aef3dd467f3c4c9e440b3
+        run: |
+          cargo install --locked --git https://github.com/Le-Syl21/ssign --rev $env:SSIGN_REV ssign
+          if ($LASTEXITCODE -ne 0) { exit 1 }
+          ssign --version
+
       - name: Build and publish release
         uses: tauri-apps/tauri-action@84b9d35b5fc46c1e45415bdb6144030364f7ebc5 # v0 (action-v0.6.2)
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # Read by ssign, which Tauri starts once for every Windows executable
+          # it bundles and once for the installer. The first start logs in and
+          # the later ones reuse that session, so one build is one login. Empty
+          # on the macOS leg, which signs nothing with them.
+          CERTUM_EMAIL: ${{ runner.os == 'Windows' && secrets.CERTUM_EMAIL || '' }}
+          CERTUM_OTP: ${{ runner.os == 'Windows' && secrets.CERTUM_OTP_URI || '' }}
           # Signs the update payloads with the minisign key whose public half is
           # pinned in `tauri.conf.json`. Nothing else can produce a payload an
           # installed tpdf will accept, and GitHub secrets cannot be read back
@@ -1049,7 +1096,7 @@ jobs:
           # quotes, leaving `{bundle:{createUpdaterArtifacts:true}}`. Checked
           # with `shlex.split`, not guessed. Either mistake would surface only on
           # a tag push, which is the most expensive place to find one.
-          args: --config ${{ github.workspace }}/src-tauri/tauri.updater.conf.json
+          args: --config ${{ github.workspace }}/src-tauri/tauri.updater.conf.json ${{ matrix.signing-config }}
           # The draft is created once, by the `draft` job, and both legs upload
           # into it by id. `tagName` is deliberately absent: the action's create
           # path is guarded by `if (tagName && !releaseId)`, so passing both
@@ -1085,6 +1132,34 @@ jobs:
           # one fact is worse than one with none, because whichever a reader
           # reaches first wins. The body is in the `draft` job now, which is the
           # only thing that creates a release.
+
+      # ssign keeps its session in a file for twenty minutes. Nothing after the
+      # build signs, so it goes, whether the build passed or not.
+      - name: Remove the Windows signing session
+        if: always() && runner.os == 'Windows'
+        shell: pwsh
+        run: Remove-Item -Recurse -Force (Join-Path ([IO.Path]::GetTempPath()) 'ssign') -ErrorAction SilentlyContinue
+
+      # Nothing in the build reads a signature back, so this step does: the
+      # installer, and then, unpacked from it, the three files tpdf itself
+      # consists of.
+      # The installer on the release is this one: the updater signature beside
+      # it is over these bytes.
+      - name: Verify the Windows build is signed
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $setup = @(Get-ChildItem "${{ matrix.bundle-dir }}/nsis" -Filter '*-setup.exe')
+          if ($setup.Count -ne 1) { Write-Output "::error::expected one NSIS installer, found $($setup.Count)"; exit 1 }
+          $unpacked = Join-Path $env:RUNNER_TEMP 'signed-setup'
+          7z x -y "-o$unpacked" $setup[0].FullName | Out-Null
+          if ($LASTEXITCODE -ne 0) { Write-Output '::error::7z could not unpack the installer'; exit 1 }
+          $inside = foreach ($name in 'tpdf.exe', 'tpdf-cli.exe', 'pdfium.dll') {
+            $found = @(Get-ChildItem $unpacked -Recurse -File -Filter $name)
+            if ($found.Count -ne 1) { Write-Output "::error::expected one $name in the installer, found $($found.Count)"; exit 1 }
+            $found[0].FullName
+          }
+          scripts/verify_signature.ps1 -Signer 'Open Source Developer Timo Stein' -Path (@($setup[0].FullName) + $inside)
 
       # Tauri notarizes and staples the .app, then builds the DMG and only
       # SIGNS it. The DMG is left unnotarized and `spctl -a -t open` rejects it

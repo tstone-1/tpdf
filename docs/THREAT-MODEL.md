@@ -3337,7 +3337,7 @@ that question itself, in the same words the close dialog uses, before it calls `
 and the same call gates the Windows *install*, which ends the process just as surely
 (`Update::install_inner` there hands over to the installer and calls `exit(0)`).
 
-**Residual, and there are five.**
+**Residual, and there are six.**
 
 1. **The release workflow is the single point of trust.** Anyone who can run it can sign a
    payload every installed copy will accept. That is the same exposure as any signed
@@ -3367,6 +3367,23 @@ and the same call gates the Windows *install*, which ends the process just as su
    `latest.json`. The first genuine end-to-end proof is the first update applied from one
    published release to the next, and `BUILD.md` schedules it as a manual step because it
    cannot exist until two signed releases do. **Nothing below claims otherwise.**
+6. **The Windows signing login is held by the release workflow and read by a program that is
+   not Certum's**, since 2026-10-07. The Authenticode key is in Certum's SimplySign service
+   and cannot be exported; what the workflow holds is the account's e-mail address and the
+   seed its one-time codes are computed from, and those two are enough to sign any file as
+   *Open Source Developer Timo Stein* until the certificate is revoked or expires on
+   2027-10-07. They are secrets of the GitHub environment `signing`, which accepts the
+   `main` branch and `v*` tags; `release.yml` and `sign-rehearsal.yml` are the two workflows
+   that name it, and neither runs for a pull request. The program that reads them is
+   `ssign`, built in the job from one pinned commit of its source: 2,800 lines read on
+   2026-10-07, in which the only hosts are `cloudsign.webnotarius.pl` and `time.certum.pl`.
+   Its dependencies are not pinned by anything here beyond its own lock file and were not
+   read. This is a second key beside the updater's and it protects a different thing: an
+   installed copy accepts an update by the minisign key alone, so a stolen Certum login
+   lets somebody sign their own program under this name and does not let them update
+   anybody's tpdf. The protocol is reverse-engineered, so Certum can end it without notice;
+   the cost of that is a release that fails to build, not one that ships unsigned, because
+   the Windows leg reads every signature back.
 
 ### T10 — Asking a timestamp authority, added 2026-09-28
 

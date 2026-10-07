@@ -37,7 +37,7 @@
     "macOS": {
       "minimumSystemVersion": "10.13"
     },
-    "targets": "all",
+    "targets": ["app", "dmg", "nsis"],
     "publisher": "Timo Stein",
     "copyright": "Copyright (c) 2026 Timo Stein. MIT licensed.",
     "category": "Productivity",

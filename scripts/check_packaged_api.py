@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Exercise an installed wheel against the CLI extracted from release packages.
 
-Requires uv, plus hdiutil on macOS or msiexec/7z on Windows. No installer is
+Requires uv, plus hdiutil on macOS or 7z on Windows. No installer is
 registered and no existing installation is changed. Run after Tauri bundling:
   python scripts/check_packaged_api.py --bundle-dir src-tauri/target/release/bundle
 The release workflow also passes --updater to require the macOS updater archive.
@@ -60,10 +60,6 @@ def unpack(artifact: Path, destination: Path):
         finally:
             for mount in mounts:
                 run(['hdiutil', 'detach', mount], cwd=destination)
-    elif artifact.suffix == '.msi':
-        run(['msiexec.exe', '/a', artifact, '/qn', f'TARGETDIR={destination}'],
-            cwd=destination)
-        yield destination
     elif artifact.name.endswith('-setup.exe'):
         run(['7z', 'x', '-y', f'-o{destination}', artifact], cwd=destination)
         yield destination
@@ -150,8 +146,7 @@ def main() -> int:
         if args.updater:
             artifacts.append(one((bundle / 'macos').glob('*.app.tar.gz'), 'updater archive'))
     elif sys.platform == 'win32':
-        artifacts = [one((bundle / 'msi').glob('*.msi'), 'MSI'),
-                     one((bundle / 'nsis').glob('*-setup.exe'), 'NSIS setup')]
+        artifacts = [one((bundle / 'nsis').glob('*-setup.exe'), 'NSIS setup')]
     else:
         raise RuntimeError('packaged API checks require macOS or Windows')
     version = json.loads((ROOT / 'package.json').read_text(encoding='utf-8'))['version']
