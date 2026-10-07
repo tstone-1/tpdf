@@ -4839,7 +4839,7 @@
 
 
   {#if error}
-    <div class="problem" data-testid="problem">
+    <div class="problem-bar" data-testid="problem">
       {#if redactedCopyPath}
         <p>Saved {basename(redactedCopyPath)}. You are still viewing the original with its pending redaction marks.</p>
         <button data-testid="open-redacted-copy" disabled={copyTaskBusy}
@@ -4853,9 +4853,9 @@
       {/if}
       {#if offers.includes("rasterCopy")}
         <p class="error">Redaction not verified. Create an image-only copy to remove everything inside the marked regions.</p>
-        <details><summary>Technical details</summary><pre class="error">{error}</pre></details>
+        <details><summary>Technical details</summary><p class="error">{error}</p></details>
       {:else}
-        <pre class="error">{error}</pre>
+        <p class="error">{error}</p>
       {/if}
       <!--
         The buttons a message carries, and never more than the message earns:
@@ -4902,6 +4902,12 @@
           {/each}
         </div>
       {/if}
+      <!-- Takes the message away and decides nothing: it runs no offer, and
+           Reload from disk stays in the Document menu and the palette. -->
+      <button class="dismiss" data-testid="problem-dismiss" title="Dismiss"
+        aria-label="Dismiss this message"
+        onclick={() => { say(null); viewer?.focus(); }}
+        ><span class="icon" use:icon={"close"}></span></button>
     </div>
   {/if}
 
@@ -5300,10 +5306,44 @@
   .recent-remove { opacity: 0; margin-right: 4px; padding: 0.25rem 0.4rem; }
   .recent li:hover .recent-remove, .recent li:focus-within .recent-remove { opacity: 0.75; }
   .recent li .recent-remove:hover, .recent li .recent-remove:focus-visible { opacity: 1; }
+  /* The bar a message and its buttons share, laid out as the find bar is: one
+     row, the buttons straight after the message they answer, wrapping under
+     it in a narrow window. The tint and the edge say it is a message;
+     the text is the window's own colour and face, because most of what appears
+     here is a sentence to read and not a failure to decode. */
+  .problem-bar {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 0.35rem 0.7rem;
+    padding: 0.35rem 0.7rem;
+    border-bottom: 1px solid color-mix(in srgb, currentColor 15%, transparent);
+    border-left: 3px solid var(--tpdf-problem);
+    background: color-mix(in srgb, var(--tpdf-problem) 9%, Canvas);
+    flex: none;
+  }
+  .problem-bar p { margin: 0; }
+  /* Opens on a row of its own, under the message and the buttons. */
+  .problem-bar details { flex: 1 1 100%; order: 1; }
+  /* A button here is the answer to a question, so it is drawn as one. The
+     chrome's buttons have no edge because a toolbar gives them their place;
+     alone under a sentence, a borderless one read as a second line of text. */
+  .problem-bar button {
+    background: Canvas;
+    border-color: color-mix(in srgb, CanvasText 30%, Canvas);
+  }
+  .offers { display: flex; flex-wrap: wrap; gap: 0.35rem; }
+  /* At the far end and without an edge, as a tab's close is: it is not one of
+     the answers, and drawn like them it would read as one. */
+  .problem-bar .dismiss {
+    margin-left: auto;
+    padding: 0.25em 0.4em;
+    background: transparent;
+    border-color: transparent;
+  }
   .error {
-    margin: 0;
-    padding: 0.5rem 0.7rem;
-    color: var(--tpdf-problem);
+    flex: 0 1 auto;
+    min-width: 0;
     white-space: pre-wrap;
   }
   .error, :global([role="alert"]) {

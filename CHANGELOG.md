@@ -31,6 +31,11 @@ have the binary.)
   copy. A file at either path that tpdf did not put there leaves both commands live:
   running one says the file is there and was left alone. If tpdf cannot find out what is
   installed, both stay live, as before. What each command does when it runs is unchanged.
+- **The message bar under the toolbar is one row with real buttons, and can be dismissed.**
+  A message such as "changed on disk" was red monospaced text with *Reload from disk*
+  below it as bare text. The message is now in the window's own font and colour on a
+  tinted bar, its buttons have an edge and follow the sentence they answer, and a close
+  button at the end of the bar takes the message away without running any of them.
 
 ## [26.10.9] - 2026-10-06
 
