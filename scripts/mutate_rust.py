@@ -143,6 +143,8 @@ FILTERS = [
     # the harness for the same reason `print::` was: this list is what selects
     # them, and a mutation whose test cannot be seen reports SURVIVED.
     "pagetree::",
+    # Added 2026-10-07 with the bookmark repair, whose tests are its own module's.
+    "outline_repair::",
     # Added 2026-08-18 with the crop. Fourth time this list has been forgotten
     # and fourth time the guard is what said so, before six mutations could
     # report SURVIVED for tests it simply could not see.
@@ -3859,7 +3861,7 @@ MUTATIONS = [
         "src/save.rs",
         "    pagetree::materialise(&mut doc, &dropped, moved.then_some(order.as_slice()))?;",
         "    pagetree::materialise(&mut doc, &[], moved.then_some(order.as_slice()))?;",
-        "deleting_a_page_drops_the_outline_and_keeping_them_all_does_not",
+        "deleting_a_page_keeps_the_bookmarks_of_the_pages_that_stay",
     ),
     Mutation(
         # Delete the page in the slot rather than the one that was named.
@@ -9980,23 +9982,17 @@ MUTATIONS += [
 # copy, spelled differently, and `docs/TRAPS.md` records two shipped defects that
 # came from the pair drifting.
 MUTATIONS += [
-    Mutation(
-        # Leave the outline in place after a deletion. Its destinations then name
-        # pages that are not in the file.
-        "pagetree: keep the outline after deleting the pages it points at",
-        "src/pagetree.rs",
-        "    if !dropped.is_empty() {\n        drop_pages(doc, dropped)?;\n        drop_outline(doc)?;\n    }",
-        "    if !dropped.is_empty() {\n        drop_pages(doc, dropped)?;\n    }",
-        "materialising_a_deletion_drops_the_outline",
-    ),
+    # "Leave the outline in place after a deletion" stood here until 2026-10-07.
+    # The outline is repaired now rather than dropped, and the same edit is
+    # `bookmarks: do not repair the outline at all` at the end of this file.
     Mutation(
         # Drop the outline unconditionally, which takes every bookmark out of a
         # document whose pages were merely rearranged --- and they would all still
         # have pointed at a page.
         "pagetree: drop the outline for a move as well as a deletion",
         "src/pagetree.rs",
-        "    if !dropped.is_empty() {\n        drop_pages(doc, dropped)?;\n        drop_outline(doc)?;\n    }",
-        "    drop_outline(doc)?;\n    if !dropped.is_empty() {\n        drop_pages(doc, dropped)?;\n    }",
+        "    if !dropped.is_empty() {\n        // Before the pages go:",
+        "    drop_outline(doc)?;\n    if !dropped.is_empty() {\n        // Before the pages go:",
         "materialising_a_move_keeps_the_outline",
     ),
     Mutation(
@@ -16303,6 +16299,179 @@ MUTATIONS += [
         "    pub occupied: bool,\n}",
         '    #[serde(rename = "removable")]\n    pub occupied: bool,\n}',
         "the_state_crosses_to_the_window_under_the_names_it_reads",
+    ),
+]
+
+# --- bookmarks kept through a page deletion ----------------------------------
+# `outline_repair::keep_for`, and the order `pagetree::materialise` calls it in.
+# `--only 'bookmarks:'` runs the set.
+#
+# Three edits to `chain` are left out because nothing can see them: taking out
+# the lines that remove `/First` and `/Last` from an emptied parent, `/Prev`
+# from a new first entry, or `/Next` from a new last one. The keys those lines
+# remove name removed entries, and `pagetree::forget` takes every key that
+# does. Measured on 2026-10-07: all three survive, as that predicts.
+MUTATIONS += [
+    Mutation(
+        'bookmarks: read the outline after the pages are dropped',
+        'src/pagetree.rs',
+        '        crate::outline_repair::keep_for(doc, &doomed)?;\n        drop_pages(doc, dropped)?;',
+        '        drop_pages(doc, dropped)?;\n        crate::outline_repair::keep_for(doc, &doomed)?;',
+        'materialising_a_deletion_keeps_the_bookmarks_of_the_pages_that_stay',
+    ),
+    Mutation(
+        'bookmarks: do not repair the outline at all',
+        'src/pagetree.rs',
+        '        crate::outline_repair::keep_for(doc, &doomed)?;\n',
+        '',
+        'materialising_a_deletion_keeps_the_bookmarks_of_the_pages_that_stay',
+    ),
+    Mutation(
+        'bookmarks: count a page a kept number also names as deleted',
+        'src/pagetree.rs',
+        '        .filter(|id| !kept.contains(id))\n        .collect()\n}',
+        '        .collect()\n}',
+        'a_page_a_kept_number_also_names_is_not_dropped',
+    ),
+    Mutation(
+        'bookmarks: keep an entry that leads to a deleted page',
+        'src/outline_repair.rs',
+        '            Aim::Page(page) => doomed.contains(&page),',
+        '            Aim::Page(_) => false,',
+        'an_outline_with_nothing_left_is_dropped',
+    ),
+    Mutation(
+        'bookmarks: remove an entry whatever page it leads to',
+        'src/outline_repair.rs',
+        '            Aim::Page(page) => doomed.contains(&page),',
+        '            Aim::Page(_) => true,',
+        'deleting_a_page_no_entry_leads_to_changes_nothing',
+    ),
+    Mutation(
+        'bookmarks: keep a heading with nothing left under it',
+        'src/outline_repair.rs',
+        '            Aim::Nothing => !was.is_empty() && left.is_empty(),',
+        '            Aim::Nothing => false,',
+        'deleting_a_page_removes_only_the_entries_that_led_to_it',
+    ),
+    Mutation(
+        'bookmarks: remove a heading that never had anything under it',
+        'src/outline_repair.rs',
+        '            Aim::Nothing => !was.is_empty() && left.is_empty(),',
+        '            Aim::Nothing => left.is_empty(),',
+        'deleting_a_page_removes_only_the_entries_that_led_to_it',
+    ),
+    Mutation(
+        'bookmarks: keep the outline when an entry cannot be vouched for',
+        'src/outline_repair.rs',
+        '            Aim::Unsafe => return whole(doc),',
+        '            Aim::Unsafe => false,',
+        'an_entry_naming_its_page_by_number_drops_the_outline_whole',
+    ),
+    Mutation(
+        'bookmarks: trust a page named by its number',
+        'src/outline_repair.rs',
+        '        Some(Object::Integer(_)) => Aim::Unsafe,',
+        '        Some(Object::Integer(_)) => Aim::Other,',
+        'an_entry_naming_its_page_by_number_drops_the_outline_whole',
+    ),
+    Mutation(
+        'bookmarks: trust a name the walk gave up on',
+        'src/outline_repair.rs',
+        '        Err(links::GaveUp) => Aim::Unsafe,',
+        '        Err(links::GaveUp) => Aim::Other,',
+        'a_name_the_walk_gives_up_on_drops_the_outline_whole',
+    ),
+    Mutation(
+        'bookmarks: drop what was under a removed entry',
+        'src/outline_repair.rs',
+        '            left.extend(under.get(id).into_iter().flatten());\n',
+        '',
+        'what_stays_moves_up_past_every_entry_that_goes',
+    ),
+    Mutation(
+        'bookmarks: leave a moved entry naming its old parent',
+        'src/outline_repair.rs',
+        '        item.set("Parent", parent);\n        match at.checked_sub',
+        '        match at.checked_sub',
+        'what_stays_moves_up_past_every_entry_that_goes',
+    ),
+    Mutation(
+        'bookmarks: do not write the chain forwards',
+        'src/outline_repair.rs',
+        '            Some(next) => item.set("Next", *next),',
+        '            Some(_) => {}',
+        'what_stays_moves_up_past_every_entry_that_goes',
+    ),
+    Mutation(
+        'bookmarks: do not write the chain backwards',
+        'src/outline_repair.rs',
+        '            Some(prev) => item.set("Prev", *prev),',
+        '            Some(_) => {}',
+        'what_stays_moves_up_past_every_entry_that_goes',
+    ),
+    Mutation(
+        "bookmarks: do not write the parent's first and last",
+        'src/outline_repair.rs',
+        '                node.set("First", *first);\n                node.set("Last", *last);\n',
+        '',
+        'what_stays_moves_up_past_every_entry_that_goes',
+    ),
+    Mutation(
+        'bookmarks: leave the removed entries in the file',
+        'src/outline_repair.rs',
+        '    pagetree::forget(doc, &removed)?;\n',
+        '',
+        'what_stays_moves_up_past_every_entry_that_goes',
+    ),
+    Mutation(
+        'bookmarks: do not recount what is left',
+        'src/outline_repair.rs',
+        '        redact::recount(doc, root, 0);\n',
+        '        let _ = root;\n',
+        'deleting_a_page_removes_only_the_entries_that_led_to_it',
+    ),
+    Mutation(
+        'bookmarks: leave an emptied outline as an empty root',
+        'src/outline_repair.rs',
+        '    if top.is_empty() {\n',
+        '    if false {\n',
+        'an_outline_with_nothing_left_is_dropped',
+    ),
+    Mutation(
+        'bookmarks: report an outline dropped and leave it in',
+        'src/outline_repair.rs',
+        'fn whole(doc: &mut Document) -> Result<Kept, String> {\n    pagetree::drop_outline(doc)?;\n',
+        'fn whole(doc: &mut Document) -> Result<Kept, String> {\n    let _ = &doc;\n',
+        'an_outline_that_is_not_a_tree_is_dropped_whole',
+    ),
+    Mutation(
+        'bookmarks: do not read a destination inside an action',
+        'src/outline_repair.rs',
+        '            Ok(b"GoTo") => action',
+        '            Ok(b"GoToX") => action',
+        'deleting_a_page_removes_only_the_entries_that_led_to_it',
+    ),
+    Mutation(
+        'bookmarks: do not look a name up',
+        'src/outline_repair.rs',
+        '        Object::Name(name) => named(doc, name),',
+        '        Object::Name(_) => Aim::Other,',
+        'deleting_a_page_removes_only_the_entries_that_led_to_it',
+    ),
+    Mutation(
+        'bookmarks: do not look a string up',
+        'src/outline_repair.rs',
+        '        Object::String(bytes, _) => named(doc, bytes),',
+        '        Object::String(..) => Aim::Other,',
+        'a_name_in_the_name_tree_is_followed_to_its_page',
+    ),
+    Mutation(
+        'bookmarks: do not read a named value written as a dictionary',
+        'src/outline_repair.rs',
+        '            Ok(Object::Array(array)) => page_of(array),',
+        '            Ok(Object::Array(_)) => Aim::Other,',
+        'a_name_in_the_name_tree_is_followed_to_its_page',
     ),
 ]
 

@@ -536,6 +536,36 @@ pub fn apply_crops(doc: &mut Document, crops: &[(ObjectId, [f64; 4])]) -> Result
     Ok(())
 }
 
+/// The page objects that removing `numbers` removes.
+///
+/// A page object can answer to more than one page number: `/Kids` may list it
+/// twice, and `lopdf`'s page walk keeps no visited set. An object that a KEPT
+/// number also names must survive --- otherwise printing "page 1" of such a
+/// document deletes the object page 1 *is*, and prints a blank sheet. This is
+/// the damaging member of the family in the trap: the other two turn a page
+/// twice, this one removes the page that was asked for.
+///
+/// One spelling, because [`materialise`] asks the same question for the outline
+/// before [`drop_pages`] answers it for the page tree, and two answers would
+/// leave a bookmark to a page that stayed removed, or one to a page that went
+/// kept.
+#[must_use]
+pub fn doomed_pages(
+    pages: &std::collections::BTreeMap<u32, ObjectId>,
+    numbers: &[u32],
+) -> HashSet<ObjectId> {
+    let kept: HashSet<ObjectId> = pages
+        .iter()
+        .filter(|(number, _)| !numbers.contains(number))
+        .map(|(_, id)| *id)
+        .collect();
+    numbers
+        .iter()
+        .filter_map(|number| pages.get(number).copied())
+        .filter(|id| !kept.contains(id))
+        .collect()
+}
+
 /// Removes pages, and every reference to them, in a single pass.
 ///
 /// `numbers` are page numbers, one-based, as `lopdf`'s page table keys them.
@@ -560,22 +590,7 @@ pub fn apply_crops(doc: &mut Document, crops: &[(ObjectId, [f64; 4])]) -> Result
 /// blank pages.
 pub fn drop_pages(doc: &mut Document, numbers: &[u32]) -> Result<(), String> {
     let pages = doc.get_pages();
-    // A page object can answer to more than one page number: `/Kids` may list it
-    // twice, and `lopdf`'s page walk keeps no visited set. An object that a KEPT
-    // number also names must survive --- otherwise printing "page 1" of such a
-    // document deletes the object page 1 *is*, and prints a blank sheet. This is
-    // the damaging member of the family in the trap: the other two turn a page
-    // twice, this one removes the page that was asked for.
-    let kept: HashSet<ObjectId> = pages
-        .iter()
-        .filter(|(number, _)| !numbers.contains(number))
-        .map(|(_, id)| *id)
-        .collect();
-    let doomed: HashSet<ObjectId> = numbers
-        .iter()
-        .filter_map(|number| pages.get(number).copied())
-        .filter(|id| !kept.contains(id))
-        .collect();
+    let doomed = doomed_pages(&pages, numbers);
     if doomed.is_empty() {
         return Ok(());
     }
@@ -817,23 +832,18 @@ pub fn detached_page(doc: &Document, page: ObjectId) -> Result<Dictionary, Strin
     Ok(dictionary)
 }
 
-/// Drops the outline of a document that has lost pages.
+/// Drops the outline of a document, whole.
 ///
-/// Its destinations name pages that are no longer in the file, and a table of
-/// contents that points at nothing is worse than none --- the same reason a
-/// bounded outline walk reports what it cut rather than presenting a partial tree
-/// as whole. It is also the only option that cannot write a *malformed* one:
-/// [`drop_pages`] drops the reference out of a `/Dest` array rather than dropping
-/// the array, so an entry that survives carries `[/XYZ 0 792 0]` with no page in
-/// front of it.
+/// What a page deletion did to every outline until 2026-10-07, and what it
+/// still does to one `outline_repair` cannot vouch for: an outline that is not
+/// a tree, one that names a page by its number, one whose names cannot be
+/// looked up to the end. A table of contents that points at nothing, or at the
+/// wrong page, is worse than none --- the same reason a bounded outline walk
+/// reports what it cut rather than presenting a partial tree as whole --- and
+/// this is the one answer that cannot write a wrong one.
 ///
-/// **Whole rather than entry by entry**, which is a real loss on a long document
-/// and is stated in `CHANGELOG.md` rather than hidden here. Repairing an outline
-/// means resolving every destination shape --- a direct `/Dest`, a `/Dest` inside
-/// an `/A` action, a name into `/Dests` or into the `/Names` tree --- deciding
-/// which of them landed on a page that is gone, and rewriting the surviving tree
-/// around the entries that have to go. That is `links.rs`'s resolver, on the
-/// write side, and it is its own piece of work.
+/// It is also what is left when every entry has gone: a root with nothing
+/// under it draws an empty panel.
 ///
 /// # Errors
 ///
@@ -921,17 +931,19 @@ fn forget_in_dictionary(
 /// already shared; the *sequence* was not, so the next rule added to one of them
 /// had nothing forcing it into the other.
 ///
-/// Two orderings are load-bearing rather than tidy:
+/// Three orderings are load-bearing rather than tidy:
 ///
 ///   - **Drop before reorder.** `reorder_pages` flattens the tree, and doing
 ///     that to pages about to be deleted rewrites ancestry for nothing.
-///   - **The outline is dropped for a deletion and kept for a move.** A
-///     deletion leaves destinations naming pages that are not in the file; a
-///     move does not, because a destination names a page *object* and the
+///   - **The outline is repaired for a deletion and untouched by a move.** A
+///     deletion leaves destinations naming pages that are not in the file, so
+///     `outline_repair` removes those entries and keeps the rest; a move
+///     leaves none, because a destination names a page *object* and the
 ///     object is still there --- a bookmark follows its page to wherever the
 ///     reader put it, which is what somebody who rearranged a document means.
-///     Dropped whole rather than repaired: [`drop_outline`] carries what
-///     repairing it would take, and it is its own piece of work.
+///   - **The outline is read before the pages are dropped.** `drop_pages`
+///     takes a deleted page out of every destination array, after which a
+///     bookmark to it cannot be told from a damaged one.
 ///
 /// `reorder_to` is `None` when the reader's order is the file's, and the caller
 /// decides that: `save` carries it as a flag from the model, `print` compares
@@ -946,15 +958,19 @@ fn forget_in_dictionary(
 ///
 /// # Errors
 ///
-/// Whatever [`drop_pages`], [`drop_outline`] and [`reorder_pages`] refuse.
+/// Whatever [`drop_pages`], `outline_repair::keep_for` and [`reorder_pages`]
+/// refuse.
 pub fn materialise(
     doc: &mut Document,
     dropped: &[u32],
     reorder_to: Option<&[ObjectId]>,
 ) -> Result<(), String> {
     if !dropped.is_empty() {
+        // Before the pages go: `drop_pages` takes the page out of every
+        // destination array, and the repair reads those arrays.
+        let doomed = doomed_pages(&doc.get_pages(), dropped);
+        crate::outline_repair::keep_for(doc, &doomed)?;
         drop_pages(doc, dropped)?;
-        drop_outline(doc)?;
     }
     if let Some(order) = reorder_to {
         reorder_pages(doc, order)?;
@@ -967,8 +983,9 @@ mod tests {
 
     /// A three-page document with an outline, for [`materialise`].
     ///
-    /// The outline is the discriminating part: a deletion must drop it and a
-    /// move must not, and a fixture without one cannot tell those apart.
+    /// The outline is the discriminating part: a deletion must take one
+    /// bookmark and a move none, and a fixture without one cannot tell those
+    /// apart.
     fn three_pages_with_outline() -> (Document, Vec<ObjectId>) {
         let mut doc = Document::with_version("1.7");
         let pages_id = doc.new_object_id();
@@ -983,7 +1000,33 @@ mod tests {
                 "Count" => 3,
             }),
         );
-        let outline = doc.add_object(dictionary! { "Type" => "Outlines", "Count" => 0 });
+        // One bookmark per page, chained, so a deletion has one to remove and
+        // two to keep.
+        let outline = doc.new_object_id();
+        let items: Vec<ObjectId> = kids.iter().map(|_| doc.new_object_id()).collect();
+        for (at, page) in kids.iter().enumerate() {
+            let mut item = dictionary! {
+                "Title" => Object::string_literal(format!("page {}", at + 1)),
+                "Parent" => outline,
+                "Dest" => vec![Object::Reference(*page), "Fit".into()],
+            };
+            if at > 0 {
+                item.set("Prev", items[at - 1]);
+            }
+            if let Some(next) = items.get(at + 1) {
+                item.set("Next", *next);
+            }
+            doc.objects.insert(items[at], Object::Dictionary(item));
+        }
+        doc.objects.insert(
+            outline,
+            Object::Dictionary(dictionary! {
+                "Type" => "Outlines",
+                "First" => items[0],
+                "Last" => items[2],
+                "Count" => 3,
+            }),
+        );
         let catalog = doc.add_object(dictionary! {
             "Type" => "Catalog",
             "Pages" => pages_id,
@@ -997,10 +1040,49 @@ mod tests {
         doc.catalog().expect("a catalog").get(b"Outlines").is_ok()
     }
 
-    /// A deletion takes the outline with it.
-    ///
-    /// Its destinations name pages that are no longer in the file, and a
-    /// bookmark that goes nowhere is worse than no bookmark.
+    /// The bookmarks' titles in reading order, each checked to lead to a page
+    /// that is in the document.
+    fn bookmarks(doc: &Document) -> Vec<String> {
+        let pages: HashSet<ObjectId> = doc.get_pages().into_values().collect();
+        let root = doc
+            .catalog()
+            .expect("a catalog")
+            .get(b"Outlines")
+            .and_then(Object::as_reference)
+            .expect("an outline");
+        let mut titles = Vec::new();
+        let mut at = doc
+            .get_dictionary(root)
+            .expect("the outline root")
+            .get(b"First")
+            .and_then(Object::as_reference)
+            .ok();
+        while let Some(id) = at {
+            let item = doc.get_dictionary(id).expect("a bookmark");
+            let dest = item
+                .get(b"Dest")
+                .and_then(Object::as_array)
+                .expect("a destination");
+            let page = dest
+                .first()
+                .and_then(|first| first.as_reference().ok())
+                .expect("a destination begins with its page");
+            assert!(
+                pages.contains(&page),
+                "a bookmark leads to a page that is in the file"
+            );
+            titles.push(
+                String::from_utf8_lossy(
+                    item.get(b"Title")
+                        .and_then(Object::as_str)
+                        .expect("a title"),
+                )
+                .into_owned(),
+            );
+            at = item.get(b"Next").and_then(Object::as_reference).ok();
+        }
+        titles
+    }
 
     #[test]
     fn a_displayed_rectangle_lands_in_the_page_where_the_text_mapping_puts_it() {
@@ -1043,13 +1125,56 @@ mod tests {
         }
     }
 
+    /// A deletion takes the bookmark of the page that went, and no other.
+    ///
+    /// The order inside [`materialise`] is what this holds: the outline is read
+    /// before the pages are dropped. The other way round, `drop_pages` has
+    /// already taken the page out of the destination, the repair cannot tell
+    /// where the bookmark led, and "page 2" stays --- leading nowhere.
     #[test]
-    fn materialising_a_deletion_drops_the_outline() {
+    fn materialising_a_deletion_keeps_the_bookmarks_of_the_pages_that_stay() {
         let (mut doc, _) = three_pages_with_outline();
-        assert!(has_outline(&doc), "the fixture has one to lose");
+        assert_eq!(bookmarks(&doc), ["page 1", "page 2", "page 3"]);
         materialise(&mut doc, &[2], None).expect("materialise");
         assert_eq!(doc.get_pages().len(), 2, "the page went");
-        assert!(!has_outline(&doc), "and the outline went with it");
+        assert_eq!(bookmarks(&doc), ["page 1", "page 3"]);
+    }
+
+    /// When every bookmark led to a deleted page, the outline goes.
+    #[test]
+    fn materialising_a_deletion_of_every_bookmarked_page_drops_the_outline() {
+        let (mut doc, _) = three_pages_with_outline();
+        let Ok(Object::Dictionary(root)) = doc
+            .catalog()
+            .expect("a catalog")
+            .get(b"Outlines")
+            .and_then(Object::as_reference)
+            .map_err(|e| e.to_string())
+            .and_then(|id| doc.get_object(id).cloned().map_err(|e| e.to_string()))
+        else {
+            unreachable!("the fixture has an outline");
+        };
+        let first = root
+            .get(b"First")
+            .and_then(Object::as_reference)
+            .expect("a bookmark");
+        // Leave only the bookmark of page 1.
+        let outline = doc
+            .catalog()
+            .expect("a catalog")
+            .get(b"Outlines")
+            .and_then(Object::as_reference)
+            .expect("an outline");
+        if let Ok(Object::Dictionary(item)) = doc.get_object_mut(first) {
+            item.remove(b"Next");
+        }
+        if let Ok(Object::Dictionary(root)) = doc.get_object_mut(outline) {
+            root.set("Last", first);
+            root.set("Count", 1);
+        }
+        assert_eq!(bookmarks(&doc), ["page 1"]);
+        materialise(&mut doc, &[1], None).expect("materialise");
+        assert!(!has_outline(&doc), "nothing was left to list");
     }
 
     /// A move keeps it, and this is the assertion that makes the one above mean
@@ -1057,15 +1182,16 @@ mod tests {
     ///
     /// A destination names a page *object*, and a move does not remove any --- so
     /// a bookmark follows its page to wherever the reader put it. Without this
-    /// test, dropping the outline unconditionally passes.
+    /// test, thinning the outline on every save passes.
     #[test]
     fn materialising_a_move_keeps_the_outline() {
         let (mut doc, kids) = three_pages_with_outline();
         let order = vec![kids[2], kids[0], kids[1]];
         materialise(&mut doc, &[], Some(&order)).expect("materialise");
         assert_eq!(doc.get_pages().len(), 3, "nothing was dropped");
-        assert!(
-            has_outline(&doc),
+        assert_eq!(
+            bookmarks(&doc),
+            ["page 1", "page 2", "page 3"],
             "a move removes no page object, so every destination still names one"
         );
     }

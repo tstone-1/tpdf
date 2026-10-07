@@ -272,6 +272,7 @@ hop through the index.
 - `%%EOF` is also a PostScript comment, so counting its bytes counts every embedded CMap as a revision
 - PDFKit answers a button in text and draws the chosen radio button once, so a form filled in Preview read as unanswered
 - PDFKit draws a text field's answer itself and ignores the turn the field declares, so it cannot check a field on a turned page
+- A bookmark kept as a heading is the title of a deleted page
 
 ## Tauri, the webview and startup
 - `AppHandle::exit` does not set the process's exit code
@@ -25909,3 +25910,33 @@ The rule: a reader's text is its opinion about spaces, lines and order as well a
 characters. Before holding an edit to *the whole reading is unchanged*, find out which of
 those the reader derives from positions, because an edit that moves text changes them all
 without changing the text.
+
+### A bookmark kept as a heading is the title of a deleted page
+
+Written 2026-10-07 with `outline_repair.rs`, which keeps a document's bookmarks when pages
+are deleted. The first version passed every test it had and was wrong.
+
+Its rule for a chapter whose own page was deleted while a section under it stayed was the
+one the window already uses for an unsaved deletion: keep the chapter as a heading with no
+destination, so the section keeps its place. In a session that is right, because the
+deletion can be undone. In a **written file** the heading is the title of a page that is
+not there. Extract pages 6 to 8 and the copy carries "Chapter 2: ..." from page 5 in its
+sidebar, where the whole-drop it replaced carried nothing. Nobody asked for that title, no
+test looked for it, and `docs/THREAT-MODEL.md` had said why in one sentence that was read
+only after the code was written: what survives a repair is only as sound as the repair.
+
+The rule now: an entry whose page goes is removed, and what stays under it moves up into
+its place. No title survives unless its own page does, and the removed entries leave the
+file rather than only the chain — a test reads every `/Title` in the output, because an
+entry spliced out of `/First` and `/Next` and left as an object is still text in the copy.
+
+Two things to take from it. **A repair that keeps more can disclose more**, and the
+comparison to make is against what the cruder rule it replaces let through, not against
+what looks tidy. And **the same rule can be right on screen and wrong on disk**: the
+session shows a state that can be taken back, the file is what somebody else receives.
+
+Two outlines the repair refuses, each for a reason of the same kind. An entry that names
+its page **by number** would lead to a different page once an earlier one is deleted,
+which is worse than leading nowhere. And a named destination the bounded name-tree walk
+**gives up on** may lead to a deleted page; `links::find_named` keeps "gave up" apart from
+"not there" for exactly that caller. Both take the old path and drop the outline whole.

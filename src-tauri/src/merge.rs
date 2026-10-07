@@ -60,8 +60,9 @@
 //! named destination all address a page through one of four shapes
 //! (`links.rs`'s resolver enumerates them), and carrying them across would mean
 //! rewriting each into the merged file's own name space --- with two files
-//! free to use the same name for different pages. `pagetree::drop_outline`
-//! takes the same position for a deletion and for the same reason.
+//! free to use the same name for different pages. A deletion is the easier
+//! case and `outline_repair` handles it: one document, one name space, and
+//! entries only ever removed.
 //!
 //! **Intra-document links survive**, which is the part that is not obvious: a
 //! `/Link` annotation whose `/Dest` names a page object keeps working, because

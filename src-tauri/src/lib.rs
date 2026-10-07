@@ -72,6 +72,7 @@ pub mod textview;
 // reaching the window server.
 pub mod opener;
 pub mod outline;
+pub mod outline_repair;
 pub mod pades;
 pub mod pagetree;
 pub mod pathcut;

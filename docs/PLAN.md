@@ -2729,8 +2729,10 @@ exactly that defect.
 `/Count` is **recomputed** rather than decremented, preserving each node's sign — a negative
 count means the reader had that section collapsed, which a removal has no business changing.
 
-**What is not this.** `pagetree::drop_outline` removes the whole outline and is still right
-for a page deletion, where every destination names a page that is gone. The two are different
+**What is not this.** `pagetree::drop_outline` removes the whole outline and ~~is still right
+for a page deletion, where every destination names a page that is gone~~ was what a page
+deletion did until 2026-10-07; `outline_repair.rs` now removes only the entries of the
+deleted pages, and the whole-drop remains for an outline it cannot vouch for. The two are different
 operations and the difference is which entries are still meaningful afterwards.
 
 **The taken text is carried on the plan**, `PlannedRedaction::taking`, from PDFium through the
@@ -9913,7 +9915,8 @@ through.
 - The **outline of a document that lost pages**, dropped whole. Its destinations name pages
   that are gone, and the pass that removes references leaves a destination array with no page
   in it — malformed rather than dead. A real loss, stated in `CHANGELOG.md` rather than
-  hidden, and repairing it is `links.rs`'s resolver on the write side.
+  hidden, and repairing it is `links.rs`'s resolver on the write side. **Repaired on
+  2026-10-07** by `outline_repair.rs`, which reads the outline before the pages go.
 
 ~~**What a saved copy still carries, and it is worth being exact.** A deleted page's
 *content* — its stream, and anything only it referenced — stays in the file as an
@@ -13652,7 +13655,9 @@ what "merge" can mean without a name-resolution pass. An outline entry, a link
 and a named destination each address a page through one of four shapes
 (`links.rs`'s resolver enumerates them), two files are free to use the same name
 for different pages, and reconciling that is its own piece of work.
-`pagetree::drop_outline` takes the same position for a deletion.
+`pagetree::drop_outline` took the same position for a deletion until 2026-10-07, when
+`outline_repair.rs` replaced it there: a deletion is the easier case, one document and one
+name space, with entries only ever removed.
 
 The README says so in the same words a reader would use, rather than leaving it
 to be discovered.

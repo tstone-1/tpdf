@@ -990,10 +990,20 @@ listeners and a `setPointerCapture` on the strip's own panel, neither of which p
 or builds a URL-bearing element — the `sinks` gate is what says so mechanically, and §T8 is
 where that invariant lives.
 
-**The outline is dropped whole from a copy that lost pages**, and that is a *smaller* claim
-than repairing it would be: what survives a repair is only as sound as the resolver that did
-it, and what survives this is nothing. Stated in the changelog as a real loss rather than
-hidden as a detail.
+**The outline of a copy that lost pages is repaired, since 2026-10-07, and the claim is
+bounded by what the repair refuses.** Until then it was dropped whole, which was a smaller
+claim: what survives a repair is only as sound as the resolver that did it, and what
+survived the drop was nothing. `outline_repair.rs` now removes the entries that lead to a
+deleted page and keeps the rest, and three things keep that from being a larger claim than
+it can carry. **No title of a deleted page survives**: an entry whose page went is removed
+even when entries under it stay, and those move up — the first version kept it as a
+heading, which would have put the name of a chapter that was left out into an extract.
+**Anything the resolver cannot vouch for takes the old path**: an outline that is not a
+tree, an entry naming its page by number, a name the bounded walk gives up on. And **the
+removed entries leave the file**, not only the chain, so their titles are not in the copy
+as unreachable objects. What is not claimed: a heading with no destination of its own is
+kept while anything is left under it, and its title is whatever the author wrote there.
+Deleting a page is not redaction, and a title that must go is a job for *Redact*.
 
 #### T6.3 — Highlighting a selection, added 2026-08-18
 

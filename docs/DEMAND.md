@@ -32,7 +32,7 @@ Limits worth keeping in mind when quoting any of this:
 | 1 | 21 | Subscriptions, paywalls, watermarks on what a trial writes | Free, MIT, no watermark |
 | 2 | 16 | Cluttered interfaces, AI banners, simple actions hard to find | Command palette; no AI |
 | 3 | 15 | Distrust: files uploaded by online tools, a free tool whose funding is unclear, bundled software | Offline, open source |
-| 4 | 14 | A file renders wrong or loses formatting after saving | Every write is checked against its input. Exception: deleting a page or merging drops the bookmarks |
+| 4 | 14 | A file renders wrong or loses formatting after saving | Every write is checked against its input. Exception: a merge brings no bookmarks across |
 | 5 | 13 | Freezes and crashes; Acrobat freezing 5 to 10 s on a five-page file | The first of tpdf's three properties |
 | 6 | 12 | Filling forms, **creating** forms, signing; confusion between a drawn and a certificate signature | Filling, both kinds of signature, and creating fields; list boxes are the one kind missing |
 | 7 | 10 | "Edit PDF" turns out to mean annotate; they want to change the existing text | Built, and it refuses what it cannot do faithfully |
@@ -92,10 +92,10 @@ the one people already call fast.
 
 In the order they should be taken:
 
-1. **Keeping bookmarks through a page deletion and a merge.** Not a wish from the threads
-   but a defect against complaint 4: deleting a page drops the document's bookmarks, and
-   a merge carries over neither bookmarks nor named destinations nor form fields.
-   Editing the outline is the step after it.
+1. **Keeping bookmarks through a merge.** Not a wish from the threads but a defect
+   against complaint 4: a merge carries over neither bookmarks nor named destinations
+   nor form fields. The other half, a page deletion dropping every bookmark, was repaired
+   on 2026-10-07. Editing the outline is the step after it.
 2. **Comparing two documents.** Moderate demand in the forum pass, none in the Reddit
    sample. The free tools that do it are websites, which collides with complaint 3, so
    an offline one is worth having. `tpdf compare a.pdf b.pdf` first, since it reuses the

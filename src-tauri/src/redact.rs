@@ -3524,7 +3524,7 @@ fn fold(value: &str) -> String {
 }
 
 /// The catalog's `/Outlines`, if the document has one.
-fn outline_root(doc: &Document) -> Option<ObjectId> {
+pub(crate) fn outline_root(doc: &Document) -> Option<ObjectId> {
     doc.catalog()
         .ok()?
         .get(b"Outlines")
@@ -3533,7 +3533,7 @@ fn outline_root(doc: &Document) -> Option<ObjectId> {
 }
 
 /// The `/First` of a node, if it names one.
-fn first_child(doc: &Document, node: ObjectId) -> Option<ObjectId> {
+pub(crate) fn first_child(doc: &Document, node: ObjectId) -> Option<ObjectId> {
     doc.get_dictionary(node)
         .ok()?
         .get(b"First")
@@ -3684,7 +3684,7 @@ fn names(doc: &Document, at: ObjectId, key: &[u8], id: ObjectId) -> bool {
 /// descendants of any child that is *open*. Sign carries whether it is open, and
 /// is read off the value that is there --- the removal must not expand a section
 /// the reader had collapsed.
-fn recount(doc: &mut Document, node: ObjectId, depth: usize) -> i64 {
+pub(crate) fn recount(doc: &mut Document, node: ObjectId, depth: usize) -> i64 {
     if depth > MAX_TREE_DEPTH {
         return 0;
     }

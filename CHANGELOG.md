@@ -36,6 +36,16 @@ have the binary.)
   below it as bare text. The message is now in the window's own font and colour on a
   tinted bar, its buttons have an edge and follow the sentence they answer, and a close
   button at the end of the bar takes the message away without running any of them.
+- **Deleting a page keeps the bookmarks of the pages that stay.** A saved copy lost the
+  whole table of contents as soon as one page was deleted, and so did the pages you
+  extracted. Now only the bookmarks that led to a deleted page go. A bookmark under one
+  of those, leading to a page that is still there, moves up a level and keeps its place
+  in the order; the removed bookmark's title is not kept as a heading, because it is the
+  title of a page that is no longer in the file. A heading that led nowhere goes when
+  nothing is left under it. The outline is still dropped whole when tpdf cannot vouch for
+  the result: an outline that loops or shares an entry, a bookmark that names its page by
+  number, which a deletion would shift to another page, or a named destination the
+  bounded lookup cannot reach. Merging still brings no bookmarks across.
 - **The README opens with what a new reader asks first.** Which file to download for which
   computer, what Windows shows for the unsigned installer and what to do about it, who
   makes tpdf, why it is free, and the three cases in which it contacts the network. A list

@@ -29,10 +29,10 @@
 //!   one, resolved up the `/Parent` chain, not the literal one, which is absent
 //!   on exactly the documents that inherit it.
 //!
-//! The outline is dropped whenever pages are. Its destinations name pages that
-//! are no longer in the file, and a table of contents that points at nothing is
-//! worse than none --- the same reason a bounded outline walk reports what it cut
-//! rather than presenting a partial tree as whole.
+//! The outline loses the entries of the pages that are not printed, through
+//! `pagetree::materialise` like every writer; `outline_repair` has the rule. A
+//! printer does not read an outline, and the job is built by the same steps as
+//! a saved copy so that the two cannot drift apart.
 
 /// Only [`build`] takes one, and that function is test-only --- see its header.
 #[cfg(test)]

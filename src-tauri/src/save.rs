@@ -3975,8 +3975,8 @@ fn rewrite(plan: &Plan, checked: Checked, job: Job) -> Result<Vec<u8>, Refusal> 
     let turns: Vec<(lopdf::ObjectId, u8)> = make_blank_pages(&mut doc, &slots, &imported)?;
 
     // What goes and in what order, in the one sequence both writers share ---
-    // see `pagetree::materialise`, which carries why the outline is dropped for
-    // a deletion and kept for a move, and why turning pages is *not* part of it.
+    // see `pagetree::materialise`, which carries why the outline is repaired for
+    // a deletion and untouched by a move, and why turning pages is *not* part of it.
     let order: Vec<lopdf::ObjectId> = turns.iter().map(|(id, _)| *id).collect();
     pagetree::materialise(&mut doc, &dropped, moved.then_some(order.as_slice()))?;
 
@@ -4453,10 +4453,8 @@ fn apply_redactions(
         // when each document's titles are matched against the next document's
         // pages --- the control that makes the 99% mean anything.
         //
-        // Entry by entry rather than `pagetree::drop_outline`, which is right
-        // for a page deletion --- where every destination names a page that is
-        // gone --- and wrong here: one redacted heading must not cost a reader
-        // 131 bookmarks. `redact::covered_outline` decides which, and
+        // Entry by entry rather than `pagetree::drop_outline`: one redacted
+        // heading must not cost a reader 131 bookmarks. `redact::covered_outline` decides which, and
         // `redact::drop_outline_items` splices the chain before the objects go.
         // That splice is the whole of it, and `docs/TRAPS.md` says why `forget`
         // alone would truncate the outline silently.

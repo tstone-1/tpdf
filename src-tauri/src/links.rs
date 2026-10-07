@@ -482,6 +482,33 @@ fn named(
     }
 }
 
+/// A name-tree walk that stopped at a bound before it found or ruled out the
+/// name.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct GaveUp;
+
+/// The value `key` has in a `/Names` tree, under the bounds every walk here
+/// has: `Ok(None)` for a name that is not there.
+///
+/// # Errors
+///
+/// [`GaveUp`] when the tree is deeper or wider than the walk goes. Kept apart
+/// from "not there" for the caller's sake: `outline_repair` leaves an entry
+/// alone when its name does not exist, and must not when it merely could not
+/// find out.
+pub(crate) fn find_named(
+    tree: &Object,
+    key: &[u8],
+    document: &Document,
+) -> Result<Option<Object>, GaveUp> {
+    let mut budget = MAX_TREE_NODES;
+    match walk_tree(tree, key, document, MAX_TREE_DEPTH, &mut budget) {
+        Found::Value(object) => Ok(Some(object)),
+        Found::Missing => Ok(None),
+        Found::Exhausted => Err(GaveUp),
+    }
+}
+
 /// What a name-tree walk found, keeping "not there" apart from "gave up".
 ///
 /// They produce the same [`Target`] and they are not the same event: one is the

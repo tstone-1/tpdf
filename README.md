@@ -699,10 +699,12 @@ measured the Windows render constants come out 1.5–1.8x worse.
   <!-- built: file.mergeDocuments -->
 - **Save**, over the open file or to a copy. A save is refused outright if the file changed
   on disk since you opened it — length, modification time and a digest of every byte,
-  taken at open and checked again before anything is written. Deleting a page drops the
-  document's bookmarks, because their destinations name pages that are no longer in the
-  file — repairing them one by one is its own piece of work. Moving a page keeps them,
-  because a bookmark names a page rather than a position.
+  taken at open and checked again before anything is written. Deleting a page removes the
+  bookmarks that led to it and keeps the others; a bookmark under a removed one that leads
+  to a page still in the file moves up a level, so no title of a deleted page is left in
+  the list. The same holds for the pages you extract. An outline tpdf cannot vouch for —
+  one that loops, or that names its pages by number — is still dropped whole. Moving a
+  page keeps every bookmark, because a bookmark names a page rather than a position.
   <!-- built: file.save file.saveCopy -->
 
   A save that only *adds* marks is written as a PDF incremental update: the previous

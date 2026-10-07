@@ -1710,13 +1710,14 @@ fn a_turn_on_a_page_after_the_deleted_one_lands_where_it_was_aimed() {
     );
 }
 
-/// The outline goes when pages do, with the control that says it stays.
+/// A deleted page takes its own bookmarks and leaves the others, with the
+/// control that says an untouched document keeps them all.
 ///
-/// Its destinations name pages that are no longer in the file. Dropping it
-/// whole is a real loss and is the only option that cannot leave a
-/// *malformed* one --- see `pagetree::drop_outline`.
+/// Until 2026-10-07 the outline went whole; `outline_repair` has the rule now.
+/// What this holds on a real file is the property a reader depends on: every
+/// bookmark left in the written file leads to a page that is in it.
 #[test]
-fn deleting_a_page_drops_the_outline_and_keeping_them_all_does_not() {
+fn deleting_a_page_keeps_the_bookmarks_of_the_pages_that_stay() {
     let Some(path) = fixture("outline-simple.pdf") else {
         println!("[SKIP] outline-simple.pdf not generated");
         return;
@@ -1724,27 +1725,99 @@ fn deleting_a_page_drops_the_outline_and_keeping_them_all_does_not() {
     let scratch = Scratch::new("outline");
     let count = page_count(&path);
     assert!(count > 1, "the fixture needs a page to spare");
+    let source = Document::load(&path).expect("load source");
+    let before = outline_aims(&source);
     assert!(
-        has_outline(&Document::load(&path).expect("load source")),
-        "the fixture carries one to begin with"
+        !before.is_empty(),
+        "the fixture carries bookmarks to begin with"
+    );
+    let last = *source
+        .get_pages()
+        .get(&(count as u32))
+        .expect("the last page");
+    let to_last = before.iter().filter(|page| **page == Some(last)).count();
+    assert!(
+        to_last > 0 && to_last < before.len(),
+        "the fixture needs a bookmark that goes and one that stays: {to_last} of {}",
+        before.len()
     );
 
     let kept: Vec<(u32, u8)> = (1..count as u32).map(|source| (source, 0)).collect();
     let trimmed = scratch.join("trimmed.pdf");
     copy_here(&path, &keeping(count as u32, &kept), &trimmed, None).expect("write");
-    assert!(
-        !has_outline(&Document::load(&trimmed).expect("load written")),
-        "a page was dropped, so its destinations are gone"
+    let written = Document::load(&trimmed).expect("load written");
+    let after = outline_aims(&written);
+    let pages: std::collections::HashSet<ObjectId> = written.get_pages().into_values().collect();
+    assert_eq!(
+        after.len(),
+        before.len() - to_last,
+        "the bookmarks of the deleted page went, and only they"
+    );
+    for page in after.iter().flatten() {
+        assert!(
+            pages.contains(page),
+            "a bookmark left in the file leads to a page that is in it: {page:?}"
+        );
+    }
+    assert_eq!(
+        after.iter().flatten().count(),
+        before.iter().flatten().count() - to_last,
+        "and every bookmark that led to a page still leads to one"
     );
 
-    // The control. Without it this check passes for a save that drops every
-    // outline it ever sees, which is a different and much worse rule.
+    // The control. Without it this check passes for a save that thins every
+    // outline it ever sees.
     let whole = scratch.join("whole.pdf");
     copy_here(&path, &plan_of(&vec![0u8; count]), &whole, None).expect("write");
-    assert!(
-        has_outline(&Document::load(&whole).expect("load written")),
-        "nothing was dropped, so the bookmarks survive"
+    assert_eq!(
+        outline_aims(&Document::load(&whole).expect("load written")).len(),
+        before.len(),
+        "nothing was dropped, so every bookmark survives"
     );
+}
+
+/// The page each bookmark leads to, for every bookmark the outline holds, in
+/// no particular order: the first element of its `/Dest` array, or of the `/D`
+/// array of its action. `None` for a bookmark with neither, which the fixture
+/// has one of.
+fn outline_aims(doc: &Document) -> Vec<Option<ObjectId>> {
+    let Some(root) = doc
+        .catalog()
+        .ok()
+        .and_then(|catalog| catalog.get(b"Outlines").ok())
+        .and_then(|entry| entry.as_reference().ok())
+    else {
+        return Vec::new();
+    };
+    let mut aims = Vec::new();
+    let mut stack = vec![root];
+    while let Some(node) = stack.pop() {
+        let Ok(dict) = doc.get_dictionary(node) else {
+            continue;
+        };
+        for key in [&b"First"[..], b"Next"] {
+            if node == root && key == b"Next" {
+                continue;
+            }
+            if let Ok(id) = dict.get(key).and_then(Object::as_reference) {
+                stack.push(id);
+            }
+        }
+        if node != root {
+            let dest = dict.get(b"Dest").ok().or_else(|| {
+                dict.get(b"A")
+                    .and_then(Object::as_dict)
+                    .and_then(|action| action.get(b"D"))
+                    .ok()
+            });
+            aims.push(
+                dest.and_then(|dest| dest.as_array().ok())
+                    .and_then(|dest| dest.first())
+                    .and_then(|first| first.as_reference().ok()),
+            );
+        }
+    }
+    aims
 }
 
 fn has_outline(doc: &Document) -> bool {
