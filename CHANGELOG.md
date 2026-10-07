@@ -36,6 +36,13 @@ have the binary.)
   below it as bare text. The message is now in the window's own font and colour on a
   tinted bar, its buttons have an edge and follow the sentence they answer, and a close
   button at the end of the bar takes the message away without running any of them.
+- **The README opens with what a new reader asks first.** Which file to download for which
+  computer, what Windows shows for the unsigned installer and what to do about it, who
+  makes tpdf, why it is free, and the three cases in which it contacts the network. A list
+  names what the five pictures do not show: merging, text recognition, compression,
+  passwords, creating form fields. A table compares price, licence and platforms with
+  SumatraPDF, Acrobat, PDFgear and Stirling-PDF. The sentence counting the command-line
+  tool's commands said twenty and now says twenty-six.
 
 ## [26.10.9] - 2026-10-06
 

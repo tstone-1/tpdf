@@ -300,8 +300,8 @@ Each release is a `Release vYY.M.MICRO: ...` commit. Unreleased work sits under
 `## [YY.M.MICRO] - Unreleased` in `CHANGELOG.md`; the date replaces `Unreleased` only at
 release time.
 
-That heading form is safe here because `release.yml` reads nothing from `CHANGELOG.md`; its
-`releaseBody` is a literal block in the workflow, so re-read it on every release
+That heading form is safe: `release.yml` reads nothing from `CHANGELOG.md`, so re-read its
+literal `releaseBody` each release. Until Windows is signed, release at most weekly
 ([`docs/DETAIL.md`](docs/DETAIL.md) *Versioning*).
 
 ---

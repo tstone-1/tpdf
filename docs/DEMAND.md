@@ -1,7 +1,7 @@
 # What people want from a PDF program
 
 What users of Acrobat, Foxit, PDF24 and the other common PDF programs complain about and
-ask for, collected on 2026-10-03, and what it means for tpdf. `docs/PLAN.md` §1 states the
+ask for, collected on 2026-10-03 and extended on 2026-10-07, and what it means for tpdf. `docs/PLAN.md` §1 states the
 problem tpdf was started for; this file is the outside check on it.
 
 ## How it was collected
@@ -32,9 +32,9 @@ Limits worth keeping in mind when quoting any of this:
 | 1 | 21 | Subscriptions, paywalls, watermarks on what a trial writes | Free, MIT, no watermark |
 | 2 | 16 | Cluttered interfaces, AI banners, simple actions hard to find | Command palette; no AI |
 | 3 | 15 | Distrust: files uploaded by online tools, a free tool whose funding is unclear, bundled software | Offline, open source |
-| 4 | 14 | A file renders wrong or loses formatting after saving | Every write is checked against its input |
+| 4 | 14 | A file renders wrong or loses formatting after saving | Every write is checked against its input. Exception: deleting a page or merging drops the bookmarks |
 | 5 | 13 | Freezes and crashes; Acrobat freezing 5 to 10 s on a five-page file | The first of tpdf's three properties |
-| 6 | 12 | Filling forms, **creating** forms, signing; confusion between a drawn and a certificate signature | Filling and both kinds of signature. **No way to add a form field** |
+| 6 | 12 | Filling forms, **creating** forms, signing; confusion between a drawn and a certificate signature | Filling, both kinds of signature, and creating fields; list boxes are the one kind missing |
 | 7 | 10 | "Edit PDF" turns out to mean annotate; they want to change the existing text | Built, and it refuses what it cannot do faithfully |
 | 7 | 10 | One program instead of five (Okular, PDF Arranger, Ghostscript, Xournal++ together) | Mostly; see the gaps |
 | 9 | 7 | Licence activation and deployment; administrators want Group Policy and a central switch for AI | No licence. No managed-deployment settings |
@@ -92,20 +92,24 @@ the one people already call fast.
 
 In the order they should be taken:
 
-1. **Creating form fields.** Asked for in the same breath as text editing and OCR by
-   people replacing Acrobat Pro. Begun on 2026-10-03: text fields and checkboxes can be
-   placed in the window by a drag and added from the command line with `tpdf form`.
-   Still to do, in this order: resizing a placed field, dropdowns, radio buttons and
-   list boxes, then turned pages.
+1. **Keeping bookmarks through a page deletion and a merge.** Not a wish from the threads
+   but a defect against complaint 4: deleting a page drops the document's bookmarks, and
+   a merge carries over neither bookmarks nor named destinations nor form fields.
+   Editing the outline is the step after it.
 2. **Comparing two documents.** Moderate demand in the forum pass, none in the Reddit
    sample. The free tools that do it are websites, which collides with complaint 3, so
    an offline one is worth having. `tpdf compare a.pdf b.pdf` first, since it reuses the
    text extraction, then a view in the window.
-3. **A calibrated measuring tool**, distance and area against a scale. A real need on
-   technical drawings and a small audience.
-4. **Split view and exporting annotations**, asked for by Mac readers.
-5. **Settings an administrator can deploy.** Seven threads; nothing to do until someone
-   deploys tpdf in an organisation.
+3. **Split view and exporting annotations**, asked for by Mac readers.
+4. **A calibrated measuring tool**, distance and area against a scale. A real need on
+   technical drawings and a small audience. Moved down from third place on 2026-10-07:
+   Open PDF Studio, an LGPL editor for construction drawings with measuring, reached 887
+   stars in nine months, and large drawings are where tpdf is slowest.
+5. **Settings an administrator can deploy.** Seven threads; nothing to do until the
+   Windows installer is signed and someone deploys tpdf in an organisation.
+
+Creating form fields led this list on 2026-10-03 and is built: text, multi-line,
+checkbox, dropdown, radio button and signature fields. List boxes remain.
 
 Left out on purpose: print production. It is a different product.
 
@@ -116,6 +120,71 @@ uploads, speed. tpdf's description should lead with those. Fifteen threads worry
 who pays for a free PDF tool and where the file goes, so the description should answer
 both outright: nobody pays, it is MIT-licensed, and nothing leaves the machine except the
 update check and a timestamp request when a signature asks for one.
+
+## Second pass, 2026-10-07
+
+A wider pass over the market: the competing programs, Hacker News and the issue trackers of
+SumatraPDF, Stirling-PDF, sioyek, PDF Arranger and Zotero, the routes by which open-source
+desktop programs found their first users, and the libraries and command-line tools that
+scripts use. Reddit refused every request in this pass, so the sample above remains the only
+Reddit evidence. Nobody from a law firm, an accounting office or an IT department was heard
+in their own words.
+
+**The finding.** Every job people name most often is already built: fill and sign a form,
+annotate, reorder pages, compress, recognise text, redact. What limits adoption is that
+nobody can find tpdf and that Windows warns against it. Distribution comes before features.
+
+What was measured, each on its own page or API on 2026-10-07:
+
+- **No comparable program exists.** No MIT-licensed native editor for both macOS and
+  Windows with redaction and text editing has users. PDF4QT (MIT, 1,497 stars) has no
+  macOS build; Stirling-PDF (93,695 stars) is a web application in a desktop wrapper with
+  installers of 310 to 458 MB and proprietary parts.
+- **Free text editing is taken.** PDFgear and PDF24 give away text editing, text
+  recognition and conversion, both closed source. Acrobat sells redaction, text
+  recognition and comparison only in Pro, at USD 239.88 a year.
+- **Failed redaction is recurring news.** On Hacker News the Epstein files reached 1,029
+  points (December 2025), a library that finds bad redactions 709, and a city's failed
+  redaction 526 (2026-10-04). No permissively licensed tool was found that removes
+  content and then checks the removal: qpdf closed its request, pypdf and pdfcpu have
+  none, and the one checker depends on an AGPL library.
+- **Scripts run on Linux.** 93.0% of pypdf's downloads come from Linux, 4.6% from Windows
+  and 2.2% from macOS. PyMuPDF has 83 million downloads a month under the AGPL, and a
+  GitHub search for "pymupdf AGPL license" returns 884 issues.
+- **An unsigned Windows installer starts again with every release.** Microsoft: "Unsigned
+  files must build reputation anew with every update", which "can take several weeks and
+  hundreds of clean installs". Smart App Control blocks unsigned programs outright.
+- **People praise behaviour.** In ten Hacker News threads with 1,514 comments, "nothing
+  leaves my machine" appears in 116, speed in 105, signing in 75. The words used for a
+  loved reader are instant, does not lock the file, remembers the place, reloads on change.
+- **E-invoices.** Quba, the free viewer for ZUGFeRD and Factur-X, has 785,918 release
+  downloads on 202 stars. An ordinary viewer shows the picture and not the XML that binds.
+
+The order of work that follows from it:
+
+1. The first screen of the README: which file to download, the Windows warning, who makes
+   tpdf and what leaves the computer, a comparison. Done on 2026-10-07.
+2. Fewer Windows releases until the installer is signed; `docs/DETAIL.md`, *Versioning*.
+3. A code-signing certificate for Windows. Azure's service takes individuals only in the
+   USA and Canada; Certum issues an open-source certificate to individuals. The Microsoft
+   Store signs for free but takes MSIX, which Tauri does not build, and whether the worker
+   runs inside an MSIX container is not known.
+4. One announcement, led by redaction that is checked.
+5. The command-line tool on Linux with a worker sandbox, then Python wheels that carry it.
+6. A command that checks a document redacted in another program for content that is
+   still there. `tpdf redact` checks its own output only.
+7. The list under *What tpdf lacks*, in its order, and after it a view of the e-invoice
+   embedded in a document.
+
+Not worth building: conversion to Word, which the free closed programs give away;
+anything with a language model in the window, which two of the nine most-voted requests
+on Adobe's own board ask to have removed; creating e-invoices, converting to PDF/A and
+repairing accessibility tags, each of which is a product of its own.
+
+Open questions this pass could not answer: how many installs the Windows warning costs,
+and whether removing whole text runs closes the leak a 2023 study found in 9 of 11
+redaction tools, where the width of the removed text gives the words away
+(<https://petsymposium.org/popets/2023/popets-2023-0069.php>).
 
 ## Sources
 
@@ -164,3 +233,25 @@ Forums and reviews:
 - <https://forum.pdf-xchange.com/viewtopic.php?p=30524>
 - <https://forums.zotero.org/discussion/comment/380173>
 - <https://forum.vivaldi.net/post/632082>
+
+Second pass, 2026-10-07:
+
+- <https://learn.microsoft.com/en-us/windows/apps/package-and-deploy/smartscreen-reputation>
+- <https://learn.microsoft.com/en-us/windows/apps/package-and-deploy/code-signing-options>
+- <https://shop.certum.eu/open-source-code-signing-on-simplysign.html>
+- <https://docs.brew.sh/Package-Acceptance-Policy>
+- <https://www.adobe.com/acrobat/pricing.html>
+- <https://www.sumatrapdfreader.org/download-free-pdf-viewer>
+- <https://github.com/Stirling-Tools/Stirling-PDF/blob/main/LICENSE>
+- <https://github.com/JakubMelka/PDF4QT>
+- <https://github.com/OpenAEC-Foundation/open-pdf-studio>
+- <https://pypistats.org/packages/pypdf>
+- <https://pypistats.org/packages/pymupdf>
+- <https://github.com/search?q=pymupdf+AGPL+license&type=issues>
+- <https://github.com/qpdf/qpdf/issues/1139>
+- <https://news.ycombinator.com/item?id=46368946>
+- <https://news.ycombinator.com/item?id=46369923>
+- <https://news.ycombinator.com/item?id=49957068>
+- <https://news.ycombinator.com/item?id=37993575>
+- <https://github.com/ZUGFeRD/quba-viewer/releases>
+- <https://blog.kowalczyk.info/article/2f72237a4230410a888acbfce3dc0864/lessons-learned-from-15-years-of-sumatrapdf-an-open-source-windows-app.html>

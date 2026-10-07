@@ -293,6 +293,19 @@ failure and it is real: that body cannot go stale by tooling, only by nobody rea
 shipped a **"Nothing here edits a document"** paragraph that a later release made false. Re-read
 it on every release.
 
+## Versioning: how often to release
+
+**Until the Windows installers are code-signed, a release waits for a user-visible
+improvement, and there is at most about one a week** (decided 2026-10-07). Microsoft's
+SmartScreen keeps a reputation per file for an unsigned program, so every release starts at
+zero and needs "several weeks and hundreds of clean installs" to lose the warning; 49 releases
+between 2026-08-12 and 2026-10-06 meant no installer lived long enough to earn any. Work
+collects under the `Unreleased` heading in the meantime. A fix for lost data or a security
+defect still ships at once. The rule ends when the installers carry a signature, because
+reputation then belongs to the publisher and not to the file. Nothing measures how many
+installs the warning costs; the rule rests on Microsoft's description of the mechanism.
+Evidence: [`DEMAND.md`](DEMAND.md), *Second pass*.
+
 ## Quality gates: the list, the Windows check, and each gate
 
 Currently, in the order `--list` prints them: a toolchain-pin check, a PDFium pin check, a trap-index check, a

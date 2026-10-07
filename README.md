@@ -6,15 +6,47 @@ SumatraPDF's speed with Acrobat's capability, and a UI where you never hunt for 
 
 ![tpdf finding a command, marking up a page, marking text for redaction and showing two signatures](docs/img/demo.gif)
 
-**Download:** installers for macOS (Apple silicon) and Windows are on the
-[Releases](https://github.com/tstone-1/tpdf/releases) page. Free, MIT-licensed, no account,
-no telemetry; your documents are not uploaded anywhere.
+Free, MIT-licensed, no account, no telemetry; your documents are not uploaded anywhere.
 
-With Homebrew on a Mac:
+## Download
 
-```
-brew install --cask tstone-1/tpdf/tpdf
-```
+Take the file for your computer from the
+[latest release](https://github.com/tstone-1/tpdf/releases/latest):
+
+| Computer | File | Notes |
+|---|---|---|
+| Mac with Apple silicon | `tpdf_<version>_aarch64.dmg` | Signed and notarized. Or `brew install --cask tstone-1/tpdf/tpdf` |
+| Windows, 64-bit | `tpdf_<version>_x64-setup.exe` | Installs for your user account, no administrator rights. **Not code-signed yet**, see below |
+| Windows, for deployment | `tpdf_<version>_x64_en-US.msi` | The same program as an MSI. Not code-signed yet |
+
+The `.sig`, `.tar.gz` and `latest.json` files beside them belong to the built-in updater;
+you do not need them. There is no build for Intel Macs, Windows on ARM or Linux.
+
+**The Windows installer is not code-signed yet.** Windows therefore shows "Windows protected
+your PC" the first time you run it: choose **More info**, then **Run anyway**. On a computer
+with Smart App Control switched on, Windows blocks unsigned programs and offers no exception
+for a single one, so tpdf cannot be installed there until it is signed. The installer is
+built from this repository by the public
+[release workflow](.github/workflows/release.yml).
+
+## Who makes it, and what leaves your computer
+
+One developer ([@tstone-1](https://github.com/tstone-1)) writes and maintains tpdf and uses
+it daily. It is free because it is open source under the MIT licence: there is no paid
+version, no trial, no advertising and nothing to sign in to.
+
+tpdf contacts the network in three cases, and in no other:
+
+- **The update check**, once per launch, reads one file from this repository's releases on
+  github.com. It can be switched off.
+- **A timestamp on a signature**, when you ask for one, sends a hash of the signature to
+  the timestamp authority you chose. The document is not sent.
+- **Long-term validation data**, when you ask for it while signing, is fetched from the
+  revocation hosts that the certificates themselves name.
+
+A web link in a document opens in your browser, and only after you confirm the site.
+Everything else happens on your computer: there is no cloud service, no AI assistant and no
+usage statistics. [Privacy](#privacy) has the detail of each request.
 
 ## What it does
 
@@ -47,6 +79,35 @@ computer trusts the signer, and what was added after signing.
 
 ![Document properties, one card for each of two signatures](docs/img/signatures.png)
 
+**And the rest of the daily work.** Each of these is described further down.
+
+- Merge documents, split one, extract pages, and make a PDF from pictures.
+- Make a scanned document searchable with a text layer from the system's text recognition.
+- Save a smaller copy, with a preview of what the compression does to the pages.
+- Set a password on a document or remove one.
+- Create form fields: text, multi-line, checkbox, dropdown, radio button and signature.
+- Draw or import a signature image once and place it on any page.
+- Tabs that come back after a restart, a reload when the file changes on disk, and inverted
+  page colours for a dark screen.
+- Print the document or a page range.
+
+## How it compares
+
+Checked on 2026-10-07 against each project's own pages. Prices are the vendors' list prices.
+
+| | tpdf | SumatraPDF | Adobe Acrobat | PDFgear | Stirling-PDF desktop |
+|---|---|---|---|---|---|
+| Price | Free | Free | Free reader; Standard USD 179.88 a year, Pro USD 239.88 a year | Free | Free core, paid plans |
+| Source code | MIT | GPL-3.0 | Closed | Not published | MIT core with proprietary parts |
+| macOS | Apple silicon | No | Yes | Yes | Yes |
+| Windows | Yes | Yes | Yes | Yes | Yes |
+| Edits documents | Yes | No, a reader with highlighting | In the paid versions | Yes | Yes |
+
+Acrobat sells redaction, text recognition and document comparison only in Pro. tpdf has the
+first two and no comparison yet. SumatraPDF's installer is 10.6 MB and tpdf's Windows
+installer is 40 MB, so SumatraPDF remains the smaller program; Stirling-PDF's desktop
+installers are 310 to 458 MB.
+
 ## Script it
 
 Everything above is also a command-line tool with JSON output, and a Python client on top
@@ -71,7 +132,7 @@ assert report["written"] and report["verified"]
 assert pdf.verify("contract-signed.pdf")["files"][0]["signatures"][0]["integrity"]["verdict"] == "intact"
 ```
 
-Twenty commands in all: [Command-line tool](#command-line-tool) has each of them, how to
+Twenty-six commands in all: [Command-line tool](#command-line-tool) has each of them, how to
 install the tool, and the Python client.
 
 ## Status
