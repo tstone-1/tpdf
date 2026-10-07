@@ -1055,6 +1055,8 @@ jobs:
           cargo install --locked --git https://github.com/Le-Syl21/ssign --rev $env:SSIGN_REV ssign
           if ($LASTEXITCODE -ne 0) { exit 1 }
           ssign --version
+          # Tauri is given the wrapper and finds it where it finds ssign.
+          Copy-Item (Join-Path $env:GITHUB_WORKSPACE 'scripts\sign-windows.cmd') (Split-Path (Get-Command ssign).Source)
 
       - name: Build and publish release
         uses: tauri-apps/tauri-action@84b9d35b5fc46c1e45415bdb6144030364f7ebc5 # v0 (action-v0.6.2)
@@ -1136,12 +1138,25 @@ jobs:
           # reaches first wins. The body is in the `draft` job now, which is the
           # only thing that creates a release.
 
-      # ssign keeps its session in a file for twenty minutes. Nothing after the
-      # build signs, so it goes, whether the build passed or not.
+      # ssign keeps its session in a file for twenty minutes, under %HOME%\.cache
+      # where HOME is set and under the temporary folder where it is not.
+      # Nothing after the build signs, so it goes, whether the build passed or not.
       - name: Remove the Windows signing session
         if: always() && runner.os == 'Windows'
         shell: pwsh
-        run: Remove-Item -Recurse -Force (Join-Path ([IO.Path]::GetTempPath()) 'ssign') -ErrorAction SilentlyContinue
+        run: |
+          $places = @((Join-Path ([IO.Path]::GetTempPath()) 'ssign'))
+          if ($env:HOME) { $places += Join-Path $env:HOME '.cache\ssign' }
+          foreach ($place in $places) { Write-Output "$place present: $(Test-Path $place)"; Remove-Item -Recurse -Force $place -ErrorAction SilentlyContinue }
+
+      # Tauri prints nothing of a sign command that failed, so this is where a
+      # failed signature gets its reason. The line naming the card is left out.
+      - name: Show what the signing client said
+        if: always() && runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $log = Join-Path $env:RUNNER_TEMP 'ssign.log'
+          if (Test-Path $log) { Get-Content $log | Where-Object { $_ -notmatch 'card ' } } else { Write-Output 'no signing log: the sign command never ran' }
 
       # Nothing in the build reads a signature back, so this step does: the
       # installer, and then, unpacked from it, the three files tpdf itself

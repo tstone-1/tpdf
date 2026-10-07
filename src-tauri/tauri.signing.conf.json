@@ -3,7 +3,7 @@
   "bundle": {
     "windows": {
       "signCommand": {
-        "cmd": "ssign",
+        "cmd": "sign-windows.cmd",
         "args": ["%1"]
       }
     }
