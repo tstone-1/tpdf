@@ -1,6 +1,6 @@
 name: Windows signing rehearsal
 
-# Signs three files that are already public with the Certum Open Source
+# Signs two files that are already public with the Certum Open Source
 # certificate and reads every signature back. It publishes nothing and uploads
 # nothing: the question it answers is whether a hosted runner can sign at all,
 # before release.yml is changed to depend on it.
@@ -8,6 +8,9 @@ name: Windows signing rehearsal
 # The key is in Certum's SimplySign service. Certum supports a login from its
 # desktop program only, so the login here is done by ssign, an unofficial
 # client (MIT) that is built from a pinned commit of its source.
+#
+# The MSI is left out: ssign 0.1.7 signs executables only and refuses an MSI
+# with "not a PE (no MZ signature)", measured in run 37631357684.
 #
 # Start it by hand:
 #   gh workflow run sign-rehearsal.yml --ref main
@@ -17,7 +20,7 @@ on:
   workflow_dispatch:
     inputs:
       release:
-        description: Published release whose Windows installers are signed as a test
+        description: Published release whose Windows installer is signed as a test
         required: true
         default: v26.10.9
 
@@ -65,12 +68,12 @@ jobs:
           RELEASE: ${{ inputs.release }}
         run: |
           New-Item -ItemType Directory -Force work | Out-Null
-          gh release download $env:RELEASE --repo $env:GITHUB_REPOSITORY --dir work --pattern '*_x64-setup.exe' --pattern '*_x64_en-US.msi'
+          gh release download $env:RELEASE --repo $env:GITHUB_REPOSITORY --dir work --pattern '*_x64-setup.exe'
           if ($LASTEXITCODE -ne 0) { exit 1 }
-          # A plain executable, as the control beside the two installers.
+          # A plain executable, as the control beside the installer.
           Copy-Item (Get-Command ssign).Source work\plain.exe
           $files = Get-ChildItem work -File
-          if ($files.Count -ne 3) { Write-Output "::error::expected 3 files to sign, found $($files.Count)"; exit 1 }
+          if ($files.Count -ne 2) { Write-Output "::error::expected 2 files to sign, found $($files.Count)"; exit 1 }
           foreach ($file in $files) {
             $status = (Get-AuthenticodeSignature $file.FullName).Status
             Write-Output "$($file.Name): $status before signing"

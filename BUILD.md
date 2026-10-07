@@ -6601,6 +6601,21 @@ gained T6.39 and T6.40 and lost the sentence that the fill is black. The release
 after 26.10.9, against the rule in `docs/DETAIL.md` *Versioning*: it was asked for, and it
 carries a fix for redactions that were refused outright.
 
+**26.10.10 publication, 2026-10-07:** `Audit` and CI were green on the release commit
+`f931f6e9`, both legs, and the tag sits on it. Only the text of the release notes had
+changed in `release.yml`, so no rehearsal tag was cut; the `Release` run for `v26.10.10`
+skipped its gates on CI's account. The Windows job passed at the first attempt. The macOS
+job built and signed, then failed in notarisation with `HTTPClientError.connectTimeout`
+while uploading to Apple; the same job had timed out twice fetching its cache. Rerun once
+with `gh run rerun --failed`, it passed. The draft held 8 assets and
+`scripts/publish_release.py v26.10.10 --publish` published it. Without authentication the
+`.dmg`, the `.msi`, the `-setup.exe` and the updater archive answer 200 and `latest.json`
+offers 26.10.10 for `darwin-aarch64` and `windows-x86_64`. The downloaded `.dmg` staples
+and Gatekeeper reads it as Notarized Developer ID. The Homebrew cask went from 26.10.9 to
+26.10.10; `brew audit --cask --online` passed and `brew livecheck` reads 26.10.10. winget
+was not updated. The update from 26.10.9 (step 12) was not applied by hand before this was
+written.
+
 **26.10.9 verification, macOS arm64, 2026-10-06:** all 30 gates passed on the release tree
 (2,865 Rust tests with ten documented ignored, 2,491 frontend tests) and `check_windows.py`
 type-checked the Windows tree. `--near v26.10.8` selected 247 Rust mutations and no frontend
