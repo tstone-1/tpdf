@@ -16,18 +16,19 @@ Take the file for your computer from the
 | Computer | File | Notes |
 |---|---|---|
 | Mac with Apple silicon | `tpdf_<version>_aarch64.dmg` | Signed and notarized. Or `brew install --cask tstone-1/tpdf/tpdf` |
-| Windows, 64-bit | `tpdf_<version>_x64-setup.exe` | Installs for your user account, no administrator rights. **Not code-signed yet**, see below |
-| Windows, for deployment | `tpdf_<version>_x64_en-US.msi` | The same program as an MSI. Not code-signed yet |
+| Windows, 64-bit | `tpdf_<version>_x64-setup.exe` | Installs for your user account, no administrator rights. Code-signed, see below |
 
 The `.sig`, `.tar.gz` and `latest.json` files beside them belong to the built-in updater;
 you do not need them. There is no build for Intel Macs, Windows on ARM or Linux.
 
-**The Windows installer is not code-signed yet.** Windows therefore shows "Windows protected
-your PC" the first time you run it: choose **More info**, then **Run anyway**. On a computer
-with Smart App Control switched on, Windows blocks unsigned programs and offers no exception
-for a single one, so tpdf cannot be installed there until it is signed. The installer is
-built from this repository by the public
-[release workflow](.github/workflows/release.yml).
+**The Windows installer is code-signed since 26.10.11**: the publisher reads *Open Source
+Developer Timo Stein*. The certificate is new, so Windows can still show "Windows protected
+your PC" the first time you run it: choose **More info**, check the publisher, then **Run
+anyway**. Whether a computer with Smart App Control switched on accepts it has not been
+tested. There is no `.msi` any more: if you installed tpdf from one, uninstall it once and
+install the `-setup.exe`. The installer is built and signed from this repository by the
+public [release workflow](.github/workflows/release.yml);
+[Code signing policy](#code-signing-policy) has who signs and what.
 
 ## Who makes it, and what leaves your computer
 
@@ -163,8 +164,9 @@ document with a certificate from your macOS keychain or Windows certificate stor
 whether each signature in a document is intact and whether your computer trusts its signer,
 and sign, verify, extract, fill and redact from scripts with the `tpdf` command-line tool.
 Installers are on the [Releases](https://github.com/tstone-1/tpdf/releases) page:
-macOS is signed with a Developer ID identity and notarized, Windows is unsigned and
-SmartScreen will warn on first launch. See [`docs/PLAN.md`](docs/PLAN.md) for the
+macOS is signed with a Developer ID identity and notarized, Windows is signed with a
+Certum Open Source certificate and SmartScreen can still warn on first launch while that
+certificate is new. See [`docs/PLAN.md`](docs/PLAN.md) for the
 architecture and roadmap, [`docs/THREAT-MODEL.md`](docs/THREAT-MODEL.md) for the security
 position, [`BUILD.md`](BUILD.md) to build it yourself, and [`AGENTS.md`](AGENTS.md) for
 project conventions.
@@ -819,11 +821,12 @@ tool…** removes both links. A file already at either path that tpdf did not pu
 left alone. Each of the two commands is greyed, and left out of the command palette, while
 it has nothing to do: **Install** once both links run this copy's tool, **Uninstall** when
 neither path holds anything. Because it is a link, the
-tool updates with the application. On Windows both installers put `tpdf-cli.exe` beside
-`tpdf.exe`, in the folder tpdf is installed in. The `-setup.exe` installer, which installs
-for you alone and needs no administrator, also adds that folder to your `PATH`, so a
-terminal opened afterwards runs `tpdf-cli` by name; uninstalling takes it out again. After
-the `.msi` installer, choose **Install command-line tool…** once, or run
+tool updates with the application. On Windows the installer puts `tpdf-cli.exe` beside
+`tpdf.exe`, in the folder tpdf is installed in. It installs
+for you alone and needs no administrator, and also adds that folder to your `PATH`, so a
+terminal opened afterwards runs `tpdf-cli` by name; uninstalling takes it out again. Where
+the folder is not on your `PATH`, as after the `.msi` of 26.10.10 and earlier, choose
+**Install command-line tool…** once, or run
 `tpdf-cli path --add` by its full path: both add the folder to your own `PATH`, not the
 computer's. **Uninstall command-line tool…** and `tpdf-cli path --remove` take it out, and
 `tpdf-cli path` says whether it is there, and of the two commands the one with nothing to do

@@ -32,7 +32,7 @@
 //! holds something that is not tpdf's.
 //!
 //! Windows has no counterpart to install: `tpdf-cli.exe` is installed beside
-//! `tpdf.exe` by both installers, and the answer says where.
+//! `tpdf.exe` by the installer, and the answer says where.
 
 use std::path::{Path, PathBuf};
 

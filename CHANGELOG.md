@@ -17,14 +17,16 @@ as *downloadable*, while the release sat as a draft that GitHub showed to nobody
 are given now because they are different facts, and only the second one means a reader can
 have the binary.)
 
-## [26.10.11] - Unreleased
+## [26.10.11] - 2026-10-07
 
 ### Changed
 
 - **The Windows installer is code-signed.** The publisher reads *Open Source Developer
   Timo Stein*, from a Certum Open Source Code Signing certificate. `tpdf.exe`, `tpdf-cli.exe`
   and `pdfium.dll` inside it are signed too. The certificate is new, so SmartScreen can
-  still warn on first launch until enough people have installed a signed release.
+  still warn on first launch until enough people have installed a signed release. Not
+  established: whether `uninstall.exe` is signed. The build's signing log has no entry for
+  it.
 
 ### Removed
 

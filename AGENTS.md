@@ -300,7 +300,7 @@ Each release is a `Release vYY.M.MICRO: ...` commit. Unreleased work sits under
 release time.
 
 That heading form is safe: `release.yml` reads nothing from `CHANGELOG.md`, so re-read its
-literal `releaseBody` each release. Until Windows is signed, release at most weekly
+literal `releaseBody` each release. The weekly limit ended with 26.10.11
 ([`docs/DETAIL.md`](docs/DETAIL.md) *Versioning*).
 
 ---

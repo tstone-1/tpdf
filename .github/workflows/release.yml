@@ -509,7 +509,11 @@ jobs:
           workers cannot read arbitrary user files or access the network;
           Windows workers use low integrity and resource-limited jobs.
 
-          **New in 26.10.10, and the reason to update.** Redacting part
+          **New in 26.10.11.** The Windows installer is code-signed, and
+          so are `tpdf.exe`, `tpdf-cli.exe` and `pdfium.dll` inside it. The
+          program is the one in 26.10.10.
+
+          **New in 26.10.10.** Redacting part
           of a line removes that part and leaves the rest of the line
           where it was; it used to take the whole line. Where tpdf cannot
           prove which characters a line draws, the whole line still goes

@@ -76,8 +76,8 @@ you do not need to have diagnosed it.
 - Vulnerabilities in unmodified upstream PDFium. Report those to
   [Chromium](https://issues.chromium.org/); they reach far more users through Chrome than
   through tpdf. If a PDFium fix needs a pin bump here, an issue is welcome.
-- The Windows build being unsigned. SmartScreen warns on first launch; this is a known and
-  documented state, not a finding.
+- SmartScreen warning on first launch of the Windows build. It is signed since 26.10.11,
+  the certificate is new, and the warning is a known and documented state, not a finding.
 - Anything requiring an attacker who already has code execution as the user.
 - Denial of service by a document that is merely large or slow. Resource bounds exist and
   are documented; a document that takes a long time is not a security issue unless it

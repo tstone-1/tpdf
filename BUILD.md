@@ -6591,9 +6591,24 @@ a copy finds no `windows-x86_64-msi` in `latest.json`, falls back to `windows-x8
 runs that installer, so it ends with two installed copies. The release notes say to
 uninstall the `.msi` once. `signpath-onboarding.yml` still builds one, with `--bundles`.
 
-**Not measured:** a release built this way. The first rehearsal tag after this was written
-is the measurement, and until it has passed nothing here says that `signCommand` reaches
-`pdfium.dll` or that the updater signature is over the signed installer.
+**A release built this way was rehearsed four times on 2026-10-07**, and each tag failed
+one step later than the last:
+
+| Tag | Windows leg |
+|---|---|
+| `v26.10.11-rc1` | Stopped before building: the overlay's path was put together in the job matrix, where `github.workspace` is empty, so Tauri was given `/src-tauri/tauri.signing.conf.json` |
+| `v26.10.11-rc2` | `tpdf-cli.exe` signed, then `failed to run ssign` on `tpdf.exe` and no reason: Tauri shows nothing of a sign command that failed. Hence `scripts/sign-windows.cmd` and its log |
+| `v26.10.11-rc3` | The log gave the reason: `atomically replacing ...tpdf.exe: Access is denied. (os error 5)`, a fifth of a second after Tauri had written to the file. `ssign` replaces a file by renaming a signed copy over it. Hence `scripts/sign-windows.ps1`, which lets it sign into a folder of its own and copies the bytes back, again for up to thirty seconds |
+| `v26.10.11-rc4` | Passed. One login signed nine files: `tpdf-cli.exe`, `tpdf.exe`, `pdfium.dll`, five NSIS plugin DLLs and the installer. The four the leg reads back were valid, timestamped and by the signer. The draft held 6 assets, `latest.json` named the installer for `windows-x86_64` and `windows-x86_64-nsis`, and `minisign` verified the downloaded installer against its `.sig` and the key in `tauri.conf.json`, and refused a copy with one byte added |
+
+What holds a file open against the rename was not found. `sign-rehearsal.yml` holds one of
+its files open against writing for twenty seconds while it signs, and fails unless the copy
+had to wait and then succeeded: 5 attempts waited in run 37664244204.
+
+**Not established: whether `uninstall.exe` is signed.** Tauri puts the sign command into
+the installer script as `!uninstfinalize`, and the rc4 signing log has no entry between the
+last plugin DLL and the installer, so that call did not reach the wrapper. The installed
+`uninstall.exe` has not been read.
 
 ## Cutting a release
 
@@ -6639,6 +6654,20 @@ showed Form at the head of the *More* menu with Pages and Redact below the fold,
 now comes last there.
 `docs/THREAT-MODEL.md` already stated the three new commands (T6.35, T6.36). The release
 notes in `release.yml` were rewritten.
+
+**26.10.11 verification, macOS arm64, 2026-10-07:** all 30 gates passed on the release tree
+(2,941 Rust tests with ten documented ignored, 2,528 frontend tests) and `check_windows.py`
+type-checked the Windows tree. The program is the one in 26.10.10: since that tag one Rust
+file changed, in a comment. What changed is how a release is built, so what was verified is
+that: the four rehearsal tags in *Signing with the Certum certificate*, of which
+`v26.10.11-rc4` passed on both legs with the installer, `tpdf.exe`, `tpdf-cli.exe` and
+`pdfium.dll` read back as signed and the updater signature verified against the signed
+installer. Since rc4 the tree changed in version numbers, documents, the release notes and
+that comment. **Not run:** the Windows test suites, any mutation, any window harness, the
+bundle smoke test (step 8) and the hand-applied update (step 12). Not established: whether
+`uninstall.exe` is signed, and what Smart App Control does with the installer. The README,
+`SECURITY.md` and `docs/DETAIL.md` no longer say that Windows is unsigned, and the weekly
+release limit, which existed because it was, ended.
 
 **26.10.10 verification, macOS arm64, 2026-10-07:** all 30 gates passed on the release tree
 (2,941 Rust tests with ten documented ignored, 2,528 frontend tests), after four mutation

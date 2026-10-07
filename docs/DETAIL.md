@@ -302,7 +302,8 @@ zero and needs "several weeks and hundreds of clean installs" to lose the warnin
 between 2026-08-12 and 2026-10-06 meant no installer lived long enough to earn any. Work
 collects under the `Unreleased` heading in the meantime. A fix for lost data or a security
 defect still ships at once. The rule ends when the installers carry a signature, because
-reputation then belongs to the publisher and not to the file. Nothing measures how many
+reputation then belongs to the publisher and not to the file. **It ended with 26.10.11,
+on 2026-10-07**, the first release whose installer is signed. Nothing measures how many
 installs the warning costs; the rule rests on Microsoft's description of the mechanism.
 Evidence: [`DEMAND.md`](DEMAND.md), *Second pass*.
 
