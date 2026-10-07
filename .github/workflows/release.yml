@@ -841,15 +841,11 @@ jobs:
           - platform: macos-latest
             label: macOS (Apple Silicon)
             bundle-dir: src-tauri/target/release/bundle
-            signing-config: ''
-          # The second overlay names the program Tauri signs every Windows
-          # executable with. It is an overlay for the reason the updater one
-          # is: in `tauri.conf.json` it would make every build on a development
-          # machine ask for a signing login.
+            signs-windows: false
           - platform: windows-2025
             label: Windows (x64)
             bundle-dir: src-tauri/target/release/bundle
-            signing-config: --config ${{ github.workspace }}/src-tauri/tauri.signing.conf.json
+            signs-windows: true
 
     runs-on: ${{ matrix.platform }}
     # The Certum login is in this environment and in no other place, and the
@@ -1096,7 +1092,14 @@ jobs:
           # quotes, leaving `{bundle:{createUpdaterArtifacts:true}}`. Checked
           # with `shlex.split`, not guessed. Either mistake would surface only on
           # a tag push, which is the most expensive place to find one.
-          args: --config ${{ github.workspace }}/src-tauri/tauri.updater.conf.json ${{ matrix.signing-config }}
+          #
+          # The second overlay, on the Windows leg only, names the program Tauri
+          # signs every Windows executable with. It is an overlay for the reason
+          # the first is: in `tauri.conf.json` it would make every build on a
+          # development machine ask for a signing login. Its path is put
+          # together here and not in the matrix, where `github.workspace` is
+          # empty: `v26.10.11-rc1` asked for `/src-tauri/tauri.signing.conf.json`.
+          args: --config ${{ github.workspace }}/src-tauri/tauri.updater.conf.json ${{ matrix.signs-windows && format('--config {0}/src-tauri/tauri.signing.conf.json', github.workspace) || '' }}
           # The draft is created once, by the `draft` job, and both legs upload
           # into it by id. `tagName` is deliberately absent: the action's create
           # path is guarded by `if (tagName && !releaseId)`, so passing both

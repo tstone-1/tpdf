@@ -1818,20 +1818,28 @@ them key by key.
 
 ## Code signing policy
 
-Windows releases are currently unsigned. The application to
-[SignPath Foundation](https://signpath.org/) submitted on 2026-09-12 was declined
-because the project has not yet established the required public adoption and
-independent recognition. A new application may follow after broader adoption;
-there is no active signing arrangement. macOS releases use Apple Developer ID
-signing and notarization.
+Windows releases after 26.10.10 are signed with a
+[Certum](https://www.certum.eu/) Open Source Code Signing certificate issued to the
+maintainer. Windows shows the publisher as *Open Source Developer Timo Stein*. 26.10.10
+and the releases before it are unsigned. macOS releases use Apple Developer ID signing and
+notarization.
 
-The committer, reviewer and proposed signing approver is
-[Timo Stein (tstone-1)](https://github.com/tstone-1). Under the proposed policy for
-future [SignPath.io](https://signpath.io/) integration,
-each Windows release requires his manual signing approval. GitHub and SignPath
-accounts involved in signing must use two-factor authentication. Only project-owned
-binaries built on GitHub-hosted runners may be submitted; upstream PDFium binaries
-remain covered by their own provenance and notices.
+The committer, reviewer and release approver is
+[Timo Stein (tstone-1)](https://github.com/tstone-1). Nobody else can sign.
+
+- **What is signed.** The installer, `tpdf.exe`, `tpdf-cli.exe` and `pdfium.dll`. All
+  four are built from this repository; `pdfium.dll` is built from unpatched upstream
+  PDFium source by the [engine workflow](.github/workflows/pdfium.yml). No file from
+  anywhere else is signed with this certificate.
+- **Where.** Only in the public [release workflow](.github/workflows/release.yml), on a
+  GitHub-hosted runner, for a version tag the maintainer pushes. The workflow reads every
+  signature back and fails if one is missing or not his.
+- **Approval.** The workflow produces a draft. The maintainer checks it and publishes it
+  by hand; nothing reaches a reader without that step.
+- **The key.** It is held in Certum's signing service and cannot be exported. The login to
+  that service is a secret of this repository that only the release workflow and its
+  rehearsal can read, and a pull request cannot. The GitHub account uses two-factor
+  authentication, and every login to the signing service needs a one-time code.
 
 ### Privacy
 

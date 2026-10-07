@@ -150,13 +150,12 @@ The account behind this section: [`docs/RATIONALE.md`](docs/RATIONALE.md) *The p
 
 ---
 
-The SignPath Foundation application submitted on 2026-09-12 was declined for
-insufficient public adoption and independent recognition, not a technical finding.
-Decision recorded 2026-09-16: continue development with unsigned Windows releases,
-defer paid SignPath, and reconsider a Foundation application after broader adoption.
-`BUILD.md`'s *Windows signing onboarding* retains the sample workflow, account
-prerequisites and signing order for future use. The public policy is in `README.md`;
-signing is not available until approval and a verified signing rehearsal.
+Windows releases after 26.10.10 are signed with a Certum Open Source Code Signing
+certificate by the Windows leg of `release.yml`. The login is two secrets of the GitHub
+environment `signing`, read by `ssign`, an unofficial client built from a pinned commit.
+`BUILD.md`, *Signing with the Certum certificate*, has the rules and the fallback by hand;
+`docs/THREAT-MODEL.md` §T9 residual 6 has what the login is worth. There is no `.msi` any
+more: `ssign` cannot sign one. The public policy is in `README.md`.
 
 ## Stack
 
