@@ -179,7 +179,7 @@ MUTATIONS = [
     Mutation("assurance: signed save incomplete status", "src/lib/signedsave.ts", "!limits || limits.locked || limits.unreadable > 0", "!limits || limits.locked || false", "requires consent when signature enumeration is incomplete or fails"),
     Mutation("assurance: save write guard", "src/lib/edits.ts", "  async save(source: string): Promise<void> {\n    await this.beforeWrite();", "  async save(source: string): Promise<void> {\n    // consent omitted", "awaits save consent before every writing command and sends nothing when declined"),
     Mutation("assurance: saveCopy write guard", "src/lib/edits.ts", "  async saveCopy(source: string, path: string): Promise<Copied> {\n    await this.beforeWrite();", "  async saveCopy(source: string, path: string): Promise<Copied> {\n    // consent omitted", "awaits save consent before every writing command and sends nothing when declined"),
-    Mutation("assurance: redactCopy write guard", "src/lib/edits.ts", "  async redactCopy(source: string, path: string): Promise<Applied> {\n    await this.beforeWrite();", "  async redactCopy(source: string, path: string): Promise<Applied> {\n    // consent omitted", "awaits save consent before every writing command and sends nothing when declined"),
+    Mutation("assurance: redactCopy write guard", "src/lib/edits.ts", "  async redactCopy(source: string, path: string, fill: Fill): Promise<Applied> {\n    await this.beforeWrite();", "  async redactCopy(source: string, path: string, fill: Fill): Promise<Applied> {\n    // consent omitted", "awaits save consent before every writing command and sends nothing when declined"),
     Mutation("assurance: redactRasterCopy write guard", "src/lib/edits.ts", "  async redactRasterCopy(source: string, path: string): Promise<Applied> {\n    await this.beforeWrite();", "  async redactRasterCopy(source: string, path: string): Promise<Applied> {\n    // consent omitted", "awaits save consent before every writing command and sends nothing when declined"),
     Mutation("assurance: ocrCopy write guard", "src/lib/edits.ts", "    language: string | null,\n  ): Promise<Recognised> {\n    await this.beforeWrite();", "    language: string | null,\n  ): Promise<Recognised> {\n    // consent omitted", "awaits save consent before every writing command and sends nothing when declined"),
     Mutation("assurance: protectCopy write guard", "src/lib/edits.ts", "  async protectCopy(source: string, path: string, password: string | null): Promise<Copied> {\n    await this.beforeWrite();", "  async protectCopy(source: string, path: string, password: string | null): Promise<Copied> {\n    // consent omitted", "awaits save consent before every writing command and sends nothing when declined"),
@@ -599,7 +599,7 @@ MUTATIONS = [
     Mutation("compress dialog: take any data URL for a PNG", "src/lib/compressdialog.ts", "  return /^data:image\\/png;base64,[A-Za-z0-9+/]+={0,2}$/.test(url);", "  return /^data:/.test(url);", "puts nothing in a picture but a PNG the backend encoded"),
     Mutation("redact list: count the pictures as drawings", "src/lib/redactlist.ts", "const drawings = (plan?.paths?.length ?? 0) +", "const drawings = (plan?.images?.length ?? 0) +", "says a drawing inside the region goes, and counts them"),
     Mutation("recovery: drop the note from a clean verdict", "src/lib/recovery.ts", '(applied.notes?.length ? ` Note: ${applied.notes.join("; ")}.` : "")', '""', "reports a redaction as the window does"),
-    Mutation("assurance: redactDocument write guard", "src/lib/edits.ts", "  async redactDocument(source: string): Promise<Applied> {\n    await this.beforeWrite();", "  async redactDocument(source: string): Promise<Applied> {\n    // consent omitted", "awaits save consent before every writing command and sends nothing when declined"),
+    Mutation("assurance: redactDocument write guard", "src/lib/edits.ts", "  async redactDocument(source: string, fill: Fill): Promise<Applied> {\n    await this.beforeWrite();", "  async redactDocument(source: string, fill: Fill): Promise<Applied> {\n    // consent omitted", "awaits save consent before every writing command and sends nothing when declined"),
     Mutation("choices: compare selection arrays by identity", "src/lib/forms.ts", "a.length === b.length && a.every((v, i) => v === b[i])", "a === b", "keeps duplicate exports distinct and compares selections across IPC replies"),
     Mutation("choices: accept too many selected options", "src/lib/forms.ts", "&& value.length > 1) return", "&& value.length > 100) return", "validates option indices and selection cardinality"),
     Mutation("forms: lose an unchecked value", "src/lib/forms.ts", "?.value ?? widget.value", "?.value || widget.value", "does not confuse an unchecked checkbox with an absent answer"),
@@ -3652,23 +3652,167 @@ MUTATIONS = [
         "does not send a redaction for a page the model has never mentioned",
     ),
     Mutation(
-        # Leave the redaction tool armed after a region. The crop's twin, and it
-        # needs its own: the two flags are cleared on adjacent lines, so a
-        # mutation of one says nothing about the other. A reader who marked one
-        # region and then dragged to scroll would mark a second.
-        "viewer: leave the redaction tool armed after a region",
+        # Spend the redaction tool on its first region. It was one-shot until
+        # 2026-10-07 and stays armed now, because a reader with a dozen things
+        # to take out armed it a dozen times. The crop's twin below still holds
+        # the other half: the two were disarmed by one line.
+        "viewer: spend the redaction tool on its first region",
         "src/lib/viewer.ts",
-        # Re-aimed 2026-09-06 when the five tool flags became one `tool` field.
-        # Re-aimed 2026-09-27 when the signature placement joined the crop's drag.
-        "        this.placing = null;\n"
+        '        if (this.tool.kind === "crop" || this.tool.kind === "place") {\n'
+        "          this.tool = NO_TOOL;\n"
+        "        }",
         '        if (this.tool.kind === "crop" || this.tool.kind === "redact" || this.tool.kind === "place") {\n'
         "          this.tool = NO_TOOL;\n"
         "        }",
-        "        this.placing = null;\n"
-        '        if (this.tool.kind === "crop" || this.tool.kind === "redact" || this.tool.kind === "place") {\n'
-        '          this.tool = { kind: "redact" };\n'
-        "        }",
-        "is spent by one region, like the crop and unlike the eraser",
+        "stays armed for the next region, like the eraser, until Escape",
+    ),
+    Mutation(
+        # The armed tool has two gestures and the press decides which. Without
+        # this branch a press on the words drags a rectangle, as it did.
+        "viewer: drag a rectangle when the armed redaction tool is pressed on text",
+        "src/lib/viewer.ts",
+        "    if (this.tool.kind === \"redact\" && this.pressOnText(event)) {",
+        "    if (false) {",
+        "marks the words dragged across and stays armed",
+    ),
+    Mutation(
+        # And the other way: every press selects, so blank paper has no gesture.
+        "viewer: select text when the armed redaction tool is pressed on blank paper",
+        "src/lib/viewer.ts",
+        "    if (this.tool.kind === \"redact\" && this.pressOnText(event)) {",
+        "    if (this.tool.kind === \"redact\") {",
+        "drags a rectangle when pressed on blank paper",
+    ),
+    Mutation(
+        # Mark every selection, armed or not: a reader selecting to copy would
+        # mark what they selected.
+        "viewer: mark a selection made with no tool armed",
+        "src/lib/viewer.ts",
+        "    if (this.tool.kind === \"redact\" && this.hasSelection) this.opts.onRedactSelection?.();",
+        "    if (this.hasSelection) this.opts.onRedactSelection?.();",
+        "selects without marking when the tool is not armed",
+    ),
+    Mutation(
+        # Ask for an empty selection to be marked, which is what a click is.
+        "viewer: mark the nothing a click selects",
+        "src/lib/viewer.ts",
+        "    if (this.tool.kind === \"redact\" && this.hasSelection) this.opts.onRedactSelection?.();",
+        "    if (this.tool.kind === \"redact\") this.opts.onRedactSelection?.();",
+        "marks nothing for a click that selects nothing",
+    ),
+    Mutation(
+        # The cursor is the only thing that says which gesture a press starts.
+        "viewer: show the crosshair over text with the redaction tool armed",
+        "src/lib/viewer.ts",
+        "      : this.tool.kind === \"redact\" && this.overRedactText\n        ? \"text\"",
+        "      : false\n        ? \"text\"",
+        "shows the text cursor over words and the crosshair over paper",
+    ),
+    Mutation(
+        # Call every point of a page with text on it text, which is what
+        # `nearestChar` answers and why the tool cannot ask it.
+        "text: call the margin text",
+        "src/lib/text.ts",
+        "    if (dx <= ON_TEXT_REACH && dy <= ON_TEXT_REACH) return true;",
+        "    if (dx <= 1e9 && dy <= 1e9) return true;",
+        "is false in the margin and between two lines",
+    ),
+    Mutation(
+        # No reach at all: a press between two letters of a word starts a rectangle.
+        "text: give a press beside a letter no reach",
+        "src/lib/text.ts",
+        "    if (dx <= ON_TEXT_REACH && dy <= ON_TEXT_REACH) return true;",
+        "    if (dx <= 0 && dy <= 0) return true;",
+        "is true on a character and just beside one",
+    ),
+    Mutation(
+        # A damaged stored value becomes the fill: a redaction in a colour nobody chose.
+        "redact fill: trust whatever is stored",
+        "src/lib/redactfill.ts",
+        "    return isFill(kept) ? kept : DEFAULT_FILL;",
+        "    return (kept as Fill | null) ?? DEFAULT_FILL;",
+        "reads as black when what is stored is not one of the three",
+    ),
+    Mutation(
+        # The note is the only thing that says what white does.
+        "redact fill: say nothing about white",
+        "src/lib/redactfill.ts",
+        "  return fill === \"white\"",
+        "  return fill === \"red\"",
+        "says what white means, and nothing for the other two",
+    ),
+    Mutation(
+        # The backend fills black when it is told nothing, so this reads as working.
+        "redact fill: send black for a copy whatever was chosen",
+        "src/lib/edits.ts",
+        "    return await call(\"redact_copy\", { doc: this.doc, source, path, fill });",
+        "    return await call(\"redact_copy\", { doc: this.doc, source, path, fill: \"black\" });",
+        "sends the colour of the boxes with both redactions",
+    ),
+    Mutation(
+        # And the same for the document itself.
+        "redact fill: send black for the document whatever was chosen",
+        "src/lib/edits.ts",
+        "    return await call(\"redact_document\", { doc: this.doc, source, fill });",
+        "    return await call(\"redact_document\", { doc: this.doc, source, fill: \"black\" });",
+        "sends the colour of the boxes with both redactions",
+    ),
+    Mutation(
+        # Tell the owner of a choice that changed nothing.
+        "redact fill: report the colour already chosen as a change",
+        "src/lib/redactfill.ts",
+        "    if (fill === this.chosen) return;\n",
+        "",
+        "opens on the kept colour and tells its owner of a new one, once",
+    ),
+    Mutation(
+        # Leave the note up after white is no longer the choice.
+        "redact fill: keep the note about white for every colour",
+        "src/lib/redactfill.ts",
+        "    const note = fillNote(this.chosen);",
+        "    const note = fillNote(\"white\");",
+        "shows the note while white is chosen and takes it away afterwards",
+    ),
+    Mutation(
+        # Take the redaction out of the selection's right-click menu, which
+        # sends the reader back to the toolbar's menu for every passage.
+        "context menu: do not offer the redaction on a selection",
+        "src/lib/contextmenu.ts",
+        '  "edit.redactSelection",\n  "edit.selectAll",',
+        '  "edit.selectAll",',
+        "offers the redaction straight after the three marks",
+    ),
+    Mutation(
+        # Add the vertical part of a sideways swipe on top of the strip's own
+        # scrolling, so a trackpad moves the tabs twice.
+        "tab wheel: move the strip for a swipe it already scrolls for",
+        "src/lib/tabwheel.ts",
+        "  if (Math.abs(wheel.deltaX) >= Math.abs(wheel.deltaY)) return 0;",
+        "  if (false) return 0;",
+        "leaves a sideways swipe to the strip itself",
+    ),
+    Mutation(
+        # Read a wheel that counts lines as one that counts pixels: three
+        # pixels a notch, which reads as a wheel that does nothing.
+        "tab wheel: count a line as a pixel",
+        "src/lib/tabwheel.ts",
+        "  if (wheel.deltaMode === LINES) return wheel.deltaY * LINE_PX;",
+        "  if (wheel.deltaMode === LINES) return wheel.deltaY;",
+        "counts lines and pages in pixels",
+    ),
+    Mutation(
+        "tab wheel: count a page as a line",
+        "src/lib/tabwheel.ts",
+        "  if (wheel.deltaMode === PAGES) return wheel.deltaY * width;",
+        "  if (wheel.deltaMode === PAGES) return wheel.deltaY * LINE_PX;",
+        "counts lines and pages in pixels",
+    ),
+    Mutation(
+        "tab wheel: turn the wheel the other way",
+        "src/lib/tabwheel.ts",
+        "  return wheel.deltaY;\n}",
+        "  return -wheel.deltaY;\n}",
+        "turns a vertical turn into the same distance sideways",
     ),
     # The four below replace five rows deleted 2026-09-06. Each of those mutated
     # one arming method's clearing of the other tools' flags, and there are no
@@ -6872,12 +7016,11 @@ MUTATIONS += [
         "src/lib/viewer.ts",
         # Re-aimed 2026-09-06 when the five tool flags became one `tool` field.
         # Re-aimed 2026-09-27 when the signature placement joined the crop's drag.
-        "        this.placing = null;\n"
-        '        if (this.tool.kind === "crop" || this.tool.kind === "redact" || this.tool.kind === "place") {\n'
+        # Re-aimed 2026-10-07 when the redaction tool left this line to stay armed.
+        '        if (this.tool.kind === "crop" || this.tool.kind === "place") {\n'
         "          this.tool = NO_TOOL;\n"
         "        }",
-        "        this.placing = null;\n"
-        '        if (this.tool.kind === "crop" || this.tool.kind === "redact" || this.tool.kind === "place") {\n'
+        '        if (this.tool.kind === "crop" || this.tool.kind === "place") {\n'
         '          this.tool = { kind: "crop" };\n'
         "        }",
         "is spent by one rectangle",

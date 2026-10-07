@@ -4173,8 +4173,10 @@ Vision refuses every image, and the probes that read a whole page still pass*.
 **`columns` ran 0/0 until 2026-08-27 and it is the fixture that matters most.** Its longest
 word is `alpha`, five characters, and the target filter was six — so the one corpus that
 puts a *second* text object on the region's own rows was the one this skipped. Every other
-fixture draws a line as a single text object, so redacting a word in it takes the whole line
-and there is no neighbour left to misread. Lowering the floor to five moves no other corpus,
+fixture draws a line as a single text object, so redacting a word in it took the whole line
+and there was no neighbour left to misread. (Since 2026-10-07 a word is cut out of its line
+and the neighbours on that line stay, so every fixture now has them; the numbers in this
+section were measured before that and have not been measured again.) Lowering the floor to five moves no other corpus,
 because the choice is the longest word on the page.
 
 Removing the `ocr_gate::mask_columns` call turns `columns.pdf` red on two checks — *the
@@ -6570,6 +6572,34 @@ showed Form at the head of the *More* menu with Pages and Redact below the fold,
 now comes last there.
 `docs/THREAT-MODEL.md` already stated the three new commands (T6.35, T6.36). The release
 notes in `release.yml` were rewritten.
+
+**26.10.10 verification, macOS arm64, 2026-10-07:** all 30 gates passed on the release tree
+(2,941 Rust tests with ten documented ignored, 2,528 frontend tests), after four mutation
+anchors the cycle's own changes had moved were re-aimed, and `check_windows.py`
+type-checked the Windows tree. `--near v26.10.9` selected 190 Rust mutations and 89
+frontend ones, run in the mutation worktree on the release tree, and every one was caught
+by the test named for it. The unit tests and the command-line suite ran on Windows 11
+through `scripts/run_on_windows.py` on the release tree: 2,964 unit tests passed, and the
+command-line suite failed one new check and then passed (535, with three skipped, which
+need the Mac's recogniser). The failure was the check and not the tool: it asked for
+*verified* on a page whose control word is 8.9 points tall, which that platform's
+recogniser does not read back, and it now asks that the copy is written and that the exit
+code agrees with the verdict. The normal bundle, with the development engine hidden: the
+bundled `tpdf-cli` answered `--version` with 26.10.10 and `verify`, took two numbers out
+of their lines with `--fill red` and reported the copy verified, and `hidden` found
+nothing in that copy. The bundle's window was opened on `text-heavy.pdf` in the
+background and a worker of it mapped the bundle's own `libpdfium.dylib`; what the
+application process maps was not read, and the window was not looked at. The window
+changes of this cycle (the armed redaction tool marking text, the command that leaves it
+armed, the colour swatches, the tab strip) were used in a development window by the person
+who reported them and were not driven by any harness; `docs/VERIFICATION.md` has what was
+measured on the files they were reported on. `worker-probe`, `backend-probe`, the window
+harnesses and `redact-reach-probe` were not run, and the README pictures were not
+retaken; no picture shows the Redactions panel's new swatches. `docs/THREAT-MODEL.md`
+gained T6.39 and T6.40 and lost the sentence that the fill is black. The release notes in
+`release.yml` were rewritten and lead with the redaction changes. This release is one day
+after 26.10.9, against the rule in `docs/DETAIL.md` *Versioning*: it was asked for, and it
+carries a fix for redactions that were refused outright.
 
 **26.10.9 verification, macOS arm64, 2026-10-06:** all 30 gates passed on the release tree
 (2,865 Rust tests with ten documented ignored, 2,491 frontend tests) and `check_windows.py`

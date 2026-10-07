@@ -523,6 +523,7 @@ fn measure(
         // `ask_redactions` merges them --- two regions over one line name the
         // same operator, and removing it twice is removing it once.
         let mut shows: Vec<usize> = Vec::new();
+        let mut show_cuts: Vec<tpdf_lib::redact::ShowCut> = Vec::new();
         let mut form_shows: Vec<(usize, usize)> = Vec::new();
         let mut images: Vec<usize> = Vec::new();
         let mut areas: Vec<[f32; 4]> = Vec::new();
@@ -590,6 +591,7 @@ fn measure(
                 }
             }
             shows.extend(plan.shows.iter().copied());
+            show_cuts.extend(plan.show_cuts.iter().cloned());
             form_shows.extend(plan.form_shows.iter().copied());
             images.extend(plan.images.iter().copied());
             paths.extend(plan.paths.iter().copied());
@@ -603,6 +605,7 @@ fn measure(
         }
         shows.sort_unstable();
         shows.dedup();
+        let show_cuts = tpdf_lib::redact::merge_cuts(show_cuts, &mut shows);
         form_shows.sort_unstable();
         form_shows.dedup();
         images.sort_unstable();
@@ -613,6 +616,7 @@ fn measure(
         paths.dedup();
         cuts.retain(|(ordinal, _)| paths.binary_search(ordinal).is_err());
         if shows.is_empty()
+            && show_cuts.is_empty()
             && form_shows.is_empty()
             && images.is_empty()
             && form_images.is_empty()
@@ -632,9 +636,11 @@ fn measure(
             });
         }
         planned.push(PlannedRedaction {
+            lines: Vec::new(),
             form_paths: Default::default(),
             source: page,
             shows,
+            show_cuts,
             text_objects,
             areas,
             taking,

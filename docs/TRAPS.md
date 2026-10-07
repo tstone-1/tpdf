@@ -52,6 +52,7 @@ hop through the index.
 - Two handles to one cached page are aliases, and a reading taken after a change describes the change
 - PDFium answers the same error for no password and for the wrong one
 - PDFium paints a pixel-aligned rectangle one pixel wider, so cutting it changes an edge the cut did not touch
+- PDFium makes no text object of a show operator that draws nothing, so counting operators counts too many
 
 ## PDFium: text, coordinates and outlines
 - A byte scan cannot verify a document with a Type0 font
@@ -93,6 +94,7 @@ hop through the index.
 - PDFium takes a character's box from its glyph outline, so invisible text in an empty glyph has no place
 - PDFium reports a glyph 1/64 larger than its outline, and a flat tolerance wide enough for that hid a 2.4% error
 - A recogniser's word boxes touch, and words written at them read back as one word
+- PDFium folds the horizontal scaling into a text object's matrix, so one em is the font size times that matrix's first row
 
 ## Text matching, and scripts that are not English
 - `FPDFText_GetUnicode` is a UTF-16 API, so an astral character is two characters
@@ -25940,3 +25942,67 @@ its page **by number** would lead to a different page once an earlier one is del
 which is worse than leading nowhere. And a named destination the bounded name-tree walk
 **gives up on** may lead to a deleted page; `links::find_named` keeps "gave up" apart from
 "not there" for exactly that caller. Both take the old path and drop the outline whole.
+
+### PDFium makes no text object of a show operator that draws nothing, so counting operators counts too many
+
+Redaction removes the nth text object PDFium reports by deleting the nth show operator
+`lopdf` decodes, and refuses when the two counts differ (`redact.rs`, *The correspondence
+this rests on*). The count of operators was every `Tj`, `TJ`, `'` and `"`. Reported from
+use on 2026-10-07: a phone company's invoice refused with 83 operators against 77 objects.
+The page has six `() Tj`. All eight invoices to hand have between two and seven on every
+one of their four pages, so no page of those documents could be redacted at all.
+
+The refusal was the guard working. What was wrong was the count it guarded, and no
+test showed it, because every fixture's show operators draw something.
+
+PDFium's rule, measured shape by shape on a generated page and not read from its source:
+
+- `Tj`, `'` and `"` make a text object when their **last** operand is a string or a name
+  that is not empty. `() Tj`, `<> Tj`, `5 Tj`, `[(x)] Tj`, a bare `Tj` and `(x) () Tj`
+  make none; `( ) Tj`, `/N Tj` and `() (x) Tj` make one.
+- `TJ` makes one when its array holds a string that is not empty. `[] TJ`, `[-200] TJ`,
+  `[()] TJ`, `[/N] TJ` and `(x) TJ` make none.
+- The font does not enter into it. A show with no font set, an unknown font name, size 0,
+  render mode 3, or outside `BT`/`ET` still makes an object.
+
+`makes_text_object` is that rule. The shapes were measured with another build of the
+engine (8076) than the pinned one, so `tests/cli/redact.rs` puts every shape on a page and
+redacts beside them through the real worker: one shape counted the other way and the
+removal refuses.
+
+Three things to take from it. **A show that makes no object is left in the stream, not
+removed with its neighbours**: `'` and `"` move to the next line even when their string is
+empty, and it holds no words to leak. **A fixture with the empty shows after the words
+cannot fail**: a count that ignores them and one that does not then address the same
+operator, so both tests put one in front. And **`pdftotext` reads nothing from a page with
+the malformed shapes**, which made the control of the first version of that check fail for
+every string; they are on a page of their own that only tpdf's extraction is asked about.
+
+### PDFium folds the horizontal scaling into a text object's matrix, so one em is the font size times that matrix's first row
+
+Cutting glyphs out of a show operator leaves a `TJ` number where they were, and that
+number is in thousandths of the font size along the baseline (`redact/glyph_cut.rs`,
+2026-10-07). The distance comes from PDFium: `FPDFText_GetCharOrigin` is the pen position
+of each character in page space. Turning page units into thousandths of an em needs to
+know what one em is on the page, and three things could be in or out of it: the font
+size, the horizontal scaling `Tz`, and the scale of `Tm` and `cm`.
+
+Measured on nine pages, one variable each and one with three at once, Helvetica `AB` where
+`A` is 667 thousandths wide:
+
+- `FPDFTextObj_GetFontSize` is the operand of `Tf`, unscaled: 4 under `3 0 0 3 … Tm`.
+- `FPDFPageObj_GetMatrix` is the text matrix times the page's, and **`Tz` is folded into
+  its first row**: `50 Tz` gives `a = 0.5`. So `size * hypot(a, b)` is one em along the
+  baseline in every case, and the pen distance divided by it was 0.667 in all nine.
+- Character spacing is in the pen distance (11.004 against 8.004 under `3 Tc`) and the rise
+  moves the origin off the baseline without changing the distance along it.
+
+That is why the cut tracks no text state on the `lopdf` side. `objects::glyphs_from` holds
+four of the nine as a table.
+
+Two more from the same work. **`pdftotext` does not read a tilted line whole**: at thirty
+degrees it lost the line, and at three it lost one word of it, a different one when the
+line's text changed, so the tilted line of `tests/cli/redact.rs` is asked about through tpdf's own
+extraction only. And **`lopdf` writes a `TJ` number and the string after it with nothing
+between**, `-1000(ef)`, which is legal and makes a test comparing content as text fail on
+a space; `glyph_cut_tests.rs` puts the space back before comparing.

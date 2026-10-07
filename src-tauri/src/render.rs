@@ -2232,6 +2232,9 @@ pub fn redaction_plans_of(
     // region first touches one.
     let form_path_counts: Vec<usize> = objects.forms.iter().map(|form| form.paths.len()).collect();
     let form_paths = std::cell::OnceCell::new();
+    // What `lopdf` says about the page's shows, for taking part of one.
+    // Decoded when a region first touches text, and then once.
+    let show_facts = std::cell::OnceCell::new();
     Ok(regions
         .iter()
         .map(|region| {
@@ -2254,6 +2257,57 @@ pub fn redaction_plans_of(
                     .get_or_init(|| document.graph().form_paths(index, &form_path_counts));
                 redact::settle_form_paths(&mut plan, &objects.forms, facts, want);
             }
+            // Last, so it reads the shows every rule above has settled.
+            // Only the page's own text: `objects.glyphs` has no entry for a
+            // form's, so a show inside a form still goes whole.
+            let cut_text = if plan.shows.is_empty() {
+                Vec::new()
+            } else {
+                let facts = show_facts
+                    .get_or_init(|| document.graph().show_facts(index, objects.glyphs.len()));
+                redact::cut_within(&mut plan, &objects.glyphs, facts.as_deref(), want)
+            };
+            // What the page's own text loses, in the order it is drawn: all of
+            // a show that goes whole, and the glyphs taken out of a cut one.
+            // And every show any part of goes from, in full: `lines`.
+            let mut touched: Vec<usize> = plan
+                .shows
+                .iter()
+                .copied()
+                .chain(plan.show_cuts.iter().map(|cut| cut.ordinal))
+                .collect();
+            touched.sort_unstable();
+            let in_forms = |plan: &redact::Plan| -> Vec<&str> {
+                plan.form_shows
+                    .iter()
+                    .filter_map(|(at, ordinal)| {
+                        objects
+                            .forms
+                            .iter()
+                            .find(|form| form.at == *at)
+                            .and_then(|form| form.text.get(*ordinal))
+                            .map(|text| text.draws.as_str())
+                    })
+                    .collect()
+            };
+            let lines = touched
+                .iter()
+                .filter_map(|ordinal| objects.text.get(*ordinal))
+                .map(String::as_str)
+                .chain(in_forms(&plan))
+                .collect::<Vec<_>>()
+                .join(" ");
+            let mut own: Vec<(usize, &str)> = plan
+                .shows
+                .iter()
+                .filter_map(|ordinal| Some((*ordinal, objects.text.get(*ordinal)?.as_str())))
+                .chain(
+                    cut_text
+                        .iter()
+                        .map(|(ordinal, text)| (*ordinal, text.as_str())),
+                )
+                .collect();
+            own.sort_by_key(|(ordinal, _)| *ordinal);
             redact::RegionPlan {
                 paths: plan.paths.clone(),
                 path_objects,
@@ -2293,27 +2347,20 @@ pub fn redaction_plans_of(
                 // draws only spaces is still an operation the removal deletes,
                 // and a caller flattening this for a row is what decides how it
                 // reads.
-                taking: plan
-                    .shows
-                    .iter()
-                    .filter_map(|ordinal| objects.text.get(*ordinal))
-                    .map(String::as_str)
+                taking: own
+                    .into_iter()
+                    .map(|(_, text)| text)
                     // Then the text inside forms, which is drawn on the same
                     // page and is as much *what this removal takes* as the
                     // page's own -- so it reaches every reader that asks what
                     // went: the review panel, the byte scan's needles, the
                     // outline and form carriers, and the OCR gate's survivors.
-                    .chain(plan.form_shows.iter().filter_map(|(at, ordinal)| {
-                        objects
-                            .forms
-                            .iter()
-                            .find(|form| form.at == *at)
-                            .and_then(|form| form.text.get(*ordinal))
-                            .map(|text| text.draws.as_str())
-                    }))
+                    .chain(in_forms(&plan))
                     .collect::<Vec<_>>()
                     .join(" "),
+                lines,
                 unhandled: plan.unhandled,
+                show_cuts: plan.show_cuts,
                 shows: plan.shows,
                 area: want,
             }

@@ -72,9 +72,11 @@ fn plan(turns: u8) -> Plan {
         compress: Default::default(),
         new_fields: Vec::new(),
         redactions: vec![PlannedRedaction {
+            lines: Vec::new(),
             form_paths: Default::default(),
             source: 0,
             shows: vec![0],
+            show_cuts: Vec::new(),
             text_objects: 2,
             areas: vec![[10.0, 20.0, 60.0, 40.0]],
             taking: vec!["TARGET".into()],
@@ -163,7 +165,8 @@ fn run() -> Result<(), String> {
         }
         drop(uncovered);
         let expected = Fingerprint::of(&path)?;
-        save::fill_redactions(&path, &plan, &expected, None, &worker).map_err(|e| e.message)?;
+        save::fill_redactions(&path, &plan, &expected, None, &worker, Default::default())
+            .map_err(|e| e.message)?;
         let filled = OpenDocument::open(bindings, &path, None).map_err(|e| e.reason)?;
         if pixel(bindings, &filled, 1, x, y)? != [0, 0, 0] {
             return Err(format!(
@@ -179,7 +182,8 @@ fn run() -> Result<(), String> {
         }
         drop(filled);
         let bytes = std::fs::read(&path).map_err(|e| e.to_string())?;
-        if save::fill_redactions(&path, &plan, &expected, None, &worker).is_ok() {
+        if save::fill_redactions(&path, &plan, &expected, None, &worker, Default::default()).is_ok()
+        {
             return Err("stale verification fingerprint accepted".into());
         }
         if std::fs::read(&path).map_err(|e| e.to_string())? != bytes {
@@ -219,8 +223,15 @@ fn run() -> Result<(), String> {
     )
     .map_err(|e| e.message)?;
     let expected = Fingerprint::of(&encrypted_out)?;
-    save::fill_redactions(&encrypted_out, &plan, &expected, Some("swordfish"), &worker)
-        .map_err(|e| e.message)?;
+    save::fill_redactions(
+        &encrypted_out,
+        &plan,
+        &expected,
+        Some("swordfish"),
+        &worker,
+        Default::default(),
+    )
+    .map_err(|e| e.message)?;
     if OpenDocument::open(bindings, &encrypted_out, None).is_ok() {
         return Err("fill lost encryption".into());
     }

@@ -577,9 +577,14 @@ measured the Windows render constants come out 1.5–1.8x worse.
   it must not be called clean. Text, pictures and drawings a page draws through a
   reusable block — a letterhead, a table, a stamp — are removed or cut like any other,
   unless the document draws that block more than once, in which case it
-  is left and reported as unverified. It also takes whole lines —
-  removing part of one means removing the instruction that drew it, so a word beside the one
-  you marked goes with it. On a document tagged for accessibility it takes the second copy
+  is left and reported as unverified. Of a line you marked part of, it takes that part: the
+  marked characters are cut out of the instruction that drew the line, and a gap as wide as
+  they were is left, so the rest of the line stays where it was. Where tpdf cannot prove
+  which characters an instruction draws — text written right to left or down the page, a
+  font whose codes it cannot count, a letter the engine gives no outline for — the whole
+  instruction goes, which is often the whole line, and the panel shows that before anything
+  is written. Text inside a reusable block also still goes by the whole instruction. On a
+  document tagged for accessibility it takes the second copy
   of those words that the tag keeps beside them — both where it sits beside the words and
   where the document files it separately under the accessibility structure — and where that
   copy is shared between pages it refuses rather than change the others. It also takes any
@@ -596,7 +601,9 @@ measured the Windows render constants come out 1.5–1.8x worse.
   copy of every answer in a separate packet, so removing the fields would leave everything
   recoverable while telling you it had gone.
   <!-- built: file.redactCopy -->
-- Applied regions receive **opaque black fill after verification**. Remaining text
+- Applied regions receive an **opaque fill after verification**: black, or white or red if
+  you choose one of them under the list in the Redactions panel. A white box cannot be seen
+  on white paper, and the panel says so while white is chosen. Remaining text
   stays selectable. A saved copy can be opened from the result message; the original
   remains on screen with its pending marks until you open another file.
 - **Redact to image-only copy** handles scans and drawings by rendering every page
@@ -1095,17 +1102,20 @@ the page as it is displayed:
   cannot find, such as a signature drawn as a picture. A match is marked as the window's **Mark
   all matches for redaction** marks it, one rectangle for each line it runs over, and more than
   500 matches in one run are refused rather than marked partly. `--pages 1-3,7` limits the
-  search, not the regions file. **What goes can be more than the match**: tpdf removes a whole
-  run of text the document drew in one piece whenever any of its characters is in a rectangle,
-  which is often the whole line; the report says what each page's removal takes. The copy is
+  search, not the regions file. **What goes is the characters in a rectangle, where tpdf can prove which those are**, and
+  the rest of the line stays in place. Where it cannot, it removes the whole run of text the
+  document drew in one piece, which is often the whole line; the report says what each
+  page's removal takes. The copy is
   then read back: searched for every removed string, searched again for every `--text` and
   `--pattern`, and each removed area rendered and read by the system's text recogniser to prove
-  nothing legible is left, before the black boxes are drawn. **Exit code 0 means every check
+  nothing legible is left, before the boxes are drawn. **Exit code 0 means every check
   proved the copy clean; 1 means the copy was written and could not be proved clean**, with
   every reason — a line the removal could not take, a copy still found elsewhere, an area the
   recogniser could not read back. The file is kept either way; treat a copy that exits 1 as
   unredacted until you have checked it. `--dry-run` writes nothing (and needs no `-o`) and
-  reports what would be marked and taken. A query that matches nothing is not an error: the
+  reports what would be marked and taken. `--fill black|white|red` is the colour of the boxes
+  drawn over what went; black unless you name another, and a white box cannot be seen on
+  white paper, so a reader of that copy does not see that anything was removed. A query that matches nothing is not an error: the
   report says so and nothing is written. **A signed document is refused**, because redacting
   rewrites the document and invalidates every signature; `--invalidate-signatures` redacts it
   anyway and says how many signatures the copy no longer carries intact. A document with an XFA

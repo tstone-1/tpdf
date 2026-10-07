@@ -316,7 +316,10 @@ pub enum Job {
     /// Only the sandboxed renderer implements this job.
     RasterRedact,
     /// Paint the already-checked removal regions on the resulting document.
-    RedactionFill,
+    RedactionFill {
+        /// The colour of the boxes.
+        fill: redaction_fill::Fill,
+    },
     /// Paper, turned by the reader's own rotation in quarter turns clockwise.
     ///
     /// **Refused for an encrypted document**, and neither answer a rewrite can
@@ -335,7 +338,7 @@ impl Job {
     #[must_use]
     pub fn view(self) -> u8 {
         match self {
-            Self::Save | Self::RasterRedact | Self::RedactionFill => 0,
+            Self::Save | Self::RasterRedact | Self::RedactionFill { .. } => 0,
             Self::Print { view } => view,
         }
     }
@@ -817,6 +820,7 @@ pub fn fill_redactions(
     expected: &Fingerprint,
     password: Option<&str>,
     rewriter: &dyn Rewriter,
+    fill: redaction_fill::Fill,
 ) -> Result<(), Refusal> {
     let mut plan = redaction_fill::output_plan(original_plan)?;
     plan.opened_as = Some(expected.clone());
@@ -834,7 +838,7 @@ pub fn fill_redactions(
             len,
             writing,
             &plan,
-            Job::RedactionFill,
+            Job::RedactionFill { fill },
             password,
         )?;
         expected.agrees_with(path).map_err(Refusal::changed)?;
@@ -4057,8 +4061,8 @@ fn rewrite(plan: &Plan, checked: Checked, job: Job) -> Result<Vec<u8>, Refusal> 
     // a turn and a crop write entries in the page dictionary. Not one of them
     // touches a content stream, which is the property that makes the ordinals
     // still true here.
-    if job == Job::RedactionFill {
-        redaction_fill::paint(&mut doc, &pages, &plan.redactions)?;
+    if let Job::RedactionFill { fill } = job {
+        redaction_fill::paint(&mut doc, &pages, &plan.redactions, fill)?;
         apply_redactions(&mut doc, &pages, &[])?;
     } else {
         apply_redactions(&mut doc, &pages, &plan.redactions)?;
@@ -4138,7 +4142,7 @@ fn rewrite(plan: &Plan, checked: Checked, job: Job) -> Result<Vec<u8>, Refusal> 
         //
         // Not the fill, which carries the regions and removes nothing: it is
         // pointed at the bytes the verification read, and only adds to them.
-        || (job != Job::RedactionFill && !plan.redactions.is_empty())
+        || (!matches!(job, Job::RedactionFill { .. }) && !plan.redactions.is_empty())
     {
         sweep::collect(&mut doc)?;
     }
@@ -4309,6 +4313,13 @@ fn apply_redactions(
     let mut lost: std::collections::HashSet<lopdf::ObjectId> = std::collections::HashSet::new();
     let mut answers: Vec<String> = Vec::new();
     for (page, redaction) in targets {
+        // The cuts first. A cut always leaves a glyph of its show, so the
+        // page has as many shows afterwards and `remove_shows` counts the same.
+        if !redaction.show_cuts.is_empty() {
+            let cut = redact::cut_shows(doc, page, &redaction.show_cuts, redaction.text_objects)
+                .map_err(Refusal::from)?;
+            done.shows += cut.removed;
+        }
         let took = redact::remove_shows(doc, page, &redaction.shows, redaction.text_objects)
             .map_err(Refusal::from)?;
         done.shows += took.removed;
@@ -4461,9 +4472,20 @@ fn apply_redactions(
         //
         // Under the same guard as the metadata for the same reason: this runs on
         // every rewrite, and an ordinary copy must keep its bookmarks.
+        //
+        // Compared with the **whole lines** a removal touched, not with the
+        // glyphs it took. A cut takes an account number out of a line; a
+        // bookmark that repeats the line still spells the number out, and it
+        // is not a substring of the number.
         let taken: Vec<String> = redactions
             .iter()
-            .flat_map(|redaction| redaction.taking.iter().cloned())
+            .flat_map(|redaction| {
+                if redaction.lines.is_empty() {
+                    redaction.taking.iter().cloned()
+                } else {
+                    redaction.lines.iter().cloned()
+                }
+            })
             .collect();
         let entries = redact::covered_outline(doc, &taken);
         done.outline = redact::drop_outline_items(doc, &entries).map_err(Refusal::from)?;

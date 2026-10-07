@@ -116,7 +116,7 @@ export const TOOL_GROUPS: ToolGroup[] = [
     label: "Redact",
     icon: "redact",
     items: [
-      { id: "edit.redactRegion", label: "Mark a region for removal" },
+      { id: "edit.redactRegion", label: "Mark text or regions for removal" },
       { id: "edit.redactSelection", label: "Mark selected text for removal" },
       { id: "edit.redactMatches", label: "Mark search matches for removal" },
       { id: "view.showRedactions", label: "Review marked regions" },

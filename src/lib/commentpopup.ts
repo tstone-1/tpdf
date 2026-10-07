@@ -28,7 +28,7 @@
  * opens would read as the reader's own note and would let a stray keystroke
  * alter a colleague's words, so editing is **armed** --- by the Edit button here
  * or by the `Edit this comment` command --- and the body is text until then.
- * That is the same posture "Redact region by dragging" takes and for the same
+ * That is the same posture "Redact text or regions by dragging" takes and for the same
  * reason: the cost of arming silently is worse than one more press.
  *
  * Once armed it behaves exactly as `markpopup.ts` does, and deliberately: the

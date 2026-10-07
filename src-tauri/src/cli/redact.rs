@@ -48,8 +48,8 @@ use crate::text::PageText;
 /// `redact`, registered.
 pub const COMMAND: Registered = Registered {
     name: "redact",
-    usage: "redact <in.pdf> -o <out.pdf> (--text STR | --pattern REGEX | --regions FILE|-)...\n        [--case-sensitive] [--pages 1-3,7] [--dry-run] [--invalidate-signatures]\n        [--password-env VAR] [--force] [--json]",
-    summary: "Removes every match of each --text and --pattern (found as the\n            viewer's search finds it) and every rectangle a --regions file\n            names, writes the result to -o, and reads it back. Exit 0 means\n            the copy was proved clean; 1 means it was written and could not be,\n            with every reason. --dry-run writes nothing and says what would go.\n            A signed document is refused unless --invalidate-signatures.",
+    usage: "redact <in.pdf> -o <out.pdf> (--text STR | --pattern REGEX | --regions FILE|-)...\n        [--case-sensitive] [--pages 1-3,7] [--dry-run] [--invalidate-signatures]\n        [--fill black|white|red] [--password-env VAR] [--force] [--json]",
+    summary: "Removes every match of each --text and --pattern (found as the\n            viewer's search finds it) and every rectangle a --regions file\n            names, writes the result to -o, and reads it back. Exit 0 means\n            the copy was proved clean; 1 means it was written and could not be,\n            with every reason. --dry-run writes nothing and says what would go.\n            --fill is the colour of the boxes drawn over what went: black\n            unless you say white or red.\n            A signed document is refused unless --invalidate-signatures.",
     parse: boxed,
 };
 
@@ -83,6 +83,8 @@ pub struct Redact {
     pub pages: Option<Vec<u32>>,
     /// `--dry-run`.
     pub dry_run: bool,
+    /// `--fill`: the colour of the boxes drawn over what went.
+    pub fill: crate::redaction_fill::Fill,
     /// `--invalidate-signatures`.
     pub invalidate_signatures: bool,
     /// The environment variable holding the password, when one was named.
@@ -139,6 +141,7 @@ pub fn parse(args: &[String]) -> Result<Redact, String> {
         case_sensitive: false,
         pages: None,
         dry_run: false,
+        fill: crate::redaction_fill::Fill::default(),
         invalidate_signatures: false,
         password_env: None,
         force: false,
@@ -159,6 +162,12 @@ pub fn parse(args: &[String]) -> Result<Redact, String> {
             (false, "--case-sensitive") => command.case_sensitive = true,
             (false, "--pages") => command.pages = Some(page_list(value(arg, &mut rest)?)?),
             (false, "--dry-run") => command.dry_run = true,
+            (false, "--fill") => {
+                let name = value(arg, &mut rest)?;
+                command.fill = crate::redaction_fill::Fill::named(name).ok_or_else(|| {
+                    format!("`--fill` takes black, white or red, and `{name}` is none of them")
+                })?;
+            }
             (false, "--invalidate-signatures") => command.invalidate_signatures = true,
             (false, "--password-env") => {
                 command.password_env = Some(variable(value(arg, &mut rest)?)?);
@@ -986,8 +995,9 @@ fn run_redact(
         return Ok(Exit::Ok);
     }
 
-    let asked = tauri::async_runtime::block_on(ask_redactions(&edits, &service, doc))
+    let mut asked = tauri::async_runtime::block_on(ask_redactions(&edits, &service, doc))
         .map_err(|why| Failure::new(Exit::Refused, format!("{shown}: {why}")))?;
+    asked.fill = command.fill;
     draft.pages = report_pages(&found, &counts, &asked.pages);
     draft.removals = asked.shows;
 

@@ -45,6 +45,7 @@ import { invoke, type InvokeArgs } from "@tauri-apps/api/core";
 import type { ToolState } from "./clitoolstate";
 import type { Comments } from "./comments";
 import type { CropGeometry } from "./crop";
+import type { Fill } from "./redactfill";
 import type { Applied, Copied, EditState, Merged, Split } from "./edits";
 import type { Offered } from "./ocrlanguage";
 import type { Recognised } from "./recognise";
@@ -272,14 +273,14 @@ export interface Commands {
     reply: RegionPlan[];
   };
   redact_copy: {
-    args: { doc: number; source: string; path: string };
+    args: { doc: number; source: string; path: string; fill: Fill };
     reply: Applied;
   };
   redact_raster_copy: {
     args: { doc: number; source: string; path: string };
     reply: Applied;
   };
-  redact_document: { args: { doc: number; source: string }; reply: Applied };
+  redact_document: { args: { doc: number; source: string; fill: Fill }; reply: Applied };
   ocr_copy: {
     args: { doc: number; source: string; path: string; run: number; language: string | null };
     reply: Recognised;

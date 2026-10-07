@@ -23,7 +23,9 @@
 //! them but order: the nth text object is assumed to be the nth show operator.
 //! Spike 0.3 measured that holding 4:4 on all four of its fixtures and said
 //! plainly it is not guaranteed --- a `TJ` split across objects, or a Form
-//! XObject contributing objects from another stream, breaks it.
+//! XObject contributing objects from another stream, breaks it. So does a show
+//! operator that draws nothing, which PDFium makes no object of:
+//! [`makes_text_object`] is which operators are counted.
 //!
 //! So [`remove_shows`] takes the count the caller saw from PDFium and **refuses**
 //! when it disagrees with the operators found. Addressing the wrong operator
@@ -166,6 +168,10 @@ pub struct Plan {
     /// [`form_paths`](Self::form_paths) are. [`cuts`](Self::cuts) one level
     /// down.
     pub form_cuts: Vec<(usize, usize)>,
+    /// Shows a region takes part of, and which part. Empty until
+    /// [`cut_within`] has looked at [`shows`](Self::shows): [`covered`] knows
+    /// an object's box and not its glyphs.
+    pub show_cuts: Vec<ShowCut>,
     /// Drawings inside a Form XObject the region touches, not yet looked at:
     /// `(form position, ordinal, whether the region holds all of it)`.
     ///
@@ -381,6 +387,10 @@ pub struct RegionPlan {
     /// [`remove_shows`]. That is the whole reason they cross the boundary
     /// rather than being counted here.
     pub shows: Vec<usize>,
+    /// Text-showing operations the removal would take **part** of.
+    /// [`Plan::show_cuts`], carried through for [`cut_shows`].
+    #[serde(default)]
+    pub show_cuts: Vec<ShowCut>,
     /// How many text objects PDFium found on the page this region is on.
     ///
     /// Not about the region at all, and carried anyway: [`remove_shows`] refuses
@@ -477,6 +487,16 @@ pub struct RegionPlan {
     /// caller wanting them apart would be reconstructing the ordinals this type
     /// exists to keep out of the reply.
     pub taking: String,
+    /// Every show the removal takes any part of, in full, in the same order.
+    ///
+    /// The same string as [`taking`](Self::taking) until a show is cut, and
+    /// wider from then on: it also holds the words of a cut line that stay.
+    /// It is what a carrier of the line is compared with. A bookmark titled
+    /// with a heading, or a form answer that repeats a line, restates the
+    /// whole line, so asking only about the glyphs that went would keep a
+    /// bookmark that still spells them out among the words beside them.
+    #[serde(default)]
+    pub lines: String,
     /// What the region covers that this cannot remove, one sentence each.
     ///
     /// Non-empty means the region is **not** redactable, and the sentences are
@@ -2078,7 +2098,7 @@ pub fn remove_shows(
         .operations
         .iter()
         .enumerate()
-        .filter(|(_, operation)| is_show(&operation.operator))
+        .filter(|(_, operation)| makes_text_object(operation))
         .map(|(at, _)| at)
         .collect();
 
@@ -2240,7 +2260,7 @@ pub fn remove_form_shows(
         .operations
         .iter()
         .enumerate()
-        .filter(|(_, operation)| is_show(&operation.operator))
+        .filter(|(_, operation)| makes_text_object(operation))
         .map(|(at, _)| at)
         .collect();
     if shows.len() != text_objects {
@@ -3372,15 +3392,45 @@ pub fn painted_path_count(doc: &Document, page: ObjectId) -> Result<usize, Strin
     Ok(painted_paths(&content).len())
 }
 
-/// The four text-showing operators.
+/// Whether PDFium makes a text object of this show operator.
 ///
-/// `Tj` and `TJ` show a string and an array; `'` and `"` show a string after
-/// moving to the next line, and both draw glyphs exactly as the other two do.
-/// Leaving either quote form out would make a redaction pass over a line that
-/// used it.
+/// There are four show operators. `Tj` and `TJ` show a string and an array;
+/// `'` and `"` show a string after moving to the next line, and both draw
+/// glyphs exactly as the other two do. Leaving either quote form out would
+/// make a redaction pass over a line that used it.
+///
+/// [`remove_shows`] addresses the nth text object as the nth show operator, so
+/// the two lists have to be the same list. They are not when a show carries no
+/// text: PDFium reads `() Tj` and moves on without making an object, and a
+/// count of every show operator is then ahead of PDFium's by one per empty
+/// show. Measured on a phone company's invoices, 2026-10-07: every page has
+/// between 2 and 7 of them, so no page of those documents could be redacted.
+///
+/// The rule is PDFium's, measured shape by shape rather than read from its
+/// source, and `tests/cli/redact.rs` holds each shape to the pinned engine:
+///
+/// * `Tj`, `'` and `"` make an object when their **last** operand is a string
+///   or a name that is not empty. A number, an array or no operand makes none.
+/// * `TJ` makes one when its array holds a string that is not empty. Numbers
+///   alone, empty strings alone, a name, or a string in place of the array
+///   make none.
+///
+/// A show that makes no object draws nothing, so leaving it in the stream
+/// leaves no words behind. It is left, and not removed with its neighbours:
+/// `'` and `"` still move to the next line when their string is empty.
 #[must_use]
-fn is_show(operator: &str) -> bool {
-    matches!(operator, "Tj" | "TJ" | "'" | "\"")
+fn makes_text_object(operation: &Operation) -> bool {
+    let text = |object: &Object| matches!(object, Object::String(bytes, _) if !bytes.is_empty());
+    match operation.operator.as_str() {
+        "Tj" | "'" | "\"" => operation.operands.last().is_some_and(|last| {
+            text(last) || matches!(last, Object::Name(name) if !name.is_empty())
+        }),
+        "TJ" => operation
+            .operands
+            .last()
+            .is_some_and(|last| matches!(last, Object::Array(parts) if parts.iter().any(text))),
+        _ => false,
+    }
 }
 
 /// How many outline entries to walk before giving up.
@@ -4190,7 +4240,7 @@ impl PageAggregate {
         PageSummary {
             page: self.planned.source,
             regions: self.planned.areas.len(),
-            text: self.planned.shows.len(),
+            text: self.planned.shows.len() + self.planned.show_cuts.len(),
             form_text: self.planned.form_shows.len(),
             // A picture is a picture to a reader, whichever stream draws it.
             images: self.planned.images.len() + self.planned.form_images.len(),
@@ -4231,6 +4281,7 @@ pub fn aggregate(
     let mut notes: Vec<String> = Vec::new();
     let mut needles: Vec<String> = Vec::new();
     let mut shows: Vec<usize> = Vec::new();
+    let mut show_cuts: Vec<ShowCut> = Vec::new();
     // Every plan on a page reports the same count, because it is a fact about
     // the page rather than about the region. Taken from the last rather than
     // asserted equal across them: they come from one walk of one page in one
@@ -4247,6 +4298,8 @@ pub fn aggregate(
     // entry names it. One source, two readers --- built in the same loop so they
     // cannot come to disagree.
     let mut taken: Vec<String> = Vec::new();
+    // And the lines those came out of, in full, for the carriers of a line.
+    let mut lines: Vec<String> = Vec::new();
     // The same two facts one level down: which text inside a form goes, and how
     // many text objects each form on the page holds. `form_text_objects` is a
     // property of the page like `text_objects` and is taken from the last plan
@@ -4298,8 +4351,13 @@ pub fn aggregate(
             }
         }
         shows.extend(plan.shows.iter().copied());
+        show_cuts.extend(plan.show_cuts.iter().cloned());
         form_shows.extend(plan.form_shows.iter().copied());
         areas.push(plan.area);
+        let line = plan.lines.trim();
+        if !line.is_empty() {
+            lines.push(line.to_string());
+        }
         let taking = plan.taking.trim();
         if !taking.is_empty() {
             needles.push(taking.to_string());
@@ -4312,7 +4370,9 @@ pub fn aggregate(
     // backwards and says so.
     shows.sort_unstable();
     shows.dedup();
-    let mut total = shows.len();
+    // A show one region takes whole goes whole, whatever another cuts from it.
+    let show_cuts = merge_cuts(show_cuts, &mut shows);
+    let mut total = shows.len() + show_cuts.len();
     // Merged the same way, and it matters as much: two regions over one line
     // inside a form name the same operator there too.
     form_shows.sort_unstable();
@@ -4357,9 +4417,11 @@ pub fn aggregate(
     let planned = edits::PlannedRedaction {
         source: page,
         shows,
+        show_cuts,
         text_objects,
         areas,
         taking: taken,
+        lines,
         form_shows,
         form_images,
         form_image_objects,
@@ -4544,6 +4606,9 @@ pub fn marked_pages_note(report: &verify::Report, marked: &[u32]) -> Option<Stri
     })
 }
 
+mod glyph_cut;
+pub use glyph_cut::{cut_shows, cut_within, merge_cuts, show_facts, ShowCut, ShowFacts};
+
 #[cfg(test)]
 mod form_image_tests;
 #[cfg(test)]
@@ -4635,6 +4700,8 @@ mod tests {
     /// `aggregate`'s fixtures: one plan, with everything empty but what a test sets.
     fn plan_of(shows: &[usize], taking: &str) -> super::RegionPlan {
         super::RegionPlan {
+            lines: String::new(),
+            show_cuts: Vec::new(),
             form_paths: Default::default(),
             shared: Vec::new(),
             shows: shows.to_vec(),
@@ -4744,6 +4811,39 @@ mod tests {
         assert_eq!(one.gate.taking, "alpha beta");
     }
 
+    /// A cut takes part of a line. What goes is what the file is searched
+    /// for; the line it came out of is what a bookmark is compared with.
+    #[test]
+    fn a_cut_is_counted_and_carries_its_line_beside_what_it_takes() {
+        let cut = |ordinal, take: &[usize]| super::ShowCut {
+            ordinal,
+            pens: vec![0.0, 500.0, 1000.0],
+            tail: None,
+            take: take.to_vec(),
+        };
+        let mut first = plan_of(&[4], "one 123");
+        first.lines = "one  account 123 end ".to_string();
+        first.show_cuts = vec![cut(6, &[0])];
+        let mut second = plan_of(&[], "45");
+        second.lines = "   ".to_string();
+        second.show_cuts = vec![cut(6, &[2]), cut(4, &[1])];
+        let one = super::aggregate(0, vec![[0.0; 4], [0.0; 4]], vec![first, second], None);
+
+        assert_eq!(one.planned.shows, vec![4]);
+        assert_eq!(
+            one.planned.show_cuts,
+            vec![cut(6, &[0, 2])],
+            "two regions cut show 6 once, and show 4 goes whole so it is not also cut"
+        );
+        assert_eq!(one.shows, 2, "one whole removal and one cut");
+        assert_eq!(one.planned.taking, vec!["one 123", "45"]);
+        assert_eq!(
+            one.planned.lines,
+            vec!["one  account 123 end"],
+            "trimmed, and a region with no line adds none"
+        );
+    }
+
     /// A plan that takes nothing contributes no needle.
     ///
     /// The control for the test above. An empty string in `needles` would be
@@ -4817,11 +4917,11 @@ mod tests {
     }
 
     use super::{
-        aggregate, covered, covered_annots, cut_crossing, is_show, leave_shared, leave_unplaced,
-        overlaps, painted_path_count, painted_paths, parent_tree_entry, path_clips, path_drawings,
-        remove_form_shows, remove_images, remove_paths, remove_shows, shared_draws, take_paths,
-        FormObject, FormOther, FormText, PageObject, Plan, RegionPlan, SharedDraws, Unhandled,
-        CLIP_PATH, MAX_CONTENT_BYTES, UNPLACED_PATH,
+        aggregate, covered, covered_annots, cut_crossing, leave_shared, leave_unplaced,
+        makes_text_object, overlaps, painted_path_count, painted_paths, parent_tree_entry,
+        path_clips, path_drawings, remove_form_shows, remove_images, remove_paths, remove_shows,
+        shared_draws, take_paths, FormObject, FormOther, FormText, PageObject, Plan, RegionPlan,
+        SharedDraws, Unhandled, CLIP_PATH, MAX_CONTENT_BYTES, UNPLACED_PATH,
     };
     use lopdf::content::Content;
     use lopdf::{dictionary, Dictionary, Document, Object, Stream};
@@ -5590,6 +5690,21 @@ mod tests {
         assert_eq!(took.removed, 1);
         assert_eq!(form_says(&doc, ids[0]), vec!["f0L0", "f0L1"]);
         assert_eq!(form_says(&doc, ids[1]), vec!["f1L1"]);
+    }
+
+    /// [`empty_shows_are_passed_over_and_left_where_they_are`] one level down:
+    /// the form's count is a second copy of the page's, and it has to pass
+    /// over the same shows.
+    #[test]
+    fn empty_shows_in_a_form_are_passed_over_and_left_where_they_are() {
+        let (mut doc, page, ids) = page_with_forms(1, 2);
+        doc.get_object_mut(ids[0])
+            .and_then(|object| object.as_stream_mut())
+            .expect("the form")
+            .set_plain_content(b"BT 14 TL () Tj (f0L0) Tj () ' (f0L1) Tj ET".to_vec());
+        let took = remove_form_shows(&mut doc, page, &[(0, 2)], 0, &[0]).expect("removed");
+        assert_eq!((took.shows_before, took.removed), (2, 1));
+        assert_eq!(form_says(&doc, ids[0]), vec!["", "", "f0L1"]);
     }
 
     #[test]
@@ -6496,12 +6611,90 @@ mod tests {
         );
     }
 
+    /// What a test reads back as "the lines this stream still shows".
+    fn is_show(operator: &str) -> bool {
+        matches!(operator, "Tj" | "TJ" | "'" | "\"")
+    }
+
+    /// Whether the one show operator in `content` counts as a text object.
+    fn counted(content: &str) -> bool {
+        let operations = Content::decode(content.as_bytes())
+            .expect("decode")
+            .operations;
+        let shows: Vec<_> = operations
+            .iter()
+            .filter(|operation| is_show(&operation.operator))
+            .collect();
+        assert_eq!(shows.len(), 1, "one show operator in {content}");
+        makes_text_object(shows[0])
+    }
+
     #[test]
     fn the_two_quote_operators_are_show_operators() {
-        for operator in ["Tj", "TJ", "'", "\""] {
-            assert!(is_show(operator), "{operator}");
+        for content in ["(a) Tj", "[(a)] TJ", "(a) '", "0 0 (a) \""] {
+            assert!(counted(content), "{content}");
         }
-        assert!(!is_show("Td"), "moving the cursor draws nothing");
+        let moved = Content::decode(b"1 2 Td").expect("decode").operations;
+        assert!(
+            !makes_text_object(&moved[0]),
+            "moving the cursor draws nothing"
+        );
+    }
+
+    /// Each shape PDFium was measured making no object of, and beside each
+    /// the nearest shape it does make one of.
+    #[test]
+    fn a_show_without_text_is_not_a_text_object() {
+        for content in [
+            "() Tj",
+            "<> Tj",
+            "() '",
+            "0 0 () \"",
+            "[] TJ",
+            "[-200] TJ",
+            "[()] TJ",
+            "[() -200 ()] TJ",
+            "[/N] TJ",
+            "(a) TJ",
+            "5 Tj",
+            "[(a)] Tj",
+            "Tj",
+            "(a) () Tj",
+        ] {
+            assert!(!counted(content), "{content} makes no object");
+        }
+        for content in [
+            "( ) Tj",
+            "/N Tj",
+            "() (a) Tj",
+            "[() -200 (a)] TJ",
+            "[( )] TJ",
+        ] {
+            assert!(counted(content), "{content} makes an object");
+        }
+    }
+
+    /// **The empty shows come first, and that is what makes this a test.**
+    ///
+    /// Counting every show operator would refuse here, 5 against 2. Counting
+    /// them and addressing by position anyway would take an empty show and
+    /// leave `one`. With the empty ones after the words both mistakes would
+    /// still remove the right line.
+    #[test]
+    fn empty_shows_are_passed_over_and_left_where_they_are() {
+        let (mut doc, page) = one_page("BT 14 TL () Tj [-200] TJ (one) Tj () ' (two) Tj ET");
+        let removed = remove_shows(&mut doc, page, &[0], 2).expect("remove");
+        assert_eq!((removed.shows_before, removed.removed), (2, 1));
+        assert_eq!(
+            shown(&doc, page),
+            vec![String::new(), String::new(), "two".to_string()],
+            "`one` went; the empty `Tj` and `'` and `two` stayed"
+        );
+        assert_eq!(
+            operators(&doc, page),
+            ["BT", "TL", "Tj", "TJ", "'", "Tj", "ET"],
+            "the empty `'` still moves `two` to the next line"
+        );
     }
 
     #[test]

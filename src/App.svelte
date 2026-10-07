@@ -15,6 +15,8 @@
     type DocumentTab, type Restore,
   } from "./lib/documenttabs";
   import { TabLabelSize } from "./lib/tablabels";
+  import { sidewaysBy } from "./lib/tabwheel";
+  import { readFill, writeFill, type Fill } from "./lib/redactfill";
   import Toolbar from "./Toolbar.svelte";
   import { toolbarState } from "./lib/toolbar";
   import { icon } from "./lib/icons";
@@ -571,7 +573,7 @@
     // reversible and applying is not, and a reader who thinks the first line
     // has already destroyed something will not review the list.
     if (kind === "redact")
-      return "Redact — drag out what to remove; nothing is removed yet";
+      return "Redact — drag across words or blank paper to mark; Esc when done; nothing is removed yet";
     return kind === "note"
       ? `${nameOf(kind)} — click to place`
       : `${nameOf(kind)} — click and drag`;
@@ -750,6 +752,11 @@
    * second line --- the objects a removal cannot take.
    */
   const redactionPlans = new Map<number, RegionPlan>();
+  /**
+   * The colour of the boxes a redaction draws: black unless the reader chose
+   * another in the redactions panel. `redactfill.ts` keeps it between sessions.
+   */
+  let redactionFill: Fill = readFill();
   /** Whether {@link fillRedactionWords} is walking, so a second call stands down. */
   let fillingRedactionWords = false;
   let rawOutline: Outline | null = null;
@@ -888,7 +895,14 @@
     dropImport: () => pendingImports.drop(),
     cropPage: (to) => void cropPage(to),
     redactRegion: () => viewer?.armRedact(),
-    redactSelection: () => void redactSelection(),
+    // Marks the selection and leaves the tool armed, so the next word the
+    // reader double-clicks is marked without coming back to this command.
+    // Reported from use: choosing it again for every passage was the tedious
+    // part. Esc puts the tool away.
+    redactSelection: () => void redactSelection().then(() => {
+      viewer?.clearSelection();
+      viewer?.armRedact();
+    }),
     redactMatches: () => void redactMatches(),
     matchCount: () => viewer?.matchCount ?? 0,
     movePage: (delta) => void movePage(delta),
@@ -2075,7 +2089,7 @@
         });
       // Cancelled, which is an answer rather than an error.
       if (!chosen) return;
-      const result = afterRedactionCopy(await edits.redactCopy(openPathName, chosen));
+      const result = afterRedactionCopy(await edits.redactCopy(openPathName, chosen, redactionFill));
       say(result.message, result.offers);
       redactedCopyPath = chosen;
     } catch (e) {
@@ -2407,7 +2421,7 @@
       say(null);
       let said: string;
       try {
-        said = afterRedaction(await edits.redactDocument(path));
+        said = afterRedaction(await edits.redactDocument(path, redactionFill));
       } catch (e) {
         if (e instanceof SaveCancelled) return;
         const failure = refusalOf(e);
@@ -4200,6 +4214,13 @@
           coveredFor: (id) => covered.get(id) ?? "",
         },
         redactions: {
+          fill: {
+            current: redactionFill,
+            onChange: (fill) => {
+              redactionFill = fill;
+              writeFill(fill);
+            },
+          },
           // Focus stays in the panel, which is the results list's arrangement
           // rather than the marks list's, and for the results list's reason: a
           // reader working down this list is *comparing* regions --- is that
@@ -4409,6 +4430,7 @@
         // rectangle a drag produces is not, so that one has to be converted.
         // A pending redaction is held in exactly the space handed here.
         onRedacted: (page, area) => void applyEdit((e) => e.redact(page, area)),
+        onRedactSelection: () => void redactSelection().then(() => viewer?.clearSelection()),
         onMarkMoved: (id, dx, dy) =>
           isSaved(id)
             ? changeField(scannedForm && edits ? fieldMoved(scannedForm, edits.state, id, dx, dy) : null)
@@ -4913,7 +4935,8 @@
 
   {#if tabRows.length}
     <div class="document-tabs" role="tablist" aria-label="Open documents"
-      style:--tab-label-size={`${tabLabelPx}px`}>
+      style:--tab-label-size={`${tabLabelPx}px`}
+      onwheel={(event) => { event.currentTarget.scrollLeft += sidewaysBy(event, event.currentTarget.clientWidth); }}>
       {#each tabRows as tab, index (tab.id)}
         <!-- The middle button's mousedown would start autoscroll on Windows. -->
         <div class="document-tab" class:active={tab.id === activeTab} role="presentation"
@@ -4987,6 +5010,9 @@
 
 <style>
   .document-tabs { display:flex; flex-shrink:0; overflow-x:auto; gap:3px; padding:4px 8px 0; border-bottom:1px solid color-mix(in srgb, CanvasText 20%, transparent); }
+  /* No bar under the tabs: `tabwheel.ts` says why, and what a mouse wheel does instead. */
+  .document-tabs { scrollbar-width:none; }
+  .document-tabs::-webkit-scrollbar { display:none; }
   .document-tab { display:flex; min-width:100px; max-width:240px; flex-shrink:0; border:1px solid transparent; border-radius:6px 6px 0 0; font-size:var(--tab-label-size); }
   .document-tab button { min-height:0; }
   .document-tab.active { background:color-mix(in srgb, Highlight 12%, Canvas); border-color:color-mix(in srgb, Highlight 50%, Canvas); border-bottom:2px solid Highlight; }

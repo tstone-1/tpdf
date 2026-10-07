@@ -536,7 +536,7 @@ describe("the redaction tool shares the crop's drag and nothing else", () => {
     viewer.destroy();
   });
 
-  it("is spent by one region, like the crop and unlike the eraser", async () => {
+  it("stays armed for the next region, like the eraser, until Escape", async () => {
     const viewer = build();
     await settle();
     viewer.setPages(pages(false));
@@ -544,10 +544,16 @@ describe("the redaction tool shares the crop's drag and nothing else", () => {
 
     viewer.armRedact();
     drag({ x: 120, y: 140 }, { x: 320, y: 340 });
-    expect(viewer.redactArmed).toBe(false);
+    expect(viewer.redactArmed).toBe(true);
 
     drag({ x: 130, y: 150 }, { x: 330, y: 350 });
-    expect(redacted).toHaveLength(1);
+    expect(redacted).toHaveLength(2);
+
+    // Escape is the way out, and a drag after it marks nothing.
+    escape();
+    expect(viewer.redactArmed).toBe(false);
+    drag({ x: 140, y: 160 }, { x: 340, y: 360 });
+    expect(redacted).toHaveLength(2);
     viewer.destroy();
   });
 

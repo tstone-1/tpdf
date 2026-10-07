@@ -356,6 +356,8 @@ fn plan_of(raw: RawPlan) -> (Plan, Job) {
             .redactions
             .into_iter()
             .map(|region| PlannedRedaction {
+                lines: Vec::new(),
+                show_cuts: Vec::new(),
                 source: u32::from(region.source),
                 shows: region.shows.into_iter().map(usize::from).collect(),
                 text_objects: usize::from(region.text_objects),

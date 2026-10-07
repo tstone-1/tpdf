@@ -61,6 +61,7 @@ function registry(open: Record<string, boolean> = {}): {
     make("edit.highlightSelection", "Highlight selection"),
     make("edit.underlineSelection", "Underline selection"),
     make("edit.strikeoutSelection", "Strike out selection"),
+    make("edit.redactSelection", "Redact selection"),
     make("edit.selectAll", "Select all on page", "⌘A"),
     make("find.inSelection", "Find: in selection on or off", "⌥⌘S"),
     make("edit.clearSelection", "Clear selection", "Esc"),
@@ -355,6 +356,17 @@ describe("keyboard", () => {
     expect(menu.handleKey(key("Enter"))).toBe(false);
     expect(chosen).toEqual([]);
     expect(menu.isOpen).toBe(true);
+  });
+});
+
+describe("the selection menu", () => {
+  it("offers the redaction straight after the three marks", () => {
+    // The fourth thing a reader does with selected words. Without it here the
+    // route is the toolbar's menu, once for every passage.
+    const offered = ids(SELECTION_MENU);
+    expect(offered.indexOf("edit.redactSelection")).toBe(
+      offered.indexOf("edit.strikeoutSelection") + 1,
+    );
   });
 });
 

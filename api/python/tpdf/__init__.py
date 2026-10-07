@@ -590,6 +590,7 @@ class Tpdf:
         regions: Sequence[Mapping[str, Any]] | None = None,
         pages: str | None = None, case_sensitive: bool = False, dry_run: bool = False,
         force: bool = False, invalidate_signatures: bool = False,
+        fill: str = 'black',
         password: str | None = None, check: bool = True,
     ) -> reports.RedactReport:
         """Remove text, regex matches or rectangles, using the CLI's verified writer.
@@ -598,15 +599,21 @@ class Tpdf:
         from top-left, sent through stdin. pages limits searches only; regions
         name their own pages. Matching ignores case unless case_sensitive=True.
         A dry run (output optional) writes nothing and has verified=None.
+        fill is the colour of the boxes drawn over what went: 'black', 'white'
+        or 'red'. White boxes cannot be seen on white paper.
 
         A written but unverified copy raises CommandError with exit_code=1;
         its report and file remain available. check=False returns that report
         directly: inspect written, verified and reasons. Exit 0 alone does not
         prove a redaction: no matches also writes nothing with verified=None.
         """
+        if fill not in ('black', 'white', 'red'):
+            raise ValueError("fill must be 'black', 'white' or 'red'")
         args = []
         if output is not None:
             args += ['-o', os.fspath(output)]
+        if fill != 'black':
+            args += ['--fill', fill]
         for flag, queries in [('--text', texts), ('--pattern', patterns)]:
             if isinstance(queries, (str, bytes)):
                 raise TypeError(f'{flag} queries must be a sequence of strings, not one string')

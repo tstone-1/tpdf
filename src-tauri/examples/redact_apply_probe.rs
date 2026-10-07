@@ -964,9 +964,11 @@ fn form_plan(
             .collect(),
         marks: Vec::new(),
         redactions: vec![PlannedRedaction {
+            lines: Vec::new(),
             form_paths: Default::default(),
             source: page,
             shows: plan.shows.clone(),
+            show_cuts: plan.show_cuts.clone(),
             text_objects: objects.text.len(),
             areas: vec![region],
             taking: Vec::new(),
@@ -1036,9 +1038,11 @@ fn plan_for(pages: u32, region: &redact::RegionPlan) -> Plan {
             .collect(),
         marks: Vec::new(),
         redactions: vec![PlannedRedaction {
+            lines: Vec::new(),
             form_paths: Default::default(),
             source: 0,
             shows: region.shows.clone(),
+            show_cuts: region.show_cuts.clone(),
             text_objects: region.text_objects,
             areas: vec![region.area],
             // What `lib.rs` carries from the same field, so the probe drives

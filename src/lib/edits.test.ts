@@ -827,14 +827,29 @@ it("asks what a smaller copy comes to without asking for consent, and writes one
   expect(asked).toBe(2);
 });
 
+it("sends the colour of the boxes with both redactions", async () => {
+  // The backend fills black when it is told nothing, so a colour dropped here
+  // is a reader who chose red and got black with nothing saying so.
+  const edits = new Edits(7, 1, async () => {});
+  core.invoke.mockResolvedValue({});
+  await edits.redactCopy("source", "copy", "red");
+  expect(core.invoke).toHaveBeenLastCalledWith("redact_copy", {
+    doc: 7, source: "source", path: "copy", fill: "red",
+  });
+  await edits.redactDocument("source", "white");
+  expect(core.invoke).toHaveBeenLastCalledWith("redact_document", {
+    doc: 7, source: "source", fill: "white",
+  });
+});
+
 it("awaits save consent before every writing command and sends nothing when declined", async () => {
   const writes = [
     (e: Edits)=>e.save("source"), (e: Edits)=>e.saveCopy("source","copy"),
-    (e: Edits)=>e.redactCopy("source","copy"), (e: Edits)=>e.redactRasterCopy("source","copy"),
+    (e: Edits)=>e.redactCopy("source","copy","black"), (e: Edits)=>e.redactRasterCopy("source","copy"),
     (e: Edits)=>e.ocrCopy("source","copy",1,null),
     (e: Edits)=>e.protectCopy("source","copy","tr0ub4dor"), (e: Edits)=>e.protectCopy("source","copy",null),
     (e: Edits)=>e.compressCopy("source","copy",null),
-    (e: Edits)=>e.redactDocument("source"), (e: Edits)=>e.extractPages("source","copy",[0]),
+    (e: Edits)=>e.redactDocument("source","black"), (e: Edits)=>e.extractPages("source","copy",[0]),
     (e: Edits)=>e.splitDocument("source","copy",[[0]]), (e: Edits)=>e.mergeDocuments("source","copy",["other"]),
   ];
   for (const write of writes) {

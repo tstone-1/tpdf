@@ -157,7 +157,7 @@ fn run(
     };
     let plans = render::redaction_plans_of(&document, 0, &[region])?;
     let planned = plans.first().ok_or("no plan came back for one region")?;
-    if planned.shows.is_empty() {
+    if planned.shows.is_empty() && planned.show_cuts.is_empty() {
         return Err("the plan names no show operator, so nothing would be removed".into());
     }
     drop(document);
@@ -201,9 +201,11 @@ fn run(
         pages,
         marks: Vec::new(),
         redactions: vec![PlannedRedaction {
+            lines: Vec::new(),
             form_paths: Default::default(),
             source: 0,
             shows: planned.shows.clone(),
+            show_cuts: planned.show_cuts.clone(),
             text_objects: planned.text_objects,
             areas: vec![planned.area],
             taking: vec![planned.taking.trim().to_string()],

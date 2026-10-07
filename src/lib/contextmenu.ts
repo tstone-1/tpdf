@@ -166,6 +166,11 @@ export const SELECTION_MENU: Entry[] = [
   "edit.highlightSelection",
   "edit.underlineSelection",
   "edit.strikeoutSelection",
+  // After the three marks, because it is the fourth thing a reader does with
+  // words they have just selected, and the one that used to cost a trip to the
+  // toolbar's menu for every passage. Reported from use on an invoice with a
+  // dozen passages to take out. Left out with nothing selected, like the marks.
+  "edit.redactSelection",
   "edit.selectAll",
   SEPARATOR,
   "find.inSelection",

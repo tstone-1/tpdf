@@ -53,6 +53,7 @@ import { flatten } from "./rowline";
 import { pairPlans } from "./pages";
 import type { FilePage, PageId, RedactionRow, RedactionView, RegionPlan } from "./pages";
 import { touchedText } from "./reading";
+import { FillPicker, type FillPickerOptions } from "./redactfill";
 import type { PageText } from "./text";
 
 /** Side of the swatch standing for the region, in CSS pixels. */
@@ -262,6 +263,12 @@ export interface RedactListOptions {
    */
   onRemove: (id: number) => void;
   /**
+   * The colour of the boxes drawn over what is removed, and where a new
+   * choice goes. Absent for a panel with no picker, which is what the tests of
+   * the rows build.
+   */
+  fill?: FillPickerOptions;
+  /**
    * The words a region covers, by id. See {@link rowLineFor} for the four
    * answers and what each one means.
    *
@@ -421,6 +428,8 @@ export class RedactList {
     });
 
     host.append(this.notice, this.list);
+    // Under the list, where it is in view while the reader checks what goes.
+    if (opts.fill) host.append(new FillPicker(opts.fill).element);
     this.paint();
   }
 

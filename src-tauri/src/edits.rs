@@ -2988,6 +2988,10 @@ pub struct PlannedRedaction {
     /// Every region on the page, merged: two regions covering one line of text
     /// name the same operator, and removing it twice is removing it once.
     pub shows: Vec<usize>,
+    /// Text objects the regions take part of, merged the same way.
+    /// `redact::cut_shows` takes them.
+    #[serde(default)]
+    pub show_cuts: Vec<crate::redact::ShowCut>,
     /// How many text objects PDFium found on the page.
     ///
     /// Carried because `redact::remove_shows` refuses when it disagrees with
@@ -3019,6 +3023,12 @@ pub struct PlannedRedaction {
     /// went is to compare its title against what went. See
     /// `redact::covered_outline`.
     pub taking: Vec<String>,
+    /// Every line the removal takes any part of, in full, one string per
+    /// region. `redact::RegionPlan::lines`, and what the outline and the form
+    /// fields are compared with. Empty in a plan written before a show could
+    /// be cut, where [`taking`](Self::taking) is the same strings.
+    #[serde(default)]
+    pub lines: Vec<String>,
     /// Which of the page's images the removal deletes, ascending.
     ///
     /// `redact::RegionPlan::images`, merged across the page's regions the way

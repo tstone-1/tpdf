@@ -209,6 +209,153 @@ pub fn overlaps(a: Rect, b: Rect) -> bool {
     a[0] < b[2] && b[0] < a[2] && a[1] < b[3] && b[1] < a[3]
 }
 
+/// One glyph of a text object: what it draws, where its ink is, and where the
+/// pen stood when it was drawn.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Glyph {
+    /// What it draws. Usually one character; a ligature draws two or three.
+    pub draws: String,
+    /// Its tight box in page space, or `None` for a glyph with no ink --- a
+    /// space is the common one.
+    pub bounds: Option<Rect>,
+    /// How far along the object's baseline the pen stood, in thousandths of
+    /// the font size: the unit a `TJ` array's numbers are in.
+    pub pen: f32,
+}
+
+/// The glyphs of one text object, in the order its show operator draws them.
+///
+/// What a removal needs in order to take **part** of a show operator and leave
+/// the rest where it was: the glyphs under a region are cut out of the string
+/// and replaced by a gap as wide as they were, and the width is the distance
+/// between two pens.
+#[derive(Debug, Clone, PartialEq)]
+pub struct TextGlyphs {
+    /// One entry per glyph.
+    pub glyphs: Vec<Glyph>,
+    /// Where the **next** text object starts, measured along this object's
+    /// baseline in the same unit. It is where the pen stands after the last
+    /// glyph when the next show operator follows without moving it, and
+    /// meaningless otherwise; only the writer can tell which.
+    pub tail: Option<f32>,
+}
+
+/// One character PDFium placed for a text object, before grouping into glyphs.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub(crate) struct Placed {
+    /// A UTF-16 code unit, as `FPDFText_GetUnicode` reports it.
+    pub unit: u16,
+    /// The pen position, in page space.
+    pub origin: (f64, f64),
+    /// The tight box, in page space: `[left, bottom, right, top]`.
+    pub bounds: Option<[f64; 4]>,
+}
+
+/// How far a pen may step backwards and still count as moving forwards, in
+/// thousandths of the font size. A negative kern between two glyphs is
+/// ordinary; this is for the noise of a position that went through a matrix.
+const PEN_SLACK: f32 = 0.5;
+
+/// How far a pen may sit off the baseline, in thousandths of the font size.
+/// Past it the object is not a row of glyphs along one line --- vertical
+/// writing is the case --- and a gap along the baseline would not replace one.
+const BASELINE_SLACK: f64 = 5.0;
+
+/// Groups a text object's characters into glyphs and measures each pen.
+///
+/// `matrix` and `size` are the object's own, as PDFium reports them: the
+/// matrix is the text matrix times the page's, **with the horizontal scaling
+/// folded into its first row**, and the size is the operand of `Tf`. Measured
+/// on nine combinations of `cm`, `Tm`, `Tf`, `Tz`, `Tc` and `Ts`, 2026-10-07:
+/// one em along the baseline is `size * hypot(a, b)` page units in every one.
+///
+/// Characters that share an origin are one glyph: a ligature's letters, and
+/// the two halves of a surrogate pair.
+///
+/// `None` when the object cannot be described this way, which a caller takes
+/// as "remove it whole": a size or a matrix that is zero or not finite, a pen
+/// off the baseline, or pens that do not run forwards (right-to-left text,
+/// which PDFium hands over in reading order).
+pub(crate) fn glyphs_from(
+    placed: &[Placed],
+    matrix: [f32; 6],
+    size: f32,
+    next_start: Option<(f32, f32)>,
+) -> Option<TextGlyphs> {
+    let (a, b) = (f64::from(matrix[0]), f64::from(matrix[1]));
+    let along = a.hypot(b);
+    let em = f64::from(size) * along;
+    if !(em.is_finite() && em > 0.0 && along > 0.0) {
+        return None;
+    }
+    let (ux, uy) = (a / along, b / along);
+    let (ex, ey) = (f64::from(matrix[4]), f64::from(matrix[5]));
+    // A point's place along the baseline and off it, in thousandths of an em.
+    let measure = |x: f64, y: f64| {
+        let (dx, dy) = (x - ex, y - ey);
+        (
+            (dx * ux + dy * uy) / em * 1000.0,
+            (dy * ux - dx * uy) / em * 1000.0,
+        )
+    };
+
+    let mut glyphs: Vec<Glyph> = Vec::new();
+    let mut units: Vec<u16> = Vec::new();
+    let mut last: Option<(f64, f64)> = None;
+    let mut off_line = 0f64;
+    let close = |glyphs: &mut Vec<Glyph>, units: &mut Vec<u16>| {
+        if let Some(open) = glyphs.last_mut() {
+            open.draws = String::from_utf16_lossy(units);
+        }
+        units.clear();
+    };
+    for (index, one) in placed.iter().enumerate() {
+        if last != Some(one.origin) {
+            close(&mut glyphs, &mut units);
+            let (pen, off) = measure(one.origin.0, one.origin.1);
+            if index == 0 {
+                off_line = off;
+            }
+            if !pen.is_finite() || (off - off_line).abs() > BASELINE_SLACK {
+                return None;
+            }
+            let pen = pen as f32;
+            if glyphs
+                .last()
+                .is_some_and(|before| pen < before.pen - PEN_SLACK)
+            {
+                return None;
+            }
+            glyphs.push(Glyph {
+                draws: String::new(),
+                bounds: None,
+                pen,
+            });
+            last = Some(one.origin);
+        }
+        units.push(one.unit);
+        let open = glyphs.last_mut()?;
+        if let Some([left, bottom, right, top]) = one.bounds {
+            let this = [left as f32, bottom as f32, right as f32, top as f32];
+            open.bounds = Some(match open.bounds {
+                Some(have) => [
+                    have[0].min(this[0]),
+                    have[1].min(this[1]),
+                    have[2].max(this[2]),
+                    have[3].max(this[3]),
+                ],
+                None => this,
+            });
+        }
+    }
+    close(&mut glyphs, &mut units);
+    let end = glyphs.last()?.pen;
+    let tail = next_start
+        .map(|(x, y)| measure(f64::from(x), f64::from(y)).0 as f32)
+        .filter(|tail| tail.is_finite() && *tail >= end - PEN_SLACK);
+    Some(TextGlyphs { glyphs, tail })
+}
+
 /// A page's objects, and what the text ones draw.
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct PageObjects {
@@ -226,6 +373,11 @@ pub struct PageObjects {
     /// strings are ordinary: a text object PDFium places no characters against
     /// draws nothing this can read.
     pub text: Vec<String>,
+    /// The glyphs of each of the **page's own** text objects, by the same
+    /// ordinals as the first entries of [`text`](Self::text). `None` for an
+    /// object [`glyphs_from`] cannot describe. Text inside a form has no entry:
+    /// a removal there still takes the whole show operator.
+    pub glyphs: Vec<Option<TextGlyphs>>,
     /// The Form XObjects on this page, and the text inside each.
     ///
     /// One entry per `form` object in [`all`](Self::all) --- always, even when the
@@ -289,6 +441,8 @@ pub fn read_using(page: &RawPage<'_>, text: &RawTextPage<'_>) -> Result<PageObje
     // unbroken range of ordinals starting at zero, and interleaving the two
     // would put a form's children in the middle of it.
     let mut form_handles: Vec<(usize, FPDF_PAGEOBJECT)> = Vec::new();
+    // The page's own text objects by ordinal, for the glyph walk at the end.
+    let mut own_text: Vec<FPDF_PAGEOBJECT> = Vec::new();
 
     for index in 0..count.max(0) {
         // SAFETY: `index` is below the reported object count.
@@ -309,6 +463,7 @@ pub fn read_using(page: &RawPage<'_>, text: &RawTextPage<'_>) -> Result<PageObje
         if kind == "text" {
             ordinal_of.insert(object as usize, text_objects);
             text_objects += 1;
+            own_text.push(object);
         }
         if kind == "form" {
             form_handles.push((all.len(), object));
@@ -348,11 +503,83 @@ pub fn read_using(page: &RawPage<'_>, text: &RawTextPage<'_>) -> Result<PageObje
         forms[form].text[ordinal].draws = drawn;
     }
 
+    let glyphs = glyphs_of(page, text, &ordinal_of, &own_text);
     Ok(PageObjects {
         text: said,
+        glyphs,
         all,
         forms,
     })
+}
+
+/// The glyphs of each of the page's own text objects.
+///
+/// One walk of the page's characters, each put on its object by
+/// `FPDFText_GetTextObject` as [`draws`] does. A character PDFium made up ---
+/// the space it puts between two words that have none --- belongs to no show
+/// operator and is left out.
+fn glyphs_of(
+    page: &RawPage<'_>,
+    text: &RawTextPage<'_>,
+    ordinal_of: &HashMap<usize, usize>,
+    own_text: &[FPDF_PAGEOBJECT],
+) -> Vec<Option<TextGlyphs>> {
+    let bindings = page.bindings();
+    let mut placed: Vec<Vec<Placed>> = vec![Vec::new(); own_text.len()];
+    // An object with a character PDFium would not place cannot be cut.
+    let mut unplaced = vec![false; own_text.len()];
+    for index in 0..text.count() {
+        // SAFETY: the text page outlives this loop and `index` is in range.
+        let object = unsafe { bindings.FPDFText_GetTextObject(text.handle(), index as i32) };
+        if object.is_null() {
+            continue;
+        }
+        let Some(ordinal) = ordinal_of.get(&(object as usize)).copied() else {
+            continue;
+        };
+        if ordinal >= placed.len() {
+            // A form's child: its ordinals continue above the page's own.
+            continue;
+        }
+        // SAFETY: as above.
+        if unsafe { bindings.FPDFText_IsGenerated(text.handle(), index as i32) } != 0 {
+            continue;
+        }
+        let (mut x, mut y) = (0f64, 0f64);
+        // SAFETY: two writable doubles, and PDFium bounds-checks the index.
+        let ok =
+            unsafe { bindings.FPDFText_GetCharOrigin(text.handle(), index as i32, &mut x, &mut y) };
+        let unit = u16::try_from(text.code(index));
+        match (ok != 0 && x.is_finite() && y.is_finite(), unit) {
+            (true, Ok(unit)) => placed[ordinal].push(Placed {
+                unit,
+                origin: (x, y),
+                bounds: text.char_box(index),
+            }),
+            _ => unplaced[ordinal] = true,
+        }
+    }
+    let starts: Vec<[f32; 6]> = own_text
+        .iter()
+        .map(|object| matrix_of(page, *object))
+        .collect();
+    own_text
+        .iter()
+        .enumerate()
+        .map(|(ordinal, object)| {
+            if unplaced[ordinal] {
+                return None;
+            }
+            let mut size = 0f32;
+            // SAFETY: a writable float, and `object` is a text object the page owns.
+            let ok = unsafe { bindings.FPDFTextObj_GetFontSize(*object, &mut size) };
+            if ok == 0 {
+                return None;
+            }
+            let next = starts.get(ordinal + 1).map(|m| (m[4], m[5]));
+            glyphs_from(&placed[ordinal], starts[ordinal], size, next)
+        })
+        .collect()
 }
 
 /// One Form XObject's text children, in page space.
@@ -595,6 +822,137 @@ mod tests {
         assert_eq!(kind_of(0), "unsupported");
         assert_eq!(kind_of(99), "unsupported");
         assert_eq!(kind_of(-1), "unsupported");
+    }
+
+    /// Characters at `xs` along a horizontal baseline at y = 100.
+    fn along(xs: &[f64]) -> Vec<Placed> {
+        xs.iter()
+            .enumerate()
+            .map(|(at, x)| Placed {
+                unit: b'a' as u16 + at as u16,
+                origin: (*x, 100.0),
+                bounds: Some([*x, 100.0, *x + 5.0, 108.0]),
+            })
+            .collect()
+    }
+
+    const PLAIN: [f32; 6] = [1.0, 0.0, 0.0, 1.0, 20.0, 100.0];
+
+    fn pens(text: &TextGlyphs) -> Vec<f32> {
+        text.glyphs.iter().map(|glyph| glyph.pen.round()).collect()
+    }
+
+    /// The numbers are PDFium's for Helvetica `AB` at 12 points: `A` is 667
+    /// thousandths wide, so `B` starts 8.004 points on.
+    #[test]
+    fn a_pen_is_measured_in_thousandths_of_the_font_size() {
+        let text = glyphs_from(&along(&[20.0, 28.004]), PLAIN, 12.0, None).expect("placed");
+        assert_eq!(pens(&text), [0.0, 667.0]);
+        assert_eq!(text.glyphs[1].draws, "b");
+        assert_eq!(text.glyphs[1].bounds, Some([28.004, 100.0, 33.004, 108.0]));
+        assert_eq!(text.tail, None);
+    }
+
+    /// Each row is one measurement of 2026-10-07: the matrix PDFium reported
+    /// and the distance it put between `A` and `B`. The pen is 667 in every
+    /// one, because that is what the font says and nothing else changed.
+    #[test]
+    fn the_matrix_and_the_size_take_the_scale_out_of_a_pen() {
+        let cases: [(&str, [f32; 6], f32, f64); 4] = [
+            ("Tz 50", [0.5, 0.0, 0.0, 1.0, 20.0, 100.0], 12.0, 4.002),
+            ("cm 2", [2.0, 0.0, 0.0, 2.0, 20.0, 100.0], 12.0, 16.008),
+            ("Tm 3, Tf 4", [3.0, 0.0, 0.0, 3.0, 20.0, 100.0], 4.0, 8.004),
+            (
+                "Tm stretched 2",
+                [2.0, 0.0, 0.0, 1.0, 20.0, 100.0],
+                12.0,
+                16.008,
+            ),
+        ];
+        for (what, matrix, size, step) in cases {
+            let text = glyphs_from(&along(&[20.0, 20.0 + step]), matrix, size, None).expect(what);
+            assert_eq!(pens(&text), [0.0, 667.0], "{what}");
+        }
+    }
+
+    #[test]
+    fn a_turned_baseline_is_measured_along_itself() {
+        // Thirty degrees: the second pen is 8.004 points along (0.866, 0.5).
+        let turned = [0.866, 0.5, -0.5, 0.866, 40.0, 60.0];
+        let placed = [
+            Placed {
+                unit: b'A' as u16,
+                origin: (40.0, 60.0),
+                bounds: None,
+            },
+            Placed {
+                unit: b'B' as u16,
+                origin: (40.0 + 8.004 * 0.866, 60.0 + 8.004 * 0.5),
+                bounds: None,
+            },
+        ];
+        let text = glyphs_from(&placed, turned, 12.0, None).expect("placed");
+        assert_eq!(pens(&text), [0.0, 667.0]);
+    }
+
+    /// A ligature is one code and two characters, and both stand at one pen.
+    #[test]
+    fn characters_at_one_pen_are_one_glyph() {
+        let mut placed = along(&[20.0, 30.0, 30.0, 45.0]);
+        placed[2].bounds = Some([32.0, 98.0, 40.0, 110.0]);
+        let text = glyphs_from(&placed, PLAIN, 10.0, None).expect("placed");
+        assert_eq!(pens(&text), [0.0, 1000.0, 2500.0]);
+        assert_eq!(text.glyphs[1].draws, "bc");
+        assert_eq!(
+            text.glyphs[1].bounds,
+            Some([30.0, 98.0, 40.0, 110.0]),
+            "the box of both"
+        );
+    }
+
+    #[test]
+    fn the_tail_is_where_the_next_object_starts_along_this_baseline() {
+        let text =
+            glyphs_from(&along(&[20.0, 30.0]), PLAIN, 10.0, Some((42.0, 100.0))).expect("placed");
+        assert_eq!(text.tail.map(f32::round), Some(2200.0));
+        // A next object that starts behind the last pen is on another line,
+        // and is no tail.
+        let behind =
+            glyphs_from(&along(&[20.0, 30.0]), PLAIN, 10.0, Some((20.0, 86.0))).expect("placed");
+        assert_eq!(behind.tail, None);
+    }
+
+    /// Each of these goes whole when a region touches it, which is what
+    /// `None` means to `redact::cut_within`.
+    #[test]
+    fn an_object_that_is_not_a_row_of_glyphs_running_forwards_has_no_glyphs() {
+        let row = along(&[20.0, 30.0, 40.0]);
+        assert!(
+            glyphs_from(&row, PLAIN, 10.0, None).is_some(),
+            "the control"
+        );
+
+        // Right-to-left text arrives in reading order, pens running back.
+        assert!(glyphs_from(&along(&[40.0, 30.0, 20.0]), PLAIN, 10.0, None).is_none());
+        // A negative kern steps back by less than the slack allows: still a row.
+        assert!(glyphs_from(&along(&[20.0, 30.0, 29.996]), PLAIN, 10.0, None).is_some());
+
+        // A pen off the baseline: vertical writing.
+        let mut down = row.clone();
+        down[2].origin = (40.0, 90.0);
+        assert!(glyphs_from(&down, PLAIN, 10.0, None).is_none());
+
+        assert!(glyphs_from(&row, PLAIN, 0.0, None).is_none(), "no size");
+        assert!(
+            glyphs_from(&row, PLAIN, f32::NAN, None).is_none(),
+            "no size"
+        );
+        let flat = [0.0, 0.0, 0.0, 1.0, 20.0, 100.0];
+        assert!(glyphs_from(&row, flat, 10.0, None).is_none(), "no baseline");
+        assert!(
+            glyphs_from(&[], PLAIN, 10.0, None).is_none(),
+            "no characters"
+        );
     }
 
     #[test]

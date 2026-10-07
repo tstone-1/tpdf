@@ -12,11 +12,17 @@ document.documentElement.lang = UI_LOCALE;
 if (import.meta.env.DEV) {
   const mark = document.createElement("style");
   mark.textContent =
-    // A bar and a badge, and no colour on the header itself: its menus are
+    // A frame and a badge, and no colour on the header itself: its menus are
     // inside it and inherit what it is given, and white text on a red header
     // was white text on their white panels.
-    "body{box-shadow:inset 0 0 0 3px #d42a2a}" +
-    "header{border-top:8px solid #d42a2a}" +
+    //
+    // The frame is a layer over the window, the same width on all four sides.
+    // It was a shadow inside `body` with a thicker bar on the header, and
+    // every row with a background of its own painted over the shadow: the
+    // toolbar and the left panel had no red edge and the page area had one
+    // only on the right. Reported from use. It takes no pointer events.
+    "body::after{content:\"\";position:fixed;inset:0;border:3px solid #d42a2a;" +
+    "pointer-events:none;z-index:2147483647}" +
     'header::before{content:"DEV";font:700 12px/1 system-ui,sans-serif;letter-spacing:0.08em;' +
     "padding:4px 7px;margin-right:6px;border-radius:4px;background:#d42a2a;color:#fff}";
   document.head.append(mark);

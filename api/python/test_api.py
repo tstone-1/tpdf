@@ -401,6 +401,23 @@ class ClientTests(unittest.TestCase):
                 self.assertNotIn(b'PRIVATE-731', output.read_bytes())
         self.assertEqual(source.read_bytes(), original)
 
+    def test_redaction_fill_is_black_unless_another_colour_is_named(self):
+        source = self.redaction_source()
+        client = Tpdf(BINARY, cwd=self.root, timeout=120)
+        # The colour is in the annotation's /IC and in its appearance; the
+        # copy is not compressed there, so both are readable as bytes.
+        for fill, colour in [(None, b'/IC[0 0 0]'), ('red', b'/IC[0.83 0.16 0.16]'),
+                             ('white', b'/IC[1 1 1]')]:
+            with self.subTest(fill=fill):
+                output = self.root / f'fill-{fill}.pdf'
+                extra = {} if fill is None else {'fill': fill}
+                report = client.redact(source.name, output, texts=['private-731'], **extra)
+                self.assertIs(report['verified'], True)
+                self.assertIn(colour, output.read_bytes())
+        with self.assertRaises(ValueError):
+            client.redact(source.name, self.root / 'blue.pdf', texts=['private-731'], fill='blue')
+        self.assertFalse((self.root / 'blue.pdf').exists())
+
     def test_redaction_dry_run_and_no_match_never_claim_verified(self):
         source = self.redaction_source()
         output = self.root / 'protected.pdf'

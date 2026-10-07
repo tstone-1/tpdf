@@ -20,6 +20,8 @@ import {
   linesOf,
   linesRunSideways,
   nearestChar,
+  onText,
+  ON_TEXT_REACH,
   textOf,
   turnedView,
   turnQuad,
@@ -527,6 +529,27 @@ describe("lineAt", () => {
 
   it("has no line to find on a page with no text", () => {
     expect(lineAt(page([]), 0)).toEqual({ from: 0, to: 0 });
+  });
+});
+
+describe("onText", () => {
+  it("is true on a character and just beside one", () => {
+    // `twoLines` has a letter from x=10 to 20 and y=10 to 22.
+    expect(onText(twoLines(), 15, 16)).toBe(true);
+    expect(onText(twoLines(), 10 - ON_TEXT_REACH, 16)).toBe(true);
+    expect(onText(twoLines(), 15, 22 + ON_TEXT_REACH)).toBe(true);
+  });
+
+  it("is false in the margin and between two lines", () => {
+    // `nearestChar` names a character for both of these points, which is why
+    // the redaction tool cannot ask it.
+    expect(onText(twoLines(), 10 - ON_TEXT_REACH - 1, 16)).toBe(false);
+    expect(onText(twoLines(), 80, 16)).toBe(false);
+    expect(onText(twoLines(), 15, 26)).toBe(false);
+  });
+
+  it("is false on a page that places no character", () => {
+    expect(onText(page([["a", null]]), 0, 0)).toBe(false);
   });
 });
 

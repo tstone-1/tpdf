@@ -2305,7 +2305,10 @@ untouched.
 
 They are **what the region covers, not what applying would remove**, and the panel does not
 pretend otherwise. Route B deletes a whole text-showing operation when any of its glyphs is
-inside, so an apply takes at least these words and commonly the rest of the line. What a
+inside, so an apply takes at least these words and commonly the rest of the line.
+(**Corrected 2026-10-07:** an apply now takes the glyphs under the region and leaves the
+rest of the line, wherever `redact/glyph_cut.rs` can prove which glyphs those are. Route B
+is what happens where it cannot. See *Route A, for the case it can be proved in* below.) What a
 removal would actually take is a plan against the page's own objects, and it belongs with
 step 3.
 
@@ -2424,6 +2427,39 @@ copy of every answer a reader typed.
 their own below. The six subsections say what each does and does not cover.
 
 #### Step 3's primitive: removing text from a region — built 2026-08-26
+
+**Route A, for the case it can be proved in — added 2026-10-07.** Reported from use: a
+phone company's invoice writes each line as one string, so marking an account number took
+the line. `redact/glyph_cut.rs` cuts the glyphs under a region out of the show operator and
+puts a `TJ` gap in their place, as wide as they were.
+
+The width is not read from the font. PDFium reports the pen position of every character
+(`FPDFText_GetCharOrigin`), and the distance between two pens is the width of what stood
+between them, with character spacing, word spacing and kerning already in it. One em along
+the baseline is `font size * hypot(a, b)` of the text object's matrix, in which PDFium has
+folded the horizontal scaling; measured on nine combinations of `cm`, `Tm`, `Tf`, `Tz`,
+`Tc` and `Ts`, and the reason no text state is tracked on the `lopdf` side at all.
+
+A show is cut only when one glyph per code can be proved: PDFium's glyphs run forwards
+along one baseline, there are as many of them as the string has codes (PDFium never makes
+more glyphs than codes), the font's code length is known (one byte, or two under
+`Identity-H`), and every glyph without ink is white space. Anything else goes whole, which
+is route B and what every show did before. Text inside a Form XObject is not cut.
+
+**Three rules elsewhere leaned on route B and were looked at.** The outline and form-field
+carriers compare a title or an answer with *what went* by `taken.contains(title)`; a cut
+takes twelve digits and a bookmark repeating the line is not a substring of twelve digits,
+so they are now compared with the whole lines a removal touched (`RegionPlan::lines`). The
+OCR gate's mask argument is corrected in place above. And `ocr_gate::surviving` drops
+control words that share an operation with the covered text; with a cut those words stay
+on the page, and the textual test now keeps them, which costs nothing and gains controls.
+
+Measured on the invoice it was reported on, every run of six or more digits marked, 33
+regions on four pages: all 33 gone from the copy's text and 6,017 of 6,367 characters left. Of
+the 827 words in the copy, 814 are at the same place to a twentieth of a point and none
+moved; the other 13 are strings the original does not have as a word, which is what a cut
+through a word leaves. `tests/cli/redact.rs` holds eight ways of writing a line to the pinned engine,
+with the same position check.
 
 `src/redact.rs`, route B, headless and wired to no command yet. Given the objects PDFium
 enumerated on a page and a rectangle, [`covered`] names which show operators the region
@@ -4354,6 +4390,10 @@ blank space rather than as an edge.
 **It is sound rather than approximate, and the reason is route B.** `redact::covered` marks
 a text object when it *overlaps* the region, and a removal takes the whole text-showing
 operation — so after a correct removal no glyph overlapping the region survives.
+(**Corrected 2026-10-07:** a glyph the region covers a tenth of or less now survives a cut,
+`glyph_cut::UNDER`, so "no glyph overlapping the region survives" is no longer exact. What
+survives is at least nine tenths outside the region. The A/B below was measured before
+that and has not been repeated.)
 Everything the mask erases is therefore something the reader did not mark and the removal
 was right to keep, and there is no half-erased survivor to misread, because a survivor
 straddling the edge would have been removed with its operation.

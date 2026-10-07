@@ -17,7 +17,7 @@ as *downloadable*, while the release sat as a draft that GitHub showed to nobody
 are given now because they are different facts, and only the second one means a reader can
 have the binary.)
 
-## [26.10.10] - Unreleased
+## [26.10.10] - 2026-10-07
 
 ### Added
 
@@ -70,6 +70,53 @@ have the binary.)
   passwords, creating form fields. A table compares price, licence and platforms with
   SumatraPDF, Acrobat, PDFgear and Stirling-PDF. The sentence counting the command-line
   tool's commands said twenty and now says twenty-six.
+- **Redacting part of a line removes that part and leaves the rest of the line.** Marking an
+  account number used to take the whole line it stood in whenever the document drew the
+  line in one piece, which most do. Now the marked characters are cut out and a gap as wide
+  as they were is left, so the words before and after stay where they were. The review
+  panel and the report name what goes, which is now the marked text and not the line.
+  tpdf does this only where it can prove which characters an instruction draws; where it
+  cannot, the whole instruction still goes and the panel says so before anything is
+  written. That is the case for text written right to left or down the page, a font whose
+  codes it cannot count, a letter the engine gives no outline for, and text inside a
+  reusable block. A bookmark or a form answer that repeats a line you cut from is still
+  removed whole. Measured on a phone company's invoice with every run of six or more
+  digits marked, 33 places on four pages: all 33 are gone from the copy's text, and of the
+  827 words left, 814 are at the same place to a twentieth of a point and none moved.
+- **The redaction tool stays on until you press Esc, and marks text as well as regions.**
+  *Redact region by dragging* marked one region and switched itself off, so a page with a
+  dozen things to take out meant choosing the command a dozen times. It is now *Redact text
+  or regions by dragging*, and it stays on. Dragging across words marks those words, a
+  double-click marks a word, and dragging on blank paper marks a rectangle; the cursor shows
+  which a press will start. *Redact selection* marks what is selected and leaves the tool
+  on too. Nothing is removed while you mark, every mark is still its own undo and its own
+  row in the review list, and a right-click on one still removes it. Cropping is unchanged:
+  one drag, because a page has one crop.
+- **The boxes a redaction draws can be black, white or red.** They were always black, and
+  black is still what you get unless you choose. The Redactions panel has three swatches
+  under its list, and the choice is kept for the next time. `tpdf redact` takes
+  `--fill black|white|red` and the Python client's `redact()` takes `fill=`. While white is
+  chosen the panel says what it means: a white box cannot be seen on white paper, so a
+  reader of the copy does not see that anything was removed. The image-only copy still
+  draws black.
+- **A right-click on selected text offers *Redact selection*.** It sits after the three
+  marks. Before, the only routes were the toolbar's Redact menu and the command palette,
+  once for every passage.
+- **The row of document tabs shows no scrollbar.** With more tabs open than fit, a bar
+  appeared under the row. The row still scrolls with a sideways swipe, and now with a
+  mouse wheel turned over it. The active tab is brought into view as before.
+
+### Fixed
+
+- **A page with text instructions that draw nothing can be redacted.** Some programs write
+  an empty text instruction between the real ones; a phone company's invoices have between
+  two and seven on every page. tpdf counted them, the engine it compares against does not,
+  and every redaction on such a page stopped with "the page has 83 text-showing operator(s)
+  and PDFium reported 77 text object(s) ... so nothing was removed". Nothing wrong was ever
+  written: the refusal is the guard doing its job on a count that was wrong. tpdf now counts
+  only the instructions the engine makes text of, and leaves the empty ones where they are.
+  Checked on eight such invoices of four pages each: all eight are now written, and no
+  account number or long digit run that was marked is left in the text of the copy.
 
 ## [26.10.9] - 2026-10-06
 

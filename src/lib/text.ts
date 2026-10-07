@@ -897,6 +897,33 @@ export function caretAt(text: PageText, x: number, y: number): number {
 }
 
 /**
+ * How near a press has to be to a character to count as on the text, in points.
+ *
+ * Two points is the gap between the letters of a word at body size, so a press
+ * between two letters is on the text and one in the margin is not.
+ */
+export const ON_TEXT_REACH = 2;
+
+/**
+ * Whether a point is on a character, or within {@link ON_TEXT_REACH} of one.
+ *
+ * {@link nearestChar} answers for every point on a page that has text, which is
+ * right for a selection and wrong for the redaction tool: armed, a press on
+ * the words marks words and a press on blank paper starts a rectangle, so the
+ * tool has to know which of the two the press is.
+ */
+export function onText(text: PageText, x: number, y: number): boolean {
+  for (let index = 0; index < text.codes.length; index++) {
+    const quad = charQuad(text, index);
+    if (!isPlaced(quad)) continue;
+    const dx = Math.max(quad.left - x, 0, x - quad.right);
+    const dy = Math.max(quad.top - y, 0, y - quad.bottom);
+    if (dx <= ON_TEXT_REACH && dy <= ON_TEXT_REACH) return true;
+  }
+  return false;
+}
+
+/**
  * The index of the character nearest a point, or -1 if the page places none.
  *
  * Split out of {@link caretAt} rather than duplicated, because a caret and a

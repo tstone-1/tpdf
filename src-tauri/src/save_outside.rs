@@ -713,7 +713,7 @@ impl Rewriter for InWorker {
         inputs: Option<crate::save::Inputs<'_>>,
     ) -> Result<usize, Refusal> {
         // The handles, never the pathnames. See [`Rewriter`].
-        let mapped = if matches!(job, Job::RasterRedact | Job::RedactionFill) {
+        let mapped = if matches!(job, Job::RasterRedact | Job::RedactionFill { .. }) {
             raster_snapshot(source, len, plan)?
         } else {
             Shm::map_open_file(source, len)?

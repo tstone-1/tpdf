@@ -144,7 +144,7 @@ fn run(file: &Path, library: &Path) -> Result<(), String> {
         r.skip("the region has a removal plan", "the worker returned none");
         r.finish();
     };
-    if plan_for_region.shows.is_empty() {
+    if plan_for_region.shows.is_empty() && plan_for_region.show_cuts.is_empty() {
         r.skip(
             "the region has a removal plan",
             format!("nothing to remove under {:?}", target.text),
@@ -168,9 +168,11 @@ fn run(file: &Path, library: &Path) -> Result<(), String> {
             .collect(),
         marks: Vec::new(),
         redactions: vec![PlannedRedaction {
+            lines: Vec::new(),
             form_paths: Default::default(),
             source: 0,
             shows: plan_for_region.shows.clone(),
+            show_cuts: plan_for_region.show_cuts.clone(),
             text_objects: plan_for_region.text_objects,
             areas: vec![plan_for_region.area],
             taking: vec![plan_for_region.taking.clone()],

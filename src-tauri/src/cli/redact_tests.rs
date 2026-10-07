@@ -48,6 +48,26 @@ fn a_whole_redaction_line_parses_into_what_is_run() {
 }
 
 #[test]
+fn the_fill_is_black_unless_one_of_the_three_is_named() {
+    use crate::redaction_fill::Fill;
+    assert_eq!(parsed("in.pdf -o out.pdf --text a").fill, Fill::Black);
+    assert_eq!(
+        parsed("in.pdf -o out.pdf --text a --fill white").fill,
+        Fill::White
+    );
+    assert_eq!(
+        parsed("in.pdf -o out.pdf --fill red --text a").fill,
+        Fill::Red
+    );
+    let why = refused("in.pdf -o out.pdf --text a --fill blue");
+    assert!(
+        why.contains("black, white or red") && why.contains("blue"),
+        "{why}"
+    );
+    assert!(refused("in.pdf -o out.pdf --text a --fill").contains("--fill"));
+}
+
+#[test]
 fn a_dry_run_needs_no_output_and_a_real_run_does() {
     assert_eq!(parsed("in.pdf --dry-run --text a").output, None);
     assert!(refused("in.pdf --text a").contains("-o <out.pdf>"));

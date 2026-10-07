@@ -3,6 +3,7 @@
     1,
     2
   ],
+  "show_cuts": [],
   "text_objects": 2,
   "images": [
     3
@@ -69,6 +70,7 @@
     60.0
   ],
   "taking": "the quick brown fox",
+  "lines": "",
   "unhandled": [
     {
       "at": 7,

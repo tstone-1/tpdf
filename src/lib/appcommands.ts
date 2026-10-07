@@ -1532,7 +1532,7 @@ export function registerAppCommands(
       // near each other in the palette on purpose, because a reader who has
       // confused the two should meet both.
       id: "edit.redactRegion",
-      title: "Redact region by dragging",
+      title: "Redact text or regions by dragging",
       enabled: withDocument,
       run: () => actions.redactRegion(),
     },
@@ -1581,7 +1581,7 @@ export function registerAppCommands(
       // copying it: with nothing picked it would remove nothing, and a command
       // that runs and does nothing reads as a broken command.
       //
-      // No keyboard binding, for the reason "Redact region by dragging" has
+      // No keyboard binding, for the reason "Redact text or regions by dragging" has
       // none: every command in this workflow is one keystroke more expensive
       // than it could be, on purpose.
       //

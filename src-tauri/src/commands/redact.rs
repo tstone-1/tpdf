@@ -29,6 +29,7 @@ async fn finish_redaction_fill(
     plan: edits::Plan,
     fingerprint: crate::fingerprint::Fingerprint,
     password: Option<String>,
+    fill: crate::redaction_fill::Fill,
 ) -> Result<(), String> {
     let writer = outside_at(library, backend);
     tauri::async_runtime::spawn_blocking(move || {
@@ -38,6 +39,7 @@ async fn finish_redaction_fill(
             &fingerprint,
             password.as_deref(),
             &*writer,
+            fill,
         )
     })
     .await
@@ -144,6 +146,9 @@ pub async fn redaction_plans(
 pub struct Asked {
     /// The reader's plan with the redaction ordinals in it.
     pub plan: edits::Plan,
+    /// The colour of the boxes drawn over what went. Black until a caller
+    /// that was given another sets it.
+    pub fill: crate::redaction_fill::Fill,
     /// The words the regions cover, to look for in what gets written.
     pub needles: Vec<String>,
     /// What the removal could not take. Not a refusal --- see [`redact_copy`]
@@ -320,6 +325,7 @@ pub async fn ask_redactions(
         .count();
     Ok(Asked {
         plan,
+        fill: crate::redaction_fill::Fill::default(),
         needles,
         concerns,
         notes,
@@ -425,8 +431,10 @@ pub async fn redact_copy(
     doc: u32,
     source: String,
     path: String,
+    fill: Option<crate::redaction_fill::Fill>,
 ) -> Result<redact::Applied, String> {
-    let asked = ask_redactions(&edits, &service, doc).await?;
+    let mut asked = ask_redactions(&edits, &service, doc).await?;
+    asked.fill = fill.unwrap_or_default();
     redact_copy_asked(
         &service,
         pdfium_library_dir(&app),
@@ -645,12 +653,20 @@ pub async fn redact_copy_asked(
     let notes = ocr_gate::sizing_notes(&asked.gate);
     let taken_here = asked.notes;
     why.extend(gate_written_file(service.clone(), out_path.clone(), asked.gate, key.clone()).await);
-    finish_redaction_fill(library, backend, out_path, asked.plan, fingerprint, key)
-        .await
-        .map_err(|message| Stopped::Failed {
-            message,
-            written: true,
-        })?;
+    finish_redaction_fill(
+        library,
+        backend,
+        out_path,
+        asked.plan,
+        fingerprint,
+        key,
+        asked.fill,
+    )
+    .await
+    .map_err(|message| Stopped::Failed {
+        message,
+        written: true,
+    })?;
     Ok(redact::Applied {
         regions,
         shows: shows_total,
@@ -714,10 +730,12 @@ pub async fn redact_document(
     web: tauri::State<'_, webopen::Registry>,
     doc: u32,
     source: String,
+    fill: Option<crate::redaction_fill::Fill>,
 ) -> Result<redact::Applied, SaveFailure> {
-    let asked = ask_redactions(&edits, &service, doc)
+    let mut asked = ask_redactions(&edits, &service, doc)
         .await
         .map_err(SaveFailure::refused)?;
+    asked.fill = fill.unwrap_or_default();
 
     let staging = source.clone();
     let plan = asked.plan.clone();
@@ -829,6 +847,7 @@ pub async fn redact_document(
         asked.plan,
         fingerprint,
         key,
+        asked.fill,
     )
     .await
     .map_err(SaveFailure::after_close)?;

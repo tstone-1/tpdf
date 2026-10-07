@@ -112,6 +112,329 @@ pub(super) fn contacts_pdf() -> Vec<u8> {
     bytes
 }
 
+/// Two pages whose content has show operators that draw nothing, on the page
+/// and inside a Form XObject.
+///
+/// A removal addresses the nth text object PDFium reports as the nth show
+/// operator, and PDFium makes no object of a show without text. Page 1 holds
+/// the well-formed shapes, which a phone company's invoices have on every
+/// page. Page 2 holds the malformed ones, and beside them the nearest shapes
+/// that do make an object. If the pinned engine counted any of them the other
+/// way, the two counts would differ and the removal would refuse.
+///
+/// The malformed shapes are on a page of their own because `pdftotext` reads
+/// nothing at all from a page that has them, and page 1 is what the other
+/// readers are asked about.
+///
+/// Every secret has an empty show **before** it in its own stream. With the
+/// empty shows only after the words, a count that ignored them and one that
+/// did not would address the same operator.
+fn empty_shows_pdf() -> Vec<u8> {
+    let mut doc = Document::with_version("1.7");
+    let pages = doc.new_object_id();
+    let font = doc.add_object(dictionary! {
+        "Type" => "Font", "Subtype" => "Type1", "BaseFont" => "Helvetica",
+        "Encoding" => "WinAnsiEncoding",
+    });
+    let resources = dictionary! { "Font" => dictionary! { "F1" => font } };
+    let form = doc.add_object(Stream::new(
+        dictionary! {
+            "Type" => "XObject", "Subtype" => "Form",
+            "BBox" => vec![0.into(), 0.into(), 400.into(), 80.into()],
+            "Resources" => resources.clone(),
+        },
+        b"BT /F1 12 Tf 14 TL 0 40 Td () Tj (FORM-SECRET-7731) Tj () ' (FORM-KEEP delta) Tj ET"
+            .to_vec(),
+    ));
+    let mut with_form = resources.clone();
+    with_form.set("XObject", dictionary! { "Fm0" => form });
+    let one = "BT /F1 12 Tf 14 TL 72 100 Td () Tj <> Tj [] TJ [-200] TJ [()] TJ \
+               [() -200 ()] TJ () ' 0 0 () \" ET\n\
+               BT /F1 12 Tf 72 700 Td (CONTROL-KEEP alpha) Tj ET\n\
+               BT /F1 12 Tf 72 680 Td () Tj (Codeword Rumpelstilzchen) Tj ET\n\
+               BT /F1 12 Tf 72 660 Td (CONTROL-KEEP beta) Tj () Tj ET\n\
+               q 1 0 0 1 72 500 cm /Fm0 Do Q\n";
+    let two = "BT /F1 12 Tf 72 100 Td [/N] TJ (x) TJ 5 Tj [(x)] Tj Tj (x) () Tj ET\n\
+               BT /F1 12 Tf 72 60 Td /N Tj ( ) Tj () (C) Tj [() -200 (D)] TJ ET\n\
+               BT /F1 12 Tf 72 700 Td (CONTROL-KEEP gamma) Tj ET\n\
+               BT /F1 12 Tf 72 680 Td 5 Tj (MALFORMED-SECRET-5512) Tj ET\n";
+    let mut kids = Vec::new();
+    for (body, resources) in [(one, with_form), (two, resources)] {
+        let content = doc.add_object(Stream::new(dictionary! {}, body.as_bytes().to_vec()));
+        kids.push(Object::Reference(doc.add_object(dictionary! {
+            "Type" => "Page", "Parent" => pages, "Resources" => resources,
+            "MediaBox" => vec![0.into(), 0.into(), 612.into(), 792.into()],
+            "Contents" => content,
+        })));
+    }
+    doc.objects.insert(
+        pages,
+        dictionary! { "Type" => "Pages", "Kids" => kids, "Count" => 2 }.into(),
+    );
+    let catalog = doc.add_object(dictionary! { "Type" => "Catalog", "Pages" => pages });
+    doc.trailer.set("Root", catalog);
+    let mut bytes = Vec::new();
+    doc.save_to(&mut bytes).expect("saved");
+    bytes
+}
+
+/// A page with empty show operators is redacted, and the right lines go.
+pub(super) fn empty_shows_are_passed_over(report: &mut Report) {
+    let dir = scratch("redact-empty-shows");
+    let input = dir.join("empty-shows.pdf");
+    std::fs::write(&input, empty_shows_pdf()).expect("fixture");
+    let secrets = ["Rumpelstilzchen", "FORM-SECRET-7731"];
+    let kept = ["CONTROL-KEEP alpha", "CONTROL-KEEP beta", "FORM-KEEP delta"];
+    // Page 2, which only tpdf's own extraction is asked about.
+    let (odd_secret, odd_kept) = ("MALFORMED-SECRET-5512", "CONTROL-KEEP gamma");
+
+    let before = readers(&input, &dir, &[], &[&secrets[..], &kept[..]].concat());
+    let odd_before = text_of(&input, &[], &[]);
+    report.check(
+        &format!("control: {} find every string in the input", installed()),
+        before.is_empty() && odd_before.contains(odd_secret) && odd_before.contains(odd_kept),
+        &before.join("; "),
+    );
+
+    let out = dir.join("redacted.pdf");
+    let line = [
+        vec![
+            "redact".to_string(),
+            s(&input),
+            "-o".into(),
+            s(&out),
+            "--json".into(),
+        ],
+        query_args(&[
+            (SearchKind::Text, "Rumpelstilzchen"),
+            (SearchKind::Text, "FORM-SECRET-7731"),
+            (SearchKind::Text, odd_secret),
+        ]),
+    ]
+    .concat();
+    let (code, json, stderr) = run(&line, &[]);
+    // Written, and that is the whole claim: the count no longer refuses.
+    // Not `verified`. Page 2's control word is 8.9 points tall and the
+    // recogniser on Windows does not read it back, so the copy is written and
+    // reported as not proved there (measured 2026-10-07; `docs/TRAPS.md` has
+    // the entry about that engine and small type). The exit code and the
+    // verdict still have to agree.
+    report.check(
+        "the copy is written, not refused over a count",
+        (code == 0 || code == 1)
+            && json["written"] == true
+            && json["verified"] == (code == 0)
+            && out.exists(),
+        &format!("exit {code}: {stderr} {json}"),
+    );
+    if !out.exists() {
+        return;
+    }
+    let wrong = readers(&out, &dir, &secrets, &kept);
+    report.check(
+        "no reader finds either secret of page 1, and every one finds its three controls",
+        wrong.is_empty(),
+        &wrong.join("; "),
+    );
+    let odd_after = text_of(&out, &[], &[]);
+    report.check(
+        "the secret beside the malformed shows is gone and its control is not",
+        !odd_after.contains(odd_secret) && odd_after.contains(odd_kept),
+        &odd_after,
+    );
+    // The shows that draw nothing are still in the page's stream: they were
+    // passed over, not swept out with the line that was asked for.
+    let after = content_of(&out);
+    report.check(
+        "the empty shows are left in the page's content",
+        after.contains("[-200] TJ") && after.contains("() '") && !after.contains("Rumpel"),
+        &after,
+    );
+}
+
+/// What each line of [`cuts_pdf`] loses and keeps: the secret, the words
+/// before it and the words after it. One line per way a show is written.
+const CUT_LINES: [(&str, &str, &str); 7] = [
+    // One string, which is how the invoice this was reported on writes a line.
+    ("555000123456", "Tarif Muster Eins", "Ende"),
+    // A `TJ`, with a kern before what goes, one after it and one further on.
+    // The secret is one string of it, so a reader of the bytes finds it too.
+    ("DE44 5001", "Konto", "alpha"),
+    // Character spacing, word spacing and horizontal scaling.
+    ("ZZ00000001", "Kunde", "bleibt"),
+    // `'`, which moves to the next line before it shows.
+    ("QUOTE-SECRET", "Zeile", "danach"),
+    // The end of a show, with the next show starting at its pen.
+    ("TAIL-SECRET", "Anfang", "weiter beta"),
+    // A scaled page matrix and a scaled text matrix.
+    ("SCHRAEG77", "Schief", "gamma"),
+    // The start of a show.
+    ("START-SECRET", "", "hinten delta"),
+];
+
+/// An eighth line, turned thirty degrees. Apart from [`CUT_LINES`] because
+/// `pdftotext` does not read a tilted line whole, so only tpdf's own
+/// extraction is asked about this one.
+const TILTED: (&str, &str, &str) = ("TILTED-SECRET", "Schraeg", "omega");
+
+/// One page, eight lines, each a different way of writing a line of which a
+/// reader marks a part.
+fn cuts_pdf() -> Vec<u8> {
+    let mut doc = Document::with_version("1.7");
+    let pages = doc.new_object_id();
+    let font = doc.add_object(dictionary! {
+        "Type" => "Font", "Subtype" => "Type1", "BaseFont" => "Helvetica",
+        "Encoding" => "WinAnsiEncoding",
+    });
+    let body = "BT /F1 12 Tf 72 700 Td (Tarif Muster Eins - 555000123456 Ende) Tj ET\n\
+                BT /F1 12 Tf 72 670 Td [(Konto ) -30 (DE44 5001) 20 ( rest) -10 ( alpha)] TJ ET\n\
+                BT /F1 12 Tf 2 Tc 3 Tw 80 Tz 72 640 Td (Kunde ZZ00000001 bleibt) Tj \
+                0 Tc 0 Tw 100 Tz ET\n\
+                BT /F1 12 Tf 14 TL 72 624 Td (Zeile QUOTE-SECRET danach) ' ET\n\
+                BT /F1 12 Tf 72 580 Td (Anfang TAIL-SECRET) Tj ( weiter beta) Tj ET\n\
+                q 1.5 0 0 1.5 0 0 cm BT /F1 8 Tf 1.2 0 0 1.2 60 300 Tm \
+                (Schief SCHRAEG77 gamma) Tj ET Q\n\
+                BT /F1 12 Tf 72 400 Td (START-SECRET hinten delta) Tj ET\n\
+                BT /F1 12 Tf 0.866 0.5 -0.5 0.866 300 80 Tm \
+                (Schraeg TILTED-SECRET omega) Tj ET\n";
+    let content = doc.add_object(Stream::new(dictionary! {}, body.as_bytes().to_vec()));
+    let page = doc.add_object(dictionary! {
+        "Type" => "Page", "Parent" => pages,
+        "Resources" => dictionary! { "Font" => dictionary! { "F1" => font } },
+        "MediaBox" => vec![0.into(), 0.into(), 612.into(), 792.into()],
+        "Contents" => content,
+    });
+    doc.objects.insert(
+        pages,
+        dictionary! { "Type" => "Pages", "Kids" => vec![page.into()], "Count" => 1 }.into(),
+    );
+    // A bookmark that repeats the first line. The cut takes twelve digits out
+    // of the line, and the title is not a substring of twelve digits: it goes
+    // because it is a substring of the **line**.
+    let outline = doc.new_object_id();
+    let entry = doc.add_object(dictionary! {
+        "Title" => Object::string_literal("Tarif Muster Eins - 555000123456 Ende"),
+        "Parent" => outline,
+        "Dest" => vec![page.into(), "Fit".into()],
+    });
+    doc.objects.insert(
+        outline,
+        dictionary! { "Type" => "Outlines", "First" => entry, "Last" => entry, "Count" => 1 }
+            .into(),
+    );
+    let catalog = doc.add_object(dictionary! {
+        "Type" => "Catalog", "Pages" => pages, "Outlines" => outline,
+    });
+    doc.trailer.set("Root", catalog);
+    let mut bytes = Vec::new();
+    doc.save_to(&mut bytes).expect("saved");
+    bytes
+}
+
+/// A marked part of a line goes, and the rest of the line stays where it was.
+///
+/// The removal used to take the whole show operator, so marking an account
+/// number took the line it stood in. Reported from use.
+pub(super) fn part_of_a_line_is_removed(report: &mut Report) {
+    let dir = scratch("redact-cuts");
+    let input = dir.join("cuts.pdf");
+    std::fs::write(&input, cuts_pdf()).expect("fixture");
+    let secrets: Vec<&str> = CUT_LINES.iter().map(|line| line.0).collect();
+    let kept: Vec<&str> = CUT_LINES
+        .iter()
+        .flat_map(|line| [line.1, line.2])
+        .filter(|word| !word.is_empty())
+        .collect();
+
+    let before = readers(&input, &dir, &[], &[&secrets[..], &kept[..]].concat());
+    report.check(
+        &format!("control: {} find every string in the input", installed()),
+        before.is_empty(),
+        &before.join("; "),
+    );
+    // Where each kept word is before anything is removed.
+    let placed: Vec<&str> = kept.iter().copied().chain([TILTED.1, TILTED.2]).collect();
+    let places = |path: &Path| -> Vec<serde_json::Value> {
+        placed
+            .iter()
+            .map(|word| region_for(path, 1, word))
+            .collect()
+    };
+    let was = places(&input);
+
+    let out = dir.join("redacted.pdf");
+    let queries: Vec<(SearchKind, &str)> = secrets
+        .iter()
+        .chain([&TILTED.0])
+        .map(|secret| (SearchKind::Text, *secret))
+        .collect();
+    let line = [
+        vec![
+            "redact".to_string(),
+            s(&input),
+            "-o".into(),
+            s(&out),
+            "--json".into(),
+        ],
+        query_args(&queries),
+    ]
+    .concat();
+    let (code, json, stderr) = run(&line, &[]);
+    report.check(
+        "the copy is written and verified",
+        code == 0 && json["written"] == true && json["verified"] == true && out.exists(),
+        &format!("exit {code}: {stderr} {json}"),
+    );
+    if !out.exists() {
+        return;
+    }
+    report.check(
+        "the report counts one text removal for each of the eight lines",
+        json["pages"][0]["text_removals"] == 8,
+        &json["pages"][0].to_string(),
+    );
+    let taking = json["pages"][0]["taking"].to_string();
+    report.check(
+        "the report says it takes the secrets and none of the words beside them",
+        secrets.iter().all(|secret| taking.contains(secret))
+            && kept.iter().all(|word| !taking.contains(word)),
+        &taking,
+    );
+    let wrong = readers(&out, &dir, &secrets, &kept);
+    report.check(
+        "no reader finds a secret, and every one finds the words before and after each",
+        wrong.is_empty(),
+        &wrong.join("; "),
+    );
+
+    // **The words that stay did not move.** A cut that left no gap would pass
+    // every check above with the rest of each line pulled left. A twentieth
+    // of a point, where the narrowest letter here is 2.7 points wide.
+    let now = places(&out);
+    let tilted = text_of(&out, &[], &[]);
+    report.check(
+        "the tilted line lost its secret and kept the words beside it",
+        !tilted.contains(TILTED.0) && tilted.contains(TILTED.1) && tilted.contains(TILTED.2),
+        &tilted,
+    );
+    let moved: Vec<String> = placed
+        .iter()
+        .zip(was.iter().zip(&now))
+        .filter(|(_, (a, b))| {
+            (0..4).any(|at| {
+                let (a, b) = (a["rect"][at].as_f64(), b["rect"][at].as_f64());
+                !matches!((a, b), (Some(a), Some(b)) if (a - b).abs() <= 0.05)
+            })
+        })
+        .map(|(word, (a, b))| format!("{word:?} was at {} and is at {}", a["rect"], b["rect"]))
+        .collect();
+    report.check(
+        "every word that stays is where it was, to a twentieth of a point",
+        moved.is_empty(),
+        &moved.join("; "),
+    );
+}
+
 /// One page drawing the same Form XObject twice, and a line of its own.
 ///
 /// The removal leaves a form the page draws more than once --- taking the one

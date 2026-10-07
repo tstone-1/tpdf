@@ -608,6 +608,21 @@ impl DocumentGraph {
         redact::path_clips(document, page, paths)
     }
 
+    /// What `lopdf` can say about each show operator one page draws text
+    /// with, or `None` when they cannot be addressed by position.
+    ///
+    /// `redact::show_facts` over the parsed graph, with [`Self::path_clips`]'s
+    /// rule for a graph that will not parse: the answer that cuts nothing, so
+    /// every show a region touches goes whole.
+    #[must_use]
+    pub fn show_facts(&self, index: u32, shows: usize) -> Option<Vec<Option<redact::ShowFacts>>> {
+        let document = self.parsed().ok()?;
+        let page = pagetree::ordered_pages(document)
+            .get(index as usize)
+            .copied()?;
+        redact::show_facts(document, page, shows)
+    }
+
     /// What a smaller copy of this document would come to.
     ///
     /// `compress::estimate` over the parsed graph. Not cached: the answer

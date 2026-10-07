@@ -150,6 +150,7 @@ import {
   caretAt,
   lineAt,
   nearestChar,
+  onText,
   runsFor,
   TextCache,
   turnQuad,
@@ -670,6 +671,14 @@ export interface ViewerOptions {
    * and reads the preview without a model behind it.
    */
   onRedacted?: (page: PageId, rect: [number, number, number, number]) => void;
+  /**
+   * The reader selected text with the redaction tool armed.
+   *
+   * The selection is still the viewer's when this is called, so the caller
+   * reads it with {@link Viewer.selectionQuadsByPage}, marks it, and clears
+   * it. Marking is not removing, as for {@link onRedacted}.
+   */
+  onRedactSelection?: () => void;
 }
 
 /**
@@ -1205,6 +1214,14 @@ export class Viewer {
   private turnedLinks: { page: number; turns: number; items: Link[] } | null = null;
   /** Whether the pointer is currently over a link, so the cursor is set once. */
   private overLink = false;
+  /**
+   * Whether the pointer is on text while the redaction tool is armed.
+   *
+   * The cursor is the only thing that says which of the tool's two gestures a
+   * press will start: the text cursor for marking words, the crosshair for a
+   * rectangle. `false` whenever another tool, or none, is armed.
+   */
+  private overRedactText = false;
   private readonly history = new History();
   /** True while the history is driving a jump, so it is not re-recorded. */
   private replaying = false;
@@ -1802,7 +1819,9 @@ export class Viewer {
         // still finds with `null`, which is the cancel, and this is the commit.
         const placing = this.placing;
         this.placing = null;
-        if (this.tool.kind === "crop" || this.tool.kind === "redact" || this.tool.kind === "place") {
+        // The redaction tool is not in this list: it stays armed for the next
+        // region, and `armRedact` says why.
+        if (this.tool.kind === "crop" || this.tool.kind === "place") {
           this.tool = NO_TOOL;
         }
         this.showCursor();
@@ -4214,6 +4233,11 @@ export class Viewer {
     // not, which is the shape of defect that gets reported as "it works on my
     // other PDF".
     this.trackArmed(event);
+    const onWords = this.tool.kind === "redact" && this.pressOnText(event);
+    if (onWords !== this.overRedactText) {
+      this.overRedactText = onWords;
+      this.showCursor();
+    }
     if (this.linkItems.length === 0) return;
     const over = this.linkUnder(event) !== null;
     if (over === this.overLink) return;
@@ -4728,10 +4752,14 @@ export class Viewer {
    * a preview --- see `paintCropPreview`, where the scrim is inverted so that
    * what is about to go is what is shaded.
    *
-   * **One-shot, like the crop and unlike the eraser.** A reader marking several
-   * regions arms it again for each, which is deliberate: every region is a
-   * separate row in the review list and a separate undo, and a tool that stayed
-   * armed would let a slipped drag add one nobody meant to make.
+   * **It stays armed until Escape, like the eraser and unlike the crop.** It
+   * was one-shot until 2026-10-07, on the argument that a tool left armed lets
+   * a slipped drag add a region nobody meant. Reported from use: an invoice
+   * has a dozen things to take out, and arming the tool again for each was
+   * the tedious part of the whole job. The slipped drag costs less than that
+   * argument assumed, because marking destroys nothing: the region is a row in
+   * the review list, a separate undo, and one right-click from being removed.
+   * A page has one crop, so the crop is still spent by its drag.
    *
    * Marking destroys nothing. `docs/PLAN.md` §6 splits marking from applying
    * precisely so that a reader looks at the list before anything is removed.
@@ -5069,7 +5097,9 @@ export class Viewer {
         // describe a gesture the reader is not making. It is also the only one
         // of the four that ends by itself, on the button coming up.
         "grabbing"
-      : this.tool.kind === "draw" ||
+      : this.tool.kind === "redact" && this.overRedactText
+        ? "text"
+        : this.tool.kind === "draw" ||
           this.tool.kind === "crop" ||
           this.tool.kind === "redact" ||
           this.tool.kind === "place"
@@ -5629,6 +5659,18 @@ export class Viewer {
     // drawing a box around a highlighted paragraph must not have the press
     // swallowed by the highlight's note, and one drawing around a
     // cross-reference must not be sent to another page.
+    //
+    // **One exception: the redaction tool pressed on text selects the text.**
+    // A reader taking an account number out of a line wants those digits, and
+    // a rectangle dragged over them is a guess at where they end. So with the
+    // tool armed a press on the words starts a selection, which is marked when
+    // the button comes up, and a press on blank paper starts the rectangle.
+    // Reported from use: selecting, then choosing the command, once for every
+    // passage, was the tedious part of redacting an invoice.
+    if (this.tool.kind === "redact" && this.pressOnText(event)) {
+      this.beginSelection(event);
+      return;
+    }
     if (this.cropDrag.start(event) || this.drawDrag.start(event)) {
       event.preventDefault();
       return;
@@ -5770,6 +5812,20 @@ export class Viewer {
     // every application does and is the only gesture a reader will try.
     if (this.popup.openId !== null) this.closeComment();
 
+    this.beginSelection(event);
+  };
+
+  /** Whether a press falls on a page's text. `false` until the text arrived. */
+  private pressOnText(event: PointerEvent): boolean {
+    const point = this.pointFrom(event);
+    return point !== null && onText(point.text, point.x, point.y);
+  }
+
+  /**
+   * Starts a text selection at a press: one press a caret, two a word, three
+   * a line.
+   */
+  private beginSelection(event: PointerEvent): void {
     // Document coordinates, not viewport ones: a scroll, zoom or page jump
     // between two clicks moves the text out from under a still pointer, and
     // keying the run on where the *document* was clicked ends it automatically.
@@ -5805,7 +5861,7 @@ export class Viewer {
     this.root.addEventListener("pointerup", this.onSelectEnd);
     event.preventDefault();
     this.wake();
-  };
+  }
 
   private readonly onSelectMove = (event: PointerEvent): void => {
     if (!this.selecting || !this.selection) return;
@@ -5849,6 +5905,9 @@ export class Viewer {
     this.root.removeEventListener("pointermove", this.onSelectMove);
     this.root.removeEventListener("pointerup", this.onSelectEnd);
     this.wake();
+    // With the redaction tool armed the selection was made to be marked. A
+    // press that selected nothing is a click, and marks nothing.
+    if (this.tool.kind === "redact" && this.hasSelection) this.opts.onRedactSelection?.();
   };
 
   /** Clears the selection. */

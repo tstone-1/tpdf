@@ -696,6 +696,8 @@ fn samples() -> BTreeMap<&'static str, String> {
     put(
         "RegionPlan",
         &redact::RegionPlan {
+            lines: String::new(),
+            show_cuts: Vec::new(),
             form_paths: redact::FormPaths {
                 whole: vec![(4, 0)],
                 cuts: vec![(4, 2)],

@@ -5280,7 +5280,7 @@ checksum = "8df9b6e13f2d32c91b9bd719c00d1958837bc7dec474d94952798cc8e69eeec3"
 
 [[package]]
 name = "tpdf"
-version = "26.10.9"
+version = "26.10.10"
 dependencies = [
  "anyhow",
  "base64 0.22.1",

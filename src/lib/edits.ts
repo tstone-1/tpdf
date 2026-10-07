@@ -31,6 +31,7 @@ import {
 } from "./pages";
 import { colorFor, type MarkColor } from "./markcolors";
 import { INK_WIDTH } from "./markband";
+import type { Fill } from "./redactfill";
 import type { PreparedImport } from "./pendingimport";
 import type { Pictures, Shrinkage } from "./compress";
 import type { Recognised } from "./recognise";
@@ -876,9 +877,9 @@ export class Edits {
    * The answer is never a bare success --- see `redact::Applied`, whose
    * `verified` cannot be false without a reason beside it.
    */
-  async redactCopy(source: string, path: string): Promise<Applied> {
+  async redactCopy(source: string, path: string, fill: Fill): Promise<Applied> {
     await this.beforeWrite();
-    return await call("redact_copy", { doc: this.doc, source, path });
+    return await call("redact_copy", { doc: this.doc, source, path, fill });
   }
 
   /**
@@ -932,9 +933,9 @@ export class Edits {
    *
    * The answer is never a bare success, for {@link redactCopy}'s reason.
    */
-  async redactDocument(source: string): Promise<Applied> {
+  async redactDocument(source: string, fill: Fill): Promise<Applied> {
     await this.beforeWrite();
-    return await call("redact_document", { doc: this.doc, source });
+    return await call("redact_document", { doc: this.doc, source, fill });
   }
 
   /**

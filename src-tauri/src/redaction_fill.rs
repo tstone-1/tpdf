@@ -10,6 +10,47 @@ use crate::docmodel::PageSource;
 use crate::edits::{PageView, Plan, PlannedRedaction};
 use crate::save::Refusal;
 
+/// The colour a redaction's boxes are filled with.
+///
+/// Black unless the reader chose another. **White is allowed and is the one
+/// that hides the redaction itself**: on white paper a reader of the copy
+/// cannot see that anything was taken out, which is sometimes what is wanted
+/// and never what should happen by accident, so it is never the default.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Fill {
+    /// The colour a redaction is expected to be.
+    #[default]
+    Black,
+    /// Paper-coloured on white paper.
+    White,
+    /// For a draft somebody else reviews: the boxes stand out from black text.
+    Red,
+}
+
+impl Fill {
+    /// The colour as `rg` takes it.
+    #[must_use]
+    pub fn rgb(self) -> [f32; 3] {
+        match self {
+            Self::Black => [0.0, 0.0, 0.0],
+            Self::White => [1.0, 1.0, 1.0],
+            Self::Red => [0.83, 0.16, 0.16],
+        }
+    }
+
+    /// The name a reader types or a panel sends: `black`, `white` or `red`.
+    #[must_use]
+    pub fn named(name: &str) -> Option<Self> {
+        match name {
+            "black" => Some(Self::Black),
+            "white" => Some(Self::White),
+            "red" => Some(Self::Red),
+            _ => None,
+        }
+    }
+}
+
 /// The plan the fill pass runs under: every page of the file the removal pass
 /// wrote, as that file has them, and the regions at the places they are now.
 ///
@@ -33,6 +74,8 @@ pub(crate) fn output_plan(original: &Plan) -> Result<Plan, Refusal> {
         for redaction in &original.redactions {
             if page.source == PageSource::Baseline(redaction.source) {
                 redactions.push(PlannedRedaction {
+                    lines: Vec::new(),
+                    show_cuts: Vec::new(),
                     source: u32::try_from(slot)
                         .map_err(|_| Refusal::from("Too many pages for the redaction fill"))?,
                     areas: redaction.areas.clone(),
@@ -115,7 +158,9 @@ pub(crate) fn paint(
     doc: &mut Document,
     pages: &[ObjectId],
     redactions: &[PlannedRedaction],
+    fill: Fill,
 ) -> Result<(), Refusal> {
+    let colour: Vec<Object> = fill.rgb().into_iter().map(Object::Real).collect();
     for redaction in redactions {
         let page = *pages
             .get(redaction.source as usize)
@@ -148,7 +193,7 @@ pub(crate) fn paint(
                 operations: vec![
                     lopdf::content::Operation::new("q", vec![]),
                     lopdf::content::Operation::new("gs", vec![Object::Name(b"Opaque".to_vec())]),
-                    lopdf::content::Operation::new("rg", vec![0.into(), 0.into(), 0.into()]),
+                    lopdf::content::Operation::new("rg", colour.clone()),
                     lopdf::content::Operation::new(
                         "re",
                         vec![0.into(), 0.into(), width.into(), height.into()],
@@ -174,8 +219,8 @@ pub(crate) fn paint(
                 "Type" => "Annot", "Subtype" => "Square", "P" => page,
                 "Rect" => area.into_iter().map(Object::Real).collect::<Vec<_>>(),
                 "F" => 196, // Print, ReadOnly, Locked; never hidden or view-only.
-                "CA" => 1, "C" => vec![0.into(), 0.into(), 0.into()],
-                "IC" => vec![0.into(), 0.into(), 0.into()],
+                "CA" => 1, "C" => colour.clone(),
+                "IC" => colour.clone(),
                 "Border" => vec![0.into(), 0.into(), 0.into()],
                 "AP" => dictionary! { "N" => appearance },
             });
@@ -194,6 +239,8 @@ mod tests {
 
     fn region(source: u32, area: [f32; 4]) -> PlannedRedaction {
         PlannedRedaction {
+            lines: Vec::new(),
+            show_cuts: Vec::new(),
             form_paths: crate::redact::FormPathsPlanned {
                 whole: vec![(1, 0)],
                 cuts: vec![(1, 2, area)],
@@ -463,7 +510,13 @@ mod tests {
         let existing = doc.add_object(dictionary! { "Subtype" => "Text" });
         let list = doc.add_object(vec![Object::Reference(existing)]);
         let page = doc.add_object(dictionary! { "Type" => "Page", "Annots" => list });
-        paint(&mut doc, &[page], &[region(0, [-20.0, 30.0, 80.0, 90.0])]).unwrap();
+        paint(
+            &mut doc,
+            &[page],
+            &[region(0, [-20.0, 30.0, 80.0, 90.0])],
+            Fill::Black,
+        )
+        .unwrap();
         let annots = doc
             .get_dictionary(page)
             .unwrap()
@@ -505,7 +558,82 @@ mod tests {
                 .collect::<Vec<_>>(),
             vec!["q", "gs", "rg", "re", "f", "Q"]
         );
-        assert_eq!(ops[2].operands, vec![Object::Integer(0); 3]);
+        assert_eq!(numbers(&ops[2].operands), [0.0; 3]);
+    }
+
+    /// Numbers as numbers: a stream that was written `0` reads back as an
+    /// integer whatever it was written from.
+    fn numbers(objects: &[Object]) -> Vec<f32> {
+        objects
+            .iter()
+            .map(|object| object.as_float().expect("a number"))
+            .collect()
+    }
+
+    /// What `paint` writes for one region in `fill`: the colour the appearance
+    /// fills with, and the two the annotation itself names.
+    fn colours(fill: Fill) -> [Vec<f32>; 3] {
+        let mut doc = Document::new();
+        let page = doc.add_object(dictionary! { "Type" => "Page" });
+        paint(
+            &mut doc,
+            &[page],
+            &[region(0, [0.0, 0.0, 10.0, 10.0])],
+            fill,
+        )
+        .unwrap();
+        let annots = doc.get_dictionary(page).unwrap().get(b"Annots").unwrap();
+        let annot = doc
+            .get_dictionary(annots.as_array().unwrap()[0].as_reference().unwrap())
+            .unwrap();
+        let ap = annot.get(b"AP").unwrap().as_dict().unwrap();
+        let stream = doc
+            .get_object(ap.get(b"N").unwrap().as_reference().unwrap())
+            .unwrap()
+            .as_stream()
+            .unwrap();
+        let ops = lopdf::content::Content::decode(&stream.content)
+            .unwrap()
+            .operations;
+        [
+            numbers(&ops[2].operands),
+            numbers(annot.get(b"C").unwrap().as_array().unwrap()),
+            numbers(annot.get(b"IC").unwrap().as_array().unwrap()),
+        ]
+    }
+
+    /// The appearance is what a reader draws, and `/C` and `/IC` are what one
+    /// that ignores appearances falls back to: all three say the same colour.
+    #[test]
+    fn the_boxes_are_the_colour_that_was_asked_for_in_all_three_places() {
+        for (fill, rgb) in [
+            (Fill::Black, [0.0, 0.0, 0.0]),
+            (Fill::White, [1.0, 1.0, 1.0]),
+            (Fill::Red, [0.83, 0.16, 0.16]),
+        ] {
+            let want = rgb.to_vec();
+            assert_eq!(
+                colours(fill),
+                [want.clone(), want.clone(), want],
+                "{fill:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_fill_is_black_unless_another_is_named() {
+        assert_eq!(Fill::default(), Fill::Black);
+        assert_eq!(Fill::named("black"), Some(Fill::Black));
+        assert_eq!(Fill::named("white"), Some(Fill::White));
+        assert_eq!(Fill::named("red"), Some(Fill::Red));
+        assert_eq!(Fill::named("Red"), None, "the names are lower case");
+        assert_eq!(Fill::named(""), None);
+        // And the same names on the wire, which is what the window sends.
+        assert_eq!(serde_json::to_string(&Fill::Red).unwrap(), "\"red\"");
+        assert_eq!(
+            serde_json::from_str::<Fill>("\"white\"").unwrap(),
+            Fill::White
+        );
     }
 
     #[test]
@@ -518,13 +646,14 @@ mod tests {
         ] {
             let mut doc = Document::new();
             let page = doc.add_object(dictionary! { "Type" => "Page" });
-            assert!(paint(&mut doc, &[page], &[region(0, area)]).is_err());
+            assert!(paint(&mut doc, &[page], &[region(0, area)], Fill::Black).is_err());
             assert!(doc.get_dictionary(page).unwrap().get(b"Annots").is_err());
         }
         assert!(paint(
             &mut Document::new(),
             &[],
-            &[region(0, [0.0, 0.0, 1.0, 1.0])]
+            &[region(0, [0.0, 0.0, 1.0, 1.0])],
+            Fill::Black,
         )
         .is_err());
     }

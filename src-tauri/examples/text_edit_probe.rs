@@ -555,9 +555,11 @@ fn run() -> Result<(), String> {
     println!("[PASS] overflow and unsupported characters refused without output");
     plan.text_edits[0].change.replacement = replacement.into();
     plan.redactions.push(tpdf_lib::edits::PlannedRedaction {
+        lines: Vec::new(),
         form_paths: Default::default(),
         source: 0,
         shows: vec![],
+        show_cuts: Vec::new(),
         text_objects: 0,
         areas: vec![[0.0, 0.0, 10.0, 10.0]],
         taking: vec![],

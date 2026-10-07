@@ -3227,6 +3227,37 @@ otherwise; 0 means "nothing found", and `README.md` words it so. This is a diffe
 from `tpdf redact`'s `verified`, which is about a file tpdf wrote and names every carrier
 it read back.
 
+#### T6.40 — Taking part of a line, added 2026-10-07
+
+A redaction used to delete the whole show operator that drew any glyph under a region.
+It now cuts those glyphs out of the operator where it can prove which they are, and
+leaves a gap as wide as they were (`redact/glyph_cut.rs`; `docs/PLAN.md` §6, *Route A, for
+the case it can be proved in*). This is a rewrite of the bytes a redaction exists to
+remove, so what it rests on is stated here.
+
+**What would leak, and what stops it.**
+
+- *The wrong glyphs are cut and the marked ones stay.* A glyph is addressed by its place
+  among the codes of a string, and that place is PDFium's count against `lopdf`'s. The cut
+  is made only when both counts are equal, and PDFium's characters at one pen position are
+  one glyph, so it never has more glyphs than codes. Then the written file is searched for
+  every string a removal took, as before: marked text that stayed is found and the copy is
+  reported as not verified.
+- *A marked glyph is called outside the region.* A glyph goes when the region covers more
+  than a tenth of its box. One covered a tenth or less stays, and is at least nine tenths
+  visible beside the fill. A glyph PDFium gives no box for cannot be placed, so a show
+  with one that is not white space is not cut and goes whole.
+- *A copy of the line elsewhere keeps the words.* A bookmark or a form answer that repeats
+  a line is compared with the whole line a cut came out of, not with the glyphs that went,
+  and the alternate text of every marked-content span around a cut show is cleared.
+
+**What is not covered.** Text inside a Form XObject is not cut; it goes by the whole
+operator. The position of what stays is measured (a twentieth of a point, on eight ways of
+writing a line and on one real invoice) and is not checked on each save: a gap of the
+wrong width would move the rest of a line and leak nothing. A font whose glyph for a code
+changes with its neighbours would draw the kept glyphs differently once a neighbour is
+gone; none was met and nothing looks for one.
+
 ### T9 — The updater
 
 **The threat.** The updater is the only code path in tpdf that fetches bytes and then
@@ -3767,7 +3798,10 @@ profile that is badly wrong.
 
 ### 5.1 A second boundary, for OCR
 
-Editable redaction verifies the uncovered output before adding its black appearance.
+Editable redaction verifies the uncovered output before adding its opaque appearance,
+black unless the reader chose white or red (`redaction_fill::Fill`). The colour is the
+only thing the choice changes; a white fill hides that a redaction was made, from a
+reader of the copy, and hides nothing the removal left.
 The final `RedactionFill` worker job adds opaque, printable appearance streams; it
 does not perform or certify content removal. Both the structural scan and OCR gate are
 evaluated first, and their failures remain failures after filling. A fingerprint taken before

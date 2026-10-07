@@ -6611,3 +6611,37 @@ not embedded, so the renderer's substitute differs between the two platforms. Th
 has no such check. Whether a scan's picture is intact under a drawn bar is not looked at
 by anything.
 
+### Redacting part of a line, and the three things reported beside it — measured 2026-10-07
+
+Reported from use on a phone company's invoices, four pages each, eight files. Counts
+only were printed from them; no page was looked at.
+
+**The refusal.** Every redaction stopped with *83 text-showing operator(s) and PDFium
+reported 77 text object(s)*. Counted with `pikepdf`: 83 show operators on page 1, six of
+them `() Tj`; every page of all eight files has between two and seven. PDFium's rule was
+then measured on a generated page, one shape a page, 25 shapes: it makes a text object
+when the operator carries a string that is not empty, and for `Tj` a name counts. With
+the count following that rule all eight files are written.
+
+**Part of a line.** Every run of six or more digits marked in one invoice through
+`tpdf redact --pattern`, 33 regions on four pages. `pdftotext` finds none of the 33 in
+the copy and 6,017 of the 6,367 characters are left. `pdftotext -bbox` on both files: of
+the 827 words in the copy, 814 are at the same place to 0.05 points, none moved, and 13
+are strings the original does not have as a word. The copy was reported *not verified*
+for four drawings that reach past a region, which is an older rule and unchanged.
+
+**The fill.** The copy saved from the window, five regions: five `/Square` annotations,
+45 to 62 points wide and 6.6 high, painted black by tpdf's renderer, by Poppler and by
+PDFKit (solid black runs of 20 pixels or more at 72 DPI: 38, 36 and 32, against 3 on the
+untouched page). With `--fill red` and `--fill white` the Python client's test reads the
+colour out of the written file.
+
+**In a window.** The armed tool marking text, the command that leaves it armed, the
+swatches and the tab strip were used in a development window by the person who reported
+them, and the first two were changed again after that use. None of it was driven by a
+harness. The swatches were not looked at before this was written.
+
+**Not measured.** How often a show can be cut and how often it still goes whole, on any
+corpus. The OCR gate's figures in `BUILD.md` and `docs/PLAN.md` §6, taken when a marked
+word took its whole line. Any of this on Windows before CI.
+
