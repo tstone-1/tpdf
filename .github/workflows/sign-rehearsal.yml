@@ -1,0 +1,117 @@
+name: Windows signing rehearsal
+
+# Signs three files that are already public with the Certum Open Source
+# certificate and reads every signature back. It publishes nothing and uploads
+# nothing: the question it answers is whether a hosted runner can sign at all,
+# before release.yml is changed to depend on it.
+#
+# The key is in Certum's SimplySign service. Certum supports a login from its
+# desktop program only, so the login here is done by ssign, an unofficial
+# client (MIT) that is built from a pinned commit of its source.
+#
+# Start it by hand:
+#   gh workflow run sign-rehearsal.yml --ref main
+#   gh run list --workflow sign-rehearsal.yml --limit 1
+
+on:
+  workflow_dispatch:
+    inputs:
+      release:
+        description: Published release whose Windows installers are signed as a test
+        required: true
+        default: v26.10.9
+
+# A SimplySign token is good for one login. Two jobs logging in inside the same
+# 30 seconds make the second one fail, and repeated failed logins can lock the
+# account, so every job that signs shares this group and none is cancelled.
+concurrency:
+  group: certum-signing
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  rehearse:
+    name: Sign and verify
+    runs-on: windows-2025
+    timeout-minutes: 30
+    # The two secrets live in this environment and nowhere else, so a workflow
+    # that does not name it cannot read them.
+    environment: signing
+    env:
+      # ssign v0.1.7. A commit and not a tag: a tag can be moved.
+      SSIGN_REV: 5fd4daf22155b19b645aef3dd467f3c4c9e440b3
+      SIGNER: Open Source Developer Timo Stein
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+        with:
+          persist-credentials: false
+
+      # Built outside the checkout, so this repository's toolchain pin does not
+      # decide which compiler builds somebody else's program.
+      - name: Build ssign from the pinned commit
+        shell: pwsh
+        working-directory: ${{ runner.temp }}
+        run: |
+          cargo install --locked --git https://github.com/Le-Syl21/ssign --rev $env:SSIGN_REV ssign
+          if ($LASTEXITCODE -ne 0) { exit 1 }
+          ssign --version
+
+      - name: Fetch the files to sign
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE: ${{ inputs.release }}
+        run: |
+          New-Item -ItemType Directory -Force work | Out-Null
+          gh release download $env:RELEASE --repo $env:GITHUB_REPOSITORY --dir work --pattern '*_x64-setup.exe' --pattern '*_x64_en-US.msi'
+          if ($LASTEXITCODE -ne 0) { exit 1 }
+          # A plain executable, as the control beside the two installers.
+          Copy-Item (Get-Command ssign).Source work\plain.exe
+          $files = Get-ChildItem work -File
+          if ($files.Count -ne 3) { Write-Output "::error::expected 3 files to sign, found $($files.Count)"; exit 1 }
+          foreach ($file in $files) {
+            $status = (Get-AuthenticodeSignature $file.FullName).Status
+            Write-Output "$($file.Name): $status before signing"
+            if ($status -ne 'NotSigned') { Write-Output "::error::$($file.Name) is already signed, so it cannot show that signing works"; exit 1 }
+          }
+
+      - name: Sign
+        shell: pwsh
+        env:
+          CERTUM_EMAIL: ${{ secrets.CERTUM_EMAIL }}
+          CERTUM_OTP: ${{ secrets.CERTUM_OTP_URI }}
+        run: |
+          if (-not $env:CERTUM_EMAIL -or -not $env:CERTUM_OTP) { Write-Output '::error::CERTUM_EMAIL or CERTUM_OTP_URI is not set in the signing environment'; exit 1 }
+          # One file at a time and stop at the first failure: a second attempt
+          # with the same account is a second login.
+          foreach ($file in Get-ChildItem work -File | Sort-Object Name) {
+            ssign $file.FullName
+            if ($LASTEXITCODE -ne 0) { Write-Output "::error::ssign failed on $($file.Name)"; exit 1 }
+          }
+
+      - name: Remove the cached session
+        if: always()
+        shell: pwsh
+        run: Remove-Item -Recurse -Force (Join-Path ([IO.Path]::GetTempPath()) 'ssign') -ErrorAction SilentlyContinue
+
+      - name: Read every signature back
+        shell: pwsh
+        run: scripts/verify_signature.ps1 -Signer $env:SIGNER -Path (Get-ChildItem work -File | Sort-Object Name).FullName
+
+      # A signature is appended to the file, and an NSIS installer checks its
+      # own bytes when it starts. Installing it is what shows that the signed
+      # installer still works, which reading the signature cannot.
+      - name: Install from the signed installer
+        shell: pwsh
+        run: |
+          $setup = Get-ChildItem work -Filter '*_x64-setup.exe' | Select-Object -First 1
+          $run = Start-Process $setup.FullName -ArgumentList '/S' -Wait -PassThru
+          Write-Output "installer exit code: $($run.ExitCode)"
+          if ($run.ExitCode -ne 0) { Write-Output '::error::the signed installer did not install'; exit 1 }
+          # A hosted runner starts without tpdf, so any tpdf.exe is this one.
+          $installed = Get-ChildItem $env:LOCALAPPDATA, $env:ProgramFiles -Recurse -Depth 2 -Filter tpdf.exe -ErrorAction SilentlyContinue |
+            Select-Object -First 1
+          if (-not $installed) { Write-Output '::error::the signed installer left no tpdf.exe'; exit 1 }
+          Write-Output "installed: $($installed.FullName)"
