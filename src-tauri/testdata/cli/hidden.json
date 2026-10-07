@@ -1,0 +1,41 @@
+{
+  "schema": 1,
+  "command": "hidden",
+  "input": "released.pdf",
+  "pages": 12,
+  "found": [
+    {
+      "page": 2,
+      "text": "Jane Example",
+      "rect": [
+        100.3,
+        103.4,
+        175.5,
+        114.4
+      ],
+      "characters": 11,
+      "off_page": false
+    },
+    {
+      "page": 5,
+      "text": "Draft 3, not for release",
+      "rect": [
+        -240.0,
+        20.0,
+        -96.5,
+        31.0
+      ],
+      "characters": 20,
+      "off_page": true
+    }
+  ],
+  "compared": 18240,
+  "unjudged": 310,
+  "without_text": [
+    7,
+    8
+  ],
+  "not_compared": [
+    12
+  ]
+}

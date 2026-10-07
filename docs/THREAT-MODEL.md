@@ -3200,6 +3200,33 @@ registry key's last-write time across the read, and
 `the_handle_a_reading_holds_cannot_write`; the same record says where they ran. The command
 has not been driven from a window on Windows.
 
+#### T6.39 — `tpdf hidden`, text a page does not show, added 2026-10-07
+
+A command of the command-line tool that reads a document and writes nothing. It adds no
+authority and no parser. For each selected page it asks the worker session every reading
+command already opens for two answers that existed before it, `Request::Text` and
+`Request::Tile`, and compares them in the tool's own process (`hidden.rs`): the boxes of the
+characters against the pixels of the rendered page. The tool's process handles a list of
+numbers and a pixel buffer whose size it checks; it does not read the document. The one
+bound that is new is on the image, at most 8,192 pixels a side and 16,777,216 in all, which
+is `tpdf render`'s, and a page that does not fit at one pixel a point is reported as not
+compared.
+
+What the command prints is text from the document. The plain output goes through `say`,
+which is what keeps a control sequence in a document from reaching a terminal, and `--json`
+through the one writer every report uses.
+
+**The claim is one-sided, and that is the security property.** A passage the command lists
+is in the file and is not shown by the page. Listing nothing is not a statement that the
+document is clean: a page without text is not compared, so a scan with black bars drawn
+over it passes unseen; a cover that is not one flat colour hides its text from the
+comparison; and comments, form values, attachments, metadata and earlier revisions are
+outside it. The report carries `without_text`, `not_compared` and `unjudged`, and the plain
+output's last sentence says them beside the result. The exit code is 1 on a finding and 0
+otherwise; 0 means "nothing found", and `README.md` words it so. This is a different claim
+from `tpdf redact`'s `verified`, which is about a file tpdf wrote and names every carrier
+it read back.
+
 ### T9 — The updater
 
 **The threat.** The updater is the only code path in tpdf that fetches bytes and then

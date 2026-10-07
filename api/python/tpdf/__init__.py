@@ -262,6 +262,28 @@ class Tpdf:
         """Inspect original text runs and the revision required for replacement."""
         return self.run('text-runs', '--page', str(page), '--', path, password=password).typed
 
+    def hidden(
+        self, path: str | os.PathLike[str], *, pages: str | None = None, password: str | None = None,
+    ) -> reports.HiddenReport:
+        """List text that is in a document and not visible on its pages.
+
+        The check for a document redacted elsewhere: words under a black box,
+        under an annotation, in the background's colour, never painted, or
+        outside the page. Each entry of report['found'] has the page, the words
+        and where they are.
+
+        Finding something is an answer, not an error: the CLI's exit 1 is
+        returned as a report whose found is not empty. An empty found means
+        nothing was found, not that the document is clean: without_text lists
+        the pages that have no text and were not compared, and unjudged counts
+        the characters that could not be decided.
+        """
+        args = [] if pages is None else ['--pages', pages]
+        result = self.run('hidden', *args, '--', path, password=password, check=False)
+        if result.exit_code not in (0, 1):
+            raise CommandError(result)
+        return result.typed
+
     def render(
         self, source: str | os.PathLike[str], output: str | os.PathLike[str], *,
         page: int = 1, dpi: int = 144, force: bool = False, password: str | None = None,

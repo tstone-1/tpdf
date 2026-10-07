@@ -54,6 +54,8 @@ __all__ = [
     "Form",
     "HelpCommand",
     "HelpReport",
+    "HiddenReport",
+    "HiddenText",
     "ImagePage",
     "ImagesReport",
     "IdentitiesReport",
@@ -301,6 +303,49 @@ class HelpReport(TypedDict):
     version: str
     # Every registered command, in help order.
     commands: list[HelpCommand]
+
+
+# --- hidden ----------------------------------------------------------------
+
+
+class HiddenText(TypedDict):
+    """One passage that is in the file and that its page does not show."""
+
+    # Counted from 1.
+    page: int
+    # The words, as `text` extracts them.
+    text: str
+    # left, top, right, bottom in points from the top-left corner of the page
+    # as it is displayed.
+    rect: list[float]
+    # How many of its characters were judged hidden; spaces are not.
+    characters: int
+    # True when the words lie outside the page, which a crop leaves behind.
+    off_page: bool
+
+
+class HiddenReport(TypedDict):
+    """`hidden --json`: text that is in a document and not visible on its pages.
+
+    One-sided. What `found` lists is in the file; an empty `found` means that
+    nothing was found among `compared` characters, and `without_text`,
+    `not_compared` and `unjudged` are what was not looked at.
+    """
+
+    schema: int
+    command: str
+    input: str
+    # Pages in the document.
+    pages: int
+    found: list[HiddenText]
+    # Characters whose place on the rendered page was looked at and decided.
+    compared: int
+    # Characters with a place that could not be decided.
+    unjudged: int
+    # Selected pages with no text, which were not compared.
+    without_text: list[int]
+    # Selected pages too large to render at a size text can be judged at.
+    not_compared: list[int]
 
 
 # --- render ----------------------------------------------------------------
@@ -1317,6 +1362,7 @@ REPORTS: dict[str, type] = {
     "fields": FieldsReport,
     "fill": FillReport,
     "fill-refused": FillReport,
+    "hidden": HiddenReport,
     "identities": IdentitiesReport,
     "images": ImagesReport,
     "compress": CompressReport,

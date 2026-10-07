@@ -48,7 +48,8 @@
 //!
 //! [`Exit`] is the list of record, and `README.md` repeats it for readers:
 //! 0 done; 1 `verify --strict` found something that is not intact and trusted,
-//! or `redact` wrote a copy it could not prove clean; 2 the command line is malformed; 3 tpdf refused (the identity, the document,
+//! or `redact` wrote a copy it could not prove clean, or `hidden` found text a page
+//! does not show; 2 the command line is malformed; 3 tpdf refused (the identity, the document,
 //! the output) or the OS did; 4 tpdf itself failed. Errors go to stderr, one
 //! sentence each; with `--json`, stdout carries exactly one JSON document
 //! whenever the exit code is 0 or 1, and for `verify` also when it is 3 or 4,
@@ -61,6 +62,7 @@ mod edit;
 pub mod fields;
 pub mod fill;
 mod form;
+mod hidden;
 pub mod identities;
 mod images;
 pub mod info;
@@ -99,6 +101,7 @@ pub enum Exit {
     /// `verify --strict`: a document with no signature, or a signature that is
     /// not both intact and trusted. `redact`: the copy was written and could
     /// not be proved clean; the file is kept and every reason is reported.
+    /// `hidden`: text was found that a page does not show.
     Strict = 1,
     /// The command line is malformed.
     Usage = 2,
@@ -489,6 +492,7 @@ pub const COMMANDS: &[Registered] = &[
     protect::PROTECT,
     protect::UNPROTECT,
     images::COMMAND,
+    hidden::COMMAND,
     path::COMMAND,
     completions::COMMAND,
 ];

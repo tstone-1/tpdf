@@ -72,6 +72,10 @@ tells you whether the removal is verified.
 
 ![Two regions marked for removal and listed for review](docs/img/redact.png)
 
+For a document somebody else redacted, `tpdf hidden released.pdf` lists the words that are
+still in the file under a black box, under an annotation, in the background's colour or
+outside the page.
+
 **Sign and check signatures.** Sign with a certificate from the macOS keychain or the
 Windows certificate store, with a timestamp and long-term validation data if you want
 them. For a signed document, tpdf says whether each signature is intact, whether your
@@ -121,6 +125,7 @@ tpdf merge cover.pdf report.pdf appendix.pdf -o combined.pdf --json
 tpdf fill application.pdf -o filled.pdf --values answers.json
 tpdf sign contract.pdf -o contract-signed.pdf --identity "Jane Doe" --timestamp digicert
 tpdf verify --strict --json *.pdf
+tpdf hidden released.pdf
 ```
 
 ```python
@@ -132,7 +137,7 @@ assert report["written"] and report["verified"]
 assert pdf.verify("contract-signed.pdf")["files"][0]["signatures"][0]["integrity"]["verdict"] == "intact"
 ```
 
-Twenty-six commands in all: [Command-line tool](#command-line-tool) has each of them, how to
+Twenty-seven commands in all: [Command-line tool](#command-line-tool) has each of them, how to
 install the tool, and the Python client.
 
 ## Status
@@ -788,8 +793,8 @@ both.
 `tpdf sign`, `tpdf verify`, `tpdf identities`, `tpdf info`, `tpdf text`, `tpdf search`, `tpdf fields`,
 `tpdf fill`, `tpdf redact`, `tpdf merge`, `tpdf extract`, `tpdf split`, `tpdf rotate`,
 `tpdf crop`, `tpdf edit`, `tpdf comments`, `tpdf text-runs`, `tpdf render`, `tpdf ocr`,
-`tpdf protect`, `tpdf unprotect`, `tpdf compress`, `tpdf form` and `tpdf images`
-expose document workflows to scripts; `tpdf path` puts the tool on your `PATH` on Windows,
+`tpdf protect`, `tpdf unprotect`, `tpdf compress`, `tpdf form`, `tpdf images` and
+`tpdf hidden` expose document workflows to scripts; `tpdf path` puts the tool on your `PATH` on Windows,
 and `tpdf completions` prints a completion script for your shell. The commands do what **Sign document…**, **Document
 properties**, the viewer's own text, its form filling, page operations and **Redact and save as…** do in the
 window, with the same code: the document is read only by the same sandboxed worker processes,
@@ -827,6 +832,7 @@ tpdf help --json
 tpdf help redact
 tpdf redact --help
 tpdf render report.pdf --page 2 --dpi 144 -o page.png --json
+tpdf hidden released.pdf --pages 1-20 --json
 tpdf ocr scan.pdf -o searchable.pdf --language de-DE --json
 NEW=... tpdf protect report.pdf -o locked.pdf --new-password-env NEW --json
 KEY=... tpdf unprotect locked.pdf -o open.pdf --password-env KEY --json
@@ -1339,6 +1345,34 @@ if the operating system refuses it. Each call starts its own CLI process. This
 API edits files; it does not control an open GUI, start an HTTP server or bypass
 OS permission prompts for signing keys.
 
+**Text a page does not show.** `tpdf hidden released.pdf` lists text that is in the
+document and not visible on its pages. It is the check for a document redacted somewhere
+else: the commonest wrong redaction draws a black rectangle over the words and leaves the
+words in the file, where select, copy and paste still reach them. For each page tpdf asks
+its sandboxed worker where every character is and what the page looks like, and reports a
+passage when the place of its characters on the rendered page shows no trace of them. A
+rectangle drawn over the words, an annotation lying over them, words in the colour of the
+background and words in a text mode that paints nothing all come out the same way, because
+the question is what a reader of the page can see. Words outside the page, which cropping
+a page leaves behind, are listed as *outside the page*. `--pages 1-3,7` limits the check.
+
+The answer is one-sided, and it is worded that way. A listed passage is in the file. When
+nothing is listed, nothing was *found*, and the last line says what was not looked at: a
+page without text has nothing to compare, so a scan with black bars is not checked at all;
+characters too small to judge at 144 DPI, and rows of underscores, hyphens and dots, are
+counted and not decided. The check does not see words under a photograph or a patterned
+cover reliably, a single hidden character between visible ones, or anything that is not
+page text: comments, form values, attachments, metadata and earlier versions kept in the
+file. It reads the document and writes nothing. `tpdf redact` remains the way to remove
+what it finds.
+
+`--json` reports `pages` (in the document), `found` (each with `page`, `text`, `rect` as
+left, top, right, bottom in points from the top-left corner of the displayed page,
+`characters` judged hidden, and `off_page`), `compared` (characters decided), `unjudged`
+(characters not decided), `without_text` and `not_compared` (pages not checked, the second
+because the page is too large to render at a size text can be judged at). The exit code is
+1 when anything is found, so a script can refuse to publish.
+
 **Rendering.** `tpdf render input.pdf -o page.png --page 1 --dpi 144 --json`
 writes one PNG, using the viewer's contained PDFium renderer, including saved
 annotations, form appearances, crops and rotations. Page numbers start at 1;
@@ -1536,7 +1570,7 @@ never replaced. The JSON report carries `schema`, `command`, `input`, `output`, 
 the copy), `fields_before`, `fields_after`, `signatures_invalidated` and
 `signatures_unknown`.
 
-**Passwords.** `form`, `protect`, `unprotect`, `compress`, `ocr`, `render`, `info`, `text`, `search`, `text-runs`, `comments`, `edit`, `fields`, `fill`, `redact` and the five page operations read a password-protected document when given
+**Passwords.** `form`, `protect`, `unprotect`, `compress`, `ocr`, `render`, `hidden`, `info`, `text`, `search`, `text-runs`, `comments`, `edit`, `fields`, `fill`, `redact` and the five page operations read a password-protected document when given
 `--password-env VAR`, the *name* of an environment variable holding the password. The
 password itself is never an argument, because arguments are visible to every process on the
 computer and are kept in the shell's history. It reaches the worker the way the window's
@@ -1560,7 +1594,7 @@ built.
 | Code | Meaning |
 |---|---|
 | 0 | Done. For `verify`, every document was read, whatever the verdicts. |
-| 1 | `verify --strict`: a document with no signature, or a signature that is not both intact and trusted, or pages rewritten after the last signature. `redact`: the copy was written and could not be proved clean — it is kept, and every reason is reported. `search`: every document was read and nothing matched. |
+| 1 | `verify --strict`: a document with no signature, or a signature that is not both intact and trusted, or pages rewritten after the last signature. `redact`: the copy was written and could not be proved clean — it is kept, and every reason is reported. `search`: every document was read and nothing matched. `hidden`: text was found that a page does not show. |
 | 2 | The command line is malformed: a missing `-o` or `--values`, an output that names the input or the answers or regions file, a bad `--rect` or `--pages`, a `--timestamp` that is not a listed authority or an `http`/`https` address without a password in it, `--long-term` without `--timestamp`, nothing for `redact` to remove or `search` to find, a `--pattern` that does not compile or a query that can match nothing, an unknown option, or a `--password-env` naming a variable that is not set. |
 | 3 | Refused: an identity that is unknown, ambiguous or cannot sign; a document that cannot be read or signed; for `text`, `search`, `fields` and `fill`, a locked document; for `search`, more than 10,000 matches in one document; for `text`, a page past its end; for `fields` and `fill`, an XFA form; for `fill`, a signed document or answers it cannot write, with nothing written; for `sign --timestamp`, an authority that could not be reached, did not answer in time, declined, or answered with a timestamp that does not check out, with nothing written; for `sign --long-term`, a timestamp authority this computer does not trust, or revocation data or an archive timestamp that could not be had, does not check out, or says a certificate is revoked, with nothing written; for `redact`, a signed document without `--invalidate-signatures`, an XFA form, a regions file it cannot read, a page it cannot read, more than 500 matches, matches it cannot mark, or a document the removal cannot rewrite, with nothing written; an output that exists; a key the system would not use, or a prompt that was cancelled. |
 | 4 | tpdf failed: a worker died or did not answer, the certificate store could not be searched, or the written file did not read back as written — for `sign --long-term`, also the validation data tpdf built not reading back as it must, with nothing written; for `fill`, the copy is then removed; for `redact`, a copy that could not be read back or finished is removed. |

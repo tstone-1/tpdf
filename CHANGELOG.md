@@ -19,6 +19,23 @@ have the binary.)
 
 ## [26.10.10] - Unreleased
 
+### Added
+
+- **`tpdf hidden` lists text that is in a document and not visible on its pages.** It is
+  the check for a document redacted somewhere else, where a black rectangle was drawn over
+  the words and the words stayed in the file. tpdf compares where each character is with
+  what the rendered page shows there, so it also finds words under an annotation, words in
+  the background's colour, words never painted, and words outside a cropped page. The
+  answer is one-sided: a listed passage is in the file, and when nothing is listed the
+  last line says which pages had no text to compare and how many characters could not be
+  judged. It exits 1 when it finds anything. `--json` gives each passage with its page and
+  its place, and the Python client has `Tpdf.hidden()`. Measured on 400 PDFs that ship
+  with macOS and installed programs, 7,748 pages and 8.7 million characters compared: 31
+  passages in 13 files, 21 of them outside the page and 10 inside it. All 10 were looked
+  at on the rendered page and none is visible there: a line under a photograph, and white
+  text. That sample is mostly program resources and not office documents. The window does
+  not have the check yet.
+
 ### Changed
 
 - **Install command-line tool… and Uninstall command-line tool… are greyed when they have

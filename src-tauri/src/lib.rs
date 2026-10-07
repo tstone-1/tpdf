@@ -36,6 +36,7 @@ pub mod fingerprint;
 pub mod formedit;
 pub mod formfields;
 pub mod forms;
+pub mod hidden;
 pub mod imagepages;
 pub mod images;
 pub mod imports;

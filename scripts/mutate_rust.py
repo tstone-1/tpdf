@@ -145,6 +145,9 @@ FILTERS = [
     "pagetree::",
     # Added 2026-10-07 with the bookmark repair, whose tests are its own module's.
     "outline_repair::",
+    # Added 2026-10-07 with `tpdf hidden`: the comparison and the command.
+    "hidden::",
+    "cli::hidden::",
     # Added 2026-08-18 with the crop. Fourth time this list has been forgotten
     # and fourth time the guard is what said so, before six mutations could
     # report SURVIVED for tests it simply could not see.
@@ -16472,6 +16475,175 @@ MUTATIONS += [
         '            Ok(Object::Array(array)) => page_of(array),',
         '            Ok(Object::Array(_)) => Aim::Other,',
         'a_name_in_the_name_tree_is_followed_to_its_page',
+    ),
+]
+
+# --- text that is in a document and not on its pages --------------------------
+# `hidden::judge` and `tpdf hidden`'s last line. `--only 'hidden:'` runs the set.
+# What only the built tool can show --- the exit code, a page without text, the
+# turned page --- is held by `tests/cli/hidden.rs` against a document written
+# there, and is not in this table.
+MUTATIONS += [
+    Mutation(
+        'hidden: count a difference of exactly the tolerance as ink',
+        'src/hidden.rs',
+        '        self.high.max(other.high) - self.low.min(other.low) <= TOLERANCE\n',
+        '        self.high.max(other.high) - self.low.min(other.low) < TOLERANCE\n',
+        'the_tolerance_is_where_one_colour_ends',
+    ),
+    Mutation(
+        'hidden: take a box with ink in it for one colour',
+        'src/hidden.rs',
+        '        self.high.max(other.high) - self.low.min(other.low) <= TOLERANCE\n',
+        '        self.high.abs_diff(other.high) <= TOLERANCE\n',
+        'visible_words_are_compared_and_not_reported',
+    ),
+    Mutation(
+        'hidden: never match the strip beside a box',
+        'src/hidden.rs',
+        '        self.high.max(other.high) - self.low.min(other.low) <= TOLERANCE\n',
+        '        self.high.max(other.high) < self.low.min(other.low)\n',
+        'words_under_a_tight_black_rectangle_are_reported',
+    ),
+    Mutation(
+        'hidden: call every uniform box hidden without looking beside it',
+        'src/hidden.rs',
+        '        if sides.into_iter().flatten().any(|side| inside.matches(side)) {',
+        '        if sides.into_iter().flatten().count() > 0 {',
+        'a_glyph_that_fills_its_box_is_visible',
+    ),
+    Mutation(
+        'hidden: judge glyphs that fill their box and touch their neighbours',
+        'src/hidden.rs',
+        '        } else if !sound || fills_its_box(ch) {',
+        '        } else if !sound {',
+        'a_rule_made_of_touching_glyphs_is_not_judged',
+    ),
+    Mutation(
+        'hidden: judge a soft hyphen as a character that paints',
+        'src/hidden.rs',
+        "            '\\u{ad}' | '\\u{200b}'..='\\u{200f}'",
+        "            '\\u{200b}'..='\\u{200f}'",
+        'characters_that_paint_nothing_are_neither_hidden_nor_visible',
+    ),
+    Mutation(
+        'hidden: report one hidden character alone',
+        'src/hidden.rs',
+        'pub const MIN_RUN: usize = 2;',
+        'pub const MIN_RUN: usize = 1;',
+        'one_hidden_character_alone_is_not_reported',
+    ),
+    Mutation(
+        'hidden: leave an unreported character counted as compared',
+        'src/hidden.rs',
+        '            out.judged -= run.hidden;\n',
+        '',
+        'one_hidden_character_alone_is_not_reported',
+    ),
+    Mutation(
+        'hidden: report words outside the page as covered',
+        'src/hidden.rs',
+        '            return Verdict::OffPage;',
+        '            return Verdict::Hidden;',
+        'words_outside_the_page_are_reported_as_off_the_page',
+    ),
+    Mutation(
+        'hidden: join words outside the page to words inside it',
+        'src/hidden.rs',
+        '                    || (run.hidden > 0 && run.off_page != off_page)\n',
+        '',
+        'words_outside_the_page_are_reported_as_off_the_page',
+    ),
+    Mutation(
+        'hidden: run a finding on into the next line',
+        'src/hidden.rs',
+        '            .is_some_and(|last| rect[far] <= last[near] || rect[near] >= last[far])',
+        '            .is_some_and(|_| false)',
+        'a_finding_does_not_run_on_into_the_next_line',
+    ),
+    Mutation(
+        "hidden: ignore the page's own turn",
+        'src/hidden.rs',
+        '        let turned = (own % 2 == 1) != (text.quarter_turns % 2 == 1);',
+        '        let turned = own % 2 == 1;',
+        'the_page_turn_and_the_character_turn_are_combined',
+    ),
+    Mutation(
+        "hidden: read a turned character's left and right",
+        'src/hidden.rs',
+        '        let sides = if turned {',
+        '        let sides = if !turned {',
+        'a_turned_character_is_read_along_its_own_line',
+    ),
+    Mutation(
+        'hidden: look for the characters at the scale of the page',
+        'src/hidden.rs',
+        '        let [left, top, right, bottom] = rect.map(|v| v * scale);',
+        '        let [left, top, right, bottom] = rect;',
+        'boxes_are_scaled_to_the_image',
+    ),
+    Mutation(
+        'hidden: judge a box of two pixels',
+        'src/hidden.rs',
+        '        if x1 < x0 + MIN_SIDE || y1 < y0 + MIN_SIDE {',
+        '        if x1 <= x0 || y1 <= y0 {',
+        'what_cannot_be_judged_is_counted',
+    ),
+    Mutation(
+        'hidden: let a finding run through a visible character',
+        'src/hidden.rs',
+        '            Verdict::Visible => {\n                out.judged += 1;\n                run.close(&mut out);',
+        '            Verdict::Visible => {\n                out.judged += 1;',
+        'a_visible_character_divides_two_findings',
+    ),
+    Mutation(
+        "hidden: keep the spaces after a finding's last character",
+        'src/hidden.rs',
+        '                text: run.text[..run.solid].to_string(),',
+        '                text: run.text.clone(),',
+        'a_visible_character_divides_two_findings',
+    ),
+    Mutation(
+        'hidden: judge with a buffer of the wrong size',
+        'src/hidden.rs',
+        '    let sound = pixels.len() == width.saturating_mul(height).saturating_mul(4) && scale > 0.0;',
+        '    let sound = pixels.len() >= 4 && scale > 0.0;',
+        'a_buffer_of_the_wrong_size_judges_nothing',
+    ),
+    Mutation(
+        'hidden: leave the characters that could not be judged out of the last line',
+        'src/cli/hidden.rs',
+        '    if report.unjudged > 0 {',
+        '    if false {',
+        'the_last_line_says_what_was_found_and_what_was_not_checked',
+    ),
+    Mutation(
+        'hidden: leave the pages without text out of the last line',
+        'src/cli/hidden.rs',
+        '    if !report.without_text.is_empty() {\n        line.push_str',
+        '    if false {\n        line.push_str',
+        'the_last_line_says_what_was_found_and_what_was_not_checked',
+    ),
+    Mutation(
+        'hidden: leave the pages too large to compare out of the last line',
+        'src/cli/hidden.rs',
+        '    if !report.not_compared.is_empty() {\n        line.push_str',
+        '    if false {\n        line.push_str',
+        'the_last_line_says_what_was_found_and_what_was_not_checked',
+    ),
+    Mutation(
+        'hidden: compare a page at any scale, however small',
+        'src/cli/hidden.rs',
+        '    if scale < MIN_SCALE {',
+        '    if scale <= 0.0 {',
+        'a_page_is_compared_at_144_dpi_or_as_large_as_the_bounds_allow',
+    ),
+    Mutation(
+        'hidden: list a passage outside the page as one inside it',
+        'src/cli/hidden.rs',
+        '    if found.off_page {',
+        '    if false {',
+        'a_passage_outside_the_page_is_listed_as_such',
     ),
 ]
 

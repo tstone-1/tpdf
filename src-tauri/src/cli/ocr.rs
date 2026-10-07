@@ -107,7 +107,7 @@ fn language(raw: &str) -> Result<String, String> {
 }
 
 /// One page as raw RGBA, rendered by the worker in tiles.
-fn render(
+pub(super) fn render(
     session: &mut Session,
     page: u32,
     width: u32,

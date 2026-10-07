@@ -36,6 +36,54 @@ pub struct Rendered {
     pub height_px: u32,
 }
 
+/// Text that is in a document and not visible on its pages. Page numbers are
+/// one-based.
+///
+/// One-sided: what `found` lists is in the file. An empty `found` means that
+/// nothing was found among `compared` characters, and `without_text`,
+/// `not_compared` and `unjudged` are what was not looked at.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct Hidden {
+    /// Schema version.
+    pub schema: u32,
+    /// Always `hidden`.
+    pub command: String,
+    /// The document, as it was named on the command line.
+    pub input: String,
+    /// Pages in the document.
+    pub pages: u32,
+    /// The passages, in page and reading order.
+    pub found: Vec<HiddenText>,
+    /// Characters whose place on the rendered page was looked at and decided.
+    pub compared: u64,
+    /// Characters with a place that could not be decided: too small at the
+    /// compared size, a glyph that fills its own box, or a single hidden
+    /// character between visible ones.
+    pub unjudged: u64,
+    /// Selected pages that have no text, which were therefore not compared.
+    pub without_text: Vec<u32>,
+    /// Selected pages too large to render at a size text can be judged at.
+    pub not_compared: Vec<u32>,
+}
+
+/// One passage the page does not show.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct HiddenText {
+    /// The page it is on.
+    pub page: u32,
+    /// The words, as `tpdf text` extracts them.
+    pub text: String,
+    /// `left, top, right, bottom` in points from the top-left corner of the
+    /// page as it is displayed.
+    pub rect: [f32; 4],
+    /// How many of its characters were judged hidden; spaces are not.
+    pub characters: u32,
+    /// `true` when the words lie outside the page, which a crop leaves
+    /// behind; `false` when they are inside it and the rendering does not
+    /// show them.
+    pub off_page: bool,
+}
+
 /// A copy with a text layer on the pages that had no text.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Ocr {

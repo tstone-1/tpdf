@@ -96,6 +96,8 @@ mod edit;
 mod form_add;
 #[path = "cli/forms.rs"]
 mod forms;
+#[path = "cli/hidden.rs"]
+mod hidden;
 #[path = "cli/images.rs"]
 mod images;
 #[path = "cli/ocr.rs"]
@@ -143,7 +145,7 @@ fn main() {
     run_outside_cargo_deps(&argv);
     // The order is load-bearing: never_maps_pdfium asserts this process has
     // not mapped PDFium, so it must precede the in-process PDFium readers.
-    let checks: [Check; 34] = [
+    let checks: [Check; 35] = [
         ("verify agrees with the in-process reader", verify_agrees),
         (
             "verify reports what was appended after each signature",
@@ -190,6 +192,10 @@ fn main() {
         ("page operations through the shipped CLI", pages::operations),
         ("JSON edit plans through the shipped CLI", edit::operations),
         ("PNG rendering through the shipped CLI", render::renders),
+        (
+            "hidden finds text the page does not show",
+            hidden::finds_what_the_page_does_not_show,
+        ),
         (
             "ocr makes a scanned page searchable",
             ocr::makes_a_scan_searchable,

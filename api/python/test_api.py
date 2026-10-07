@@ -211,7 +211,7 @@ class ClientTests(unittest.TestCase):
 
     def test_external_workflow_and_discovery(self):
         commands = {c['name'] for c in self.pdf.help()['commands']}
-        self.assertTrue({'edit', 'comments', 'text-runs', 'redact', 'fill', 'sign', 'search', 'ocr', 'protect', 'unprotect', 'images', 'compress', 'form'} <= commands)
+        self.assertTrue({'edit', 'comments', 'text-runs', 'redact', 'fill', 'sign', 'search', 'ocr', 'protect', 'unprotect', 'images', 'compress', 'form', 'hidden'} <= commands)
         self.assertEqual([c['name'] for c in self.pdf.help('search')['commands']], ['search'])
         output = self.root / 'changed.pdf'
         self.pdf.edit(self.source, output, [
@@ -548,6 +548,24 @@ class ClientTests(unittest.TestCase):
             with self.assertRaises(TypeError):
                 self.pdf.sign(self.source, 'unused.pdf', identity='SYNTHETIC ID', lines='name')
             popen.assert_not_called()
+
+    def test_hidden_lists_words_under_a_drawn_rectangle_and_nothing_in_a_plain_page(self):
+        plain = self.pdf.hidden(self.source)
+        self.assertEqual((plain['found'], plain['without_text'], plain['pages']), ([], [], 1))
+        self.assertGreater(plain['compared'], 10)
+        covered = self.root / 'covered.pdf'
+        fixture(covered, content=(
+            b'BT /F1 12 Tf 30 300 Td (VISIBLE HEADING) Tj ET '
+            b'BT /F1 12 Tf 30 100 Td (SYNTHETIC ORIGINAL) Tj ET '
+            b'0 g 24 92 220 24 re f'))
+        report = self.pdf.hidden(covered)
+        self.assertEqual([(f['page'], f['text'], f['off_page']) for f in report['found']],
+                         [(1, 'SYNTHETIC ORIGINAL', False)])
+        # The words are still what `text` extracts, which is the point.
+        self.assertIn('SYNTHETIC ORIGINAL', self.pdf.text(covered)['pages'][0]['text'])
+        with self.assertRaises(CommandError) as caught:
+            self.pdf.hidden(self.source, pages='2')
+        self.assertEqual(caught.exception.exit_code, 3)
 
     def test_render_supports_repeatable_visual_assertions(self):
         first = self.root / 'before.png'

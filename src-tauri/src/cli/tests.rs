@@ -572,6 +572,7 @@ fn every_registered_command_is_reached_by_its_name_and_listed_in_help() {
         ("protect", "protect a.pdf -o b.pdf --new-password-env NEW"),
         ("unprotect", "unprotect a.pdf -o b.pdf --password-env OLD"),
         ("images", "images a.png b.jpg -o c.pdf --paper a4"),
+        ("hidden", "hidden a.pdf --pages 1-2 --json"),
         ("path", "path --add"),
         ("completions", "completions zsh"),
     ];
@@ -2190,6 +2191,35 @@ fn samples() -> Vec<(&'static str, String)> {
             }),
         ),
         (
+            "hidden",
+            pretty(&report::Hidden {
+                schema: report::SCHEMA,
+                command: "hidden".into(),
+                input: "released.pdf".into(),
+                pages: 12,
+                found: vec![
+                    report::HiddenText {
+                        page: 2,
+                        text: "Jane Example".into(),
+                        rect: [100.3, 103.4, 175.5, 114.4],
+                        characters: 11,
+                        off_page: false,
+                    },
+                    report::HiddenText {
+                        page: 5,
+                        text: "Draft 3, not for release".into(),
+                        rect: [-240.0, 20.0, -96.5, 31.0],
+                        characters: 20,
+                        off_page: true,
+                    },
+                ],
+                compared: 18_240,
+                unjudged: 310,
+                without_text: vec![7, 8],
+                not_compared: vec![12],
+            }),
+        ),
+        (
             "images",
             pretty(&report::ImagesMade {
                 schema: report::SCHEMA,
@@ -2467,7 +2497,7 @@ fn the_samples_directory_holds_one_file_per_sample_and_nothing_else() {
         .map(|(name, _)| format!("{name}.json"))
         .collect();
     want.sort();
-    assert_eq!(want.len(), 25, "the sample table itself");
+    assert_eq!(want.len(), 26, "the sample table itself");
     assert_eq!(found, want);
 }
 

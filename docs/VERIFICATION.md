@@ -6563,3 +6563,51 @@ seen. Neither command was run, because installing asks for an administrator pass
 changes the machine. On Windows the command has not been asked from a window; the
 test holds the reading to the stored value for three folders and does not say which of
 them were there.
+
+### `tpdf hidden`: text a page does not show — measured 2026-10-07
+
+**What it is.** A command that lists text which is in a document and which the rendered page
+does not show, for checking a document redacted in another program. `hidden.rs` has the
+rule and the reasons for it.
+
+**Against a document written for it** (`src-tauri/tests/cli/hidden.rs`, through the built
+tool): six pages, one case a line. Listed, each on its page: words under a tight black
+rectangle, under a loose one, under a dark red one, white words on white, words in text
+render mode 3, words under a square annotation with a black interior, and a line set 400
+points left of the page, which is listed as outside the page. Not listed: a row of
+underscores, of hyphens, of full stops, of lower-case L and capital I, grey text, text on a
+shaded cell, white text on a black bar, and single letters with spaces between. The first
+page again at `/Rotate 90` gives the same three passages. A page with a filled square and
+no text is reported in `without_text`.
+
+That turned page found a defect before the command was finished. A character's own turn is
+stored against the unturned page, the boxes and the pixels are of the page as displayed, and
+the first version read left and right of each character where the text ran down. All three
+passages on that page were missed, and the five pages beside it passed.
+
+**Against documents nobody wrote for it.** The 68 generated fixtures in `testdata/`: two
+report anything, and both are right --- `hostile-ocg.pdf`, text in an optional-content
+layer that is switched off, and `links-cropped.pdf`, text below the crop box. 400 PDFs
+that ship with macOS and with installed programs (found with `find` under `/Applications`,
+`/Library/Documentation`, `/System/Library/Frameworks` and `/opt/homebrew`, 30 KB to 20 MB):
+7,748 pages, 3,577 of them with text, 8,664,282 characters compared, 1,241,327 not judged,
+79 s in a debug build. 31 passages in 13 files. 21 lie outside the page, by their
+coordinates. The 10 inside the page were each looked at in a rendering: six are fragments
+of one line that lies under a photograph, four are two lines of white text on white. None
+is visible. So no false finding in this sample, and the sample is program resources and
+vendor documents, not office correspondence.
+
+The share not judged, one character in eight, is mostly full stops and hyphens, which are
+never judged, and small print.
+
+**Mutations.** `python3 scripts/mutate_rust.py --only 'hidden:'` runs 23, each red in the
+test named for it. One of the first 23 survived and was right to: an early return for a box
+with ink in it, which the strip comparison already implies. The return is gone.
+
+**Not done.** No document redacted with another program's own redaction or drawing tool
+was tried; every covered passage above was written by hand. Nothing was measured on
+Windows before the first CI run there, and the document in the test uses a font that is
+not embedded, so the renderer's substitute differs between the two platforms. The window
+has no such check. Whether a scan's picture is intact under a drawn bar is not looked at
+by anything.
+
