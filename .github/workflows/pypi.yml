@@ -31,6 +31,9 @@ jobs:
     name: Build and check
     runs-on: ubuntu-latest
     timeout-minutes: 15
+    permissions:
+      contents: read
+      actions: read
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
         with:
@@ -70,8 +73,27 @@ jobs:
             exit 1
           fi
 
-      - name: Run the client's tests from the checkout
-        run: python -m unittest discover -s api/python -p 'test_*.py'
+      # test_api.py starts the built command-line tool, and a Linux runner has
+      # none: 37 of its tests failed here for that reason alone in run
+      # 37807802209. The whole suite runs in ci.yml on macOS and Windows, so
+      # this asks whether it passed on the commit being published.
+      - name: Require a green CI run on this commit
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          answer=$(gh api "repos/$GITHUB_REPOSITORY/actions/workflows/ci.yml/runs?head_sha=$GITHUB_SHA&status=completed" \
+            --jq '[.workflow_runs[] | select(.conclusion == "success")] | length')
+          echo "green ci.yml runs on $GITHUB_SHA: $answer"
+          if [ "$answer" = "" ] || [ "$answer" -lt 1 ]; then
+            echo "::error::no green ci.yml run on $GITHUB_SHA; wait for CI, then start this again"
+            exit 1
+          fi
+
+      # The two test files that need no tool.
+      - name: Run the tests that need no tool
+        run: |
+          python -m unittest discover -s api/python -p 'test_reports.py'
+          python -m unittest discover -s api/python -p 'test_signing_checks.py'
 
       - name: Build
         run: uv build api/python --out-dir dist

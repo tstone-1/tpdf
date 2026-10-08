@@ -220,8 +220,9 @@ gh workflow run pypi.yml --ref main
 gh run list --workflow pypi.yml --limit 1
 ```
 
-`pypi.yml` refuses a version PyPI already has, runs the client's tests, builds, checks the
-two archives, imports the built wheel from outside the checkout and uploads. It stores no
+`pypi.yml` refuses a version PyPI already has, requires a green `ci.yml` run on the same
+commit (the client's full tests start the built tool, which a Linux runner does not
+have), runs the two test files that need no tool, builds, checks the two archives, imports the built wheel from outside the checkout and uploads. It stores no
 password: PyPI trusts this workflow in the environment `pypi` (project `tpdf-client`,
 owner `tstone-1`, repository `tpdf`, workflow `pypi.yml`), set on pypi.org under
 *Publishing*. After the first upload, change the install line in `README.md` and
