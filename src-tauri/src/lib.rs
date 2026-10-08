@@ -675,7 +675,7 @@ pub fn run() {
     // Queued here for the same reason: on Windows a double-click arrives in
     // `argv`, long before there is a webview to tell about it.
     let launch = launch::Launch::default();
-    for path in launch::paths_from_args(std::env::args()) {
+    for path in launch::paths_from_launch(std::env::args(), |path| path.is_file()) {
         launch.deliver(path);
     }
 
@@ -776,7 +776,7 @@ pub fn run() {
                 let _ = window.unminimize();
                 let _ = window.set_focus();
             }
-            for path in launch::paths_from_args(argv) {
+            for path in launch::paths_from_launch(argv, |path| path.is_file()) {
                 if let launch::Delivery::Emit(path) = launch.deliver(path) {
                     let _ = app.emit(launch::OPEN_EVENT, path.to_string_lossy().into_owned());
                 }

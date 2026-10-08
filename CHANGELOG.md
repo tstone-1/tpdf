@@ -17,6 +17,17 @@ as *downloadable*, while the release sat as a draft that GitHub showed to nobody
 are given now because they are different facts, and only the second one means a reader can
 have the binary.)
 
+## [26.10.13] - Unreleased
+
+### Fixed
+
+- **After an update on Windows, a document in a folder with spaces in its name is opened
+  again.** The update restarts tpdf with the document it was started with. When the path
+  had a space in it, the restart handed it over cut at the spaces, and tpdf showed
+  *could not open* with the last part of the path and *The system cannot find the path
+  specified*. tpdf now puts such a path back together when the parts are a file only
+  together. A path with two spaces in a row is not repaired.
+
 ## [26.10.12] - 2026-10-08
 
 ### Fixed

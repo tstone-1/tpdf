@@ -97,6 +97,50 @@ where
         .collect()
 }
 
+/// Paths named on the command line, with one path put back together when the
+/// command line arrived without its quotes.
+///
+/// After an update on Windows the installer starts tpdf again with the
+/// arguments the old process had, so that the document comes back. The updater
+/// quotes a path with spaces in it, and the installer reads that value with
+/// NSIS `GetOptions`, which returns the inside of a value that is one quoted
+/// string. Measured 2026-10-08: `/ARGS "C:\a b\x.pdf"` comes back as
+/// `C:\a b\x.pdf`, and tpdf was started with `C:\a` and `b\x.pdf`. A
+/// document under `Team Site - Documents` came back as three arguments, the
+/// middle one `-`, and the message named a path that was the tail of the
+/// real one.
+///
+/// So when there are two arguments or more, none of the ones that could be a
+/// document is a file, and all of them joined by one space are a file, that
+/// file is what was asked for. `-` pieces are part of the join: a flag never
+/// was. Two things this does not do. A path with two spaces in a row is
+/// not put back, because the split kept no count of them. And arguments that
+/// are not a file together are left as they are, so that a mistyped name is
+/// still reported by whatever opens it.
+///
+/// `is_file` is a parameter so that this needs no disk to test.
+pub fn paths_from_launch<I, S>(args: I, is_file: impl Fn(&std::path::Path) -> bool) -> Vec<PathBuf>
+where
+    I: IntoIterator<Item = S>,
+    S: AsRef<str>,
+{
+    let args: Vec<String> = args
+        .into_iter()
+        .map(|arg| arg.as_ref().to_string())
+        .collect();
+    let pieces = args.get(1..).unwrap_or_default();
+    if pieces.len() > 1 {
+        let whole = PathBuf::from(pieces.join(" "));
+        let one_is_a_file = pieces
+            .iter()
+            .any(|piece| !piece.starts_with('-') && is_file(std::path::Path::new(piece)));
+        if !one_is_a_file && is_file(&whole) {
+            return vec![whole];
+        }
+    }
+    paths_from_args(args)
+}
+
 /// Turns a `file://` URL from an Apple Event into a path.
 ///
 /// `Url::to_file_path` rather than `Url::path`, because the URL is
@@ -119,8 +163,8 @@ pub fn path_from_url(url: &tauri::Url) -> Option<PathBuf> {
 
 #[cfg(test)]
 mod tests {
-    use super::{path_from_url, paths_from_args, Delivery, Launch};
-    use std::path::PathBuf;
+    use super::{path_from_url, paths_from_args, paths_from_launch, Delivery, Launch};
+    use std::path::{Path, PathBuf};
 
     #[test]
     fn the_executable_is_not_a_document() {
@@ -161,6 +205,57 @@ mod tests {
             paths_from_args(["tpdf", "/tmp/definitely-not-here.pdf"]),
             vec![PathBuf::from("/tmp/definitely-not-here.pdf")]
         );
+    }
+
+    /// The arguments tpdf gets after an update when the document's folder has
+    /// spaces and a lone hyphen in its name.
+    const SPLIT: [&str; 5] = [
+        "tpdf",
+        r"C:\Users\x\Team",
+        "-",
+        r"Documents\my",
+        "report.pdf",
+    ];
+    const WHOLE: &str = r"C:\Users\x\Team - Documents\my report.pdf";
+
+    #[test]
+    fn a_path_split_at_its_spaces_is_put_back_together() {
+        assert_eq!(
+            paths_from_launch(SPLIT, |path| path == Path::new(WHOLE)),
+            vec![PathBuf::from(WHOLE)]
+        );
+    }
+
+    #[test]
+    fn pieces_that_are_no_file_together_stay_apart() {
+        // A mistyped name has to reach the opener as it was typed, flags left
+        // out as before, so that the message names what was asked for.
+        assert_eq!(
+            paths_from_launch(SPLIT, |_| false),
+            vec![
+                PathBuf::from(r"C:\Users\x\Team"),
+                PathBuf::from(r"Documents\my"),
+                PathBuf::from("report.pdf")
+            ]
+        );
+    }
+
+    #[test]
+    fn two_documents_that_exist_are_two_documents() {
+        // Also when their names joined by a space happen to be a file.
+        assert_eq!(
+            paths_from_launch(["tpdf", "a.pdf", "b.pdf"], |_| true),
+            vec![PathBuf::from("a.pdf"), PathBuf::from("b.pdf")]
+        );
+    }
+
+    #[test]
+    fn one_argument_is_never_joined_with_anything() {
+        assert_eq!(
+            paths_from_launch(["tpdf", "/tmp/not here.pdf"], |_| false),
+            vec![PathBuf::from("/tmp/not here.pdf")]
+        );
+        assert!(paths_from_launch(["tpdf"], |_| true).is_empty());
     }
 
     #[test]

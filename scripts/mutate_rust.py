@@ -122,6 +122,8 @@ HERE = "macos" if sys.platform == "darwin" else "windows" if sys.platform == "wi
 FILTERS = [
     "redaction_fill::",
     "raster_redact::",
+    # Added 2026-10-08 with the repair of a path that lost its quotes.
+    "launch::",
     "objects::",
     "textedit::",
     "textview::",
@@ -3050,6 +3052,36 @@ MUTATIONS = [
         "                pixel.copy_from_slice(&colour);",
         "                pixel.copy_from_slice(&[0, 0, 0]);",
         "strip_mask_removes_only_intersecting_rgb_pixels",
+    ),
+    # A document path split at its spaces by the restart after an update,
+    # 2026-10-08 (`launch.rs`).
+    Mutation(
+        "launch: join the arguments whether or not they are a file together",
+        "src/launch.rs",
+        "        if !one_is_a_file && is_file(&whole) {",
+        "        if !one_is_a_file {",
+        "pieces_that_are_no_file_together_stay_apart",
+    ),
+    Mutation(
+        "launch: join two documents that each exist",
+        "src/launch.rs",
+        "        if !one_is_a_file && is_file(&whole) {",
+        "        if is_file(&whole) {",
+        "two_documents_that_exist_are_two_documents",
+    ),
+    Mutation(
+        "launch: leave a split path in its pieces",
+        "src/launch.rs",
+        "    if pieces.len() > 1 {",
+        "    if pieces.len() > usize::MAX - 1 {",
+        "a_path_split_at_its_spaces_is_put_back_together",
+    ),
+    Mutation(
+        "launch: leave the hyphen out of the path that is put back",
+        "src/launch.rs",
+        '        let whole = PathBuf::from(pieces.join(" "));',
+        '        let whole = PathBuf::from(pieces.iter().filter(|piece| !piece.starts_with(\'-\')).cloned().collect::<Vec<_>>().join(" "));',
+        "a_path_split_at_its_spaces_is_put_back_together",
     ),
     # Taking part of a show operator, 2026-10-07: the glyphs under a region
     # and no others, with a gap as wide as they were (`redact/glyph_cut.rs`).

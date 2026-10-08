@@ -313,6 +313,7 @@ hop through the index.
 - A relaunch is not a window close, so the question the close handler asks is never asked
 - A label that instructs, over a control that is disabled
 - A stop flag the command clears as it starts loses the stop that arrived first
+- The restart after an update hands one quoted path over without its quotes, so a path with spaces arrives in pieces
 
 ## Rust and macOS
 - A locked macOS session cannot be unlocked from a script, so it must be prevented
@@ -26040,3 +26041,38 @@ Three things to take from it.
 
 An installer is not a probe. Nothing that writes to a computer somebody is working on
 belongs behind an answer of this kind without the control.
+
+### The restart after an update hands one quoted path over without its quotes, so a path with spaces arrives in pieces
+
+Reported from a Windows computer on 2026-10-08, after the update to 26.10.12: tpdf came back
+with *could not open "Documents\\...\\name.pdf": The system cannot find the path specified*,
+for a document under a folder named like `Team Site - Documents`. The path in the message
+was the tail of the real one.
+
+The route has three parts and the middle one loses the quotes.
+
+- `tauri-plugin-updater` (2.13.1 read) starts the NSIS installer with `/ARGS` followed by
+  the arguments of the running process, so that the document comes back. It quotes an
+  argument with a space in it (`escape_nsis_current_exe_arg`). That part is right.
+- Tauri's installer reads the value with `${GetOptions} $CMDLINE "/ARGS" $R0` and starts
+  the application with `$R0`. **`GetOptions` returns the inside of a value that is one
+  quoted string.** Measured on Windows 11 with the NSIS that Tauri installs and a ten-line
+  installer that writes `$R0` to a file: `/ARGS "C:\a b\x.pdf"` gave `C:\a b\x.pdf`,
+  while `/ARGS "C:\a b\x.pdf" second.pdf` and `/ARGS C:\a\x.pdf "C:\c d\y.pdf"` came back
+  with their quotes. So one document, the usual case, is the case that breaks.
+- tpdf is then started with `C:\a` and `b\x.pdf`. A piece that is a lone `-` is dropped as
+  a flag, which is why the message named only the last part.
+
+`launch::paths_from_launch` puts the path back: with two arguments or more, none of which
+is a file, and all of them joined by one space being a file, that file is the document.
+Four mutations hold it. It cannot put back a path with two spaces in a row.
+
+Two things to take from it. **The updater plugin's own escaping is correct and tested, and
+the defect is one program later**, so reading the plugin is not enough to clear this
+route. And **no check here could have found it**: `update.test.ts` fakes the plugin, the
+update by hand (`BUILD.md` step 12) was done from an empty window, and a document in a
+folder without spaces comes back. Open a document under a folder with a space in its name
+before pressing the update button in step 12.
+
+Not seen: the repaired restart on Windows. The function is tested without a disk, and the
+update that would show it needs a release after the one that carries the fix.

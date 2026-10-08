@@ -8785,6 +8785,14 @@ starts at 0 and increments within the month.
     Needs two published releases, so it starts from the second one ever cut with the
     updater — first opportunity is applying `26.8.2` from an installed `26.8.2`+1.
 
+    **On Windows, start the previous release by opening a document that lies under a
+    folder with a space in its name, and press the update button with that document
+    open.** The installer starts tpdf again with the document, and that hand-over lost the
+    quotes around the path until 26.10.12: the update was applied from an empty window on
+    2026-10-08 and looked right, and the same update with such a document open ended in
+    *could not open*. The document has to be on screen again after the restart.
+    `docs/TRAPS.md` has the three programs on that route.
+
     **Carried out for the first time on 2026-08-31, and it passes.** 26.8.11 installed from
     its own `.dmg` over the 26.8.12 that was there, launched normally: the toolbar showed
     `Update to 26.8.12`, pressing it reached `Update ready — restart to finish` in **two
