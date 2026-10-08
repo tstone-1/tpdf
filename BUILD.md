@@ -6466,67 +6466,18 @@ and the defect does not, so a sixth adds nothing: check the message, then delete
 
 ---
 
-## Windows signing onboarding
+## Windows signing
 
-The maintainer submitted the SignPath Foundation application on 2026-09-12.
-The Foundation declined it because the project does not yet have sufficient
-public adoption and independent recognition. The decision was about public
-visibility, not a technical assessment of the project.
-
-Decision recorded 2026-09-16: continue development and unsigned Windows releases;
-defer a paid SignPath subscription. Reapply to the Foundation after the project
-has gained broader adoption and independent references. Account configuration,
-a certificate and a signed Windows build have not yet been verified. The steps
-below are retained for future onboarding, not an active release dependency.
-The proposed [code signing policy](README.md#code-signing-policy) records the owner,
-approval model and actual network behaviour. Do not claim that signing is provided
-until onboarding succeeds.
-
-The manual `SignPath onboarding samples` workflow builds the normal executable,
-MSI and NSIS on `windows-2025`, checks the production frontend excludes the harness,
-and records the source commit, executable metadata and SHA-256 digests. It uploads
-separate executable and installer artifacts without release or signing credentials.
-Run the workflow manually from the default branch:
-
-```sh
-gh workflow run signpath-onboarding.yml --ref main
-gh run list --workflow signpath-onboarding.yml --limit 5
-```
-
-Use a commit whose regular CI is green. These are onboarding samples, not a
-release verification. The first hosted run at `20d2e7a` passed on 2026-09-12:
-[SignPath onboarding samples](https://github.com/tstone-1/tpdf/actions/runs/34704069850).
-Both artifacts were downloaded and all three binaries matched the recorded SHA-256
-digests, source commit and product version. Artifacts are retained for 14 days;
-rerun the workflow if SignPath needs a fresh sample. No signing request was made.
-`.signpath/tpdf-exe-v1.xml` proposes a narrowly scoped executable configuration
-for the first signing test: only `tpdf.exe`, product `tpdf`, with a required
-version parameter. Validate it in SignPath and register it as `tpdf-exe-v1`.
-
-Account setup needs the maintainer's chosen email, two-factor authentication on
-GitHub and SignPath, Foundation acceptance, and a project linked to the public
-repository. Use SignPath's GitHub connector with a CI submitter and a separate
-human approver. The first integration should use the assigned organization ID,
-project slug, test signing policy, and a submitter token stored as a GitHub secret;
-never put the token in this repository or pass it in a command line.
-
-Before changing `release.yml`, demonstrate one signing request from a
-GitHub-hosted build using its uploaded artifact ID. Confirm the signed executable's
-identity and signature against the expected test certificate. Then resolve the
-installer sequence with SignPath: sign the application before packaging, cover
-the NSIS uninstaller as well as setup, and sign the MSI and NSIS outer containers.
-Do not sign upstream `pdfium.dll` with the Foundation certificate.
-Only after Authenticode signing is complete may the updater signatures and
-`latest.json` be generated from the final installer bytes. Replacing an installer
-after the current Tauri action publishes it would invalidate its updater signature.
-Rehearse installation and updating before enabling release signing.
-
-The [Foundation terms](https://signpath.org/terms) require manual release approval
-and verifiable project reputation; acceptance is not automatic. The
-[GitHub connector](https://docs.signpath.io/trusted-build-systems/github) requires
-GitHub-hosted jobs leading to OSS signing, so local or self-hosted builds are not
-substitutes. Also disclose the automatic update check: the Foundation's example
-privacy sentence about network activity only on request does not describe tpdf.
+The maintainer applied to the SignPath Foundation on 2026-09-12. The Foundation declined:
+the project did not yet have sufficient public adoption and independent recognition. The
+decision was about public visibility, not a technical assessment of the project. A paid
+SignPath subscription was deferred on 2026-09-16, and Windows releases stayed unsigned up
+to 26.10.10. The workflow that built samples for that application and the proposed
+artifact configuration were removed on 2026-10-08, after 26.10.11 was signed with the
+Certum certificate; both are in the history before that date. One sentence of that plan
+still holds: updater signatures and `latest.json` are made from the final installer bytes,
+after Authenticode signing, because replacing an installer afterwards would invalidate its
+updater signature.
 
 ### Signing with the Certum certificate
 
@@ -6589,7 +6540,7 @@ costs somebody who installed from it was measured on Windows on 2026-10-07: with
 with exit code 0 and left the `.msi` registered beside its own entry. The updater of such
 a copy finds no `windows-x86_64-msi` in `latest.json`, falls back to `windows-x86_64` and
 runs that installer, so it ends with two installed copies. The release notes say to
-uninstall the `.msi` once. `signpath-onboarding.yml` still builds one, with `--bundles`.
+uninstall the `.msi` once.
 
 **A release built this way was rehearsed four times on 2026-10-07**, and each tag failed
 one step later than the last:
@@ -6679,6 +6630,26 @@ the bundle smoke test (step 8) and the hand-applied update (step 12). The image-
 in another colour was not looked at in a window, and the README pictures were not retaken.
 `docs/THREAT-MODEL.md` needed no change: the cycle added no command and no authority, and
 the image-only job carries one more value, a colour of three.
+
+**26.10.12 publication, 2026-10-08:** `Audit` and CI were green on the release commit
+`3fbfe708`, both legs, and the tag sits on it. The `Release` run 37736261721 skipped its
+gates on CI's account and both platform jobs passed at the first attempt. The Windows leg
+signed ten files with one login, each written at the first attempt: the nine of 26.10.11
+and the uninstaller, which makensis hands over as a temporary file (`nstBC68.tmp`). It read
+the installer, `tpdf.exe`, `tpdf-cli.exe` and `pdfium.dll` back as signed, then installed
+and read `uninstall.exe` back as `Valid`, timestamped, signer
+`CN=Open Source Developer Timo Stein`. That is the first signed uninstaller. The draft held
+6 assets and `scripts/publish_release.py v26.10.12 --publish` published it. Without
+authentication the `.dmg`, the `-setup.exe` and its `.sig` answer 200 and `latest.json`
+offers 26.10.12 for `darwin-aarch64` and, with the installer, for `windows-x86_64`. The
+downloaded `.dmg` staples and Gatekeeper reads it as Notarized Developer ID. The downloaded
+installer verifies with `minisign` against its `.sig`, and on a Windows 11 computer that
+never held the certificate `Get-AuthenticodeSignature` reads it as `Valid` and timestamped
+by the same signer, with the SHA-256 of the copy downloaded on macOS. The Homebrew cask
+went from 26.10.11 to 26.10.12; `brew audit --cask --online` passed and `brew livecheck`
+reads 26.10.12. winget was not updated. The installer was not run outside the release run,
+so the uninstaller's signature was read on the runner only, and the update from an earlier
+version (step 12) was not applied by hand.
 
 **26.10.11 verification, macOS arm64, 2026-10-07:** all 30 gates passed on the release tree
 (2,941 Rust tests with ten documented ignored, 2,528 frontend tests) and `check_windows.py`

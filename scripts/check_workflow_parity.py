@@ -269,7 +269,7 @@ def other_workflows() -> list[str]:
 
     THE FOURTH INVARIANT, added 2026-09-26: property 2 over every workflow in
     the directory, not only the two this script compares. `audit.yml`,
-    `pdfium.yml` and `signpath-onboarding.yml` all set the flag, and nothing
+    `pdfium.yml` and the workflow that built signing samples then all set the flag, and nothing
     checked that they did --- a rule written for two named files covers two
     named files, and the next workflow is written by copying one of the others.
     Globbed rather than listed, so a new file is covered the day it lands.
