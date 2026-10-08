@@ -6665,6 +6665,21 @@ now comes last there.
 `docs/THREAT-MODEL.md` already stated the three new commands (T6.35, T6.36). The release
 notes in `release.yml` were rewritten.
 
+**26.10.12 verification, macOS arm64, 2026-10-08:** all 30 gates passed on the release tree
+(2,942 Rust tests with ten documented ignored, 2,528 frontend tests) and `check_windows.py`
+type-checked the Windows tree. Every mutation selected `--near v26.10.11` ran and was
+caught, 15 Rust and 16 frontend. `raster-redact-probe` painted black, red and white and
+read each pixel back from the rendered page; with the read-back held to black by hand it
+failed on the red page. `sign-rehearsal.yml` passed in run 37733051706, starting the sign
+command the way makensis starts it and waiting 5 attempts for a file held open. The
+uninstaller's cause and fix are in *Signing with the Certum certificate*; a real signature
+on an uninstaller had not been seen when this was written, and the release run's new
+check is where it is. **Not run:** the Windows test suites outside CI, any window harness,
+the bundle smoke test (step 8) and the hand-applied update (step 12). The image-only copy
+in another colour was not looked at in a window, and the README pictures were not retaken.
+`docs/THREAT-MODEL.md` needed no change: the cycle added no command and no authority, and
+the image-only job carries one more value, a colour of three.
+
 **26.10.11 verification, macOS arm64, 2026-10-07:** all 30 gates passed on the release tree
 (2,941 Rust tests with ten documented ignored, 2,528 frontend tests) and `check_windows.py`
 type-checked the Windows tree. The program is the one in 26.10.10: since that tag one Rust

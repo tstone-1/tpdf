@@ -509,9 +509,13 @@ jobs:
           workers cannot read arbitrary user files or access the network;
           Windows workers use low integrity and resource-limited jobs.
 
+          **New in 26.10.12.** An image-only redacted copy has its boxes in
+          the colour chosen in the *Redactions* panel; it painted them black
+          whatever was chosen. The Windows uninstaller is code-signed: in
+          26.10.11 the installer and the program were, and it was not.
+
           **New in 26.10.11.** The Windows installer is code-signed, and
-          so are `tpdf.exe`, `tpdf-cli.exe` and `pdfium.dll` inside it. The
-          program is the one in 26.10.10.
+          so are `tpdf.exe`, `tpdf-cli.exe` and `pdfium.dll` inside it.
 
           **New in 26.10.10.** Redacting part
           of a line removes that part and leaves the rest of the line
