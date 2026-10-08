@@ -32,6 +32,7 @@ use lopdf::{dictionary, Dictionary};
 use crate::docmodel::MarkKind;
 use crate::edits::PlannedMark;
 use crate::protect::Protection;
+use crate::redaction_fill::Fill;
 use crate::textbox;
 
 // The marks module's own items, which `use super::*` cannot reach: `save::tests`
@@ -5575,7 +5576,7 @@ fn raster_copy_refuses_a_missing_source_fingerprint() {
     let out = scratch.join("copy.pdf");
     let writer = FakeWriter::writing(Ok(b"SYNTHETIC OUTPUT".to_vec()));
 
-    write_raster_copy(&source, &plan, &out, None, &writer)
+    write_raster_copy(&source, &plan, &out, None, &writer, Fill::default())
         .expect_err("coordinates without a source fingerprint must not be applied");
 
     assert!(
@@ -5636,7 +5637,8 @@ fn raster_copy_refuses_changed_bytes_with_the_same_page_count() {
     std::fs::write(&source, &before).expect("original source");
     let plan = plan_opened_as(&[0], &source);
     let writer = FakeWriter::writing(Ok(b"SYNTHETIC OUTPUT".to_vec()));
-    write_raster_copy(&source, &plan, &out, None, &writer).expect("unchanged control");
+    write_raster_copy(&source, &plan, &out, None, &writer, Fill::default())
+        .expect("unchanged control");
     writer.asked.borrow_mut().clear();
     let modified = std::fs::metadata(&source)
         .expect("metadata")
@@ -5650,7 +5652,7 @@ fn raster_copy_refuses_changed_bytes_with_the_same_page_count() {
         .set_times(std::fs::FileTimes::new().set_modified(modified))
         .expect("retain mtime");
 
-    let why = write_raster_copy(&source, &plan, &out, None, &writer)
+    let why = write_raster_copy(&source, &plan, &out, None, &writer, Fill::default())
         .expect_err("same-page, same-length replacement must be refused");
 
     assert!(
@@ -5756,7 +5758,7 @@ fn raster_copy_never_overwrites_its_source() {
     let before = std::fs::read(&source).expect("source bytes");
     let writer = FakeWriter::writing(Ok(b"SYNTHETIC OUTPUT".to_vec()));
 
-    write_raster_copy(&source, &plan, &source, None, &writer)
+    write_raster_copy(&source, &plan, &source, None, &writer, Fill::default())
         .expect_err("the raster route only creates a separate copy");
 
     assert!(writer.asked.borrow().is_empty());
@@ -5776,7 +5778,7 @@ fn raster_copy_worker_failure_preserves_destination_and_removes_partial_output()
         let mut writer = FakeWriter::writing(Err("synthetic raster verification failure".into()));
         writer.partial_before_refusal = b"SYNTHETIC PARTIAL OUTPUT".to_vec();
 
-        let why = write_raster_copy(&source, &plan, &out, None, &writer)
+        let why = write_raster_copy(&source, &plan, &out, None, &writer, Fill::default())
             .expect_err("a refused partial output cannot be published");
 
         assert!(
@@ -5785,7 +5787,12 @@ fn raster_copy_worker_failure_preserves_destination_and_removes_partial_output()
             "{}",
             why.message
         );
-        assert_eq!(writer.jobs.borrow().as_slice(), &[Job::RasterRedact]);
+        assert_eq!(
+            writer.jobs.borrow().as_slice(),
+            &[Job::RasterRedact {
+                fill: Fill::default()
+            }]
+        );
         if existing {
             assert_eq!(
                 std::fs::read(&out).expect("previous destination"),
@@ -5806,11 +5813,21 @@ fn raster_copy_dispatches_raster_job_and_preserves_password() {
     let writer = FakeWriter::writing(Ok(b"SYNTHETIC VERIFIED OUTPUT".to_vec()));
     let source_bytes = std::fs::read(&source).expect("source bytes");
 
-    let copied = write_raster_copy(&source, &plan, &out, Some("SYNTHETIC_PASSWORD"), &writer)
-        .expect("the verified worker output is published");
+    let copied = write_raster_copy(
+        &source,
+        &plan,
+        &out,
+        Some("SYNTHETIC_PASSWORD"),
+        &writer,
+        Fill::Red,
+    )
+    .expect("the verified worker output is published");
 
     assert!(!copied.changed);
-    assert_eq!(writer.jobs.borrow().as_slice(), &[Job::RasterRedact]);
+    assert_eq!(
+        writer.jobs.borrow().as_slice(),
+        &[Job::RasterRedact { fill: Fill::Red }]
+    );
     assert_eq!(
         writer.asked.borrow().as_slice(),
         &[(source_bytes.len(), Some("SYNTHETIC_PASSWORD".into()))]

@@ -314,7 +314,10 @@ pub enum Job {
     Save,
     /// A fresh image-only document with marked pixels removed before encoding.
     /// Only the sandboxed renderer implements this job.
-    RasterRedact,
+    RasterRedact {
+        /// The colour the marked pixels become.
+        fill: crate::redaction_fill::Fill,
+    },
     /// Paint the already-checked removal regions on the resulting document.
     RedactionFill {
         /// The colour of the boxes.
@@ -338,7 +341,7 @@ impl Job {
     #[must_use]
     pub fn view(self) -> u8 {
         match self {
-            Self::Save | Self::RasterRedact | Self::RedactionFill { .. } => 0,
+            Self::Save | Self::RasterRedact { .. } | Self::RedactionFill { .. } => 0,
             Self::Print { view } => view,
         }
     }
@@ -777,6 +780,7 @@ pub fn write_raster_copy(
     out: &Path,
     password: Option<&str>,
     rewriter: &dyn Rewriter,
+    fill: crate::redaction_fill::Fill,
 ) -> Result<Copied, Refusal> {
     if same_file(source, out) {
         return Err(
@@ -800,7 +804,7 @@ pub fn write_raster_copy(
             len,
             writing,
             plan,
-            Job::RasterRedact,
+            Job::RasterRedact { fill },
             password,
         )?;
         // The snapshot is stable, but do not present an old version as a copy
@@ -828,7 +832,7 @@ pub fn fill_redactions(
     let actual = Fingerprint::of_open(&reading, path)?;
     if actual.len != expected.len || actual.digest != expected.digest {
         return Err(Refusal::changed(
-            "The redaction output changed before its black fill was written",
+            "The redaction output changed before its fill was written",
         ));
     }
     let staged = stage(path, |writing| {
@@ -3270,7 +3274,7 @@ pub fn rewrite_update_with(
     password: Option<&str>,
     inputs: Option<Inputs<'_>>,
 ) -> Result<Vec<u8>, Refusal> {
-    if job == Job::RasterRedact {
+    if matches!(job, Job::RasterRedact { .. }) {
         return Err("Image-only redaction requires the sandboxed rendering worker".into());
     }
     let checked = checked(original, plan, job.view(), password, inputs)?;

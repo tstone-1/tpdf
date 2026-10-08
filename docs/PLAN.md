@@ -16768,7 +16768,7 @@ Decisions taken in building it, each with its reason:
   characters have no box, which becomes no region, is a reason (and with nothing else marked the
   run is refused); and `redact_copy_asked` takes an optional `also` reader, run on the written,
   unfilled file before the gate --- the tool passes a search of it for every query, the window
-  passes `None`. Before the fill, so the window's sentence *"Checks before adding the black fill
+  passes `None`. Before the fill, so the window's sentence *"Checks before adding the fill
   found"* stays true of it. `docs/TRAPS.md` has the entry.
 - **A query that can match nothing is exit 2**, not a report of zero: an empty pattern or a
   literal of only whitespace (`search::Prepared::matches_nothing`) reads exactly like a clean

@@ -6,6 +6,7 @@ use tpdf_lib::docmodel::PageSource;
 use tpdf_lib::document::OpenDocument;
 use tpdf_lib::edits::{PageView, Plan, PlannedRedaction};
 use tpdf_lib::progressive::{self, Bindings, CancelToken, TileSpec};
+use tpdf_lib::redaction_fill::Fill;
 
 fn source() -> Document {
     let mut doc = Document::with_version("1.7");
@@ -131,7 +132,16 @@ fn run() -> Result<(), String> {
         return Err(format!("control pixel is not image red: {control:?}"));
     }
     for turns in 0..4 {
-        let out = tpdf_lib::raster_redact::rewrite(&opened, &plan(turns)).map_err(|e| e.message)?;
+        // Each colour a reader can choose, with the pixel it has to come out as
+        // written here by hand and not taken from the code that paints it.
+        let (fill, painted) = [
+            (Fill::Black, [0, 0, 0]),
+            (Fill::Red, [212, 41, 41]),
+            (Fill::White, [255, 255, 255]),
+            (Fill::Black, [0, 0, 0]),
+        ][turns as usize];
+        let out =
+            tpdf_lib::raster_redact::rewrite(&opened, &plan(turns), fill).map_err(|e| e.message)?;
         std::fs::write(&out_path, &out).map_err(|e| e.to_string())?;
         let after = OpenDocument::open(bindings, &out_path, None).map_err(|e| e.reason)?;
         // The untouched duplicate moved to output page zero. Its visible image
@@ -142,8 +152,12 @@ fn run() -> Result<(), String> {
         // Independent expected coordinates for source point (25,30), after
         // crop [5,10,130,135] and each quarter turn; no production mapper used.
         let (x, y) = [(20, 105), (20, 20), (105, 20), (105, 105)][turns as usize];
-        if pixel(bindings, &after, 1, x, y)?[..3] != [0, 0, 0] {
-            return Err(format!("marked point survived turn {turns}"));
+        let marked = pixel(bindings, &after, 1, x, y)?;
+        if marked[..3] != painted {
+            return Err(format!(
+                "marked point is {:?} at turn {turns}, and the {fill:?} fill is {painted:?}",
+                &marked[..3]
+            ));
         }
         let (x, y) = [(55, 75), (50, 55), (70, 50), (75, 70)][turns as usize];
         if pixel(bindings, &after, 1, x, y)?[..3] != [230, 30, 40] {
@@ -155,12 +169,12 @@ fn run() -> Result<(), String> {
             return Err("original text/metadata survived".into());
         }
         println!(
-            "[PASS] crop + turn {turns} + reordered pages + repeated image + vector/text carriers"
+            "[PASS] crop + turn {turns} + {fill:?} fill + reordered pages + repeated image + vector/text carriers"
         );
     }
     let mut bad = plan(0);
     bad.redactions[0].areas = vec![[200.0, 200.0, 210.0, 210.0]];
-    if tpdf_lib::raster_redact::rewrite(&opened, &bad).is_ok() {
+    if tpdf_lib::raster_redact::rewrite(&opened, &bad, Fill::default()).is_ok() {
         return Err("offpage region accepted".into());
     }
     println!("[PASS] offpage region refused");
@@ -190,7 +204,8 @@ fn run() -> Result<(), String> {
     for page in &mut inherited_plan.pages {
         page.crop = None;
     }
-    let out = tpdf_lib::raster_redact::rewrite(&opened, &inherited_plan).map_err(|e| e.message)?;
+    let out = tpdf_lib::raster_redact::rewrite(&opened, &inherited_plan, Fill::default())
+        .map_err(|e| e.message)?;
     std::fs::write(&out_path, &out).map_err(|e| e.to_string())?;
     let after = OpenDocument::open(bindings, &out_path, None).map_err(|e| e.reason)?;
     let page = after.page(0)?;
@@ -210,6 +225,7 @@ fn run() -> Result<(), String> {
         &worker_out,
         None,
         &tpdf_lib::save::InWorker::at(library.clone()),
+        Fill::default(),
     )
     .map_err(|e| e.message)?;
     let worker_pdf = OpenDocument::open(bindings, &worker_out, None).map_err(|e| e.reason)?;
@@ -238,7 +254,8 @@ fn run() -> Result<(), String> {
     own.save(&source_path).map_err(|e| e.to_string())?;
     let opened =
         OpenDocument::open(bindings, &source_path, Some("swordfish")).map_err(|e| e.reason)?;
-    let out = tpdf_lib::raster_redact::rewrite(&opened, &plan(1)).map_err(|e| e.message)?;
+    let out = tpdf_lib::raster_redact::rewrite(&opened, &plan(1), Fill::default())
+        .map_err(|e| e.message)?;
     std::fs::write(&out_path, &out).map_err(|e| e.to_string())?;
     if OpenDocument::open(bindings, &out_path, None).is_ok() {
         return Err("raster output lost password protection".into());

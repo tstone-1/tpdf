@@ -293,7 +293,7 @@ export function afterRedaction(applied: {
       // because those are different and only one of them is known. A blind spot
       // is a scan that could not look, and telling a reader their words are
       // still there when nothing said so would be its own confident lie.
-      `Redaction not verified. Redacted ${removed}, but tpdf could not prove the file is clean. Checks before adding the black fill found: ` +
+      `Redaction not verified. Redacted ${removed}, but tpdf could not prove the file is clean. Checks before adding the fill found: ` +
       `${applied.why.join("; ")}. Treat it as unredacted until you have checked it.`;
   if (!applied.changed) return verdict;
   return (

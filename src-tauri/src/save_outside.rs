@@ -713,7 +713,7 @@ impl Rewriter for InWorker {
         inputs: Option<crate::save::Inputs<'_>>,
     ) -> Result<usize, Refusal> {
         // The handles, never the pathnames. See [`Rewriter`].
-        let mapped = if matches!(job, Job::RasterRedact | Job::RedactionFill { .. }) {
+        let mapped = if matches!(job, Job::RasterRedact { .. } | Job::RedactionFill { .. }) {
             raster_snapshot(source, len, plan)?
         } else {
             Shm::map_open_file(source, len)?
@@ -749,7 +749,7 @@ impl Rewriter for InWorker {
         let rx = asked_on_a_thread(worker, move |worker| {
             Self::ask_rewrite(worker, &plan, job, &incoming, key.as_deref())
         });
-        let deadline = if job == Job::RasterRedact {
+        let deadline = if matches!(job, Job::RasterRedact { .. }) {
             std::time::Duration::from_secs(180)
         } else {
             DEFAULT_DEADLINE

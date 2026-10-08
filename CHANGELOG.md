@@ -17,6 +17,19 @@ as *downloadable*, while the release sat as a draft that GitHub showed to nobody
 are given now because they are different facts, and only the second one means a reader can
 have the binary.)
 
+## [26.10.12] - Unreleased
+
+### Fixed
+
+- **An image-only copy has its boxes in the colour chosen.** It painted them black
+  whatever the *Redactions* panel said. The copy is still rendered back before it is
+  saved, and a pixel inside a box that is not the chosen colour refuses it.
+- **Messages about a redaction no longer call the fill black** when it is red or white.
+- **The Windows uninstaller is signed.** In 26.10.11 the installer and the program were
+  signed and `uninstall.exe` was not: the sign command failed for that one file while the
+  installer was built, and the build went on. The release build now installs what it made
+  and fails unless the uninstaller is signed too.
+
 ## [26.10.11] - 2026-10-07
 
 ### Changed

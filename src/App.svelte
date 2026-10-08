@@ -2148,7 +2148,7 @@
       await tick();
       say(
         afterRasterRedaction(
-          await edits.redactRasterCopy(source, chosen),
+          await edits.redactRasterCopy(source, chosen, redactionFill),
           basename(chosen),
         ),
       );

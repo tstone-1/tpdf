@@ -609,7 +609,7 @@ measured the Windows render constants come out 1.5–1.8x worse.
   stays selectable. A saved copy can be opened from the result message; the original
   remains on screen with its pending marks until you open another file.
 - **Redact to image-only copy** handles scans and drawings by rendering every page
-  at 300 dpi, blackening the marked pixels, and writing a fresh PDF without the
+  at 300 dpi, painting the marked pixels in the colour chosen for the boxes, and writing a fresh PDF without the
   original text layers, annotations, links or metadata. It preserves encryption and
   keeps the original file. Text in the copy is no longer selectable. The output is
   checked structurally and rendered back before it is saved. It is the one removal a

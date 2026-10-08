@@ -766,7 +766,7 @@ pub fn after_redaction(
     } else {
         format!(
             "Redaction not verified. Redacted {removed}, but tpdf could not prove the file is \
-             clean. Checks before adding the black fill found: {}. Treat it as unredacted until \
+             clean. Checks before adding the fill found: {}. Treat it as unredacted until \
              you have checked it.",
             why.join("; ")
         )

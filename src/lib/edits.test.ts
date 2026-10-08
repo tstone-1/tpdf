@@ -658,7 +658,7 @@ describe("Edits", () => {
     expect(edits.state.redactions.map((r) => r.id)).toEqual([5]);
   });
 
-  it("sends the source and destination when an image-only redacted copy is made", async () => {
+  it("sends the source, the destination and the fill when an image-only redacted copy is made", async () => {
     core.invoke.mockResolvedValueOnce({
       regions: 2,
       shows: 0,
@@ -668,7 +668,7 @@ describe("Edits", () => {
     });
     const edits = new Edits(17, 3);
 
-    await expect(edits.redactRasterCopy("source.pdf", "masked.pdf")).resolves.toMatchObject({
+    await expect(edits.redactRasterCopy("source.pdf", "masked.pdf", "red")).resolves.toMatchObject({
       regions: 2,
       verified: true,
     });
@@ -676,6 +676,7 @@ describe("Edits", () => {
       doc: 17,
       source: "source.pdf",
       path: "masked.pdf",
+      fill: "red",
     });
   });
 
@@ -845,7 +846,7 @@ it("sends the colour of the boxes with both redactions", async () => {
 it("awaits save consent before every writing command and sends nothing when declined", async () => {
   const writes = [
     (e: Edits)=>e.save("source"), (e: Edits)=>e.saveCopy("source","copy"),
-    (e: Edits)=>e.redactCopy("source","copy","black"), (e: Edits)=>e.redactRasterCopy("source","copy"),
+    (e: Edits)=>e.redactCopy("source","copy","black"), (e: Edits)=>e.redactRasterCopy("source","copy","black"),
     (e: Edits)=>e.ocrCopy("source","copy",1,null),
     (e: Edits)=>e.protectCopy("source","copy","tr0ub4dor"), (e: Edits)=>e.protectCopy("source","copy",null),
     (e: Edits)=>e.compressCopy("source","copy",null),

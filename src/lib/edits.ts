@@ -888,10 +888,11 @@ export class Edits {
    * The source document and this model stay untouched. Unlike
    * {@link redactCopy}, the result deliberately carries no selectable text or
    * interactive document objects: each output page is made only from pixels.
+   * The marked pixels become `fill`.
    */
-  async redactRasterCopy(source: string, path: string): Promise<Applied> {
+  async redactRasterCopy(source: string, path: string, fill: Fill): Promise<Applied> {
     await this.beforeWrite();
-    return await call("redact_raster_copy", { doc: this.doc, source, path });
+    return await call("redact_raster_copy", { doc: this.doc, source, path, fill });
   }
 
   /**

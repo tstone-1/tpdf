@@ -277,7 +277,7 @@ export interface Commands {
     reply: Applied;
   };
   redact_raster_copy: {
-    args: { doc: number; source: string; path: string };
+    args: { doc: number; source: string; path: string; fill: Fill };
     reply: Applied;
   };
   redact_document: { args: { doc: number; source: string; fill: Fill }; reply: Applied };

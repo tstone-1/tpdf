@@ -327,7 +327,7 @@ describe("what to say after a redaction", () => {
     });
     expect(said.startsWith("Redaction not verified")).toBe(true);
     expect(said).toContain("could not prove the file is clean");
-    expect(said).toContain("Checks before adding the black fill");
+    expect(said).toContain("Checks before adding the fill");
     expect(said).toContain("page 3: object 0 is of kind image");
     expect(said).toContain("a stream would not decode");
     expect(said).toContain("Treat it as unredacted");

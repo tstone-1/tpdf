@@ -43,10 +43,10 @@ async fn finish_redaction_fill(
         )
     })
     .await
-    .map_err(|e| format!("The black fill did not run: {e}"))?
+    .map_err(|e| format!("The fill did not run: {e}"))?
     .map_err(|e| {
         format!(
-            "Content removal finished, but the black fill could not be saved: {}",
+            "Content removal finished, but the fill could not be saved: {}",
             e.message
         )
     })
@@ -379,15 +379,24 @@ pub async fn redact_raster_copy(
     doc: u32,
     source: String,
     path: String,
+    fill: Option<crate::redaction_fill::Fill>,
 ) -> Result<redact::Applied, String> {
     let asked = ask_redactions(&edits, &service, doc).await?;
     let password = password_for(&service, doc, "redact_raster_copy").await;
+    let fill = fill.unwrap_or_default();
     let writing = outside_of(&app, service.backend());
     let from = std::path::PathBuf::from(source);
     let out = std::path::PathBuf::from(path);
     let regions = asked.regions;
     tauri::async_runtime::spawn_blocking(move || {
-        save::write_raster_copy(&from, &asked.plan, &out, password.as_deref(), &*writing)
+        save::write_raster_copy(
+            &from,
+            &asked.plan,
+            &out,
+            password.as_deref(),
+            &*writing,
+            fill,
+        )
     })
     .await
     .map_err(|e| format!("The image-only copy did not run: {e}"))?
@@ -548,7 +557,7 @@ pub type ReadBack<'a> = dyn Fn(&str, Option<&str>) -> Vec<String> + Sync + 'a;
 /// search of the written file for its own queries --- the check a reader would
 /// make by hand --- which has no counterpart in the window because the window
 /// marks by hand. It runs before the fill so that the sentence the application
-/// shows, *"Checks before adding the black fill found: ..."*, stays true of it.
+/// shows, *"Checks before adding the fill found: ..."*, stays true of it.
 pub async fn redact_copy_asked(
     service: &RenderService,
     library: std::path::PathBuf,

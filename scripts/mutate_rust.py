@@ -121,6 +121,7 @@ HERE = "macos" if sys.platform == "darwin" else "windows" if sys.platform == "wi
 #: which is worth knowing because it looks like the feature being unsupported.
 FILTERS = [
     "redaction_fill::",
+    "raster_redact::",
     "objects::",
     "textedit::",
     "textview::",
@@ -3032,6 +3033,23 @@ MUTATIONS = [
         "                command.fill = crate::redaction_fill::Fill::named(name).ok_or_else(|| {",
         "                command.fill = crate::redaction_fill::Fill::named(name).or(Some(Default::default())).ok_or_else(|| {",
         "the_fill_is_black_unless_one_of_the_three_is_named",
+    ),
+    # The image-only copy in the colour chosen, 2026-10-08. What reads the
+    # painted page back and refuses another colour needs PDFium and is held by
+    # `raster-redact-probe`, which no mutation here runs.
+    Mutation(
+        "redaction fill: give every colour the pixel of black",
+        "src/redaction_fill.rs",
+        "        self.rgb().map(|part| (part * 255.0).round() as u8)",
+        "        self.rgb().map(|part| (part * 0.0).round() as u8)",
+        "a_fill_is_one_pixel_colour",
+    ),
+    Mutation(
+        "image-only copy: paint the marked pixels black whatever was chosen",
+        "src/raster_redact.rs",
+        "                pixel.copy_from_slice(&colour);",
+        "                pixel.copy_from_slice(&[0, 0, 0]);",
+        "strip_mask_removes_only_intersecting_rgb_pixels",
     ),
     # Taking part of a show operator, 2026-10-07: the glyphs under a region
     # and no others, with a gap as wide as they were (`redact/glyph_cut.rs`).

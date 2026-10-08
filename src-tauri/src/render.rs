@@ -2689,8 +2689,8 @@ pub(crate) fn run_rewrite(
     // The image-only path renders every output page through this document's
     // own PDFium, which has no page of another file to render; it refuses a
     // plan that places one before anything is drawn.
-    if job == save::Job::RasterRedact {
-        raster_redact::rewrite(document, plan)
+    if let save::Job::RasterRedact { fill } = job {
+        raster_redact::rewrite(document, plan, fill)
     } else {
         document.graph().rewrite(plan, job, inputs)
     }

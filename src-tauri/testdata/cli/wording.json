@@ -33,7 +33,7 @@
           "page 1: object 0 is of kind path and overlaps the region; only text is removed here"
         ]
       },
-      "sentence": "Redaction not verified. Redacted 1 region, 1 removal, but tpdf could not prove the file is clean. Checks before adding the black fill found: page 1: object 0 is of kind path and overlaps the region; only text is removed here. Treat it as unredacted until you have checked it."
+      "sentence": "Redaction not verified. Redacted 1 region, 1 removal, but tpdf could not prove the file is clean. Checks before adding the fill found: page 1: object 0 is of kind path and overlaps the region; only text is removed here. Treat it as unredacted until you have checked it."
     },
     {
       "applied": {
@@ -46,7 +46,7 @@
           "page 1: object 0 is of kind path and overlaps the region; only text is removed here"
         ]
       },
-      "sentence": "Redaction not verified. Redacted 1 region, 1 removal, but tpdf could not prove the file is clean. Checks before adding the black fill found: page 1: object 0 is of kind path and overlaps the region; only text is removed here. Treat it as unredacted until you have checked it. The original also changed on disk while you had it open, so this was built from the newer version."
+      "sentence": "Redaction not verified. Redacted 1 region, 1 removal, but tpdf could not prove the file is clean. Checks before adding the fill found: page 1: object 0 is of kind path and overlaps the region; only text is removed here. Treat it as unredacted until you have checked it. The original also changed on disk while you had it open, so this was built from the newer version."
     },
     {
       "applied": {
@@ -60,7 +60,7 @@
           "page 2: the removed area could not be shown unreadable. the engine rejected the image"
         ]
       },
-      "sentence": "Redaction not verified. Redacted 1 region, 1 removal, but tpdf could not prove the file is clean. Checks before adding the black fill found: 4711-0815 is still in the file, on page 2; page 2: the removed area could not be shown unreadable. the engine rejected the image. Treat it as unredacted until you have checked it."
+      "sentence": "Redaction not verified. Redacted 1 region, 1 removal, but tpdf could not prove the file is clean. Checks before adding the fill found: 4711-0815 is still in the file, on page 2; page 2: the removed area could not be shown unreadable. the engine rejected the image. Treat it as unredacted until you have checked it."
     },
     {
       "applied": {
@@ -74,7 +74,7 @@
           "page 2: the removed area could not be shown unreadable. the engine rejected the image"
         ]
       },
-      "sentence": "Redaction not verified. Redacted 1 region, 1 removal, but tpdf could not prove the file is clean. Checks before adding the black fill found: 4711-0815 is still in the file, on page 2; page 2: the removed area could not be shown unreadable. the engine rejected the image. Treat it as unredacted until you have checked it. The original also changed on disk while you had it open, so this was built from the newer version."
+      "sentence": "Redaction not verified. Redacted 1 region, 1 removal, but tpdf could not prove the file is clean. Checks before adding the fill found: 4711-0815 is still in the file, on page 2; page 2: the removed area could not be shown unreadable. the engine rejected the image. Treat it as unredacted until you have checked it. The original also changed on disk while you had it open, so this was built from the newer version."
     },
     {
       "applied": {
@@ -109,7 +109,7 @@
           "page 1: object 0 is of kind path and overlaps the region; only text is removed here"
         ]
       },
-      "sentence": "Redaction not verified. Redacted 3 regions, 2 removals, but tpdf could not prove the file is clean. Checks before adding the black fill found: page 1: object 0 is of kind path and overlaps the region; only text is removed here. Treat it as unredacted until you have checked it."
+      "sentence": "Redaction not verified. Redacted 3 regions, 2 removals, but tpdf could not prove the file is clean. Checks before adding the fill found: page 1: object 0 is of kind path and overlaps the region; only text is removed here. Treat it as unredacted until you have checked it."
     },
     {
       "applied": {
@@ -122,7 +122,7 @@
           "page 1: object 0 is of kind path and overlaps the region; only text is removed here"
         ]
       },
-      "sentence": "Redaction not verified. Redacted 3 regions, 2 removals, but tpdf could not prove the file is clean. Checks before adding the black fill found: page 1: object 0 is of kind path and overlaps the region; only text is removed here. Treat it as unredacted until you have checked it. The original also changed on disk while you had it open, so this was built from the newer version."
+      "sentence": "Redaction not verified. Redacted 3 regions, 2 removals, but tpdf could not prove the file is clean. Checks before adding the fill found: page 1: object 0 is of kind path and overlaps the region; only text is removed here. Treat it as unredacted until you have checked it. The original also changed on disk while you had it open, so this was built from the newer version."
     },
     {
       "applied": {
@@ -136,7 +136,7 @@
           "page 2: the removed area could not be shown unreadable. the engine rejected the image"
         ]
       },
-      "sentence": "Redaction not verified. Redacted 3 regions, 2 removals, but tpdf could not prove the file is clean. Checks before adding the black fill found: 4711-0815 is still in the file, on page 2; page 2: the removed area could not be shown unreadable. the engine rejected the image. Treat it as unredacted until you have checked it."
+      "sentence": "Redaction not verified. Redacted 3 regions, 2 removals, but tpdf could not prove the file is clean. Checks before adding the fill found: 4711-0815 is still in the file, on page 2; page 2: the removed area could not be shown unreadable. the engine rejected the image. Treat it as unredacted until you have checked it."
     },
     {
       "applied": {
@@ -150,7 +150,7 @@
           "page 2: the removed area could not be shown unreadable. the engine rejected the image"
         ]
       },
-      "sentence": "Redaction not verified. Redacted 3 regions, 2 removals, but tpdf could not prove the file is clean. Checks before adding the black fill found: 4711-0815 is still in the file, on page 2; page 2: the removed area could not be shown unreadable. the engine rejected the image. Treat it as unredacted until you have checked it. The original also changed on disk while you had it open, so this was built from the newer version."
+      "sentence": "Redaction not verified. Redacted 3 regions, 2 removals, but tpdf could not prove the file is clean. Checks before adding the fill found: 4711-0815 is still in the file, on page 2; page 2: the removed area could not be shown unreadable. the engine rejected the image. Treat it as unredacted until you have checked it. The original also changed on disk while you had it open, so this was built from the newer version."
     },
     {
       "applied": {
@@ -185,7 +185,7 @@
           "page 1: object 0 is of kind path and overlaps the region; only text is removed here"
         ]
       },
-      "sentence": "Redaction not verified. Redacted 0 regions, 0 removals, but tpdf could not prove the file is clean. Checks before adding the black fill found: page 1: object 0 is of kind path and overlaps the region; only text is removed here. Treat it as unredacted until you have checked it."
+      "sentence": "Redaction not verified. Redacted 0 regions, 0 removals, but tpdf could not prove the file is clean. Checks before adding the fill found: page 1: object 0 is of kind path and overlaps the region; only text is removed here. Treat it as unredacted until you have checked it."
     },
     {
       "applied": {
@@ -198,7 +198,7 @@
           "page 1: object 0 is of kind path and overlaps the region; only text is removed here"
         ]
       },
-      "sentence": "Redaction not verified. Redacted 0 regions, 0 removals, but tpdf could not prove the file is clean. Checks before adding the black fill found: page 1: object 0 is of kind path and overlaps the region; only text is removed here. Treat it as unredacted until you have checked it. The original also changed on disk while you had it open, so this was built from the newer version."
+      "sentence": "Redaction not verified. Redacted 0 regions, 0 removals, but tpdf could not prove the file is clean. Checks before adding the fill found: page 1: object 0 is of kind path and overlaps the region; only text is removed here. Treat it as unredacted until you have checked it. The original also changed on disk while you had it open, so this was built from the newer version."
     },
     {
       "applied": {
@@ -212,7 +212,7 @@
           "page 2: the removed area could not be shown unreadable. the engine rejected the image"
         ]
       },
-      "sentence": "Redaction not verified. Redacted 0 regions, 0 removals, but tpdf could not prove the file is clean. Checks before adding the black fill found: 4711-0815 is still in the file, on page 2; page 2: the removed area could not be shown unreadable. the engine rejected the image. Treat it as unredacted until you have checked it."
+      "sentence": "Redaction not verified. Redacted 0 regions, 0 removals, but tpdf could not prove the file is clean. Checks before adding the fill found: 4711-0815 is still in the file, on page 2; page 2: the removed area could not be shown unreadable. the engine rejected the image. Treat it as unredacted until you have checked it."
     },
     {
       "applied": {
@@ -226,7 +226,7 @@
           "page 2: the removed area could not be shown unreadable. the engine rejected the image"
         ]
       },
-      "sentence": "Redaction not verified. Redacted 0 regions, 0 removals, but tpdf could not prove the file is clean. Checks before adding the black fill found: 4711-0815 is still in the file, on page 2; page 2: the removed area could not be shown unreadable. the engine rejected the image. Treat it as unredacted until you have checked it. The original also changed on disk while you had it open, so this was built from the newer version."
+      "sentence": "Redaction not verified. Redacted 0 regions, 0 removals, but tpdf could not prove the file is clean. Checks before adding the fill found: 4711-0815 is still in the file, on page 2; page 2: the removed area could not be shown unreadable. the engine rejected the image. Treat it as unredacted until you have checked it. The original also changed on disk while you had it open, so this was built from the newer version."
     },
     {
       "applied": {

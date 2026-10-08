@@ -861,8 +861,15 @@ fn the_image_only_route_refuses_a_plan_that_places_another_file_s_pages() {
     let scratch = Scratch::new("raster-import");
     let other = scratch.put("other.pdf", &labelled(&["THEIR-1"]));
     let plan = plan_with(1, vec![theirs(2, 0), own(0)], &other);
-    let refused = rewrite_update(&labelled(&["OWN-A"]), &plan, Job::RasterRedact, None)
-        .expect_err("the image-only job is not served here");
+    let refused = rewrite_update(
+        &labelled(&["OWN-A"]),
+        &plan,
+        Job::RasterRedact {
+            fill: Default::default(),
+        },
+        None,
+    )
+    .expect_err("the image-only job is not served here");
     assert!(
         refused.message.contains("sandboxed rendering worker"),
         "{:?}",

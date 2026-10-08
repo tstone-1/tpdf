@@ -39,6 +39,14 @@ impl Fill {
         }
     }
 
+    /// The colour as a pixel of an 8-bit RGB image, for the image-only copy.
+    #[must_use]
+    pub fn bytes(self) -> [u8; 3] {
+        // Truncation is what is wanted: every component is rounded to 0..=255.
+        #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+        self.rgb().map(|part| (part * 255.0).round() as u8)
+    }
+
     /// The name a reader types or a panel sends: `black`, `white` or `red`.
     #[must_use]
     pub fn named(name: &str) -> Option<Self> {
@@ -236,6 +244,15 @@ pub(crate) fn paint(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The image-only copy paints pixels, and its probe reads these three
+    /// triples back out of a rendered page.
+    #[test]
+    fn a_fill_is_one_pixel_colour() {
+        assert_eq!(Fill::Black.bytes(), [0, 0, 0]);
+        assert_eq!(Fill::White.bytes(), [255, 255, 255]);
+        assert_eq!(Fill::Red.bytes(), [212, 41, 41]);
+    }
 
     fn region(source: u32, area: [f32; 4]) -> PlannedRedaction {
         PlannedRedaction {

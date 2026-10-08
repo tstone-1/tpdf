@@ -575,8 +575,14 @@ fn run() -> Result<(), String> {
     });
     let mut rejected =
         File::create(dir.join("synthetic-refused.pdf")).map_err(|e| e.to_string())?;
-    let error = write(&plan, &mut rejected, save::Job::RasterRedact)
-        .expect_err("mixed text/raster redaction accepted");
+    let error = write(
+        &plan,
+        &mut rejected,
+        save::Job::RasterRedact {
+            fill: Default::default(),
+        },
+    )
+    .expect_err("mixed text/raster redaction accepted");
     if !error.contains("save text edits")
         || rejected.metadata().map_err(|e| e.to_string())?.len() != 0
     {

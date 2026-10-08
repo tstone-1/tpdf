@@ -11,6 +11,7 @@ use crate::docmodel::PageSource;
 use crate::document::OpenDocument;
 use crate::edits::Plan;
 use crate::progressive::{self, Bindings, CancelToken, Placement, RawBitmap, RawDocument, RawPage};
+use crate::redaction_fill::Fill;
 use crate::save::{Job, Refusal};
 
 const DPI: f64 = 300.0;
@@ -134,12 +135,14 @@ fn map_area(
     pixel_bounds(&points, width, height)
 }
 
-fn mask(rgb: &mut [u8], width: usize, y: usize, rows: usize, areas: &[Pixels]) {
+fn mask(rgb: &mut [u8], width: usize, y: usize, rows: usize, areas: &[Pixels], colour: [u8; 3]) {
     for area in areas {
         for row in area.top.max(y)..area.bottom.min(y + rows) {
             let start = ((row - y) * width + area.left) * 3;
             let end = ((row - y) * width + area.right) * 3;
-            rgb[start..end].fill(0);
+            for pixel in rgb[start..end].chunks_exact_mut(3) {
+                pixel.copy_from_slice(&colour);
+            }
         }
     }
 }
@@ -311,11 +314,11 @@ fn verify_graph(
 }
 
 /// Writes a new raster-only document, preserving the input encryption policy.
-pub fn rewrite(document: &OpenDocument, plan: &Plan) -> Result<Vec<u8>, Refusal> {
-    rewrite_inner(document, plan).map_err(Into::into)
+pub fn rewrite(document: &OpenDocument, plan: &Plan, fill: Fill) -> Result<Vec<u8>, Refusal> {
+    rewrite_inner(document, plan, fill.bytes()).map_err(Into::into)
 }
 
-fn rewrite_inner(document: &OpenDocument, plan: &Plan) -> Result<Vec<u8>, String> {
+fn rewrite_inner(document: &OpenDocument, plan: &Plan, colour: [u8; 3]) -> Result<Vec<u8>, String> {
     let started = Instant::now();
     if !plan.text_edits.is_empty() {
         return Err("save text edits before applying redactions".into());
@@ -419,7 +422,7 @@ fn rewrite_inner(document: &OpenDocument, plan: &Plan) -> Result<Vec<u8>, String
             }
             let rows = STRIP.min(height - y);
             let mut rgb = render_strip(&page, width, height, y, rows)?;
-            mask(&mut rgb, width, y, rows, &masks);
+            mask(&mut rgb, width, y, rows, &masks, colour);
             let hash: [u8; 32] = Sha256::digest(&rgb).into();
             let mut image = Stream::new(
                 dictionary! {"Type"=>"XObject", "Subtype"=>"Image", "Width"=>width as i64, "Height"=>rows as i64, "ColorSpace"=>"DeviceRGB", "BitsPerComponent"=>8},
@@ -520,8 +523,11 @@ fn rewrite_inner(document: &OpenDocument, plan: &Plan) -> Result<Vec<u8>, String
                 for row in inside.top.max(y)..inside.bottom.min(y + rows) {
                     let start = ((row - y) * proof.width + inside.left) * 3;
                     let end = ((row - y) * proof.width + inside.right) * 3;
-                    if rgb[start..end].iter().any(|&n| n != 0) {
-                        return Err("PDFium found non-black pixels inside a redacted region".into());
+                    if rgb[start..end].chunks_exact(3).any(|pixel| pixel != colour) {
+                        return Err(
+                            "PDFium found pixels of another colour than the fill inside a redacted region"
+                                .into(),
+                        );
                     }
                 }
             }
@@ -571,15 +577,17 @@ mod tests {
                 right: 4,
                 bottom: 15,
             }],
+            [212, 41, 40],
         );
         for row in 0..3 {
             for col in 0..5 {
+                let at = (row * 5 + col) * 3;
                 assert_eq!(
-                    rgb[(row * 5 + col) * 3],
+                    rgb[at..at + 3],
                     if row >= 1 && (1..4).contains(&col) {
-                        0
+                        [212, 41, 40]
                     } else {
-                        77
+                        [77, 77, 77]
                     }
                 );
             }
