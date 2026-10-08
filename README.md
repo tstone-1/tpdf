@@ -1830,10 +1830,12 @@ notarization.
 The committer, reviewer and release approver is
 [Timo Stein (tstone-1)](https://github.com/tstone-1). Nobody else can sign.
 
-- **What is signed.** The installer, `tpdf.exe`, `tpdf-cli.exe` and `pdfium.dll`. All
-  four are built from this repository; `pdfium.dll` is built from unpatched upstream
-  PDFium source by the [engine workflow](.github/workflows/pdfium.yml). No file from
-  anywhere else is signed with this certificate.
+- **What is signed.** The installer, the uninstaller, `tpdf.exe`, `tpdf-cli.exe` and
+  `pdfium.dll`. They are built from this repository; `pdfium.dll` is built from unpatched
+  upstream PDFium source by the [engine workflow](.github/workflows/pdfium.yml). The
+  installer also holds five small NSIS plugin libraries that come with Tauri's packaging
+  tools, and the build signs them in the same step. Nothing else in a tpdf release is
+  signed.
 - **Where.** Only in the public [release workflow](.github/workflows/release.yml), on a
   GitHub-hosted runner, for a version tag the maintainer pushes. The workflow reads every
   signature back and fails if one is missing or not his.

@@ -6528,8 +6528,10 @@ Measured on 2026-10-07, `windows-2025`:
 
 **Three rules the login brings.** One code is good for one login, so two jobs that log in
 within the same 30 seconds make the second fail, and repeated failed logins can lock the
-account: everything that signs is in the concurrency group `certum-signing`. Do not log in
-to the desktop program while a signing job runs, for the same reason. And `ssign` keeps its
+account: everything that signs is in the concurrency group `certum-signing`. A group holds
+inside one repository only, so it does not stop a signing job of another project that
+uses the same certificate: start one release or rehearsal at a time across all of them. Do
+not log in to the desktop program while a signing job runs, for the same reason. And `ssign` keeps its
 session in `%TEMP%\ssign\session.json` for twenty minutes; both workflows remove it.
 
 **There is no `.msi` from the release after 26.10.10 on**, because `ssign` cannot sign one
