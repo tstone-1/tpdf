@@ -6605,10 +6605,20 @@ What holds a file open against the rename was not found. `sign-rehearsal.yml` ho
 its files open against writing for twenty seconds while it signs, and fails unless the copy
 had to wait and then succeeded: 5 attempts waited in run 37664244204.
 
-**Not established: whether `uninstall.exe` is signed.** Tauri puts the sign command into
-the installer script as `!uninstfinalize`, and the rc4 signing log has no entry between the
-last plugin DLL and the installer, so that call did not reach the wrapper. The installed
-`uninstall.exe` has not been read.
+**26.10.11 shipped an unsigned `uninstall.exe`**, read on 2026-10-08 on a Windows 11
+computer after installing the published release: `tpdf.exe`, `tpdf-cli.exe` and
+`pdfium.dll` were `Valid` and the uninstaller `NotSigned`. Tauri puts the sign command into
+the installer script as `!uninstfinalize '"sign-windows.cmd" "%1"'`, and makensis runs it
+from `target\release\nsis\x64` through the shell. Started by its quoted name through
+`PATH`, `sign-windows.cmd` got that folder for `%~dp0` and asked `pwsh` for a script that
+is not there; makensis printed `UninstFinalize command returned 64` and went on. Found by
+building 26.10.11 on that computer with a stand-in for `ssign` and `--verbose`, which is
+the one way to see what makensis says: without it Tauri shows none of it. The wrapper now
+takes the script's path from `TPDF_SIGN_SCRIPT`; the same build then logged the
+uninstaller's temporary file, `nst2743.tmp`, between the last plugin DLL and the installer.
+The Windows leg now installs what it built and reads `uninstall.exe` where it lands, and
+`sign-rehearsal.yml` starts the wrapper the way makensis does. **Not yet seen:** a real
+signature on an uninstaller; the next release run is that.
 
 ## Cutting a release
 
@@ -6668,6 +6678,23 @@ bundle smoke test (step 8) and the hand-applied update (step 12). Not establishe
 `uninstall.exe` is signed, and what Smart App Control does with the installer. The README,
 `SECURITY.md` and `docs/DETAIL.md` no longer say that Windows is unsigned, and the weekly
 release limit, which existed because it was, ended.
+
+**26.10.11 publication, 2026-10-08:** `Audit` and CI were green on the release commit
+`293df0d3`, both legs, and the tag sits on it. The `Release` run for `v26.10.11` skipped its
+gates on CI's account and both platform jobs passed at the first attempt; the Windows leg
+signed nine files with one login and read the installer, `tpdf.exe`, `tpdf-cli.exe` and
+`pdfium.dll` back as signed. The draft held 6 assets and
+`scripts/publish_release.py v26.10.11 --publish` published it. Without authentication the
+`.dmg`, the `-setup.exe` and the updater archive answer 200 and `latest.json` offers
+26.10.11 for `darwin-aarch64` and, with the installer, for `windows-x86_64`. The downloaded
+`.dmg` staples and Gatekeeper reads it as Notarized Developer ID. The downloaded installer
+verifies with `minisign` against its `.sig`, and on a Windows 11 computer that never held
+the certificate `Get-AuthenticodeSignature` reads it as `Valid`, timestamped, signer
+`CN=Open Source Developer Timo Stein`; the 26.10.10 installer fetched beside it reads
+`NotSigned`. Smart App Control is off on that computer. The Homebrew cask went from
+26.10.10 to 26.10.11; `brew audit --cask --online` passed and `brew livecheck` reads
+26.10.11. winget was not updated. The update from 26.10.10 (step 12) was not applied by
+hand before this was written, and the installer was not run.
 
 **26.10.10 verification, macOS arm64, 2026-10-07:** all 30 gates passed on the release tree
 (2,941 Rust tests with ten documented ignored, 2,528 frontend tests), after four mutation

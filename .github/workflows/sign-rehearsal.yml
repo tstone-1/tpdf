@@ -61,7 +61,7 @@ jobs:
           if ($LASTEXITCODE -ne 0) { exit 1 }
           ssign --version
           # The wrapper release.yml gives to Tauri, found where ssign is found.
-          Copy-Item (Join-Path $env:GITHUB_WORKSPACE 'scripts\sign-windows.cmd'), (Join-Path $env:GITHUB_WORKSPACE 'scripts\sign-windows.ps1') (Split-Path (Get-Command ssign).Source)
+          Copy-Item (Join-Path $env:GITHUB_WORKSPACE 'scripts\sign-windows.cmd') (Split-Path (Get-Command ssign).Source)
 
       - name: Fetch the files to sign
         shell: pwsh
@@ -87,6 +87,7 @@ jobs:
         env:
           CERTUM_EMAIL: ${{ secrets.CERTUM_EMAIL }}
           CERTUM_OTP: ${{ secrets.CERTUM_OTP_URI }}
+          TPDF_SIGN_SCRIPT: ${{ github.workspace }}/scripts/sign-windows.ps1
         run: |
           if (-not $env:CERTUM_EMAIL -or -not $env:CERTUM_OTP) { Write-Output '::error::CERTUM_EMAIL or CERTUM_OTP_URI is not set in the signing environment'; exit 1 }
           # One file at a time and stop at the first failure: a second attempt
@@ -103,10 +104,17 @@ jobs:
             $file.Dispose()
           }
           Start-Sleep -Seconds 3
-          foreach ($file in Get-ChildItem work -File | Sort-Object Name) {
-            sign-windows.cmd $file.FullName
-            if ($LASTEXITCODE -ne 0) { Write-Output "::error::signing failed on $($file.Name)"; exit 1 }
+          #
+          # Each file is signed the way makensis signs the uninstaller: from
+          # another folder, through the shell, by the quoted name of the
+          # wrapper. Started so, the wrapper once looked for its script in that
+          # other folder, and 26.10.11 shipped an unsigned uninstaller.
+          Push-Location $env:RUNNER_TEMP
+          foreach ($file in Get-ChildItem (Join-Path $env:GITHUB_WORKSPACE work) -File | Sort-Object Name) {
+            cmd /c "`"sign-windows.cmd`" `"$($file.FullName)`""
+            if ($LASTEXITCODE -ne 0) { Pop-Location; Write-Output "::error::signing failed on $($file.Name)"; exit 1 }
           }
+          Pop-Location
           $waited = @(Select-String -Path (Join-Path $env:RUNNER_TEMP 'ssign.log') -Pattern '^attempt \d+:').Count
           Write-Output "write attempts that had to wait: $waited"
           if ($waited -lt 1) { Write-Output '::error::the held file was written at once, so the wait was not exercised'; exit 1 }

@@ -1060,7 +1060,7 @@ jobs:
           if ($LASTEXITCODE -ne 0) { exit 1 }
           ssign --version
           # Tauri is given the wrapper and finds it where it finds ssign.
-          Copy-Item (Join-Path $env:GITHUB_WORKSPACE 'scripts\sign-windows.cmd'), (Join-Path $env:GITHUB_WORKSPACE 'scripts\sign-windows.ps1') (Split-Path (Get-Command ssign).Source)
+          Copy-Item (Join-Path $env:GITHUB_WORKSPACE 'scripts\sign-windows.cmd') (Split-Path (Get-Command ssign).Source)
 
       - name: Build and publish release
         uses: tauri-apps/tauri-action@84b9d35b5fc46c1e45415bdb6144030364f7ebc5 # v0 (action-v0.6.2)
@@ -1072,6 +1072,9 @@ jobs:
           # on the macOS leg, which signs nothing with them.
           CERTUM_EMAIL: ${{ runner.os == 'Windows' && secrets.CERTUM_EMAIL || '' }}
           CERTUM_OTP: ${{ runner.os == 'Windows' && secrets.CERTUM_OTP_URI || '' }}
+          # Where sign-windows.cmd finds the script that does the work. It
+          # cannot look beside itself: see the file.
+          TPDF_SIGN_SCRIPT: ${{ github.workspace }}/scripts/sign-windows.ps1
           # Signs the update payloads with the minisign key whose public half is
           # pinned in `tauri.conf.json`. Nothing else can produce a payload an
           # installed tpdf will accept, and GitHub secrets cannot be read back
@@ -1182,6 +1185,16 @@ jobs:
             $found[0].FullName
           }
           scripts/verify_signature.ps1 -Signer 'Open Source Developer Timo Stein' -Path (@($setup[0].FullName) + $inside)
+          if ($LASTEXITCODE -ne 0) { exit 1 }
+          # The uninstaller is not a file in the installer: the installer writes
+          # it. makensis signs it while building and goes on when that fails,
+          # which is how 26.10.11 shipped one unsigned. So it is installed here
+          # and read where it lands.
+          $run = Start-Process $setup[0].FullName -ArgumentList '/S' -Wait -PassThru
+          if ($run.ExitCode -ne 0) { Write-Output "::error::the signed installer did not install (exit code $($run.ExitCode))"; exit 1 }
+          $uninstaller = Join-Path $env:LOCALAPPDATA 'tpdf\uninstall.exe'
+          if (-not (Test-Path $uninstaller)) { Write-Output "::error::the installer left no $uninstaller"; exit 1 }
+          scripts/verify_signature.ps1 -Signer 'Open Source Developer Timo Stein' -Path $uninstaller
 
       # Tauri notarizes and staples the .app, then builds the DMG and only
       # SIGNS it. The DMG is left unnotarized and `spctl -a -t open` rejects it
