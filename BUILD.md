@@ -6509,6 +6509,17 @@ and `v*` tags. After the build the leg reads the signatures back, of the install
 valid, timestamped and by that signer. `docs/THREAT-MODEL.md` §T9, residual 6, has what the
 login is worth to somebody who steals it.
 
+**The built client is cached, by its commit.** Building `ssign` took 3.5 minutes of the
+Windows leg of 26.10.12, which took 19. Both workflows now install it into
+`%RUNNER_TEMP%\ssign-client` and keep that folder in a cache with the key
+`ssign-<os>-<arch>-<commit>`; a run that finds the cache does not build. A run on a tag can
+read a cache saved on `main` and none saved on another tag, so what a release finds is
+what `sign-rehearsal.yml` saved when it ran on `main`. Three things follow. After changing
+`SSIGN_REV`, in both workflows, run the rehearsal on `main` once, which is also the proof
+that the new client logs in. GitHub removes a cache nobody read for 7 days, and the next
+run then builds again and is slower, not wrong. And a release that finds no cache builds
+the client as it always did.
+
 `sign-rehearsal.yml` proves the build of `ssign` and the login without building tpdf: it
 signs a plain executable and the installer of a published release, reads both back and
 installs from the signed installer. Run it before a release whenever `SSIGN_REV` changed,

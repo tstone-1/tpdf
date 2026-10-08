@@ -53,15 +53,36 @@ jobs:
 
       # Built outside the checkout, so this repository's toolchain pin does not
       # decide which compiler builds somebody else's program.
+      #
+      # The built client is kept in a cache whose key is the commit. A release
+      # runs on a tag and can read a cache saved on main only, so a run of this
+      # workflow on main is what gives the next release its copy.
+      - name: Restore ssign
+        id: ssign
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ runner.temp }}\ssign-client
+          key: ssign-${{ runner.os }}-${{ runner.arch }}-${{ env.SSIGN_REV }}
+
       - name: Build ssign from the pinned commit
         shell: pwsh
         working-directory: ${{ runner.temp }}
+        env:
+          CACHED: ${{ steps.ssign.outputs.cache-hit }}
         run: |
-          cargo install --locked --git https://github.com/Le-Syl21/ssign --rev $env:SSIGN_REV ssign
-          if ($LASTEXITCODE -ne 0) { exit 1 }
-          ssign --version
+          $root = Join-Path $env:RUNNER_TEMP 'ssign-client'
+          if ($env:CACHED -eq 'true') {
+            Write-Output "ssign $env:SSIGN_REV restored from the cache"
+          } else {
+            cargo install --locked --git https://github.com/Le-Syl21/ssign --rev $env:SSIGN_REV --root $root ssign
+            if ($LASTEXITCODE -ne 0) { exit 1 }
+          }
+          $bin = Join-Path $root 'bin'
+          & (Join-Path $bin 'ssign.exe') --version
+          if ($LASTEXITCODE -ne 0) { Write-Output '::error::the signing client does not start'; exit 1 }
           # The wrapper release.yml gives to Tauri, found where ssign is found.
-          Copy-Item (Join-Path $env:GITHUB_WORKSPACE 'scripts\sign-windows.cmd') (Split-Path (Get-Command ssign).Source)
+          Copy-Item (Join-Path $env:GITHUB_WORKSPACE 'scripts\sign-windows.cmd') $bin -Force
+          Add-Content -Path $env:GITHUB_PATH -Value $bin
 
       - name: Fetch the files to sign
         shell: pwsh

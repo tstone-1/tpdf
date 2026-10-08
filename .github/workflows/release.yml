@@ -867,6 +867,10 @@ jobs:
     concurrency:
       group: certum-signing
       cancel-in-progress: false
+    env:
+      # ssign v0.1.7. A commit and not a tag: a tag can be moved. It is also
+      # the key of the cache below, so a new commit is a new build.
+      SSIGN_REV: 5fd4daf22155b19b645aef3dd467f3c4c9e440b3
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5 (v5.1.0)
         with:
@@ -1052,19 +1056,44 @@ jobs:
       # outside the checkout, so this repository's toolchain pin does not decide
       # which compiler builds somebody else's program. `sign-rehearsal.yml`
       # proves the same build and login without building tpdf.
+      #
+      # The build took three and a half minutes of every release, so the built
+      # client is kept in a cache whose key is the commit. A run on a tag can
+      # read a cache saved on main and none saved on another tag, so the copy a
+      # release finds is the one `sign-rehearsal.yml` saved on main; a release
+      # that finds none builds the client as before. This is the program that
+      # reads the Certum login: only a run on main can put it into that cache,
+      # and a pull request from a fork cannot.
+      - name: Restore the Windows signing client
+        id: ssign
+        if: runner.os == 'Windows'
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ runner.temp }}\ssign-client
+          key: ssign-${{ runner.os }}-${{ runner.arch }}-${{ env.SSIGN_REV }}
+
       - name: Build the Windows signing client
         if: runner.os == 'Windows'
         shell: pwsh
         working-directory: ${{ runner.temp }}
         env:
-          # ssign v0.1.7
-          SSIGN_REV: 5fd4daf22155b19b645aef3dd467f3c4c9e440b3
+          CACHED: ${{ steps.ssign.outputs.cache-hit }}
         run: |
-          cargo install --locked --git https://github.com/Le-Syl21/ssign --rev $env:SSIGN_REV ssign
-          if ($LASTEXITCODE -ne 0) { exit 1 }
-          ssign --version
+          # A folder of its own, so that the cache holds this program and
+          # nothing else, and the Rust cache of the build does not hold it.
+          $root = Join-Path $env:RUNNER_TEMP 'ssign-client'
+          if ($env:CACHED -eq 'true') {
+            Write-Output "ssign $env:SSIGN_REV restored from the cache"
+          } else {
+            cargo install --locked --git https://github.com/Le-Syl21/ssign --rev $env:SSIGN_REV --root $root ssign
+            if ($LASTEXITCODE -ne 0) { exit 1 }
+          }
+          $bin = Join-Path $root 'bin'
+          & (Join-Path $bin 'ssign.exe') --version
+          if ($LASTEXITCODE -ne 0) { Write-Output '::error::the signing client does not start'; exit 1 }
           # Tauri is given the wrapper and finds it where it finds ssign.
-          Copy-Item (Join-Path $env:GITHUB_WORKSPACE 'scripts\sign-windows.cmd') (Split-Path (Get-Command ssign).Source)
+          Copy-Item (Join-Path $env:GITHUB_WORKSPACE 'scripts\sign-windows.cmd') $bin -Force
+          Add-Content -Path $env:GITHUB_PATH -Value $bin
 
       - name: Build and publish release
         uses: tauri-apps/tauri-action@84b9d35b5fc46c1e45415bdb6144030364f7ebc5 # v0 (action-v0.6.2)

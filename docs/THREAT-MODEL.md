@@ -3375,10 +3375,15 @@ and the same call gates the Windows *install*, which ends the process just as su
    2027-10-07. They are secrets of the GitHub environment `signing`, which accepts the
    `main` branch and `v*` tags; `release.yml` and `sign-rehearsal.yml` are the two workflows
    that name it, and neither runs for a pull request. The program that reads them is
-   `ssign`, built in the job from one pinned commit of its source: 2,800 lines read on
+   `ssign`, built from one pinned commit of its source: 2,800 lines read on
    2026-10-07, in which the only hosts are `cloudsign.webnotarius.pl` and `time.certum.pl`.
    Its dependencies are not pinned by anything here beyond its own lock file and were not
-   read. This is a second key beside the updater's and it protects a different thing: an
+   read. Since 2026-10-08 the built program is kept in a GitHub Actions cache whose key is
+   that commit, and a job builds it only when the cache has none. A release runs on a tag
+   and reads a cache saved by a run on `main` or by itself, so the copy that reads the
+   login is one a run on `main` built; a pull request from a fork cannot write there.
+   Somebody who can run a workflow on `main` can replace it, and could change the workflow
+   as well. This is a second key beside the updater's and it protects a different thing: an
    installed copy accepts an update by the minisign key alone, so a stolen Certum login
    lets somebody sign their own program under this name and does not let them update
    anybody's tpdf. The protocol is reverse-engineered, so Certum can end it without notice;
