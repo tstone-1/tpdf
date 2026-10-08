@@ -11,7 +11,9 @@ use std::path::Path;
 
 use lopdf::{dictionary, Dictionary, Document, Object, Stream};
 
-use super::{scratch, tool, Report};
+use super::{library_dir, scratch, tool, Report};
+use tpdf_lib::hidden_text::{hidden_text_asked, HiddenText, Progress, CANCELLED};
+use tpdf_lib::render::{Backend, RenderService};
 
 const SIZE: f32 = 12.0;
 const LEFT: f32 = 60.0;
@@ -105,6 +107,26 @@ fn visible_lookalikes() -> String {
     out
 }
 
+/// The side of the large sheet, in points. At the 144 DPI a page is compared
+/// at it is 2400 pixels, which is more than one 2048-pixel tile.
+const SHEET: f32 = 1200.0;
+
+const IN_THE_CORNER: &str = "Covered in the far corner";
+
+fn far_corner() -> String {
+    let (x, y) = (SHEET - 220.0, 40.0);
+    let mut out = show(
+        LEFT,
+        SHEET - 80.0,
+        "A large sheet begins with a visible line",
+    );
+    out += &show(x, y + 30.0, "Visible beside it");
+    out += &show(x, y, IN_THE_CORNER);
+    out += "0 g\n";
+    out += &cover(x, y, IN_THE_CORNER);
+    out
+}
+
 fn document(path: &Path) {
     let mut doc = Document::with_version("1.7");
     let tree = doc.new_object_id();
@@ -159,10 +181,20 @@ fn document(path: &Path) {
     // Page one again, turned: the characters and the pixels must be read in
     // the same frame, whatever the page's own rotation.
     page(&mut doc, drawn_over(), dictionary! { "Rotate" => 90 });
+    // A sheet larger than one render tile of the window's, with the covered
+    // words in its far corner: the pixels there come from another tile than
+    // the first, and have to land where the characters are.
+    let sheet = page(&mut doc, far_corner(), dictionary! {});
+    if let Ok(Object::Dictionary(dict)) = doc.get_object_mut(sheet) {
+        dict.set(
+            "MediaBox",
+            vec![0.into(), 0.into(), SHEET.into(), SHEET.into()],
+        );
+    }
 
     doc.objects.insert(
         tree,
-        dictionary! { "Type" => "Pages", "Count" => 6, "Kids" => kids }.into(),
+        dictionary! { "Type" => "Pages", "Count" => 7, "Kids" => kids }.into(),
     );
     let catalog = doc.add_object(dictionary! { "Type" => "Catalog", "Pages" => tree });
     doc.trailer.set("Root", catalog);
@@ -209,6 +241,7 @@ pub(super) fn finds_what_the_page_does_not_show(report: &mut Report) {
     expected.push((3, UNDER_ANNOTATION.into(), false));
     expected.push((4, "left in the margin".into(), true));
     expected.extend(drawn.iter().map(|t| (6, (*t).to_string(), false)));
+    expected.push((7, IN_THE_CORNER.into(), false));
     // Within a page the order is the text's own, which on the turned page is
     // not top to bottom; what is held is which passages, on which page.
     let mut found = listed(&json);
@@ -224,7 +257,7 @@ pub(super) fn finds_what_the_page_does_not_show(report: &mut Report) {
         "hidden names the page it could not compare, and counts what it compared",
         parsed["without_text"] == serde_json::json!([5])
             && parsed["not_compared"] == serde_json::json!([])
-            && parsed["pages"] == 6
+            && parsed["pages"] == 7
             && parsed["compared"].as_u64().unwrap_or(0) > 300,
         &json,
     );
@@ -246,10 +279,139 @@ pub(super) fn finds_what_the_page_does_not_show(report: &mut Report) {
             && plain.contains("1 page without text not checked (5)"),
         &format!("{code} {stderr} {plain}"),
     );
-    let (code, _, stderr) = tool(&["hidden", &input, "--pages", "7"], &[]);
+    let (code, _, stderr) = tool(&["hidden", &input, "--pages", "8"], &[]);
     report.check(
         "a page past the end is refused",
         code == 3 && stderr.contains("past the end"),
         &format!("{code} {stderr}"),
     );
+
+    let (_, whole, _) = tool(&["hidden", &input, "--json"], &[]);
+    let (_, plain, _) = tool(&["hidden", &input], &[]);
+    window_path(report, &source, &whole, &plain);
+}
+
+fn wait<T: Send + 'static, E: Send + 'static + From<String>>(
+    call: impl FnOnce(Box<dyn FnOnce(Result<T, E>) + Send>),
+) -> Result<T, E> {
+    let (tx, rx) = std::sync::mpsc::channel();
+    call(Box::new(move |result| {
+        let _ = tx.send(result);
+    }));
+    rx.recv_timeout(std::time::Duration::from_secs(120))
+        .unwrap_or_else(|_| Err(E::from("the render service did not answer".to_string())))
+}
+
+/// The window's command on the same document: the document opened in a render
+/// service, as the application holds it, gives what the tool gives --- the
+/// same passages in the same places, the same counts and the same last line.
+fn window_path(report: &mut Report, source: &Path, json: &str, plain: &str) {
+    let service = RenderService::start_with(library_dir(), Backend::Worker);
+    let info = wait(|r| service.open(source.to_path_buf(), true, None, r))
+        .map_err(|refusal| refusal.reason)
+        .expect("the document opens");
+    let count = u32::try_from(info.page_count).unwrap();
+    let seen = std::sync::Mutex::new(Vec::new());
+    let walked = hidden_text_asked(&service, info.id, count, &|| false, &|at| {
+        seen.lock().unwrap().push(at);
+    });
+    let seen = seen.into_inner().unwrap();
+    let every: Vec<Progress> = (1..=count)
+        .map(|page| Progress { page, of: count })
+        .collect();
+    report.check(
+        "the window's path walks every page and says which",
+        walked.is_ok() && count == 7 && seen == every,
+        &format!("{walked:?}; {seen:?}"),
+    );
+    let Ok(walked) = walked else {
+        return;
+    };
+    // Each side as plain values. The tool's places are read back as the
+    // single-precision numbers they were written from.
+    type Row = (u64, String, [f32; 4], u64, bool);
+    let tool: serde_json::Value = serde_json::from_str(json).unwrap_or_default();
+    let numbers = |key: &str| -> Vec<u64> {
+        tool[key]
+            .as_array()
+            .map(|pages| pages.iter().filter_map(serde_json::Value::as_u64).collect())
+            .unwrap_or_default()
+    };
+    let theirs: Vec<Row> = tool["found"]
+        .as_array()
+        .map(|found| {
+            found
+                .iter()
+                .map(|f| {
+                    let side = |at: usize| f["rect"][at].as_f64().unwrap_or(f64::NAN) as f32;
+                    (
+                        f["page"].as_u64().unwrap_or(0),
+                        f["text"].as_str().unwrap_or("?").to_string(),
+                        [side(0), side(1), side(2), side(3)],
+                        f["characters"].as_u64().unwrap_or(0),
+                        f["off_page"].as_bool().unwrap_or(false),
+                    )
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+    let ours: Vec<Row> = walked
+        .found
+        .iter()
+        .map(|f| {
+            (
+                u64::from(f.page),
+                f.text.clone(),
+                f.rect,
+                u64::from(f.characters),
+                f.off_page,
+            )
+        })
+        .collect();
+    let wide = |pages: &[u32]| pages.iter().map(|n| u64::from(*n)).collect::<Vec<_>>();
+    report.check(
+        "the window's path finds what the tool finds, place for place and count for count",
+        ours == theirs
+            && ours.len() == 11
+            && Some(walked.compared) == tool["compared"].as_u64()
+            && Some(walked.unjudged) == tool["unjudged"].as_u64()
+            && walked.compared > 300
+            && wide(&walked.without_text) == numbers("without_text")
+            && wide(&walked.without_text) == [5]
+            && wide(&walked.not_compared) == numbers("not_compared"),
+        &format!("{walked:?}\nagainst\n{json}"),
+    );
+    let said = HiddenText::of(walked, false);
+    report.check(
+        "the window's last two lines are the tool's",
+        plain.lines().rev().nth(1) == Some(said.summary.as_str())
+            && plain.lines().last() == Some(said.not_looked_at.as_str())
+            && said.not_looked_at.starts_with("Not looked at: comments")
+            && said.summary.contains("11 passages are")
+            && said.summary.contains("1 page without text not checked (5)"),
+        &format!(
+            "{:?} and {:?} against {plain:?}",
+            said.summary, said.not_looked_at
+        ),
+    );
+
+    // Stopped ahead of the third page: the two before it were reported, and
+    // there is no result.
+    let pages = std::sync::atomic::AtomicU32::new(0);
+    let stopped = hidden_text_asked(
+        &service,
+        info.id,
+        count,
+        &|| pages.load(std::sync::atomic::Ordering::Relaxed) == 2,
+        &|_| {
+            pages.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        },
+    );
+    report.check(
+        "a stopped check has no result",
+        stopped.as_ref().err().map(String::as_str) == Some(CANCELLED)
+            && pages.load(std::sync::atomic::Ordering::Relaxed) == 2,
+        &format!("{stopped:?}"),
+    );
+    let _: Result<(), String> = wait(|r| service.close(info.id, r));
 }

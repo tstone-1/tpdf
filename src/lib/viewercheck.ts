@@ -79,7 +79,8 @@ import { OVERSCAN, rowHeightFor, type Thumbnails } from "./thumbnails";
 import { SCROLLBAR_WIDTH, Viewer, type ViewerStatus } from "./viewer";
 
 /**
- * Tabs the sidebar has: outline, pages, results, comments, marks.
+ * Tabs the sidebar has: outline, pages, results, comments, marks, redactions,
+ * text the pages do not show.
  *
  * Spelled out here rather than read from the sidebar, which would make the check
  * agree with whatever the sidebar happens to build. It went red on its own when
@@ -87,9 +88,10 @@ import { SCROLLBAR_WIDTH, Viewer, type ViewerStatus } from "./viewer";
  * working --- twice. Three times: the marks tab made it five. Four: the
  * redactions tab made it six, and that red was not read for a week, because
  * nothing runs this harness automatically and the mutation table is the only
- * thing that runs its baseline.
+ * thing that runs its baseline. Five: the tab for text the pages do not show
+ * made it seven, and the number was changed with the tab, without a window run.
  */
-const SIDEBAR_TABS = 6;
+const SIDEBAR_TABS = 7;
 
 /** Size of the surface the check mounts, in CSS pixels. */
 const WIDTH = 900;
@@ -426,6 +428,9 @@ async function run(path: string): Promise<void> {
       // reaches only the arms that fixture happens to have.
       planFor: (id) => regionPlans.get(id),
     },
+    // Not driven by any phase yet: the check behind it needs the application's
+    // command, and `hiddenlist.test.ts` presses the rows.
+    hidden: { onPick: () => {} },
     pages: {
       doc: doc.id,
       pageCount: doc.page_count,
@@ -3272,6 +3277,7 @@ async function appCommandChecks(
     redactCopy: () => fired.push("redactCopy"),
     redactRasterCopy: () => fired.push("redactRasterCopy"),
     recogniseText: () => fired.push("recogniseText"),
+    findHiddenText: () => fired.push("findHiddenText"),
     chooseRecognitionLanguage: () => fired.push("chooseRecognitionLanguage"),
     recognitionLanguages: () => null,
     setRecognitionLanguage: (raw) => fired.push(`setRecognitionLanguage:${raw}`),
@@ -4203,6 +4209,11 @@ async function appCommandChecks(
     {
       id: "file.recogniseTextLanguage",
       ...shell("chooseRecognitionLanguage"),
+      read: () => fired.join(","),
+    },
+    {
+      id: "file.findHiddenText",
+      ...shell("findHiddenText"),
       read: () => fired.join(","),
     },
     {

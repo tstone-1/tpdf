@@ -64,6 +64,8 @@
 
 use crate::text::PageText;
 
+pub mod survey;
+
 /// Most that the brightest and darkest pixel of a box may differ by for the
 /// box to count as one colour, on a scale of 0 to 255.
 ///

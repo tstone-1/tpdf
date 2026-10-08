@@ -253,6 +253,16 @@ export const ICONS = {
       { d: "M4 19h10" },
     ],
   },
+  // Two lines of text with an empty frame where the third was: words that
+  // are in the file and that the page does not show.
+  unshown: {
+    source: null,
+    parts: [
+      { d: "M4 5h16" },
+      { rect: [4, 9.5, 12, 5, 1] },
+      { d: "M4 19h10" },
+    ],
+  },
   // Three rules, thin to thick.
   width: {
     source: null,

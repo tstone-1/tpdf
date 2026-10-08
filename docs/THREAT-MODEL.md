@@ -3227,6 +3227,20 @@ otherwise; 0 means "nothing found", and `README.md` words it so. This is a diffe
 from `tpdf redact`'s `verified`, which is about a file tpdf wrote and names every carrier
 it read back.
 
+**In the window since 2026-10-08**, as *Find text the pages do not show*. It is the same
+walk (`hidden/survey.rs`), with the render service answering for a page where the tool asks
+a worker session of its own, so the document is parsed wherever the viewer's own rendering
+parses it and nowhere else. Two commands. `hidden_text` takes the document's handle and a
+run number and answers the passages, the walk's last sentence and whether the journal holds
+changes that are not saved; `hidden_text_cancel` takes a run number. Neither takes a path
+and neither writes a file. The comparison runs in the application process on what the
+service answered: character boxes, and pixels that are refused tile by tile when a tile is
+not the size that was asked for. The words of a passage are document text that reaches the
+webview, where `hiddenlist.ts` sets them as `textContent`. The file is what is checked,
+not the journal, and the reply says when the two differ. Not measured: no probe reads the
+application's image table while a check runs; `backend-probe` does that for the render
+path the check goes through.
+
 #### T6.40 — Taking part of a line, added 2026-10-07
 
 A redaction used to delete the whole show operator that drew any glyph under a region.

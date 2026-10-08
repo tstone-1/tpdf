@@ -64,6 +64,7 @@ describe("Sidebar keyboard activation", () => {
         wordsFor: (id) => covered.get(id),
         planFor: () => undefined,
       },
+      hidden: { onPick: () => {} },
       onTab: (tab) => tabs.push(tab),
       pages: {
         doc: 1,
@@ -90,6 +91,27 @@ describe("Sidebar keyboard activation", () => {
     bar.selectTab("marks");
     expect(tabs).toEqual(["outline", "comments", "marks"]);
     expect(bar.tab).toBe("marks");
+  });
+
+  it("has a tab for text the pages do not show, and hands a check's result to it", () => {
+    const tabs: string[] = [];
+    const bar = tree([], tabs);
+    bar.selectTab("hidden");
+    expect(bar.tab).toBe("hidden");
+    expect(tabs).toEqual(["outline", "hidden"]);
+    expect(bar.hiddenText.rowCount).toBe(0);
+    bar.setHiddenText({
+      found: [{ page: 2, text: "Jane Example", rect: [1, 2, 3, 4], characters: 11, offPage: false }],
+      summary: "1 passage is in the file and not visible on the page, on 1 page.",
+      notLookedAt: "Not looked at: comments.",
+      unsaved: false,
+    });
+    expect(bar.hiddenText.rowCount).toBe(1);
+    expect(bar.hiddenText.rowText(0).words).toBe("Jane Example");
+    // And to no other panel.
+    expect(bar.redactions.rowCount).toBe(0);
+    bar.setHiddenText(null);
+    expect(bar.hiddenText.rowCount).toBe(0);
   });
 
   it("puts the regions in the redactions panel and nothing in the marks one", () => {
@@ -214,6 +236,7 @@ describe("Sidebar keyboard activation", () => {
         wordsFor: (id) => covered.get(id),
         planFor: () => undefined,
       },
+      hidden: { onPick: () => {} },
       onTab: () => {},
       pages: {
         doc: 1,

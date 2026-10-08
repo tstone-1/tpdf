@@ -767,6 +767,27 @@ fn samples() -> BTreeMap<&'static str, String> {
     );
 
     put(
+        "HiddenText",
+        &crate::commands::hidden::HiddenText::of(
+            crate::hidden::survey::Survey {
+                found: vec![crate::hidden::survey::Passage {
+                    page: 2,
+                    text: "Jane Example".into(),
+                    rect: [100.25, 103.5, 175.5, 114.25],
+                    characters: 11,
+                    off_page: true,
+                }],
+                compared: 1200,
+                unjudged: 40,
+                without_text: vec![3],
+                not_compared: vec![9],
+                selected: 9,
+            },
+            true,
+        ),
+    );
+
+    put(
         "ToolState",
         &crate::clitool::ToolState {
             installed: true,
@@ -1014,7 +1035,7 @@ fn samples() -> BTreeMap<&'static str, String> {
 ///
 /// `put` above takes `&dyn Sample` rather than a generic parameter so the whole
 /// table is one expression per payload; a generic closure cannot be called with
-/// seventeen different types.
+/// that many different types.
 mod erased {
     /// Anything that can write itself as the JSON a command would send.
     pub trait Sample {

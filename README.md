@@ -73,9 +73,9 @@ tells you whether the removal is verified.
 
 ![Two regions marked for removal and listed for review](docs/img/redact.png)
 
-For a document somebody else redacted, `tpdf hidden released.pdf` lists the words that are
-still in the file under a black box, under an annotation, in the background's colour or
-outside the page.
+For a document somebody else redacted, *Find text the pages do not show* and
+`tpdf hidden released.pdf` list the words that are still in the file under a black box,
+under an annotation, in the background's colour or outside the page.
 
 **Sign and check signatures.** Sign with a certificate from the macOS keychain or the
 Windows certificate store, with a timestamp and long-term validation data if you want
@@ -648,6 +648,20 @@ measured the Windows render constants come out 1.5–1.8x worse.
   refuses, which the closing line names. A document with unsaved changes is
   asked to be saved first. The engine and its limits are under *Text recognition* below.
   <!-- built: file.recogniseText -->
+- **Find text the pages do not show** is the check for a document redacted somewhere
+  else. It compares the text in the saved file with what each page looks like and lists,
+  in a sidebar tab, every passage the page does not show: words under a black box, under
+  an annotation, in the colour of the background, or outside the page. Choosing a passage
+  goes to its page and rings where the words are. A line in the toolbar shows which page
+  is being compared and has a Stop button. The result is one-sided, and the tab says so
+  above the list: which pages have no text and were not compared, how many characters
+  could not be judged, and that comments, form values, attachments, metadata and earlier
+  versions kept in the file are not looked at. When nothing is listed, nothing was
+  *found*. Unsaved changes are not part of the check, and the tab says when there were
+  any. It is `tpdf hidden` in the window, with the same comparison and the same closing
+  sentence; what that comparison can and cannot see is under *Text a page does not show*
+  below. It writes nothing.
+  <!-- built: file.findHiddenText -->
 - **Recognise text: language** sets the language the recogniser is told to expect. It
   lists the languages your computer offers; type a tag such as `de-DE`, a name such as
   `German`, or `automatic` to let the recogniser choose, which is how it starts. The
@@ -1370,7 +1384,7 @@ the question is what a reader of the page can see. Words outside the page, which
 a page leaves behind, are listed as *outside the page*. `--pages 1-3,7` limits the check.
 
 The answer is one-sided, and it is worded that way. A listed passage is in the file. When
-nothing is listed, nothing was *found*, and the last line says what was not looked at: a
+nothing is listed, nothing was *found*, and the last two lines say what was not looked at: a
 page without text has nothing to compare, so a scan with black bars is not checked at all;
 characters too small to judge at 144 DPI, and rows of underscores, hyphens and dots, are
 counted and not decided. The check does not see words under a photograph or a patterned

@@ -47,6 +47,7 @@ import type { Comments } from "./comments";
 import type { CropGeometry } from "./crop";
 import type { Fill } from "./redactfill";
 import type { Applied, Copied, EditState, Merged, Split } from "./edits";
+import type { HiddenText } from "./hiddentext";
 import type { Offered } from "./ocrlanguage";
 import type { Recognised } from "./recognise";
 import type { Links } from "./links";
@@ -287,6 +288,8 @@ export interface Commands {
   };
   ocr_cancel: { args: { run: number }; reply: void };
   ocr_languages: { args: NoArgs; reply: Offered };
+  hidden_text: { args: { doc: number; run: number }; reply: HiddenText };
+  hidden_text_cancel: { args: { run: number }; reply: void };
   annot_erase: {
     args: { doc: number; mark: number; remove: number[]; sweep: number };
     reply: EditState;

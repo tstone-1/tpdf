@@ -16880,10 +16880,13 @@ MUTATIONS += [
 ]
 
 # --- text that is in a document and not on its pages --------------------------
-# `hidden::judge` and `tpdf hidden`'s last line. `--only 'hidden:'` runs the set.
-# What only the built tool can show --- the exit code, a page without text, the
-# turned page --- is held by `tests/cli/hidden.rs` against a document written
-# there, and is not in this table.
+# `hidden::judge`, the walk over the pages and its last line (`hidden/survey.rs`),
+# which the tool and the window share. `--only 'hidden:'` runs the set, the
+# window's own included (`--only 'hidden window:'`, `--only 'hidden survey:'`).
+# What only a worker can show --- the exit code, the turned page, a sheet of
+# more than one tile, the window's path giving what the tool gives --- is held
+# by `tests/cli/hidden.rs` against a document written there, and is not in this
+# table.
 MUTATIONS += [
     Mutation(
         'hidden: count a difference of exactly the tolerance as ink',
@@ -17013,31 +17016,171 @@ MUTATIONS += [
     ),
     Mutation(
         'hidden: leave the characters that could not be judged out of the last line',
-        'src/cli/hidden.rs',
-        '    if report.unjudged > 0 {',
+        'src/hidden/survey.rs',
+        '    if survey.unjudged > 0 {',
         '    if false {',
         'the_last_line_says_what_was_found_and_what_was_not_checked',
     ),
     Mutation(
         'hidden: leave the pages without text out of the last line',
-        'src/cli/hidden.rs',
-        '    if !report.without_text.is_empty() {\n        line.push_str',
+        'src/hidden/survey.rs',
+        '    if !survey.without_text.is_empty() {\n        line.push_str',
         '    if false {\n        line.push_str',
         'the_last_line_says_what_was_found_and_what_was_not_checked',
     ),
     Mutation(
         'hidden: leave the pages too large to compare out of the last line',
-        'src/cli/hidden.rs',
-        '    if !report.not_compared.is_empty() {\n        line.push_str',
+        'src/hidden/survey.rs',
+        '    if !survey.not_compared.is_empty() {\n        line.push_str',
         '    if false {\n        line.push_str',
         'the_last_line_says_what_was_found_and_what_was_not_checked',
     ),
     Mutation(
         'hidden: compare a page at any scale, however small',
-        'src/cli/hidden.rs',
+        'src/hidden/survey.rs',
         '    if scale < MIN_SCALE {',
         '    if scale <= 0.0 {',
         'a_page_is_compared_at_144_dpi_or_as_large_as_the_bounds_allow',
+    ),
+    Mutation(
+        'hidden survey: compare a page that has no text',
+        'src/hidden/survey.rs',
+        '        if !ocr_layer::has_text(&text) {',
+        '        if false {',
+        'a_page_without_text_or_too_large_is_named_and_not_rendered',
+    ),
+    Mutation(
+        'hidden survey: leave a page too large to compare out of the account',
+        'src/hidden/survey.rs',
+        '            out.not_compared.push(*n);\n',
+        '',
+        'a_page_without_text_or_too_large_is_named_and_not_rendered',
+    ),
+    Mutation(
+        'hidden survey: ask for the page numbered as the selection counts',
+        'src/hidden/survey.rs',
+        '        let page = n.saturating_sub(1);',
+        '        let page = *n;',
+        'each_selected_page_is_compared_and_a_finding_names_its_page',
+    ),
+    Mutation(
+        'hidden survey: put every finding on the first page',
+        'src/hidden/survey.rs',
+        '                page: *n,\n',
+        '                page: 1,\n',
+        'each_selected_page_is_compared_and_a_finding_names_its_page',
+    ),
+    Mutation(
+        'hidden survey: count only the last page compared',
+        'src/hidden/survey.rs',
+        '        out.compared += judged.judged as u64;',
+        '        out.compared = judged.judged as u64;',
+        'each_selected_page_is_compared_and_a_finding_names_its_page',
+    ),
+    Mutation(
+        'hidden survey: drop the characters that could not be judged',
+        'src/hidden/survey.rs',
+        '        out.unjudged += judged.unjudged as u64;\n',
+        '',
+        'each_selected_page_is_compared_and_a_finding_names_its_page',
+    ),
+    Mutation(
+        'hidden survey: report no characters as hidden in a finding',
+        'src/hidden/survey.rs',
+        '                characters: found.hidden as u32,',
+        '                characters: 0,',
+        'each_selected_page_is_compared_and_a_finding_names_its_page',
+    ),
+    Mutation(
+        'hidden survey: forget how many pages were selected',
+        'src/hidden/survey.rs',
+        '        selected: selection.len(),',
+        '        selected: 0,',
+        'each_selected_page_is_compared_and_a_finding_names_its_page',
+    ),
+    Mutation(
+        'hidden survey: lose the mark on words outside the page',
+        'src/hidden/survey.rs',
+        '                off_page: found.off_page,',
+        '                off_page: false,',
+        'words_outside_the_page_keep_their_mark',
+    ),
+    Mutation(
+        'hidden survey: walk on after being told to stop',
+        'src/hidden/survey.rs',
+        '        before(done, *n)?;',
+        '        let _ = before(done, *n);',
+        'the_walk_says_where_it_is_and_stops_when_told',
+    ),
+    Mutation(
+        'hidden survey: send a passage to the window in another spelling',
+        'src/hidden/survey.rs',
+        '#[serde(rename_all = "camelCase")]\npub struct Passage {',
+        'pub struct Passage {',
+        'the_reply_reaches_the_window_in_its_own_spelling',
+    ),
+    Mutation(
+        'hidden window: never ask whether to stop',
+        'src/commands/hidden.rs',
+        '        if cancelled() {\n            return Err(CANCELLED.into());',
+        '        if false {\n            return Err(CANCELLED.into());',
+        'a_stop_ends_the_walk_before_the_next_page_and_leaves_no_result',
+    ),
+    Mutation(
+        'hidden window: report every page as the first',
+        'src/commands/hidden.rs',
+        '        progress(Progress { page, of: count });',
+        '        progress(Progress { page: 1, of: count });',
+        'every_page_is_walked_and_reported_before_it_is_read',
+    ),
+    Mutation(
+        'hidden window: put every tile at the left edge',
+        'src/commands/hidden.rs',
+        '                let start = ((y as usize + row) * width as usize + x as usize) * 4;',
+        '                let start = ((y as usize + row) * width as usize) * 4;',
+        'a_page_is_put_together_from_its_tiles',
+    ),
+    Mutation(
+        'hidden window: ask for a full tile at the right edge',
+        'src/commands/hidden.rs',
+        '            let tw = (width - x).min(side) as u16;',
+        '            let tw = width.min(side) as u16;',
+        'a_page_is_put_together_from_its_tiles',
+    ),
+    Mutation(
+        'hidden window: take a tile that is larger than asked',
+        'src/commands/hidden.rs',
+        '            if part.len() != stride * usize::from(th) {',
+        '            if part.len() < stride * usize::from(th) {',
+        'a_tile_of_the_wrong_size_or_one_that_failed_ends_the_page',
+    ),
+    Mutation(
+        'hidden window: call a document with unsaved changes saved',
+        'src/commands/hidden.rs',
+        '    !plan.is_identity()',
+        '    plan.is_identity()',
+        'a_document_with_changes_that_are_not_saved_is_told_so',
+    ),
+    Mutation(
+        'hidden window: never say there were unsaved changes',
+        'src/commands/hidden.rs',
+        '            not_looked_at: NOT_LOOKED_AT.into(),\n            unsaved,',
+        '            not_looked_at: NOT_LOOKED_AT.into(),\n            unsaved: false,',
+        'the_reply_reaches_the_window_in_its_own_spelling',
+    ),
+    Mutation(
+        'hidden window: leave out what the check never looks at',
+        'src/commands/hidden.rs',
+        '            not_looked_at: NOT_LOOKED_AT.into(),\n            unsaved,',
+        '            not_looked_at: String::new(),\n            unsaved,',
+        'the_reply_reaches_the_window_in_its_own_spelling',
+    ),
+    Mutation(
+        "hidden window: send the reply in Rust's spelling",
+        'src/commands/hidden.rs',
+        '#[serde(rename_all = "camelCase")]\npub struct HiddenText {',
+        'pub struct HiddenText {',
+        'the_reply_reaches_the_window_in_its_own_spelling',
     ),
     Mutation(
         'hidden: list a passage outside the page as one inside it',

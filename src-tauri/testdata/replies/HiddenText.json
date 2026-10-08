@@ -1,0 +1,19 @@
+{
+  "found": [
+    {
+      "page": 2,
+      "text": "Jane Example",
+      "rect": [
+        100.25,
+        103.5,
+        175.5,
+        114.25
+      ],
+      "characters": 11,
+      "offPage": true
+    }
+  ],
+  "summary": "1 passage is in the file and not visible on the page, on 1 page; 40 characters could not be judged; 1 page without text not checked (3); 1 page too large to compare (9).",
+  "notLookedAt": "Not looked at: comments, form values, attachments, metadata and earlier versions kept in the file.",
+  "unsaved": true
+}

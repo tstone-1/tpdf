@@ -6,13 +6,15 @@
  * one for exactly this reason: the *second* tab is otherwise the one that has to
  * introduce it, by which point something else is positioned against its absence.
  *
- * There are six. The fifth lists the reader's *own* marks, and it is not one of
+ * There are seven. The fifth lists the reader's *own* marks, and it is not one of
  * the four because when they were specified the reader could not make any; see
  * `marklist.ts` for why it is not the comments panel with a different source.
  * The sixth lists the regions marked for removal, and it is `docs/PLAN.md` §6
  * step 2 --- a review of what a redaction is about to take, which is a different
  * subject from what the reader has drawn on the page and a different type all
- * the way down; see `redactlist.ts`.
+ * the way down; see `redactlist.ts`. The seventh lists text that is in the
+ * file and that its pages do not show, which a check the reader asks for finds;
+ * see `hiddenlist.ts`.
  *
  * ## The tabs are not equals, and the code says so
  *
@@ -66,6 +68,8 @@ import {
   type WebTarget,
 } from "./outline";
 import { CommentList, type CommentListOptions } from "./commentlist";
+import { HiddenList, type HiddenListOptions } from "./hiddenlist";
+import type { HiddenText } from "./hiddentext";
 import type { Comments } from "./comments";
 import { MarkList, type MarkListOptions } from "./marklist";
 import { RedactList, type RedactListOptions } from "./redactlist";
@@ -86,7 +90,8 @@ export type Tab =
   | "results"
   | "comments"
   | "marks"
-  | "redactions";
+  | "redactions"
+  | "hidden";
 
 export interface SidebarOptions {
   /** Called when a row is activated. `top` is points from the page's top. */
@@ -123,6 +128,8 @@ export interface SidebarOptions {
   marks: MarkListOptions;
   /** What the redactions tab needs. */
   redactions: RedactListOptions;
+  /** What the tab listing text the pages do not show needs. */
+  hidden: HiddenListOptions;
   /**
    * What the page strip needs, or absent for no strip at all.
    *
@@ -156,6 +163,7 @@ export class Sidebar {
   private readonly notes: CommentList;
   private readonly mine: MarkList;
   private readonly pending: RedactList;
+  private readonly unshown: HiddenList;
   private showing: Tab = "outline";
   private visibleNow = true;
 
@@ -268,6 +276,12 @@ export class Sidebar {
     this.host.appendChild(redactionsPanel);
     this.pending = new RedactList(redactionsPanel, opts.redactions);
 
+    // Last, and beside the redactions: it is the same subject from the other
+    // side, what a redaction somebody else made left in the file.
+    const hiddenPanel = this.panel("hidden", "Text the pages do not show", "unshown");
+    this.host.appendChild(hiddenPanel);
+    this.unshown = new HiddenList(hiddenPanel, opts.hidden);
+
     root.appendChild(this.host);
     this.selectTab("outline");
   }
@@ -351,6 +365,16 @@ export class Sidebar {
   /** The panel listing the regions marked for removal. */
   get redactions(): RedactList {
     return this.pending;
+  }
+
+  /** The panel listing text the pages do not show. */
+  get hiddenText(): HiddenList {
+    return this.unshown;
+  }
+
+  /** Shows a check's result, or with `null` that none has been run. */
+  setHiddenText(checked: HiddenText | null): void {
+    this.unshown.setChecked(checked);
   }
 
   /**

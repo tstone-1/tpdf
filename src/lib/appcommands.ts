@@ -553,6 +553,8 @@ export interface AppActions {
   redactRasterCopy(): void;
   /** Ask for a name and write a copy whose scanned pages can be searched. */
   recogniseText(): void;
+  /** Compare the saved file's text with its pages and list what is not shown. */
+  findHiddenText(): void;
   /** Fetch the languages this machine offers and ask which to recognise in. */
   chooseRecognitionLanguage(): void;
   /**
@@ -865,6 +867,16 @@ export function registerAppCommands(
       id: "app.makeDefaultPdfApp",
       title: "Make tpdf the default PDF app",
       run: () => actions.makeDefaultPdfApp(),
+    },
+    {
+      // Named for what it lists, in a reader's words: "hidden text" would name
+      // the kind without saying hidden from what. No ellipsis, because nothing
+      // is asked: it reads the saved file, writes nothing, and its answer is a
+      // tab of the sidebar.
+      id: "file.findHiddenText",
+      title: "Find text the pages do not show",
+      enabled: withDocument,
+      run: () => actions.findHiddenText(),
     },
     {
       id: "file.properties",

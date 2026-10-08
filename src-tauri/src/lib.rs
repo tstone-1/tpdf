@@ -171,8 +171,8 @@ use tauri::Manager;
 // moved and what decides which file a new one goes in.
 use commands::document::start_eager_open;
 use commands::{
-    app::*, compress::*, document::*, edit::*, menubar::*, ocr::*, print::*, protect::*, read::*,
-    redact::*, save::*, session::*, sign::*, spike::*,
+    app::*, compress::*, document::*, edit::*, hidden::*, menubar::*, ocr::*, print::*, protect::*,
+    read::*, redact::*, save::*, session::*, sign::*, spike::*,
 };
 
 /// The window's *Redact and save as*, without the window.
@@ -193,6 +193,14 @@ pub mod recognition {
     pub use crate::commands::ocr::{
         ocr_copy_asked, offered_languages, Progress, Recognised, CANCELLED, UNSAVED,
     };
+}
+
+/// The window's *Find text the pages do not show*, without the window.
+///
+/// Public for `tests/cli.rs`, which runs the application's path in-process on
+/// the document the tool's own `hidden` check is run on.
+pub mod hidden_text {
+    pub use crate::commands::hidden::{hidden_text_asked, HiddenText, Progress, CANCELLED};
 }
 
 /// Who creates the window, and what it points at (spike 0.7).
@@ -690,6 +698,7 @@ pub fn run() {
         // a timestamp that did not come (`commands::sign::Pending`).
         .manage(commands::sign::Pending::default())
         .manage(commands::ocr::Cancel::default())
+        .manage(commands::hidden::Cancel::default())
         // The addresses behind a document's web links, which the webview is
         // given a token for and never receives. Managed on the builder for the
         // same reason the edit models are: it needs nothing from the app, and a
@@ -919,6 +928,8 @@ pub fn run() {
             ocr_copy,
             ocr_cancel,
             ocr_languages,
+            hidden_text,
+            hidden_text_cancel,
             annot_erase,
             annot_note,
             annot_draft_lines,

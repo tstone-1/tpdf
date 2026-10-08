@@ -26,8 +26,9 @@ use super::ocr::render;
 use super::report::{self, SCHEMA};
 use super::text::{declined, page_list, password, variable};
 use super::{json, opened, say, Env, Exit, Failure, Registered, Subcommand};
-use crate::hidden;
-use crate::render::PageSize;
+use crate::hidden::survey::{self, Pages};
+use crate::save_outside::Session;
+use crate::text::PageText;
 use crate::worker_proto::{Reply, Request};
 
 pub const COMMAND: Registered = Registered {
@@ -36,17 +37,6 @@ pub const COMMAND: Registered = Registered {
     summary: "Lists text that is in the document and not visible on its pages:\n            words under a black box, in the background's colour, or never painted.\n            Exits 1 when it finds any.",
     parse: |args| parse(args).map(|p| Box::new(p) as Box<dyn Subcommand>),
 };
-
-/// Pixels per point a page is compared at: 144 DPI, `tpdf render`'s default.
-const WANTED_SCALE: f32 = 2.0;
-
-/// The lowest scale a page is compared at. Below it ordinary body text is too
-/// small to judge, and the page is reported as not checked.
-const MIN_SCALE: f32 = 1.0;
-
-/// `tpdf render`'s bounds on one image.
-const MAX_SIDE: f32 = 8192.0;
-const MAX_PIXELS: f32 = 16_777_216.0;
 
 #[derive(Debug)]
 struct Hidden {
@@ -87,25 +77,40 @@ fn parse(args: &[String]) -> Result<Hidden, String> {
     Ok(command)
 }
 
-/// The image a page is compared at: its size in pixels and the scale that
-/// gives it. `None` for a page with no size, or one so large that it cannot be
-/// rendered at [`MIN_SCALE`] within `tpdf render`'s bounds.
-fn image_of(size: PageSize) -> Option<(u32, u32, f32)> {
-    let (w, h) = (size.width_pt, size.height_pt);
-    if !(w.is_finite() && h.is_finite() && w > 0.0 && h > 0.0) {
-        return None;
+/// The pages of the document the tool opened, answered by its worker.
+struct Opened<'a> {
+    session: &'a mut Session,
+    /// The document as it was named, for a refusal.
+    shown: &'a str,
+    has_password: bool,
+}
+
+impl Pages for Opened<'_> {
+    type Error = Failure;
+
+    fn text(&mut self, page: u32) -> Result<PageText, Failure> {
+        let reply = self
+            .session
+            .ask(Request::Text { page, crop: None })
+            .map_err(|why| declined(self.shown, why, self.has_password))?;
+        let Reply::Text(text) = reply else {
+            return Err(Failure::new(
+                Exit::Internal,
+                format!("unexpected worker reply: {reply:?}"),
+            ));
+        };
+        Ok(text)
     }
-    let scale = WANTED_SCALE
-        .min(MAX_SIDE / w.max(h))
-        .min((MAX_PIXELS / (w * h)).sqrt());
-    if scale < MIN_SCALE {
-        return None;
+
+    fn pixels(
+        &mut self,
+        page: u32,
+        width: u32,
+        height: u32,
+        scale: f32,
+    ) -> Result<Vec<u8>, Failure> {
+        render(self.session, page, width, height, scale)
     }
-    // Rounded as `tpdf render` and the viewer round a page, and floored on
-    // the scale side so the product stays inside the bound.
-    let width = (w * scale).round().max(1.0) as u32;
-    let height = (h * scale).round().max(1.0) as u32;
-    Some((width, height, scale))
 }
 
 impl Subcommand for Hidden {
@@ -122,24 +127,16 @@ impl Subcommand for Hidden {
             .worker()
             .session(&file, len, key.as_deref())
             .map_err(|e| declined(&shown, e, key.is_some()))?;
+        // Without every page's size: a page's text says how large the page is.
         let reply = session.ask(Request::Open {
-            lazy_geometry: false,
+            lazy_geometry: true,
         })?;
-        let Reply::Open {
-            pages, page_count, ..
-        } = reply
-        else {
+        let Reply::Open { page_count, .. } = reply else {
             return Err(Failure::new(
                 Exit::Internal,
-                "the worker did not return page sizes",
+                "the worker did not say how many pages the document has",
             ));
         };
-        if pages.len() != page_count {
-            return Err(Failure::new(
-                Exit::Internal,
-                "the worker returned incomplete page sizes",
-            ));
-        }
         let count = u32::try_from(page_count).unwrap_or(u32::MAX);
         let selection = self.pages.clone().unwrap_or_else(|| (1..=count).collect());
         if selection.iter().any(|n| *n > count) {
@@ -149,52 +146,39 @@ impl Subcommand for Hidden {
             ));
         }
 
-        let mut report = report::Hidden {
-            schema: SCHEMA,
-            command: "hidden".into(),
-            input: shown.clone(),
-            pages: count,
-            found: Vec::new(),
-            compared: 0,
-            unjudged: 0,
-            without_text: Vec::new(),
-            not_compared: Vec::new(),
-        };
-        for n in &selection {
-            let page = n - 1;
-            let reply = session
-                .ask(Request::Text { page, crop: None })
-                .map_err(|why| declined(&shown, why, key.is_some()))?;
-            let Reply::Text(text) = reply else {
-                return Err(Failure::new(
-                    Exit::Internal,
-                    format!("unexpected worker reply: {reply:?}"),
-                ));
-            };
-            if !crate::ocr_layer::has_text(&text) {
-                report.without_text.push(*n);
-                continue;
-            }
-            let Some((width, height, scale)) = image_of(pages[page as usize]) else {
-                report.not_compared.push(*n);
-                continue;
-            };
-            let pixels = render(&mut session, page, width, height, scale)?;
-            let judged = hidden::judge(&text, &pixels, width as usize, height as usize, scale);
-            report.compared += judged.judged as u64;
-            report.unjudged += judged.unjudged as u64;
-            report
-                .found
-                .extend(judged.found.into_iter().map(|found| report::HiddenText {
-                    page: *n,
-                    text: found.text,
-                    rect: found.rect,
-                    characters: found.hidden as u32,
-                    off_page: found.off_page,
-                }));
-        }
+        let walked = survey::survey(
+            &mut Opened {
+                session: &mut session,
+                shown: &shown,
+                has_password: key.is_some(),
+            },
+            &selection,
+            &mut |_, _| Ok(()),
+        )?;
         drop(session);
 
+        let last = survey::summary(&walked);
+        let report = report::Hidden {
+            schema: SCHEMA,
+            command: "hidden".into(),
+            input: shown,
+            pages: count,
+            found: walked
+                .found
+                .into_iter()
+                .map(|found| report::HiddenText {
+                    page: found.page,
+                    text: found.text,
+                    rect: found.rect,
+                    characters: found.characters,
+                    off_page: found.off_page,
+                })
+                .collect(),
+            compared: walked.compared,
+            unjudged: walked.unjudged,
+            without_text: walked.without_text,
+            not_compared: walked.not_compared,
+        };
         let exit = if report.found.is_empty() {
             Exit::Ok
         } else {
@@ -206,7 +190,8 @@ impl Subcommand for Hidden {
             for found in &report.found {
                 say(out, &line_of(found));
             }
-            say(out, &summary(&report, selection.len()));
+            say(out, &last);
+            say(out, survey::NOT_LOOKED_AT);
         }
         Ok(exit)
     }
@@ -219,67 +204,6 @@ fn line_of(found: &report::HiddenText) -> String {
     } else {
         format!("page {}: {}", found.page, found.text)
     }
-}
-
-/// The sentence a run ends on. What was not checked is in it, so the result
-/// is never read without its limits.
-fn summary(report: &report::Hidden, selected: usize) -> String {
-    let mut line = if report.found.is_empty() {
-        format!(
-            "No hidden text found: {} characters on {} compared with the rendered page",
-            report.compared,
-            pages_of(selected - report.without_text.len() - report.not_compared.len()),
-        )
-    } else {
-        let on: std::collections::BTreeSet<u32> = report.found.iter().map(|f| f.page).collect();
-        format!(
-            "{} in the file and not visible on the page, on {}",
-            if report.found.len() == 1 {
-                "1 passage is".to_string()
-            } else {
-                format!("{} passages are", report.found.len())
-            },
-            pages_of(on.len()),
-        )
-    };
-    if report.unjudged > 0 {
-        line.push_str(&format!(
-            "; {} characters could not be judged",
-            report.unjudged
-        ));
-    }
-    if !report.without_text.is_empty() {
-        line.push_str(&format!(
-            "; {} without text not checked ({})",
-            pages_of(report.without_text.len()),
-            numbers(&report.without_text)
-        ));
-    }
-    if !report.not_compared.is_empty() {
-        line.push_str(&format!(
-            "; {} too large to compare ({})",
-            pages_of(report.not_compared.len()),
-            numbers(&report.not_compared)
-        ));
-    }
-    line.push('.');
-    line
-}
-
-fn pages_of(count: usize) -> String {
-    if count == 1 {
-        "1 page".into()
-    } else {
-        format!("{count} pages")
-    }
-}
-
-fn numbers(pages: &[u32]) -> String {
-    pages
-        .iter()
-        .map(u32::to_string)
-        .collect::<Vec<_>>()
-        .join(", ")
 }
 
 #[cfg(test)]
@@ -312,45 +236,6 @@ mod tests {
         assert_eq!((dashed.pages, dashed.json), (None, false));
     }
 
-    #[test]
-    fn a_page_is_compared_at_144_dpi_or_as_large_as_the_bounds_allow() {
-        let size = |width_pt, height_pt| PageSize {
-            width_pt,
-            height_pt,
-        };
-        assert_eq!(image_of(size(595.0, 842.0)), Some((1190, 1684, 2.0)));
-        // The longer side decides: 6000 points at 8192 pixels.
-        let (width, height, scale) = image_of(size(6000.0, 100.0)).expect("it fits");
-        assert!((width, height) == (8192, 137) && scale < 2.0 && scale > 1.0);
-        // The area decides: 4000 points square is 16 million pixels at 1.024.
-        let (width, height, scale) = image_of(size(4000.0, 4000.0)).expect("it fits");
-        assert!(scale >= 1.0 && u64::from(width) * u64::from(height) <= 16_777_216);
-        for (w, h) in [
-            (9000.0, 100.0),
-            (4200.0, 4200.0),
-            (0.0, 10.0),
-            (-1.0, 10.0),
-            (f32::NAN, 10.0),
-            (10.0, f32::INFINITY),
-        ] {
-            assert_eq!(image_of(size(w, h)), None, "{w} by {h}");
-        }
-    }
-
-    fn report(found: Vec<report::HiddenText>) -> report::Hidden {
-        report::Hidden {
-            schema: SCHEMA,
-            command: "hidden".into(),
-            input: "a.pdf".into(),
-            pages: 9,
-            found,
-            compared: 1200,
-            unjudged: 0,
-            without_text: Vec::new(),
-            not_compared: Vec::new(),
-        }
-    }
-
     fn passage(page: u32, off_page: bool) -> report::HiddenText {
         report::HiddenText {
             page,
@@ -359,36 +244,6 @@ mod tests {
             characters: 11,
             off_page,
         }
-    }
-
-    #[test]
-    fn the_last_line_says_what_was_found_and_what_was_not_checked() {
-        assert_eq!(
-            summary(&report(Vec::new()), 9),
-            "No hidden text found: 1200 characters on 9 pages compared with the rendered page."
-        );
-        assert_eq!(
-            summary(&report(vec![passage(2, false)]), 9),
-            "1 passage is in the file and not visible on the page, on 1 page."
-        );
-        assert_eq!(
-            summary(
-                &report(vec![passage(2, false), passage(2, true), passage(7, false)]),
-                9
-            ),
-            "3 passages are in the file and not visible on the page, on 2 pages."
-        );
-        // Nothing found is never said without what was left out.
-        let mut partial = report(Vec::new());
-        partial.unjudged = 40;
-        partial.without_text = vec![3, 4];
-        partial.not_compared = vec![9];
-        assert_eq!(
-            summary(&partial, 9),
-            "No hidden text found: 1200 characters on 6 pages compared with the rendered page; \
-             40 characters could not be judged; 2 pages without text not checked (3, 4); \
-             1 page too large to compare (9)."
-        );
     }
 
     #[test]

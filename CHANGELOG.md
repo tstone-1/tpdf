@@ -19,6 +19,22 @@ have the binary.)
 
 ## [26.10.13] - Unreleased
 
+### Added
+
+- **Find text the pages do not show, in the window.** The check `tpdf hidden` makes is
+  now a command of the palette and the File menu. It compares the text in the saved file
+  with what each page looks like and lists every passage a page does not show in a new
+  sidebar tab: words under a black box, under an annotation, in the colour of the
+  background, or outside the page. Choosing a passage goes to its page and rings the
+  place. The tab says what was not compared (pages without text, characters that could
+  not be judged) and what is never looked at (comments, form values, attachments,
+  metadata, earlier versions kept in the file), also when nothing was found. Unsaved
+  changes are not part of the check, and the tab says when there were any. A line in the
+  toolbar shows the page being compared and has a Stop button; a stopped check has no
+  result.
+  `tpdf hidden` prints the same sentence about what is never looked at as the last
+  line of its plain output; `--json` is unchanged.
+
 ### Fixed
 
 - **After an update on Windows, a document in a folder with spaces in its name is opened

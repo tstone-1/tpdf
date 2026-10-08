@@ -65,6 +65,15 @@
     type Progress,
   } from "./lib/recognise";
   import { RecognitionLanguage } from "./lib/ocrlanguage";
+  import {
+    PAGE_GONE,
+    PROGRESS_EVENT as HIDDEN_PROGRESS_EVENT,
+    Runs as HiddenRuns,
+    STARTING as HIDDEN_STARTING,
+    placeOf,
+    type Passage,
+    type Progress as HiddenProgress,
+  } from "./lib/hiddentext";
   import { CommandLineTool } from "./lib/clitoolstate";
   import {
     afterCopy,
@@ -485,6 +494,11 @@
   // The number of the recognition Stop is for. Counted from 1, because 0 is
   // the backend's "nothing was asked to stop".
   let recognitionRun = 0;
+  // The other blocking task that reports its pages and can be stopped: the
+  // check for text the pages do not show. Which run Stop is for is
+  // `hiddenRuns`'; the flag is its `running`, held here so the header redraws.
+  const hiddenRuns = new HiddenRuns();
+  let findingHidden = $state(false);
   /**
    * The open document's page edits, or null when there is none.
    *
@@ -988,6 +1002,7 @@
     redactCopy: () => void redactCopy(),
     redactRasterCopy: () => void redactRasterCopy(),
     recogniseText: () => void recogniseText(),
+    findHiddenText: () => void findHiddenText(),
     chooseRecognitionLanguage: () => void chooseRecognitionLanguage(),
     recognitionLanguages: () => {
       const offered = recognitionLanguage.question();
@@ -2337,6 +2352,75 @@
     say(done.said);
     await openPath(done.path);
     if (openPathName === done.path) say(done.said);
+  }
+
+  /**
+   * Compares the saved file's text with its pages and lists what is not shown.
+   *
+   * `recogniseText`'s shape without a file to write: the task blocks document
+   * commands, because the backend reads the pages of the open document while
+   * it runs, and it reports its pages and can be stopped. The answer goes to
+   * the sidebar's tab, which is opened. A stopped or failed check leaves
+   * whatever the tab showed before: it has no result of its own.
+   *
+   * Unsaved changes do not refuse it. The file is what is checked, and the
+   * result says so (`UNSAVED` in `hiddentext.ts`).
+   */
+  async function findHiddenText(): Promise<void> {
+    if (opening) return;
+    await documentTasks.run(async () => {
+      if (!edits || copyTaskBusy) return;
+      const settled = settleDrafts();
+      copyTaskBusy = true;
+      refreshMenu();
+      try {
+        await settled;
+        if (!edits) return;
+        const asked = edits;
+        // Numbered before Stop is shown, so a press at any moment names this run.
+        const run = hiddenRuns.start();
+        blockingTask = HIDDEN_STARTING;
+        findingHidden = true;
+        await tick();
+        const checked = await call("hidden_text", { doc: asked.doc, run });
+        // The document the answer is about, not whichever is open when it lands.
+        if (edits !== asked) return;
+        sidebar?.setHiddenText(checked);
+        // The ring over a passage of the result this one replaces.
+        viewer?.clearRegion();
+        showTab("hidden");
+      } catch (e) {
+        say(String(e));
+      } finally {
+        hiddenRuns.finish();
+        findingHidden = false;
+        blockingTask = null;
+        copyTaskBusy = false;
+        refreshMenu();
+      }
+    });
+  }
+
+  /**
+   * Goes to a passage the check found and rings it.
+   *
+   * Focus stays in the panel, for the results list's reason: a reader working
+   * down this list is comparing passages. A passage outside the page has no
+   * place on it to ring, so its page is what is shown.
+   */
+  function showHidden(passage: Passage): void {
+    if (!edits || !viewer) return;
+    const place = placeOf(passage, (page) => edits?.map.slotOf(page));
+    if (!place) {
+      say(PAGE_GONE);
+      return;
+    }
+    if (place.rect) {
+      viewer.showRegion(place.slot, place.rect);
+    } else {
+      viewer.clearRegion();
+      viewer.goToDestination(place.slot, null);
+    }
   }
 
   /**
@@ -3727,6 +3811,10 @@
       await listen<Progress>(PROGRESS_EVENT, (event) => {
         if (recognising) blockingTask = progressLine(event.payload);
       });
+      // The same guard, kept in `hiddentext.ts`.
+      await listen<HiddenProgress>(HIDDEN_PROGRESS_EVENT, (event) => {
+        blockingTask = hiddenRuns.line(event.payload) ?? blockingTask;
+      });
       // Together rather than one after the other. Neither answer feeds the
       // other --- one is what the launcher handed over, the other is what was on
       // disk from last time --- and both are round trips on the path between the
@@ -4243,6 +4331,7 @@
           // of them ever produces a line.
           planFor: (id) => redactionPlans.get(id),
         },
+        hidden: { onPick: (passage) => showHidden(passage) },
         pages: {
           doc: doc.id,
           pageCount: doc.page_count,
@@ -4292,6 +4381,8 @@
           // is *also* driven from `runEdit`, because a region the reader has
           // just dragged wants its words while they are looking at the panel.
           if (tab === "redactions") void fillRedactionWords();
+          // The ring over a passage belongs to the list that drew it.
+          if (tab !== "hidden") viewer?.clearRegion();
         },
       });
       sidebar.setVisible(sidebarShown);
@@ -4759,6 +4850,8 @@
       {#if blockingTask}<span class="notice" data-testid="blocking-task">{blockingTask}</span>
         {#if recognising}<button data-testid="stop-recognition" title="Stop recognising text"
           onclick={() => void call("ocr_cancel", { run: recognitionRun })}>Stop</button>{/if}
+        {#if findingHidden}<button data-testid="stop-hidden-text" title="Stop comparing text with the pages"
+          onclick={() => void call("hidden_text_cancel", { run: hiddenRuns.number })}>Stop</button>{/if}
       {:else if notice}<span class="notice" data-testid="notice">{notice}</span>{/if}
     </span>
     {#if status}

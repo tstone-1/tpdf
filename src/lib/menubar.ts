@@ -167,6 +167,9 @@ export const MENU_LAYOUT: LayoutSection[] = [
       // and this only reports about it, so it reads as a fourth action when it
       // sits flush against the print item.
       "file.properties",
+      // The other item that only reports: it reads the saved file and lists
+      // what its pages do not show.
+      "file.findHiddenText",
     ],
   },
   {

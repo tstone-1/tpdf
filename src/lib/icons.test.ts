@@ -63,10 +63,10 @@ describe("icons", () => {
     }
   });
 
-  it("vendors no file that nothing draws, and two icons are ours", () => {
+  it("vendors no file that nothing draws, and three icons are ours", () => {
     const used = new Set(names.map((name) => ICONS[name].source).filter((source) => source !== null));
     expect([...files.keys()].sort()).toEqual([...used].sort());
-    expect(names.filter((name) => ICONS[name].source === null).sort()).toEqual(["redact", "width"]);
+    expect(names.filter((name) => ICONS[name].source === null).sort()).toEqual(["redact", "unshown", "width"]);
   });
 
   it("gives every button on the tool row a picture of its own", () => {

@@ -226,6 +226,7 @@ function harness(
     redactCopy: () => fired.push("redactCopy"),
     redactRasterCopy: () => fired.push("redactRasterCopy"),
     recogniseText: () => fired.push("recogniseText"),
+    findHiddenText: () => fired.push("findHiddenText"),
     chooseRecognitionLanguage: () => fired.push("chooseRecognitionLanguage"),
     recognitionLanguages: () => languages,
     setRecognitionLanguage: (raw) => fired.push(`setRecognitionLanguage:${raw}`),
@@ -1263,6 +1264,18 @@ describe("the page operations", () => {
     expect(closed.fired).toEqual([]);
   });
 
+  it("finds text the pages do not show through its own command, on any open document", () => {
+    const { registry, fired } = harness();
+    const command = registry.all().find((entry) => entry.id === "file.findHiddenText");
+    // No ellipsis: nothing is asked before it runs.
+    expect(command?.title).toBe("Find text the pages do not show");
+    expect(registry.run("file.findHiddenText")).toBe(true);
+    expect(fired).toEqual(["findHiddenText"]);
+    const closed = harness(false);
+    expect(closed.registry.run("file.findHiddenText")).toBe(false);
+    expect(closed.fired).toEqual([]);
+  });
+
   it("offers a smaller copy on any open document", () => {
     const { registry, fired } = harness();
     const titles = new Map(registry.all().map((entry) => [entry.id, entry.title]));
@@ -1920,6 +1933,7 @@ describe("the window shortcuts for editing", () => {
       redactCopy: () => fired.push("redactCopy"),
       redactRasterCopy: () => fired.push("redactRasterCopy"),
       recogniseText: () => fired.push("recogniseText"),
+    findHiddenText: () => fired.push("findHiddenText"),
       chooseRecognitionLanguage: () => fired.push("chooseRecognitionLanguage"),
       recognitionLanguages: () => null,
       setRecognitionLanguage: (raw) => fired.push(`setRecognitionLanguage:${raw}`),

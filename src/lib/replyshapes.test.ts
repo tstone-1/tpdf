@@ -12,7 +12,7 @@
  * fields.
  *
  * `src-tauri/testdata/replies/<Type>.json` is what closes it. Rust writes those
- * files from real values of the seventeen named payload types
+ * files from real values of the named payload types
  * (`src-tauri/src/replies.rs`, regenerated with `TPDF_REPLIES=write`), and this
  * file reads the same bytes and holds them against the mirror. Nothing is
  * generated from anything: a renamed Rust field changes the sample, and the
@@ -76,6 +76,8 @@ import type { Shrinkage } from "./compress";
 import Shrinkage_ from "../../src-tauri/testdata/replies/Shrinkage.json";
 import type { Recognised } from "./recognise";
 import Recognised_ from "../../src-tauri/testdata/replies/Recognised.json";
+import type { HiddenText } from "./hiddentext";
+import HiddenText_ from "../../src-tauri/testdata/replies/HiddenText.json";
 import type { Offered } from "./ocrlanguage";
 import type { ToolState } from "./clitoolstate";
 import ToolState_ from "../../src-tauri/testdata/replies/ToolState.json";
@@ -187,6 +189,12 @@ const SCHEMA = {
     engine: ["string"],
     languageUnavailable: ["string"],
   } satisfies Shape<Recognised>,
+  HiddenText: {
+    found: ["array"],
+    summary: ["string"],
+    notLookedAt: ["string"],
+    unsaved: ["boolean"],
+  } satisfies Shape<HiddenText>,
   Offered: {
     languages: ["array"],
     installable: ["boolean"],
@@ -370,6 +378,7 @@ const SAMPLES: Record<keyof typeof SCHEMA, Record<string, unknown>> = {
   Made: Made_ satisfies Widen<Made>,
   Shrinkage: Shrinkage_ satisfies Widen<Shrinkage>,
   Recognised: Recognised_ satisfies Widen<Recognised>,
+  HiddenText: HiddenText_ satisfies Widen<HiddenText>,
   Offered: Offered_ satisfies Widen<Offered>,
   ToolState: ToolState_ satisfies Widen<ToolState>,
   CropGeometry: CropGeometry_ satisfies Widen<CropGeometry>,
@@ -396,7 +405,7 @@ const SAMPLES: Record<keyof typeof SCHEMA, Record<string, unknown>> = {
 };
 
 /**
- * Every command module's source, so the seventeen can be counted rather than
+ * Every command module's source, so the payload types can be counted rather than
  * remembered.
  *
  * A glob rather than a list, because a list is the thing that goes stale: an
@@ -536,7 +545,7 @@ describe("the committed reply samples against the mirrors in ipc.ts", () => {
     expect(Object.keys(SAMPLES).sort()).toEqual(Object.keys(SCHEMA).sort());
   });
 
-  // Where the seventeen come from. Without this, the table above is a list
+  // Where the payload types come from. Without this, the table above is a list
   // somebody wrote once, and the payload a new command answers with is covered
   // by nothing -- silently, which is the direction this repository records as
   // the expensive one.

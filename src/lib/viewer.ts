@@ -1237,6 +1237,16 @@ export class Viewer {
   private focusedLink: Link | null = null;
   /** The ring drawn over the focused link. */
   private readonly ring: HTMLElement;
+  /**
+   * The place a list outside the viewer asked to be shown, or null.
+   *
+   * Held by the page's **id** and placed by its slot each frame, so the ring
+   * stays on the page it was drawn for when another page is deleted or moved
+   * above it. See {@link showRegion}.
+   */
+  private shownRegion: { page: PageId; rect: [number, number, number, number] } | null = null;
+  /** The ring over {@link shownRegion}. {@link ring}'s twin, for a place that is not a link. */
+  private readonly regionRing: HTMLElement;
   /** The note shown on the page, built once and reused. */
   private readonly popup: CommentPopup;
   private readonly markNote: MarkPopup;
@@ -1678,11 +1688,21 @@ export class Viewer {
     // colour are then the platform's rather than ours to guess.
     this.ring = document.createElement("div");
     this.ring.setAttribute("aria-hidden", "true");
-    this.ring.style.cssText =
+    const ringStyle =
       "position:absolute;display:none;pointer-events:none;z-index:4;" +
       "border-radius:2px;outline:2px solid Highlight;outline-offset:2px;" +
       "background:color-mix(in srgb, Highlight 12%, transparent);";
+    this.ring.style.cssText = ringStyle;
     root.appendChild(this.ring);
+
+    // The same ring for a place a list names: a passage of text the page does
+    // not show has nothing on the page to point at, so the ring is all a
+    // reader gets. Not the link's element, because both can be up at once.
+    this.regionRing = document.createElement("div");
+    this.regionRing.setAttribute("aria-hidden", "true");
+    this.regionRing.dataset.testid = "shown-region";
+    this.regionRing.style.cssText = ringStyle;
+    root.appendChild(this.regionRing);
 
     // The box's drag. Its three callbacks are the whole of the gesture; the
     // arithmetic they call is in `markband.ts`, which the file's writer mirrors.
@@ -2206,6 +2226,7 @@ export class Viewer {
     this.syncMark(visible);
     this.syncArrangeBar();
     if (this.focusedLink) this.placeRing();
+    if (this.shownRegion) this.placeRegion();
     this.paintOverlay(visible);
     this.paintThumb();
     this.report(stats);
@@ -3532,6 +3553,63 @@ export class Viewer {
     if (!this.focusedLink) return;
     this.focusedLink = null;
     this.ring.style.display = "none";
+  }
+
+  /**
+   * Scrolls to a rectangle on a page and rings it.
+   *
+   * For a list whose rows name a place and nothing on the page marks it: the
+   * text a page does not show. `rect` is `[left, top, right, bottom]` in points
+   * from the corner of the page as the file displays it, which is what a
+   * link's and a comment's rectangle are, and it is placed as they are ---
+   * under the reader's crop and every turn in force.
+   *
+   * The ring stays until {@link clearRegion} or the next call. `false` when
+   * the slot holds no page, and then nothing moves.
+   */
+  showRegion(slot: number, rect: readonly [number, number, number, number]): boolean {
+    const page = this.pages.idOf(slot);
+    if (page === undefined) return false;
+    this.shownRegion = { page, rect: [rect[0], rect[1], rect[2], rect[3]] };
+    this.goToDestination(slot, Math.max(0, this.viewRectOn(slot, rect).top));
+    this.placeRegion();
+    this.wake();
+    return true;
+  }
+
+  /** Takes the ring {@link showRegion} drew away. */
+  clearRegion(): void {
+    this.shownRegion = null;
+    this.regionRing.style.display = "none";
+  }
+
+  /**
+   * Where the ring over a shown region is drawn, in the root's coordinates,
+   * or null when none is. For the tests and the check harness.
+   *
+   * Read off the element, for {@link linkRingShown}'s reason.
+   */
+  get regionRingBox(): { left: number; top: number; width: number; height: number } | null {
+    if (this.regionRing.style.display !== "block") return null;
+    const px = (value: string) => Number.parseFloat(value);
+    const style = this.regionRing.style;
+    return { left: px(style.left), top: px(style.top), width: px(style.width), height: px(style.height) };
+  }
+
+  /** Puts the ring over the shown region, or hides it when its page has gone. */
+  private placeRegion(): void {
+    if (!this.shownRegion) return;
+    const slot = this.pages.slotOfId(this.shownRegion.page);
+    if (slot === undefined) {
+      this.regionRing.style.display = "none";
+      return;
+    }
+    const where = this.anchorOn(slot, this.shownRegion.rect);
+    this.regionRing.style.display = "block";
+    this.regionRing.style.left = `${Math.round(where.left)}px`;
+    this.regionRing.style.top = `${Math.round(where.top)}px`;
+    this.regionRing.style.width = `${Math.max(1, Math.round(where.right - where.left))}px`;
+    this.regionRing.style.height = `${Math.max(1, Math.round(where.bottom - where.top))}px`;
   }
 
   /** Points from the displayed page's top to the focused link's top edge. */

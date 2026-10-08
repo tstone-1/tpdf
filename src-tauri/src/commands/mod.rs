@@ -28,6 +28,7 @@ pub mod app;
 pub mod compress;
 pub mod document;
 pub mod edit;
+pub mod hidden;
 pub mod menubar;
 pub mod ocr;
 pub mod print;
@@ -110,6 +111,40 @@ pub(crate) fn reply_channel<T: Send + 'static, E: Send + 'static>(
         }),
         rx,
     )
+}
+
+/// The longest any single answer from the render service is waited for by a
+/// command that walks a document on a blocking thread.
+///
+/// [`crate::ocr_gate`]'s bound and its reason: a wait that never ends cannot be
+/// reported, and the slowest legitimate answer is the open of a large file.
+const ANSWER_BOUND: std::time::Duration = std::time::Duration::from_secs(60);
+
+/// Drives one of the render service's callback-shaped calls to an answer, on
+/// a thread that may block.
+///
+/// For the walks that run under `spawn_blocking` --- a text recognition, the
+/// check for text the pages do not show --- where [`await_reply`] has no task
+/// to suspend. `doing` ends the sentence a reader is shown when no answer
+/// comes: `recognising text`.
+pub(crate) fn answered<T: Send + 'static, E: Send + 'static + From<String>>(
+    doing: &str,
+    call: impl FnOnce(Box<dyn FnOnce(Result<T, E>) + Send>),
+) -> Result<T, E> {
+    let (tx, rx) = std::sync::mpsc::channel();
+    call(Box::new(move |result| {
+        let _ = tx.send(result);
+    }));
+    match rx.recv_timeout(ANSWER_BOUND) {
+        Ok(result) => result,
+        Err(std::sync::mpsc::RecvTimeoutError::Timeout) => Err(E::from(format!(
+            "the render service did not answer within {} s while {doing}",
+            ANSWER_BOUND.as_secs()
+        ))),
+        Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => {
+            Err(E::from("the render service stopped".to_string()))
+        }
+    }
 }
 
 /// The password that opened `doc`, or `None`.

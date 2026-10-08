@@ -129,30 +129,11 @@ fn offered() -> Offered {
     }
 }
 
-/// The longest any single answer from the render service is waited for.
-///
-/// [`crate::ocr_gate`]'s bound and its reason: a wait that never ends cannot be
-/// reported, and the slowest legitimate answer is the open of a large file.
-const ANSWER_BOUND: std::time::Duration = std::time::Duration::from_secs(60);
-
 /// Drives one of the render service's callback-shaped calls to an answer.
 fn wait<T: Send + 'static, E: Send + 'static + From<String>>(
     call: impl FnOnce(Box<dyn FnOnce(Result<T, E>) + Send>),
 ) -> Result<T, E> {
-    let (tx, rx) = std::sync::mpsc::channel();
-    call(Box::new(move |result| {
-        let _ = tx.send(result);
-    }));
-    match rx.recv_timeout(ANSWER_BOUND) {
-        Ok(result) => result,
-        Err(std::sync::mpsc::RecvTimeoutError::Timeout) => Err(E::from(format!(
-            "the render service did not answer within {} s while recognising text",
-            ANSWER_BOUND.as_secs()
-        ))),
-        Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => {
-            Err(E::from("the render service stopped".to_string()))
-        }
-    }
+    super::answered("recognising text", call)
 }
 
 /// The layers to write, and the account of the pages that got none.

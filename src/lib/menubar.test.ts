@@ -256,6 +256,9 @@ describe("buildMenu", () => {
       "separator",
       "command",
       "separator",
+      // Document properties, and Find text the pages do not show: the two
+      // that only report.
+      "command",
       "command",
     ]);
   });

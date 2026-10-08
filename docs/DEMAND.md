@@ -173,7 +173,8 @@ The order of work that follows from it:
 5. The command-line tool on Linux with a worker sandbox, then Python wheels that carry it.
 6. A command that checks a document redacted in another program for content that is
    still there. `tpdf redact` checks its own output only. Built on 2026-10-07 as
-   `tpdf hidden`, in the command-line tool and the Python client; the window is next.
+   `tpdf hidden`, in the command-line tool and the Python client, and on 2026-10-08 in
+   the window as *Find text the pages do not show*.
 7. The list under *What tpdf lacks*, in its order, and after it a view of the e-invoice
    embedded in a document.
 
