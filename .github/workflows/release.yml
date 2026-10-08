@@ -509,6 +509,16 @@ jobs:
           workers cannot read arbitrary user files or access the network;
           Windows workers use low integrity and resource-limited jobs.
 
+          **New in 26.10.13.** *Find text the pages do not show* checks a
+          document for words that are in the file and not visible on its
+          pages, such as words under a black box drawn in another program.
+          It lists them in the sidebar and says what it did not look at.
+          After an update on Windows, a document in a folder with a space
+          in its name is opened again; it was reported as not found. The
+          update that brings this fix still loses the document once. The
+          Python client is on PyPI as `tpdf-client` and is imported as
+          `tpdf_client`.
+
           **New in 26.10.12.** An image-only redacted copy has its boxes in
           the colour chosen in the *Redactions* panel; it painted them black
           whatever was chosen. The Windows uninstaller is code-signed: in

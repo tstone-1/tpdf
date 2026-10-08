@@ -189,12 +189,16 @@ are in [`docs/PLAN.md`](docs/PLAN.md). This file is only the mechanics.
 
 ## The Python client and PyPI
 
-`api/python` is the distribution `tpdf-client`; its import name is `tpdf_client`. Until
-its first upload to PyPI it installs from the repository:
+`api/python` is the distribution `tpdf-client`; its import name is `tpdf_client`. It is on
+PyPI since 2026-10-08, <https://pypi.org/project/tpdf-client/>:
 
 ```
-pip install "git+https://github.com/tstone-1/tpdf#subdirectory=api/python"
+pip install tpdf-client
 ```
+
+Version 0.1.0 was uploaded by run 37813188402 from `03f8b62c`. Read afterwards: the page
+answers, the wheel and the source archive are there, and the wheel installed from PyPI in
+a fresh environment answered `info` on a document through the built tool.
 
 The import name was `tpdf` until 2026-10-08. PyPI has a project of another author named
 `tpdf` whose module is also `tpdf`; with both installed, one writes over the other's files
@@ -222,11 +226,10 @@ gh run list --workflow pypi.yml --limit 1
 
 `pypi.yml` refuses a version PyPI already has, requires a green `ci.yml` run on the same
 commit (the client's full tests start the built tool, which a Linux runner does not
-have), runs the two test files that need no tool, builds, checks the two archives, imports the built wheel from outside the checkout and uploads. It stores no
-password: PyPI trusts this workflow in the environment `pypi` (project `tpdf-client`,
+have), runs the two test files that need no tool, builds, checks the two archives,
+imports the built wheel from outside the checkout and uploads. It stores no password: PyPI trusts this workflow in the environment `pypi` (project `tpdf-client`,
 owner `tstone-1`, repository `tpdf`, workflow `pypi.yml`), set on pypi.org under
-*Publishing*. After the first upload, change the install line in `README.md` and
-`api/python/README.md` to `pip install tpdf-client`.
+*Publishing*.
 
 The same steps by hand, which is what the install line from the repository runs:
 
@@ -6654,6 +6657,20 @@ showed Form at the head of the *More* menu with Pages and Redact below the fold,
 now comes last there.
 `docs/THREAT-MODEL.md` already stated the three new commands (T6.35, T6.36). The release
 notes in `release.yml` were rewritten.
+
+**26.10.13 verification, macOS arm64, 2026-10-08:** all 30 gates passed on the release tree
+(2,957 Rust tests with ten documented ignored, 2,562 frontend tests) and `check_windows.py`
+type-checked the Windows tree. Every mutation selected `--near v26.10.12` ran and was
+caught, 31 Rust and 63 frontend. The window's check for text the pages do not show was held
+against `tpdf hidden --json` on one document by `tests/cli/hidden.rs`, passage for passage;
+with the tool's new last line removed by hand that test failed. CI was green on both legs
+for `03f8b62c`, the first Windows run of that check and of the launch repair.
+**Not run:** any window harness, so the new sidebar tab, the ring around a passage and the
+Stop button were never looked at on a screen; the Windows test suites outside CI; the
+bundle smoke test (step 8) and the hand-applied update (step 12). The launch repair shows
+only in the update *after* this one, because the version being replaced does the restart.
+`docs/THREAT-MODEL.md` §T6 gained a paragraph for the new command: it parses nothing in the
+application's process, and no probe reads the process's image table during a check.
 
 **26.10.12 verification, macOS arm64, 2026-10-08:** all 30 gates passed on the release tree
 (2,942 Rust tests with ten documented ignored, 2,528 frontend tests) and `check_windows.py`

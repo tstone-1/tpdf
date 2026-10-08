@@ -17,7 +17,7 @@ as *downloadable*, while the release sat as a draft that GitHub showed to nobody
 are given now because they are different facts, and only the second one means a reader can
 have the binary.)
 
-## [26.10.13] - Unreleased
+## [26.10.13] - 2026-10-08
 
 ### Added
 
@@ -41,7 +41,9 @@ have the binary.)
   of another author with that name whose module is also `tpdf`, and with both installed
   one writes over the other's files. Scripts change `from tpdf import Tpdf` to
   `from tpdf_client import Tpdf`; nothing else in the client changed. The package name
-  `tpdf-client` stays, and a workflow now uploads it to PyPI when started by hand.
+  `tpdf-client` stays.
+- **The Python client is on PyPI**: `pip install tpdf-client`. It still needs the tpdf
+  application, which brings the command-line tool, and does nothing on Linux.
 
 ### Fixed
 

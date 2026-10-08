@@ -1238,14 +1238,15 @@ height, size and wrapping are not yet part of the edit schema. Use `tpdf text`
 to inspect the saved result.
 Text editing is not redaction; use `redact` for confidential content.
 
-**Python API.** Install the client from this repository:
+**Python API.** Install the client from [PyPI](https://pypi.org/project/tpdf-client/):
 
 ```
-pip install "git+https://github.com/tstone-1/tpdf#subdirectory=api/python"
+pip install tpdf-client
 ```
 
-It is not on PyPI. It starts the command-line tool, so the application has to be installed
-as well; `uv pip install ./api/python` installs it from a checkout.
+It starts the command-line tool, so the application has to be installed as well, and it
+does nothing on Linux, where there is no tool. `uv pip install ./api/python` installs it
+from a checkout.
 The client has no runtime dependencies and requires Python 3.10 or newer.
 
 ```python
