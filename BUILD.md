@@ -6649,7 +6649,12 @@ by the same signer, with the SHA-256 of the copy downloaded on macOS. The Homebr
 went from 26.10.11 to 26.10.12; `brew audit --cask --online` passed and `brew livecheck`
 reads 26.10.12. winget was not updated. The installer was not run outside the release run,
 so the uninstaller's signature was read on the runner only, and the update from an earlier
-version (step 12) was not applied by hand.
+version (step 12) was not applied by hand before this was written. It was applied later
+that day: a Windows 11 computer holding 26.10.10 from the installer was updated with the
+button in the application. Afterwards the registry held one tpdf entry, 26.10.12, out of
+365 entries read, and `tpdf.exe` and `uninstall.exe` in the installation folder both read
+`Valid` with the signer above. The two rehearsal tags `v26.9.22-rc1` and `v26.9.22-rc2`
+and their drafts were deleted the same day.
 
 **26.10.11 verification, macOS arm64, 2026-10-07:** all 30 gates passed on the release tree
 (2,941 Rust tests with ten documented ignored, 2,528 frontend tests) and `check_windows.py`

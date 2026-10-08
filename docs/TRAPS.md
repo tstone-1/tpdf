@@ -792,6 +792,7 @@ hop through the index.
 - A test module whose every test is platform-gated makes its own `use super::*` an error on the other platform
 - The updater ends the process on one platform and not the other, so `ready` is a state only macOS reaches
 - Tauri 2.12 puts an empty `msvcrt.lib` on the library path of everything that depends on `tpdf`
+- A PowerShell `$env:` variable in double quotes is emptied by the remote bash, and `Test-Path` then answers False about another path
 
 ## Fixtures
 - The test fixtures are generated, not committed
@@ -26006,3 +26007,36 @@ line's text changed, so the tilted line of `tests/cli/redact.rs` is asked about 
 extraction only. And **`lopdf` writes a `TJ` number and the string after it with nothing
 between**, `-1000(ef)`, which is legal and makes a test comparing content as text fail on
 a space; `glyph_cut_tests.rs` puts the space back before comparing.
+
+### A PowerShell `$env:` variable in double quotes is emptied by the remote bash, and `Test-Path` then answers False about another path
+
+The Windows desktop's ssh shell is WSL, so a command sent to it is read by bash before
+PowerShell sees it. On 2026-10-07 the question was whether tpdf was installed there, and
+the command sent was `powershell.exe -NoProfile -Command "Test-Path $env:LOCALAPPDATA\tpdf\tpdf.exe"`.
+The answer was `False`. tpdf 26.10.9 was installed there and running. On that answer the
+26.10.10 `.msi` was installed over it, as a test of what the installer does to a computer
+without tpdf, and the computer ended with two registered installs and the files of a
+running application replaced under it.
+
+Reproduced on 2026-10-08 with `Write-Output` in place of the question: the text PowerShell
+received was `:LOCALAPPDATA\tpdf\tpdf.exe`. Inside double quotes bash expands `$env` as a
+variable of its own, which is unset, and leaves the rest. `Test-Path $env:LOCALAPPDATA`
+sent the same way answers `False` too, for a folder every Windows account has.
+
+Three things to take from it.
+
+- **A "not installed" answer needs a question beside it whose answer is known to be yes.**
+  `Test-Path` of the folder above the file, in the same command, would have said `False`
+  and shown that the probe was broken. `False` is what a missing file, a mangled path and a
+  wrong account all print.
+- **Send PowerShell to that computer as `-EncodedCommand`**, base64 of the UTF-16LE text,
+  so that no shell on the way reads it. The second Windows computer has PowerShell as its
+  ssh shell and the same command works there unencoded, which is how a command copied from
+  one to the other breaks.
+- **Read the registry for whether a program is installed, and count what was read.** The
+  later probes list the `Uninstall` keys of the user and the machine and print the number
+  of entries beside the tpdf rows: one tpdf row out of 365 entries is an answer, and no
+  tpdf row out of 0 is a broken probe.
+
+An installer is not a probe. Nothing that writes to a computer somebody is working on
+belongs behind an answer of this kind without the control.
