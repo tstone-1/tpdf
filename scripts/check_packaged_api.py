@@ -72,11 +72,11 @@ def unpack(artifact: Path, destination: Path):
 
 
 # Executed with -I in the new environment. Loading only the test file avoids
-# importing api/python/tpdf from the checkout. Assert that property explicitly.
+# importing api/python/tpdf_client from the checkout. Assert that property explicitly.
 RUN_SUITE = '''
 import json, pathlib, runpy, sys, unittest
-import tpdf
-origin = pathlib.Path(tpdf.__file__).resolve()
+import tpdf_client
+origin = pathlib.Path(tpdf_client.__file__).resolve()
 if not origin.is_relative_to(pathlib.Path(sys.prefix).resolve()):
     raise RuntimeError(f"client was not installed in the isolated environment: {origin}")
 namespace = runpy.run_path(sys.argv[1])

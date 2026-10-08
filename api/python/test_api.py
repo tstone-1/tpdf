@@ -15,7 +15,7 @@ import time
 import unittest
 from unittest.mock import patch
 
-from tpdf import CommandError, CommandTimeout, ProtocolError, Tpdf
+from tpdf_client import CommandError, CommandTimeout, ProtocolError, Tpdf
 
 ROOT = Path(__file__).resolve().parents[2]
 TARGET = Path(os.environ.get('CARGO_TARGET_DIR', ROOT / 'src-tauri' / 'target'))
@@ -502,7 +502,7 @@ class ClientTests(unittest.TestCase):
         self.assertFalse((self.root / 'unused.pdf').exists())
 
     def test_signing_options_and_discovery_use_the_json_contract(self):
-        with patch('tpdf.subprocess.Popen') as popen:
+        with patch('tpdf_client.subprocess.Popen') as popen:
             process = popen.return_value
             process.returncode = 0
             process.communicate.return_value = (b'{"schema":1,"command":"identities","usable":[],"not_usable":[]}', b'')
@@ -695,7 +695,7 @@ class ClientTests(unittest.TestCase):
         for timeout in [0, -1, float('nan'), float('inf')]:
             with self.assertRaises(ValueError):
                 Tpdf(BINARY, timeout=timeout)
-        with patch('tpdf.subprocess.Popen') as popen:
+        with patch('tpdf_client.subprocess.Popen') as popen:
             with self.assertRaises(ValueError):
                 self.pdf.run('edit', input_json={'bad': float('nan')})
             with self.assertRaises(ValueError):
@@ -703,7 +703,7 @@ class ClientTests(unittest.TestCase):
             popen.assert_not_called()
 
     def test_password_is_child_only_and_not_in_argv(self):
-        with patch('tpdf.subprocess.Popen') as popen:
+        with patch('tpdf_client.subprocess.Popen') as popen:
             process = popen.return_value
             process.returncode = 0
             process.communicate.return_value = (b'{"schema":1,"command":"info","files":[]}', b'')
@@ -715,7 +715,7 @@ class ClientTests(unittest.TestCase):
             self.assertEqual(dict(os.environ), before)
 
     def test_a_new_password_is_child_only_and_not_in_argv(self):
-        with patch('tpdf.subprocess.Popen') as popen:
+        with patch('tpdf_client.subprocess.Popen') as popen:
             process = popen.return_value
             process.returncode = 0
             process.communicate.return_value = (b'{"schema":1,"command":"protect"}', b'')
@@ -780,7 +780,7 @@ class ClientTests(unittest.TestCase):
             self.assertEqual(len(self.pdf.fields(made)['fields']), 1)
 
     def test_add_fields_builds_the_line_its_options_ask_for(self):
-        with patch('tpdf.subprocess.Popen') as popen:
+        with patch('tpdf_client.subprocess.Popen') as popen:
             process = popen.return_value
             process.returncode = 0
             process.communicate.return_value = (b'{"schema":1,"command":"form"}', b'')
@@ -795,7 +795,7 @@ class ClientTests(unittest.TestCase):
                 self.assertIn(flag, popen.call_args[0][0])
 
     def test_compress_builds_the_line_its_options_ask_for(self):
-        with patch('tpdf.subprocess.Popen') as popen:
+        with patch('tpdf_client.subprocess.Popen') as popen:
             process = popen.return_value
             process.returncode = 0
             process.communicate.return_value = (b'{"schema":1,"command":"compress"}', b'')
@@ -863,7 +863,7 @@ class ClientTests(unittest.TestCase):
 
     def test_malformed_and_incompatible_reports_are_not_success(self):
         for response in [b'', b'not JSON', b'{}{}', b'[]', b'{"schema":2,"command":"help"}', b'{"schema":true,"command":"help"}', b'{"schema":1,"command":"info"}']:
-            with self.subTest(response=response), patch('tpdf.subprocess.Popen') as popen:
+            with self.subTest(response=response), patch('tpdf_client.subprocess.Popen') as popen:
                 process = popen.return_value
                 process.returncode = 0
                 process.communicate.return_value = (response, b'')
@@ -886,7 +886,7 @@ class ClientTests(unittest.TestCase):
             if argv[0] == str(BINARY.resolve()):
                 return fake_tool(argv, **kwargs)
             return original_popen(argv, **kwargs)
-        with patch('tpdf.subprocess.Popen', side_effect=launch):
+        with patch('tpdf_client.subprocess.Popen', side_effect=launch):
             with self.assertRaises(CommandTimeout):
                 Tpdf(BINARY, timeout=0.5).help()
         self.assertLess(time.monotonic() - start, 10)

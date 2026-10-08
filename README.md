@@ -130,7 +130,7 @@ tpdf hidden released.pdf
 ```
 
 ```python
-from tpdf import Tpdf
+from tpdf_client import Tpdf
 
 pdf = Tpdf()
 report = pdf.redact("letter.pdf", "letter-redacted.pdf", texts=["Jane Doe"])
@@ -1249,7 +1249,7 @@ as well; `uv pip install ./api/python` installs it from a checkout.
 The client has no runtime dependencies and requires Python 3.10 or newer.
 
 ```python
-from tpdf import Tpdf
+from tpdf_client import Tpdf
 
 pdf = Tpdf()  # Or Tpdf("/path/to/tpdf-cli", timeout=60)
 result = pdf.edit("input.pdf", "output.pdf", [
@@ -1359,7 +1359,7 @@ client timeout. Encrypted inputs are refused. An intact signature is not necessa
 `run(command, *arguments)` reaches every CLI command.
 It returns a `Result` carrying
 `report`, `exit_code` and `stderr`. `Result.typed` is the same report; the client's methods
-return it under the shape `tpdf.reports` names, and nothing checks that shape at run time. Nonzero exits raise `CommandError`, which retains
+return it under the shape `tpdf_client.reports` names, and nothing checks that shape at run time. Nonzero exits raise `CommandError`, which retains
 those results; use `check=False` on `run` to inspect a negative verification verdict
 or partial split directly. Malformed or incompatible reports raise `ProtocolError`.
 `password=` passes a password in the child's environment, without changing the

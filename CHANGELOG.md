@@ -35,6 +35,14 @@ have the binary.)
   `tpdf hidden` prints the same sentence about what is never looked at as the last
   line of its plain output; `--json` is unchanged.
 
+### Changed
+
+- **The Python client is imported as `tpdf_client`.** It was `tpdf`. PyPI has a project
+  of another author with that name whose module is also `tpdf`, and with both installed
+  one writes over the other's files. Scripts change `from tpdf import Tpdf` to
+  `from tpdf_client import Tpdf`; nothing else in the client changed. The package name
+  `tpdf-client` stays, and a workflow now uploads it to PyPI when started by hand.
+
 ### Fixed
 
 - **After an update on Windows, a document in a folder with spaces in its name is opened

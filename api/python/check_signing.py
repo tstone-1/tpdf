@@ -20,7 +20,7 @@ from pathlib import Path
 import sys
 
 from test_api import check_document_workflow, fixture
-from tpdf import CommandError, Tpdf
+from tpdf_client import CommandError, Tpdf
 
 
 

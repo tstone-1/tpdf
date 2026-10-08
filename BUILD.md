@@ -187,27 +187,52 @@ are in [`docs/PLAN.md`](docs/PLAN.md). This file is only the mechanics.
 
 
 
-## The Python client is installed from the repository
+## The Python client and PyPI
 
-`api/python` is the distribution `tpdf-client` (import name `tpdf`). It is **not published
-on PyPI, by decision (2026-10-02)**, and installs from the repository:
+`api/python` is the distribution `tpdf-client`; its import name is `tpdf_client`. Until
+its first upload to PyPI it installs from the repository:
 
 ```
 pip install "git+https://github.com/tstone-1/tpdf#subdirectory=api/python"
 ```
 
-Why not PyPI: the client only starts the `tpdf` command-line tool, which comes with the
-desktop application, so `pip install tpdf-client` alone would install something that cannot
-run. A PyPI release would also be a second release to keep in step with every change to the
-CLI's JSON reports, and a version there cannot be withdrawn and replaced. Revisit when
-somebody asks for it, or when the report format has been stable over several releases.
+The import name was `tpdf` until 2026-10-08. PyPI has a project of another author named
+`tpdf` whose module is also `tpdf`; with both installed, one writes over the other's files
+and neither `pip` nor Python says so. The rename was made before the first upload, because
+after it a rename breaks every script.
 
-The package still has to build, because the line above builds it:
+On 2026-10-02 the decision was not to publish, for three reasons. They still hold as facts,
+and the decision of 2026-10-08 to publish accepts them:
+
+- The client only starts the `tpdf` command-line tool, which comes with the desktop
+  application, so `pip install tpdf-client` alone installs something that cannot run. It
+  does nothing on Linux, where there is no tool. The package's description has to say both.
+- It is a second release to keep in step with the tool's JSON reports. The client refuses
+  a report whose `schema` is not 1 with `ProtocolError`, so a tool that has moved on is
+  noticed and not misread.
+- A version on PyPI cannot be withdrawn and replaced. A wrong upload is answered with the
+  next version.
+
+To publish: raise `version` in `api/python/pyproject.toml`, push, wait for CI, then
+
+```
+gh workflow run pypi.yml --ref main
+gh run list --workflow pypi.yml --limit 1
+```
+
+`pypi.yml` refuses a version PyPI already has, runs the client's tests, builds, checks the
+two archives, imports the built wheel from outside the checkout and uploads. It stores no
+password: PyPI trusts this workflow in the environment `pypi` (project `tpdf-client`,
+owner `tstone-1`, repository `tpdf`, workflow `pypi.yml`), set on pypi.org under
+*Publishing*. After the first upload, change the install line in `README.md` and
+`api/python/README.md` to `pip install tpdf-client`.
+
+The same steps by hand, which is what the install line from the repository runs:
 
 ```
 uv build api/python --out-dir scratch/dist
 uvx twine check scratch/dist/*
-uv run --isolated --no-project --with scratch/dist/tpdf_client-*.whl python -c "import tpdf; print(tpdf.Tpdf)"
+uv run --isolated --no-project --with scratch/dist/tpdf_client-*.whl python -c "import tpdf_client; print(tpdf_client.Tpdf)"
 ```
 
 ## README screenshots

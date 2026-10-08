@@ -24,10 +24,10 @@ class PackageGateTests(unittest.TestCase):
             result = root / 'result.json'
             # No third-party code needed: supply only the module origin that
             # the child runner checks, then exercise real unittest execution.
-            origin = root / 'tpdf/__init__.py' if origin_inside else root.parent / 'wrong-client.py'
+            origin = root / 'tpdf_client/__init__.py' if origin_inside else root.parent / 'wrong-client.py'
             setup = ('import sys,types; '
                      f'sys.prefix={str(root)!r}; '
-                     f'sys.modules["tpdf"]=types.SimpleNamespace(__file__={str(origin)!r});\n')
+                     f'sys.modules["tpdf_client"]=types.SimpleNamespace(__file__={str(origin)!r});\n')
             process = subprocess.run([sys.executable, '-I', '-c', setup + RUN_SUITE,
                                       str(tests), str(result)], capture_output=True, text=True)
             report = json.loads(result.read_text()) if result.exists() else None

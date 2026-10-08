@@ -6,7 +6,7 @@ import unittest
 from unittest.mock import Mock
 
 from check_signing import check_long_term, check_signing, long_term_checks
-from tpdf import CommandError, Result
+from tpdf_client import CommandError, Result
 
 
 def good_report():

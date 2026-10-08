@@ -2,7 +2,7 @@
 
 Install from a checkout: uv pip install ./api/python
 
-    from tpdf import Tpdf
+    from tpdf_client import Tpdf
     pdf = Tpdf()  # or Tpdf('/path/to/tpdf-cli')
     result = pdf.edit('input.pdf', 'output.pdf', [
         {'op': 'rotate', 'page': 1, 'degrees': 90},
@@ -44,7 +44,7 @@ class Result:
 
     @property
     def typed(self) -> Any:
-        """The report, for a method that names its shape in `tpdf.reports`.
+        """The report, for a method that names its shape in `tpdf_client.reports`.
 
         The shape is the CLI's promise, held against its committed samples by
         `test_reports.py`; nothing here checks a report against it at run time.

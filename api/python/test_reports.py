@@ -1,4 +1,4 @@
-"""Holds `tpdf.reports` against the committed CLI samples, in both directions.
+"""Holds `tpdf_client.reports` against the committed CLI samples, in both directions.
 
 Run from the repository root:
 
@@ -23,7 +23,7 @@ import unittest
 from pathlib import Path
 from typing import Any, Literal, TypedDict
 
-from tpdf import reports
+from tpdf_client import reports
 
 SAMPLES = Path(__file__).resolve().parents[2] / "src-tauri" / "testdata" / "cli"
 
