@@ -6672,6 +6672,27 @@ only in the update *after* this one, because the version being replaced does the
 `docs/THREAT-MODEL.md` §T6 gained a paragraph for the new command: it parses nothing in the
 application's process, and no probe reads the process's image table during a check.
 
+**26.10.13 publication, 2026-10-08:** `Audit` and CI were green on the release commit
+`03061b3a`, both legs. The release workflow had changed since 26.10.12, taking the signing
+client from a cache, so `v26.10.13-rc1` was built first (run 37822087488): the client was
+restored from the cache, both platform jobs passed at the first attempt, and the tag and
+its draft were deleted. The `Release` run 37825754203 for the real tag skipped its gates on
+CI's account and both platform jobs passed at the first attempt. The Windows leg signed ten
+files with one login, each written at the first attempt, read the installer, `tpdf.exe`,
+`tpdf-cli.exe` and `pdfium.dll` back as signed, then installed and read `uninstall.exe`
+back as `Valid` and timestamped. The draft held 6 assets and
+`scripts/publish_release.py v26.10.13 --publish` published it. Without authentication the
+`.dmg`, the `-setup.exe` and its `.sig` answer 200 and `latest.json` offers 26.10.13 for
+`darwin-aarch64` and `windows-x86_64`. The downloaded `.dmg` staples and Gatekeeper reads
+it as Notarized Developer ID. The downloaded installer verifies with `minisign` against its
+`.sig`, and on a Windows 11 computer `Get-AuthenticodeSignature` reads it as `Valid` and
+timestamped by `CN=Open Source Developer Timo Stein`, with the SHA-256 of the copy
+downloaded on macOS; the 26.10.10 installer read `NotSigned` in the same command, as the
+control. The Homebrew cask went from 26.10.12 to 26.10.13; `brew audit --cask --online`
+passed and `brew livecheck` reads 26.10.13. winget was not updated. The installer was not
+run outside the release run, and the update from an earlier version (step 12) was not
+applied by hand before this was written.
+
 **26.10.12 verification, macOS arm64, 2026-10-08:** all 30 gates passed on the release tree
 (2,942 Rust tests with ten documented ignored, 2,528 frontend tests) and `check_windows.py`
 type-checked the Windows tree. Every mutation selected `--near v26.10.11` ran and was
