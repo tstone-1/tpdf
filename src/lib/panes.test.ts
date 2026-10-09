@@ -72,6 +72,13 @@ describe("moving a tab to the right", () => {
     });
   });
 
+  it("shows the tab after it when a tab between two others moves", () => {
+    const { panes, order } = three();
+    panes.fronted(2);
+    panes.move(2, "right", order);
+    expect(panes.front("left")).toBe(3);
+  });
+
   it("shows the tab before it when the moved tab was last on its side", () => {
     const { panes, order } = three();
     panes.fronted(3);
@@ -302,6 +309,7 @@ describe("naming the other document", () => {
   it("takes a name typed in full over a longer one containing it", () => {
     expect(pickPartner("report.pdf", names)).toEqual({ index: 0 });
     expect(pickPartner("  INVOICE.PDF ", names)).toEqual({ index: 2 });
+    expect(pickPartner("report.pdf", ["annual report.pdf", "report.pdf"])).toEqual({ index: 1 });
   });
 
   it("takes part of a name when one document has it", () => {

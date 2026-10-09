@@ -50,6 +50,10 @@ describe("the stage", () => {
     expect(v.stage.focused).toBe(-1);
     expect(v.stage.holds(-1)).toBe(false);
     expect(v.stage.parked).toEqual([]);
+    // No document is not the one in the variables, though both are -1.
+    let ran = false;
+    expect(v.stage.within(-1, () => { ran = true; })).toEqual({ ran: false });
+    expect(ran).toBe(false);
     // Parking nothing parks nothing.
     v.stage.park();
     expect(v.stage.parked).toEqual([]);
