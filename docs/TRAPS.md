@@ -795,6 +795,7 @@ hop through the index.
 - The updater ends the process on one platform and not the other, so `ready` is a state only macOS reaches
 - Tauri 2.12 puts an empty `msvcrt.lib` on the library path of everything that depends on `tpdf`
 - A PowerShell `$env:` variable in double quotes is emptied by the remote bash, and `Test-Path` then answers False about another path
+- A process that is exiting refuses a query before its handle says it has exited
 
 ## Fixtures
 - The test fixtures are generated, not committed
@@ -26101,3 +26102,26 @@ that is right for `getImageData` on the overlay is wrong for a press by exactly 
 height of what is above the page, and that height changes whenever the window's chrome
 does. Nobody read the red, because this harness needs a window and nothing runs it
 automatically.
+
+### A process that is exiting refuses a query before its handle says it has exited
+
+`tabs_check.py --phase sides` passed its checks on Windows and then exited 1 with *could not
+verify worker exit: [WinError 5] Access is denied*, once in eight runs (2026-10-09). The
+error read as `OpenProcess` being refused a sandboxed worker. It was not: a live worker
+opens with `SYNCHRONIZE | PROCESS_QUERY_LIMITED_INFORMATION` every time, and so does one
+that has just exited.
+
+The refusal is `QueryFullProcessImageNameW` on a worker **while it is exiting**. Hammering
+the workers of a killed application, the query failed 127 times, each time with error 5,
+each time with the handle not yet signalled, and each handle was signalled within two
+seconds. `win_worker_exit.py` already knew a concurrent exit could fail the query and
+rechecked the handle, but with a wait of zero, which asks at the one instant the answer is
+still no. It now waits out the rest of its deadline. Called inside the exit window, the
+committed observer raised in 20 of 20 launches and the waiting one in 0 of 20, interleaved.
+
+Two things made it look rare and unexplained. The workers are gone about 10 to 55 ms after
+the application, so the observer usually finds no child to ask about. And the first A/B of
+the fix waited for the application before calling either observer, found nothing to ask
+about in both arms and reported 0 of 20 for each: a comparison in which the old code cannot
+fail says nothing about the new code. On Windows, *exited* is the handle being signalled;
+an error from a query about the process is not it, in either direction.

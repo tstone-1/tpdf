@@ -92,9 +92,14 @@ def live_workers(parent: int, binary: Path, timeout: float = 5) -> tuple[list[in
             length = wintypes.DWORD(len(path))
             if not api.QueryFullProcessImageNameW(handle, 0, path, ctypes.byref(length)):
                 query_error = ctypes.get_last_error()
-                # A concurrent exit may make the query fail; only a signalled
-                # process handle establishes that it exited.
-                if api.WaitForSingleObject(handle, 0) == 0:
+                # A worker that is exiting refuses the query with access denied
+                # before its handle is signalled: measured 2026-10-09, 127 of
+                # 127 refusals were not signalled at that instant and all were
+                # within two seconds. Only a signalled handle establishes that
+                # it exited, so it is waited for; a zero wait here failed a
+                # passing run.
+                remaining = max(0, int((deadline - time.monotonic()) * 1000))
+                if api.WaitForSingleObject(handle, remaining) == 0:
                     continue
                 raise ctypes.WinError(query_error)
             if os.path.normcase(path.value) != expected:

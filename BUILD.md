@@ -7801,12 +7801,11 @@ starts at 0 and increments within the month.
    `scripts/viewer_sweep.py` (*Checking the viewer*), a longer run with its own table.
 
    **It runs unmodified on Windows** against the `--no-bundle` checks build, from a session
-   that is logged on (2026-10-09, Windows 11): every check passed. **Open, and seen once:**
-   in that run the `sides` phase passed its checks and `tabs_check.py` then exited 1 with
-   `could not verify worker exit: [WinError 5] Access is denied`, from `OpenProcess` in
-   `win_worker_exit.py`. The phase ran seven more times that day, and `tabs` six, with no
-   repeat and no `tpdf.exe` left afterwards. The cause is not established; a rerun of the
-   one phase is what told a harness refusal from a worker that stayed.
+   that is logged on (2026-10-09, Windows 11): every check passed. In that run the `sides`
+   phase passed its checks and `tabs_check.py` then exited 1 with `could not verify worker
+   exit: [WinError 5] Access is denied`. That was the harness: `win_worker_exit.py` asked
+   about a worker that was exiting and did not wait for it (`docs/TRAPS.md`, *A process
+   that is exiting refuses a query before its handle says it has exited*). It waits now.
 6. <a id="release-step-6"></a>**Re-check `docs/THREAT-MODEL.md` against the code**, and correct the document before
    trusting anything else in this list — §3's boundary table, §5's sandbox policy and
    §6's macOS column especially. Every present-tense sentence there claims something is
