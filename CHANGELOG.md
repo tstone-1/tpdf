@@ -17,6 +17,19 @@ as *downloadable*, while the release sat as a draft that GitHub showed to nobody
 are given now because they are different facts, and only the second one means a reader can
 have the binary.)
 
+## [26.10.14] - Unreleased
+
+### Added
+
+- **Two documents side by side.** *Show side by side with...* asks for the other open
+  document by name, and a tab's right-click menu has *Move to right side* or *Move to left
+  side*, beside *Move to start* and *Move to end*. Each side has its own row of tabs. The
+  toolbar, the sidebar, the find field and every command act on the side last clicked into,
+  which its row of tabs marks. The divider between the sides is dragged to resize them and
+  double-clicked for equal halves. *Switch sides* exchanges them, *Go to other side* moves
+  between them, and closing or moving away a side's last tab ends the split. The two sides
+  do not yet scroll together, and the layout is not restored at the next launch.
+
 ## [26.10.13] - 2026-10-08
 
 ### Added

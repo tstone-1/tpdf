@@ -120,7 +120,7 @@
   } from "./lib/weblinkdialog";
   import type { Properties } from "./lib/properties";
   import { basename } from "./lib/paths";
-  import { Sidebar, type Tab } from "./lib/sidebar";
+  import { Sidebar, type SidebarOptions, type Tab } from "./lib/sidebar";
   import {
     pagesNeedingWords,
     wantingWordsOn,
@@ -182,11 +182,51 @@
     finishUpdate, installEndsProcess, Updates, updateLabel, updateNotice,
     type FinishStep, type UpdateState,
   } from "./lib/update";
-  import { Viewer, type ViewerStatus } from "./lib/viewer";
-  import { Stage, blankLive, type LiveDocument, type Slots } from "./lib/livedocument";
+  import { Viewer, type ViewerOptions, type ViewerStatus } from "./lib/viewer";
+  import { Stage, blankLive, scoped, type LiveDocument, type Slots } from "./lib/livedocument";
+  import { Panes, otherSide, type Side, type Slot } from "./lib/panes";
   import { describeFit, percentOf } from "./lib/zoom";
 
-  let surface = $state<HTMLDivElement | null>(null);
+  /**
+   * The window's two page areas. The second is used when two documents are
+   * side by side; which side each one shows is `panes.ts`'s answer.
+   */
+  let areaHosts = $state<(HTMLDivElement | null)[]>([null, null]);
+  /** The page area the mounted document's viewer is in. */
+  let surface: HTMLDivElement | null = null;
+  const panes = new Panes();
+  /**
+   * What the markup needs of {@link panes}, which is not reactive: for each
+   * page area, whether it shows nothing and where it is drawn. Written by
+   * {@link refreshTabs}, which every change to the tabs already ends in.
+   */
+  let paneLayout = $state({
+    split: false, unused: [false, true], order: [0, 2], focused: 0, front: [-1, -1],
+  });
+  /**
+   * Whether a document is mounted that the reader is not working in. The body
+   * is drawn while this is set, as well as while the document in the variables
+   * has a title.
+   */
+  let bodyHeld = $state(false);
+  /** The share of the width the left side has, with two sides. */
+  let paneShare = $state(0.5);
+  let panesHost = $state<HTMLDivElement | null>(null);
+
+  function dividerDown(event: PointerEvent): void {
+    if (event.button !== 0) return;
+    (event.currentTarget as HTMLElement).setPointerCapture(event.pointerId);
+    event.preventDefault();
+  }
+
+  /** Follows the pointer while the divider holds it, within a fifth of either edge. */
+  function dividerMove(event: PointerEvent): void {
+    const divider = event.currentTarget as HTMLElement;
+    if (!divider.hasPointerCapture(event.pointerId) || !panesHost) return;
+    const box = panesHost.getBoundingClientRect();
+    if (box.width <= 0) return;
+    paneShare = Math.min(0.8, Math.max(0.2, (event.clientX - box.left) / box.width));
+  }
   let sidebarHost = $state<HTMLDivElement | null>(null);
   let title = $state("");
   let error = $state<string | null>(null);
@@ -211,11 +251,13 @@
     refreshMenu();
   });
   const tabs = new DocumentTabs<DocumentTab>();
-  let tabRows = $state<{ id: number; path: string; dirty: boolean }[]>([]);
+  let tabRows = $state<{ id: number; path: string; dirty: boolean; slot: number }[]>([]);
   const tabLabelSize = new TabLabelSize();
   let tabLabelPx = $state(tabLabelSize.px);
   let activeTab = $state(-1);
   const tabLabels = $derived(labelsFor(tabRows.map((tab) => tab.path)));
+  /** The same labels by handle, for a row that shows some of the tabs. */
+  const tabLabelOf = $derived(new Map(tabRows.map((tab, index) => [tab.id, tabLabels[index] ?? ""])));
   let committingPopup = false;
   let formLayer: FormLayer | null = null;
   /** The names in the open document's form, for naming a field placed in it. */
@@ -287,10 +329,20 @@
   }
 
   function refreshTabs(): void {
+    const leftIn = panes.slotOf("left");
+    paneLayout = {
+      split: panes.split,
+      unused: [0, 1].map((slot) => !panes.split && slot !== leftIn),
+      // The divider is drawn between them, at 1.
+      order: [0, 1].map((slot) => (slot === leftIn ? 0 : 2)),
+      focused: panes.slotOf(panes.focused),
+      front: ([0, 1] as Slot[]).map((slot) => panes.front(panes.sideIn(slot))),
+    };
     const changed = activeTab !== tabs.active;
     activeTab = tabs.active;
     tabRows = tabs.all.map((tab) => ({
       id: tab.doc.id, path: tab.path, dirty: tab.edits.state.dirty,
+      slot: panes.slotOf(panes.sideOf(tab.doc.id)),
     }));
     tabRecorder.note(tabs.all.map((tab) => tab.path), tabs.find(tabs.active)?.path ?? null);
     if (changed) void tick().then(() => {
@@ -322,9 +374,18 @@
    */
   async function settleDrafts(): Promise<void> {
     commitPopups();
+    // The document on the other side too, when there is one: a note left open
+    // there is as unsaved as one here, and closing the window or every tab
+    // reads both documents' state. Committed before the first wait, like the
+    // line above, and each as its own document.
+    const beside = stage.parked.map((id) => asDocument(id, () => {
+      commitPopups();
+      return Promise.all([pendingEdit, formLayer?.settle(), textEditor?.settle()]);
+    }));
     await pendingEdit;
     await formLayer?.settle();
     await textEditor?.settle();
+    await Promise.all(beside);
   }
 
   async function settleDocument(): Promise<void> {
@@ -373,16 +434,139 @@
 
   function activateTab(id: number): Promise<void> {
     return documentTasks.idle().then(() => opens.run(async () => {
-      const tab = tabs.find(id);
-      if (!tab || id === openDoc) return;
-      await openDocument(tab.path, false, null, tab);
+      await showTabNow(id);
     }));
+  }
+
+  /**
+   * Brings a tab to the front of the side it is on, with the reader working
+   * there. Inside {@link opens}, like every caller of `openDocument`.
+   */
+  async function showTabNow(id: number): Promise<void> {
+    const tab = tabs.find(id);
+    if (!tab) return;
+    const side = panes.sideOf(id);
+    if (side !== panes.focused && !focusSide(side)) return;
+    if (id === openDoc) return;
+    await openDocument(tab.path, false, null, tab);
+  }
+
+  /**
+   * Makes `side` the one the reader works in: its document's values go into
+   * the variables and the other document's wait in `stage`.
+   *
+   * Not asynchronous, and it must not become so. It is called from a press
+   * inside the other side, and the viewer there handles the same press right
+   * after: by then the variables have to be that document's. What the reader
+   * was typing on the side they leave is committed first; the edit that makes
+   * is finished by {@link runEdit} as the document it was made in.
+   *
+   * Refused while a document is opening or a task is running, as a tab switch
+   * is, and for a side that shows nothing.
+   */
+  function focusSide(side: Side): boolean {
+    const id = panes.front(side);
+    if (id === openDoc) return true;
+    if (opening || documentBusy || copyTaskBusy || !stage.parked.includes(id)) return false;
+    commitPopups();
+    // A search still waiting out its pause is this document's. Run now, it
+    // reaches the viewer it was typed for.
+    if (findTimer) {
+      clearTimeout(findTimer);
+      findTimer = 0;
+      viewer?.search(query);
+    }
+    sidebar?.setVisible(false);
+    stage.focus(id);
+    panes.focus(side);
+    tabs.active = id;
+    sidebar?.setVisible(sidebarShown);
+    formLayer?.setBusy(documentBusy);
+    textEditor?.setBusy(documentBusy);
+    refreshTabs();
+    refreshMenu();
+    return true;
+  }
+
+  /**
+   * Mounts and tears down viewers until the window shows what {@link panes}
+   * says, and leaves the reader in the side it names. Inside {@link opens}.
+   *
+   * A document is torn down as itself, whichever side the reader is in. One is
+   * mounted into blank variables: the document in them is parked first, and
+   * `openDocument` then does what it does for the first document of a window.
+   */
+  async function showPanes(): Promise<void> {
+    const plan = panes.plan();
+    for (const { id } of plan.unmount) {
+      asDocument(id, () => { commitPopups(); keepActiveTab(); unmountDocument(); });
+    }
+    let refused: string | null = null;
+    for (const { id } of plan.mount) {
+      const tab = tabs.find(id);
+      if (!tab) continue;
+      if (openDoc >= 0) {
+        sidebar?.setVisible(false);
+        // The body is drawn while a document has a title, and the variables
+        // are about to have none: this keeps the page areas, and the viewer
+        // in one of them, through that.
+        bodyHeld = true;
+        stage.park();
+      }
+      panes.fronted(id);
+      await openDocument(tab.path, false, null, tab);
+      // A document that would not mount left its reason in variables that the
+      // next lines replace.
+      if (openDoc !== id) refused = error;
+    }
+    const wanted = panes.plan().focus;
+    if (openDoc !== wanted && stage.parked.includes(wanted)) {
+      sidebar?.setVisible(false);
+      stage.focus(wanted);
+    } else if (openDoc < 0) {
+      // The side the reader was to be in shows nothing. Any document that is
+      // mounted is a better answer than an empty window beside one.
+      const any = stage.parked[0];
+      if (any !== undefined && stage.focus(any)) panes.fronted(any);
+    }
+    bodyHeld = stage.parked.length > 0;
+    if (openDoc >= 0) tabs.active = openDoc;
+    sidebar?.setVisible(sidebarShown);
+    formLayer?.setBusy(documentBusy);
+    textEditor?.setBusy(documentBusy);
+    if (refused) say(refused);
+    refreshTabs();
+    refreshMenu();
+    if (plan.mount.length || plan.unmount.length) viewer?.focus();
+  }
+
+  /** Moves a tab to `to`, which starts the split when nothing is on the right. */
+  function moveTab(id: number, to: Side): Promise<void> {
+    return documentTasks.idle().then(() => opens.run(async () => {
+      if (!tabs.find(id) || tabs.all.length < 2) return;
+      opening = true;
+      try {
+        await settleDocument();
+        panes.move(id, to, tabs.all.map((entry) => entry.doc.id));
+        await showPanes();
+      } catch (e) { say(String(e)); }
+      finally { opening = false; refreshMenu(); }
+    }));
+  }
+
+  function switchSides(): void {
+    panes.swap(tabs.all.map((entry) => entry.doc.id));
+    refreshTabs();
+    refreshMenu();
   }
 
   function closeTab(id: number): Promise<void> {
     return documentTasks.idle().then(() => opens.run(async () => {
       const tab = tabs.find(id);
       if (!tab) return;
+      // The tab in front of the other side is closed as the document the
+      // reader is in, which it becomes first.
+      if (id !== openDoc && panes.front(panes.sideOf(id)) === id && !focusSide(panes.sideOf(id))) return;
       opening = true;
       try {
         await settleDocument();
@@ -390,17 +574,18 @@
           `Discard unsaved changes to ${basename(tab.path)}?`,
           { title: "Close tab", kind: "warning", okLabel: "Discard changes", cancelLabel: "Keep open" },
         )) return;
-        const wasActive = id === openDoc;
-        if (wasActive) clearActiveDocument();
+        if (id === openDoc) clearActiveDocument();
+        panes.closed(id, tabs.all.map((entry) => entry.doc.id));
         tabs.remove(id);
         refreshTabs();
         // A teardown refusal must not prevent the next document from mounting.
         await call("close_document", { doc: id }).catch((e) => {
           console.warn(`could not release document ${id}: ${e}`);
         });
-        const next = tabs.find(tabs.active);
-        if (wasActive && next) await openDocument(next.path, false, null, next);
-        else if (wasActive) void refreshStartPage();
+        // The side's next tab comes to the front, or the split ends and the
+        // other side's document is the one the reader is in.
+        if (tabs.all.length) await showPanes();
+        else void refreshStartPage();
       } catch (e) { say(String(e)); }
       finally { opening = false; refreshMenu(); }
     }));
@@ -425,8 +610,11 @@
           { title: "Close all tabs", kind: "warning", okLabel: "Discard changes", cancelLabel: "Keep open" },
         )) return;
         const ids = tabs.all.map((tab) => tab.doc.id);
+        for (const beside of stage.parked) asDocument(beside, () => unmountDocument());
+        bodyHeld = false;
         clearActiveDocument();
         for (const id of ids) tabs.remove(id);
+        panes.cleared();
         refreshTabs();
         for (const id of ids) {
           // A teardown refusal must not keep the other handles open.
@@ -797,6 +985,7 @@
     openPathName: { get: () => openPathName, set: (value) => { openPathName = value; } },
     openPageCount: { get: () => openPageCount, set: (value) => { openPageCount = value; } },
     title: { get: () => title, set: (value) => { title = value; } },
+    surface: { get: () => surface, set: (value) => { surface = value; } },
     viewer: { get: () => viewer, set: (value) => { viewer = value; } },
     sidebar: { get: () => sidebar, set: (value) => { sidebar = value; } },
     textEditor: { get: () => textEditor, set: (value) => { textEditor = value; } },
@@ -832,6 +1021,21 @@
   const stage = new Stage(liveSlots, blankLive, () => openDoc);
 
   /**
+   * Runs `work` with document `id` in the variables above, when it is still
+   * mounted, and answers `undefined` when it is not.
+   *
+   * For everything that happens to a document without the reader pressing
+   * anything in it: a frame its viewer drew, a reply that arrived for it. With
+   * two documents side by side those happen to the one the reader is *not*
+   * working in as well, and the code that handles them reads the variables.
+   * `work` must not wait: what follows an `await` goes through here again.
+   */
+  function asDocument<R>(id: number, work: () => R): R | undefined {
+    const done = stage.within(id, work);
+    return done.ran ? done.value : undefined;
+  }
+
+  /**
    * Tears down what is built around the mounted document and leaves every
    * variable of it as it is with no document.
    *
@@ -843,11 +1047,13 @@
     // The debounced find is keyed to the viewer destroyed below: left armed, it
     // fires a scan at the next document for a query the field no longer shows.
     clearTimeout(findTimer);
+    findTimer = 0;
     textEditorGeneration++;
     textEditor?.destroy();
     formLayer?.destroy();
     viewer?.destroy();
     sidebar?.destroy();
+    panes.unmounted(openDoc);
     stage.clear();
   }
 
@@ -902,6 +1108,18 @@
     setDiskChangeMode: (mode) => setDiskChangeMode(mode),
     closeDocument: () => void closeTab(openDoc),
     closeAllDocuments: () => void closeAllTabs(),
+    sides: () => ({
+      split: panes.split,
+      focused: panes.focused,
+      others: tabs.all.filter((tab) => tab.doc.id !== openDoc).map((tab) => basename(tab.path)),
+    }),
+    showBeside: (index) => {
+      const partner = tabs.all.filter((tab) => tab.doc.id !== openDoc)[index];
+      if (partner) void moveTab(partner.doc.id, otherSide(panes.focused));
+    },
+    moveToOtherSide: () => void moveTab(openDoc, otherSide(panes.focused)),
+    switchSides: () => switchSides(),
+    focusOtherSide: () => { if (focusSide(otherSide(panes.focused))) viewer?.focus(); },
     restoreTabs: () => restoreTabs,
     setRestoreTabs: (restore) => setRestoreTabs(restore),
     tabsToReopen: () => tabsToReopen(session, isOpenTab).length,
@@ -1708,7 +1926,11 @@
     if (copyTaskBusy || (documentBusy && !committingPopup)) return Promise.resolve();
     // Queued rather than started, so a reply can never be adopted after a
     // later one. See {@link editing}.
-    pendingEdit = editing.run(() => runEdit(run));
+    //
+    // The document is named here, when the edit is asked for. The queue runs
+    // it later, and the reader may be working in the other side by then.
+    const id = openDoc;
+    pendingEdit = editing.run(() => runEdit(id, run));
     return pendingEdit;
   }
 
@@ -1752,62 +1974,70 @@
   }
 
   async function runEdit(
+    id: number,
     run: (edits: Edits) => Promise<EditState>,
   ): Promise<void> {
-    const model = edits;
-    if (!model || !viewer) return;
+    const model = asDocument(id, () => (viewer ? edits : null));
+    if (!model) return;
     try {
       const after = await run(model);
-      if (edits !== model) return;
-      // Only when the pages moved, and the viewer is what answers that: every
-      // call below throws work away --- the strip's thumbnails, the panels' rows
-      // --- and a turn moves no page, so doing it unconditionally would make
-      // rotating a page cost a re-render of the whole strip.
-      if (viewer?.setPages(after.pages)) {
-        applyPageOrder();
-        // The strip, which is the one consumer that cannot work out for itself
-        // that anything happened: its thumbnails are held under the row they
-        // were rendered for, and a *move* leaves the row count exactly as it
-        // was. Called here rather than in `applyPageOrder`, which also runs
-        // when a late outline or a late set of comments arrives and has no
-        // business throwing away a strip somebody is looking at.
-        sidebar?.thumbnails?.setPages(after.pages.length);
-      }
-      // Any other file whose first pages just arrived has links nobody has read.
-      void fetchImportedLinks(model);
-      viewer?.setMarks(shownMarks(after));
-      formLayer?.update(after);
-      formLayer?.layout();
-      if (viewer?.setTextEdits(after.text_edits ?? [])) sidebar?.thumbnails?.setPages(after.pages.length);
-      if (viewer?.setFieldEdits(scannedForm?.widgets ?? [], after.fields ?? [])) sidebar?.thumbnails?.setPages(after.pages.length);
-      textEditor?.update(after);
-      // The pending redactions arrive on the same reply and are pushed the same
-      // way. Not through `setMarks`: they are a separate list for the reason
-      // `docmodel.rs` states, and one setter taking both would be the first
-      // place that distinction could be lost.
-      viewer?.setRedactions(after.redactions);
-      // Beside the viewer's own copy rather than in `applyPageOrder`: the marks
-      // arrive with this answer, where the links, comments and outline are
-      // answers about the *file* that this reconciles against a new page order.
-      sidebar?.setMarks(markRows(after.marks, model.map));
-      // Two calls rather than one, because the rows and the words on them
-      // change for different reasons: marking a region changes the list at
-      // once, and the words under it arrive a page-extraction later. The
-      // scheduler is a no-op when every page in the list has already been read,
-      // which is every edit after the first on a given page.
-      sidebar?.setRedactions(redactionRows(after.redactions, model.map));
-      void fillRedactionWords();
-      dirty = after.dirty;
-      refreshTabs();
-      // Undo and Redo are the two menu items whose enablement moves on every
-      // edit, which is why this is here rather than only at the ends of an open.
-      refreshMenu();
+      // Everything below reads and writes the variables of the document the
+      // edit was made in, so it runs as that document.
+      asDocument(id, () => adoptEdit(model, after));
     } catch (e) {
       // Shown rather than logged. A refusal here is about the document --- a page
       // that is gone, a handle that is not open --- and a rotate command that
       // silently does nothing reads as a broken application.
-      say(String(e));
+      asDocument(id, () => say(String(e)));
     }
+  }
+
+  /** Moves the mounted document's viewer and panels to the state an edit produced. */
+  function adoptEdit(model: Edits, after: EditState): void {
+    if (edits !== model) return;
+    // Only when the pages moved, and the viewer is what answers that: every
+    // call below throws work away --- the strip's thumbnails, the panels' rows
+    // --- and a turn moves no page, so doing it unconditionally would make
+    // rotating a page cost a re-render of the whole strip.
+    if (viewer?.setPages(after.pages)) {
+      applyPageOrder();
+      // The strip, which is the one consumer that cannot work out for itself
+      // that anything happened: its thumbnails are held under the row they
+      // were rendered for, and a *move* leaves the row count exactly as it
+      // was. Called here rather than in `applyPageOrder`, which also runs
+      // when a late outline or a late set of comments arrives and has no
+      // business throwing away a strip somebody is looking at.
+      sidebar?.thumbnails?.setPages(after.pages.length);
+    }
+    // Any other file whose first pages just arrived has links nobody has read.
+    void fetchImportedLinks(model);
+    viewer?.setMarks(shownMarks(after));
+    formLayer?.update(after);
+    formLayer?.layout();
+    if (viewer?.setTextEdits(after.text_edits ?? [])) sidebar?.thumbnails?.setPages(after.pages.length);
+    if (viewer?.setFieldEdits(scannedForm?.widgets ?? [], after.fields ?? [])) sidebar?.thumbnails?.setPages(after.pages.length);
+    textEditor?.update(after);
+    // The pending redactions arrive on the same reply and are pushed the same
+    // way. Not through `setMarks`: they are a separate list for the reason
+    // `docmodel.rs` states, and one setter taking both would be the first
+    // place that distinction could be lost.
+    viewer?.setRedactions(after.redactions);
+    // Beside the viewer's own copy rather than in `applyPageOrder`: the marks
+    // arrive with this answer, where the links, comments and outline are
+    // answers about the *file* that this reconciles against a new page order.
+    sidebar?.setMarks(markRows(after.marks, model.map));
+    // Two calls rather than one, because the rows and the words on them
+    // change for different reasons: marking a region changes the list at
+    // once, and the words under it arrive a page-extraction later. The
+    // scheduler is a no-op when every page in the list has already been read,
+    // which is every edit after the first on a given page.
+    sidebar?.setRedactions(redactionRows(after.redactions, model.map));
+    void fillRedactionWords();
+    dirty = after.dirty;
+    refreshTabs();
+    // Undo and Redo are the two menu items whose enablement moves on every
+    // edit, which is why this is here rather than only at the ends of an open.
+    refreshMenu();
   }
 
   /**
@@ -1820,12 +2050,19 @@
    * either way, so a failing scan is not retried on every edit.
    */
   async function fetchImportedLinks(model: Edits): Promise<void> {
-    for (const doc of importedLinks.wanted(model.map)) {
+    // The list is this document's own, held while the scans are in flight:
+    // the variable is another document's when the reader changes sides.
+    const mine = importedLinks;
+    for (const doc of mine.wanted(model.map)) {
       try {
         const result = await call("document_links", { doc });
-        if (edits !== model) return;
-        importedLinks.record(doc, result.items);
-        applyPageOrder();
+        const recorded = asDocument(model.doc, () => {
+          if (edits !== model) return false;
+          importedLinks.record(doc, result.items);
+          applyPageOrder();
+          return true;
+        });
+        if (!recorded) return;
       } catch {
         // Deliberately quiet; see above.
       }
@@ -1911,42 +2148,55 @@
     const source = rawComments;
     if (!source) return;
     fillingWords = true;
+    // The walk waits for a page at a time, and the reader may change sides
+    // while it does. Each round's reading and each round's writing runs as the
+    // document the walk was started in, and so does lowering the flag.
+    const id = openDoc;
     try {
       for (;;) {
-        // **Re-slotted every round, not once before the loop.** A page number
-        // here is a slot, and a reader who deletes a page mid-walk renumbers
-        // every slot after it --- so a list captured up front would read slot 4's
-        // text and hand it to the comment that used to be there. Wrong words on
-        // a real row, which is the failure that looks entirely plausible.
-        const items = commentsIn(
-          source.items,
-          edits?.map ?? NO_PAGES,
-          edits?.state.notes,
-        );
-        const page = pagesNeedingWords(items, wordsAsked)[0];
-        if (page === undefined) return;
-        // The document that was open when this page was asked for. A second file
-        // opened mid-walk replaces `rawComments`, and writing this one's
-        // sentences onto its rows has the same shape as the slot problem above.
-        if (rawComments !== source) return;
-        // The comments this round will answer, recorded before the await so a
-        // page that cannot be read is not asked for again on the next edit.
-        // **Their ids, not the page**: a page number here is a slot, and a
-        // deletion renumbers every slot after it --- see `pagesNeedingWords`,
-        // which now takes this set and states what went wrong when it held
-        // slots.
-        for (const comment of wantingWordsOn(items, page)) wordsAsked.add(comment.id);
+        const round = asDocument(id, () => {
+          // **Re-slotted every round, not once before the loop.** A page number
+          // here is a slot, and a reader who deletes a page mid-walk renumbers
+          // every slot after it --- so a list captured up front would read slot 4's
+          // text and hand it to the comment that used to be there. Wrong words on
+          // a real row, which is the failure that looks entirely plausible.
+          const items = commentsIn(
+            source.items,
+            edits?.map ?? NO_PAGES,
+            edits?.state.notes,
+          );
+          const page = pagesNeedingWords(items, wordsAsked)[0];
+          if (page === undefined) return null;
+          // The document that was open when this page was asked for. A second file
+          // opened mid-walk replaces `rawComments`, and writing this one's
+          // sentences onto its rows has the same shape as the slot problem above.
+          if (rawComments !== source) return null;
+          // The comments this round will answer, recorded before the await so a
+          // page that cannot be read is not asked for again on the next edit.
+          // **Their ids, not the page**: a page number here is a slot, and a
+          // deletion renumbers every slot after it --- see `pagesNeedingWords`,
+          // which now takes this set and states what went wrong when it held
+          // slots.
+          for (const comment of wantingWordsOn(items, page)) wordsAsked.add(comment.id);
+          return { items, page, reader: viewer };
+        });
+        if (!round) return;
+        const { items, page, reader } = round;
         const words = await wordsForPage(items, page, (at) =>
-          viewer ? viewer.unturnedText(at) : Promise.resolve(null),
+          reader ? reader.unturnedText(at) : Promise.resolve(null),
         );
-        if (rawComments !== source) return;
-        if (words.size > 0) {
-          for (const [id, said] of words) commentWords.set(id, said);
-          sidebar?.setCommentWords(words);
-        }
+        const kept = asDocument(id, () => {
+          if (rawComments !== source) return false;
+          if (words.size > 0) {
+            for (const [comment, said] of words) commentWords.set(comment, said);
+            sidebar?.setCommentWords(words);
+          }
+          return true;
+        });
+        if (!kept) return;
       }
     } finally {
-      fillingWords = false;
+      asDocument(id, () => { fillingWords = false; });
     }
   }
 
@@ -1987,6 +2237,9 @@
     const model = edits;
     if (!model || !viewer) return;
     fillingRedactionWords = true;
+    // Held for the walk, as `fillCommentWords` holds its own: the variables
+    // are another document's once the reader changes sides.
+    const id = openDoc, reader = viewer, panel = sidebar;
     try {
       // The walk is `redactlist.ts`, where a test can reach it; what stays here
       // is the wiring. Every lookup reads `model.map` at the moment it is asked,
@@ -1995,15 +2248,15 @@
         // The model that was open when this walk started. A second document
         // replaces `edits` mid-walk, and writing this one's words onto its rows
         // is the same failure `fillCommentWords` guards against.
-        current: () => edits === model,
+        current: () => asDocument(id, () => edits === model) === true,
         regions: () => model.state.redactions,
         slotOf: (page) => model.map.slotOfId(page),
         sourceOf: (slot) => model.map.sourceOf(slot),
-        text: async (slot) => (await viewer?.unturnedText(slot)) ?? null,
+        text: async (slot) => (await reader.unturnedText(slot)) ?? null,
         plans: (page, regions) => call("redaction_plans", { doc: model.doc, page, regions }),
         words: redactionWords,
         planned: redactionPlans,
-        answered: () => sidebar?.setRedactionWords(),
+        answered: () => panel?.setRedactionWords(),
         // Not raised to the reader. The rows keep saying what they said,
         // which is nothing about what a removal would take --- and the
         // command that actually redacts asks again and reports its own
@@ -2011,7 +2264,7 @@
         failed: (e) => console.warn(`could not read what a removal would take: ${e}`),
       });
     } finally {
-      fillingRedactionWords = false;
+      asDocument(id, () => { fillingRedactionWords = false; });
     }
   }
 
@@ -2970,7 +3223,21 @@
     event.stopPropagation();
     const tab = tabs.find(id);
     if (!tab) return;
-    contextMenu?.show(["tab.reveal", "tab.copyPath", "tab.copyName", "---", "tab.close", "file.closeAll"], { x: event.clientX, y: event.clientY }, [{
+    const across = otherSide(panes.sideOf(id));
+    contextMenu?.show(["tab.reveal", "tab.copyPath", "tab.copyName", "---", "tab.moveStart", "tab.moveEnd", "tab.moveSide", "---", "tab.close", "file.closeAll"], { x: event.clientX, y: event.clientY }, [{
+      id: "tab.moveStart", title: "Move to start",
+      enabled: () => tabs.find(id) === tab && tabs.all.length > 1,
+      run: () => { tabs.moveTo(id, "start"); refreshTabs(); },
+    }, {
+      id: "tab.moveEnd", title: "Move to end",
+      enabled: () => tabs.find(id) === tab && tabs.all.length > 1,
+      run: () => { tabs.moveTo(id, "end"); refreshTabs(); },
+    }, {
+      // Named for where the tab goes. With one side, the right one is made.
+      id: "tab.moveSide", title: `Move to ${across} side`,
+      enabled: () => tabs.find(id) === tab && tabs.all.length > 1 && !opening && !documentBusy,
+      run: () => moveTab(id, across),
+    }, {
       id: "tab.reveal",
       title: isMac() ? "Show in Finder" : "Show in Explorer",
       enabled: () => tabs.find(id) === tab,
@@ -3066,6 +3333,10 @@
    * wrong between them.
    */
   function refreshMenu(): void {
+    // The menu bar and the toolbar describe the document the reader is working
+    // in. Asked from a frame of the other one, this would describe that one,
+    // and the next frame of this one would push it all back.
+    if (stage.lent) return;
     // The toolbar also runs on Windows, where there is no native menu.
     const nextTools = toolbarState(commands);
     const nextKey = JSON.stringify(nextTools);
@@ -3369,7 +3640,7 @@
    * scheduling preference rather than a dependency. Anything that waits on the
    * viewer without a way out is a feature that silently never arrives.
    */
-  function firstPaint(): Promise<void> {
+  function firstPaint(id = openDoc): Promise<void> {
     return new Promise((resolve) => {
       const timer = setTimeout(done, 1000);
       const started = performance.now();
@@ -3378,7 +3649,11 @@
         resolve();
       }
       function poll() {
-        if ((status && status.any >= 0.999) || performance.now() - started > 1000) done();
+        // The document's own status, which is not the one in the header when
+        // the reader is working in the other side. A document that has gone
+        // answers nothing, and the wait ends on its clock.
+        const drawn = asDocument(id, () => status?.any ?? 0) ?? 0;
+        if (drawn >= 0.999 || performance.now() - started > 1000) done();
         else requestAnimationFrame(poll);
       }
       requestAnimationFrame(poll);
@@ -3556,7 +3831,7 @@
   function onFindInput() {
     clearTimeout(findTimer);
     const wanted = query;
-    findTimer = setTimeout(() => viewer?.search(wanted), FIND_DEBOUNCE_MS);
+    findTimer = setTimeout(() => { findTimer = 0; viewer?.search(wanted); }, FIND_DEBOUNCE_MS);
   }
 
   function onFindKey(event: KeyboardEvent) {
@@ -3912,6 +4187,7 @@
           open: (path) => openPath(path),
           hasViewer: () => viewer !== null,
           tabs: () => tabRows,
+          status: () => status,
           viewer: () => viewer,
           edits: () => edits,
           apply: (run) => applyEdit(run),
@@ -4104,8 +4380,9 @@
     const ready = resume ? Promise.resolve() : documentTasks.idle();
     return ready.then(() => opens.run(async () => {
       const existing = resume ? undefined : tabs.forPath(path);
-      if (existing?.doc.id === openDoc) { viewer?.focus(); return; }
-      await openDocument(path, resuming, resume, existing);
+      // A document already open is shown where it is, on its own side.
+      if (existing) { await showTabNow(existing.doc.id); viewer?.focus(); return; }
+      await openDocument(path, resuming, resume);
     }));
   }
 
@@ -4139,6 +4416,7 @@
           throw new Error("document reports no pages");
         }
         tabs.add({ doc, path, edits: editsFor(doc), place: null, ...freshState() });
+        panes.joined(doc.id);
         refreshTabs();
       }),
       arrange: (order) => { tabs.arrange(order); refreshTabs(); },
@@ -4261,7 +4539,13 @@
       // The host element does not exist until the viewer section is in the
       // DOM, and it is not while the empty-state placeholder is showing.
       await new Promise(requestAnimationFrame);
-      if (!surface || !sidebarHost) throw new Error("no surface to mount into");
+      const slot = panes.slotOf(panes.focused);
+      const area = areaHosts[slot] ?? null;
+      if (!area || !sidebarHost) throw new Error("no surface to mount into");
+      surface = area;
+      // Every callback the viewer and the panels are built with runs as this
+      // document, whichever one the reader is working in when it fires.
+      const own = <R,>(work: () => R) => asDocument(doc.id, work);
 
       // One record for every restore below, fresh for a document never kept,
       // and applied through `restoring` at each of the three points.
@@ -4281,7 +4565,7 @@
       // included, because the controls it builds belong to the viewer and went
       // with the last one. Changing the fields is a mode of the document on
       // screen, and it does not wait for the reader in a tab they left.
-      sidebar = new Sidebar(sidebarHost, {
+      sidebar = new Sidebar(sidebarHost, scoped<SidebarOptions>({
         onNavigate: (target, top) => {
           viewer?.goToDestination(target, top);
           viewer?.focus();
@@ -4404,7 +4688,7 @@
           // The ring over a passage belongs to the list that drew it.
           if (tab !== "hidden") viewer?.clearRegion();
         },
-      });
+      }, own));
       sidebar.setVisible(sidebarShown);
 
       // Before the viewer, so that a rotate arriving on the first frame has a
@@ -4416,11 +4700,17 @@
       dirty = opening.state.dirty;
       restore(kept, "model", restoring);
       tabs.keep(retained ?? { doc, path, edits: opening, place: resume, ...freshState() }, replaceId);
+      // A tab returned to is in front of the side it is on. A save's new
+      // handle takes the old one's side, and a document opened for the first
+      // time joins the side the reader is working in.
+      if (replaceId !== undefined) panes.replaced(replaceId, doc.id);
+      if (retained || replaceId !== undefined) panes.fronted(doc.id);
+      else panes.opened(doc.id);
       refreshTabs();
       if (replaceId !== undefined && replaceId !== doc.id)
         void call("close_document", { doc: replaceId }).catch(console.warn);
       void opening.refresh().then(
-        (state) => {
+        (state) => own(() => {
           // The model this reply belongs to, not whichever one is open when it
           // lands. A second document opened inside the round trip replaces
           // `edits` and the panels with it, and this would then translate one
@@ -4434,7 +4724,7 @@
           // through `runEdit` above.
           sidebar?.setMarks(markRows(state.marks, opening.map));
           sidebar?.setRedactions(redactionRows(state.redactions, opening.map));
-        },
+        }),
         (e) => {
           // Not raised to the reader. Nothing is wrong with their document ---
           // the edit commands will refuse until this succeeds, which is the
@@ -4444,7 +4734,7 @@
         },
       );
 
-      viewer = new Viewer(surface, {
+      viewer = new Viewer(area, scoped<ViewerOptions>({
         doc: doc.id,
         pageCount: doc.page_count,
         pages,
@@ -4644,7 +4934,8 @@
         onGone: (message) => {
           say(message);
         },
-      });
+      }, own));
+      panes.mounted(doc.id, slot);
       // Before the first paint, so the reader sees their page rather than page
       // one and then a jump --- and before `focus`, which does not move the view
       // but would make the jump look like something they did.
@@ -4690,11 +4981,15 @@
       // dropped exactly as it was before.
       const wanted = doc.id;
       const mounted = viewer;
-      void firstPaint().then(() => {
-        if (openDoc !== wanted || viewer !== mounted) return null;
+      // Whether this document is still mounted with the viewer built above.
+      // Asked as the document, so the answer is the same whichever side the
+      // reader is working in when a reply lands.
+      const still = () => own(() => viewer === mounted) === true;
+      void firstPaint(wanted).then(() => {
+        if (!still()) return null;
         return call("document_form", { doc: wanted });
-      }).then((form) => {
-        if (!form || !surface || openDoc !== wanted || viewer !== mounted) return;
+      }).then((form) => own(() => {
+        if (!form || !surface || viewer !== mounted) return;
         formNames = form.widgets.map((widget) => widget.name);
         scannedForm = form;
         // A control sits where its field now is, and nowhere while the fields
@@ -4709,27 +5004,25 @@
           (widget) => void signDocument(edits ? signTarget(widget, edits.state.pages) : null));
         if (edits) formLayer.update(edits.state);
         formLayer.setBusy(documentBusy);
-      }).catch((error) => { if (openDoc === wanted && viewer === mounted) say(String(error)); });
-      void firstPaint()
+      })).catch((error) => own(() => { if (viewer === mounted) say(String(error)); }));
+      void firstPaint(wanted)
         .then(() => {
           // Checked before asking as well as after. The wait is up to a second
           // and is no longer inside the open, so another document can arrive
           // during it --- and an outline walk for a file nobody is looking at is
           // not merely wasted, it is a third of a second of the FIFO render
           // thread in front of the tiles for the file they *are* looking at.
-          if (openDoc !== wanted || viewer !== mounted) return null;
+          if (!still()) return null;
           return call("document_outline", { doc: wanted });
         })
-        .then((result) => {
+        .then((result) => own(() => {
           // And again, because another document may have been opened while the
           // walk itself was in flight.
-          if (!result || openDoc !== wanted || viewer !== mounted) return;
+          if (!result || viewer !== mounted) return;
           rawOutline = result;
           applyPageOrder();
-        })
-        .catch(() => {
-          if (openDoc === wanted) sidebar?.setOutline(null);
-        });
+        }))
+        .catch(() => own(() => sidebar?.setOutline(null)));
 
       // The comments, on the same terms and for a different reason. They cost
       // an `lopdf` parse of the whole file --- 0.1 ms small, 11.9 ms on the
@@ -4738,13 +5031,13 @@
       // margin against its 300 ms target, and this is off that path entirely.
       // A separate chain rather than a link in the one above, so a document
       // whose outline cannot be read still gets its comments and the reverse.
-      void firstPaint()
+      void firstPaint(wanted)
         .then(() => {
-          if (openDoc !== wanted || viewer !== mounted) return null;
+          if (!still()) return null;
           return call("document_comments", { doc: wanted });
         })
-        .then((result) => {
-          if (!result || openDoc !== wanted || viewer !== mounted) return;
+        .then((result) => own(() => {
+          if (!result || viewer !== mounted) return;
           // Both the panel that lists them and the viewer that makes the mark on
           // the page openable, and both through the translation --- see
           // `applyPageOrder`, which is also what re-runs this if a page is
@@ -4756,10 +5049,8 @@
           // tab callback fired before there was anything to fill in, and it does
           // not fire again for a tab that is already showing.
           if (sidebar?.tab === "comments") void fillCommentWords();
-        })
-        .catch(() => {
-          if (openDoc === wanted) sidebar?.setComments(null);
-        });
+        }))
+        .catch(() => own(() => sidebar?.setComments(null)));
 
       // The links, on the same terms again --- a third chain rather than a link
       // in either above, so one failing does not take the others with it.
@@ -4768,13 +5059,13 @@
       // clicking a cross-reference, so waiting for demand would mean the first
       // click on any document goes nowhere. It waits for first paint for the
       // same reason they do, and for nothing else.
-      void firstPaint()
+      void firstPaint(wanted)
         .then(() => {
-          if (openDoc !== wanted || viewer !== mounted) return null;
+          if (!still()) return null;
           return call("document_links", { doc: wanted });
         })
-        .then((result) => {
-          if (!result || openDoc !== wanted || viewer !== mounted) return;
+        .then((result) => own(() => {
+          if (!result || viewer !== mounted) return;
           rawLinks = result.items;
           applyPageOrder();
           // A cut list is worth saying out loud, for the reason every bound in
@@ -4783,7 +5074,7 @@
           // silence makes the two indistinguishable.
           const said = linkNotice(result.limits);
           if (said) error = said;
-        })
+        }))
         .catch(() => {
           // Deliberately quiet. A document with no readable links is the common
           // case --- most PDFs have none --- and there is nothing the reader
@@ -4791,6 +5082,7 @@
         });
     } catch (e) {
       if (acquired >= 0) {
+        panes.closed(acquired, tabs.all.map((entry) => entry.doc.id));
         tabs.remove(acquired);
         void call("close_document", { doc: acquired }).catch(console.warn);
         refreshTabs();
@@ -5030,38 +5322,73 @@
     </div>
   {/if}
 
-  {#if tabRows.length}
-    <div class="document-tabs" role="tablist" aria-label="Open documents"
+  <!-- One row of tabs. With one side it is every tab; with two, each side
+       draws its own above its pages. `front` is the tab that row shows. -->
+  {#snippet tabStrip(rows: typeof tabRows, front: number, label: string)}
+    <div class="document-tabs" role="tablist" aria-label={label}
       style:--tab-label-size={`${tabLabelPx}px`}
       onwheel={(event) => { event.currentTarget.scrollLeft += sidewaysBy(event, event.currentTarget.clientWidth); }}>
-      {#each tabRows as tab, index (tab.id)}
+      {#each rows as tab (tab.id)}
         <!-- The middle button's mousedown would start autoscroll on Windows. -->
-        <div class="document-tab" class:active={tab.id === activeTab} role="presentation"
+        <div class="document-tab" class:active={tab.id === front} role="presentation"
           onmousedown={(event) => { if (event.button === 1) event.preventDefault(); }}
           onauxclick={(event) => tabAuxClick(event, tab.id)}>
           <button id={`document-tab-${tab.id}`} role="tab"
-            aria-selected={tab.id === activeTab} aria-controls="document-panel"
-            tabindex={tab.id === activeTab ? 0 : -1}
+            aria-selected={tab.id === front} aria-controls="document-panel"
+            tabindex={tab.id === front ? 0 : -1}
             title={tab.path} disabled={opening || documentBusy}
             oncontextmenu={(event) => tabContextMenu(event, tab.id)}
             onclick={() => void activateTab(tab.id)} onkeydown={(event) => tabKey(event, tab.id)}>
-            <span class="tab-name">{tabLabels[index]}</span>
+            <span class="tab-name">{tabLabelOf.get(tab.id)}</span>
             {#if tab.id === activeTab ? dirty : tab.dirty}<span aria-label="Unsaved changes">*</span>{/if}
           </button>
-          <button class="tab-close" title={`Close ${tabLabels[index]}`}
-            aria-label={`Close ${tabLabels[index]}`} disabled={opening || documentBusy}
+          <button class="tab-close" title={`Close ${tabLabelOf.get(tab.id)}`}
+            aria-label={`Close ${tabLabelOf.get(tab.id)}`} disabled={opening || documentBusy}
             onclick={() => void closeTab(tab.id)}><span class="icon" use:icon={"close"}></span></button>
         </div>
       {/each}
       <button class="tab-open" title="Open PDFs in new tabs" aria-label="Open PDFs in new tabs"
         disabled={opening || documentBusy} onclick={pickAndOpen}><span class="icon" use:icon={"add"}></span></button>
     </div>
+  {/snippet}
+  {#if tabRows.length && !paneLayout.split}
+    {@render tabStrip(tabRows, activeTab, "Open documents")}
   {/if}
-  {#if title}
+  {#if title || bodyHeld}
     <div class="body" id="document-panel" role="tabpanel" aria-labelledby={`document-tab-${activeTab}`}>
 
       <div class="panel" bind:this={sidebarHost}></div>
-      <div class="surface" bind:this={surface}></div>
+      <!-- Both page areas exist for as long as any document is open, used
+           or not: a viewer is mounted into one and stays there, so an area
+           made and removed with the split would take its viewer with it. -->
+      <div class="panes" bind:this={panesHost}>
+        {#each [0, 1] as slot (slot)}
+          <!-- A press or the keyboard arriving in a side makes it the one the
+               reader works in, before anything inside it handles the event. -->
+          <div class="pane" class:unused={paneLayout.unused[slot]}
+            class:focused={paneLayout.split && paneLayout.focused === slot}
+            data-side={paneLayout.order[slot] === 0 ? "left" : "right"}
+            style:order={paneLayout.order[slot]}
+            style:flex-grow={paneLayout.split ? (paneLayout.order[slot] === 0 ? paneShare : 1 - paneShare) : 1}
+            role="presentation"
+            onpointerdowncapture={() => { focusSide(panes.sideIn(slot as Slot)); }}
+            onfocusin={() => { focusSide(panes.sideIn(slot as Slot)); }}>
+            {#if paneLayout.split}
+              {@render tabStrip(tabRows.filter((tab) => tab.slot === slot), paneLayout.front[slot] ?? -1,
+                paneLayout.order[slot] === 0 ? "Documents on the left side" : "Documents on the right side")}
+            {/if}
+            <div class="surface" bind:this={areaHosts[slot]}></div>
+          </div>
+        {/each}
+        {#if paneLayout.split}
+          <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
+          <div class="pane-divider" role="separator" aria-orientation="vertical"
+            aria-label="Divider between the two sides" title="Drag to resize. Double-click for equal halves."
+            aria-valuemin="20" aria-valuemax="80" aria-valuenow={Math.round(paneShare * 100)}
+            onpointerdown={dividerDown} onpointermove={dividerMove}
+            ondblclick={() => { paneShare = 0.5; }}></div>
+        {/if}
+      </div>
     </div>
   {:else}
     <!--
@@ -5353,6 +5680,32 @@
        space while the sidebar is hidden. */
     display: contents;
   }
+  .panes {
+    flex: 1;
+    min-width: 0;
+    min-height: 0;
+    display: flex;
+  }
+  .pane {
+    flex: 1 1 0;
+    min-width: 0;
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
+  }
+  .pane.unused { display: none; }
+  /* The side the reader is working in, said on its row of tabs: the toolbar
+     and the sidebar act on it, and nothing else on screen says which it is. */
+  .pane.focused :global(.document-tabs) { box-shadow: inset 0 2px 0 Highlight; }
+  .pane-divider {
+    order: 1;
+    flex: none;
+    width: 5px;
+    cursor: col-resize;
+    background: color-mix(in srgb, currentColor 15%, transparent);
+    touch-action: none;
+  }
+  .pane-divider:hover { background: color-mix(in srgb, currentColor 35%, transparent); }
   .surface {
     flex: 1;
     min-width: 0;

@@ -199,6 +199,20 @@ export class DocumentTabs<T extends { doc: { id: number }; path: string }> {
     this.entries.sort((a, b) => rank(a) - rank(b));
   }
 
+  /**
+   * Moves a tab to the start or the end of the row. With two sides each row
+   * shows its own tabs in this order, so the start of the whole order is the
+   * start of the tab's own row.
+   */
+  moveTo(id: number, where: "start" | "end"): void {
+    const index = this.entries.findIndex((tab) => tab.doc.id === id);
+    if (index < 0) return;
+    const [tab] = this.entries.splice(index, 1);
+    if (!tab) return;
+    if (where === "start") this.entries.unshift(tab);
+    else this.entries.push(tab);
+  }
+
   remove(id: number): T | undefined {
     const index = this.entries.findIndex((tab) => tab.doc.id === id);
     if (index < 0) return undefined;

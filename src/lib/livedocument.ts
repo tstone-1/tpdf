@@ -43,6 +43,8 @@ export interface LiveDocument {
   openPageCount: number;
   title: string;
 
+  /** The page area the viewer is mounted in. */
+  surface: HTMLDivElement | null;
   viewer: Viewer | null;
   sidebar: Sidebar | null;
   textEditor: TextEditor | null;
@@ -91,6 +93,7 @@ export function blankLive(): LiveDocument {
     openPathName: "",
     openPageCount: 0,
     title: "",
+    surface: null,
     viewer: null,
     sidebar: null,
     textEditor: null,
@@ -167,6 +170,7 @@ export class Stage<T> {
   readonly #blank: () => T;
   readonly #focusedId: () => number;
   readonly #parked = new Map<number, T>();
+  #lent = 0;
 
   /** `focusedId` answers -1 when the slots hold no document. */
   constructor(slots: Slots<T>, blank: () => T, focusedId: () => number) {
@@ -178,6 +182,16 @@ export class Stage<T> {
   /** The handle of the document in the slots, or -1. */
   get focused(): number {
     return this.#focusedId();
+  }
+
+  /**
+   * Whether the slots are on loan to a parked document right now, inside
+   * {@link within}. What is about the window and not about a document, the
+   * menu bar's enablement for one, is not to be pushed from in there: it would
+   * describe a document the reader is not working in.
+   */
+  get lent(): boolean {
+    return this.#lent > 0;
   }
 
   /** The handles of the parked documents, in the order they were parked. */
@@ -251,9 +265,11 @@ export class Stage<T> {
 
     const focused = capture(this.#slots);
     install(this.#slots, record);
+    this.#lent++;
     try {
       return { ran: true, value: work() };
     } finally {
+      this.#lent--;
       // Read back before the focused values return, so what `work` changed is
       // kept. If `work` ended the document, its record is not put back.
       if (this.#focusedId() === id) this.#parked.set(id, capture(this.#slots));
@@ -261,4 +277,29 @@ export class Stage<T> {
       install(this.#slots, focused);
     }
   }
+}
+
+/**
+ * A copy of `options` in which every function runs through `run`.
+ *
+ * For the callbacks a viewer and its panels are built with. They are written
+ * against the slots, so each has to run with its own document in them, and
+ * wrapping the whole object is what makes that true of a callback added later
+ * as well as of the ones there today. `run` answers `undefined` for a document
+ * that is no longer mounted, and the callback is then not called.
+ *
+ * Plain objects are copied and walked, so a group of callbacks nested in the
+ * options is wrapped too. Arrays, class instances and everything else are
+ * handed through as they are.
+ */
+export function scoped<T>(options: T, run: <R>(work: () => R) => R | undefined): T {
+  if (typeof options === "function") {
+    const call = options as unknown as (...args: unknown[]) => unknown;
+    return ((...args: unknown[]) => run(() => call(...args))) as unknown as T;
+  }
+  if (options === null || typeof options !== "object") return options;
+  if (Object.getPrototypeOf(options) !== Object.prototype) return options;
+  const copy: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(options)) copy[key] = scoped(value, run);
+  return copy as T;
 }

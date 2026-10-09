@@ -50,6 +50,8 @@ function harness(
     // two guards is seen. Both offered by default: that is "not known", the
     // state the window starts in.
     tool?: { install?: boolean; uninstall?: boolean };
+    // The window's two sides. One document and one side by default.
+    sides?: { split: boolean; focused: "left" | "right"; others: string[] };
   } = {},
   journal: { undo?: boolean; redo?: boolean } = {},
   selected = false,
@@ -113,6 +115,11 @@ function harness(
     openDocument: () => fired.push("openDocument"),
     closeDocument: () => fired.push("closeDocument"),
     closeAllDocuments: () => fired.push("closeAllDocuments"),
+    sides: () => update.sides ?? { split: false, focused: "left" as const, others: [] as string[] },
+    showBeside: (index: number) => fired.push(`showBeside:${index}`),
+    moveToOtherSide: () => fired.push("moveToOtherSide"),
+    switchSides: () => fired.push("switchSides"),
+    focusOtherSide: () => fired.push("focusOtherSide"),
     restoreTabs: () => restoring,
     setRestoreTabs: (restore) => { restoring = restore; fired.push(`setRestoreTabs:${restore}`); },
     tabsToReopen: () => update.reopenable ?? 0,
@@ -1837,6 +1844,11 @@ describe("the window shortcuts for editing", () => {
       openDocument: () => fired.push("openDocument"),
     closeDocument: () => fired.push("closeDocument"),
     closeAllDocuments: () => fired.push("closeAllDocuments"),
+    sides: () => ({ split: false, focused: "left" as const, others: [] as string[] }),
+    showBeside: (index: number) => fired.push(`showBeside:${index}`),
+    moveToOtherSide: () => fired.push("moveToOtherSide"),
+    switchSides: () => fired.push("switchSides"),
+    focusOtherSide: () => fired.push("focusOtherSide"),
     restoreTabs: () => false,
     setRestoreTabs: (restore) => fired.push(`setRestoreTabs:${restore}`),
     tabsToReopen: () => 0,
@@ -2193,5 +2205,70 @@ describe("moving back and forward through jumps", () => {
     });
     expect(offers(registry, "nav.back")).toBe(false);
     expect(offers(registry, "nav.forward")).toBe(false);
+  });
+});
+
+describe("two documents side by side", () => {
+  const SIDE_COMMANDS = ["view.sideBySide", "view.moveToOtherSide", "view.switchSides", "view.focusOtherSide"];
+  const one = { split: false, focused: "left" as const, others: [] };
+  const two = { split: false, focused: "left" as const, others: ["report.pdf", "report-draft.pdf"] };
+  const beside = { split: true, focused: "right" as const, others: ["report.pdf"] };
+  const offers = (registry: CommandRegistry, id: string): boolean => {
+    const guard = registry.find(id)?.enabled;
+    if (!guard) throw new Error(`${id} is not registered with a guard`);
+    return guard();
+  };
+
+  it("offers nothing with one document, and nothing with none", () => {
+    const alone = harness(true, { sides: one }).registry;
+    const none = harness(false, { sides: two }).registry;
+    for (const id of SIDE_COMMANDS) {
+      expect(offers(alone, id), id).toBe(false);
+      expect(offers(none, id), id).toBe(false);
+    }
+  });
+
+  it("offers the two that start a split once there is a second document", () => {
+    const { registry } = harness(true, { sides: two });
+    expect(SIDE_COMMANDS.filter((id) => offers(registry, id))).toEqual([
+      "view.sideBySide", "view.moveToOtherSide",
+    ]);
+  });
+
+  it("offers all four with two sides", () => {
+    const { registry } = harness(true, { sides: beside });
+    expect(SIDE_COMMANDS.filter((id) => offers(registry, id))).toEqual(SIDE_COMMANDS);
+  });
+
+  it("names the side the tab would move to", () => {
+    expect(harness(true, { sides: two }).registry.find("view.moveToOtherSide")?.title)
+      .toBe("Move tab to right side");
+    expect(harness(true, { sides: beside }).registry.find("view.moveToOtherSide")?.title)
+      .toBe("Move tab to left side");
+  });
+
+  it("hands over the document the reader named, by its place among the others", () => {
+    const { registry, fired } = harness(true, { sides: two });
+    expect(registry.run("view.sideBySide", "draft")).toBe(true);
+    expect(fired).toEqual(["showBeside:1"]);
+  });
+
+  it("refuses a name that fits two documents, and one that fits none", () => {
+    const { registry, fired } = harness(true, { sides: two });
+    const question = registry.find("view.sideBySide")?.argument;
+    expect(question?.problem?.("report")).toBe("2 open documents match. Type more of the name");
+    expect(question?.problem?.("zebra")).toBe("No other open document has that in its name");
+    expect(question?.problem?.("report.pdf")).toBeNull();
+    expect(question?.preview?.("draft")).toBe("report-draft.pdf");
+    expect(question?.placeholder).toBe("report.pdf, report-draft.pdf");
+    expect(fired).toEqual([]);
+  });
+
+  it("runs each of the other three as its own action", () => {
+    const { registry, fired } = harness(true, { sides: beside });
+    registry.run("view.moveToOtherSide");
+    registry.run("view.switchSides");
+    registry.run("view.focusOtherSide");
+    expect(fired).toEqual(["moveToOtherSide", "switchSides", "focusOtherSide"]);
   });
 });

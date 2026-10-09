@@ -57,6 +57,8 @@ function registry(overrides: Record<string, () => unknown> = {}): CommandRegistr
     busyOpening: () => false,
     // Tab labels at the default size, as a fresh install has them.
     tabLabels: () => ({ canGrow: true, canShrink: true, isDefault: true }),
+    // One document, so nothing to put beside it.
+    sides: () => ({ split: false, focused: "left", others: [] }),
     ...overrides,
   };
   const actions = new Proxy(

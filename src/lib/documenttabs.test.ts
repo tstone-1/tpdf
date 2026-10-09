@@ -33,6 +33,19 @@ describe("document tabs", () => {
     expect(tabs.forPath("/fixture/Example.pdf")?.doc.id).toBe(2);
   });
 
+  it("moves a tab to either end and leaves the one in front in front", () => {
+    const tabs = new DocumentTabs<ReturnType<typeof tab>>();
+    tabs.keep(tab(1)); tabs.keep(tab(2)); tabs.keep(tab(3));
+    tabs.moveTo(3, "start");
+    expect(tabs.all.map((entry) => entry.doc.id)).toEqual([3, 1, 2]);
+    tabs.moveTo(3, "end");
+    tabs.moveTo(1, "end");
+    expect(tabs.all.map((entry) => entry.doc.id)).toEqual([2, 3, 1]);
+    tabs.moveTo(9, "start");
+    expect(tabs.all.map((entry) => entry.doc.id)).toEqual([2, 3, 1]);
+    expect(tabs.active).toBe(3);
+  });
+
   it("replaces a saved handle in its original position", () => {
     const tabs = new DocumentTabs<ReturnType<typeof tab>>();
     tabs.keep(tab(1)); tabs.keep(tab(2)); tabs.keep(tab(3));

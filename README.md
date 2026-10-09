@@ -212,6 +212,13 @@ project conventions.
   The tab labels' size is adjustable: Larger, Smaller and Default tab labels, in the
   View menu and the command palette; the choice is remembered.
   <!-- built: file.close file.closeAll view.nextTab view.previousTab view.tabLabelsLarger view.tabLabelsSmaller view.tabLabelsDefault -->
+- Two documents side by side. *Show side by side with...* asks for the other open
+  document by name; a tab's right-click menu moves that tab to the right or left side,
+  or to the start or end of its row. Each side has its own row of tabs, and the toolbar,
+  the sidebar and the find field follow the side you click into. Drag the divider to
+  resize the two sides, double-click it for equal halves. *Switch sides* exchanges them,
+  and closing or moving away a side's last tab ends the split.
+  <!-- built: view.sideBySide view.moveToOtherSide view.switchSides view.focusOtherSide -->
 - Notices when another program rewrites the open file. By default it says so and offers
   a reload; *When the file changes on disk: reload automatically* reloads at once, keeping
   your page and zoom, which suits a document a build regenerates. *…: do nothing* turns the

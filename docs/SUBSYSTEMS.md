@@ -168,6 +168,28 @@ command through the registry, and `session_forget` and `session_clear_places` re
 places without touching the tabs or the preferences.
 Restoration keeps the saved absolute point until the target page's lazy geometry
 arrives; ordinary scrolling over estimated pages still keeps its relative position.
+
+Two documents side by side are three modules and one rule. `src/lib/panes.ts` holds which
+tab is on which side, which is in front and which side is focused, and `Panes.plan` says
+what has to be mounted or torn down; a side is not a place on screen, so a side that
+empties hands its page area to the other and *Switch sides* rebuilds nothing.
+`src/lib/livedocument.ts` names the variables `App.svelte` keeps about a mounted
+document (`LiveDocument`) and moves them as a whole: the variables hold the focused
+document, and `Stage` holds the other one's record. `App.svelte` carries the plan out in
+`showPanes` and changes side in `focusSide`, which is synchronous because the viewer in
+the side pressed handles the same press next.
+
+The rule: **code in `App.svelte` that runs without the reader pressing anything in that
+document runs through `asDocument(id, ...)`, and again after every `await`.** A frame, a
+late reply and the rest of an edit all read the variables, and by then they may be the
+other document's. The viewer's and the sidebar's callbacks get this from `scoped`, which
+wraps the whole options object; `runEdit`, `firstPaint`, the four replies after first
+paint and the two word walkers do it by hand. `refreshMenu` returns while `stage.lent`,
+since the menu bar describes the focused document only. A new field of one document goes
+in `LiveDocument` and the slot table, which does not compile without it; a tool the
+reader armed or a colour they picked is the window's and stays out.
+`scripts/tabs_check.py <checks-binary> testdata/text-heavy.pdf --phase sides` drives it;
+with the viewer's callbacks unwrapped, *the header reads the focused document's page* fails.
 Fit uses the visible sheet, which can differ from the page at the viewport's top.
 `tabs_check.py --phase tabs-position` checks repeated tab switches at nonzero offsets
 and at the final page under fit-page, fit-width and fixed zoom.

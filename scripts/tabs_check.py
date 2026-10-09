@@ -49,6 +49,13 @@ panel, which no phase can answer, and both report through the same sentence.
   uv run scripts/tabs_check.py <app> testdata/redact-pages.pdf --phase redact-pages
 --saved-copy keeps the first pass's redacted output, which is a real redacted
 file an independent reader can be pointed at.
+--phase sides puts two documents side by side and takes the split apart again: a tab
+moved to the right, a press in the other side, switching sides, closing a side's last
+tab, Show side by side with... by name, a tab moved back from its own menu, and Close
+all tabs from a split. It needs a PDF of three or more pages.
+
+  uv run scripts/tabs_check.py <checks-binary> testdata/text-heavy.pdf --phase sides
+
 --phase pictures runs New document from pictures in the window, with no document open.
 
   uv run scripts/tabs_check.py <checks-binary> testdata/text-base14.pdf --phase pictures
@@ -93,7 +100,7 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("binary", type=Path)
     parser.add_argument("pdf", type=Path)
-    parser.add_argument("--phase", choices=("tabs", "tabs-position", "tabs-rotation", "forms", "signatures", "textedit", "textedit-dash", "textedit-cff-unicode", "textedit-cff-ligatures", "textedit-passport", "textedit-agenda", "textedit-agenda-page2", "textedit-factsheet", "textedit-factsheet-body", "textedit-w3c", "textedit-latin1", "textedit-cid-latin1", "textedit-overhang", "textedit-multipage", "textedit-wrapped", "textedit-wide-spacing", "textedit-list-child", "textedit-grow", "textedit-push", "textedit-w9", "textedit-centred", "import", "redact-pages", "sign", "recognise", "protect", "pictures", "compress", "fields", "fields-turned"), default="tabs")
+    parser.add_argument("--phase", choices=("tabs", "sides", "tabs-position", "tabs-rotation", "forms", "signatures", "textedit", "textedit-dash", "textedit-cff-unicode", "textedit-cff-ligatures", "textedit-passport", "textedit-agenda", "textedit-agenda-page2", "textedit-factsheet", "textedit-factsheet-body", "textedit-w3c", "textedit-latin1", "textedit-cid-latin1", "textedit-overhang", "textedit-multipage", "textedit-wrapped", "textedit-wide-spacing", "textedit-list-child", "textedit-grow", "textedit-push", "textedit-w9", "textedit-centred", "import", "redact-pages", "sign", "recognise", "protect", "pictures", "compress", "fields", "fields-turned"), default="tabs")
     parser.add_argument("--other", type=Path, help="The file --phase import inserts pages from")
     parser.add_argument("--identity", help="--phase sign only: the SHA-256 of the signing certificate")
     # 90 s by default; the signing phase waits on a person answering the
@@ -121,6 +128,10 @@ def main() -> int:
             shutil.copyfile(args.other, second)
         else:
             shutil.copyfile(args.pdf, second)
+        if args.phase == "sides":
+            # A third tab, so that a side still has one when its front tab moves.
+            shutil.copyfile(args.pdf, room / "third.pdf")
+            copies.append(room / "third.pdf")
         if args.phase == "redact-pages":
             # A third and a fourth, because a redaction spends the file it is
             # applied to and the phase makes four of them. Each case needs a

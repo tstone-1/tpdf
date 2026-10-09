@@ -3140,6 +3140,11 @@ async function appCommandChecks(
     openDocument: () => fired.push("openDocument"),
     closeDocument: () => fired.push("closeDocument"),
     closeAllDocuments: () => fired.push("closeAllDocuments"),
+    sides: () => ({ split: false, focused: "left" as const, others: [] as string[] }),
+    showBeside: (index: number) => fired.push(`showBeside:${index}`),
+    moveToOtherSide: () => fired.push("moveToOtherSide"),
+    switchSides: () => fired.push("switchSides"),
+    focusOtherSide: () => fired.push("focusOtherSide"),
     restoreTabs: () => false,
     setRestoreTabs: (restore) => fired.push(`setRestoreTabs:${restore}`),
     tabsToReopen: () => 0,
@@ -4383,6 +4388,10 @@ async function appCommandChecks(
     "view.tabLabelsDefault": "a stored display preference; tablabels.test.ts covers stepping and storage",
     "view.nextTab": "tab ownership is exercised by the open check's tabs phase",
     "view.previousTab": "tab ownership is exercised by the open check's tabs phase",
+    "view.sideBySide": "needs a second open document; the open check's sides phase drives it",
+    "view.moveToOtherSide": "needs a second open document; the open check's sides phase drives it",
+    "view.switchSides": "needs two documents side by side; the open check's sides phase drives it",
+    "view.focusOtherSide": "needs two documents side by side; the open check's sides phase drives it",
     "find.next": "needs a live search with more than one match",
     "find.previous": "needs a live search with more than one match",
     "edit.copy": "its outcome is the system clipboard",
@@ -4627,6 +4636,12 @@ async function appCommandChecks(
     "file.reopenLastDocumentAtLaunch",
     // This fixture remembers no documents, so there is nothing to clear.
     "file.clearRecents",
+    // This fixture has no other document to put beside the open one, and so
+    // no two sides to switch or to go between. Declared with the commands.
+    "view.sideBySide",
+    "view.moveToOtherSide",
+    "view.switchSides",
+    "view.focusOtherSide",
     // This fixture's disk-change mode is `ask`, so that choice is the one not
     // offered. In registry order, as the whole list is.
     "file.onDiskChange.ask",

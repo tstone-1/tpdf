@@ -38,7 +38,7 @@ import { screenshotCheck } from "./screenshotcheck";
 import { pause, Report, settle } from "./checkreport";
 import { basename } from "./paths";
 import { SIDEBAR_CLASS } from "./sidebar";
-import type { Viewer } from "./viewer";
+import type { Viewer, ViewerStatus } from "./viewer";
 import type { Edits, EditState } from "./edits";
 import type { PendingImport } from "./pendingimport";
 
@@ -83,7 +83,9 @@ export interface OpenCheckHost {
   open: (path: string) => Promise<void>;
   /** Whether a viewer is mounted, for the `race` phase's end state. */
   hasViewer: () => boolean;
-  tabs: () => readonly { id: number; path: string }[];
+  tabs: () => readonly { id: number; path: string; dirty?: boolean }[];
+  /** What the header shows of the document the reader is in. */
+  status: () => ViewerStatus | null;
   viewer: () => Viewer | null;
   edits: () => Edits | null;
   /**
@@ -1172,11 +1174,14 @@ async function run(host: OpenCheckHost, phase: string, expected: string): Promis
       const tabActions = Array.from(document.querySelectorAll<HTMLElement>('.context-menu [role="menuitem"]'));
       // Four since 26.9.18 added *Close all tabs* after the separator; this
       // phase was not run again until the 26.9.21 release, which found it red.
-      // Five since 26.10.2 added *Copy file name* below the path.
-      report.check("tab menu offers reveal, copy path, copy name, close and close all", tabActions.length === 5 &&
+      // Five since 26.10.2 added *Copy file name* below the path. Eight since
+      // the three moves joined it with the two sides, declared with them.
+      report.check("tab menu offers reveal, copy path, copy name, the three moves, close and close all", tabActions.length === 8 &&
         /^Show in (Explorer|Finder)$/.test(tabActions[0]?.textContent ?? "") &&
         tabActions[1]?.textContent === "Copy file path" && tabActions[2]?.textContent === "Copy file name" &&
-        tabActions[3]?.textContent === "Close" && tabActions[4]?.textContent === "Close all tabs",
+        tabActions[3]?.textContent === "Move to start" && tabActions[4]?.textContent === "Move to end" &&
+        tabActions[5]?.textContent === "Move to right side" &&
+        tabActions[6]?.textContent === "Close" && tabActions[7]?.textContent === "Close all tabs",
         tabActions.map((item) => item.textContent).join(" | "));
       check("right-clicking a background tab keeps the active document", host.edits()?.doc === b.id);
       check("the header does not repeat the document filename", !document.querySelector("header .title"));
@@ -1228,6 +1233,143 @@ async function run(host: OpenCheckHost, phase: string, expected: string): Promis
       await host.open(second);
       check("opening after the last close still works", host.tabs().length === 1 && host.hasViewer());
       check("only one sidebar is mounted", sidebars() === 1);
+      break;
+    }
+    case "sides": {
+      // Two documents side by side, driven through the commands, a tab's own
+      // menu and a press in a page area. Every check reads the window or the
+      // handles the application itself uses: what is under test is the join in
+      // `App.svelte` between the pane model, the stage and the two viewers.
+      const [first, second, third] = expected.split("|");
+      if (!first || !second || !third) throw new Error("three fixture paths required");
+      const rows = (side: "left" | "right") =>
+        Array.from(document.querySelectorAll<HTMLElement>(`.pane[data-side="${side}"] [role="tab"]`))
+          .map((tab) => Number(tab.id.replace("document-tab-", "")));
+      const frontOf = (side: "left" | "right") => Number(
+        document.querySelector<HTMLElement>(`.pane[data-side="${side}"] [role="tab"][aria-selected="true"]`)
+          ?.id.replace("document-tab-", "") ?? -1);
+      const focusedSide = () =>
+        document.querySelector<HTMLElement>(".pane.focused")?.dataset.side ?? "none";
+      const split = () => document.querySelector(".pane-divider") !== null;
+      const mountedAreas = () =>
+        Array.from(document.querySelectorAll<HTMLElement>(".pane:not(.unused) .surface"))
+          .filter((area) => area.childElementCount > 0).length;
+      const shownSidebars = () =>
+        Array.from(document.querySelectorAll<HTMLElement>(`.${SIDEBAR_CLASS}`))
+          .filter((panel) => panel.style.display !== "none").length;
+      const check = (name: string, ok: boolean) => report.check(name, ok,
+        `left [${rows("left")}] front ${frontOf("left")}, right [${rows("right")}] front ${frontOf("right")}, ` +
+        `in ${focusedSide()}, document ${host.edits()?.doc ?? -1}, page ${host.status()?.page ?? 0}` +
+        `${host.edits()?.state.dirty ? ", edited" : ""}`);
+      const settled = async (what: string, when: () => boolean) => {
+        if (!await settle(when, SETTLE_MS)) throw new Error(`${what} did not happen`);
+        await host.idle();
+      };
+      const pressIn = (side: "left" | "right") =>
+        document.querySelector(`.pane[data-side="${side}"] .surface`)
+          ?.dispatchEvent(new PointerEvent("pointerdown", { bubbles: true, button: 0 }));
+
+      report.emit("[sides] opening three documents");
+      await host.open(first); await host.open(second); await host.open(third);
+      const [a, b, c] = host.tabs();
+      if (!a || !b || !c || !host.viewer()) throw new Error("the three documents did not open");
+      check("one side before anything is moved", !split() && mountedAreas() === 1 && sidebars() === 1);
+
+      report.emit("[sides] moving the tab in front to the right");
+      host.run("view.moveToOtherSide");
+      await settled("the split", () => split() && mountedAreas() === 2 && host.edits()?.doc === c.id);
+      check("moving a tab to the right shows two documents", mountedAreas() === 2 && sidebars() === 2);
+      check("each side lists its own tabs",
+        rows("left").join() === [a.id, b.id].join() && rows("right").join() === [c.id].join());
+      check("the side it left shows its neighbour", frontOf("left") === b.id && frontOf("right") === c.id);
+      check("the reader is in the moved document", focusedSide() === "right" && host.edits()?.doc === c.id);
+      check("one sidebar is shown, the focused document's", shownSidebars() <= 1);
+      const rightViewer = host.viewer();
+
+      report.emit("[sides] editing on the right, then pressing in the left");
+      host.run("edit.rotatePageClockwise");
+      await settled("the rotation", () => host.edits()?.state.dirty === true);
+      host.viewer()!.goToPage(2);
+      await settled("the jump", () => host.status()?.page === 3);
+      pressIn("left");
+      // The variables change in the press itself; the row of tabs that says
+      // which side the reader is in is drawn after it.
+      const atOnce = host.edits()?.doc;
+      await host.idle();
+      check("the press itself changes the document, before anything is drawn", atOnce === b.id);
+      check("a press in a side makes it the one the commands act on",
+        focusedSide() === "left" && host.edits()?.doc === b.id && host.viewer() !== rightViewer);
+      check("the other document's edit is not this one's", host.edits()?.state.dirty === false);
+      // The right document keeps drawing while the reader is on the left. Its
+      // frames must land in its own status and not in the header's.
+      await pause(400);
+      check("the header reads the focused document's page", host.status()?.page === 1);
+      host.run("edit.rotatePageCounterClockwise");
+      await settled("the second rotation", () => host.edits()?.state.dirty === true);
+
+      host.run("view.focusOtherSide");
+      await host.idle();
+      check("Go to other side returns to the right document",
+        focusedSide() === "right" && host.edits()?.doc === c.id && host.viewer() === rightViewer);
+      check("each document kept its own place and its own edit",
+        host.status()?.page === 3 && host.edits()?.state.dirty === true);
+
+      report.emit("[sides] switching sides");
+      host.run("view.switchSides");
+      await host.idle();
+      check("switching sides moves the tabs across",
+        rows("left").join() === [c.id].join() && rows("right").join() === [a.id, b.id].join());
+      check("and rebuilds neither viewer, with the reader in the same document",
+        host.viewer() === rightViewer && host.edits()?.doc === c.id && focusedSide() === "left" && mountedAreas() === 2);
+
+      report.emit("[sides] bringing a background tab forward on the other side");
+      await host.activate(a.id);
+      check("a tab shown from the other side's row puts the reader there",
+        focusedSide() === "right" && host.edits()?.doc === a.id && frontOf("right") === a.id && frontOf("left") === c.id);
+      check("the tab it replaced kept its edit", host.tabs().find((tab) => tab.id === b.id)?.dirty === true);
+
+      report.emit("[sides] closing a side's last tab");
+      // Its edit is undone first: closing a document with unsaved work asks in
+      // a native dialog, which nothing here can answer.
+      host.run("view.focusOtherSide");
+      host.run("edit.undo");
+      await settled("the undo", () => host.edits()?.doc === c.id && host.edits()?.state.dirty === false);
+      host.run("view.focusOtherSide");
+      await host.close(c.id);
+      await settled("the end of the split", () => !split());
+      check("closing a side's last tab ends the split",
+        mountedAreas() === 1 && sidebars() === 1 && host.tabs().length === 2);
+      check("the reader is in the document that was beside it", host.edits()?.doc === a.id && host.hasViewer());
+
+      report.emit("[sides] asking for a partner by name");
+      host.run("view.sideBySide", "second");
+      await settled("the second split", () => split() && mountedAreas() === 2 && host.edits()?.doc === b.id);
+      check("Show side by side with... puts the named document beside this one",
+        frontOf("left") === a.id && frontOf("right") === b.id && focusedSide() === "right");
+      check("the named document came back with its edit", host.edits()?.state.dirty === true);
+
+      report.emit("[sides] moving the tab back from its own menu");
+      document.getElementById(`document-tab-${b.id}`)?.dispatchEvent(
+        new MouseEvent("contextmenu", { bubbles: true, cancelable: true, clientX: 30, clientY: 80 }));
+      const items = Array.from(document.querySelectorAll<HTMLElement>('.context-menu [role="menuitem"]'));
+      check("a tab's menu names the side it would move to",
+        items.some((item) => item.textContent?.trim() === "Move to left side") &&
+        items.some((item) => item.textContent?.trim() === "Move to start") &&
+        items.some((item) => item.textContent?.trim() === "Move to end"));
+      items.find((item) => item.textContent?.trim() === "Move to left side")?.click();
+      await settled("the move back", () => !split() && host.edits()?.doc === b.id);
+      check("moving the right side's only tab back ends the split",
+        mountedAreas() === 1 && sidebars() === 1 && host.tabs().length === 2);
+
+      report.emit("[sides] closing every tab from a split");
+      host.run("edit.undo");
+      await settled("the second undo", () => host.edits()?.state.dirty === false);
+      host.run("view.moveToOtherSide");
+      await settled("the third split", () => split() && mountedAreas() === 2);
+      host.run("file.closeAll");
+      await settled("the empty window", () => host.tabs().length === 0);
+      check("closing every tab from a split leaves an empty window",
+        host.tabs().length === 0 && !host.hasViewer() && sidebars() === 0 && !split() && host.path() === "");
       break;
     }
     case "opened": {

@@ -61,6 +61,7 @@ import {
 } from "./pendingimport";
 import { lacks, type Arrangement } from "./arrange";
 import { parseChoices, parseGroup } from "./fieldnames";
+import { partnerPlaceholder, pickPartner } from "./panes";
 
 /** One title per choice, each a whole sentence so the palette reads it alone. */
 const DISK_CHANGE_TITLES: Record<DiskChangeMode, string> = {
@@ -112,6 +113,20 @@ export interface AppActions {
   closeDocument(): void;
   /** Close every open document, asking once if any has unsaved work. */
   closeAllDocuments(): void;
+  /**
+   * The window's two sides: whether two documents are shown, which side the
+   * reader is working in, and the file names of the other open documents in
+   * tab order.
+   */
+  sides(): { split: boolean; focused: "left" | "right"; others: string[] };
+  /** Show the other document at `index` of `sides().others` beside this one. */
+  showBeside(index: number): void;
+  /** Move the tab in front to the side the reader is not in. */
+  moveToOtherSide(): void;
+  /** Exchange the two sides. */
+  switchSides(): void;
+  /** Work in the other side. */
+  focusOtherSide(): void;
   /** Whether a launch reopens every tab rather than the last document alone. */
   restoreTabs(): boolean;
   setRestoreTabs(restore: boolean): void;
@@ -723,6 +738,53 @@ export function registerAppCommands(
       keys: label("view.previousTab"),
       enabled: () => withDocument() && actions.documentCount() > 1,
       run: () => actions.nextDocument(-1),
+    },
+    {
+      // Asks for the other document by name, where a tab's own menu moves the
+      // tab the reader pressed: from the keyboard there is no tab under the
+      // pointer, and choosing the partner is the whole of the question.
+      id: "view.sideBySide",
+      title: "Show side by side with...",
+      enabled: () => withDocument() && actions.sides().others.length > 0,
+      argument: {
+        get placeholder() {
+          return partnerPlaceholder(actions.sides().others);
+        },
+        problem: (raw: string) => {
+          const picked = pickPartner(raw, actions.sides().others);
+          return "problem" in picked ? picked.problem : null;
+        },
+        preview: (raw: string) => {
+          const others = actions.sides().others;
+          const picked = pickPartner(raw, others);
+          return "index" in picked ? (others[picked.index] ?? "") : "";
+        },
+        run: (raw: string) => {
+          const picked = pickPartner(raw, actions.sides().others);
+          if ("index" in picked) actions.showBeside(picked.index);
+        },
+      },
+    },
+    {
+      // Named for where the tab goes, which is the side the reader is not in.
+      id: "view.moveToOtherSide",
+      get title() {
+        return `Move tab to ${actions.sides().focused === "left" ? "right" : "left"} side`;
+      },
+      enabled: () => withDocument() && actions.sides().others.length > 0,
+      run: () => actions.moveToOtherSide(),
+    },
+    {
+      id: "view.switchSides",
+      title: "Switch sides",
+      enabled: () => withDocument() && actions.sides().split,
+      run: () => actions.switchSides(),
+    },
+    {
+      id: "view.focusOtherSide",
+      title: "Go to other side",
+      enabled: () => withDocument() && actions.sides().split,
+      run: () => actions.focusOtherSide(),
     },
     {
       id: "file.open",

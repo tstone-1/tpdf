@@ -88,7 +88,9 @@ WIRINGS: list[tuple[str, str, str, str, str]] = [
         "export interface ViewerOptions {",
         "src/App.svelte",
         "new Viewer(",
-        "\n      });\n",
+        # The literal is handed to `scoped`, which runs each callback as the
+        # document it was built for, so it closes on that call's last argument.
+        "\n      }, own));\n",
     ),
     (
         "src/lib/scroller.ts",

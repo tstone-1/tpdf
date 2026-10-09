@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { Stage, blankLive, capture, install, type Slots } from "./livedocument";
+import { Stage, blankLive, capture, install, scoped, type Slots } from "./livedocument";
 
 interface Toy {
   id: number;
@@ -158,6 +158,22 @@ describe("work done within a document", () => {
     expect(v.now().name).toBe("half done");
   });
 
+  it("says the variables are lent only while a parked document has them", () => {
+    const v = variables();
+    v.open(1, "one");
+    v.stage.park();
+    v.open(2, "two");
+    const seen: boolean[] = [v.stage.lent];
+    v.stage.within(2, () => seen.push(v.stage.lent));
+    v.stage.within(1, () => {
+      seen.push(v.stage.lent);
+      v.stage.within(1, () => seen.push(v.stage.lent));
+    });
+    expect(() => v.stage.within(1, () => { throw new Error("no"); })).toThrow();
+    seen.push(v.stage.lent);
+    expect(seen).toEqual([false, false, true, true, false]);
+  });
+
   it("drops the record of a document the work ended", () => {
     const v = variables();
     v.open(1, "one");
@@ -212,5 +228,52 @@ describe("a blank live document", () => {
     expect(second.commentWords).not.toBe(first.commentWords);
     expect(second.redactionWords).not.toBe(first.redactionWords);
     expect(second.redactionPlans).not.toBe(first.redactionPlans);
+  });
+});
+
+describe("scoped callbacks", () => {
+  const through = (log: string[]) => <R>(work: () => R): R | undefined => {
+    log.push("in");
+    try { return work(); } finally { log.push("out"); }
+  };
+
+  it("run every function through the runner, nested groups included", () => {
+    const log: string[] = [];
+    const options = scoped({
+      count: 3,
+      onStatus: (next: string) => { log.push(`status ${next}`); },
+      marks: { onPick: (id: number) => { log.push(`pick ${id}`); return id * 2; } },
+    }, through(log));
+    options.onStatus("ready");
+    expect(options.marks.onPick(4)).toBe(8);
+    expect(options.count).toBe(3);
+    expect(log).toEqual(["in", "status ready", "out", "in", "pick 4", "out"]);
+  });
+
+  it("do not run for a document the runner refuses", () => {
+    let ran = false;
+    const options = scoped({ onGone: () => { ran = true; return 1; } }, () => undefined);
+    expect(options.onGone()).toBeUndefined();
+    expect(ran).toBe(false);
+  });
+
+  it("hand arrays, class instances and null through untouched", () => {
+    const pages = [{ width_pt: 1 }];
+    const when = new Date(0);
+    const map = new Map([[1, () => 1]]);
+    const options = scoped({ pages, when, map, nothing: null, text: "x" }, through([]));
+    expect(options.pages).toBe(pages);
+    expect(options.when).toBe(when);
+    expect(options.map).toBe(map);
+    expect(options.nothing).toBeNull();
+    expect(options.text).toBe("x");
+  });
+
+  it("leave the object they were given as it was", () => {
+    const onPick = () => 1;
+    const given = { group: { onPick } };
+    const options = scoped(given, through([]));
+    expect(given.group.onPick).toBe(onPick);
+    expect(options.group).not.toBe(given.group);
   });
 });
