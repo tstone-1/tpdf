@@ -4704,9 +4704,6 @@ async function appCommandChecks(
     // `edit.insertPages` leaves behind. It shipped without its entry here and
     // the Windows run was the first to read the red, on both corpora.
     "edit.insertPages.range",
-    // Guarded on the list of languages `file.recogniseTextLanguage` fetches.
-    // Declared with the command.
-    "file.recogniseTextLanguage.choice",
     // Guarded on the document being edited, which an untouched one is not. It
     // joined this list late: the guard landed with "Save over the file the
     // reader opened" and turned this check red, and the red went unread because
@@ -4715,6 +4712,10 @@ async function appCommandChecks(
     // promises; `file.saveCopy` is deliberately not here, because a copy of an
     // unedited document is a file a reader wants.
     "file.save",
+    // Guarded on the list of languages `file.recogniseTextLanguage` fetches.
+    // Declared with the command, one place too early: the
+    // registry lists it after `file.save`, and this list is compared in order.
+    "file.recogniseTextLanguage.choice",
     // Guarded on the jump history rather than on a document, which is why the
     // phase clears it below: both are correct to offer after a jump, and this
     // check is about what an open document alone earns. `nav.forward` joined
@@ -4768,6 +4769,9 @@ async function appCommandChecks(
     "app.uninstallCommandLineTool",
     "app.makeDefaultPdfApp",
     "edit.fieldBorderOff",
+    // A preference, set before or after the first scan is opened. Missing here
+    // from 2026-10-05, when it was registered, until this check next ran.
+    "file.recogniseTextLanguage",
   ];
 
   viewer.clearSelection();
