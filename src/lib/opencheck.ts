@@ -86,6 +86,8 @@ export interface OpenCheckHost {
   tabs: () => readonly { id: number; path: string; dirty?: boolean }[];
   /** What the header shows of the document the reader is in. */
   status: () => ViewerStatus | null;
+  /** The viewer on the side the reader is not in, with two sides. */
+  beside: () => Viewer | null;
   viewer: () => Viewer | null;
   edits: () => Edits | null;
   /**
@@ -1313,6 +1315,73 @@ async function run(host: OpenCheckHost, phase: string, expected: string): Promis
         focusedSide() === "right" && host.edits()?.doc === c.id && host.viewer() === rightViewer);
       check("each document kept its own place and its own edit",
         host.status()?.page === 3 && host.edits()?.state.dirty === true);
+
+      report.emit("[sides] scrolling the two sides together");
+      // The right document is at page 3 and the left at page 1: two pages apart.
+      const line = (viewer: Viewer | null) => {
+        const at = viewer?.reading;
+        return at ? at.page + at.fraction : NaN;
+      };
+      const apart = () => line(host.viewer()) - line(host.beside());
+      const near = (got: number, want: number) => Math.abs(got - want) < 0.02;
+      const lockButton = () => document.querySelector<HTMLElement>('[data-testid="sync-scroll"]');
+      host.run("view.syncScrolling");
+      await host.idle();
+      check("the lock is shown on the divider", lockButton()?.getAttribute("aria-pressed") === "true");
+      const held = apart();
+      host.viewer()!.goToPage(5);
+      await settled("the led jump", () => host.status()?.page === 6);
+      check("the other side follows, as far behind as it was",
+        near(held, 2) && near(apart(), held) && near(line(host.beside()), 3));
+      pressIn("left");
+      await host.idle();
+      host.viewer()!.goToPage(1);
+      await settled("the jump on the left", () => host.status()?.page === 2);
+      check("either side leads", near(line(host.beside()), 3) && near(apart(), -held));
+
+      // A wheel turned with Alt held moves its own side and nothing else.
+      const stayed = line(host.beside());
+      document.querySelector(`.pane[data-side="left"] .surface`)?.dispatchEvent(
+        new WheelEvent("wheel", { deltaY: 400, altKey: true, bubbles: true, cancelable: true }));
+      // The wheel moves this side at once and the frame that would move the
+      // other one comes after, so that frame is waited for: read before it,
+      // the other side has not moved under any rule.
+      await settled("the scroll alone", () => line(host.viewer()) > 1.05);
+      await pause(150);
+      check("Alt scrolls one side alone", near(line(host.beside()), stayed));
+      const reset = apart();
+      await pause(400);
+      host.viewer()!.goToPage(3);
+      await settled("the jump after it", () => host.status()?.page === 4);
+      check("and the new distance is the one kept",
+        !near(reset, -held) && near(line(host.beside()), 3 - reset));
+
+      const zoomBefore = { here: host.viewer()!.currentZoom, there: host.beside()!.currentZoom };
+      host.viewer()!.setZoomFixed(zoomBefore.here * 1.25);
+      await settled("the zoom across", () => near(host.beside()!.currentZoom / zoomBefore.there, 1.25));
+      check("a zoom step on one side is made on the other, and they stay in step",
+        near(host.beside()!.currentZoom / zoomBefore.there, 1.25) && near(apart(), reset));
+
+      host.viewer()!.goToEnd();
+      // The other side is moved in this side's next frame, which is not yet.
+      await settled("the end", () => line(host.beside()) > 700);
+      const atEnd = line(host.beside());
+      host.viewer()!.goToPage(3);
+      await settled("the way back", () => host.status()?.page === 4);
+      check("a document held at its end is back in step when the other returns",
+        atEnd > 700 && near(line(host.beside()), 3 - reset));
+
+      host.run("view.syncScrolling");
+      await host.idle();
+      const left = line(host.beside());
+      host.viewer()!.goToPage(9);
+      await settled("the jump with the lock off", () => host.status()?.page === 10);
+      check("with the lock off each side scrolls alone",
+        lockButton()?.getAttribute("aria-pressed") === "false" && near(line(host.beside()), left));
+      // The right document goes back to where the checks below expect it.
+      host.viewer()!.goToPage(0);
+      host.run("view.focusOtherSide");
+      await host.idle();
 
       report.emit("[sides] switching sides");
       host.run("view.switchSides");

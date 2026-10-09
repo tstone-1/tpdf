@@ -381,6 +381,7 @@ export const MENU_LAYOUT: LayoutSection[] = [
       "view.moveToOtherSide",
       "view.switchSides",
       "view.focusOtherSide",
+      "view.syncScrolling",
       SEPARATOR,
       "view.zoomIn",
       "view.zoomOut",

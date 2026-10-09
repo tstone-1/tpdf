@@ -27,8 +27,14 @@ have the binary.)
   toolbar, the sidebar, the find field and every command act on the side last clicked into,
   which its row of tabs marks. The divider between the sides is dragged to resize them and
   double-clicked for equal halves. *Switch sides* exchanges them, *Go to other side* moves
-  between them, and closing or moving away a side's last tab ends the split. The two sides
-  do not yet scroll together, and the layout is not restored at the next launch.
+  between them, and closing or moving away a side's last tab ends the split. A split
+  starts with each side fitted to its width. The layout is not restored at the next launch.
+- **The two sides scroll together** when the button on the divider is on, or *Scroll both
+  sides together* is run. The documents are locked at the places they are in, so one stays
+  as many pages ahead of the other as it was, whatever each side's zoom and page size. A
+  document that reaches its end waits there and is back in step when the other returns. A
+  zoom step on one side is made on the other. Holding Alt while scrolling moves one side
+  alone and keeps the new distance.
 
 ## [26.10.13] - 2026-10-08
 

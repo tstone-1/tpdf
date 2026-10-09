@@ -1534,6 +1534,11 @@ export class Scroller {
     return this.pageTop(page);
   }
 
+  /** Whether `page` is a page of the document as it is laid out now. */
+  knowsPage(page: number): boolean {
+    return this.boxes[page] !== undefined;
+  }
+
   /**
    * Distance from a page's top to the next page's, in CSS pixels.
    *

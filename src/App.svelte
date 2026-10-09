@@ -185,6 +185,7 @@
   import { Viewer, type ViewerOptions, type ViewerStatus } from "./lib/viewer";
   import { Stage, blankLive, scoped, type LiveDocument, type Slots } from "./lib/livedocument";
   import { Panes, otherSide, type Side, type Slot } from "./lib/panes";
+  import { ScrollLock } from "./lib/syncscroll";
   import { describeFit, percentOf } from "./lib/zoom";
 
   /**
@@ -212,6 +213,15 @@
   /** The share of the width the left side has, with two sides. */
   let paneShare = $state(0.5);
   let panesHost = $state<HTMLDivElement | null>(null);
+  /** Whether the two sides scroll together. The offset is `syncscroll.ts`'s. */
+  let syncScroll = $state(false);
+  const scrollLock = new ScrollLock();
+  /** The viewers of the two locked documents, by handle. See `lockSides`. */
+  const lockedViewers = new Map<number, Viewer>();
+  /** Set while one document is being moved to keep up with the other. */
+  let following = false;
+  /** Until when a wheel turned with Alt held scrolls its own side alone. */
+  let aloneUntil = 0;
 
   function dividerDown(event: PointerEvent): void {
     if (event.button !== 0) return;
@@ -535,6 +545,7 @@
     formLayer?.setBusy(documentBusy);
     textEditor?.setBusy(documentBusy);
     if (refused) say(refused);
+    if (syncScroll) setSyncScroll(true);
     refreshTabs();
     refreshMenu();
     if (plan.mount.length || plan.unmount.length) viewer?.focus();
@@ -547,11 +558,84 @@
       opening = true;
       try {
         await settleDocument();
+        const wasSplit = panes.split;
         panes.move(id, to, tabs.all.map((entry) => entry.doc.id));
         await showPanes();
+        // Half the window at the zoom the whole window had shows half a page
+        // width, so a split starts with each side fitted to its own width.
+        if (!wasSplit && panes.split) {
+          for (const side of ["left", "right"] as const) {
+            asDocument(panes.front(side), () => viewer?.setFit("width"));
+          }
+        }
       } catch (e) { say(String(e)); }
       finally { opening = false; refreshMenu(); }
     }));
+  }
+
+  /**
+   * Turns scrolling together on or off. On, the two documents are locked at
+   * the places they are in; with one side, or a side that shows nothing, it
+   * stays off.
+   */
+  function setSyncScroll(on: boolean): void {
+    syncScroll = on && panes.split;
+    if (!lockSides()) syncScroll = false;
+    refreshMenu();
+  }
+
+  /**
+   * Locks the two documents in front at the places they are in, when the
+   * reader has scrolling together on and both are mounted; holds nothing
+   * otherwise. False when nothing is locked.
+   *
+   * The two viewers are kept beside the lock. {@link keepInStep} runs in every
+   * frame of either document, and asking the stage for the other one's viewer
+   * there would lend the variables out and back once a frame for an answer
+   * that changes only when a document is mounted or torn down.
+   */
+  function lockSides(): boolean {
+    const read = (id: number) => asDocument(id, () =>
+      viewer ? { id, at: viewer.reading, zoom: viewer.currentZoom, viewer } : null);
+    const first = syncScroll && panes.split ? read(panes.front("left")) : null;
+    const second = first ? read(panes.front("right")) : null;
+    lockedViewers.clear();
+    if (!first || !second) {
+      scrollLock.release();
+      return false;
+    }
+    scrollLock.lock(first, second);
+    lockedViewers.set(first.id, first.viewer);
+    lockedViewers.set(second.id, second.viewer);
+    return true;
+  }
+
+  /**
+   * Moves the other document to where this one's frame says it belongs.
+   * Called from every frame of a mounted document, as that document, and it
+   * runs inside that frame: the other viewer draws before this returns, so the
+   * two sides are never a frame apart.
+   */
+  function keepInStep(): void {
+    if (!syncScroll || !viewer) return;
+    const leader = viewer;
+    const partnerId = scrollLock.partnerOf(openDoc);
+    const partner = lockedViewers.get(partnerId);
+    if (!partner) return;
+    const factor = scrollLock.zoomed(openDoc, leader.currentZoom,
+      { following, fitted: leader.fitMode !== "none" });
+    const moved = scrollLock.moved(openDoc, leader.reading,
+      { following, alone: performance.now() < aloneUntil, partnerAt: partner.reading });
+    if (factor === null && moved === null) return;
+    following = true;
+    try {
+      // The zoom first: it shifts the partner's own place, and the place asked
+      // for after it is then the one it ends in.
+      if (factor !== null) partner.setZoomFixed(partner.currentZoom * factor);
+      const to = moved ?? scrollLock.aim(openDoc, leader.reading);
+      if (to) partner.followTo(to.page, to.fraction);
+      scrollLock.seen(partnerId, partner.reading, partner.currentZoom);
+    } finally { following = false; }
   }
 
   function switchSides(): void {
@@ -612,6 +696,7 @@
         const ids = tabs.all.map((tab) => tab.doc.id);
         for (const beside of stage.parked) asDocument(beside, () => unmountDocument());
         bodyHeld = false;
+        setSyncScroll(false);
         clearActiveDocument();
         for (const id of ids) tabs.remove(id);
         panes.cleared();
@@ -1054,6 +1139,9 @@
     viewer?.destroy();
     sidebar?.destroy();
     panes.unmounted(openDoc);
+    // A lock on a document that is going is a lock on nothing. Whoever mounts
+    // what replaces it locks again, at the new pair's places.
+    if (scrollLock.locks(openDoc)) { scrollLock.release(); lockedViewers.clear(); }
     stage.clear();
   }
 
@@ -1119,6 +1207,8 @@
     },
     moveToOtherSide: () => void moveTab(openDoc, otherSide(panes.focused)),
     switchSides: () => switchSides(),
+    syncScrolling: () => syncScroll,
+    toggleSyncScrolling: () => setSyncScroll(!syncScroll),
     focusOtherSide: () => { if (focusSide(otherSide(panes.focused))) viewer?.focus(); },
     restoreTabs: () => restoreTabs,
     setRestoreTabs: (restore) => setRestoreTabs(restore),
@@ -4188,6 +4278,7 @@
           hasViewer: () => viewer !== null,
           tabs: () => tabRows,
           status: () => status,
+          beside: () => asDocument(panes.front(otherSide(panes.focused)), () => viewer) ?? null,
           viewer: () => viewer,
           edits: () => edits,
           apply: (run) => applyEdit(run),
@@ -4914,6 +5005,7 @@
         onPosition: (at, top) => {
           sidebar?.setPosition(at, top);
           notePlace();
+          keepInStep();
         },
         // Shown, for the same reason a failed print is: this fires only for a
         // command the reader typed and is waiting on --- a copy that could not
@@ -4958,6 +5050,9 @@
       // being rendered light and immediately thrown away.
       viewer.setInverted(invertPages);
       viewer.focus();
+      // A side that shows a different tab is a different pair of documents.
+      // Nothing is locked while the other side is still to be mounted.
+      if (syncScroll) lockSides();
 
       // After the viewer, deliberately not awaited, and deliberately not asked
       // for until the first screen is up.
@@ -5371,6 +5466,7 @@
             style:order={paneLayout.order[slot]}
             style:flex-grow={paneLayout.split ? (paneLayout.order[slot] === 0 ? paneShare : 1 - paneShare) : 1}
             role="presentation"
+            onwheelcapture={(event) => { if (event.altKey) aloneUntil = performance.now() + 250; }}
             onpointerdowncapture={() => { focusSide(panes.sideIn(slot as Slot)); }}
             onfocusin={() => { focusSide(panes.sideIn(slot as Slot)); }}>
             {#if paneLayout.split}
@@ -5386,7 +5482,19 @@
             aria-label="Divider between the two sides" title="Drag to resize. Double-click for equal halves."
             aria-valuemin="20" aria-valuemax="80" aria-valuenow={Math.round(paneShare * 100)}
             onpointerdown={dividerDown} onpointermove={dividerMove}
-            ondblclick={() => { paneShare = 0.5; }}></div>
+            ondblclick={() => { paneShare = 0.5; }}>
+            <!-- On the divider because it is about both sides and belongs to
+                 neither. A press on it is not the start of a resize. -->
+            <button class="sync-scroll" class:on={syncScroll} aria-pressed={syncScroll}
+              data-testid="sync-scroll"
+              title={syncScroll
+                ? "The two sides scroll together. Hold Alt to scroll one side alone."
+                : "Scroll both sides together"}
+              aria-label="Scroll both sides together"
+              onpointerdown={(event) => event.stopPropagation()}
+              ondblclick={(event) => event.stopPropagation()}
+              onclick={() => setSyncScroll(!syncScroll)}><span></span><span></span></button>
+          </div>
         {/if}
       </div>
     </div>
@@ -5706,6 +5814,31 @@
     touch-action: none;
   }
   .pane-divider:hover { background: color-mix(in srgb, currentColor 35%, transparent); }
+  .pane-divider { position: relative; }
+  /* Two bars, apart when the sides scroll separately and joined when they
+     scroll together. Wider than the divider it sits on, so it can be pressed. */
+  .sync-scroll {
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    z-index: 5;
+    width: 22px;
+    height: 26px;
+    padding: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 5px;
+    border: 1px solid color-mix(in srgb, currentColor 30%, transparent);
+    border-radius: 5px;
+    background: Canvas;
+    color: CanvasText;
+    cursor: pointer;
+  }
+  .sync-scroll span { width: 2px; height: 14px; border-radius: 1px; background: currentColor; }
+  .sync-scroll.on { gap: 0; background: Highlight; color: HighlightText; border-color: Highlight; }
+  .sync-scroll.on span { width: 3px; }
   .surface {
     flex: 1;
     min-width: 0;

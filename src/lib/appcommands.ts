@@ -127,6 +127,9 @@ export interface AppActions {
   switchSides(): void;
   /** Work in the other side. */
   focusOtherSide(): void;
+  /** Whether the two sides scroll together. */
+  syncScrolling(): boolean;
+  toggleSyncScrolling(): void;
   /** Whether a launch reopens every tab rather than the last document alone. */
   restoreTabs(): boolean;
   setRestoreTabs(restore: boolean): void;
@@ -785,6 +788,16 @@ export function registerAppCommands(
       title: "Go to other side",
       enabled: () => withDocument() && actions.sides().split,
       run: () => actions.focusOtherSide(),
+    },
+    {
+      // One command whose title says what running it does, like the button on
+      // the divider it is the keyboard's way to.
+      id: "view.syncScrolling",
+      get title() {
+        return actions.syncScrolling() ? "Scroll the two sides separately" : "Scroll both sides together";
+      },
+      enabled: () => withDocument() && actions.sides().split,
+      run: () => actions.toggleSyncScrolling(),
     },
     {
       id: "file.open",

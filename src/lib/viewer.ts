@@ -3070,6 +3070,50 @@ export class Viewer {
     this.scrollTo(this.scroller.pageTopOf(clamped));
   }
 
+  /**
+   * Where the top of the view is: a page, and the share of the distance to the
+   * next page's top that is already above it.
+   *
+   * {@link position} answers in points down the page, which is what a place in
+   * a file is remembered by. This is what a second viewer beside this one is
+   * kept in step by (`syncscroll.ts`): a share of a page means the same thing
+   * at another zoom and on a page of another size, and points do not.
+   */
+  get reading(): { page: number; fraction: number } {
+    const page = this.scroller.pageAt(this.scrollTop);
+    const pitch = this.scroller.pagePitchOf(page);
+    if (pitch <= 0) return { page, fraction: 0 };
+    const down = (this.scrollTop - this.scroller.pageTopOf(page)) / pitch;
+    return { page, fraction: Math.min(1, Math.max(0, down)) };
+  }
+
+  /**
+   * Moves to a {@link reading} and draws it before returning.
+   *
+   * For a viewer led by another one. Three things differ from every other
+   * way of moving. Nothing is recorded for Back, since the reader did not go
+   * anywhere in this document. No margin is left above the place. And the
+   * frame is drawn here, not at the next animation frame: this is called from
+   * inside the leading viewer's own frame, and a follower that drew one frame
+   * later would trail it by that frame for as long as the reader scrolled.
+   *
+   * A page past the last one is the end of the document.
+   */
+  followTo(page: number, fraction: number): void {
+    if (this.life.ended) return;
+    const at = Math.max(0, Math.floor(page));
+    const pitch = this.scroller.pagePitchOf(at);
+    const top = this.scroller.knowsPage(at)
+      ? this.scroller.pageTopOf(at) + Math.min(1, Math.max(0, fraction)) * pitch
+      : this.scroller.maxScroll;
+    const before = this.scrollTop;
+    this.scrollTo(top);
+    if (this.scrollTop === before) return;
+    cancelAnimationFrame(this.frameHandle);
+    this.running = true;
+    this.tick();
+  }
+
   /** Scrolls to the very top of the document. */
   goToStart(): void {
     this.scrollTo(0);

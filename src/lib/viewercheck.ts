@@ -3145,6 +3145,8 @@ async function appCommandChecks(
     moveToOtherSide: () => fired.push("moveToOtherSide"),
     switchSides: () => fired.push("switchSides"),
     focusOtherSide: () => fired.push("focusOtherSide"),
+    syncScrolling: () => false,
+    toggleSyncScrolling: () => fired.push("toggleSyncScrolling"),
     restoreTabs: () => false,
     setRestoreTabs: (restore) => fired.push(`setRestoreTabs:${restore}`),
     tabsToReopen: () => 0,
@@ -4392,6 +4394,7 @@ async function appCommandChecks(
     "view.moveToOtherSide": "needs a second open document; the open check's sides phase drives it",
     "view.switchSides": "needs two documents side by side; the open check's sides phase drives it",
     "view.focusOtherSide": "needs two documents side by side; the open check's sides phase drives it",
+    "view.syncScrolling": "needs two documents side by side; the open check's sides phase drives it",
     "find.next": "needs a live search with more than one match",
     "find.previous": "needs a live search with more than one match",
     "edit.copy": "its outcome is the system clipboard",
@@ -4642,6 +4645,7 @@ async function appCommandChecks(
     "view.moveToOtherSide",
     "view.switchSides",
     "view.focusOtherSide",
+    "view.syncScrolling",
     // This fixture's disk-change mode is `ask`, so that choice is the one not
     // offered. In registry order, as the whole list is.
     "file.onDiskChange.ask",

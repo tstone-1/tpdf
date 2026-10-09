@@ -52,6 +52,7 @@ function harness(
     tool?: { install?: boolean; uninstall?: boolean };
     // The window's two sides. One document and one side by default.
     sides?: { split: boolean; focused: "left" | "right"; others: string[] };
+    syncScrolling?: boolean;
   } = {},
   journal: { undo?: boolean; redo?: boolean } = {},
   selected = false,
@@ -120,6 +121,8 @@ function harness(
     moveToOtherSide: () => fired.push("moveToOtherSide"),
     switchSides: () => fired.push("switchSides"),
     focusOtherSide: () => fired.push("focusOtherSide"),
+    syncScrolling: () => update.syncScrolling ?? false,
+    toggleSyncScrolling: () => fired.push("toggleSyncScrolling"),
     restoreTabs: () => restoring,
     setRestoreTabs: (restore) => { restoring = restore; fired.push(`setRestoreTabs:${restore}`); },
     tabsToReopen: () => update.reopenable ?? 0,
@@ -1849,6 +1852,8 @@ describe("the window shortcuts for editing", () => {
     moveToOtherSide: () => fired.push("moveToOtherSide"),
     switchSides: () => fired.push("switchSides"),
     focusOtherSide: () => fired.push("focusOtherSide"),
+    syncScrolling: () => false,
+    toggleSyncScrolling: () => fired.push("toggleSyncScrolling"),
     restoreTabs: () => false,
     setRestoreTabs: (restore) => fired.push(`setRestoreTabs:${restore}`),
     tabsToReopen: () => 0,
@@ -2209,7 +2214,10 @@ describe("moving back and forward through jumps", () => {
 });
 
 describe("two documents side by side", () => {
-  const SIDE_COMMANDS = ["view.sideBySide", "view.moveToOtherSide", "view.switchSides", "view.focusOtherSide"];
+  const SIDE_COMMANDS = [
+    "view.sideBySide", "view.moveToOtherSide", "view.switchSides", "view.focusOtherSide",
+    "view.syncScrolling",
+  ];
   const one = { split: false, focused: "left" as const, others: [] };
   const two = { split: false, focused: "left" as const, others: ["report.pdf", "report-draft.pdf"] };
   const beside = { split: true, focused: "right" as const, others: ["report.pdf"] };
@@ -2264,11 +2272,19 @@ describe("two documents side by side", () => {
     expect(fired).toEqual([]);
   });
 
-  it("runs each of the other three as its own action", () => {
+  it("runs each of the other four as its own action", () => {
     const { registry, fired } = harness(true, { sides: beside });
     registry.run("view.moveToOtherSide");
     registry.run("view.switchSides");
     registry.run("view.focusOtherSide");
-    expect(fired).toEqual(["moveToOtherSide", "switchSides", "focusOtherSide"]);
+    registry.run("view.syncScrolling");
+    expect(fired).toEqual(["moveToOtherSide", "switchSides", "focusOtherSide", "toggleSyncScrolling"]);
+  });
+
+  it("names the scroll lock for what running it does", () => {
+    expect(harness(true, { sides: beside }).registry.find("view.syncScrolling")?.title)
+      .toBe("Scroll both sides together");
+    expect(harness(true, { sides: beside, syncScrolling: true }).registry.find("view.syncScrolling")?.title)
+      .toBe("Scroll the two sides separately");
   });
 });

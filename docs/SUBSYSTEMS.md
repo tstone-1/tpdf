@@ -190,6 +190,21 @@ in `LiveDocument` and the slot table, which does not compile without it; a tool 
 reader armed or a colour they picked is the window's and stays out.
 `scripts/tabs_check.py <checks-binary> testdata/text-heavy.pdf --phase sides` drives it;
 with the viewer's callbacks unwrapped, *the header reads the focused document's page* fails.
+
+Scrolling the two sides together is `src/lib/syncscroll.ts`: an offset between two places,
+each a page and the share of it above the top of the view, so it holds across two zooms and
+two page sizes. `keepInStep` in `App.svelte` runs in every frame of either document and
+moves the other with `Viewer.followTo`, which draws before it returns; a follower woken for
+the next animation frame would trail by that frame for as long as the reader scrolled.
+Three rules keep the two from pulling at each other: a frame that moved nothing leads
+nothing (so a document held at its end does not drag the longer one back), a document
+being moved does not answer, and after a move or a zoom the follower's place is recorded
+as seen. A wheel turned with Alt held scrolls its own side and resets the offset. A zoom
+passes across as a factor, and only a zoom the reader set: a fitted side's zoom follows
+the window, and both sides see the same resize. The lock is taken again whenever a side
+shows a different tab, and `unmountDocument` drops it. The same sides phase drives it; with
+the Alt rule ignored, *Alt scrolls one side alone* fails. That check waits for a frame
+after the wheel on purpose: read before it, the other side has not moved under any rule.
 Fit uses the visible sheet, which can differ from the page at the viewport's top.
 `tabs_check.py --phase tabs-position` checks repeated tab switches at nonzero offsets
 and at the final page under fit-page, fit-width and fixed zoom.
