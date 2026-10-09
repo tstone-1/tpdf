@@ -1025,6 +1025,7 @@ fn samples() -> BTreeMap<&'static str, String> {
             max_in_flight: 4,
             prefetch_screens: 1.5,
             cancels: vec![0, 1],
+            panes: vec![1, 2],
         },
     );
 

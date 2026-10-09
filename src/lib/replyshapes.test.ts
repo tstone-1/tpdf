@@ -320,6 +320,7 @@ const SCHEMA = {
     max_in_flight: ["number"],
     prefetch_screens: ["number"],
     cancels: ["array"],
+    panes: ["array"],
   } satisfies Shape<ScrollBenchConfig>,
   PreparedImport: {
     pending: ["number"],

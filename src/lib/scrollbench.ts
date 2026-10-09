@@ -44,14 +44,23 @@ export interface ScrollBenchConfig {
   max_in_flight: number;
   prefetch_screens: number;
   cancels: number[];
+  panes: number[];
 }
 
-/** One variant: a layout at a zoom, with its own persistent scroller. */
+/**
+ * One variant: a layout at a zoom, with its own persistent scrollers.
+ *
+ * One scroller per pane, left to right, each on its own opening of the
+ * document. The first is the one the scroll is computed for and the rest are
+ * moved to the same offset inside the same animation frame, which is what a
+ * synchronised second pane has to do --- so the frame times of a two-pane
+ * variant are the cost of that, not of two independent scrolls.
+ */
 interface Variant {
   label: string;
   layout: Layout;
   zoom: number;
-  scroller: Scroller;
+  scrollers: Scroller[];
   host: HTMLDivElement;
 }
 
@@ -111,7 +120,8 @@ function nextFrame(): Promise<number> {
  */
 async function settle(variant: Variant, frames: number): Promise<number> {
   for (let frame = 0; frame < frames; frame++) {
-    if (variant.scroller.outstanding === 0) return frame;
+    if (variant.scrollers.every((scroller) => scroller.outstanding === 0))
+      return frame;
     await nextFrame();
   }
   return frames;
@@ -185,7 +195,28 @@ async function scrollRound(
   config: ScrollBenchConfig,
   round: number,
 ): Promise<Round> {
-  const { scroller } = variant;
+  const { scrollers } = variant;
+  const lead = scrollers[0];
+  if (!lead) throw new Error("variant has no scroller");
+
+  // The worst pane, because that is the one a reader is looking at when they
+  // notice: a mean over two panes would let a blank right-hand side hide behind
+  // a sharp left-hand one.
+  const frameAll = (top: number): { sharp: number; any: number } => {
+    let sharp = 1;
+    let any = 1;
+    for (const scroller of scrollers) {
+      const stats = scroller.frame(Math.min(top, scroller.maxScroll));
+      sharp = Math.min(sharp, stats.sharp);
+      any = Math.min(any, stats.any);
+    }
+    return { sharp, any };
+  };
+  const total = (pick: (scroller: Scroller) => number): number =>
+    scrollers.reduce((sum, scroller) => sum + pick(scroller), 0);
+  const reset = (): void => {
+    for (const scroller of scrollers) scroller.resetStats();
+  };
 
   // Cleared once, here. An earlier version cleared again after the warm-up, to
   // be sure the timed section scrolled over unrendered content --- and that
@@ -194,8 +225,8 @@ async function scrollRound(
   // single new request and reported a flawless 60 fps over nothing at all.
   // Clearing between rounds is enough: everything below the first screen is
   // unrendered either way, which is the case the criterion is about.
-  scroller.clearTiles();
-  scroller.resetStats();
+  for (const scroller of scrollers) scroller.clearTiles();
+  reset();
 
   // Untimed: let the first screen fill and the layer tree settle, so the timed
   // section measures scrolling rather than the first paint after a variant is
@@ -205,12 +236,13 @@ async function scrollRound(
   let warmupFrames = 0;
   for (; warmupFrames < config.warmup_frames; warmupFrames++) {
     await nextFrame();
-    scroller.frame(0);
-    if (scroller.coverage().sharp >= 0.999) break;
+    if (frameAll(0).sharp >= 0.999) break;
   }
-  const warmupCoverage = scroller.coverage();
+  const warmupCoverage = Math.min(
+    ...scrollers.map((scroller) => scroller.coverage().sharp),
+  );
 
-  scroller.resetStats();
+  reset();
 
   const intervals: number[] = [];
   const callbacks: number[] = [];
@@ -228,8 +260,8 @@ async function scrollRound(
     previous = timestamp;
 
     scrollTop += direction * config.px_per_frame;
-    if (scrollTop >= scroller.maxScroll) {
-      scrollTop = scroller.maxScroll;
+    if (scrollTop >= lead.maxScroll) {
+      scrollTop = lead.maxScroll;
       direction = -1;
     } else if (scrollTop <= 0) {
       scrollTop = 0;
@@ -237,7 +269,7 @@ async function scrollRound(
     }
 
     const start = performance.now();
-    const stats = scroller.frame(scrollTop);
+    const stats = frameAll(scrollTop);
     callbacks.push(performance.now() - start);
     coverages.push(stats.sharp);
     anyCoverages.push(stats.any);
@@ -252,23 +284,34 @@ async function scrollRound(
     anyCoverage: mean(anyCoverages),
     anyFloor: Math.min(...anyCoverages),
     warmupFrames,
-    warmupCoverage: warmupCoverage.sharp,
+    warmupCoverage,
     wallMs: previous - wallStart,
-    delivered: scroller.stats.delivered,
-    discarded: scroller.stats.discarded,
-    abandoned: scroller.stats.abandoned,
-    requested: scroller.stats.requested,
-    megabytes: scroller.stats.bytes / (1024 * 1024),
-    renderMs: scroller.stats.renderMs,
-    decodeMs: scroller.stats.decodeMs,
+    delivered: total((scroller) => scroller.stats.delivered),
+    discarded: total((scroller) => scroller.stats.discarded),
+    abandoned: total((scroller) => scroller.stats.abandoned),
+    requested: total((scroller) => scroller.stats.requested),
+    megabytes: total((scroller) => scroller.stats.bytes) / (1024 * 1024),
+    renderMs: total((scroller) => scroller.stats.renderMs),
+    decodeMs: total((scroller) => scroller.stats.decodeMs),
   };
 }
 
-/** Builds one host element and scroller per variant, all but one hidden. */
+/**
+ * The width each of `panes` panes gets, in CSS px.
+ *
+ * An equal share and nothing held back for a divider: the benchmark asks what a
+ * second scroller costs the frame, and a few pixels of chrome would change the
+ * painted area by less than the run-to-run noise.
+ */
+function paneWidth(viewport: { width: number }, panes: number): number {
+  return Math.floor(viewport.width / panes);
+}
+
+/** Builds one host element per variant, all but one hidden. */
 function buildVariants(
   stage: HTMLElement,
   config: ScrollBenchConfig,
-  doc: DocumentInfo,
+  docs: DocumentInfo[],
   page: PageSize,
   viewport: { width: number; height: number },
 ): Variant[] {
@@ -277,48 +320,16 @@ function buildVariants(
   for (const layout of config.layouts) {
     for (const zoom of config.zooms) {
       for (const cancel of config.cancels) {
-        const host = document.createElement("div");
-        host.style.display = "none";
-        stage.appendChild(host);
-
-        variants.push({
-          // Only labelled when there is more than one to tell apart, so the
-          // ordinary single-variant run keeps its established row names.
-          label:
-            config.cancels.length > 1
-              ? `${layout}/${zoom.toFixed(0)}x/${cancel ? "cancel" : "plain"}`
-              : `${layout}/${zoom.toFixed(0)}x`,
-          layout: layout as Layout,
-          zoom,
-          host,
-          scroller: new Scroller(host, {
-            doc: doc.id,
-            pageCount: doc.page_count,
-            // Page 1 alone, and nothing here learns the rest. The benchmark
-            // opens one corpus at a time and every one of them is uniform, so a
-            // learning channel would add a variable to a measurement rather than
-            // correctness to it --- and the frame cost this measures is the same
-            // whichever size the pages are.
-            pages: [page],
-            zoom,
-            // Upright: the benchmark measures scrolling, and a rotation would
-            // add a dimension to a table that already has three.
-            turns: 0,
-      // The benchmark measures the light path. Inversion is a per-pixel pass
-      // over the tile in the renderer, so it would be a variant dimension of
-      // its own rather than a constant here, and nothing has asked for that
-      // number yet.
-      invert: false,
-            layout: layout as Layout,
-            tilePx: config.tile_px,
-            dpr: window.devicePixelRatio,
-            viewport,
-            prefetchScreens: config.prefetch_screens,
-            cacheTiles: config.cache_tiles,
-            maxInFlight: config.max_in_flight,
-            cancel: cancel !== 0,
-          }),
-        });
+        for (const panes of config.panes) {
+          variants.push(
+            buildVariant(stage, config, docs, page, viewport, {
+              layout: layout as Layout,
+              zoom,
+              cancel: cancel !== 0,
+              panes,
+            }),
+          );
+        }
       }
     }
   }
@@ -326,9 +337,78 @@ function buildVariants(
   return variants;
 }
 
+function buildVariant(
+  stage: HTMLElement,
+  config: ScrollBenchConfig,
+  docs: DocumentInfo[],
+  page: PageSize,
+  viewport: { width: number; height: number },
+  shape: { layout: Layout; zoom: number; cancel: boolean; panes: number },
+): Variant {
+  const { layout, zoom, cancel, panes } = shape;
+  const host = document.createElement("div");
+  host.style.display = "none";
+  host.style.position = "relative";
+  stage.appendChild(host);
+
+  const width = paneWidth(viewport, panes);
+  const scrollers: Scroller[] = [];
+  for (let pane = 0; pane < panes; pane++) {
+    const doc = docs[pane];
+    if (!doc) throw new Error(`no document was opened for pane ${pane + 1}`);
+
+    // A wrapper carries the pane's place in the window, because the scroller
+    // sets its own host to `position: relative` when it mounts and would undo
+    // an offset written on that element.
+    const slot = document.createElement("div");
+    slot.style.cssText = `position:absolute;top:0;left:${pane * width}px;`;
+    const paneHost = document.createElement("div");
+    slot.appendChild(paneHost);
+    host.appendChild(slot);
+
+    scrollers.push(
+      new Scroller(paneHost, {
+        doc: doc.id,
+        pageCount: doc.page_count,
+        // Page 1 alone, and nothing here learns the rest. The benchmark
+        // opens one corpus at a time and every one of them is uniform, so a
+        // learning channel would add a variable to a measurement rather than
+        // correctness to it --- and the frame cost this measures is the same
+        // whichever size the pages are.
+        pages: [page],
+        zoom,
+        // Upright: the benchmark measures scrolling, and a rotation would
+        // add a dimension to a table that already has three.
+        turns: 0,
+        // The benchmark measures the light path. Inversion is a per-pixel pass
+        // over the tile in the renderer, so it would be a variant dimension of
+        // its own rather than a constant here, and nothing has asked for that
+        // number yet.
+        invert: false,
+        layout: layout as Layout,
+        tilePx: config.tile_px,
+        dpr: window.devicePixelRatio,
+        viewport: { width, height: viewport.height },
+        prefetchScreens: config.prefetch_screens,
+        cacheTiles: config.cache_tiles,
+        maxInFlight: config.max_in_flight,
+        cancel,
+      }),
+    );
+  }
+
+  // Only labelled when there is more than one to tell apart, so the ordinary
+  // single-variant run keeps its established row names.
+  const parts = [layout, `${zoom.toFixed(0)}x`];
+  if (config.cancels.length > 1) parts.push(cancel ? "cancel" : "plain");
+  if (config.panes.length > 1) parts.push(`${panes}p`);
+
+  return { label: parts.join("/"), layout, zoom, scrollers, host };
+}
+
 function report(
   config: ScrollBenchConfig,
-  doc: DocumentInfo,
+  docs: DocumentInfo[],
   page: PageSize,
   viewport: { width: number; height: number },
   baselineMs: number,
@@ -340,7 +420,7 @@ function report(
   const labels = [...new Set(rounds.map((r) => r.label))];
 
   log(`file            ${config.path}`);
-  log(`pages           ${doc.page_count}`);
+  log(`pages           ${docs[0]?.page_count ?? 0}`);
   log(
     `page 1          ${page.width_pt.toFixed(0)} x ${page.height_pt.toFixed(0)} pt`,
   );
@@ -352,6 +432,14 @@ function report(
   );
   log(
     `withdrawal      ${config.cancels.map((c) => (c ? "on" : "off")).join(", ")}`,
+  );
+  // The ids are printed because the comparison is only about two *documents*
+  // if they differ: two panes on one id would share a tile queue's worth of
+  // state in the backend and measure something cheaper than the feature.
+  log(
+    `panes           ${config.panes
+      .map((n) => `${n} (${paneWidth(viewport, n)} css px each)`)
+      .join(", ")}; document ids ${docs.map((d) => d.id).join(", ")}`,
   );
   log(
     `scroll          ${config.px_per_frame} css px/frame, ${config.frames} frames x ${config.rounds} rounds`,
@@ -537,10 +625,14 @@ export async function runScrollBenchIfRequested(): Promise<boolean> {
   try {
     const resolutionMs = clockResolutionMs();
 
-    const doc = await call("open_document", {
-      path: config.path,
-    });
-    const page = doc.pages[0];
+    // Once per pane of the widest variant. A second pane in the application
+    // holds a second document, so the file is opened again rather than one id
+    // being shared between scrollers.
+    const docs: DocumentInfo[] = [];
+    for (let pane = 0; pane < Math.max(1, ...config.panes); pane++) {
+      docs.push(await call("open_document", { path: config.path }));
+    }
+    const page = docs[0]?.pages[0];
     if (!page) throw new Error("document has no pages");
 
     // The whole window, minus nothing: the stage covers the page so no other
@@ -553,7 +645,7 @@ export async function runScrollBenchIfRequested(): Promise<boolean> {
     const idle = await calibrateCadence(120);
     const baselineMs = quantile(idle, 0.5);
 
-    const variants = buildVariants(stage, config, doc, page, viewport);
+    const variants = buildVariants(stage, config, docs, page, viewport);
     const rounds: Round[] = [];
 
     let unsettled = 0;
@@ -572,7 +664,7 @@ export async function runScrollBenchIfRequested(): Promise<boolean> {
 
     report(
       config,
-      doc,
+      docs,
       page,
       viewport,
       baselineMs,

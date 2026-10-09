@@ -88,6 +88,10 @@ pub struct ScrollBenchConfig {
     /// Whether stale requests are withdrawn, as a variant dimension so the two
     /// behaviours can be interleaved rather than compared across runs.
     pub(crate) cancels: Vec<u8>,
+    /// How many scrollers share the window, side by side, as a variant
+    /// dimension. Each pane opens the document again and gets an equal share of
+    /// the width; every pane is moved inside the same animation frame.
+    pub(crate) panes: Vec<usize>,
 }
 
 /// The scroll benchmark's configuration, or `None` if none was requested.
@@ -115,6 +119,9 @@ pub fn scrollbench_config() -> Option<ScrollBenchConfig> {
         // One value by default, so an ordinary run is not twice the size. Pass
         // `0,1` to measure what withdrawal is worth.
         cancels: env_list("TPDF_SCROLL_CANCEL", vec![1]),
+        // One pane by default, for the same reason. Pass `1,2` to measure what a
+        // second pane costs the frame.
+        panes: env_list("TPDF_SCROLL_PANES", vec![1]),
     })
 }
 
