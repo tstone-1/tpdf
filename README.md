@@ -214,14 +214,16 @@ project conventions.
   <!-- built: file.close file.closeAll view.nextTab view.previousTab view.tabLabelsLarger view.tabLabelsSmaller view.tabLabelsDefault -->
 - Two documents side by side. *Show side by side with...* asks for the other open
   document by name; a tab's right-click menu moves that tab to the right or left side,
-  or to the start or end of its row. Each side has its own row of tabs, and the toolbar,
+  or to the start or end of its row, and a tab dragged over the pages is dropped on the
+  half it is over. Each side has its own row of tabs, and the toolbar,
   the sidebar and the find field follow the side you click into. Drag the divider to
   resize the two sides, double-click it for equal halves. *Switch sides* exchanges them,
   and closing or moving away a side's last tab ends the split. The button on the divider,
   or *Scroll both sides together*, locks the two documents at the places they are in: one
   stays as many pages ahead of the other as it was, at any zoom, and a zoom step on one
   side is made on the other. Hold Alt while scrolling to move one side alone and keep the
-  new distance.
+  new distance. With *At launch: reopen all tabs* chosen, the two sides come back with
+  their tabs and the divider where it was.
   <!-- built: view.sideBySide view.moveToOtherSide view.switchSides view.focusOtherSide view.syncScrolling -->
 - Notices when another program rewrites the open file. By default it says so and offers
   a reload; *When the file changes on disk: reload automatically* reloads at once, keeping

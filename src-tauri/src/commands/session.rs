@@ -164,7 +164,8 @@ pub async fn session_set_ocr_language(
     .map_err(|e| format!("the session write did not run: {e}"))?
 }
 
-/// Records which documents are open as tabs, and which one is showing.
+/// Records which documents are open as tabs, which one is showing, and how
+/// they are divided between two sides when the window shows two.
 ///
 /// Called whenever a tab opens, closes or takes the front, and whether or not
 /// the reader has asked for tabs to be reopened: the list is what that
@@ -174,10 +175,11 @@ pub async fn session_set_tabs(
     app: tauri::AppHandle,
     paths: Vec<String>,
     active: Option<String>,
+    sides: Option<session::Sides>,
 ) -> Result<(), String> {
     let path = session_file(&app);
     tauri::async_runtime::spawn_blocking(move || {
-        with_session(&path, |session| session.set_tabs(paths, active))
+        with_session(&path, |session| session.set_tabs(paths, active, sides))
     })
     .await
     .map_err(|e| format!("the session write did not run: {e}"))?

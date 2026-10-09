@@ -19,5 +19,12 @@
   ],
   "active_tab": "/tmp/one.pdf",
   "restore_tabs": true,
+  "sides": {
+    "right": [
+      "/tmp/two.pdf"
+    ],
+    "beside": "/tmp/two.pdf",
+    "share": 0.4
+  },
   "home": "/Users/reader"
 }

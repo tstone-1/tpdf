@@ -335,6 +335,7 @@ const SCHEMA = {
     tabs: ["array"],
     active_tab: ["string"],
     restore_tabs: ["boolean"],
+    sides: ["object"],
     home: ["string"],
   } satisfies Shape<Session>,
   Split: {

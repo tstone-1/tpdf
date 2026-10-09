@@ -191,6 +191,18 @@ reader armed or a colour they picked is the window's and stays out.
 `scripts/tabs_check.py <checks-binary> testdata/text-heavy.pdf --phase sides` drives it;
 with the viewer's callbacks unwrapped, *the header reads the focused document's page* fails.
 
+A tab dragged onto a side is `src/lib/tabdrag.ts`: a press is a click until the pointer
+has travelled, and `dropSide` says which side a drop lands on. `tabPress` in `App.svelte`
+follows the pointer on the window with pointer events; the page's own drag events are not
+used, because the shell takes file drops and on Windows that turns them off. The two
+sides are written with the tab list (`Sides` in `session.rs`: the paths on the right,
+the tab in front of the side the reader is not in, the divider's share), and a launch
+that reopens every tab puts them back once the tabs are open: `sidesToRestore` cuts the
+record down to the tabs that opened, and `Panes.arrange` exchanges the two page areas
+before it would rebuild the viewer already on screen. The recorder is held until then,
+so a quit halfway through does not record the tabs as one side.
+`scripts/session_check.py --only tabs` drives the record and the relaunch.
+
 Scrolling the two sides together is `src/lib/syncscroll.ts`: an offset between two places,
 each a page and the share of it above the top of the view, so it holds across two zooms and
 two page sizes. `keepInStep` in `App.svelte` runs in every frame of either document and

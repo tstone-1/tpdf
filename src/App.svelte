@@ -171,7 +171,7 @@
   } from "./lib/savedfields";
   import type { Form } from "./lib/forms";
   import {
-    TabRecorder, afterReopen, launchPlan, openBehind, tabsToReopen, type TabHost,
+    TabRecorder, afterReopen, launchPlan, openBehind, sidesToRestore, tabsToReopen, type TabHost,
   } from "./lib/tabrestore";
   import { runMarkCheckIfRequested } from "./lib/harness";
   import { runSessionCheckIfRequested } from "./lib/harness";
@@ -185,6 +185,7 @@
   import { Viewer, type ViewerOptions, type ViewerStatus } from "./lib/viewer";
   import { Stage, blankLive, scoped, type LiveDocument, type Slots } from "./lib/livedocument";
   import { Panes, otherSide, type Side, type Slot } from "./lib/panes";
+  import { TabDrag, type Carried } from "./lib/tabdrag";
   import { ScrollLock } from "./lib/syncscroll";
   import { describeFit, percentOf } from "./lib/zoom";
 
@@ -236,6 +237,69 @@
     const box = panesHost.getBoundingClientRect();
     if (box.width <= 0) return;
     paneShare = Math.min(0.8, Math.max(0.2, (event.clientX - box.left) / box.width));
+  }
+
+  const tabDrag = new TabDrag();
+  /** The tab being dragged and the side it is over, for the markup. */
+  let tabCarried = $state<Carried | null>(null);
+  /** Set from the end of a drag until the click the same release sends has passed. */
+  let tabDragEnded = false;
+
+  /** What a drop is decided against, read when the pointer moves. */
+  function dropLayout(id: number) {
+    const box = panesHost?.getBoundingClientRect();
+    return {
+      area: box ?? { left: 0, top: 0, width: 0, height: 0 },
+      split: panes.split, share: paneShare, from: panes.sideOf(id), tabs: tabs.all.length,
+    };
+  }
+
+  /**
+   * A press on a tab, which is a drag onto a side once the pointer has left
+   * the tab's place. The pointer is followed on the window, so the drag goes
+   * on over the pages, where the tab's own row does not reach.
+   */
+  function tabPress(event: PointerEvent, id: number): void {
+    if (event.button !== 0 || opening || documentBusy || tabDrag.pressed) return;
+    tabDrag.press(id, event.clientX, event.clientY);
+    const move = (moved: PointerEvent) => {
+      tabCarried = tabDrag.move(moved.clientX, moved.clientY, dropLayout(id));
+    };
+    const end = (drop: boolean) => {
+      for (const [name, listener] of listeners) window.removeEventListener(name, listener, true);
+      const carried = drop ? tabDrag.release() : null;
+      tabDrag.cancel();
+      if (tabCarried) {
+        // The release is followed by a click when it is over the tab pressed.
+        tabDragEnded = true;
+        setTimeout(() => { tabDragEnded = false; });
+      }
+      tabCarried = null;
+      if (carried?.side) void dropTab(carried.id, carried.side);
+    };
+    const listeners: [string, (event: Event) => void][] = [
+      ["pointermove", (moved) => move(moved as PointerEvent)],
+      ["pointerup", () => end(true)],
+      ["pointercancel", () => end(false)],
+      ["blur", () => end(false)],
+      ["keydown", (key) => {
+        if ((key as KeyboardEvent).key !== "Escape" || !tabCarried) return;
+        key.preventDefault();
+        key.stopPropagation();
+        end(false);
+      }],
+    ];
+    for (const [name, listener] of listeners) window.addEventListener(name, listener, true);
+  }
+
+  /**
+   * Puts a dragged tab on `side`. With one side showing, the tab dropped on
+   * the left half stays on the left and every other tab goes to the right.
+   */
+  async function dropTab(id: number, side: Side): Promise<void> {
+    if (panes.split) return moveTab(id, side);
+    await moveTab(id, "right");
+    if (side === "left" && panes.split && panes.sideOf(id) === "right") switchSides();
   }
   let sidebarHost = $state<HTMLDivElement | null>(null);
   let title = $state("");
@@ -354,7 +418,11 @@
       id: tab.doc.id, path: tab.path, dirty: tab.edits.state.dirty,
       slot: panes.slotOf(panes.sideOf(tab.doc.id)),
     }));
-    tabRecorder.note(tabs.all.map((tab) => tab.path), tabs.find(tabs.active)?.path ?? null);
+    tabRecorder.note(tabs.all.map((tab) => tab.path), tabs.find(tabs.active)?.path ?? null, panes.split ? {
+      right: tabs.all.filter((tab) => panes.sideOf(tab.doc.id) === "right").map((tab) => tab.path),
+      beside: tabs.find(panes.front(otherSide(panes.focused)))?.path ?? null,
+      share: Math.round(paneShare * 1000) / 1000,
+    } : null);
     if (changed) void tick().then(() => {
       document.getElementById(`document-tab-${activeTab}`)?.scrollIntoView({ block: "nearest", inline: "nearest" });
     });
@@ -529,6 +597,11 @@
       // next lines replace.
       if (openDoc !== id) refused = error;
     }
+    // Mounting a document puts the reader in its side, and the last one
+    // mounted is not always the side the plan named.
+    if (stage.holds(plan.focus) && panes.front(panes.sideOf(plan.focus)) === plan.focus) {
+      panes.focus(panes.sideOf(plan.focus));
+    }
     const wanted = panes.plan().focus;
     if (openDoc !== wanted && stage.parked.includes(wanted)) {
       sidebar?.setVisible(false);
@@ -568,6 +641,27 @@
             asDocument(panes.front(side), () => viewer?.setFit("width"));
           }
         }
+      } catch (e) { say(String(e)); }
+      finally { opening = false; refreshMenu(); }
+    }));
+  }
+
+  /**
+   * Puts the tabs back on the two sides a launch read, once they are open.
+   * `recorded` is what the session held; what is done with it is decided
+   * against the tabs that did open (`sidesToRestore`).
+   */
+  function restoreSides(recorded: Parameters<typeof sidesToRestore>[0]): Promise<void> {
+    return documentTasks.idle().then(() => opens.run(async () => {
+      const sides = sidesToRestore(recorded, tabs.all.map((tab) => tab.path), tabs.find(openDoc)?.path ?? null);
+      if (!sides || panes.split) return;
+      const idOf = (path: string | null) => (path === null ? -1 : tabs.forPath(path)?.doc.id ?? -1);
+      opening = true;
+      try {
+        await settleDocument();
+        paneShare = sides.share;
+        panes.arrange(sides.right.map(idOf), idOf(sides.beside), openDoc, tabs.all.map((entry) => entry.doc.id));
+        await showPanes();
       } catch (e) { say(String(e)); }
       finally { opening = false; refreshMenu(); }
     }));
@@ -4261,6 +4355,9 @@
       if (plan.behind.length) {
         void firstPaint()
           .then(() => openBehind(plan.behind, plan.order, tabHost(false)))
+          // Before the recorder is released: a quit between the two would
+          // otherwise record the tabs that came back as one side.
+          .then(() => restoreSides(plan.sides))
           .finally(() => { tabRecorder.release(); refreshTabs(); refreshMenu(); });
       }
 
@@ -4335,6 +4432,7 @@
         setRestoreTabs,
         reopenLastTabs,
         tabsSettled: () => tabRecorder.settled(),
+        moveToOtherSide: () => moveTab(openDoc, otherSide(panes.focused)),
         recentCommands: () =>
           commands
             .all()
@@ -5425,7 +5523,8 @@
       onwheel={(event) => { event.currentTarget.scrollLeft += sidewaysBy(event, event.currentTarget.clientWidth); }}>
       {#each rows as tab (tab.id)}
         <!-- The middle button's mousedown would start autoscroll on Windows. -->
-        <div class="document-tab" class:active={tab.id === front} role="presentation"
+        <div class="document-tab" class:active={tab.id === front} class:carried={tabCarried?.id === tab.id}
+          role="presentation"
           onmousedown={(event) => { if (event.button === 1) event.preventDefault(); }}
           onauxclick={(event) => tabAuxClick(event, tab.id)}>
           <button id={`document-tab-${tab.id}`} role="tab"
@@ -5433,7 +5532,8 @@
             tabindex={tab.id === front ? 0 : -1}
             title={tab.path} disabled={opening || documentBusy}
             oncontextmenu={(event) => tabContextMenu(event, tab.id)}
-            onclick={() => void activateTab(tab.id)} onkeydown={(event) => tabKey(event, tab.id)}>
+            onpointerdown={(event) => tabPress(event, tab.id)}
+            onclick={() => { if (!tabDragEnded) void activateTab(tab.id); }} onkeydown={(event) => tabKey(event, tab.id)}>
             <span class="tab-name">{tabLabelOf.get(tab.id)}</span>
             {#if tab.id === activeTab ? dirty : tab.dirty}<span aria-label="Unsaved changes">*</span>{/if}
           </button>
@@ -5482,7 +5582,8 @@
             aria-label="Divider between the two sides" title="Drag to resize. Double-click for equal halves."
             aria-valuemin="20" aria-valuemax="80" aria-valuenow={Math.round(paneShare * 100)}
             onpointerdown={dividerDown} onpointermove={dividerMove}
-            ondblclick={() => { paneShare = 0.5; }}>
+            onpointerup={refreshTabs} onpointercancel={refreshTabs}
+            ondblclick={() => { paneShare = 0.5; refreshTabs(); }}>
             <!-- On the divider because it is about both sides and belongs to
                  neither. A press on it is not the start of a resize. -->
             <button class="sync-scroll" class:on={syncScroll} aria-pressed={syncScroll}
@@ -5495,6 +5596,12 @@
               ondblclick={(event) => event.stopPropagation()}
               onclick={() => setSyncScroll(!syncScroll)}><span></span><span></span></button>
           </div>
+        {/if}
+        {#if tabCarried?.side}
+          {@const edge = (paneLayout.split ? paneShare : 0.5) * 100}
+          <div class="drop-side" data-testid="drop-side" data-side={tabCarried.side}
+            style:left={tabCarried.side === "left" ? "0" : `${edge}%`}
+            style:width={`${tabCarried.side === "left" ? edge : 100 - edge}%`}></div>
         {/if}
       </div>
     </div>
@@ -5802,6 +5909,20 @@
     flex-direction: column;
   }
   .pane.unused { display: none; }
+  /* Where a dragged tab lands if it is let go now. Over the pages and under
+     the pointer, which it does not take: the drag is followed on the window. */
+  .panes { position: relative; }
+  .drop-side {
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    z-index: 20;
+    pointer-events: none;
+    background: color-mix(in srgb, Highlight 22%, transparent);
+    outline: 2px solid Highlight;
+    outline-offset: -2px;
+  }
+  .document-tab.carried { opacity: 0.55; }
   /* The side the reader is working in, said on its row of tabs: the toolbar
      and the sidebar act on it, and nothing else on screen says which it is. */
   .pane.focused :global(.document-tabs) { box-shadow: inset 0 2px 0 Highlight; }

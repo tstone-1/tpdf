@@ -1433,6 +1433,69 @@ async function run(host: OpenCheckHost, phase: string, expected: string): Promis
       report.emit("[sides] closing every tab from a split");
       host.run("edit.undo");
       await settled("the second undo", () => host.edits()?.state.dirty === false);
+
+      report.emit("[sides] dragging a tab onto a side");
+      // Pointer events at the tab and then at the window, which is where the
+      // application follows a drag. `nearly` is a move too short to be one.
+      const dropMark = () =>
+        document.querySelector<HTMLElement>('[data-testid="drop-side"]')?.dataset.side ?? "none";
+      const pagesBox = () => document.querySelector<HTMLElement>(".panes")!.getBoundingClientRect();
+      const over = (share: number) => {
+        const box = pagesBox();
+        return { clientX: box.left + box.width * share, clientY: box.top + box.height / 2 };
+      };
+      const carry = async (id: number, to: { clientX: number; clientY: number }, end: "drop" | "escape") => {
+        const tab = document.getElementById(`document-tab-${id}`);
+        if (!tab) throw new Error(`no tab ${id} to drag`);
+        const box = tab.getBoundingClientRect();
+        const from = { clientX: box.left + box.width / 2, clientY: box.top + box.height / 2 };
+        tab.dispatchEvent(new PointerEvent("pointerdown", { bubbles: true, button: 0, ...from }));
+        window.dispatchEvent(new PointerEvent("pointermove", { ...from, clientX: from.clientX + 3 }));
+        await pause(50);
+        const nearly = dropMark();
+        window.dispatchEvent(new PointerEvent("pointermove", to));
+        await pause(50);
+        const shown = dropMark();
+        if (end === "escape") {
+          window.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true }));
+        }
+        window.dispatchEvent(new PointerEvent("pointerup", to));
+        await pause(50);
+        await host.idle();
+        return { nearly, shown, after: dropMark() };
+      };
+      const sides = () => `${rows("left")}|${rows("right")}|${focusedSide()}|${host.edits()?.doc ?? -1}`;
+
+      let carried = await carry(a.id, over(0.75), "drop");
+      await settled("the dragged split", () => split() && mountedAreas() === 2 && host.edits()?.doc === a.id);
+      check("a tab pressed is not dragged before it has travelled", carried.nearly === "none");
+      check("a tab carried over the right half is shown where it would land",
+        carried.shown === "right" && carried.after === "none");
+      check("a tab dropped on the right half is shown beside the others",
+        sides() === `${b.id}|${a.id}|right|${a.id}`);
+
+      carried = await carry(a.id, over(0.75), "drop");
+      check("a tab let go over its own side stays there",
+        carried.shown === "none" && sides() === `${b.id}|${a.id}|right|${a.id}`);
+      carried = await carry(a.id, over(0.25), "escape");
+      check("Esc ends a drag and nothing is dropped",
+        carried.shown === "left" && carried.after === "none" && sides() === `${b.id}|${a.id}|right|${a.id}`);
+      const above = { clientX: over(0.25).clientX, clientY: pagesBox().top - 300 };
+      carried = await carry(a.id, above, "drop");
+      check("a tab let go outside the pages is not dropped",
+        carried.shown === "none" && sides() === `${b.id}|${a.id}|right|${a.id}`);
+
+      carried = await carry(a.id, over(0.25), "drop");
+      await settled("the split ended by a drag", () => !split() && host.edits()?.doc === a.id);
+      check("the right side's only tab dragged to the left ends the split",
+        carried.shown === "left" && mountedAreas() === 1 && sidebars() === 1);
+
+      carried = await carry(b.id, over(0.25), "drop");
+      await settled("the split from the left half", () => split() && mountedAreas() === 2 && host.edits()?.doc === b.id);
+      check("a tab dropped on the left half takes the left and the others the right",
+        carried.shown === "left" && sides() === `${b.id}|${a.id}|left|${b.id}`);
+      host.run("view.moveToOtherSide");
+      await settled("the end of the dragged split", () => !split() && host.edits()?.doc === b.id);
       host.run("view.moveToOtherSide");
       await settled("the third split", () => split() && mountedAreas() === 2);
       host.run("file.closeAll");

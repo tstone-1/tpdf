@@ -68,6 +68,8 @@ PHASE_TABS_VERIFY = "tabs: every tab comes back"
 PHASE_TABS_MISSING = "tabs: the front tab's file is gone"
 PHASE_TABS_LEAVE = "tabs: leaving three open, preference off"
 PHASE_TABS_OFF = "control: only the last document without the preference"
+PHASE_SIDES_RECORD = "sides: leaving two documents side by side"
+PHASE_SIDES_VERIFY = "sides: the two sides come back"
 
 # The precondition check inside `record`, by name, so its verdict can be read.
 #
@@ -173,6 +175,20 @@ def check_tabs_file(session_file: Path, tabs: list[Path], front: Path, restore: 
     return bool(ok)
 
 
+def check_sides_file(session_file: Path, wanted: dict | None) -> bool:
+    """Asserts the two sides the app wrote; `None` is a window showing one document."""
+    try:
+        got = json.loads(session_file.read_text()).get("sides")
+    except (OSError, ValueError) as e:
+        print(f"[FAIL] session file is not readable: {e}")
+        return False
+    good = got == wanted
+    shown = got and {**got, "right": [Path(p).name for p in got.get("right", [])],
+                     "beside": got.get("beside") and Path(got["beside"]).name}
+    print(f"{'[OK]  ' if good else '[FAIL]'} recorded {'sides':<12} {shown!r}")
+    return good
+
+
 def check_tabs(binary: str, pdf: str, scratch: Path, timeout: float) -> bool:
     """Leaves three tabs open and relaunches, with the preference on and off."""
     import shutil
@@ -193,6 +209,8 @@ def check_tabs(binary: str, pdf: str, scratch: Path, timeout: float) -> bool:
     code, out = launch(binary, f"tabs-record:{tabs_argument(tabs, front)}", recorded, timeout)
     ok &= report(out, code, PHASE_TABS_RECORD)
     ok &= check_tabs_file(recorded, tabs, front, True)
+    # The control for the sides recorded further down: these tabs had one side.
+    ok &= check_sides_file(recorded, None)
 
     # A copy for the second launch below: the first one rewrites the list when
     # it switches tabs, and the missing-file case must start from what was left.
@@ -208,6 +226,16 @@ def check_tabs(binary: str, pdf: str, scratch: Path, timeout: float) -> bool:
 
     code, out = launch(binary, f"tabs-off:{tabs_argument(tabs, front)}", left, timeout)
     ok &= report(out, code, PHASE_TABS_OFF)
+
+    # The front tab on the right, alone, and its neighbour in front on the left.
+    sides = scratch / "sides.json"
+    code, out = launch(binary, f"sides-record:{tabs_argument(tabs, front)}", sides, timeout)
+    ok &= report(out, code, PHASE_SIDES_RECORD)
+    ok &= check_tabs_file(sides, tabs, front, True)
+    ok &= check_sides_file(sides, {"right": [str(front)], "beside": str(tabs[2]), "share": 0.5})
+
+    code, out = launch(binary, f"sides-verify:{tabs_argument(tabs, front)}", sides, timeout)
+    ok &= report(out, code, PHASE_SIDES_VERIFY)
 
     # Last, because it deletes a file the phases above open.
     front.unlink()

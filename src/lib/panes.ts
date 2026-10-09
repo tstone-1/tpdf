@@ -178,6 +178,30 @@ export class Panes {
     this.#flipped = !this.#flipped;
   }
 
+  /**
+   * Puts every tab on the side a launch read back: the handles in `right` on
+   * the right and the rest on the left, `beside` in front of the side the
+   * reader is not in, and `active`, the document they are looking at, in front
+   * of its own side and focused. `order` is every open handle in tab order.
+   *
+   * The viewer `active` already has stays where it is: when its side would be
+   * drawn in the other page area, the two areas change sides instead. A
+   * handle that is not open is ignored, and with nothing left on one of the
+   * sides there is no split.
+   */
+  arrange(right: readonly number[], beside: number, active: number, order: readonly number[]): void {
+    this.#right.clear();
+    for (const id of right) this.#right.add(id);
+    for (const side of ["left", "right"] as const) {
+      const mine = this.on(side, order);
+      this.#front[side] = [active, beside].find((id) => mine.includes(id)) ?? mine[0] ?? -1;
+    }
+    if (order.includes(active)) this.#focused = this.sideOf(active);
+    this.#settle(order);
+    const area = this.#mounted.indexOf(active);
+    if (area >= 0 && this.slotOf(this.sideOf(active)) !== area) this.#flipped = !this.#flipped;
+  }
+
   /** A viewer for `id` now exists in page area `slot`. */
   mounted(id: number, slot: Slot): void {
     this.#mounted[slot] = id;

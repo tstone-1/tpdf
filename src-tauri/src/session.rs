@@ -166,6 +166,35 @@ pub struct Session {
     /// asked for twenty to be opened every morning.
     #[serde(default)]
     pub restore_tabs: bool,
+    /// The two sides, when the window was showing two documents side by side.
+    ///
+    /// Only what [`Session::tabs`] does not say: which of them were on the
+    /// right, which was in front of the side the reader was not in, and where
+    /// the divider stood. `None` for a window showing one document.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sides: Option<Sides>,
+}
+
+/// The narrowest a side is drawn, as a share of the width. `App.svelte`'s
+/// divider stops at the same two shares.
+const MIN_SHARE: f64 = 0.2;
+
+/// How the tabs were divided between the two sides of the window.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct Sides {
+    /// The tabs on the right, in tab order. Every other tab was on the left.
+    #[serde(default)]
+    pub right: Vec<String>,
+    /// The tab in front of the side the reader was not working in.
+    #[serde(default)]
+    pub beside: Option<String>,
+    /// The share of the width the left side had.
+    #[serde(default = "even_share")]
+    pub share: f64,
+}
+
+fn even_share() -> f64 {
+    0.5
 }
 
 impl Session {
@@ -196,7 +225,7 @@ impl Session {
             restore_tabs: session.restore_tabs,
             ..Self::default()
         }
-        .with_tabs(session.tabs, session.active_tab)
+        .with_tabs(session.tabs, session.active_tab, session.sides)
         .with_ocr_language(session.ocr_language)
     }
 
@@ -214,13 +243,19 @@ impl Session {
         self
     }
 
-    /// Records which documents are open as tabs, and which of them is showing.
+    /// Records which documents are open as tabs, which of them is showing, and
+    /// how they are divided between two sides.
     ///
     /// A path is listed once, at its first position: two tabs on one file do
     /// not exist, so a repeat is a damaged record and not a second tab. The
     /// active tab is kept only when it is in the list, because a launch opens
     /// it first and it must be one of the tabs that come back.
-    pub fn set_tabs(&mut self, paths: Vec<String>, active: Option<String>) {
+    ///
+    /// The sides are kept only when they describe a split of these tabs: some
+    /// of them on the right and some not. The tab in front of the other side
+    /// has to be on the side the active tab is not on, and the divider is put
+    /// back inside the range it can be dragged over.
+    pub fn set_tabs(&mut self, paths: Vec<String>, active: Option<String>, sides: Option<Sides>) {
         let mut kept: Vec<String> = Vec::new();
         for path in paths {
             if kept.len() == CAPACITY {
@@ -231,11 +266,41 @@ impl Session {
             }
         }
         self.active_tab = active.filter(|path| kept.contains(path));
+        self.sides = sides.and_then(|sides| {
+            let right: Vec<String> = kept
+                .iter()
+                .filter(|path| sides.right.contains(path))
+                .cloned()
+                .collect();
+            if right.is_empty() || right.len() == kept.len() {
+                return None;
+            }
+            let active_right = self.active_tab.as_ref().map(|path| right.contains(path));
+            let beside = sides.beside.filter(|path| {
+                kept.contains(path)
+                    && active_right.is_some_and(|there| there != right.contains(path))
+            });
+            let share = if sides.share.is_finite() {
+                sides.share.clamp(MIN_SHARE, 1.0 - MIN_SHARE)
+            } else {
+                even_share()
+            };
+            Some(Sides {
+                right,
+                beside,
+                share,
+            })
+        });
         self.tabs = kept;
     }
 
-    fn with_tabs(mut self, paths: Vec<String>, active: Option<String>) -> Self {
-        self.set_tabs(paths, active);
+    fn with_tabs(
+        mut self,
+        paths: Vec<String>,
+        active: Option<String>,
+        sides: Option<Sides>,
+    ) -> Self {
+        self.set_tabs(paths, active, sides);
         self
     }
 
@@ -335,7 +400,7 @@ fn temp_beside(path: &Path) -> PathBuf {
 
 #[cfg(test)]
 mod tests {
-    use super::{Fit, Place, Session, CAPACITY};
+    use super::{Fit, Place, Session, Sides, CAPACITY};
     use std::path::PathBuf;
 
     use crate::testutil::TempDir;
@@ -443,6 +508,7 @@ mod tests {
         session.set_tabs(
             paths(&["/tmp/b.pdf", "/tmp/a.pdf", "/tmp/c.pdf"]),
             Some("/tmp/a.pdf".to_string()),
+            None,
         );
         session.save(&dir.file()).expect("save");
 
@@ -466,12 +532,130 @@ mod tests {
         assert_eq!(loaded.active_tab, None);
     }
 
+    fn sides(right: &[&str], beside: Option<&str>, share: f64) -> Option<Sides> {
+        Some(Sides {
+            right: paths(right),
+            beside: beside.map(str::to_string),
+            share,
+        })
+    }
+
+    #[test]
+    fn the_two_sides_survive_a_round_trip() {
+        let dir = TempDir::new("sides");
+        let mut session = Session::default();
+        session.set_tabs(
+            paths(&["/tmp/a.pdf", "/tmp/b.pdf", "/tmp/c.pdf"]),
+            Some("/tmp/a.pdf".to_string()),
+            sides(&["/tmp/c.pdf", "/tmp/b.pdf"], Some("/tmp/c.pdf"), 0.3),
+        );
+        session.save(&dir.file()).expect("save");
+
+        let loaded = Session::load(&dir.file());
+        assert_eq!(
+            loaded.sides,
+            sides(&["/tmp/b.pdf", "/tmp/c.pdf"], Some("/tmp/c.pdf"), 0.3),
+            "the right side is listed in tab order"
+        );
+    }
+
+    #[test]
+    fn sides_that_do_not_divide_the_tabs_are_no_split() {
+        let open = paths(&["/tmp/a.pdf", "/tmp/b.pdf"]);
+        let front = Some("/tmp/a.pdf".to_string());
+        let mut session = Session::default();
+
+        session.set_tabs(
+            open.clone(),
+            front.clone(),
+            sides(&["/tmp/gone.pdf"], None, 0.5),
+        );
+        assert_eq!(session.sides, None, "nothing open is on the right");
+
+        session.set_tabs(
+            open.clone(),
+            front.clone(),
+            sides(&["/tmp/a.pdf", "/tmp/b.pdf"], None, 0.5),
+        );
+        assert_eq!(session.sides, None, "nothing is left on the left");
+
+        session.set_tabs(
+            open.clone(),
+            front.clone(),
+            sides(&["/tmp/b.pdf"], None, 0.5),
+        );
+        assert!(session.sides.is_some());
+        session.set_tabs(open, front, None);
+        assert_eq!(session.sides, None, "the split has ended");
+    }
+
+    #[test]
+    fn the_tab_beside_is_on_the_other_side_and_the_divider_within_reach() {
+        let open = paths(&["/tmp/a.pdf", "/tmp/b.pdf", "/tmp/c.pdf"]);
+        let front = Some("/tmp/a.pdf".to_string());
+        let mut session = Session::default();
+        let mut beside_after = |beside: &str, active: Option<String>| {
+            session.set_tabs(
+                open.clone(),
+                active,
+                sides(&["/tmp/c.pdf"], Some(beside), 0.5),
+            );
+            session.sides.clone().expect("a split").beside
+        };
+        assert_eq!(
+            beside_after("/tmp/c.pdf", front.clone()).as_deref(),
+            Some("/tmp/c.pdf")
+        );
+        assert_eq!(
+            beside_after("/tmp/b.pdf", front.clone()),
+            None,
+            "on the active tab's own side"
+        );
+        assert_eq!(
+            beside_after("/tmp/gone.pdf", Some("/tmp/c.pdf".to_string())),
+            None,
+            "not open, and not on the left for that"
+        );
+        assert_eq!(
+            beside_after("/tmp/gone.pdf", front.clone()),
+            None,
+            "not open"
+        );
+        assert_eq!(beside_after("/tmp/c.pdf", None), None, "beside nothing");
+
+        let mut share_after = |share: f64| {
+            session.set_tabs(
+                open.clone(),
+                front.clone(),
+                sides(&["/tmp/c.pdf"], None, share),
+            );
+            session.sides.clone().expect("a split").share
+        };
+        assert!((share_after(0.05) - 0.2).abs() < 1e-9);
+        assert!((share_after(7.0) - 0.8).abs() < 1e-9);
+        assert!((share_after(f64::NAN) - 0.5).abs() < 1e-9);
+        assert!((share_after(0.35) - 0.35).abs() < 1e-9);
+
+        // A file that names the sides and no share reads as even halves.
+        let dir = TempDir::new("sides-no-share");
+        let raw = serde_json::json!({
+            "tabs": ["/tmp/a.pdf", "/tmp/b.pdf"], "active_tab": "/tmp/a.pdf",
+            "sides": { "right": ["/tmp/b.pdf"] },
+        });
+        std::fs::write(dir.file(), raw.to_string()).expect("write");
+        assert_eq!(
+            Session::load(&dir.file()).sides,
+            sides(&["/tmp/b.pdf"], None, 0.5)
+        );
+    }
+
     #[test]
     fn a_tab_is_listed_once_and_the_active_one_is_among_them() {
         let mut session = Session::default();
         session.set_tabs(
             paths(&["/tmp/a.pdf", "", "/tmp/b.pdf", "/tmp/a.pdf"]),
             Some("/tmp/gone.pdf".to_string()),
+            None,
         );
         assert_eq!(session.tabs, paths(&["/tmp/a.pdf", "/tmp/b.pdf"]));
         assert_eq!(
@@ -479,11 +663,11 @@ mod tests {
             "a tab that is not open cannot be showing"
         );
 
-        session.set_tabs(paths(&["/tmp/b.pdf"]), Some("/tmp/b.pdf".to_string()));
+        session.set_tabs(paths(&["/tmp/b.pdf"]), Some("/tmp/b.pdf".to_string()), None);
         assert_eq!(session.active_tab.as_deref(), Some("/tmp/b.pdf"));
 
         // Closing every tab leaves nothing to reopen.
-        session.set_tabs(Vec::new(), None);
+        session.set_tabs(Vec::new(), None, None);
         assert!(session.tabs.is_empty());
     }
 
@@ -491,7 +675,7 @@ mod tests {
     fn the_tab_list_is_bounded_on_the_way_in_and_on_the_way_back() {
         let many: Vec<String> = (0..CAPACITY + 5).map(|n| format!("/tmp/{n}.pdf")).collect();
         let mut session = Session::default();
-        session.set_tabs(many.clone(), None);
+        session.set_tabs(many.clone(), None, None);
         assert_eq!(session.tabs.len(), CAPACITY);
         assert_eq!(
             session.tabs[0], "/tmp/0.pdf",
@@ -516,6 +700,7 @@ mod tests {
         session.set_tabs(
             paths(&["/tmp/a.pdf", "/tmp/b.pdf"]),
             Some("/tmp/a.pdf".to_string()),
+            None,
         );
         session.remember(place("/tmp/b.pdf"));
         assert_eq!(session.tabs, paths(&["/tmp/a.pdf", "/tmp/b.pdf"]));
@@ -562,6 +747,7 @@ mod tests {
         session.set_tabs(
             paths(&["/Users/reader/Documents/report.pdf"]),
             Some("/Users/reader/Documents/report.pdf".into()),
+            None,
         );
 
         session.forget("/Users/reader/Documents/report.pdf");
@@ -593,6 +779,7 @@ mod tests {
         session.set_tabs(
             open.clone(),
             Some("/Users/reader/Documents/report.pdf".into()),
+            None,
         );
 
         session.clear_places();

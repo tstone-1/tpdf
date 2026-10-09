@@ -5572,8 +5572,10 @@ WebView2 teardown noise on a *passing* run, not a failure.
 phases above it copies the fixture to three files, leaves them open as tabs, and relaunches:
 with the preference on the strip must come back in order with the right tab in front, with it
 off only the last document may open (the control), and with the front tab's file deleted the
-first remaining tab must be on screen. `--only tabs` runs that half alone, five launches,
-and `--only places` the first half alone. Any fixture does for it; the eight-page minimum
+first remaining tab must be on screen. Two more launches leave the front tab on the right
+side and relaunch: the two sides must come back with their tabs, the tab in front of each
+and the reader on the right, and the launches before them, which recorded no sides, must
+show one. `--only tabs` runs that half alone, and `--only places` the first half alone. Any fixture does for it; the eight-page minimum
 below is the first half's.
 
 **Open, and intermittent: the `default` control can hang instead of running** (Windows,

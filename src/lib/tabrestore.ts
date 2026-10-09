@@ -18,7 +18,7 @@
  */
 
 import { call } from "./ipc";
-import type { Session } from "./session";
+import type { Session, Sides } from "./session";
 
 /** What a launch opens, and in what order the tabs end up. */
 export interface LaunchPlan {
@@ -36,6 +36,11 @@ export interface LaunchPlan {
   behind: string[];
   /** The tab order once every one of them is open. Empty leaves it alone. */
   order: string[];
+  /**
+   * The two sides the tabs were on, to be put back once they are open, or
+   * null for one document in the window. See {@link sidesToRestore}.
+   */
+  sides: Sides | null;
 }
 
 /** The tabs a session recorded, when it recorded any. */
@@ -59,11 +64,14 @@ export function launchPlan(session: Session, handed: readonly string[]): LaunchP
       behind: tabs.filter((path) => !handed.includes(path)),
       // The reader's tabs where they were, and what they just asked for after.
       order: tabs.length ? [...tabs, ...handed.filter((path) => !tabs.includes(path))] : [],
+      // What was handed over is what the reader came for, and it is not in
+      // the record of the sides. It gets the whole window.
+      sides: null,
     };
   }
   if (!tabs.length) {
     const last = session.places[0];
-    return { show: last ? [last.path] : [], resuming: true, behind: [], order: [] };
+    return { show: last ? [last.path] : [], resuming: true, behind: [], order: [], sides: null };
   }
   const front = frontTab(session, tabs);
   return {
@@ -71,7 +79,29 @@ export function launchPlan(session: Session, handed: readonly string[]): LaunchP
     resuming: true,
     behind: tabs.filter((path) => path !== front),
     order: [...tabs],
+    sides: session.sides ?? null,
   };
+}
+
+/**
+ * The recorded sides, cut down to the tabs that opened.
+ *
+ * `open` is every open path in tab order and `active` the one the reader is
+ * looking at. A tab that would not open is on neither side, and what is left
+ * is a split only while both sides still have a tab: with the whole of one
+ * side gone the window shows one document, which is what null says.
+ */
+export function sidesToRestore(
+  sides: Sides | null,
+  open: readonly string[],
+  active: string | null,
+): Sides | null {
+  if (!sides || active === null || !open.includes(active)) return null;
+  const right = open.filter((path) => sides.right.includes(path));
+  if (right.length === 0 || right.length === open.length) return null;
+  const beside = sides.beside !== null && open.includes(sides.beside)
+    && right.includes(sides.beside) !== right.includes(active) ? sides.beside : null;
+  return { right, beside, share: sides.share };
 }
 
 /**
@@ -156,28 +186,33 @@ export function afterReopen(refused: readonly string[], name: (path: string) => 
  */
 export class TabRecorder {
   private last: string | null = null;
-  private waiting: [string[], string | null] | null = null;
+  private waiting: [string[], string | null, Sides | null] | null = null;
   private held = false;
   private queue: Promise<unknown> = Promise.resolve();
 
   constructor(
-    private readonly send: (paths: string[], active: string | null) => Promise<unknown> = (
-      paths,
-      active,
-    ) => call("session_set_tabs", { paths, active }),
+    private readonly send: (
+      paths: string[],
+      active: string | null,
+      sides: Sides | null,
+    ) => Promise<unknown> = (paths, active, sides) => call("session_set_tabs", { paths, active, sides }),
   ) {}
 
-  /** Records the tabs as they are now. The same list twice is one write. */
-  note(paths: readonly string[], active: string | null): void {
+  /**
+   * Records the tabs as they are now, and the two sides they are on when the
+   * window shows two. The same record twice is one write.
+   */
+  note(paths: readonly string[], active: string | null, sides: Sides | null = null): void {
     if (this.held) {
-      this.waiting = [[...paths], active];
+      this.waiting = [[...paths], active, sides && { ...sides, right: [...sides.right] }];
       return;
     }
-    const key = JSON.stringify([paths, active]);
+    const key = JSON.stringify([paths, active, sides]);
     if (key === this.last) return;
     this.last = key;
     const list = [...paths];
-    const write = () => this.send(list, active);
+    const kept = sides && { ...sides, right: [...sides.right] };
+    const write = () => this.send(list, active, kept);
     // A failed write must not stop the ones after it, so the tail never rejects.
     this.queue = this.queue.then(write).catch(() => undefined);
   }
@@ -198,7 +233,7 @@ export class TabRecorder {
     this.held = false;
     const waiting = this.waiting;
     this.waiting = null;
-    if (waiting) this.note(waiting[0], waiting[1]);
+    if (waiting) this.note(waiting[0], waiting[1], waiting[2]);
   }
 
   /** Resolves once every write issued so far has been answered. Never rejects. */

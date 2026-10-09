@@ -28,7 +28,16 @@ have the binary.)
   which its row of tabs marks. The divider between the sides is dragged to resize them and
   double-clicked for equal halves. *Switch sides* exchanges them, *Go to other side* moves
   between them, and closing or moving away a side's last tab ends the split. A split
-  starts with each side fitted to its width. The layout is not restored at the next launch.
+  starts with each side fitted to its width.
+- **A tab can be dragged onto a side.** Carried over the pages, it is dropped on the half
+  it is over, which is marked while the tab is held: the right half shows it on the right,
+  and the left half shows it on the left with every other tab on the right. With two
+  sides showing, a tab is dragged from one to the other. Esc, or letting go anywhere
+  else, drops nothing.
+- **The two sides come back at the next launch** when *At launch: reopen all tabs* is
+  chosen: the tabs of each side, the tab in front of each, the side last worked in and
+  the place of the divider. A side whose documents no longer open is left out, and the
+  window then shows one document. Scrolling together starts off.
 - **The two sides scroll together** when the button on the divider is on, or *Scroll both
   sides together* is run. The documents are locked at the places they are in, so one stays
   as many pages ahead of the other as it was, whatever each side's zoom and page size. A

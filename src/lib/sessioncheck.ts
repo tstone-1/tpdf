@@ -30,6 +30,12 @@
  * | `tabs-verify` | from `tabs-record` | the tabs expected and the one in front | the strip came back, and a tab opened behind mounts |
  * | `tabs-off`    | from `tabs-leave` | the same | only the last document opens; the command then brings the rest |
  *
+ * | `sides-record` | fresh | three documents | as `tabs-record`, then moves the tab in front to the right side |
+ * | `sides-verify` | from `sides-record` | the same | the two sides came back: their tabs, the tab in front of each, the side the reader was in |
+ *
+ * `tabs-verify` is the control for `sides-verify`: it asserts one side, so a
+ * launch that showed two whatever was recorded fails there.
+ *
  * `tabs-off` is the control: without it, a launch that reopened every tab
  * whatever the preference said would pass `tabs-verify`. The script runs
  * `tabs-verify` a second time with the front tab's file deleted, which is the
@@ -140,6 +146,29 @@ export interface SessionCheckHost {
   reopenLastTabs: () => Promise<void>;
   /** Resolves once the tab list on disk is the one on screen. */
   tabsSettled: () => Promise<void>;
+  /** Moves the tab in front to the other side, as the command does. */
+  moveToOtherSide: () => Promise<void>;
+}
+
+/**
+ * The two sides as the window draws them: the names on each side's row of
+ * tabs, the name in front, and the side marked as the reader's. Read off the
+ * page, so it is what a reader sees and not what the pane model holds.
+ */
+function sidesShown(): string {
+  const side = (which: string) => {
+    const row = Array.from(
+      document.querySelectorAll<HTMLElement>(`.pane[data-side="${which}"] [role="tab"]`));
+    const name = (tab: HTMLElement) => basename(tab.title);
+    const front = row.find((tab) => tab.getAttribute("aria-selected") === "true");
+    return `${row.map(name).join(" ")} (${front ? name(front) : "none"})`;
+  };
+  const mounted = Array.from(document.querySelectorAll<HTMLElement>(".pane:not(.unused) .surface"))
+    .filter((area) => area.childElementCount > 0).length;
+  const reader = document.querySelector<HTMLElement>(".pane.focused")?.dataset.side ?? "none";
+  return document.querySelector(".pane-divider")
+    ? `left ${side("left")}, right ${side("right")}, reader ${reader}, ${mounted} mounted`
+    : "one side";
 }
 
 /** Splits a `tabs-*` argument: the paths, `|`-separated, the front one last. */
@@ -455,6 +484,45 @@ async function run(host: SessionCheckHost, phase: string, argument: string): Pro
       break;
     }
 
+    case "sides-record": {
+      await leaveTabs(host, argument, true);
+      await host.moveToOtherSide();
+      const { tabs, front } = tabArgument(argument);
+      // The tab moved is alone on the right, and its neighbour, the next tab,
+      // takes the front of the side it left.
+      const rest = tabs.filter((path) => path !== front);
+      const neighbour = tabs[tabs.indexOf(front) + 1] ?? rest[rest.length - 1] ?? "";
+      const wanted = `left ${names(rest)} (${basename(neighbour)}), ` +
+        `right ${basename(front)} (${basename(front)}), reader right, 2 mounted`;
+      const shown = await settle(() => sidesShown() === wanted);
+      check("the tab in front moved to the right side", shown, `${sidesShown()}; wanted ${wanted}`);
+      await host.tabsSettled();
+      await pause(500);
+      break;
+    }
+
+    case "sides-verify": {
+      const { tabs, front } = tabArgument(argument);
+      const rest = tabs.filter((path) => path !== front);
+      const neighbour = tabs[tabs.indexOf(front) + 1] ?? rest[rest.length - 1] ?? "";
+      const wanted = `left ${names(rest)} (${basename(neighbour)}), ` +
+        `right ${basename(front)} (${basename(front)}), reader right, 2 mounted`;
+      const back = await settle(() => sidesShown() === wanted);
+      check("the two sides came back as they were left", back, `${sidesShown()}; wanted ${wanted}`);
+      await settle(() => host.viewer()?.idle === true);
+      check(
+        "the reader is in the document they were in",
+        host.path() === front && host.viewer() !== null,
+        describe(host),
+      );
+      check(
+        "the tabs are in the order they were left in",
+        host.tabs().join("|") === tabs.join("|"),
+        `${names(host.tabs())}, wanted ${names(tabs)}`,
+      );
+      break;
+    }
+
     case "tabs-verify": {
       const { tabs, front } = tabArgument(argument);
       const back = await settle(() => host.tabs().length >= tabs.length);
@@ -482,6 +550,8 @@ async function run(host: SessionCheckHost, phase: string, argument: string): Pro
         () => host.path() === behind && host.viewer()?.idle === true && host.pageCount() > 0,
       );
       check("a tab opened behind shows its document when switched to", mounted, describe(host));
+      // The control for `sides-verify`: no sides were recorded for these tabs.
+      check("the window shows one side", sidesShown() === "one side", sidesShown());
       check(
         "switching to it opened no further tab",
         host.tabs().join("|") === tabs.join("|"),

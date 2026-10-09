@@ -239,6 +239,48 @@ describe("two sides", () => {
   });
 });
 
+describe("the sides a launch reads back", () => {
+  it("puts the tabs on their sides with the reader's document focused", () => {
+    const { panes, order } = three();
+    panes.arrange([3], 3, 1, order);
+    expect(panes.split).toBe(true);
+    expect(panes.on("right", order)).toEqual([3]);
+    expect([panes.front("left"), panes.front("right"), panes.focused]).toEqual([1, 3, "left"]);
+    // The viewer that exists stays, and the other side's is the one to mount.
+    expect(carryOut(panes)).toEqual({ unmount: [], mount: [{ id: 3, slot: 1 }], focus: 1 });
+  });
+
+  it("keeps the reader's viewer in its area when their document is on the right", () => {
+    const { panes, order } = three();
+    panes.arrange([1, 2], 3, 1, order);
+    expect(panes.sideOf(1)).toBe("right");
+    expect(panes.focused).toBe("right");
+    expect(panes.slotOf("right")).toBe(0);
+    expect(carryOut(panes)).toEqual({ unmount: [], mount: [{ id: 3, slot: 1 }], focus: 1 });
+    expect(areas(panes)).toEqual([1, 3]);
+  });
+
+  it("shows the first tab of a side whose front tab is not named or not open", () => {
+    const { panes, order } = three();
+    panes.arrange([2, 3, 9], 9, 1, order);
+    expect(panes.on("right", order)).toEqual([2, 3]);
+    expect(panes.front("right")).toBe(2);
+    // A tab named beside on the reader's own side does not take the front there.
+    panes.arrange([3], 2, 1, order);
+    expect([panes.front("left"), panes.front("right")]).toEqual([1, 3]);
+  });
+
+  it("is no split when every tab, or none, is on the right", () => {
+    for (const right of [[], [1, 2, 3], [7]]) {
+      const { panes, order } = three();
+      panes.arrange(right, -1, 1, order);
+      expect(panes.split, String(right)).toBe(false);
+      expect([panes.front("left"), panes.focused]).toEqual([1, "left"]);
+      expect(carryOut(panes)).toEqual({ unmount: [], mount: [], focus: 1 });
+    }
+  });
+});
+
 describe("sides and areas", () => {
   it("are each other's inverse, flipped or not", () => {
     const { panes, order } = three();

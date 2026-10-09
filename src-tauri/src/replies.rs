@@ -987,6 +987,11 @@ fn samples() -> BTreeMap<&'static str, String> {
                 tabs: vec!["/tmp/one.pdf".into(), "/tmp/two.pdf".into()],
                 active_tab: Some("/tmp/one.pdf".into()),
                 restore_tabs: true,
+                sides: Some(session::Sides {
+                    right: vec!["/tmp/two.pdf".into()],
+                    beside: Some("/tmp/two.pdf".into()),
+                    share: 0.4,
+                }),
             },
         },
     );

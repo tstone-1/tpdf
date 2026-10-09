@@ -1,8 +1,8 @@
 import { describe, expect, it } from "vitest";
 
-import type { Place, Session } from "./session";
+import type { Place, Session, Sides } from "./session";
 import {
-  TabRecorder, afterReopen, launchPlan, openBehind, tabsToReopen, type TabHost,
+  TabRecorder, afterReopen, launchPlan, openBehind, sidesToRestore, tabsToReopen, type TabHost,
 } from "./tabrestore";
 
 const place = (path: string): Place => ({
@@ -20,13 +20,13 @@ const session = (extra: Partial<Session> = {}): Session => ({
 
 describe("what a launch opens", () => {
   it("reopens only the last document unless every tab was asked for", () => {
-    const plan = { show: ["/c.pdf"], resuming: true, behind: [], order: [] };
+    const plan = { show: ["/c.pdf"], resuming: true, behind: [], order: [], sides: null };
     expect(launchPlan(session({ restore_tabs: false }), [])).toEqual(plan);
     // A session file written before the preference existed.
     const { restore_tabs: _, ...older } = session();
     expect(launchPlan(older, [])).toEqual(plan);
     expect(launchPlan({ places: [] }, [])).toEqual({
-      show: [], resuming: true, behind: [], order: [],
+      show: [], resuming: true, behind: [], order: [], sides: null,
     });
   });
 
@@ -36,7 +36,16 @@ describe("what a launch opens", () => {
       resuming: true,
       behind: ["/a.pdf", "/c.pdf"],
       order: ["/a.pdf", "/b.pdf", "/c.pdf"],
+      sides: null,
     });
+  });
+
+  it("carries the two sides when the tabs come back, and only then", () => {
+    const sides: Sides = { right: ["/c.pdf"], beside: "/c.pdf", share: 0.3 };
+    expect(launchPlan(session({ sides }), []).sides).toEqual(sides);
+    expect(launchPlan(session({ sides, restore_tabs: false }), []).sides).toBeNull();
+    // What the launcher handed over is not in the record, and gets the window.
+    expect(launchPlan(session({ sides }), ["/new.pdf"]).sides).toBeNull();
   });
 
   it("falls back to the tab read most recently, then to the first", () => {
@@ -50,7 +59,7 @@ describe("what a launch opens", () => {
   });
 
   it("falls back to the last document when no tab was recorded", () => {
-    const plan = { show: ["/c.pdf"], resuming: true, behind: [], order: [] };
+    const plan = { show: ["/c.pdf"], resuming: true, behind: [], order: [], sides: null };
     expect(launchPlan(session({ tabs: [] }), [])).toEqual(plan);
     const { tabs: _, ...older } = session();
     expect(launchPlan(older, [])).toEqual(plan);
@@ -62,10 +71,11 @@ describe("what a launch opens", () => {
       resuming: false,
       behind: ["/a.pdf", "/c.pdf"],
       order: ["/a.pdf", "/b.pdf", "/c.pdf", "/new.pdf"],
+      sides: null,
     });
     // With the preference off a handed file is all that opens, as before.
     expect(launchPlan(session({ restore_tabs: false }), ["/new.pdf"])).toEqual({
-      show: ["/new.pdf"], resuming: false, behind: [], order: [],
+      show: ["/new.pdf"], resuming: false, behind: [], order: [], sides: null,
     });
   });
 });
@@ -127,6 +137,41 @@ describe("opening tabs behind the one showing", () => {
   });
 });
 
+describe("the sides to put back", () => {
+  const open = ["/a.pdf", "/b.pdf", "/c.pdf"];
+  const sides: Sides = { right: ["/c.pdf", "/b.pdf"], beside: "/b.pdf", share: 0.3 };
+
+  it("are the recorded ones when every tab opened, the right in tab order", () => {
+    expect(sidesToRestore(sides, open, "/a.pdf")).toEqual({
+      right: ["/b.pdf", "/c.pdf"], beside: "/b.pdf", share: 0.3,
+    });
+  });
+
+  it("are none without a record, or without a document on screen", () => {
+    expect(sidesToRestore(null, open, "/a.pdf")).toBeNull();
+    expect(sidesToRestore(sides, open, null)).toBeNull();
+    expect(sidesToRestore(sides, open, "/gone.pdf")).toBeNull();
+  });
+
+  it("are none when a whole side would not open", () => {
+    expect(sidesToRestore(sides, ["/a.pdf"], "/a.pdf")).toBeNull();
+    expect(sidesToRestore(sides, ["/b.pdf", "/c.pdf"], "/b.pdf")).toBeNull();
+    // One tab of the right side is enough for a split.
+    expect(sidesToRestore(sides, ["/a.pdf", "/c.pdf"], "/a.pdf")).toEqual({
+      right: ["/c.pdf"], beside: null, share: 0.3,
+    });
+  });
+
+  it("name a tab beside only on the side the reader is not in", () => {
+    // The tab that was showing would not open, and its neighbour is shown.
+    expect(sidesToRestore(sides, open, "/c.pdf")?.beside).toBeNull();
+    expect(sidesToRestore({ ...sides, beside: "/a.pdf" }, open, "/c.pdf")?.beside).toBe("/a.pdf");
+    expect(sidesToRestore({ ...sides, beside: null }, open, "/a.pdf")?.beside).toBeNull();
+    // A tab that did not open is on neither side, the left included.
+    expect(sidesToRestore({ ...sides, beside: "/gone.pdf" }, open, "/c.pdf")?.beside).toBeNull();
+  });
+});
+
 describe("recording the open tabs", () => {
   const recorder = () => {
     const sent: [string[], string | null][] = [];
@@ -164,6 +209,28 @@ describe("recording the open tabs", () => {
       [["/a.pdf", "/b.pdf"], "/b.pdf"],
       [["/b.pdf", "/a.pdf"], "/b.pdf"],
       [[], null],
+    ]);
+  });
+
+  it("writes the two sides with the tabs, and when only they changed", async () => {
+    const sent: unknown[] = [];
+    const tabs = new TabRecorder(async (paths, active, sides) => { sent.push([paths, active, sides]); });
+    const open = ["/a.pdf", "/b.pdf"];
+    const right = ["/b.pdf"];
+    tabs.note(open, "/a.pdf");
+    tabs.note(open, "/a.pdf", { right, beside: "/b.pdf", share: 0.5 });
+    tabs.note(open, "/a.pdf", { right, beside: "/b.pdf", share: 0.5 });
+    tabs.note(open, "/a.pdf", { right, beside: "/b.pdf", share: 0.4 });
+    right.push("/later.pdf");
+    tabs.hold();
+    tabs.note(open, "/a.pdf", { right: ["/a.pdf"], beside: null, share: 0.4 });
+    tabs.release();
+    await tabs.settled();
+    expect(sent).toEqual([
+      [open, "/a.pdf", null],
+      [open, "/a.pdf", { right: ["/b.pdf"], beside: "/b.pdf", share: 0.5 }],
+      [open, "/a.pdf", { right: ["/b.pdf"], beside: "/b.pdf", share: 0.4 }],
+      [open, "/a.pdf", { right: ["/a.pdf"], beside: null, share: 0.4 }],
     ]);
   });
 

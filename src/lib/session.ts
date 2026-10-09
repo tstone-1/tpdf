@@ -39,6 +39,19 @@ export interface Place {
   page_count: number;
 }
 
+/**
+ * How the tabs were divided between the two sides of the window. Field names
+ * match the Rust struct, which is also where a damaged record is repaired.
+ */
+export interface Sides {
+  /** The tabs on the right, in tab order. Every other tab was on the left. */
+  right: string[];
+  /** The tab in front of the side the reader was not working in. */
+  beside: string | null;
+  /** The share of the width the left side had. */
+  share: number;
+}
+
 export interface Session {
   places: Place[];
   /**
@@ -60,6 +73,8 @@ export interface Session {
   active_tab?: string | null;
   /** Whether a launch reopens every tab rather than the last document alone. */
   restore_tabs?: boolean;
+  /** The two sides, when the window was showing two documents side by side. */
+  sides?: Sides | null;
   /**
    * The reader's home folder on this machine, when the platform names one.
    *
