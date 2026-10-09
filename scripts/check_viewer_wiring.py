@@ -90,7 +90,8 @@ WIRINGS: list[tuple[str, str, str, str, str]] = [
         "new Viewer(",
         # The literal is handed to `scoped`, which runs each callback as the
         # document it was built for, so it closes on that call's last argument.
-        "\n      }, own));\n",
+        # It is the whole of `buildViewer`.
+        "\n    }, runningAs(view)));\n",
     ),
     (
         "src/lib/scroller.ts",
@@ -109,7 +110,7 @@ WIRINGS: list[tuple[str, str, str, str, str]] = [
         # in `App.svelte`, not the `new Thumbnails(` line in `sidebar.ts`.
         "src/App.svelte",
         "pages: {",
-        "\n        },\n",
+        "\n      },\n",
     ),
 ]
 

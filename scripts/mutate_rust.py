@@ -17221,15 +17221,71 @@ MUTATIONS += [
         "a_content_stream_replaced_with_the_same_length_touches_its_page",
     ),
     Mutation(
-        # The fourth condition of a listing: the page's content stream is in
-        # both parses, unchanged. Without the comparison a page whose stream
-        # was replaced beside a new signature field reads "the page's content
-        # is unchanged".
+        # A listing needs nothing the page draws from to have changed, and
+        # its content stream is the first of those. Left out of what the page
+        # refers to, a stream replaced beside a new signature field reads
+        # "the page's content is unchanged".
         "appendix: call a page a listing whatever became of its content stream",
         "src/docinfo.rs",
-        "                (Some(a), Some(b)) if same_object(a, b)",
-        "                (Some(_), Some(_))",
+        '        if key.as_slice() != b"Annots" {',
+        '        if key.as_slice() != b"Annots" && key.as_slice() != b"Contents" {',
         "a_same_length_replacement_beside_a_new_signature_field_is_not_a_listing",
+    ),
+    Mutation(
+        # Until 2026-10-09 that stream was all a listing was checked for: a
+        # form, a font or a graphics state replaced in the page's resources
+        # beside a new signature field passed `verify --strict`.
+        "appendix: call a page a listing whatever became of what it draws with",
+        "src/docinfo.rs",
+        "        listings.retain(|(page, _)| !redrawn.contains(page));",
+        "        drop(redrawn);",
+        "what_a_page_draws_replaced_beside_a_new_signature_field_is_not_a_listing",
+    ),
+    Mutation(
+        # The annotations a page already had are the page's: a field's value
+        # written again beside the new signature changes what its widget shows.
+        "appendix: follow none of the annotations a page already had",
+        "src/docinfo.rs",
+        "    for entry in new.iter().filter(|entry| listed(entry)) {",
+        "    for entry in new.iter().filter(|_| false) {",
+        "an_annotation_changed_beside_a_new_signature_field_is_not_a_listing",
+    ),
+    Mutation(
+        # The field a page gained arrives with its appearance stream, and the
+        # page reaches both. Followed like any other entry, every visible
+        # second signature would read as a rewritten page.
+        "appendix: follow the field a page gained to what it brings",
+        "src/docinfo.rs",
+        "    for entry in new.iter().filter(|entry| listed(entry)) {",
+        "    for entry in new.iter().filter(|_| true) {",
+        "a_visible_second_signature_is_a_listing_whatever_its_widget_brings",
+    ),
+    Mutation(
+        # The page's own object is one of the changes, and `page_listing` has
+        # already compared it entry by entry.
+        "appendix: count a page's own rewrite as something it draws from",
+        "src/docinfo.rs",
+        "            .filter(|id| !apart_from_new_fields.contains_key(id))",
+        "            .filter(|_| true)",
+        "a_visible_second_signature_is_a_listing_whatever_its_widget_brings",
+    ),
+    Mutation(
+        # What unmakes a listing is that the page draws the object, and not
+        # that the revision replaced one.
+        "appendix: unmake a listing whenever another object was replaced",
+        "src/docinfo.rs",
+        "        listings.retain(|(page, _)| !redrawn.contains(page));",
+        "        listings.retain(|_| out.replaced == 1 && redrawn.is_empty());",
+        "an_object_no_page_draws_replaced_beside_a_new_signature_field_leaves_the_listing",
+    ),
+    Mutation(
+        # The signature's widget, written under a number the signed page's
+        # resources already named: the page draws with it and lists it.
+        "appendix: leave a page's own resources out of what it draws from",
+        "src/docinfo.rs",
+        '        if key.as_slice() != b"Annots" {',
+        '        if key.as_slice() != b"Annots" && key.as_slice() != b"Resources" {',
+        "a_new_field_the_page_also_draws_with_is_not_a_listing",
     ),
     Mutation(
         # `lopdf` keeps no free entry, so an object a later section frees is

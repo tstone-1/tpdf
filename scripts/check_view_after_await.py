@@ -136,9 +136,9 @@ PER_WINDOW: dict[str, str] = {
     "armedOptions": "the choices of the next dropdown",
     "fieldBorder": "a preference, kept between sessions",
     "markColor": "the colour the reader picked",
-    "markNib": "the nib the reader picked",
+    "markNib": "the nib the reader picked, set on every mounted viewer",
     "redactionFill": "a preference, kept between sessions",
-    "invertPages": "a preference, kept in the session",
+    "invertPages": "a preference, kept in the session and set on every mounted viewer",
     "diskChangeMode": "a preference, kept between sessions",
     "restoreTabs": "a preference, kept in the session",
     # Built once at launch, on `document.body`.

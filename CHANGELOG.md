@@ -62,6 +62,12 @@ have the binary.)
   `verify --json`, the pages that drew from them count as rewritten, and a cross-reference
   section tpdf cannot follow makes the row read as unread. An independent read-only review
   found both.
+- **A second signature could hide a change to what a page draws with.** A page that was
+  rewritten only to list a new signature field does not count as rewritten. Only its
+  content stream was compared for that, so a revision that replaced a form, picture, font
+  or graphics state the page draws with, or changed a field the page already had, and
+  added a signature field beside it, passed `verify --strict`. Such a page now counts as
+  rewritten.
 - **Redacting a page that shares its content with another page changed the other page too.**
   Where two pages name one content stream, as a repeated page does, the redacted text went
   from both, with no box on the second and no line about it in the report. The redacted

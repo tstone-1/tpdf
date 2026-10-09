@@ -97,7 +97,8 @@ export interface Appendix {
   pages_touched: number;
   /**
    * The touched pages rewritten only to list a new signature or timestamp
-   * field, with the page's content stream unchanged; `timestamp` says every
+   * field, with nothing the page draws from added or changed: its content
+   * streams, its resources and the annotations it had. `timestamp` says every
    * field the page gained holds a document timestamp.
    */
   pages_listing: { page: number; timestamp: boolean }[];
@@ -646,7 +647,7 @@ export function appendixRow(signature: Signature): Row | null {
  * the commonest reason a page object is written again changes nothing on it: a
  * signature or timestamp field has to be listed in the page's annotations. So
  * when the worker proved that is all that happened to every touched page ---
- * `docinfo::page_listing` holds the four conditions --- the row says that, and
+ * `docinfo::read_appendix` holds the conditions --- the row says that, and
  * names the page. **Every other rewrite keeps the bare wording**, including a
  * mix of the two, so that sentence still means what it meant: a page object
  * changed and tpdf does not know why.

@@ -26190,6 +26190,13 @@ entry PDFium 8066 keeps drawing the object and poppler does not, so both forms a
 When one parser's view is the evidence for a verdict, ask what that parser leaves out, and
 do not use `Debug` text as an equality where a wrong "same" is the dangerous answer.
 
+A third hole was the rule for a page that only lists a new signature field. Its condition
+compared the content stream, and its comment said so exactly, while the sentence the reader
+gets is "the page's content is unchanged": a replaced form, font or graphics state beside a
+second signature passed. The page is now a listing only when nothing it reaches changed.
+The new field is left out by leaving out the edge from `/Annots`, not the object: an object
+number can be both the new widget and something the page's resources already named.
+
 ### A position measured from the engine already contains what moved the pen
 
 A cut that reaches the end of a show closes the gap to where PDFium placed the next show.

@@ -279,6 +279,12 @@ licensing constraint above rather than assumed, because one copyleft crate anywh
 removes the option of making this repository public. The check is `cargo metadata` over the whole
 tree, not a glance at the crate's own README.
 
+**The raw PDFium bindings.** `pdfium-render` 0.9.4 hides its bindings accessor. `progressive::bind` and
+`bind_library` retain both a safe wrapper and a second public raw binding table
+for the same library; only the safe wrapper initializes PDFium. Raw-interface
+callers must use this bridge, before applying containment. The tables live for
+the process lifetime; this does not make PDFium calls safe to run concurrently.
+
 ## Versioning: the CHANGELOG heading
 
 **That heading form is measured safe here, and it is not safe everywhere** — checked

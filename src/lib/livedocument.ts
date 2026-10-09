@@ -314,6 +314,21 @@ export class Stage<T, Id extends number = number> {
       install(this.#slots, outside.record);
     }
   }
+
+  /**
+   * Runs `work` once as every mounted document: the one in the slots first,
+   * then each parked one through {@link within}.
+   *
+   * For a setting of the window that each document's viewer holds a copy of,
+   * the page colours for one. Set on the focused viewer alone, the other side
+   * kept the old value until it was mounted again. `work` must not wait, and
+   * this is for a command of the reader's: called from inside a lend it does
+   * not reach the document that is lending.
+   */
+  each(work: () => void): void {
+    if (this.focused >= 0) work();
+    for (const id of this.parked) this.within(id, work);
+  }
 }
 
 /**

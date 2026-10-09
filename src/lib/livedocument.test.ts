@@ -1,5 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { Stage, blankLive, capture, install, scoped, type Slots } from "./livedocument";
+import { functionIn, missingFrom } from "./sourcetext";
+import app from "../App.svelte?raw";
 
 interface Toy {
   id: number;
@@ -257,6 +259,29 @@ describe("work done within a document", () => {
   });
 });
 
+describe("work done as every mounted document", () => {
+  it("runs once for the focused document and once for each parked one, and keeps what it wrote", () => {
+    const v = variables();
+    v.open(1, "one");
+    v.stage.park();
+    v.open(2, "two");
+    const seen: number[] = [];
+    v.stage.each(() => { seen.push(v.now().id); v.rename(`${v.now().name}, dark`); });
+    // The reader's own document first: it is the one they are looking at.
+    expect(seen).toEqual([2, 1]);
+    expect(v.now()).toEqual({ id: 2, name: "two, dark", words: ["two"] });
+    v.stage.focus(1);
+    expect(v.now()).toEqual({ id: 1, name: "one, dark", words: ["one"] });
+  });
+
+  it("runs for nothing when no document is in the variables", () => {
+    const v = variables();
+    let ran = 0;
+    v.stage.each(() => { ran++; });
+    expect(ran).toBe(0);
+  });
+});
+
 describe("a blank live document", () => {
   it("names no document", () => {
     const blank = blankLive();
@@ -330,5 +355,19 @@ describe("scoped callbacks", () => {
     const options = scoped(given, through([]));
     expect(given.group.onPick).toBe(onPick);
     expect(options.group).not.toBe(given.group);
+  });
+});
+
+describe("the window's settings in App.svelte", () => {
+  // Read as text with the comments taken out, because `App.svelte` is the join
+  // and nothing imports it. That sees that a line is there and not whether it
+  // runs (`sourcetext.ts`): whether both viewers change is the window checks'.
+  it("sets the page colours and the nib on every mounted viewer", () => {
+    expect(missingFrom(functionIn(app, "function toggleInvert() {"), [
+      "stage.each(() => viewer?.setInverted(invertPages));",
+    ])).toEqual([]);
+    expect(missingFrom(functionIn(app, "function chooseNib(id: string): void {"), [
+      "stage.each(() => viewer?.setNib(chosen.pt));",
+    ])).toEqual([]);
   });
 });

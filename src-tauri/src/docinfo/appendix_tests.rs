@@ -28,6 +28,29 @@ struct Built {
     inherited_font: ObjectId,
     /// A text field's dictionary; its widget is on the first page.
     field: ObjectId,
+    /// A form the first page alone draws, through its own resources.
+    own_form: ObjectId,
+    /// A form `own_form` draws, through the resources `own_form` states.
+    nested_form: ObjectId,
+    /// The font in those same resources: two forms down from the page.
+    nested_font: ObjectId,
+    /// A graphics state in the first page's own resources.
+    graphics_state: ObjectId,
+    /// A form no page draws and nothing refers to.
+    undrawn: ObjectId,
+    /// A number the first page's resources name as a graphics state, with no
+    /// object behind it when the document is signed.
+    dangling: ObjectId,
+}
+
+/// A form of its own: `content` in a ten-point box, with `resources`.
+fn form(content: &[u8], resources: Dictionary) -> Stream {
+    Stream::new(
+        dictionary! { "Type" => "XObject", "Subtype" => "Form",
+        "BBox" => vec![0.into(), 0.into(), 10.into(), 10.into()],
+        "Resources" => resources },
+        content.to_vec(),
+    )
 }
 
 fn built() -> Built {
@@ -45,6 +68,20 @@ fn built() -> Built {
     let inherited = doc.add_object(dictionary! {
         "Font" => dictionary! { "F1" => inherited_font },
     });
+    let nested_form = doc.add_object(form(b"0 0 4 4 re f", dictionary! {}));
+    let nested_font = doc.add_object(dictionary! {
+        "Type" => "Font", "Subtype" => "Type1", "BaseFont" => "Times-Roman",
+    });
+    let own_form = doc.add_object(form(
+        b"/Fm0 Do BT /F2 4 Tf (SYNTHETIC) Tj ET",
+        dictionary! {
+            "XObject" => dictionary! { "Fm0" => nested_form },
+            "Font" => dictionary! { "F2" => nested_font },
+        },
+    ));
+    let graphics_state = doc.add_object(dictionary! { "Type" => "ExtGState", "CA" => 1 });
+    let undrawn = doc.add_object(form(b"0 0 2 2 re f", dictionary! {}));
+    let dangling = doc.new_object_id();
     let content = [
         doc.add_object(Stream::new(dictionary! {}, b"/Fm0 Do".to_vec())),
         doc.add_object(Stream::new(dictionary! {}, b"/Fm0 Do".to_vec())),
@@ -74,7 +111,11 @@ fn built() -> Built {
         first,
         Object::Dictionary(dictionary! {
             "Type" => "Page", "Parent" => branch[0], "Contents" => content[0],
-            "Resources" => own(), "Annots" => vec![widget.into(), link.into()],
+            "Resources" => dictionary! {
+                "XObject" => dictionary! { "Fm0" => shared, "Fm1" => own_form },
+                "ExtGState" => dictionary! { "GS0" => graphics_state, "GS9" => dangling },
+            },
+            "Annots" => vec![widget.into(), link.into()],
         }),
     );
     doc.objects.insert(
@@ -117,6 +158,12 @@ fn built() -> Built {
         shared,
         inherited_font,
         field,
+        own_form,
+        nested_form,
+        nested_font,
+        graphics_state,
+        undrawn,
+        dangling,
     }
 }
 
@@ -238,16 +285,40 @@ fn with_freed_in_a_table(bytes: &[u8], catalog: ObjectId, freed: ObjectId, more:
 
 /// The revision a second signer appends, as far as this reading goes: a
 /// signature field whose widget is added to the first page's annotations.
+///
+/// A visible one: the widget has an appearance stream, which is a form with a
+/// font of its own. Both arrive with the signature and are the widget's, so a
+/// page that gained this and nothing else is still only listing a field.
 fn signs_the_first_page(built: &Built, before: &Document, new: &mut Document) {
+    let widget = new.new_object_id();
+    signs_the_first_page_as(built, before, new, widget);
+}
+
+/// The same with the widget written as object `widget`.
+fn signs_the_first_page_as(built: &Built, before: &Document, new: &mut Document, widget: ObjectId) {
     let value = new.add_object(dictionary! {
         "Type" => "Sig", "Filter" => "Adobe.PPKLite", "SubFilter" => "adbe.pkcs7.detached",
     });
-    let widget = new.add_object(dictionary! {
-        "Type" => "Annot", "Subtype" => "Widget", "FT" => "Sig",
-        "T" => Object::string_literal("Synthetic second signer"),
-        "V" => value, "P" => built.page[0],
-        "Rect" => vec![0.into(), 0.into(), 0.into(), 0.into()],
+    let font = new.add_object(dictionary! {
+        "Type" => "Font", "Subtype" => "Type1", "BaseFont" => "Courier",
     });
+    let appearance = new.add_object(form(
+        b"BT /F1 4 Tf (SYNTHETIC SIGNER) Tj ET",
+        dictionary! { "Font" => dictionary! { "F1" => font } },
+    ));
+    new.set_object(
+        widget,
+        dictionary! {
+            "Type" => "Annot", "Subtype" => "Widget", "FT" => "Sig",
+            "T" => Object::string_literal("Synthetic second signer"),
+            "V" => value, "P" => built.page[0],
+            "Rect" => vec![100.into(), 100.into(), 180.into(), 130.into()],
+            "AP" => dictionary! { "N" => appearance },
+            // A widget that is also a graphics state, for the test that
+            // writes it where the page's resources look for one.
+            "CA" => 0,
+        },
+    );
     let mut page = dict_of(before, built.page[0]);
     let mut annots = page
         .get(b"Annots")
@@ -368,6 +439,174 @@ fn a_same_length_replacement_beside_a_new_signature_field_is_not_a_listing() {
     assert_eq!(appendix.pages_listing, Vec::<PageListing>::new());
     assert_eq!(appendix.pages_touched, 1, "{appendix:?}");
     assert_eq!(strict(appendix), After::Pages(1));
+}
+
+/// The page's content is more than its content stream: what the stream draws
+/// with is named in the page's resources, and an object written again there
+/// changes the page under an unchanged stream. Each of these is replaced
+/// beside a new signature field on the same page, which until 2026-10-09 read
+/// "a signature field was added (the page's content is unchanged)" and passed
+/// `--strict`.
+#[test]
+fn what_a_page_draws_replaced_beside_a_new_signature_field_is_not_a_listing() {
+    use crate::cli::verify::After;
+    let built = built();
+    let was = Document::load_mem(&built.bytes).expect("parses");
+    let rewritten = |id: ObjectId| -> Object {
+        match was.get_object(id).expect("in the signed document").clone() {
+            Object::Stream(mut stream) => {
+                // The length it had, so nothing but the bytes differs.
+                stream.content.fill(b' ');
+                Object::Stream(stream)
+            }
+            Object::Dictionary(mut dict) => {
+                dict.set("Synthetic", 1);
+                Object::Dictionary(dict)
+            }
+            other => panic!("neither a stream nor a dictionary: {other:?}"),
+        }
+    };
+    for (what, id, pages) in [
+        ("a form in the page's own resources", built.own_form, 1),
+        ("a form that form draws", built.nested_form, 1),
+        ("a font in that form's resources", built.nested_font, 1),
+        (
+            "a graphics state in the page's own resources",
+            built.graphics_state,
+            1,
+        ),
+        ("a form both pages draw", built.shared, 2),
+        (
+            "a font the page inherits from the tree",
+            built.inherited_font,
+            2,
+        ),
+    ] {
+        let appendix = appended(&built, |before, new| {
+            signs_the_first_page(&built, before, new);
+            new.set_object(id, rewritten(id));
+        });
+        assert_eq!(appendix.replaced, 2, "{what}: {appendix:?}");
+        assert_eq!(
+            (
+                appendix.pages_listing.clone(),
+                appendix.pages_touched,
+                strict(appendix)
+            ),
+            (Vec::new(), pages, After::Pages(pages)),
+            "{what}"
+        );
+    }
+}
+
+/// An annotation the page already had is the page's as well. The text field
+/// whose widget is on the first page is given another value beside the new
+/// signature field: what the widget shows changed, and the page is not one
+/// that only listed a field.
+#[test]
+fn an_annotation_changed_beside_a_new_signature_field_is_not_a_listing() {
+    use crate::cli::verify::After;
+    let built = built();
+    let appendix = appended(&built, |before, new| {
+        signs_the_first_page(&built, before, new);
+        let mut field = dict_of(before, built.field);
+        field.set("V", Object::string_literal("changed afterwards"));
+        new.set_object(built.field, field);
+    });
+    assert_eq!(
+        (
+            appendix.pages_listing.clone(),
+            appendix.pages_touched,
+            strict(appendix)
+        ),
+        (Vec::new(), 1, After::Pages(1))
+    );
+}
+
+/// The first control: a second signature that is visible. Its widget, the
+/// signature, the widget's appearance stream and that stream's font all
+/// arrive, and the page reaches every one of them --- through the field it
+/// gained, which is the one way that does not count. Still a listing.
+#[test]
+fn a_visible_second_signature_is_a_listing_whatever_its_widget_brings() {
+    use crate::cli::verify::After;
+    let built = built();
+    let appendix = appended(&built, |before, new| {
+        signs_the_first_page(&built, before, new)
+    });
+    // The signature, the font, the appearance and the widget, and the
+    // revision's own cross-reference stream.
+    assert_eq!((appendix.added, appendix.replaced), (5, 1), "{appendix:?}");
+    assert_eq!(
+        appendix.pages_listing,
+        [PageListing {
+            page: 1,
+            timestamp: false
+        }]
+    );
+    assert_eq!(appendix.pages_touched, 1);
+    assert_eq!(strict(appendix), After::Unchanged);
+}
+
+/// The third control: an object no page draws, replaced beside the new
+/// field. It is counted as replaced and takes nothing from the listing, so
+/// what unmakes a listing is that the page draws the object and not that an
+/// object was replaced.
+#[test]
+fn an_object_no_page_draws_replaced_beside_a_new_signature_field_leaves_the_listing() {
+    use crate::cli::verify::After;
+    let built = built();
+    let appendix = appended(&built, |before, new| {
+        signs_the_first_page(&built, before, new);
+        new.set_object(built.undrawn, form(b"0 0 9 9 re f", dictionary! {}));
+    });
+    assert_eq!(appendix.replaced, 2, "{appendix:?}");
+    assert_eq!(appendix.pages_listing.len(), 1, "{appendix:?}");
+    assert_eq!(appendix.pages_touched, 1);
+    assert_eq!(strict(appendix), After::Unchanged);
+
+    // And validation data in the same revision, which is what a timestamp
+    // append is: the catalog and three streams, none of them a page's.
+    let appendix = appended(&built, |before, new| {
+        signs_the_first_page(&built, before, new);
+        let stream =
+            |new: &mut Document| new.add_object(Stream::new(dictionary! {}, vec![0x30, 0]));
+        let (certificate, crl, ocsp) = (stream(new), stream(new), stream(new));
+        let dss = new.add_object(dictionary! {
+            "Certs" => vec![certificate.into()],
+            "CRLs" => vec![crl.into()],
+            "OCSPs" => vec![ocsp.into()],
+        });
+        let mut catalog = dict_of(before, built.catalog);
+        catalog.set("DSS", dss);
+        new.set_object(built.catalog, catalog);
+    });
+    assert_eq!(appendix.catalog_gained, ["DSS"]);
+    assert_eq!(appendix.pages_listing.len(), 1, "{appendix:?}");
+    assert_eq!(strict(appendix), After::Unchanged);
+}
+
+/// The way that does not count is the page's new entry in `/Annots` and not
+/// the widget wherever it is found. The signed page names a graphics state
+/// that no object stood behind; the append writes the signature's widget
+/// under that number. The page now draws with it, and lists it.
+#[test]
+fn a_new_field_the_page_also_draws_with_is_not_a_listing() {
+    use crate::cli::verify::After;
+    let built = built();
+    let appendix = appended(&built, |before, new| {
+        signs_the_first_page_as(&built, before, new, built.dangling);
+    });
+    // What arrived is what the visible signature brings, object for object.
+    assert_eq!((appendix.added, appendix.replaced), (5, 1), "{appendix:?}");
+    assert_eq!(
+        (
+            appendix.pages_listing.clone(),
+            appendix.pages_touched,
+            strict(appendix)
+        ),
+        (Vec::new(), 1, After::Pages(1))
+    );
 }
 
 /// An object freed after signing: one cross-reference stream appended, which
@@ -558,6 +797,8 @@ fn validation_data_touches_no_page() {
     });
     assert_eq!(appendix.catalog_gained, ["DSS"]);
     assert_eq!(appendix.pages_touched, 0, "{appendix:?}");
+    assert_eq!(appendix.pages_listing, Vec::<PageListing>::new());
+    assert_eq!(strict(appendix), crate::cli::verify::After::Unchanged);
 }
 
 /// What two pages share is both pages': a form each draws through its own

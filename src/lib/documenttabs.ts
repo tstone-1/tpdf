@@ -79,8 +79,9 @@ export function keepState(tab: DocumentTab, state: TabState): void {
  * What a tab being reopened restores, or {@link freshState} for a document
  * that was never kept.
  *
- * Applied at three points of `openDocument` rather than at one, because the
- * order is load-bearing there: the status line before the viewer mounts, the
+ * Applied at three points of an open rather than at one (`openDocument` and
+ * its steps `adoptModel` and `showModel`), because the order is load-bearing
+ * there: the status line before the viewer mounts, the
  * covered words beside the model, the search and sidebar tab after the panels
  * exist. What this owns is that every one of them comes from the same record;
  * {@link restore} owns that every field of it is applied.

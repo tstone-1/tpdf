@@ -1299,6 +1299,19 @@ async function run(host: OpenCheckHost, phase: string, expected: string): Promis
       check("one sidebar is shown, the focused document's", shownSidebars() <= 1);
       const rightViewer = host.viewer();
 
+      report.emit("[sides] inverting the page colours");
+      // The colours are the window's, and each viewer holds its own copy of
+      // them: set on the focused one alone, the other side stayed as it was.
+      const plain = host.viewer()!.inverted;
+      host.run("view.invertPages");
+      await host.idle();
+      check("inverting the page colours inverts both sides",
+        host.viewer()?.inverted === !plain && host.beside()?.inverted === !plain);
+      host.run("view.invertPages");
+      await host.idle();
+      check("and both sides go back together",
+        host.viewer()?.inverted === plain && host.beside()?.inverted === plain);
+
       report.emit("[sides] editing on the right, then pressing in the left");
       host.run("edit.rotatePageClockwise");
       await settled("the rotation", () => host.edits()?.state.dirty === true);

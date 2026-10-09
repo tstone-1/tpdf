@@ -13,7 +13,7 @@
   import {
     DocumentTabs, DocumentTasks, freshState, keepState, oneEach, partnersOf, restore, restoredState,
     restoredWith, twinsOf,
-    type DocumentTab, type Restore,
+    type DocumentTab, type FreshState, type Restore,
   } from "./lib/documenttabs";
   import { TabLabelSize } from "./lib/tablabels";
   import { sidewaysBy } from "./lib/tabwheel";
@@ -91,7 +91,7 @@
   } from "./lib/recovery";
   import { releaseOrphans } from "./lib/orphans";
   import type { DocumentInfo, PageSize } from "./lib/ipc";
-  import { call, isOpenRefusal } from "./lib/ipc";
+  import { call } from "./lib/ipc";
   import * as signing from "./lib/signing";
   import { emptySignatureFields, signTarget, type SignTarget } from "./lib/signfield";
   import { openWithPassword } from "./lib/unlock";
@@ -155,7 +155,6 @@
     behindWrites, focusAfterRemoval, recentCommands, StartPage, startMove, type StartRow,
   } from "./lib/startpage";
   import {
-    clampPlace,
     loadSession,
     SessionWriter,
     type Place,
@@ -185,6 +184,10 @@
   } from "./lib/update";
   import { Viewer, type ViewerOptions, type ViewerStatus } from "./lib/viewer";
   import { Stage, blankLive, scoped, type LiveDocument, type Slots } from "./lib/livedocument";
+  import {
+    dropView, openFailure, pageTable, placeOnSide, placeToResume, readerIsIn, repoint, sharedByTwin,
+    type OpenFound,
+  } from "./lib/documentopen";
   import { Panes, otherSide, type Side, type Slot } from "./lib/panes";
   import { TabDrag, type Carried } from "./lib/tabdrag";
   import { NO_VIEW, ViewIds, viewOf, type ViewId } from "./lib/views";
@@ -1932,7 +1935,8 @@
     // No such nib means a command id that named one, which cannot happen from
     // the registry: every `edit.nib.*` command is built from `NIBS`.
     if (!chosen) return;
-    viewer?.setNib(chosen.pt);
+    // The nib is the window's, so the viewer on the other side takes it too.
+    stage.each(() => viewer?.setNib(chosen.pt));
     markNib = chosen;
   }
 
@@ -3761,7 +3765,9 @@
   function toggleInvert() {
     if (!viewer) return;
     invertPages = !viewer.inverted;
-    viewer.setInverted(invertPages);
+    // The colours are the window's and each viewer holds its own copy, so the
+    // document on the other side is set too.
+    stage.each(() => viewer?.setInverted(invertPages));
     // Written directly rather than through the place writer. The writer skips a
     // place identical to the last one it sent, and inverting the page moves
     // nothing --- so routed that way, a reader who inverts and quits without
@@ -4879,6 +4885,704 @@
   }
 
   /**
+   * The runner `scoped` wraps a document's callbacks with. Every callback the
+   * viewer and the panels are built with runs as this document, whichever one
+   * the reader is working in when it fires.
+   */
+  function runningAs(view: ViewId): <R>(work: () => R) => R | undefined {
+    return (work) => asDocument(view, work);
+  }
+
+  /**
+   * Whether `view` is still mounted with the viewer `mounted`. Asked as the
+   * document, so the answer is the same whichever side the reader is working
+   * in when a reply lands.
+   */
+  function stillMounted(view: ViewId, mounted: Viewer): boolean {
+    return asDocument(view, () => viewer === mounted) === true;
+  }
+
+  /** Closes the two panels that are about the document that is going. */
+  function closeDocumentPanels(): void {
+    propertiesDialog?.close();
+    // A panel about one field of the document that is closing. Left open, its
+    // Save would look the field up by an id that starts at 1 in every
+    // document; `changeProperties` refuses that too, and closing it is what
+    // the reader sees.
+    fieldPropertiesDialog?.close();
+  }
+
+  /**
+   * The sidebar of the document `openDocument` is mounting as `view`, built in
+   * `host`. `page` is the first page's size, which the strip lays every row
+   * out at.
+   *
+   * One options literal, and kept as one: the `wiring` gate reads the `pages`
+   * block of it as text.
+   */
+  function buildSidebar(host: HTMLElement, view: ViewId, doc: DocumentInfo, page: PageSize): Sidebar {
+    return new Sidebar(host, scoped<SidebarOptions>({
+      onNavigate: (target, top) => {
+        viewer?.goToDestination(target, top);
+        viewer?.focus();
+      },
+      // `outline`, not `links`: the two scans number their tokens
+      // independently, so the wrong word here opens a different address
+      // rather than failing. See `webopen::Source`.
+      onWebLink: (target) => void followWebLink("outline", target),
+      results: {
+        // Focus stays where it was, unlike an outline row. A reader picking
+        // hits off this list is comparing them, and taking focus to the page
+        // after each one means clicking back into the panel to try the next.
+        onPick: (index) => viewer?.showMatch(index),
+      },
+      comments: {
+        // Focus moves into the note, which is the opposite of the results
+        // list above and for the reason that distinguishes them: a hit is
+        // something to look at on the page, and a comment is something to
+        // *read* in the note that opens --- so the keyboard belongs there.
+        onPick: (id) => viewer?.showComment(id),
+      },
+      marks: {
+        // The comments row's reasoning, one step stronger: a reader who picks
+        // one of their own marks out of a list is reaching for the box that
+        // edits it, so the keyboard goes into the field. The keyboard walk is
+        // the route that deliberately does not --- there the reader is
+        // stepping rather than writing, and taking focus would strand them.
+        onPick: (id) => viewer?.showMark(id),
+        // The mark named by id, which nothing else in this file does --- see
+        // `removeMark` above for the rule this breaks and `marklist.ts` for
+        // why it has to. A mark the model could not place is listed here and
+        // nowhere else, so the open note cannot name it and this is its only
+        // way off. `applyEdit` is the same path every other edit takes, so it
+        // journals, undoes and refreshes the panel exactly as they do.
+        onRemove: (id) => void applyEdit((e) => e.unmark(id)),
+        // What the selection said when the mark was made, or "" --- see
+        // `covered` above for why this is held here and not in the model.
+        coveredFor: (id) => covered.get(id) ?? "",
+      },
+      redactions: {
+        fill: {
+          current: redactionFill,
+          onChange: (fill) => {
+            redactionFill = fill;
+            writeFill(fill);
+          },
+        },
+        // Focus stays in the panel, which is the results list's arrangement
+        // rather than the marks list's, and for the results list's reason: a
+        // reader working down this list is *comparing* regions --- is that
+        // the right box, is that one too wide --- and taking the keyboard to
+        // the page after each row means clicking back to reach the next.
+        onPick: (id) => showRedaction(id),
+        // The only route off a pending region other than undo, and undo is
+        // chronological --- a reader who dragged six and wants the second one
+        // back cannot get there by undoing. `applyEdit` is the path every
+        // other edit takes, so this journals and undoes like the rest.
+        onRemove: (id) => void applyEdit((e) => e.unredact(id)),
+        // Four answers, and the map deliberately holds no entry for a region
+        // nobody has looked at yet: `Map.get` answering `undefined` is what
+        // separates *not read* from a page read and found to hold nothing.
+        wordsFor: (id) => redactionWords.get(id),
+        // Absent until a worker has answered for the region's page, which is
+        // why the row draws nothing rather than "no objects": a warning that
+        // has not arrived and a region with nothing to warn about must not
+        // look alike, and the way they are told apart here is that only one
+        // of them ever produces a line.
+        planFor: (id) => redactionPlans.get(id),
+      },
+      hidden: { onPick: (passage) => showHidden(passage) },
+      pages: {
+        doc: doc.id,
+        pageCount: doc.page_count,
+        // Page 1 alone, and the strip lays every row out at it. Deliberately
+        // left on the uniform assumption the viewer has just stopped making,
+        // and it is a *known* gap rather than a proof of harmlessness: see
+        // `thumbnails.ts`, which states what a mixed-size document costs there
+        // and why the fix is a separate piece of work from this one.
+        page,
+        // The viewer is created below, so the strip reaches it lazily rather
+        // than being handed a reference that does not exist yet.
+        tier1: { placeholderFor: (at) => viewer?.placeholderFor(at) ?? null },
+        // A row is a slot and a tile request names a page of a document --- this
+        // one's, or another file's for a page inserted from it; see `pages.ts`.
+        addressOf: (slot) => edits?.map.addressOf(slot, doc.id),
+        onNavigate: (at) => {
+          viewer?.goToPage(at);
+          viewer?.focus();
+        },
+        // The same call `movePage` makes, and deliberately so: a drag and the
+        // two palette commands are one operation reached two ways, and the
+        // slot arithmetic that turns a drop into a destination is the strip's
+        // because the strip is what knows where the pointer was.
+        onReorder: (from, to) => {
+          void applyEdit((e) => e.move(from, to));
+        },
+        // Right-clicking a thumbnail goes to that page first, and then offers
+        // the page operations. Navigating on a right-click is unusual and it
+        // is the honest arrangement here: every one of these commands acts on
+        // the page the viewer is on, so the alternative is a second way to
+        // address a page --- and a reader who rotates a page wants to see it
+        // turn, which means being on it anyway.
+        onContextMenu: (slot, at) => {
+          viewer?.goToPage(slot);
+          openContextMenu(PAGE_MENU, at);
+        },
+      },
+      // The comments panel lists a bare highlight by the words it covers, and
+      // finding those words is one text extraction per page carrying one. So
+      // it is paid for by a reader who opens that tab, and by nobody else ---
+      // a document opened, read and closed on the outline costs none of it.
+      onTab: (tab) => {
+        if (tab === "comments") void fillCommentWords();
+        // The same bargain for the same reason: the words under a region are
+        // a text extraction per page carrying one, and a reader who never
+        // opens this tab pays none of it. Unlike the comments walk this one
+        // is *also* driven from `runEdit`, because a region the reader has
+        // just dragged wants its words while they are looking at the panel.
+        if (tab === "redactions") void fillRedactionWords();
+        // The ring over a passage belongs to the list that drew it.
+        if (tab !== "hidden") viewer?.clearRegion();
+      },
+    }, runningAs(view)));
+  }
+
+  /**
+   * Asks the model of the document mounting as `view` what is already on it,
+   * and shows the answer when it comes. Not waited for: see {@link adoptModel}.
+   */
+  function readEditState(view: ViewId, model: Edits): void {
+    void model.refresh().then(
+      (state) => asDocument(view, () => {
+        // The model this reply belongs to, not whichever one is open when it
+        // lands. A second document opened inside the round trip replaces
+        // `edits` and the panels with it, and this would then translate one
+        // document's marks through another's page order and list the result.
+        // `dirty` had the same hazard and the same one-line fix.
+        if (edits !== model) return;
+        dirty = state.dirty;
+        refreshTabs();
+        // A document opened with edits already on it --- which is the model's
+        // to answer, not this file's to assume. Every later change comes
+        // through `runEdit` above.
+        sidebar?.setMarks(markRows(state.marks, model.map));
+        sidebar?.setRedactions(redactionRows(state.redactions, model.map));
+      }),
+      (e) => {
+        // Not raised to the reader. Nothing is wrong with their document ---
+        // the edit commands will refuse until this succeeds, which is the
+        // right failure, and an error banner over a page that opened fine is
+        // not.
+        console.warn(`could not read the edit state: ${e}`);
+      },
+    );
+  }
+
+  /**
+   * Gives the document mounting as `view` its edit model, its tab and its
+   * side, and answers the model.
+   *
+   * Before the viewer, so that a rotate arriving on the first frame has a
+   * model to ask. `refresh` is not awaited: it reads a `HashMap` in the
+   * backend, and holding the first page behind it would put an IPC round
+   * trip on the startup path for an answer that is "nothing is edited".
+   *
+   * `from` is what the open found: the tab being returned to, the tab a save
+   * or a reload opens the file again in and the handle that tab had, its
+   * other views, the place to resume at and what the tab left behind.
+   */
+  function adoptModel(view: ViewId, doc: DocumentInfo, path: string, from: OpenFound): Edits {
+    const { retained, replacing, replaceId, twins, resume, kept } = from;
+    const model = retained?.edits ?? editsFor(doc);
+    edits = model;
+    dirty = model.state.dirty;
+    restore(kept, "model", restoring);
+    tabs.keep(retained ?? { view, doc, path, edits: model, place: resume, ...freshState() }, replacing?.view);
+    repoint(twins, doc, model);
+    // Two views of one document read one list of what its marks cover.
+    const shared = sharedByTwin(tabs.all, tabs.find(view), (twin) => asDocument(twin.view, () => covered));
+    if (shared) covered = shared;
+    placeOnSide(panes, view, replacing?.view, retained !== undefined);
+    refreshTabs();
+    if (replaceId !== undefined && replaceId !== doc.id)
+      void call("close_document", { doc: replaceId }).catch(console.warn);
+    readEditState(view, model);
+    return model;
+  }
+
+  /**
+   * The viewer of the document `openDocument` is mounting as `view`, built in
+   * the page area `area`.
+   *
+   * One options literal, and kept as one: the `wiring` gate reads it as text
+   * for every callback `ViewerOptions` declares.
+   */
+  function buildViewer(
+    area: HTMLDivElement,
+    view: ViewId,
+    doc: DocumentInfo,
+    pages: [PageSize, ...PageSize[]],
+  ): Viewer {
+    return new Viewer(area, scoped<ViewerOptions>({
+      doc: doc.id,
+      pageCount: doc.page_count,
+      pages,
+      // The panel's selection follows the page, so a note opened by clicking
+      // a mark highlights its row --- and the two can never disagree about
+      // which comment is being read, which is the whole reason this is a
+      // callback rather than each side tracking its own idea of it.
+      onComment: (id) => sidebar?.comments.select(id),
+      // The same arrangement for the reader's own marks: pressing one on the
+      // page selects its row, so the panel and the box can never disagree
+      // about which mark is being read. `markpopup.ts` fires it, because the
+      // box is closed by five different things.
+      onMark: (id) => sidebar?.marks.select(id),
+      // The note the reader typed on one of their own marks, committed when
+      // its box closed. A command like any other: it lands in the journal, so
+      // undo steps over it and the document is dirty until it is saved.
+      //
+      // The edit's promise is handed back, in both branches: the page keeps
+      // drawing what was typed until it settles, which is after `setMarks`
+      // has the model's answer. See `markdraft.ts`.
+      onMarkNote: (mark, note) => {
+        if (!isSaved(mark)) return applyEdit((e) => e.renote(mark, note));
+        const to = scannedForm && edits ? fieldRenamed(scannedForm, edits.state, mark, note) : null;
+        if (typeof to === "string") return say(to);
+        return to ? applyEdit((e) => e.refield([to])) : undefined;
+      },
+      // The lines for a text box's words while they are being typed, from
+      // the function the model wraps with. Nothing is stored by it.
+      onMarkDraft: (note, left, right) => call("annot_draft_lines", { note, left, right }),
+      // Somebody else's comment, rewritten. The one edit command addressed by
+      // the **object** the file gave the annotation rather than by an id this
+      // application issued --- `Comment.id` is a position in one scan, and a
+      // save crosses a process boundary.
+      //
+      // The page is this viewer's slot and the model wants an identity, so
+      // the translation happens here, where the map is. A comment on a page
+      // the model no longer has translates to nothing and is dropped: it is
+      // the same guard `Edits.mark` states, and the reader cannot have got
+      // here anyway --- `setComments` closes a popup whose comment has gone.
+      onCommentEdit: (comment, body) => {
+        const object = comment.object;
+        const page = edits?.map.idOf(comment.page);
+        if (!object || page === undefined) return;
+        void applyEdit((e) => e.rewrite(object, page, body));
+      },
+      // The same two lookups as the rewrite above and for its reasons: a
+      // comment the file wrote as a direct dictionary has no object to name,
+      // and one on a page the model no longer has translates to nothing. A
+      // comment a reply of the reader's own answers is refused by the model
+      // rather than predicted here --- the refusal names the order to do the
+      // two in, which is more than this side could say.
+      onCommentDelete: (comment) => {
+        const object = comment.object;
+        const page = edits?.map.idOf(comment.page);
+        if (!object || page === undefined) return;
+        void applyEdit((e) => e.discard(object, page));
+      },
+      // The reply's own icon goes on the parent's rectangle, which is why
+      // this callback needs a third thing off the comment where the one above
+      // needs two. `comment.page` is a slot and `idOf` turns it into the page
+      // identity the model addresses --- the translation that exists because
+      // an id and a slot are both `number`, which this repository has paid
+      // for once.
+      onCommentReply: (comment, body) => {
+        const object = comment.object;
+        const page = edits?.map.idOf(comment.page);
+        if (!object || page === undefined) return;
+        void applyEdit((e) => e.reply(page, object, comment.rect, body));
+      },
+      onMarkRemove: (mark, sweep) => removeNamed(mark, sweep),
+      // A colour picked in the swatch row, or by a `Colour:` command with a
+      // note open. A command like the note above it, and undone the same way.
+      // Not for a saved field, which is drawn in one colour to say what it
+      // is and has none of its own to change: its id is not a mark's.
+      onMarkRecolor: (mark, color) => {
+        if (!isSaved(mark)) void applyEdit((e) => e.recolor(mark, color));
+      },
+      // A box or a drawing the reader finished. The page id and the shape are
+      // already in the file's space --- `Viewer.fileRectOn` does that, because
+      // the crop and both rotations are the viewer's and nothing here could
+      // undo them --- so this is the same one-line journal entry a highlight
+      // is, and undo steps over it identically. The shape is handed straight
+      // through: which of its two halves is filled is the viewer's answer and
+      // the model's rule, and restating it here would be a third copy.
+      onDrawn: (kind, page, shape, stamp) =>
+        void drawn(kind, page, shape, stamp),
+      // The rectangle a reader dragged out to crop to. It arrives in the
+      // file's *display* space, like every other gesture's, and the crop the
+      // model holds is one turn further in --- so unlike the three callbacks
+      // around it this one cannot go straight to an edit. See `cropTo`.
+      onCropped: (page, rect) => void cropTo(page, rect),
+      // Straight through, where a crop goes via `cropTo` and an IPC round
+      // trip: a crop box is in the page's own unrotated space and the
+      // rectangle a drag produces is not, so that one has to be converted.
+      // A pending redaction is held in exactly the space handed here.
+      onRedacted: (page, area) => void applyEdit((e) => e.redact(page, area)),
+      onRedactSelection: () =>
+        void redactSelection().then(() => asDocument(view, () => viewer?.clearSelection())),
+      onMarkMoved: (id, dx, dy) =>
+        isSaved(id)
+          ? changeField(scannedForm && edits ? fieldMoved(scannedForm, edits.state, id, dx, dy) : null)
+          : void applyEdit((e) => e.displace(id, dx, dy)),
+      onSignatureResize: (id, width) => void applyEdit((e) => e.resizeSignature(id, width)),
+      onMarkResized: (id, rect) =>
+        isSaved(id)
+          ? changeField(scannedForm && edits ? fieldPlaced(scannedForm, edits.state, id, rect) : null)
+          : void applyEdit((e) => e.resize(id, rect)),
+      onMarksArranged: (moves, sweep) =>
+        void applyEdit((e) => arrangeBoth(scannedForm, e.state, e, moves, sweep)),
+      // The Arrange commands are offered by how many are picked, and a menu
+      // item's enablement is pushed, so every change is pushed too.
+      onPicked: (count, more) => {
+        notice = noticeAfterPick(count, more, notice);
+        refreshMenu();
+      },
+      // The bar beside several picked marks asks the registry for each of
+      // its buttons, so a button and its menu item are one command.
+      onArrangeCommand: (id) => barCommand(commands, id),
+      onErased: (mark, remove, sweep) =>
+        void applyEdit((e) => e.erase(mark, remove, sweep)),
+      // The same sweep's other half: a mark with no parts to lose goes whole.
+      // `unmark` is what the mark panel's own Remove already calls, so a mark
+      // taken by the nib and one taken from the list are one command and one
+      // undo, however the reader asked. The same function as `onMarkRemove`
+      // for that reason, and because a saved field under the nib is removed
+      // as a field there and has to be here.
+      onUnmarked: (mark, sweep) => removeNamed(mark, sweep),
+      // **Back and Forward grey when there is nowhere to go, and this is what
+      // keeps that honest.** A menu item's enablement is a *pushed* map, so a
+      // guard reading state that moves outside the push sites is wrong
+      // between them --- which is the trap `refreshMenu` already carries. The
+      // history moves on a jump, on a step back and on a new document, and
+      // none of those is an edit; the frame loop's push covers the ones that
+      // also move the page, and this covers the ones that do not, including a
+      // link to somewhere on the page the reader is already looking at.
+      onNavigate: () => refreshMenu(),
+      onStatus: (next) => {
+        status = next;
+        formLayer?.layout();
+        textEditor?.layout();
+        // Here rather than in a `$derived`, because this is the only moment
+        // the coverage actually changes, and the gate wants one reading of
+        // the clock per change rather than one per render.
+        degraded = degradedGate.update(next, performance.now());
+        // What keeps thumbnails out of the way of the page: the strip stops
+        // asking, and withdraws what it asked for, whenever the viewer has
+        // work outstanding. See `thumbnails.ts`.
+        sidebar?.setViewerBusy(next.pending > 0);
+        // Through the status rather than from the rotate command, so the
+        // strip follows however the rotation was reached --- the palette, the
+        // keyboard, or anything later that rotates without going via here.
+        sidebar?.setTurns(next.turns);
+        // Same reasoning as the rotation above: the strip follows the view
+        // however the inversion was reached, rather than only via the command.
+        sidebar?.setInvert(next.invert);
+        // Same reasoning again, and it is the whole wiring for the results
+        // tab: the panel follows the scan through the status, so it is fed
+        // whether the search came from the find field, the palette, or a
+        // toggle rescanning what was already there.
+        if (viewer) {
+          sidebar?.results.update(
+            viewer.searchMatches,
+            viewer.matchIndex,
+            next.search.query,
+            next.search.running,
+            next.search.unsearchablePages,
+          );
+        }
+        notePlace();
+        // Every frame, and almost always a no-op: the guards that move
+        // without an edit --- a selection appearing, a mark's note opening ---
+        // have no event of their own, and `refreshMenu` pushes nothing when
+        // the answers have not changed. Without this the menu bar's Highlight
+        // selection is greyed at exactly the moment there is a selection,
+        // because the last thing to refresh it was an edit.
+        refreshMenu();
+      },
+      onPosition: (at, top) => {
+        sidebar?.setPosition(at, top);
+        notePlace();
+        keepInStep();
+      },
+      // Shown, for the same reason a failed print is: this fires only for a
+      // command the reader typed and is waiting on --- a copy that could not
+      // read every page it spans, or a clipboard that refused the write.
+      onError: (message) => {
+        say(message);
+      },
+      // `links`, not `outline`: a target from a page rectangle is numbered by
+      // the links scan, and the two scans number independently --- the wrong
+      // word here opens a different address rather than failing.
+      onWebLink: (target) => void followWebLink("links", target),
+      // The one message here nobody asked for. It fires while someone is
+      // reading, because a process outside the application shortened the file
+      // underneath them --- so it goes to the same surface as the errors they
+      // did ask for, which is the only one this window has. The pages already
+      // painted stay painted; what this adds is the reason the rest never
+      // arrive.
+      onGone: (message) => {
+        say(message);
+      },
+    }, runningAs(view)));
+  }
+
+  /**
+   * Puts the model's pages and marks, the reader's place and the window's
+   * settings into a viewer and its sidebar that have just been built.
+   *
+   * `kept` is what a tab being returned to left behind, and null for a
+   * document opened for the first time.
+   */
+  function showModel(
+    shown: Viewer,
+    panel: Sidebar,
+    model: Edits,
+    resume: Place | null,
+    kept: FreshState | null,
+  ): void {
+    // Before the first paint, so the reader sees their page rather than page
+    // one and then a jump --- and before `focus`, which does not move the view
+    // but would make the jump look like something they did.
+    shown.setPages(model.state.pages);
+    // A kept tab can hold pages of other files, whose links were cleared with
+    // the rest when the outgoing document was torn down.
+    void fetchImportedLinks(model);
+    shown.setTextEdits(model.state.text_edits ?? []);
+    shown.setFieldEdits([], model.state.fields ?? []);
+    shown.setMarks(shownMarks(model.state));
+    shown.setRedactions(model.state.redactions);
+    panel.thumbnails?.setPages(model.state.pages.length);
+    if (resume) shown.restore(resume);
+    // Only for a tab being returned to. A document opened for the first time
+    // has no search to put back and opens on the tab the sidebar starts on.
+    if (kept) restore(kept, "mounted", restoring);
+    shown.setNib(markNib.pt);
+    // After `restore`, which does not touch the colours, and before `focus`,
+    // so the first tiles requested are already the right polarity rather than
+    // being rendered light and immediately thrown away.
+    shown.setInverted(invertPages);
+    shown.focus();
+    // A side that shows a different tab is a different pair of documents.
+    // Nothing is locked while the other side is still to be mounted.
+    if (syncScroll) lockSides();
+  }
+
+  /**
+   * The controls over a form's fields, for the document mounted as `view` in
+   * the viewer `mounted`.
+   */
+  function buildFormLayer(host: HTMLDivElement, view: ViewId, form: Form, mounted: Viewer): FormLayer {
+    // A control sits where its field now is, and nowhere while the fields
+    // are being changed: a press on one then picks it and does not type.
+    const anchored = (widget: Form["widgets"][number]) => {
+      const rect = formEditing || !edits ? null : shownAt(widget, edits.state);
+      return rect ? mounted.formAnchor({ page: widget.page, display_rect: rect }) : null;
+    };
+    return new FormLayer(host, form, anchored,
+      // For this document by name: a control commits when it loses the
+      // keyboard, and the press that took it may have been in the other side.
+      async (object, value) => { await applyEdit((model) => model.fill(object, value), view); },
+      (widget) => mounted.showForm(widget),
+      // What a control has to say, and a press on a place for a signature,
+      // are this document's for the same reason.
+      (message) => { asDocument(view, () => say(message)); },
+      (widget) => {
+        // Signing reads the focused document, and it starts a moment after
+        // it is asked for. So the reader is taken to this document first,
+        // and where that is refused nothing is signed.
+        if (!readerIsIn(view, openView, () => focusSide(panes.sideOf(view)))) {
+          asDocument(view, () => say("Wait for the other document to finish, then press the field again"));
+          return;
+        }
+        void signDocument(edits ? signTarget(widget, edits.state.pages) : null);
+      });
+  }
+
+  /**
+   * Reads the document's form once its first screen is up, and builds the
+   * controls over its fields.
+   *
+   * The form, its names and whether its fields are being changed were
+   * reset when the outgoing document was torn down and are read again here:
+   * these three are not in `DocumentTab` on purpose. The form and its names
+   * are facts about the file, which this scan reads on every open, a tab
+   * being returned to included, because the controls it builds belong to the
+   * viewer and went with the last one. Changing the fields is a mode of the
+   * document on screen, and it does not wait for the reader in a tab they left.
+   */
+  function readForm(view: ViewId, wanted: number, mounted: Viewer): void {
+    void firstPaint(view).then(() => {
+      if (!stillMounted(view, mounted)) return null;
+      return call("document_form", { doc: wanted });
+    }).then((form) => asDocument(view, () => {
+      if (!form || !surface || viewer !== mounted) return;
+      formNames = form.widgets.map((widget) => widget.name);
+      scannedForm = form;
+      formLayer = buildFormLayer(surface, view, form, mounted);
+      if (edits) formLayer.update(edits.state);
+      formLayer.setBusy(documentBusy);
+    })).catch((error) => asDocument(view, () => { if (viewer === mounted) say(String(error)); }));
+  }
+
+  /** Reads the document's outline once its first screen is up. */
+  function readOutline(view: ViewId, wanted: number, mounted: Viewer): void {
+    void firstPaint(view)
+      .then(() => {
+        // Checked before asking as well as after. The wait is up to a second
+        // and is no longer inside the open, so another document can arrive
+        // during it --- and an outline walk for a file nobody is looking at is
+        // not merely wasted, it is a third of a second of the FIFO render
+        // thread in front of the tiles for the file they *are* looking at.
+        if (!stillMounted(view, mounted)) return null;
+        return call("document_outline", { doc: wanted });
+      })
+      .then((result) => asDocument(view, () => {
+        // And again, because another document may have been opened while the
+        // walk itself was in flight.
+        if (!result || viewer !== mounted) return;
+        rawOutline = result;
+        applyPageOrder();
+      }))
+      .catch(() => asDocument(view, () => sidebar?.setOutline(null)));
+  }
+
+  /** Reads the comments in the document once its first screen is up. */
+  function readComments(view: ViewId, wanted: number, mounted: Viewer): void {
+    // The comments, on the same terms and for a different reason. They cost
+    // an `lopdf` parse of the whole file --- 0.1 ms small, 11.9 ms on the
+    // 337 MB scan --- rather than render-thread time, so what this waits for
+    // is not the render queue but the first paint: warm startup has ~25 ms of
+    // margin against its 300 ms target, and this is off that path entirely.
+    // A separate chain rather than a link in the one above, so a document
+    // whose outline cannot be read still gets its comments and the reverse.
+    void firstPaint(view)
+      .then(() => {
+        if (!stillMounted(view, mounted)) return null;
+        return call("document_comments", { doc: wanted });
+      })
+      .then((result) => asDocument(view, () => {
+        if (!result || viewer !== mounted) return;
+        // Both the panel that lists them and the viewer that makes the mark on
+        // the page openable, and both through the translation --- see
+        // `applyPageOrder`, which is also what re-runs this if a page is
+        // deleted later.
+        rawComments = result;
+        applyPageOrder();
+        // A reader already on the comments tab when the scan lands would
+        // otherwise sit looking at rows reading "Highlight, no comment": the
+        // tab callback fired before there was anything to fill in, and it does
+        // not fire again for a tab that is already showing.
+        if (sidebar?.tab === "comments") void fillCommentWords();
+      }))
+      .catch(() => asDocument(view, () => sidebar?.setComments(null)));
+  }
+
+  /** Reads the document's links once its first screen is up. */
+  function readLinks(view: ViewId, wanted: number, mounted: Viewer): void {
+    // The links, on the same terms again --- a third chain rather than a link
+    // in either above, so one failing does not take the others with it.
+    //
+    // Where this differs from the comments: nobody opens a panel before
+    // clicking a cross-reference, so waiting for demand would mean the first
+    // click on any document goes nowhere. It waits for first paint for the
+    // same reason they do, and for nothing else.
+    void firstPaint(view)
+      .then(() => {
+        if (!stillMounted(view, mounted)) return null;
+        return call("document_links", { doc: wanted });
+      })
+      .then((result) => asDocument(view, () => {
+        if (!result || viewer !== mounted) return;
+        rawLinks = result.items;
+        applyPageOrder();
+        // A cut list is worth saying out loud, for the reason every bound in
+        // this application reports itself: a document whose cross-references
+        // half work is worse to use than one whose links are all dead, and
+        // silence makes the two indistinguishable.
+        const said = linkNotice(result.limits);
+        if (said) error = said;
+      }))
+      .catch(() => {
+        // Deliberately quiet. A document with no readable links is the common
+        // case --- most PDFs have none --- and there is nothing the reader
+        // would do about it, so this is not the `onError` contract.
+      });
+  }
+
+  /**
+   * Asks for the answers about the file `wanted`, mounted as `view` in the
+   * viewer `mounted`: its form, its outline, its comments and its links.
+   *
+   * After the viewer, deliberately not awaited, and deliberately not asked
+   * for until the first screen is up.
+   *
+   * Not awaiting the *outline* was always right: it shares the render thread
+   * with tiles and a document that opens instantly should not wait for its
+   * table of contents. Waiting for the first paint before *asking* is there
+   * because the walk stopped being free: resolving a destination on a page
+   * carrying `/Rotate` needs the page's rotation, `FPDFPage_GetRotation`
+   * needs the page loaded, and that measured 0.17 ms -> 7.5 ms on a
+   * twelve-page fixture, about 1 ms per distinct page named. On a book with
+   * a three-hundred-entry table of contents that is a third of a second of
+   * render thread, and the render thread is FIFO --- so asked for at open it
+   * would sit in front of the tiles for the page someone is looking at.
+   *
+   * What changed is that `openPath` is now a chain, and `firstPaint` waits
+   * up to a second: awaiting it here would hold the *next* document's open
+   * behind a delay that has nothing to do with it. Both halves are already
+   * guarded by the viewer still being the one that was mounted, so letting the whole tail run detached
+   * costs nothing --- an outline for a document nobody is looking at is
+   * dropped exactly as it was before.
+   */
+  function readAfterFirstPaint(view: ViewId, wanted: number, mounted: Viewer): void {
+    readForm(view, wanted, mounted);
+    readOutline(view, wanted, mounted);
+    readComments(view, wanted, mounted);
+    readLinks(view, wanted, mounted);
+  }
+
+  /**
+   * Takes back what an open that failed had got as far as changing.
+   *
+   * `acquired` is the handle the open was given, or -1 when it was a tab's
+   * own; `replaced` is whether the outgoing document had been torn down, and
+   * `twins` the other views that went with it.
+   *
+   * What may be cleared depends on how far the open got, and the two cases
+   * are opposites. A failure *before* the outgoing document was torn down ---
+   * an `open_document` that threw, which is the common one --- has touched
+   * nothing: the reader still has their document on screen, and clearing
+   * `title` there unmounts the body out from under a live viewer and sidebar
+   * while the backend still holds the file. A failure *after* it has no
+   * document left to keep, and leaving the singletons set would advertise one
+   * that is gone.
+   */
+  function abandonOpen(acquired: number, replaced: boolean, twins: readonly DocumentTab[]): void {
+    if (acquired >= 0) {
+      dropView(panes, tabs, viewOf(acquired));
+      void call("close_document", { doc: acquired }).catch(console.warn);
+      refreshTabs();
+    }
+    if (replaced) {
+      // The other views were torn down for a handle that never arrived.
+      for (const twin of twins) dropView(panes, tabs, twin.view);
+      // Whatever half-built state got as far as existing. A viewer left alive
+      // while `title` is empty runs its frame loop against a detached surface
+      // and keeps writing `status`, which the header renders --- a page count
+      // and a zoom for a document with no body under them.
+      //
+      // `title` and `status` go together, always: `title` gates the body
+      // and `status` feeds the header, so one outliving the other is a header
+      // describing a document that is no longer on screen. The degraded
+      // label's clock goes with them, because a stale one would show the
+      // next document's first blurry frame at once.
+      unmountDocument();
+    }
+  }
+
+  /**
    * Opens a document, putting the reader back where they left it.
    *
    * Never called directly --- {@link openPath} is the entry point, and going
@@ -4889,6 +5593,13 @@
    * a file and cannot have it needs to be told; someone who launched the app and
    * whose last document has since been deleted or unmounted needs an empty
    * window, not a dialog about a file they did not ask for.
+   *
+   * A sequence of steps, and the ones that are functions of this file
+   * ({@link buildSidebar}, {@link adoptModel}, {@link buildViewer},
+   * {@link showModel}) are called from here and nowhere else: they read the
+   * document's variables after this function's waits, which is right under
+   * `opening` and only there. What the open decides on the way is in
+   * `documentopen.ts`.
    */
   async function openDocument(
     path: string,
@@ -4897,18 +5608,7 @@
     retained?: DocumentTab,
   ) {
     opening = true;
-    /**
-     * Whether this body has already torn the outgoing document down.
-     *
-     * What the `catch` is allowed to clear depends on how far the body got, and
-     * the two cases are opposites. A failure *before* this point --- an
-     * `open_document` that threw, which is the common one --- has touched
-     * nothing: the reader still has their document on screen, and clearing
-     * `title` there unmounts the body out from under a live viewer and sidebar
-     * while the backend still holds the file. A failure *after* it has no
-     * document left to keep, and leaving the singletons set would advertise one
-     * that is gone.
-     */
+    /** Whether this body has already torn the outgoing document down: see {@link abandonOpen}. */
     let replaced = false;
     let acquired = -1;
     let twins: DocumentTab[] = [];
@@ -4927,17 +5627,7 @@
       // The first view of a document is named by its handle, and a tab that
       // is returned to keeps the name it has.
       const view = retained?.view ?? viewOf(doc.id);
-      const page = doc.pages[0];
-      if (!page) throw new Error("document reports no pages");
-      // The whole table the open carried, not only its first entry. On a lazy
-      // open --- the default, because collecting every page's size costs 86 ms
-      // on a long document --- that *is* only the first entry, and the viewer
-      // estimates the rest and corrects them as it reads. What it must not do is
-      // discard sizes the backend already sent, which is what handing over
-      // `pages[0]` alone did: with `TPDF_EAGER_GEOMETRY` set the whole document's
-      // geometry arrived and every page after the first was still laid out at
-      // page 1's.
-      const pages: [PageSize, ...PageSize[]] = [page, ...doc.pages.slice(1)];
+      const pages = pageTable(doc);
 
       // Whatever the outgoing document was owed, before its path is replaced.
       places.flush();
@@ -4956,14 +5646,8 @@
       openPageCount = doc.page_count;
       startPage.opened(path);
 
-      // Fitted to the document as it is now, not as it was: the file may have
-      // been rebuilt shorter since, and a viewer scrolled past its own last page
-      // is a worse answer than the wrong page.
-      // A caller that already knows where the reader is wins over the startup
-      // snapshot --- see `reloadDocument`, which is the only one that does.
-      const remembered =
-        retained?.place ?? override ?? session.places.find((kept) => kept.path === path);
-      const resume = remembered ? clampPlace(remembered, retained?.edits.state.pages.length ?? doc.page_count) : null;
+      const resume = placeToResume(retained?.place, override, session.places, path,
+        retained?.edits.state.pages.length ?? doc.page_count);
       sidebarShown = resume ? resume.sidebar : sidebarShown;
 
       // The host element does not exist until the viewer section is in the
@@ -4973,585 +5657,24 @@
       const area = areaHosts[slot] ?? null;
       if (!area || !sidebarHost) throw new Error("no surface to mount into");
       surface = area;
-      // Every callback the viewer and the panels are built with runs as this
-      // document, whichever one the reader is working in when it fires.
-      const own = <R,>(work: () => R) => asDocument(view, work);
 
       // One record for every restore below, fresh for a document never kept,
       // and applied through `restoring` at each of the three points.
       const kept = restoredState(retained);
       restore(kept, "unmounted", restoring);
-      propertiesDialog?.close();
-      // A panel about one field of the document that is closing. Left open, its
-      // Save would look the field up by an id that starts at 1 in every
-      // document; `changeProperties` refuses that too, and closing it is what
-      // the reader sees.
-      fieldPropertiesDialog?.close();
-      // The form, its names and whether its fields are being changed were
-      // reset with the rest above and are read again, where the kept fields
-      // are restored: these three are not in `DocumentTab` on purpose. The
-      // form and its names are facts about the file, which the scan after the
-      // first paint below reads on every open, a tab being returned to
-      // included, because the controls it builds belong to the viewer and went
-      // with the last one. Changing the fields is a mode of the document on
-      // screen, and it does not wait for the reader in a tab they left.
-      sidebar = new Sidebar(sidebarHost, scoped<SidebarOptions>({
-        onNavigate: (target, top) => {
-          viewer?.goToDestination(target, top);
-          viewer?.focus();
-        },
-        // `outline`, not `links`: the two scans number their tokens
-        // independently, so the wrong word here opens a different address
-        // rather than failing. See `webopen::Source`.
-        onWebLink: (target) => void followWebLink("outline", target),
-        results: {
-          // Focus stays where it was, unlike an outline row. A reader picking
-          // hits off this list is comparing them, and taking focus to the page
-          // after each one means clicking back into the panel to try the next.
-          onPick: (index) => viewer?.showMatch(index),
-        },
-        comments: {
-          // Focus moves into the note, which is the opposite of the results
-          // list above and for the reason that distinguishes them: a hit is
-          // something to look at on the page, and a comment is something to
-          // *read* in the note that opens --- so the keyboard belongs there.
-          onPick: (id) => viewer?.showComment(id),
-        },
-        marks: {
-          // The comments row's reasoning, one step stronger: a reader who picks
-          // one of their own marks out of a list is reaching for the box that
-          // edits it, so the keyboard goes into the field. The keyboard walk is
-          // the route that deliberately does not --- there the reader is
-          // stepping rather than writing, and taking focus would strand them.
-          onPick: (id) => viewer?.showMark(id),
-          // The mark named by id, which nothing else in this file does --- see
-          // `removeMark` above for the rule this breaks and `marklist.ts` for
-          // why it has to. A mark the model could not place is listed here and
-          // nowhere else, so the open note cannot name it and this is its only
-          // way off. `applyEdit` is the same path every other edit takes, so it
-          // journals, undoes and refreshes the panel exactly as they do.
-          onRemove: (id) => void applyEdit((e) => e.unmark(id)),
-          // What the selection said when the mark was made, or "" --- see
-          // `covered` above for why this is held here and not in the model.
-          coveredFor: (id) => covered.get(id) ?? "",
-        },
-        redactions: {
-          fill: {
-            current: redactionFill,
-            onChange: (fill) => {
-              redactionFill = fill;
-              writeFill(fill);
-            },
-          },
-          // Focus stays in the panel, which is the results list's arrangement
-          // rather than the marks list's, and for the results list's reason: a
-          // reader working down this list is *comparing* regions --- is that
-          // the right box, is that one too wide --- and taking the keyboard to
-          // the page after each row means clicking back to reach the next.
-          onPick: (id) => showRedaction(id),
-          // The only route off a pending region other than undo, and undo is
-          // chronological --- a reader who dragged six and wants the second one
-          // back cannot get there by undoing. `applyEdit` is the path every
-          // other edit takes, so this journals and undoes like the rest.
-          onRemove: (id) => void applyEdit((e) => e.unredact(id)),
-          // Four answers, and the map deliberately holds no entry for a region
-          // nobody has looked at yet: `Map.get` answering `undefined` is what
-          // separates *not read* from a page read and found to hold nothing.
-          wordsFor: (id) => redactionWords.get(id),
-          // Absent until a worker has answered for the region's page, which is
-          // why the row draws nothing rather than "no objects": a warning that
-          // has not arrived and a region with nothing to warn about must not
-          // look alike, and the way they are told apart here is that only one
-          // of them ever produces a line.
-          planFor: (id) => redactionPlans.get(id),
-        },
-        hidden: { onPick: (passage) => showHidden(passage) },
-        pages: {
-          doc: doc.id,
-          pageCount: doc.page_count,
-          // Page 1 alone, and the strip lays every row out at it. Deliberately
-          // left on the uniform assumption the viewer has just stopped making,
-          // and it is a *known* gap rather than a proof of harmlessness: see
-          // `thumbnails.ts`, which states what a mixed-size document costs there
-          // and why the fix is a separate piece of work from this one.
-          page,
-          // The viewer is created below, so the strip reaches it lazily rather
-          // than being handed a reference that does not exist yet.
-          tier1: { placeholderFor: (at) => viewer?.placeholderFor(at) ?? null },
-          // A row is a slot and a tile request names a page of a document --- this
-          // one's, or another file's for a page inserted from it; see `pages.ts`.
-          addressOf: (slot) => edits?.map.addressOf(slot, doc.id),
-          onNavigate: (at) => {
-            viewer?.goToPage(at);
-            viewer?.focus();
-          },
-          // The same call `movePage` makes, and deliberately so: a drag and the
-          // two palette commands are one operation reached two ways, and the
-          // slot arithmetic that turns a drop into a destination is the strip's
-          // because the strip is what knows where the pointer was.
-          onReorder: (from, to) => {
-            void applyEdit((e) => e.move(from, to));
-          },
-          // Right-clicking a thumbnail goes to that page first, and then offers
-          // the page operations. Navigating on a right-click is unusual and it
-          // is the honest arrangement here: every one of these commands acts on
-          // the page the viewer is on, so the alternative is a second way to
-          // address a page --- and a reader who rotates a page wants to see it
-          // turn, which means being on it anyway.
-          onContextMenu: (slot, at) => {
-            viewer?.goToPage(slot);
-            openContextMenu(PAGE_MENU, at);
-          },
-        },
-        // The comments panel lists a bare highlight by the words it covers, and
-        // finding those words is one text extraction per page carrying one. So
-        // it is paid for by a reader who opens that tab, and by nobody else ---
-        // a document opened, read and closed on the outline costs none of it.
-        onTab: (tab) => {
-          if (tab === "comments") void fillCommentWords();
-          // The same bargain for the same reason: the words under a region are
-          // a text extraction per page carrying one, and a reader who never
-          // opens this tab pays none of it. Unlike the comments walk this one
-          // is *also* driven from `runEdit`, because a region the reader has
-          // just dragged wants its words while they are looking at the panel.
-          if (tab === "redactions") void fillRedactionWords();
-          // The ring over a passage belongs to the list that drew it.
-          if (tab !== "hidden") viewer?.clearRegion();
-        },
-      }, own));
+      closeDocumentPanels();
+      sidebar = buildSidebar(sidebarHost, view, doc, pages[0]);
       sidebar.setVisible(sidebarShown);
 
-      // Before the viewer, so that a rotate arriving on the first frame has a
-      // model to ask. `refresh` is not awaited: it reads a `HashMap` in the
-      // backend, and holding the first page behind it would put an IPC round
-      // trip on the startup path for an answer that is "nothing is edited".
-      const opening = retained?.edits ?? editsFor(doc);
-      edits = opening;
-      dirty = opening.state.dirty;
-      restore(kept, "model", restoring);
-      tabs.keep(retained ?? { view, doc, path, edits: opening, place: resume, ...freshState() }, replacing?.view);
-      // A tab returned to is in front of the side it is on. A save's new
-      // handle takes the old one's side, and a document opened for the first
-      // time joins the side the reader is working in.
-      // The other views of a document that was saved or reloaded are views of
-      // the file as it is now: the new handle, and the model built for it.
-      for (const twin of twins) { twin.doc = doc; twin.edits = opening; }
-      // Two views of one document read one list of what its marks cover.
-      const mine = tabs.find(view);
-      const shared = mine && twinsOf(tabs.all, mine)
-        .map((twin) => asDocument(twin.view, () => covered)).find((list) => list !== undefined);
-      if (shared) covered = shared;
-      if (replacing) panes.replaced(replacing.view, view);
-      if (retained || replacing) panes.fronted(view);
-      else panes.opened(view);
-      refreshTabs();
-      if (replaceId !== undefined && replaceId !== doc.id)
-        void call("close_document", { doc: replaceId }).catch(console.warn);
-      void opening.refresh().then(
-        (state) => own(() => {
-          // The model this reply belongs to, not whichever one is open when it
-          // lands. A second document opened inside the round trip replaces
-          // `edits` and the panels with it, and this would then translate one
-          // document's marks through another's page order and list the result.
-          // `dirty` had the same hazard and the same one-line fix.
-          if (edits !== opening) return;
-          dirty = state.dirty;
-          refreshTabs();
-          // A document opened with edits already on it --- which is the model's
-          // to answer, not this file's to assume. Every later change comes
-          // through `runEdit` above.
-          sidebar?.setMarks(markRows(state.marks, opening.map));
-          sidebar?.setRedactions(redactionRows(state.redactions, opening.map));
-        }),
-        (e) => {
-          // Not raised to the reader. Nothing is wrong with their document ---
-          // the edit commands will refuse until this succeeds, which is the
-          // right failure, and an error banner over a page that opened fine is
-          // not.
-          console.warn(`could not read the edit state: ${e}`);
-        },
-      );
-
-      viewer = new Viewer(area, scoped<ViewerOptions>({
-        doc: doc.id,
-        pageCount: doc.page_count,
-        pages,
-        // The panel's selection follows the page, so a note opened by clicking
-        // a mark highlights its row --- and the two can never disagree about
-        // which comment is being read, which is the whole reason this is a
-        // callback rather than each side tracking its own idea of it.
-        onComment: (id) => sidebar?.comments.select(id),
-        // The same arrangement for the reader's own marks: pressing one on the
-        // page selects its row, so the panel and the box can never disagree
-        // about which mark is being read. `markpopup.ts` fires it, because the
-        // box is closed by five different things.
-        onMark: (id) => sidebar?.marks.select(id),
-        // The note the reader typed on one of their own marks, committed when
-        // its box closed. A command like any other: it lands in the journal, so
-        // undo steps over it and the document is dirty until it is saved.
-        //
-        // The edit's promise is handed back, in both branches: the page keeps
-        // drawing what was typed until it settles, which is after `setMarks`
-        // has the model's answer. See `markdraft.ts`.
-        onMarkNote: (mark, note) => {
-          if (!isSaved(mark)) return applyEdit((e) => e.renote(mark, note));
-          const to = scannedForm && edits ? fieldRenamed(scannedForm, edits.state, mark, note) : null;
-          if (typeof to === "string") return say(to);
-          return to ? applyEdit((e) => e.refield([to])) : undefined;
-        },
-        // The lines for a text box's words while they are being typed, from
-        // the function the model wraps with. Nothing is stored by it.
-        onMarkDraft: (note, left, right) => call("annot_draft_lines", { note, left, right }),
-        // Somebody else's comment, rewritten. The one edit command addressed by
-        // the **object** the file gave the annotation rather than by an id this
-        // application issued --- `Comment.id` is a position in one scan, and a
-        // save crosses a process boundary.
-        //
-        // The page is this viewer's slot and the model wants an identity, so
-        // the translation happens here, where the map is. A comment on a page
-        // the model no longer has translates to nothing and is dropped: it is
-        // the same guard `Edits.mark` states, and the reader cannot have got
-        // here anyway --- `setComments` closes a popup whose comment has gone.
-        onCommentEdit: (comment, body) => {
-          const object = comment.object;
-          const page = edits?.map.idOf(comment.page);
-          if (!object || page === undefined) return;
-          void applyEdit((e) => e.rewrite(object, page, body));
-        },
-        // The same two lookups as the rewrite above and for its reasons: a
-        // comment the file wrote as a direct dictionary has no object to name,
-        // and one on a page the model no longer has translates to nothing. A
-        // comment a reply of the reader's own answers is refused by the model
-        // rather than predicted here --- the refusal names the order to do the
-        // two in, which is more than this side could say.
-        onCommentDelete: (comment) => {
-          const object = comment.object;
-          const page = edits?.map.idOf(comment.page);
-          if (!object || page === undefined) return;
-          void applyEdit((e) => e.discard(object, page));
-        },
-        // The reply's own icon goes on the parent's rectangle, which is why
-        // this callback needs a third thing off the comment where the one above
-        // needs two. `comment.page` is a slot and `idOf` turns it into the page
-        // identity the model addresses --- the translation that exists because
-        // an id and a slot are both `number`, which this repository has paid
-        // for once.
-        onCommentReply: (comment, body) => {
-          const object = comment.object;
-          const page = edits?.map.idOf(comment.page);
-          if (!object || page === undefined) return;
-          void applyEdit((e) => e.reply(page, object, comment.rect, body));
-        },
-        onMarkRemove: (mark, sweep) => removeNamed(mark, sweep),
-        // A colour picked in the swatch row, or by a `Colour:` command with a
-        // note open. A command like the note above it, and undone the same way.
-        // Not for a saved field, which is drawn in one colour to say what it
-        // is and has none of its own to change: its id is not a mark's.
-        onMarkRecolor: (mark, color) => {
-          if (!isSaved(mark)) void applyEdit((e) => e.recolor(mark, color));
-        },
-        // A box or a drawing the reader finished. The page id and the shape are
-        // already in the file's space --- `Viewer.fileRectOn` does that, because
-        // the crop and both rotations are the viewer's and nothing here could
-        // undo them --- so this is the same one-line journal entry a highlight
-        // is, and undo steps over it identically. The shape is handed straight
-        // through: which of its two halves is filled is the viewer's answer and
-        // the model's rule, and restating it here would be a third copy.
-        onDrawn: (kind, page, shape, stamp) =>
-          void drawn(kind, page, shape, stamp),
-        // The rectangle a reader dragged out to crop to. It arrives in the
-        // file's *display* space, like every other gesture's, and the crop the
-        // model holds is one turn further in --- so unlike the three callbacks
-        // around it this one cannot go straight to an edit. See `cropTo`.
-        onCropped: (page, rect) => void cropTo(page, rect),
-        // Straight through, where a crop goes via `cropTo` and an IPC round
-        // trip: a crop box is in the page's own unrotated space and the
-        // rectangle a drag produces is not, so that one has to be converted.
-        // A pending redaction is held in exactly the space handed here.
-        onRedacted: (page, area) => void applyEdit((e) => e.redact(page, area)),
-        onRedactSelection: () => void redactSelection().then(() => viewer?.clearSelection()),
-        onMarkMoved: (id, dx, dy) =>
-          isSaved(id)
-            ? changeField(scannedForm && edits ? fieldMoved(scannedForm, edits.state, id, dx, dy) : null)
-            : void applyEdit((e) => e.displace(id, dx, dy)),
-        onSignatureResize: (id, width) => void applyEdit((e) => e.resizeSignature(id, width)),
-        onMarkResized: (id, rect) =>
-          isSaved(id)
-            ? changeField(scannedForm && edits ? fieldPlaced(scannedForm, edits.state, id, rect) : null)
-            : void applyEdit((e) => e.resize(id, rect)),
-        onMarksArranged: (moves, sweep) =>
-          void applyEdit((e) => arrangeBoth(scannedForm, e.state, e, moves, sweep)),
-        // The Arrange commands are offered by how many are picked, and a menu
-        // item's enablement is pushed, so every change is pushed too.
-        onPicked: (count, more) => {
-          notice = noticeAfterPick(count, more, notice);
-          refreshMenu();
-        },
-        // The bar beside several picked marks asks the registry for each of
-        // its buttons, so a button and its menu item are one command.
-        onArrangeCommand: (id) => barCommand(commands, id),
-        onErased: (mark, remove, sweep) =>
-          void applyEdit((e) => e.erase(mark, remove, sweep)),
-        // The same sweep's other half: a mark with no parts to lose goes whole.
-        // `unmark` is what the mark panel's own Remove already calls, so a mark
-        // taken by the nib and one taken from the list are one command and one
-        // undo, however the reader asked. The same function as `onMarkRemove`
-        // for that reason, and because a saved field under the nib is removed
-        // as a field there and has to be here.
-        onUnmarked: (mark, sweep) => removeNamed(mark, sweep),
-        // **Back and Forward grey when there is nowhere to go, and this is what
-        // keeps that honest.** A menu item's enablement is a *pushed* map, so a
-        // guard reading state that moves outside the push sites is wrong
-        // between them --- which is the trap `refreshMenu` already carries. The
-        // history moves on a jump, on a step back and on a new document, and
-        // none of those is an edit; the frame loop's push covers the ones that
-        // also move the page, and this covers the ones that do not, including a
-        // link to somewhere on the page the reader is already looking at.
-        onNavigate: () => refreshMenu(),
-        onStatus: (next) => {
-          status = next;
-          formLayer?.layout();
-          textEditor?.layout();
-          // Here rather than in a `$derived`, because this is the only moment
-          // the coverage actually changes, and the gate wants one reading of
-          // the clock per change rather than one per render.
-          degraded = degradedGate.update(next, performance.now());
-          // What keeps thumbnails out of the way of the page: the strip stops
-          // asking, and withdraws what it asked for, whenever the viewer has
-          // work outstanding. See `thumbnails.ts`.
-          sidebar?.setViewerBusy(next.pending > 0);
-          // Through the status rather than from the rotate command, so the
-          // strip follows however the rotation was reached --- the palette, the
-          // keyboard, or anything later that rotates without going via here.
-          sidebar?.setTurns(next.turns);
-          // Same reasoning as the rotation above: the strip follows the view
-          // however the inversion was reached, rather than only via the command.
-          sidebar?.setInvert(next.invert);
-          // Same reasoning again, and it is the whole wiring for the results
-          // tab: the panel follows the scan through the status, so it is fed
-          // whether the search came from the find field, the palette, or a
-          // toggle rescanning what was already there.
-          if (viewer) {
-            sidebar?.results.update(
-              viewer.searchMatches,
-              viewer.matchIndex,
-              next.search.query,
-              next.search.running,
-              next.search.unsearchablePages,
-            );
-          }
-          notePlace();
-          // Every frame, and almost always a no-op: the guards that move
-          // without an edit --- a selection appearing, a mark's note opening ---
-          // have no event of their own, and `refreshMenu` pushes nothing when
-          // the answers have not changed. Without this the menu bar's Highlight
-          // selection is greyed at exactly the moment there is a selection,
-          // because the last thing to refresh it was an edit.
-          refreshMenu();
-        },
-        onPosition: (at, top) => {
-          sidebar?.setPosition(at, top);
-          notePlace();
-          keepInStep();
-        },
-        // Shown, for the same reason a failed print is: this fires only for a
-        // command the reader typed and is waiting on --- a copy that could not
-        // read every page it spans, or a clipboard that refused the write.
-        onError: (message) => {
-          say(message);
-        },
-        // `links`, not `outline`: a target from a page rectangle is numbered by
-        // the links scan, and the two scans number independently --- the wrong
-        // word here opens a different address rather than failing.
-        onWebLink: (target) => void followWebLink("links", target),
-        // The one message here nobody asked for. It fires while someone is
-        // reading, because a process outside the application shortened the file
-        // underneath them --- so it goes to the same surface as the errors they
-        // did ask for, which is the only one this window has. The pages already
-        // painted stay painted; what this adds is the reason the rest never
-        // arrive.
-        onGone: (message) => {
-          say(message);
-        },
-      }, own));
+      const opening = adoptModel(view, doc, path, { retained, replacing, replaceId, twins, resume, kept });
+      viewer = buildViewer(area, view, doc, pages);
       panes.mounted(view, slot);
-      // Before the first paint, so the reader sees their page rather than page
-      // one and then a jump --- and before `focus`, which does not move the view
-      // but would make the jump look like something they did.
-      viewer.setPages(opening.state.pages);
-      // A kept tab can hold pages of other files, whose links were cleared with
-      // the rest a few lines up.
-      void fetchImportedLinks(opening);
-      viewer.setTextEdits(opening.state.text_edits ?? []);
-      viewer.setFieldEdits([], opening.state.fields ?? []);
-      viewer.setMarks(shownMarks(opening.state));
-      viewer.setRedactions(opening.state.redactions);
-      sidebar.thumbnails?.setPages(opening.state.pages.length);
-      if (resume) viewer.restore(resume);
-      // Only for a tab being returned to. A document opened for the first time
-      // has no search to put back and opens on the tab the sidebar starts on.
-      if (retained) restore(kept, "mounted", restoring);
-      viewer.setNib(markNib.pt);
-      // After `restore`, which does not touch the colours, and before `focus`,
-      // so the first tiles requested are already the right polarity rather than
-      // being rendered light and immediately thrown away.
-      viewer.setInverted(invertPages);
-      viewer.focus();
-      // A side that shows a different tab is a different pair of documents.
-      // Nothing is locked while the other side is still to be mounted.
-      if (syncScroll) lockSides();
-
-      // After the viewer, deliberately not awaited, and deliberately not asked
-      // for until the first screen is up.
-      //
-      // Not awaiting the *outline* was always right: it shares the render thread
-      // with tiles and a document that opens instantly should not wait for its
-      // table of contents. Waiting for the first paint before *asking* is there
-      // because the walk stopped being free: resolving a destination on a page
-      // carrying `/Rotate` needs the page's rotation, `FPDFPage_GetRotation`
-      // needs the page loaded, and that measured 0.17 ms -> 7.5 ms on a
-      // twelve-page fixture, about 1 ms per distinct page named. On a book with
-      // a three-hundred-entry table of contents that is a third of a second of
-      // render thread, and the render thread is FIFO --- so asked for at open it
-      // would sit in front of the tiles for the page someone is looking at.
-      //
-      // What changed is that `openPath` is now a chain, and `firstPaint` waits
-      // up to a second: awaiting it here would hold the *next* document's open
-      // behind a delay that has nothing to do with it. Both halves are already
-      // guarded by `openDoc === wanted`, so letting the whole tail run detached
-      // costs nothing --- an outline for a document nobody is looking at is
-      // dropped exactly as it was before.
-      const wanted = doc.id;
-      const mounted = viewer;
-      // Whether this document is still mounted with the viewer built above.
-      // Asked as the document, so the answer is the same whichever side the
-      // reader is working in when a reply lands.
-      const still = () => own(() => viewer === mounted) === true;
-      void firstPaint(view).then(() => {
-        if (!still()) return null;
-        return call("document_form", { doc: wanted });
-      }).then((form) => own(() => {
-        if (!form || !surface || viewer !== mounted) return;
-        formNames = form.widgets.map((widget) => widget.name);
-        scannedForm = form;
-        // A control sits where its field now is, and nowhere while the fields
-        // are being changed: a press on one then picks it and does not type.
-        const anchored = (widget: Form["widgets"][number]) => {
-          const rect = formEditing || !edits ? null : shownAt(widget, edits.state);
-          return rect ? mounted.formAnchor({ page: widget.page, display_rect: rect }) : null;
-        };
-        formLayer = new FormLayer(surface, form, anchored,
-          // For this document by name: a control commits when it loses the
-          // keyboard, and the press that took it may have been in the other side.
-          async (object, value) => { await applyEdit((model) => model.fill(object, value), view); },
-          (widget) => mounted.showForm(widget), say,
-          (widget) => void signDocument(edits ? signTarget(widget, edits.state.pages) : null));
-        if (edits) formLayer.update(edits.state);
-        formLayer.setBusy(documentBusy);
-      })).catch((error) => own(() => { if (viewer === mounted) say(String(error)); }));
-      void firstPaint(view)
-        .then(() => {
-          // Checked before asking as well as after. The wait is up to a second
-          // and is no longer inside the open, so another document can arrive
-          // during it --- and an outline walk for a file nobody is looking at is
-          // not merely wasted, it is a third of a second of the FIFO render
-          // thread in front of the tiles for the file they *are* looking at.
-          if (!still()) return null;
-          return call("document_outline", { doc: wanted });
-        })
-        .then((result) => own(() => {
-          // And again, because another document may have been opened while the
-          // walk itself was in flight.
-          if (!result || viewer !== mounted) return;
-          rawOutline = result;
-          applyPageOrder();
-        }))
-        .catch(() => own(() => sidebar?.setOutline(null)));
-
-      // The comments, on the same terms and for a different reason. They cost
-      // an `lopdf` parse of the whole file --- 0.1 ms small, 11.9 ms on the
-      // 337 MB scan --- rather than render-thread time, so what this waits for
-      // is not the render queue but the first paint: warm startup has ~25 ms of
-      // margin against its 300 ms target, and this is off that path entirely.
-      // A separate chain rather than a link in the one above, so a document
-      // whose outline cannot be read still gets its comments and the reverse.
-      void firstPaint(view)
-        .then(() => {
-          if (!still()) return null;
-          return call("document_comments", { doc: wanted });
-        })
-        .then((result) => own(() => {
-          if (!result || viewer !== mounted) return;
-          // Both the panel that lists them and the viewer that makes the mark on
-          // the page openable, and both through the translation --- see
-          // `applyPageOrder`, which is also what re-runs this if a page is
-          // deleted later.
-          rawComments = result;
-          applyPageOrder();
-          // A reader already on the comments tab when the scan lands would
-          // otherwise sit looking at rows reading "Highlight, no comment": the
-          // tab callback fired before there was anything to fill in, and it does
-          // not fire again for a tab that is already showing.
-          if (sidebar?.tab === "comments") void fillCommentWords();
-        }))
-        .catch(() => own(() => sidebar?.setComments(null)));
-
-      // The links, on the same terms again --- a third chain rather than a link
-      // in either above, so one failing does not take the others with it.
-      //
-      // Where this differs from the comments: nobody opens a panel before
-      // clicking a cross-reference, so waiting for demand would mean the first
-      // click on any document goes nowhere. It waits for first paint for the
-      // same reason they do, and for nothing else.
-      void firstPaint(view)
-        .then(() => {
-          if (!still()) return null;
-          return call("document_links", { doc: wanted });
-        })
-        .then((result) => own(() => {
-          if (!result || viewer !== mounted) return;
-          rawLinks = result.items;
-          applyPageOrder();
-          // A cut list is worth saying out loud, for the reason every bound in
-          // this application reports itself: a document whose cross-references
-          // half work is worse to use than one whose links are all dead, and
-          // silence makes the two indistinguishable.
-          const said = linkNotice(result.limits);
-          if (said) error = said;
-        }))
-        .catch(() => {
-          // Deliberately quiet. A document with no readable links is the common
-          // case --- most PDFs have none --- and there is nothing the reader
-          // would do about it, so this is not the `onError` contract.
-        });
+      showModel(viewer, sidebar, opening, resume, retained ? kept : null);
+      readAfterFirstPaint(view, doc.id, viewer);
     } catch (e) {
-      if (acquired >= 0) {
-        panes.closed(viewOf(acquired), tabs.all.map((entry) => entry.view));
-        tabs.remove(viewOf(acquired));
-        void call("close_document", { doc: acquired }).catch(console.warn);
-        refreshTabs();
-      }
-      if (replaced) {
-        // The other views were torn down for a handle that never arrived.
-        for (const twin of twins) {
-          panes.closed(twin.view, tabs.all.map((entry) => entry.view));
-          tabs.remove(twin.view);
-        }
-        // Whatever half-built state got as far as existing. A viewer left alive
-        // while `title` is empty runs its frame loop against a detached surface
-        // and keeps writing `status`, which the header renders --- a page count
-        // and a zoom for a document with no body under them.
-        //
-        // `title` and `status` go together, always: `title` gates the body
-        // and `status` feeds the header, so one outliving the other is a header
-        // describing a document that is no longer on screen. The degraded
-        // label's clock goes with them, because a stale one would show the
-        // next document's first blurry frame at once.
-        unmountDocument();
-      }
-      // A document that was open last time and is not there now is not a
-      // failure the reader caused, so the window simply comes up empty.
-      if (!resuming) error = isOpenRefusal(e) ? e.reason : String(e);
+      abandonOpen(acquired, replaced, twins);
+      const said = openFailure(e, resuming);
+      if (said !== null) error = said;
       // Whether or not it is reported: a row for a document that would not
       // open says so from here on, and keeps its control for removing it.
       startPage.failed(path, e);

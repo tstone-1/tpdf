@@ -236,11 +236,8 @@ Latest disabled so they do not replace the application updater's release.
 Phase 0 measurements used `chromium/7881`; they remain historical evidence.
 On a pin change, re-run the compatibility probes listed near the top of `BUILD.md`.
 
-`pdfium-render` 0.9.4 hides its bindings accessor. `progressive::bind` and
-`bind_library` retain both a safe wrapper and a second public raw binding table
-for the same library; only the safe wrapper initializes PDFium. Raw-interface
-callers must use this bridge, before applying containment. The tables live for
-the process lifetime; this does not make PDFium calls safe to run concurrently.
+`pdfium-render` hides its bindings accessor; raw-interface callers go through
+`progressive::bind` ([`docs/DETAIL.md`](docs/DETAIL.md) *Stack*).
 
 Same shell as `screenpick`, chosen because the muscle memory transfers and Rust does the
 heavy work while the webview does the UI.

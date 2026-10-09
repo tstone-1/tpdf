@@ -266,8 +266,13 @@ pub struct Appendix {
     /// draws. Without this a reader is told "1 page was rewritten" under a
     /// signature and takes it for a change to the page, which is the one
     /// thing they opened the row to rule out. A page is named here only when
-    /// [`page_listing`] proved every part of that; any other touched page is
-    /// counted in `pages_touched` and nowhere else, so the two stay apart.
+    /// every part of that was proved: [`page_listing`] for the page's own
+    /// object, and `read_appendix` for what the page draws from --- no content
+    /// stream, no resource however far down, no annotation it already had and
+    /// nothing it inherits was added, changed or removed. What the new field
+    /// brings, its appearance included, is the field's. Any other touched
+    /// page is counted in `pages_touched` and nowhere else, so the two stay
+    /// apart.
     pub pages_listing: Vec<PageListing>,
     /// Set when the appendix could not be read at all.
     ///
@@ -2533,6 +2538,7 @@ fn read_appendix(bytes: &[u8], end: usize, password: Option<&str>) -> Appendix {
         std::collections::BTreeSet::new();
     let mut touched = changed.clone();
     let mut listings: Vec<(lopdf::ObjectId, PageListing)> = Vec::new();
+    let mut apart_from_new_fields = Referring::new();
     for (id, object) in &whole.objects {
         let before = signed.objects.get(id);
         match before {
@@ -2546,10 +2552,11 @@ fn read_appendix(bytes: &[u8], end: usize, password: Option<&str>) -> Appendix {
         let kind = kind_of(object);
         if kind == "Page" {
             touched.insert(*id);
-            if let Some(listing) =
+            if let Some((listing, refers_to)) =
                 before.and_then(|before| page_listing(&signed, &whole, *id, before, object))
             {
                 listings.push((*id, listing));
+                apart_from_new_fields.insert(*id, refers_to);
             }
         }
         kinds.insert(kind);
@@ -2557,6 +2564,24 @@ fn read_appendix(bytes: &[u8], end: usize, password: Option<&str>) -> Appendix {
     // And the pages whose own object stands as it was while something they
     // draw from does not, or which are no longer where they were.
     touched.extend(pages_drawing_from(&whole, &changed));
+    // A page written again to list a field is only that when nothing it
+    // draws from was added or changed: its content streams, its resources
+    // and what they name however far down, the annotations it already had,
+    // what it inherits. The same walk answers it, over the same changes, with
+    // two things taken out. The page's own object is one of the changes, and
+    // `page_listing` has compared it entry by entry. And the fields the page
+    // gained are reached from it, with their appearance streams; they are
+    // what the row names, so each such page stands in the walk as referring
+    // to everything it names except those entries.
+    if !listings.is_empty() {
+        let besides: std::collections::BTreeSet<lopdf::ObjectId> = changed
+            .iter()
+            .filter(|id| !apart_from_new_fields.contains_key(id))
+            .copied()
+            .collect();
+        let redrawn = pages_reaching(&whole, &besides, &apart_from_new_fields);
+        listings.retain(|(page, _)| !redrawn.contains(page));
+    }
     // And what the signed revision had that a reader of the document no
     // longer finds. A cross-reference section that marks an object free
     // writes no object, and `lopdf` keeps no free entry, so the object is
@@ -2655,6 +2680,23 @@ fn pages_drawing_from(
     whole: &Document,
     changed: &std::collections::BTreeSet<lopdf::ObjectId>,
 ) -> std::collections::BTreeSet<lopdf::ObjectId> {
+    pages_reaching(whole, changed, &Referring::new())
+}
+
+/// What some objects refer to, stated for them: the walk takes this in place
+/// of what it would read in the object itself.
+type Referring = std::collections::BTreeMap<lopdf::ObjectId, Vec<lopdf::ObjectId>>;
+
+/// [`pages_drawing_from`], with what the objects in `stated` refer to taken
+/// from there. That is how a page is asked what it draws from apart from the
+/// fields it gained: by leaving those entries of its `/Annots` out of what it
+/// refers to. The edge is left out and not the field, so a field the page
+/// reaches some other way --- named in its resources as well --- is reached.
+fn pages_reaching(
+    whole: &Document,
+    changed: &std::collections::BTreeSet<lopdf::ObjectId>,
+    stated: &Referring,
+) -> std::collections::BTreeSet<lopdf::ObjectId> {
     use lopdf::ObjectId;
     use std::collections::{BTreeMap, BTreeSet};
 
@@ -2685,16 +2727,20 @@ fn pages_drawing_from(
     let mut named = Vec::new();
     for (id, object) in &whole.objects {
         named.clear();
-        match (tree.contains(id), object.as_dict()) {
-            (true, Ok(node)) => {
-                for key in HANDED_DOWN {
-                    if let Ok(value) = node.get(key) {
-                        references_in(value, &mut named);
+        if let Some(stated) = stated.get(id) {
+            named.extend(stated);
+        } else {
+            match (tree.contains(id), object.as_dict()) {
+                (true, Ok(node)) => {
+                    for key in HANDED_DOWN {
+                        if let Ok(value) = node.get(key) {
+                            references_in(value, &mut named);
+                        }
                     }
                 }
+                (true, Err(_)) => {}
+                (false, _) => references_in(object, &mut named),
             }
-            (true, Err(_)) => {}
-            (false, _) => references_in(object, &mut named),
         }
         for to in &named {
             referrers.entry(*to).or_default().push(*id);
@@ -2722,30 +2768,36 @@ fn pages_drawing_from(
 /// Whether a page was rewritten only to list a new signature or timestamp
 /// field, and which of the two.
 ///
-/// `Some` only when all four hold, each checked against both parses:
+/// `Some` only when all three hold, each checked against both parses:
 ///
 /// 1. the page dictionary is the same apart from `/Annots`;
 /// 2. the new `/Annots` is the old one with entries added --- none removed,
 ///    none replaced;
 /// 3. every added entry is a widget of a signature field (`/FT /Sig`, its own
-///    or inherited);
-/// 4. no object the page's `/Contents` names was added or changed.
+///    or inherited).
 ///
 /// Anything else is `None`, and the page is then reported as rewritten with
 /// no reason given: a false "only a field was listed" is the reassuring
 /// answer, so every doubt goes the other way.
 ///
-/// **What 4 covers is the content stream, and that is all the wording
-/// claims.** A visible signature draws through its widget's appearance, which
-/// is the field and is what the row names; the page's own stream is what a
-/// reader means by its content.
+/// **These three are about the page's own object, and a listing needs a
+/// fourth that is not: nothing the page draws from was added or changed.**
+/// `read_appendix` holds that one, with the walk that finds which pages an
+/// append touched, because it is a question about every object the page
+/// reaches and not about this dictionary. Until 2026-10-09 the fourth was
+/// held here and read `/Contents` alone, so a form, a font or a graphics
+/// state replaced in the page's resources beside a new signature field read
+/// "the page's content is unchanged". What comes back with the listing is
+/// what that walk needs: every object the page refers to **apart from the
+/// entries it gained**. A visible signature draws through its widget's
+/// appearance, which is the field and is what the row names.
 fn page_listing(
     signed: &Document,
     whole: &Document,
     id: lopdf::ObjectId,
     before: &Object,
     after: &Object,
-) -> Option<PageListing> {
+) -> Option<(PageListing, Vec<lopdf::ObjectId>)> {
     let (before, after) = (before.as_dict().ok()?, after.as_dict().ok()?);
     let apart_from_annots = |dict: &lopdf::Dictionary| {
         let mut rest = dict.clone();
@@ -2787,36 +2839,26 @@ fn page_listing(
             .is_some_and(|sig| name_of(whole, sig, b"SubFilter") == "ETSI.RFC3161");
     }
 
-    // `/Contents` is one stream or an array of them; either way every object
-    // it names must be in both parses, unchanged.
-    if let Ok(contents) = after.get(b"Contents") {
-        let named: Vec<&Object> = match contents {
-            Object::Reference(_) => match resolve(whole, contents) {
-                Object::Array(streams) => std::iter::once(contents).chain(streams).collect(),
-                _ => vec![contents],
-            },
-            Object::Array(streams) => streams.iter().collect(),
-            // A direct stream cannot be written inside a dictionary, so this
-            // is a shape the specification does not have.
-            _ => return None,
-        };
-        for entry in named {
-            let reference = entry.as_reference().ok()?;
-            let unchanged = matches!(
-                (signed.objects.get(&reference), whole.objects.get(&reference)),
-                (Some(a), Some(b)) if same_object(a, b)
-            );
-            if !unchanged {
-                return None;
-            }
+    // Everything the page refers to apart from the fields it gained: its
+    // other entries, and the annotations it had. `/Annots` is taken as the
+    // entries compared above and not as the object that holds them, so an
+    // array written as an object of its own is neither a change the page
+    // draws from nor a way around the comparison.
+    let mut refers_to = Vec::new();
+    for (key, value) in after.iter() {
+        if key.as_slice() != b"Annots" {
+            references_in(value, &mut refers_to);
         }
+    }
+    for entry in new.iter().filter(|entry| listed(entry)) {
+        references_in(entry, &mut refers_to);
     }
 
     let page = whole
         .get_pages()
         .into_iter()
         .find_map(|(number, page)| (page == id).then_some(number))?;
-    Some(PageListing { page, timestamp })
+    Some((PageListing { page, timestamp }, refers_to))
 }
 
 /// A field's own entry for `key`, or the nearest ancestor's. Bounded, because
@@ -3268,9 +3310,12 @@ mod tests {
 
     /// A page rewritten for any other reason is not excused as a field listing.
     ///
-    /// The four refusals of [`page_listing`], each on a page built for it, and
-    /// the acceptance beside them so that a function answering `None` to
-    /// everything does not pass.
+    /// The refusals of [`page_listing`], each on a page built for it, and the
+    /// acceptance beside them so that a function answering `None` to
+    /// everything does not pass. What it refuses is what the page's own
+    /// object shows; a content stream or a resource changed beside the field
+    /// is refused by `read_appendix`, from what this hands it, and
+    /// `appendix_tests` has those.
     #[test]
     fn a_page_is_excused_only_when_listing_a_field_is_all_that_changed() {
         use lopdf::dictionary;
@@ -3318,7 +3363,7 @@ mod tests {
         let link = Object::Reference((5, 0));
         let widget = Object::Reference((4, 0));
         let signed = build(vec![link.clone()], 0, b"q Q", b"Sig");
-        let ask = |whole: &Document| {
+        let asked = |whole: &Document| {
             page_listing(
                 &signed,
                 whole,
@@ -3327,6 +3372,7 @@ mod tests {
                 &whole.objects[&(2, 0)],
             )
         };
+        let ask = |whole: &Document| asked(whole).map(|(listing, _)| listing);
 
         let listed = vec![link.clone(), widget.clone()];
         assert_eq!(
@@ -3352,11 +3398,13 @@ mod tests {
             None,
             "what was added is not a signature field"
         );
-        assert_eq!(
-            ask(&build(listed, 0, b"q 1 0 0 rg Q", b"Sig")),
-            None,
-            "the content stream changed with it"
-        );
+        // What the page refers to apart from the field it gained: its tree,
+        // its content stream and the link it already had, and not the widget.
+        let mut refers_to = asked(&build(listed, 0, b"q Q", b"Sig"))
+            .expect("a listing")
+            .1;
+        refers_to.sort_unstable();
+        assert_eq!(refers_to, [(1, 0), (3, 0), (5, 0)]);
         assert_eq!(
             ask(&build(vec![link], 0, b"q Q", b"Sig")),
             None,

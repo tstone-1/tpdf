@@ -188,6 +188,14 @@ when the reader has left calls `stillIn(view, model)`, and `applyEdit` answers t
 the view adopted. A frame led by the unfocused side runs inside a lend, and `Stage.within`
 keeps the lender's record so that the focused viewer's own callbacks run from in there.
 
+`openDocument` is a sequence of steps. What it decides is `src/lib/documentopen.ts` (the
+page table, the place to resume, the second view of a document, the side, the wording of a
+failure), and `buildSidebar`, `adoptModel`, `buildViewer`, `showModel` and
+`readAfterFirstPaint` in `App.svelte` are its wiring, called from it alone. A form's
+controls are built by `buildFormLayer`, with every callback bound to its view. Inverted
+page colours and the pen nib are the window's and each viewer holds a copy, so
+`toggleInvert` and `chooseNib` set them through `Stage.each` on every mounted viewer.
+
 The rule: **code in `App.svelte` that runs without the reader pressing anything in that
 document runs through `asDocument(id, ...)`, and again after every `await`.** A frame, a
 late reply and the rest of an edit all read the variables, and by then they may be the

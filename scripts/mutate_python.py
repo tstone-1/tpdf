@@ -418,7 +418,7 @@ MUTATIONS = [
         "wiring: an optional callback dropped from App.svelte's literal",
         "wiring",
         "src/App.svelte",
-        "        onMarkRemove: (mark, sweep) => removeNamed(mark, sweep),\n",
+        "      onMarkRemove: (mark, sweep) => removeNamed(mark, sweep),\n",
         "",
         red=True,
         says="onMarkRemove",
