@@ -1,0 +1,65 @@
+name: Pages
+
+# Publishes the landing page in `site/` to GitHub Pages.
+#
+# WHAT IS PUBLISHED: `site/index.html`, `site/download.js` and the pictures the
+# README already shows (`docs/img/`, as `img/`). Nothing is built; the step
+# below copies those files into one folder. The rest of `docs/` is not copied,
+# which is why Pages does not serve the `docs/` folder itself.
+#
+# FORK THREAT MODEL, as in `ci.yml`: it runs on a push to `main` and by hand,
+# never on a pull request, and references no secret. The job that checks the
+# repository out holds `contents: read` only; the right to publish is on the
+# job that runs no code from the repository. Actions are pinned by commit SHA
+# with the tag beside it; see `ci.yml` for how to bump one.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'site/**'
+      - 'docs/img/**'
+      - '.github/workflows/pages.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  assemble:
+    name: Assemble the page
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5 (v5.1.0)
+        with:
+          persist-credentials: false
+
+      # Named files, not `site/*`: the type declarations beside the script are
+      # for the test and are not part of the page.
+      - name: Copy the page and its pictures
+        run: |
+          mkdir -p "$RUNNER_TEMP/page/img"
+          cp site/index.html site/download.js "$RUNNER_TEMP/page/"
+          cp docs/img/* "$RUNNER_TEMP/page/img/"
+
+      - uses: actions/upload-pages-artifact@fc324d3547104276b827a68afc52ff2a11cc49c9 # v5.0.0
+        with:
+          path: ${{ runner.temp }}/page
+
+  publish:
+    name: Publish
+    needs: assemble
+    runs-on: ubuntu-latest
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@368f82528645a54fb793d4d04e342629a3f51346 # v5.0.1

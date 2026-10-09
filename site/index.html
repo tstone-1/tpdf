@@ -1,0 +1,146 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>tpdf: a fast PDF viewer and editor for macOS and Windows</title>
+<meta name="description" content="Free, open-source PDF viewer and editor for macOS and Windows. Redact, sign, annotate and fill forms on your own computer; no account, no telemetry.">
+<style>
+  :root {
+    --page: #ffffff; --text: #1b1f24; --quiet: #57606a; --line: #d8dee4;
+    --band: #f6f8fa; --button: #0b5cad; --button-text: #ffffff; --link: #0b5cad;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --page: #0f1317; --text: #e6edf3; --quiet: #9aa5b1; --line: #2b323a;
+      --band: #161b22; --button: #4c9bea; --button-text: #0f1317; --link: #6cb1f5;
+    }
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--page); color: var(--text);
+    font: 17px/1.55 -apple-system, "Segoe UI", system-ui, sans-serif;
+  }
+  main, header, footer { max-width: 60rem; margin: 0 auto; padding: 0 1rem; }
+  header { padding-top: 3rem; text-align: center; }
+  h1 { font-size: 2.4rem; line-height: 1.15; margin: 0 0 0.75rem; }
+  h2 { font-size: 1.5rem; line-height: 1.25; margin: 0 0 0.5rem; }
+  p { margin: 0 0 1rem; }
+  a { color: var(--link); }
+  .lead { font-size: 1.2rem; color: var(--quiet); max-width: 40rem; margin: 0 auto 1.75rem; }
+  .downloads { display: flex; flex-wrap: wrap; gap: 0.75rem; justify-content: center; }
+  .download {
+    display: block; padding: 0.8rem 1.4rem; border-radius: 8px; text-decoration: none;
+    border: 1px solid var(--button); color: var(--link); font-weight: 600;
+  }
+  .download span { display: block; font-weight: 400; font-size: 0.85rem; }
+  .download.here { background: var(--button); color: var(--button-text); }
+  .small { font-size: 0.9rem; color: var(--quiet); }
+  .downloads + .small { margin-top: 1rem; }
+  code { font: 0.9em ui-monospace, "SF Mono", Consolas, monospace; }
+  img { max-width: 100%; height: auto; border: 1px solid var(--line); border-radius: 8px; display: block; }
+  .hero { margin: 2rem auto 0; }
+  .task { display: grid; gap: 1.5rem; padding: 3rem 0; border-top: 1px solid var(--line); align-items: center; }
+  @media (min-width: 52rem) { .task { grid-template-columns: 2fr 3fr; } }
+  .task ol { margin: 0; padding-left: 1.25rem; }
+  .facts { background: var(--band); border-top: 1px solid var(--line); border-bottom: 1px solid var(--line); }
+  .facts ul { max-width: 60rem; margin: 0 auto; padding: 2rem 1rem; list-style: none; display: grid; gap: 1.5rem; }
+  @media (min-width: 52rem) { .facts ul { grid-template-columns: repeat(3, 1fr); } }
+  .facts strong { display: block; }
+  footer { padding: 2rem 1rem 3rem; }
+</style>
+</head>
+<body>
+
+<header>
+  <h1>A fast PDF viewer and editor for macOS and Windows</h1>
+  <p class="lead">Free and open source. No account, no telemetry, and your documents
+  stay on your computer.</p>
+
+  <div class="downloads">
+    <a class="download" id="download-mac" href="https://github.com/tstone-1/tpdf/releases/latest">
+      Download for Mac<span>Apple silicon, signed and notarized</span></a>
+    <a class="download" id="download-windows" href="https://github.com/tstone-1/tpdf/releases/latest">
+      Download for Windows<span>64-bit, no administrator rights needed</span></a>
+  </div>
+  <p class="small"><span id="version"></span>On a Mac you can also run
+  <code>brew install --cask tstone-1/tpdf/tpdf</code>. There is no build for Intel Macs,
+  Windows on ARM or Linux.</p>
+  <p class="small">The Windows installer is code-signed; the publisher reads
+  <em>Open Source Developer Timo Stein</em>. The certificate is new, so Windows can show
+  "Windows protected your PC" the first time: choose <strong>More info</strong>, check
+  the publisher, then <strong>Run anyway</strong>.</p>
+
+  <img class="hero" src="img/demo.gif" width="960" height="720"
+       alt="tpdf finding a command, marking up a page, marking text for redaction and showing two signatures">
+</header>
+
+<main>
+  <section class="task">
+    <div>
+      <h2>Remove personal information before you share a file</h2>
+      <p>A redaction in tpdf removes the words from the file. It does not draw a black
+      box over them.</p>
+      <ol>
+        <li>Open the command palette and type <em>redact</em>.</li>
+        <li>Drag over the text or the region to remove. Every region is listed for review.</li>
+        <li>Choose <em>Redact and save as</em>. tpdf reads the result back and tells you
+        whether the removal is verified.</li>
+      </ol>
+      <p class="small">For a document somebody else redacted, <em>Find text the pages do
+      not show</em> lists the words that are still in the file.</p>
+    </div>
+    <img src="img/redact.png" alt="Two regions marked for removal and listed for review">
+  </section>
+
+  <section class="task">
+    <div>
+      <h2>Sign a document, and check a signature you received</h2>
+      <p>Sign with a certificate from the macOS keychain or the Windows certificate
+      store, with a timestamp if you want one. Or draw your signature once and place the
+      image on any page.</p>
+      <p>For a signed document, tpdf says whether each signature is intact, whether your
+      computer trusts the signer, and what was added after signing.</p>
+    </div>
+    <img src="img/signatures.png" alt="Document properties, one card for each of two signatures">
+  </section>
+
+  <section class="task">
+    <div>
+      <h2>Mark up, fill in and rearrange</h2>
+      <p>Highlight, underline, draw, add text boxes, stamps and comments. Fill forms and
+      create form fields. Turn, move, delete, crop, extract and insert pages; merge
+      documents or split one.</p>
+      <p>It also makes a scanned document searchable, saves a smaller copy, and sets or
+      removes a password.</p>
+    </div>
+    <img src="img/annotate.png" alt="A highlighted line, a boxed table row and a comment, listed in the sidebar">
+  </section>
+</main>
+
+<div class="facts">
+  <ul>
+    <li><strong>Fast to open</strong>From launch to the first page painted is 276 ms,
+    measured warm on an Apple silicon Mac.</li>
+    <li><strong>Every tool in one place</strong>Type part of a command's name in the
+    command palette and press Enter. Nothing is buried in a menu.</li>
+    <li><strong>Nothing is uploaded</strong>tpdf contacts the network for the update
+    check, and for a signature's timestamp or validation data when you ask for them.
+    <a href="https://github.com/tstone-1/tpdf#who-makes-it-and-what-leaves-your-computer">The detail</a>.</li>
+  </ul>
+</div>
+
+<footer class="small">
+  <p>tpdf is written and maintained by one developer and is free under the MIT licence.
+  <a href="https://github.com/tstone-1/tpdf">Source code and full description</a> ·
+  <a href="https://github.com/tstone-1/tpdf/releases">All releases</a> ·
+  <a href="https://github.com/tstone-1/tpdf/blob/main/CHANGELOG.md">Changes</a> ·
+  <a href="https://github.com/tstone-1/tpdf/blob/main/SECURITY.md">Security</a> ·
+  <a href="https://github.com/tstone-1/tpdf/issues">Report a problem</a></p>
+  <p>This page asks api.github.com once which files the latest release has, to link the
+  two installers directly. It sets no cookie and loads nothing else.</p>
+</footer>
+
+<script type="module" src="download.js"></script>
+</body>
+</html>
