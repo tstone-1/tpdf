@@ -183,6 +183,7 @@
     type FinishStep, type UpdateState,
   } from "./lib/update";
   import { Viewer, type ViewerStatus } from "./lib/viewer";
+  import { Stage, blankLive, type LiveDocument, type Slots } from "./lib/livedocument";
   import { describeFit, percentOf } from "./lib/zoom";
 
   let surface = $state<HTMLDivElement | null>(null);
@@ -447,28 +448,7 @@
   }
 
   function clearActiveDocument(): void {
-    clearTimeout(findTimer);
-    textEditorGeneration++;
-    textEditor?.destroy();
-    textEditor = null;
-    formLayer?.destroy();
-    formLayer = null;
-    viewer?.destroy();
-    sidebar?.destroy();
-    viewer = null;
-    sidebar = null;
-    edits = null;
-    openDoc = -1;
-    status = null;
-    title = "";
-    openPathName = "";
-    openPageCount = 0;
-    dirty = false;
-    query = "";
-    findShown = false;
-    degraded = degradedGate.update(null, performance.now());
-    say(null);
-    notice = null;
+    unmountDocument();
   }
 
   function tabKey(event: KeyboardEvent, id: number): void {
@@ -552,7 +532,7 @@
    * displaying. The cost of that choice is an entry per mark removed and not
    * redone, each capped at {@link COVERED_CHARS}.
    */
-  const covered = new Map<number, string>();
+  let covered = new Map<number, string>();
   /**
    * Longest covered text kept per mark, in characters.
    *
@@ -602,7 +582,7 @@
    * the episode clock; see `degraded.ts` for why there is one.
    */
   let degraded = $state<string | null>(null);
-  const degradedGate = new DegradedLabel();
+  let degradedGate = new DegradedLabel();
   let query = $state("");
   let findField = $state<HTMLInputElement | null>(null);
   let findShown = $state(false);
@@ -705,7 +685,7 @@
    * The links of the other files the document's pages were inserted from, one
    * scan per file, asked for when its first page arrives. See `importedlinks.ts`.
    */
-  const importedLinks = new ImportedLinks();
+  let importedLinks = new ImportedLinks();
   let rawComments: Comments | null = null;
   /**
    * Comments whose covered words have been asked for, so none is asked twice.
@@ -727,7 +707,7 @@
    * that a second region drawn on a page already read is still asked about.
    * Cleared with the document, since an id means nothing across two files.
    */
-  const wordsAsked = new Set<number>();
+  let wordsAsked = new Set<number>();
   /**
    * The words each comment covers, for the ones that have been looked up.
    *
@@ -744,7 +724,7 @@
    * changed nothing observable, which is what made it worth reading the code one
    * layer out.
    */
-  const commentWords = new Map<number, string>();
+  let commentWords = new Map<number, string>();
   /** Whether {@link fillCommentWords} is walking, so a second call stands down. */
   let fillingWords = false;
   /**
@@ -755,7 +735,7 @@
    * four answers and why none of them may be collapsed. A region with no entry
    * has not been looked at yet.
    */
-  const redactionWords = new Map<number, string | null>();
+  let redactionWords = new Map<number, string | null>();
   /**
    * What a removal would take from each pending region, by redaction id.
    *
@@ -765,7 +745,7 @@
    * content stream that only a worker can do. What it is for is the row's
    * second line --- the objects a removal cannot take.
    */
-  const redactionPlans = new Map<number, RegionPlan>();
+  let redactionPlans = new Map<number, RegionPlan>();
   /**
    * The colour of the boxes a redaction draws: black unless the reader chose
    * another in the redactions panel. `redactfill.ts` keeps it between sessions.
@@ -803,6 +783,74 @@
   const places = new SessionWriter();
   const tabRecorder = new TabRecorder();
   let restoreTabs = false;
+  /**
+   * The variables that hold the mounted document, one entry for each.
+   *
+   * Every one of them is a value of the document the reader is working in.
+   * `livedocument.ts` moves a document in and out of them as a whole, and an
+   * entry missing here does not compile. A variable added to this file that is
+   * about one document belongs in `LiveDocument` and in this table; one that is
+   * about the window (a tool the reader armed, a colour they picked) does not.
+   */
+  const liveSlots: Slots<LiveDocument> = {
+    openDoc: { get: () => openDoc, set: (value) => { openDoc = value; } },
+    openPathName: { get: () => openPathName, set: (value) => { openPathName = value; } },
+    openPageCount: { get: () => openPageCount, set: (value) => { openPageCount = value; } },
+    title: { get: () => title, set: (value) => { title = value; } },
+    viewer: { get: () => viewer, set: (value) => { viewer = value; } },
+    sidebar: { get: () => sidebar, set: (value) => { sidebar = value; } },
+    textEditor: { get: () => textEditor, set: (value) => { textEditor = value; } },
+    formLayer: { get: () => formLayer, set: (value) => { formLayer = value; } },
+    edits: { get: () => edits, set: (value) => { edits = value; } },
+    pendingEdit: { get: () => pendingEdit, set: (value) => { pendingEdit = value; } },
+    status: { get: () => status, set: (value) => { status = value; } },
+    dirty: { get: () => dirty, set: (value) => { dirty = value; } },
+    degraded: { get: () => degraded, set: (value) => { degraded = value; } },
+    degradedGate: { get: () => degradedGate, set: (value) => { degradedGate = value; } },
+    query: { get: () => query, set: (value) => { query = value; } },
+    findShown: { get: () => findShown, set: (value) => { findShown = value; } },
+    error: { get: () => error, set: (value) => { error = value; } },
+    offers: { get: () => offers, set: (value) => { offers = value; } },
+    notice: { get: () => notice, set: (value) => { notice = value; } },
+    redactedCopyPath: { get: () => redactedCopyPath, set: (value) => { redactedCopyPath = value; } },
+    properties: { get: () => properties, set: (value) => { properties = value; } },
+    rawLinks: { get: () => rawLinks, set: (value) => { rawLinks = value; } },
+    importedLinks: { get: () => importedLinks, set: (value) => { importedLinks = value; } },
+    rawComments: { get: () => rawComments, set: (value) => { rawComments = value; } },
+    rawOutline: { get: () => rawOutline, set: (value) => { rawOutline = value; } },
+    formNames: { get: () => formNames, set: (value) => { formNames = value; } },
+    scannedForm: { get: () => scannedForm, set: (value) => { scannedForm = value; } },
+    formEditing: { get: () => formEditing, set: (value) => { formEditing = value; } },
+    covered: { get: () => covered, set: (value) => { covered = value; } },
+    wordsAsked: { get: () => wordsAsked, set: (value) => { wordsAsked = value; } },
+    commentWords: { get: () => commentWords, set: (value) => { commentWords = value; } },
+    redactionWords: { get: () => redactionWords, set: (value) => { redactionWords = value; } },
+    redactionPlans: { get: () => redactionPlans, set: (value) => { redactionPlans = value; } },
+    fillingWords: { get: () => fillingWords, set: (value) => { fillingWords = value; } },
+    fillingRedactionWords: { get: () => fillingRedactionWords, set: (value) => { fillingRedactionWords = value; } },
+  };
+  const stage = new Stage(liveSlots, blankLive, () => openDoc);
+
+  /**
+   * Tears down what is built around the mounted document and leaves every
+   * variable of it as it is with no document.
+   *
+   * The generation is counted up first and is not one of the variables: a
+   * text editor still being built compares against it, and a count that went
+   * back to zero would match an editor asked for in an earlier document.
+   */
+  function unmountDocument(): void {
+    // The debounced find is keyed to the viewer destroyed below: left armed, it
+    // fires a scan at the next document for a query the field no longer shows.
+    clearTimeout(findTimer);
+    textEditorGeneration++;
+    textEditor?.destroy();
+    formLayer?.destroy();
+    viewer?.destroy();
+    sidebar?.destroy();
+    stage.clear();
+  }
+
   /**
    * Serialises document opens. See {@link openPath}.
    *
@@ -4189,23 +4237,12 @@
 
       // Whatever the outgoing document was owed, before its path is replaced.
       places.flush();
-      // The debounced find is keyed to the viewer being destroyed on the next
-      // line: left armed, it fires a scan at the *new* document for a query the
-      // field no longer shows, because `query` is cleared below.
-      clearTimeout(findTimer);
       replaced = true;
-      textEditorGeneration++;
-      textEditor?.destroy();
-      textEditor = null;
-      formLayer?.destroy();
-      formLayer = null;
-      viewer?.destroy();
+      // Everything about the outgoing document goes here, the answers about
+      // its file and the lookups keyed by its ids included: a page number or a
+      // mark id kept would be read as the next file's.
+      unmountDocument();
       openDoc = doc.id;
-      viewer = null;
-      sidebar?.destroy();
-      sidebar = null;
-      status = null;
-      degraded = degradedGate.update(null, performance.now());
       title = basename(path);
       openPathName = path;
       openPageCount = doc.page_count;
@@ -4230,37 +4267,20 @@
       // and applied through `restoring` at each of the three points.
       const kept = restoredState(retained);
       restore(kept, "unmounted", restoring);
-      // Before the panels are built, so nothing carries over from the document
-      // that was open a moment ago --- these are answers about a file, and the
-      // file has changed.
-      rawLinks = [];
-      importedLinks.clear();
-      rawComments = null;
-      // A page number is a slot in the document that is closing, so an entry
-      // kept would tell the next file's page 3 that its words are already known.
-      wordsAsked.clear();
-      commentWords.clear();
-      redactionWords.clear();
-      redactionPlans.clear();
-      properties = null;
       propertiesDialog?.close();
       // A panel about one field of the document that is closing. Left open, its
       // Save would look the field up by an id that starts at 1 in every
       // document; `changeProperties` refuses that too, and closing it is what
       // the reader sees.
       fieldPropertiesDialog?.close();
-      rawOutline = null;
-      // Reset and read again, where the fields above are kept and restored,
-      // and that is the difference between them: these three are not in
-      // `DocumentTab` on purpose. The form and its names are facts about the
-      // file, which the scan after the first paint below reads on every open,
-      // a tab being returned to included, because the controls it builds
-      // belong to the viewer and went with the last one. Changing the fields
-      // is a mode of the window, like an armed tool, and a tool does not
-      // follow a reader to another tab or wait for them in this one.
-      formNames = [];
-      scannedForm = null;
-      formEditing = false;
+      // The form, its names and whether its fields are being changed were
+      // reset with the rest above and are read again, where the kept fields
+      // are restored: these three are not in `DocumentTab` on purpose. The
+      // form and its names are facts about the file, which the scan after the
+      // first paint below reads on every open, a tab being returned to
+      // included, because the controls it builds belong to the viewer and went
+      // with the last one. Changing the fields is a mode of the document on
+      // screen, and it does not wait for the reader in a tab they left.
       sidebar = new Sidebar(sidebarHost, {
         onNavigate: (target, top) => {
           viewer?.goToDestination(target, top);
@@ -4780,29 +4800,13 @@
         // while `title` is empty runs its frame loop against a detached surface
         // and keeps writing `status`, which the header renders --- a page count
         // and a zoom for a document with no body under them.
-        textEditorGeneration++;
-        textEditor?.destroy();
-        textEditor = null;
-        formLayer?.destroy();
-        formLayer = null;
-        viewer?.destroy();
-        viewer = null;
-        sidebar?.destroy();
-        sidebar = null;
-        // Cleared together with `title`, always: `title` gates the body and
-        // `status` feeds the header, so one outliving the other is a header
-        // describing a document that is no longer on screen.
-        status = null;
-        // Cleared through the gate rather than by assignment, so the episode
-        // clock is reset too: a stale `#since` would show the next document's
-        // first blurry frame instantly, which is the flicker this removes.
-        degraded = degradedGate.update(null, performance.now());
-        title = "";
-        openPathName = "";
-        openPageCount = 0;
-        openDoc = -1;
-        edits = null;
-        dirty = false;
+        //
+        // `title` and `status` go together, always: `title` gates the body
+        // and `status` feeds the header, so one outliving the other is a header
+        // describing a document that is no longer on screen. The degraded
+        // label's clock goes with them, because a stale one would show the
+        // next document's first blurry frame at once.
+        unmountDocument();
       }
       // A document that was open last time and is not there now is not a
       // failure the reader caused, so the window simply comes up empty.
