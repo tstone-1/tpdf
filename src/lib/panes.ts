@@ -32,23 +32,30 @@ export function otherSide(side: Side): Side {
 }
 
 /** What the window has to do to show what the model says. */
-export interface Plan {
+export interface Plan<Id extends number = number> {
   /** Viewers to tear down, each with the area it is in. */
-  unmount: { id: number; slot: Slot }[];
+  unmount: { id: Id; slot: Slot }[];
   /** Tabs to mount, each with the area it goes in. */
-  mount: { id: number; slot: Slot }[];
+  mount: { id: Id; slot: Slot }[];
   /** The document the commands act on once that is done, or -1. */
-  focus: number;
+  focus: Id;
 }
 
-export class Panes {
+/** What a side showing nothing has in front. */
+const NONE = -1;
+
+/**
+ * `Id` is what a tab is named by. A plain number unless the caller has a type
+ * of its own for it, as `App.svelte` has in `ViewId`.
+ */
+export class Panes<Id extends number = number> {
   /** The tabs on the right. Every other tab is on the left. */
-  readonly #right = new Set<number>();
-  readonly #front: Record<Side, number> = { left: -1, right: -1 };
+  readonly #right = new Set<Id>();
+  readonly #front: Record<Side, Id> = { left: NONE as Id, right: NONE as Id };
   #focused: Side = "left";
   #flipped = false;
   /** The document mounted in each page area, or -1. */
-  readonly #mounted: [number, number] = [-1, -1];
+  readonly #mounted: [Id, Id] = [NONE as Id, NONE as Id];
 
   /** Whether two documents are shown side by side. */
   get split(): boolean {
@@ -59,17 +66,17 @@ export class Panes {
     return this.#focused;
   }
 
-  sideOf(id: number): Side {
+  sideOf(id: Id): Side {
     return this.#right.has(id) ? "right" : "left";
   }
 
   /** The tab in front on `side`, or -1. */
-  front(side: Side): number {
+  front(side: Side): Id {
     return this.#front[side];
   }
 
   /** The handles on `side`, in tab order. */
-  on(side: Side, order: readonly number[]): number[] {
+  on(side: Side, order: readonly Id[]): Id[] {
     return order.filter((id) => this.sideOf(id) === side);
   }
 
@@ -84,19 +91,19 @@ export class Panes {
   }
 
   /** A tab was opened without being shown. It joins the focused side. */
-  joined(id: number): void {
+  joined(id: Id): void {
     if (this.#focused === "right") this.#right.add(id);
   }
 
   /** A tab came to the front of its side, and the reader is working in it. */
-  fronted(id: number): void {
+  fronted(id: Id): void {
     const side = this.sideOf(id);
     this.#front[side] = id;
     this.#focused = side;
   }
 
   /** A document was opened in the focused side and is in front there. */
-  opened(id: number): void {
+  opened(id: Id): void {
     this.joined(id);
     this.fronted(id);
   }
@@ -105,7 +112,7 @@ export class Panes {
    * A save gave the document `before` a new handle. It keeps its side, its
    * place in front and its page area.
    */
-  replaced(before: number, after: number): void {
+  replaced(before: Id, after: Id): void {
     if (before === after) return;
     if (this.#right.delete(before)) this.#right.add(after);
     for (const side of ["left", "right"] as const) {
@@ -131,7 +138,7 @@ export class Panes {
    * handle in tab order. The side it left shows its next tab, or the one
    * before when it was last; a side left with none ends the split.
    */
-  move(id: number, to: Side, order: readonly number[]): void {
+  move(id: Id, to: Side, order: readonly Id[]): void {
     const from = this.sideOf(id);
     if (from !== to) {
       if (this.#front[from] === id) this.#front[from] = this.#neighbour(id, from, order);
@@ -148,7 +155,7 @@ export class Panes {
    * including this one. Its side shows the neighbour; a side left with none
    * ends the split.
    */
-  closed(id: number, order: readonly number[]): void {
+  closed(id: Id, order: readonly Id[]): void {
     const side = this.sideOf(id);
     if (this.#front[side] === id) this.#front[side] = this.#neighbour(id, side, order);
     this.#right.delete(id);
@@ -158,8 +165,8 @@ export class Panes {
   /** Every tab is gone. */
   cleared(): void {
     this.#right.clear();
-    this.#front.left = -1;
-    this.#front.right = -1;
+    this.#front.left = NONE as Id;
+    this.#front.right = NONE as Id;
     this.#focused = "left";
   }
 
@@ -168,7 +175,7 @@ export class Panes {
    * stays the focused document. Nothing is remounted, because the page areas
    * change sides with their tabs. Does nothing with no split.
    */
-  swap(order: readonly number[]): void {
+  swap(order: readonly Id[]): void {
     if (!this.split) return;
     const left = this.on("left", order);
     this.#right.clear();
@@ -189,12 +196,12 @@ export class Panes {
    * handle that is not open is ignored, and with nothing left on one of the
    * sides there is no split.
    */
-  arrange(right: readonly number[], beside: number, active: number, order: readonly number[]): void {
+  arrange(right: readonly Id[], beside: Id, active: Id, order: readonly Id[]): void {
     this.#right.clear();
     for (const id of right) this.#right.add(id);
     for (const side of ["left", "right"] as const) {
       const mine = this.on(side, order);
-      this.#front[side] = [active, beside].find((id) => mine.includes(id)) ?? mine[0] ?? -1;
+      this.#front[side] = [active, beside].find((id) => mine.includes(id)) ?? mine[0] ?? (NONE as Id);
     }
     if (order.includes(active)) this.#focused = this.sideOf(active);
     this.#settle(order);
@@ -203,19 +210,19 @@ export class Panes {
   }
 
   /** A viewer for `id` now exists in page area `slot`. */
-  mounted(id: number, slot: Slot): void {
+  mounted(id: Id, slot: Slot): void {
     this.#mounted[slot] = id;
   }
 
   /** The viewer for `id` is gone. */
-  unmounted(id: number): void {
+  unmounted(id: Id): void {
     for (const slot of [0, 1] as const) {
-      if (this.#mounted[slot] === id) this.#mounted[slot] = -1;
+      if (this.#mounted[slot] === id) this.#mounted[slot] = NONE as Id;
     }
   }
 
   /** The document mounted in page area `slot`, or -1. */
-  mountedIn(slot: Slot): number {
+  mountedIn(slot: Slot): Id {
     return this.#mounted[slot];
   }
 
@@ -225,8 +232,8 @@ export class Panes {
    * A document in front on one side and mounted in the other side's area is
    * torn down and mounted again: a viewer does not change areas.
    */
-  plan(): Plan {
-    const plan: Plan = { unmount: [], mount: [], focus: this.#front[this.#focused] };
+  plan(): Plan<Id> {
+    const plan: Plan<Id> = { unmount: [], mount: [], focus: this.#front[this.#focused] };
     for (const slot of [0, 1] as const) {
       const wanted = this.#front[this.sideIn(slot)];
       const there = this.#mounted[slot];
@@ -238,11 +245,11 @@ export class Panes {
   }
 
   /** The tab that takes `id`'s place in front of `side`: the next, else the one before. */
-  #neighbour(id: number, side: Side, order: readonly number[]): number {
+  #neighbour(id: Id, side: Side, order: readonly Id[]): Id {
     const mine = this.on(side, order);
     const at = mine.indexOf(id);
     const rest = mine.filter((entry) => entry !== id);
-    return rest[Math.min(at, rest.length - 1)] ?? -1;
+    return rest[Math.min(at, rest.length - 1)] ?? (NONE as Id);
   }
 
   /**
@@ -250,7 +257,7 @@ export class Panes {
    * are the left side, a side with tabs has one in front, and the focused side
    * shows something whenever either does.
    */
-  #settle(order: readonly number[]): void {
+  #settle(order: readonly Id[]): void {
     for (const id of [...this.#right]) {
       if (!order.includes(id)) this.#right.delete(id);
     }
@@ -259,11 +266,11 @@ export class Panes {
       // its page area.
       this.#right.clear();
       this.#front.left = this.#front.right;
-      this.#front.right = -1;
+      this.#front.right = NONE as Id;
       this.#flipped = !this.#flipped;
       this.#focused = "left";
     }
-    if (this.#right.size === 0) this.#front.right = -1;
+    if (this.#right.size === 0) this.#front.right = NONE as Id;
     if (this.#front[this.#focused] < 0 && this.#front[otherSide(this.#focused)] >= 0) {
       this.#focused = otherSide(this.#focused);
     }

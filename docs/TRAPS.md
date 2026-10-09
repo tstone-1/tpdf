@@ -314,6 +314,7 @@ hop through the index.
 - A label that instructs, over a control that is disabled
 - A stop flag the command clears as it starts loses the stop that arrived first
 - The restart after an update hands one quoted path over without its quotes, so a path with spaces arrives in pieces
+- A viewer built in a page area that is still hidden restores its place against nothing
 
 ## Rust and macOS
 - A locked macOS session cannot be unlocked from a script, so it must be prevented
@@ -26125,3 +26126,22 @@ the fix waited for the application before calling either observer, found nothing
 about in both arms and reported 0 of 20 for each: a comparison in which the old code cannot
 fail says nothing about the new code. On Windows, *exited* is the handle being signalled;
 an error from a query about the process is not it, in either direction.
+
+### A viewer built in a page area that is still hidden restores its place against nothing
+
+With two sides, the window has two page areas and the second is `display: none` until a
+document is on the right. `showPanes` mounted the document first and drew the window with
+two sides afterwards, so the viewer was constructed in an area with no size. It restored
+the tab's remembered place against that, and when the area appeared the resize kept
+whatever the degenerate layout had made of it: on `text-heavy.pdf` a tab left on page 3
+came up on page 13 (2026-10-09). It had done so since two sides existed, for every tab
+moved to the right, and no check read the page after a move.
+
+`showPanes` now draws the window with its sides and waits for that before it mounts
+anything. The second half was the fit: a new split fits each side to its width, and a fit
+keeps the *middle* of the view in place, which at half the width is most of a page further
+up. The split reads where each view begins before the window is divided and puts it back
+there after the fit (`readingsNow`, `fitNewSplit`). The `views` phase of `tabs_check.py`
+reads both pages; with either half removed, *the new view starts on the page the first was
+on* fails. Mount into an element only once it is laid out, and when a place has to survive
+a change of size, read it before the change.

@@ -150,6 +150,41 @@ export async function runOpenCheckIfRequested(host: OpenCheckHost): Promise<bool
 /** The tail of a path, for a detail column that has to stay readable. */
 const name = basename;
 
+/**
+ * What the phases about the two sides of the window read: each side's row of
+ * tabs and what is mounted in it, off the page, and the handles the
+ * application itself uses.
+ */
+function sideProbe(host: OpenCheckHost) {
+  const rows = (side: "left" | "right") =>
+    Array.from(document.querySelectorAll<HTMLElement>(`.pane[data-side="${side}"] [role="tab"]`))
+      .map((tab) => Number(tab.id.replace("document-tab-", "")));
+  const frontOf = (side: "left" | "right") => Number(
+    document.querySelector<HTMLElement>(`.pane[data-side="${side}"] [role="tab"][aria-selected="true"]`)
+      ?.id.replace("document-tab-", "") ?? -1);
+  const focusedSide = () =>
+    document.querySelector<HTMLElement>(".pane.focused")?.dataset.side ?? "none";
+  const split = () => document.querySelector(".pane-divider") !== null;
+  const mountedAreas = () =>
+    Array.from(document.querySelectorAll<HTMLElement>(".pane:not(.unused) .surface"))
+      .filter((area) => area.childElementCount > 0).length;
+  const shownSidebars = () =>
+    Array.from(document.querySelectorAll<HTMLElement>(`.${SIDEBAR_CLASS}`))
+      .filter((panel) => panel.style.display !== "none").length;
+  const check = (name: string, ok: boolean) => report.check(name, ok,
+    `left [${rows("left")}] front ${frontOf("left")}, right [${rows("right")}] front ${frontOf("right")}, ` +
+    `in ${focusedSide()}, document ${host.edits()?.doc ?? -1}, page ${host.status()?.page ?? 0}` +
+    `${host.edits()?.state.dirty ? ", edited" : ""}`);
+  const settled = async (what: string, when: () => boolean) => {
+    if (!await settle(when, SETTLE_MS)) throw new Error(`${what} did not happen`);
+    await host.idle();
+  };
+  const pressIn = (side: "left" | "right") =>
+    document.querySelector(`.pane[data-side="${side}"] .surface`)
+      ?.dispatchEvent(new PointerEvent("pointerdown", { bubbles: true, button: 0 }));
+  return { rows, frontOf, focusedSide, split, mountedAreas, shownSidebars, check, settled, pressIn };
+}
+
 /** How many sidebars are mounted. More than one is the defect `race` looks for. */
 function sidebars(): number {
   return document.querySelectorAll(`.${SIDEBAR_CLASS}`).length;
@@ -1244,32 +1279,8 @@ async function run(host: OpenCheckHost, phase: string, expected: string): Promis
       // `App.svelte` between the pane model, the stage and the two viewers.
       const [first, second, third] = expected.split("|");
       if (!first || !second || !third) throw new Error("three fixture paths required");
-      const rows = (side: "left" | "right") =>
-        Array.from(document.querySelectorAll<HTMLElement>(`.pane[data-side="${side}"] [role="tab"]`))
-          .map((tab) => Number(tab.id.replace("document-tab-", "")));
-      const frontOf = (side: "left" | "right") => Number(
-        document.querySelector<HTMLElement>(`.pane[data-side="${side}"] [role="tab"][aria-selected="true"]`)
-          ?.id.replace("document-tab-", "") ?? -1);
-      const focusedSide = () =>
-        document.querySelector<HTMLElement>(".pane.focused")?.dataset.side ?? "none";
-      const split = () => document.querySelector(".pane-divider") !== null;
-      const mountedAreas = () =>
-        Array.from(document.querySelectorAll<HTMLElement>(".pane:not(.unused) .surface"))
-          .filter((area) => area.childElementCount > 0).length;
-      const shownSidebars = () =>
-        Array.from(document.querySelectorAll<HTMLElement>(`.${SIDEBAR_CLASS}`))
-          .filter((panel) => panel.style.display !== "none").length;
-      const check = (name: string, ok: boolean) => report.check(name, ok,
-        `left [${rows("left")}] front ${frontOf("left")}, right [${rows("right")}] front ${frontOf("right")}, ` +
-        `in ${focusedSide()}, document ${host.edits()?.doc ?? -1}, page ${host.status()?.page ?? 0}` +
-        `${host.edits()?.state.dirty ? ", edited" : ""}`);
-      const settled = async (what: string, when: () => boolean) => {
-        if (!await settle(when, SETTLE_MS)) throw new Error(`${what} did not happen`);
-        await host.idle();
-      };
-      const pressIn = (side: "left" | "right") =>
-        document.querySelector(`.pane[data-side="${side}"] .surface`)
-          ?.dispatchEvent(new PointerEvent("pointerdown", { bubbles: true, button: 0 }));
+      const { rows, frontOf, focusedSide, split, mountedAreas, shownSidebars, check, settled, pressIn } =
+        sideProbe(host);
 
       report.emit("[sides] opening three documents");
       await host.open(first); await host.open(second); await host.open(third);
@@ -1502,6 +1513,134 @@ async function run(host: OpenCheckHost, phase: string, expected: string): Promis
       await settled("the empty window", () => host.tabs().length === 0);
       check("closing every tab from a split leaves an empty window",
         host.tabs().length === 0 && !host.hasViewer() && sidebars() === 0 && !split() && host.path() === "");
+      break;
+    }
+    case "views": {
+      // One document on both sides: two tabs, two viewers, one handle and one
+      // edit model. What is under test is that an edit made in either view is
+      // drawn in the other, that closing a view closes no document, and that a
+      // save leaves both views on the file as it is afterwards.
+      const [first, second] = expected.split("|");
+      if (!first || !second) throw new Error("two fixture paths required");
+      const { rows, frontOf, focusedSide, split, mountedAreas, check, settled, pressIn } = sideProbe(host);
+      const drawnBeside = () => host.beside()?.pageOrder.length ?? -1;
+      const drawnHere = () => host.viewer()?.pageOrder.length ?? -1;
+      const labelOf = (id: number) =>
+        document.querySelector(`#document-tab-${id} .tab-name`)?.textContent?.trim() ?? "";
+      // Whether the backend has let go of a handle, asked until it has: the
+      // release is issued after the tab has left the row.
+      const released = async (doc: number) => {
+        const deadline = performance.now() + SETTLE_MS;
+        for (;;) {
+          try { await call("edit_state", { doc }); } catch { return true; }
+          if (performance.now() > deadline) return false;
+          await pause(50);
+        }
+      };
+
+      report.emit("[views] opening two documents");
+      await host.open(second); await host.open(first);
+      const [b, a] = host.tabs();
+      if (!a || !b || !host.viewer()) throw new Error("the two documents did not open");
+      const pages = host.edits()?.state.pages.length ?? 0;
+      if (pages < 4) throw new Error("the fixture needs four pages or more");
+      host.viewer()!.goToPage(2);
+      await settled("the jump", () => host.status()?.page === 3);
+
+      report.emit("[views] showing the document on both sides");
+      host.run("view.bothSides");
+      await settled("the second view", () => split() && mountedAreas() === 2 && host.tabs().length === 3);
+      const twin = host.tabs().find((tab) => tab.path === first && tab.id !== a.id);
+      if (!twin) throw new Error("the document has no second tab");
+      check("a document shown on both sides has a tab on each",
+        rows("left").join() === [b.id, a.id].join() && rows("right").join() === [twin.id].join() &&
+        host.tabs().map((tab) => tab.id).join() === [b.id, a.id, twin.id].join());
+      check("the reader is in the new view", focusedSide() === "right" && frontOf("right") === twin.id);
+      check("both views are of one document, on one handle",
+        host.edits()?.doc === a.id && host.beside() !== null && host.beside() !== host.viewer());
+      // Its first frame is what says where it is, and that comes after the mount.
+      await settle(() => host.status()?.page === 3, SETTLE_MS);
+      check("the new view starts on the page the first was on",
+        host.status()?.page === 3 && (host.beside()?.position.page ?? -1) === 2);
+      check("both tabs carry the file's name and not its path",
+        labelOf(a.id) !== "" && labelOf(a.id) === labelOf(twin.id) && !/[\\/]/.test(labelOf(a.id)));
+      check("the other document's tab is as it was", labelOf(b.id) !== labelOf(a.id) && host.tabs()[0]?.id === b.id);
+
+      report.emit("[views] editing in one view");
+      const firstPage = host.edits()?.state.pages[0]?.id ?? -1;
+      await host.apply((edits) => edits.delete(firstPage));
+      await settled("the deletion", () => drawnHere() === pages - 1);
+      check("an edit made in one view is drawn in the other", drawnBeside() === pages - 1);
+      check("both tabs say the document has unsaved work",
+        host.tabs().filter((tab) => tab.path === first).every((tab) => tab.dirty === true) &&
+        host.tabs().find((tab) => tab.id === b.id)?.dirty === false);
+      pressIn("left");
+      await host.idle();
+      check("the first view is on the same edit model", focusedSide() === "left" && host.edits()?.state.dirty === true);
+      host.run("edit.undo");
+      await settled("the undo", () => drawnHere() === pages);
+      check("an undo in the first view is drawn in the second", drawnBeside() === pages);
+
+      report.emit("[views] closing one view of an edited document");
+      await host.apply((edits) => edits.delete(firstPage));
+      await settled("the second deletion", () => drawnHere() === pages - 1 && drawnBeside() === pages - 1);
+      // No dialog: a native one would stop the phase here, since nothing can
+      // answer it, and the document's unsaved work is not being discarded.
+      await host.close(twin.id);
+      await settled("the end of the split", () => !split() && host.tabs().length === 2);
+      check("closing one view leaves the document open with its unsaved work",
+        host.edits()?.doc === a.id && host.edits()?.state.dirty === true && host.hasViewer() &&
+        drawnHere() === pages - 1 && mountedAreas() === 1);
+      let held = true;
+      try { await call("edit_state", { doc: a.id }); } catch { held = false; }
+      check("and the backend still holds it", held);
+
+      report.emit("[views] saving with two views open");
+      host.run("view.bothSides");
+      await settled("the second view again", () => split() && mountedAreas() === 2 && host.tabs().length === 3);
+      const again = host.tabs().find((tab) => tab.path === first && tab.id !== a.id);
+      if (!again) throw new Error("the document has no second tab");
+      check("a second view asked for again is a new tab on the same document",
+        again.id !== twin.id && host.edits()?.doc === a.id && drawnHere() === pages - 1);
+      host.run("file.save");
+      await host.idle();
+      await settled("the save", () => host.edits()?.state.dirty === false && mountedAreas() === 2 &&
+        host.edits()?.doc !== a.id && drawnBeside() === pages - 1);
+      const saved = host.edits()?.doc ?? -1;
+      check("a save leaves both views mounted, on the file as it is now",
+        split() && host.tabs().length === 3 && drawnHere() === pages - 1 && drawnBeside() === pages - 1 &&
+        host.tabs().filter((tab) => tab.path === first).every((tab) => tab.dirty === false));
+      check("the reader is still in the view they saved from", focusedSide() === "right");
+      check("the handle from before the save is released", await released(a.id));
+      host.run("view.focusOtherSide");
+      await host.idle();
+      check("the other view is on the new handle too", host.edits()?.doc === saved && focusedSide() === "left");
+      await host.apply((edits) => edits.rotate(host.edits()?.state.pages[0]?.id ?? -1, 1));
+      await settled("the edit after the save", () => host.edits()?.state.dirty === true);
+      check("an edit after the save reaches both tabs",
+        host.tabs().filter((tab) => tab.path === first).every((tab) => tab.dirty === true));
+      // The save before was made from the second view. This one is made
+      // from the first, whose tab is the one named by the old handle.
+      host.run("file.save");
+      await host.idle();
+      await settled("the save from the first view", () => host.edits()?.state.dirty === false &&
+        mountedAreas() === 2 && host.edits()?.doc !== saved && drawnBeside() === pages - 1);
+      const resaved = host.edits()?.doc ?? -1;
+      check("a save from the first view leaves both views mounted too",
+        split() && host.tabs().length === 3 && focusedSide() === "left" && drawnHere() === pages - 1 &&
+        host.tabs().filter((tab) => tab.path === first).every((tab) => tab.dirty === false));
+      check("and releases the handle it replaced", await released(saved));
+      pressIn("right");
+      await host.idle();
+      check("the second view is on the handle of the second save",
+        host.edits()?.doc === resaved && focusedSide() === "right");
+
+      report.emit("[views] closing every tab with a document shown twice");
+      host.run("file.closeAll");
+      await settled("the empty window", () => host.tabs().length === 0);
+      check("closing every tab leaves an empty window",
+        !host.hasViewer() && sidebars() === 0 && !split() && host.path() === "");
+      check("and the document shown twice is released once and for good", await released(resaved));
       break;
     }
     case "opened": {

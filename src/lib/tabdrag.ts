@@ -61,17 +61,17 @@ export function dropSide(x: number, y: number, layout: DropLayout): Side | null 
 }
 
 /** A tab being dragged, and the side it would land on if let go now. */
-export interface Carried {
-  id: number;
+export interface Carried<Id extends number = number> {
+  id: Id;
   side: Side | null;
 }
 
-export class TabDrag {
-  #press: { id: number; x: number; y: number } | null = null;
-  #carried: Carried | null = null;
+export class TabDrag<Id extends number = number> {
+  #press: { id: Id; x: number; y: number } | null = null;
+  #carried: Carried<Id> | null = null;
 
   /** The tab being dragged, or null while nothing is, a press included. */
-  get carried(): Carried | null {
+  get carried(): Carried<Id> | null {
     return this.#carried;
   }
 
@@ -81,7 +81,7 @@ export class TabDrag {
   }
 
   /** The pointer went down on tab `id`. */
-  press(id: number, x: number, y: number): void {
+  press(id: Id, x: number, y: number): void {
     this.#press = { id, x, y };
     this.#carried = null;
   }
@@ -90,7 +90,7 @@ export class TabDrag {
    * The pointer moved. Answers what is being dragged, which is nothing until
    * the pointer has left the place it was pressed.
    */
-  move(x: number, y: number, layout: DropLayout): Carried | null {
+  move(x: number, y: number, layout: DropLayout): Carried<Id> | null {
     const press = this.#press;
     if (!press) return null;
     if (!this.#carried && Math.hypot(x - press.x, y - press.y) < SLOP) return null;
@@ -102,7 +102,7 @@ export class TabDrag {
    * The pointer was let go. Answers the drag it ended, with the side read at
    * the last move, or null when the press never became one.
    */
-  release(): Carried | null {
+  release(): Carried<Id> | null {
     const carried = this.#carried;
     this.cancel();
     return carried;

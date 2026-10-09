@@ -125,6 +125,8 @@ export interface AppActions {
   moveToOtherSide(): void;
   /** Exchange the two sides. */
   switchSides(): void;
+  /** Show the focused document on the other side as well, as a second view of it. */
+  showOnBothSides(): void;
   /** Work in the other side. */
   focusOtherSide(): void;
   /** Whether the two sides scroll together. */
@@ -776,6 +778,14 @@ export function registerAppCommands(
       },
       enabled: () => withDocument() && actions.sides().others.length > 0,
       run: () => actions.moveToOtherSide(),
+    },
+    {
+      // No second document needed, which is what tells it from the commands
+      // above: the text on one side and its figures or notes on the other.
+      id: "view.bothSides",
+      title: "Show this document on both sides",
+      enabled: () => withDocument(),
+      run: () => actions.showOnBothSides(),
     },
     {
       id: "view.switchSides",

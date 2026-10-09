@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
-  DocumentTabs, DocumentTasks, RESTORE_POINTS, freshState, keepState, restore, restoredState, restoredWith,
+  DocumentTabs, DocumentTasks, RESTORE_POINTS, freshState, keepState, oneEach, restore, restoredState, restoredWith,
+  twinsOf,
   type DocumentTab, type FreshState, type Restore, type TabState,
 } from "./documenttabs";
 import { PLAIN_SEARCH } from "./search";
@@ -8,7 +9,7 @@ import { handleWindowKey, registerAppCommands, type AppActions } from "./appcomm
 import { CommandRegistry } from "./commands";
 import { matches } from "./keys";
 
-const tab = (id: number, path = `/fixture/${id}.pdf`) => ({ doc: { id }, path, edits: [id], page: id });
+const tab = (id: number, path = `/fixture/${id}.pdf`) => ({ view: id, doc: { id }, path, edits: [id], page: id });
 
 describe("document tabs", () => {
   it("keeps independent edit journals and positions across switches", () => {
@@ -31,6 +32,46 @@ describe("document tabs", () => {
     expect(tabs.forPath("c:/fixture/example.pdf")?.doc.id).toBe(1);
     expect(tabs.forPath("/fixture/example.pdf")).toBeUndefined();
     expect(tabs.forPath("/fixture/Example.pdf")?.doc.id).toBe(2);
+  });
+
+  it("names a document shown twice by the view asked for, else by the first", () => {
+    const tabs = new DocumentTabs<ReturnType<typeof tab>>();
+    const first = tab(1);
+    const second = { ...tab(1), view: 900 };
+    tabs.keep(tab(2)); tabs.keep(first); tabs.keep(tab(3));
+    tabs.addAfter(second, 1);
+    expect(tabs.all.map((entry) => entry.view)).toEqual([2, 1, 900, 3]);
+    // Added behind: the tab in front is the one that was.
+    expect(tabs.active).toBe(3);
+    expect(tabs.forPath("/fixture/1.pdf")?.view).toBe(1);
+    expect(tabs.forPath("/fixture/1.pdf", 900)?.view).toBe(900);
+    // A view of another file is no reason to answer anything but the first.
+    expect(tabs.forPath("/fixture/1.pdf", 3)?.view).toBe(1);
+    expect(tabs.find(900)).toBe(second);
+    expect(tabs.find(1)).toBe(first);
+    // Twice is once, and a tab that is gone puts the new one last.
+    tabs.addAfter(second, 2);
+    tabs.addAfter({ ...tab(5), view: 901 }, 77);
+    expect(tabs.all.map((entry) => entry.view)).toEqual([2, 1, 900, 3, 901]);
+    // Removing one view leaves the other, and the row in order.
+    tabs.remove(900);
+    expect(tabs.all.map((entry) => entry.view)).toEqual([2, 1, 3, 901]);
+    expect(tabs.forPath("/fixture/1.pdf", 900)?.view).toBe(1);
+  });
+
+  it("finds the other tabs of a document by its edit model, and counts it once", () => {
+    const model = { pages: 3 };
+    const other = { pages: 3 };
+    const tabs = [
+      { name: "a", edits: model }, { name: "b", edits: other }, { name: "a again", edits: model },
+    ];
+    const [a, b, again] = tabs as [typeof tabs[0], typeof tabs[0], typeof tabs[0]];
+    expect(twinsOf(tabs, a)).toEqual([again]);
+    expect(twinsOf(tabs, again)).toEqual([a]);
+    // Equal is not the same: two documents with the same pages are two.
+    expect(twinsOf(tabs, b)).toEqual([]);
+    expect(oneEach(tabs)).toEqual([a, b]);
+    expect(oneEach([])).toEqual([]);
   });
 
   it("moves a tab to either end and leaves the one in front in front", () => {

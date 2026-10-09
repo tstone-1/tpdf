@@ -203,6 +203,20 @@ before it would rebuild the viewer already on screen. The recorder is held until
 so a quit halfway through does not record the tabs as one side.
 `scripts/session_check.py --only tabs` drives the record and the relaunch.
 
+One document on both sides is two tabs on one handle and one `Edits`. So a tab, an entry
+on a side and a mounted record are named by a view and not by the handle: `ViewId` in
+`src/lib/views.ts`, a type of its own because both are numbers, so a handle passed where a
+view is wanted does not compile. The first view of a document is named by its handle and
+a further one by a number no handle has. `LiveDocument.openView` is what the stage is
+keyed by; `openDoc` stays the handle every backend call takes. Three places know that two
+tabs can be one document, each through `twinsOf` or `oneEach` in `documenttabs.ts`:
+`runEdit` adopts an edit's reply in every mounted view of the model, `closeTab` asks and
+releases only for a document's last view, and `openDocument`, when a save or a reload
+replaces the handle, tears the other views down first and points their tabs at the new
+handle and model, which `openPath` then mounts again. The answers about the file (links,
+comments, outline, form) are read by each view for itself.
+`scripts/tabs_check.py <checks-binary> testdata/text-heavy.pdf --phase views` drives it.
+
 Scrolling the two sides together is `src/lib/syncscroll.ts`: an offset between two places,
 each a page and the share of it above the top of the view, so it holds across two zooms and
 two page sizes. `keepInStep` in `App.svelte` runs in every frame of either document and

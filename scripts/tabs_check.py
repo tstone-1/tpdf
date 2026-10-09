@@ -55,6 +55,12 @@ tab, Show side by side with... by name, a tab moved back from its own menu, and 
 all tabs from a split. It needs a PDF of three or more pages.
 
   uv run scripts/tabs_check.py <checks-binary> testdata/text-heavy.pdf --phase sides
+--phase views shows one document on both sides: two tabs and two viewers on one handle
+and one edit model. An edit made in either view is drawn in the other, closing one view
+closes no document and asks nothing, and a save leaves both views on the new handle.
+A fixture of four pages or more.
+
+  uv run scripts/tabs_check.py <checks-binary> testdata/text-heavy.pdf --phase views
 
 --phase pictures runs New document from pictures in the window, with no document open.
 
@@ -100,7 +106,7 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("binary", type=Path)
     parser.add_argument("pdf", type=Path)
-    parser.add_argument("--phase", choices=("tabs", "sides", "tabs-position", "tabs-rotation", "forms", "signatures", "textedit", "textedit-dash", "textedit-cff-unicode", "textedit-cff-ligatures", "textedit-passport", "textedit-agenda", "textedit-agenda-page2", "textedit-factsheet", "textedit-factsheet-body", "textedit-w3c", "textedit-latin1", "textedit-cid-latin1", "textedit-overhang", "textedit-multipage", "textedit-wrapped", "textedit-wide-spacing", "textedit-list-child", "textedit-grow", "textedit-push", "textedit-w9", "textedit-centred", "import", "redact-pages", "sign", "recognise", "protect", "pictures", "compress", "fields", "fields-turned"), default="tabs")
+    parser.add_argument("--phase", choices=("tabs", "sides", "views", "tabs-position", "tabs-rotation", "forms", "signatures", "textedit", "textedit-dash", "textedit-cff-unicode", "textedit-cff-ligatures", "textedit-passport", "textedit-agenda", "textedit-agenda-page2", "textedit-factsheet", "textedit-factsheet-body", "textedit-w3c", "textedit-latin1", "textedit-cid-latin1", "textedit-overhang", "textedit-multipage", "textedit-wrapped", "textedit-wide-spacing", "textedit-list-child", "textedit-grow", "textedit-push", "textedit-w9", "textedit-centred", "import", "redact-pages", "sign", "recognise", "protect", "pictures", "compress", "fields", "fields-turned"), default="tabs")
     parser.add_argument("--other", type=Path, help="The file --phase import inserts pages from")
     parser.add_argument("--identity", help="--phase sign only: the SHA-256 of the signing certificate")
     # 90 s by default; the signing phase waits on a person answering the

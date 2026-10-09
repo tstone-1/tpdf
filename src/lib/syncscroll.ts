@@ -33,21 +33,21 @@ export function readingAt(line: number): Reading {
 /** Two lines closer than this are the same place: a frame that moved nothing. */
 const SAME = 1e-6;
 
-export class ScrollLock {
-  #pair: [number, number] | null = null;
+export class ScrollLock<Id extends number = number> {
+  #pair: [Id, Id] | null = null;
   /** How far the second document of the pair is ahead of the first, in pages. */
   #ahead = 0;
-  readonly #last = new Map<number, number>();
-  readonly #zoom = new Map<number, number>();
+  readonly #last = new Map<Id, number>();
+  readonly #zoom = new Map<Id, number>();
 
   /** Whether `id` is one of the two documents locked together. */
-  locks(id: number): boolean {
+  locks(id: Id): boolean {
     return this.#pair !== null && this.#pair.includes(id);
   }
 
   /** The document locked to `id`, or -1. */
-  partnerOf(id: number): number {
-    if (!this.#pair || !this.#pair.includes(id)) return -1;
+  partnerOf(id: Id): Id {
+    if (!this.#pair || !this.#pair.includes(id)) return -1 as Id;
     return this.#pair[0] === id ? this.#pair[1] : this.#pair[0];
   }
 
@@ -55,7 +55,7 @@ export class ScrollLock {
    * Locks two documents at the places they are in now. Called when the reader
    * turns the lock on, and again when a side shows a different tab.
    */
-  lock(first: { id: number; at: Reading; zoom: number }, second: { id: number; at: Reading; zoom: number }): void {
+  lock(first: { id: Id; at: Reading; zoom: number }, second: { id: Id; at: Reading; zoom: number }): void {
     this.#pair = [first.id, second.id];
     this.#ahead = lineOf(second.at) - lineOf(first.at);
     this.#last.clear();
@@ -87,7 +87,7 @@ export class ScrollLock {
    * `partnerAt` is needed.
    */
   moved(
-    id: number,
+    id: Id,
     at: Reading,
     how: { following: boolean; alone: boolean; partnerAt: Reading },
   ): Reading | null {
@@ -110,7 +110,7 @@ export class ScrollLock {
    * Where the partner of `id` belongs while `id` is at `at`, whether or not
    * anything moved. For after a zoom, which shifts the partner's own place.
    */
-  aim(id: number, at: Reading): Reading | null {
+  aim(id: Id, at: Reading): Reading | null {
     if (!this.#pair || !this.#pair.includes(id)) return null;
     const line = lineOf(at);
     return readingAt(this.#pair[0] === id ? line + this.#ahead : line - this.#ahead);
@@ -120,7 +120,7 @@ export class ScrollLock {
    * Records where `id` is and at what zoom without answering anything: it was
    * put there by its partner, and its next frame is to find nothing changed.
    */
-  seen(id: number, at: Reading, zoom: number): void {
+  seen(id: Id, at: Reading, zoom: number): void {
     if (!this.#pair || !this.#pair.includes(id)) return;
     this.#last.set(id, lineOf(at));
     this.#zoom.set(id, zoom);
@@ -135,7 +135,7 @@ export class ScrollLock {
    * sides are refitted by the same resize, and passing the change across would
    * apply it twice.
    */
-  zoomed(id: number, zoom: number, how: { following: boolean; fitted: boolean }): number | null {
+  zoomed(id: Id, zoom: number, how: { following: boolean; fitted: boolean }): number | null {
     if (!this.#pair || !this.#pair.includes(id)) return null;
     const before = this.#zoom.get(id);
     this.#zoom.set(id, zoom);

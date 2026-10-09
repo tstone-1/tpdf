@@ -38,6 +38,13 @@ have the binary.)
   chosen: the tabs of each side, the tab in front of each, the side last worked in and
   the place of the divider. A side whose documents no longer open is left out, and the
   window then shows one document. Scrolling together starts off.
+- **One document on both sides.** *Show this document on both sides* opens a second view
+  of the document being read, on the other side and at the same page: the text on one
+  side and its figures, notes or another chapter on the other. Both views are the same
+  document. An edit made in either is drawn in the other at once, undo works from both,
+  and a save or a reload leaves both where they were. Closing one view asks nothing and
+  closes nothing, since the document and its unsaved changes stay open in the other. A
+  document shown twice comes back once at the next launch.
 - **The two sides scroll together** when the button on the divider is on, or *Scroll both
   sides together* is run. The documents are locked at the places they are in, so one stays
   as many pages ahead of the other as it was, whatever each side's zoom and page size. A

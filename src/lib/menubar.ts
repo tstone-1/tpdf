@@ -379,6 +379,7 @@ export const MENU_LAYOUT: LayoutSection[] = [
       SEPARATOR,
       "view.sideBySide",
       "view.moveToOtherSide",
+      "view.bothSides",
       "view.switchSides",
       "view.focusOtherSide",
       "view.syncScrolling",

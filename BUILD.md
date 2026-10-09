@@ -7789,7 +7789,7 @@ starts at 0 and increments within the month.
    ```
 
    It runs the viewer check, the mark check on two documents, the tab phases `tabs`,
-   `tabs-position`, `sides` and `import`, and the session check, one after the other, and
+   `tabs-position`, `sides`, `views` and `import`, and the session check, one after the other, and
    exits 1 when any of them fails or a fixture is missing; `--list` prints the commands.
    The last line puts the normal frontend back in `dist/`, which the checks build replaced.
    It needs an unlocked screen and takes the keyboard while it runs, so it is not a gate.

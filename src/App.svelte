@@ -11,7 +11,8 @@
   } from "./lib/diskwatch";
   import { getCurrentWindow } from "@tauri-apps/api/window";
   import {
-    DocumentTabs, DocumentTasks, freshState, keepState, restore, restoredState, restoredWith,
+    DocumentTabs, DocumentTasks, freshState, keepState, oneEach, restore, restoredState, restoredWith,
+    twinsOf,
     type DocumentTab, type Restore,
   } from "./lib/documenttabs";
   import { TabLabelSize } from "./lib/tablabels";
@@ -186,6 +187,7 @@
   import { Stage, blankLive, scoped, type LiveDocument, type Slots } from "./lib/livedocument";
   import { Panes, otherSide, type Side, type Slot } from "./lib/panes";
   import { TabDrag, type Carried } from "./lib/tabdrag";
+  import { NO_VIEW, ViewIds, viewOf, type ViewId } from "./lib/views";
   import { ScrollLock } from "./lib/syncscroll";
   import { describeFit, percentOf } from "./lib/zoom";
 
@@ -196,7 +198,8 @@
   let areaHosts = $state<(HTMLDivElement | null)[]>([null, null]);
   /** The page area the mounted document's viewer is in. */
   let surface: HTMLDivElement | null = null;
-  const panes = new Panes();
+  const panes = new Panes<ViewId>();
+  const furtherViews = new ViewIds();
   /**
    * What the markup needs of {@link panes}, which is not reactive: for each
    * page area, whether it shows nothing and where it is drawn. Written by
@@ -216,9 +219,9 @@
   let panesHost = $state<HTMLDivElement | null>(null);
   /** Whether the two sides scroll together. The offset is `syncscroll.ts`'s. */
   let syncScroll = $state(false);
-  const scrollLock = new ScrollLock();
+  const scrollLock = new ScrollLock<ViewId>();
   /** The viewers of the two locked documents, by handle. See `lockSides`. */
-  const lockedViewers = new Map<number, Viewer>();
+  const lockedViewers = new Map<ViewId, Viewer>();
   /** Set while one document is being moved to keep up with the other. */
   let following = false;
   /** Until when a wheel turned with Alt held scrolls its own side alone. */
@@ -239,14 +242,14 @@
     paneShare = Math.min(0.8, Math.max(0.2, (event.clientX - box.left) / box.width));
   }
 
-  const tabDrag = new TabDrag();
+  const tabDrag = new TabDrag<ViewId>();
   /** The tab being dragged and the side it is over, for the markup. */
-  let tabCarried = $state<Carried | null>(null);
+  let tabCarried = $state<Carried<ViewId> | null>(null);
   /** Set from the end of a drag until the click the same release sends has passed. */
   let tabDragEnded = false;
 
   /** What a drop is decided against, read when the pointer moves. */
-  function dropLayout(id: number) {
+  function dropLayout(id: ViewId) {
     const box = panesHost?.getBoundingClientRect();
     return {
       area: box ?? { left: 0, top: 0, width: 0, height: 0 },
@@ -259,7 +262,7 @@
    * the tab's place. The pointer is followed on the window, so the drag goes
    * on over the pages, where the tab's own row does not reach.
    */
-  function tabPress(event: PointerEvent, id: number): void {
+  function tabPress(event: PointerEvent, id: ViewId): void {
     if (event.button !== 0 || opening || documentBusy || tabDrag.pressed) return;
     tabDrag.press(id, event.clientX, event.clientY);
     const move = (moved: PointerEvent) => {
@@ -296,7 +299,7 @@
    * Puts a dragged tab on `side`. With one side showing, the tab dropped on
    * the left half stays on the left and every other tab goes to the right.
    */
-  async function dropTab(id: number, side: Side): Promise<void> {
+  async function dropTab(id: ViewId, side: Side): Promise<void> {
     if (panes.split) return moveTab(id, side);
     await moveTab(id, "right");
     if (side === "left" && panes.split && panes.sideOf(id) === "right") switchSides();
@@ -325,13 +328,20 @@
     refreshMenu();
   });
   const tabs = new DocumentTabs<DocumentTab>();
-  let tabRows = $state<{ id: number; path: string; dirty: boolean; slot: number }[]>([]);
+  let tabRows = $state<{ id: ViewId; path: string; dirty: boolean; slot: number }[]>([]);
   const tabLabelSize = new TabLabelSize();
   let tabLabelPx = $state(tabLabelSize.px);
-  let activeTab = $state(-1);
-  const tabLabels = $derived(labelsFor(tabRows.map((tab) => tab.path)));
-  /** The same labels by handle, for a row that shows some of the tabs. */
-  const tabLabelOf = $derived(new Map(tabRows.map((tab, index) => [tab.id, tabLabels[index] ?? ""])));
+  let activeTab = $state<ViewId>(NO_VIEW);
+  /**
+   * Each tab's label, by the tab. Worked out over the files and not the tabs:
+   * a file shown in two tabs is one name, and two equal paths would lengthen
+   * each other to the whole path.
+   */
+  const tabLabelOf = $derived.by(() => {
+    const paths = [...new Set(tabRows.map((tab) => tab.path))];
+    const labels = labelsFor(paths);
+    return new Map(tabRows.map((tab) => [tab.id, labels[paths.indexOf(tab.path)] ?? ""]));
+  });
   let committingPopup = false;
   let formLayer: FormLayer | null = null;
   /** The names in the open document's form, for naming a field placed in it. */
@@ -415,11 +425,11 @@
     const changed = activeTab !== tabs.active;
     activeTab = tabs.active;
     tabRows = tabs.all.map((tab) => ({
-      id: tab.doc.id, path: tab.path, dirty: tab.edits.state.dirty,
-      slot: panes.slotOf(panes.sideOf(tab.doc.id)),
+      id: tab.view, path: tab.path, dirty: tab.edits.state.dirty,
+      slot: panes.slotOf(panes.sideOf(tab.view)),
     }));
     tabRecorder.note(tabs.all.map((tab) => tab.path), tabs.find(tabs.active)?.path ?? null, panes.split ? {
-      right: tabs.all.filter((tab) => panes.sideOf(tab.doc.id) === "right").map((tab) => tab.path),
+      right: tabs.all.filter((tab) => panes.sideOf(tab.view) === "right").map((tab) => tab.path),
       beside: tabs.find(panes.front(otherSide(panes.focused)))?.path ?? null,
       share: Math.round(paneShare * 1000) / 1000,
     } : null);
@@ -473,7 +483,7 @@
   }
 
   function keepActiveTab(): void {
-    const tab = tabs.find(openDoc);
+    const tab = tabs.find(openView);
     if (!tab || !viewer || !edits) return;
     keepState(tab, {
       edits, place: currentPlace(false), covered: new Map(covered), query,
@@ -510,7 +520,7 @@
     sidebarTab: (value) => sidebar?.selectTab(value),
   };
 
-  function activateTab(id: number): Promise<void> {
+  function activateTab(id: ViewId): Promise<void> {
     return documentTasks.idle().then(() => opens.run(async () => {
       await showTabNow(id);
     }));
@@ -520,12 +530,12 @@
    * Brings a tab to the front of the side it is on, with the reader working
    * there. Inside {@link opens}, like every caller of `openDocument`.
    */
-  async function showTabNow(id: number): Promise<void> {
+  async function showTabNow(id: ViewId): Promise<void> {
     const tab = tabs.find(id);
     if (!tab) return;
     const side = panes.sideOf(id);
     if (side !== panes.focused && !focusSide(side)) return;
-    if (id === openDoc) return;
+    if (id === openView) return;
     await openDocument(tab.path, false, null, tab);
   }
 
@@ -544,7 +554,7 @@
    */
   function focusSide(side: Side): boolean {
     const id = panes.front(side);
-    if (id === openDoc) return true;
+    if (id === openView) return true;
     if (opening || documentBusy || copyTaskBusy || !stage.parked.includes(id)) return false;
     commitPopups();
     // A search still waiting out its pause is this document's. Run now, it
@@ -580,6 +590,13 @@
       asDocument(id, () => { commitPopups(); keepActiveTab(); unmountDocument(); });
     }
     let refused: string | null = null;
+    // The page area a document is about to be mounted in is hidden until the
+    // window is drawn with two sides. A viewer built in a hidden area measures
+    // nothing and restores its place against that.
+    if (plan.mount.length) {
+      refreshTabs();
+      await tick();
+    }
     for (const { id } of plan.mount) {
       const tab = tabs.find(id);
       if (!tab) continue;
@@ -595,7 +612,7 @@
       await openDocument(tab.path, false, null, tab);
       // A document that would not mount left its reason in variables that the
       // next lines replace.
-      if (openDoc !== id) refused = error;
+      if (openView !== id) refused = error;
     }
     // Mounting a document puts the reader in its side, and the last one
     // mounted is not always the side the plan named.
@@ -603,7 +620,7 @@
       panes.focus(panes.sideOf(plan.focus));
     }
     const wanted = panes.plan().focus;
-    if (openDoc !== wanted && stage.parked.includes(wanted)) {
+    if (openView !== wanted && stage.parked.includes(wanted)) {
       sidebar?.setVisible(false);
       stage.focus(wanted);
     } else if (openDoc < 0) {
@@ -613,7 +630,7 @@
       if (any !== undefined && stage.focus(any)) panes.fronted(any);
     }
     bodyHeld = stage.parked.length > 0;
-    if (openDoc >= 0) tabs.active = openDoc;
+    if (openDoc >= 0) tabs.active = openView;
     sidebar?.setVisible(sidebarShown);
     formLayer?.setBusy(documentBusy);
     textEditor?.setBusy(documentBusy);
@@ -625,22 +642,81 @@
   }
 
   /** Moves a tab to `to`, which starts the split when nothing is on the right. */
-  function moveTab(id: number, to: Side): Promise<void> {
+  function moveTab(id: ViewId, to: Side): Promise<void> {
     return documentTasks.idle().then(() => opens.run(async () => {
       if (!tabs.find(id) || tabs.all.length < 2) return;
       opening = true;
       try {
         await settleDocument();
-        const wasSplit = panes.split;
-        panes.move(id, to, tabs.all.map((entry) => entry.doc.id));
+        const before = panes.split ? null : readingsNow();
+        panes.move(id, to, tabs.all.map((entry) => entry.view));
         await showPanes();
-        // Half the window at the zoom the whole window had shows half a page
-        // width, so a split starts with each side fitted to its own width.
-        if (!wasSplit && panes.split) {
-          for (const side of ["left", "right"] as const) {
-            asDocument(panes.front(side), () => viewer?.setFit("width"));
-          }
+        if (before) fitNewSplit(before);
+      } catch (e) { say(String(e)); }
+      finally { opening = false; refreshMenu(); }
+    }));
+  }
+
+  /** Where each mounted document's view begins, by view. */
+  function readingsNow(): Map<ViewId, { page: number; fraction: number }> {
+    const readings = new Map<ViewId, { page: number; fraction: number }>();
+    for (const view of [openView, ...stage.parked]) {
+      const at = asDocument(view, () => viewer?.reading);
+      if (at) readings.set(view, at);
+    }
+    return readings;
+  }
+
+  /**
+   * Half the window at the zoom the whole window had shows half a page width,
+   * so a split starts with each side fitted to its own width.
+   *
+   * `before` is {@link readingsNow} from before the window was divided. A
+   * view that was on screen then begins where it began: its area has halved
+   * since, and a view that follows its width keeps the middle of the page in
+   * place through that and through the fit here, which at half the width is
+   * most of a page further up. A view mounted since begins where it was put.
+   */
+  function fitNewSplit(before: ReadonlyMap<ViewId, { page: number; fraction: number }>): void {
+    if (!panes.split) return;
+    for (const side of ["left", "right"] as const) {
+      const view = panes.front(side);
+      asDocument(view, () => {
+        if (!viewer) return;
+        const at = before.get(view) ?? viewer.reading;
+        viewer.setFit("width");
+        viewer.followTo(at.page, at.fraction);
+      });
+    }
+  }
+
+  /**
+   * Shows the document the reader is in on the other side as well: a second
+   * view of it, with a tab of its own, on the same handle and the same edit
+   * model. A document that already has a second view gets that one brought to
+   * the front of the other side.
+   *
+   * The second view starts where the first is, with no search and no message
+   * of its own, and the reader is left in it.
+   */
+  function showOnBothSides(): Promise<void> {
+    return documentTasks.idle().then(() => opens.run(async () => {
+      const tab = tabs.find(openView);
+      if (!tab || !viewer) return;
+      opening = true;
+      try {
+        await settleDocument();
+        keepActiveTab();
+        const across = otherSide(panes.focused);
+        const before = panes.split ? null : readingsNow();
+        let twin = twinsOf(tabs.all, tab)[0];
+        if (!twin) {
+          twin = { ...tab, ...freshState(), view: furtherViews.another(), sidebarTab: tab.sidebarTab };
+          tabs.addAfter(twin, tab.view);
         }
+        panes.move(twin.view, across, tabs.all.map((entry) => entry.view));
+        await showPanes();
+        if (before) fitNewSplit(before);
       } catch (e) { say(String(e)); }
       finally { opening = false; refreshMenu(); }
     }));
@@ -653,14 +729,14 @@
    */
   function restoreSides(recorded: Parameters<typeof sidesToRestore>[0]): Promise<void> {
     return documentTasks.idle().then(() => opens.run(async () => {
-      const sides = sidesToRestore(recorded, tabs.all.map((tab) => tab.path), tabs.find(openDoc)?.path ?? null);
+      const sides = sidesToRestore(recorded, tabs.all.map((tab) => tab.path), tabs.find(openView)?.path ?? null);
       if (!sides || panes.split) return;
-      const idOf = (path: string | null) => (path === null ? -1 : tabs.forPath(path)?.doc.id ?? -1);
+      const idOf = (path: string | null) => (path === null ? NO_VIEW : tabs.forPath(path)?.view ?? NO_VIEW);
       opening = true;
       try {
         await settleDocument();
         paneShare = sides.share;
-        panes.arrange(sides.right.map(idOf), idOf(sides.beside), openDoc, tabs.all.map((entry) => entry.doc.id));
+        panes.arrange(sides.right.map(idOf), idOf(sides.beside), openView, tabs.all.map((entry) => entry.view));
         await showPanes();
       } catch (e) { say(String(e)); }
       finally { opening = false; refreshMenu(); }
@@ -689,7 +765,7 @@
    * that changes only when a document is mounted or torn down.
    */
   function lockSides(): boolean {
-    const read = (id: number) => asDocument(id, () =>
+    const read = (id: ViewId) => asDocument(id, () =>
       viewer ? { id, at: viewer.reading, zoom: viewer.currentZoom, viewer } : null);
     const first = syncScroll && panes.split ? read(panes.front("left")) : null;
     const second = first ? read(panes.front("right")) : null;
@@ -713,12 +789,12 @@
   function keepInStep(): void {
     if (!syncScroll || !viewer) return;
     const leader = viewer;
-    const partnerId = scrollLock.partnerOf(openDoc);
+    const partnerId = scrollLock.partnerOf(openView);
     const partner = lockedViewers.get(partnerId);
     if (!partner) return;
-    const factor = scrollLock.zoomed(openDoc, leader.currentZoom,
+    const factor = scrollLock.zoomed(openView, leader.currentZoom,
       { following, fitted: leader.fitMode !== "none" });
-    const moved = scrollLock.moved(openDoc, leader.reading,
+    const moved = scrollLock.moved(openView, leader.reading,
       { following, alone: performance.now() < aloneUntil, partnerAt: partner.reading });
     if (factor === null && moved === null) return;
     following = true;
@@ -726,39 +802,43 @@
       // The zoom first: it shifts the partner's own place, and the place asked
       // for after it is then the one it ends in.
       if (factor !== null) partner.setZoomFixed(partner.currentZoom * factor);
-      const to = moved ?? scrollLock.aim(openDoc, leader.reading);
+      const to = moved ?? scrollLock.aim(openView, leader.reading);
       if (to) partner.followTo(to.page, to.fraction);
       scrollLock.seen(partnerId, partner.reading, partner.currentZoom);
     } finally { following = false; }
   }
 
   function switchSides(): void {
-    panes.swap(tabs.all.map((entry) => entry.doc.id));
+    panes.swap(tabs.all.map((entry) => entry.view));
     refreshTabs();
     refreshMenu();
   }
 
-  function closeTab(id: number): Promise<void> {
+  function closeTab(id: ViewId): Promise<void> {
     return documentTasks.idle().then(() => opens.run(async () => {
       const tab = tabs.find(id);
       if (!tab) return;
       // The tab in front of the other side is closed as the document the
       // reader is in, which it becomes first.
-      if (id !== openDoc && panes.front(panes.sideOf(id)) === id && !focusSide(panes.sideOf(id))) return;
+      if (id !== openView && panes.front(panes.sideOf(id)) === id && !focusSide(panes.sideOf(id))) return;
       opening = true;
       try {
         await settleDocument();
-        if (tab.edits.state.dirty && !await confirmDialog(
+        // One of two views of a document closes without a question and without
+        // releasing anything: the document, and its unsaved work, stay open in
+        // the other.
+        const lastView = twinsOf(tabs.all, tab).length === 0;
+        if (lastView && tab.edits.state.dirty && !await confirmDialog(
           `Discard unsaved changes to ${basename(tab.path)}?`,
           { title: "Close tab", kind: "warning", okLabel: "Discard changes", cancelLabel: "Keep open" },
         )) return;
-        if (id === openDoc) clearActiveDocument();
-        panes.closed(id, tabs.all.map((entry) => entry.doc.id));
+        if (id === openView) clearActiveDocument();
+        panes.closed(id, tabs.all.map((entry) => entry.view));
         tabs.remove(id);
         refreshTabs();
         // A teardown refusal must not prevent the next document from mounting.
-        await call("close_document", { doc: id }).catch((e) => {
-          console.warn(`could not release document ${id}: ${e}`);
+        if (lastView) await call("close_document", { doc: tab.doc.id }).catch((e) => {
+          console.warn(`could not release document ${tab.doc.id}: ${e}`);
         });
         // The side's next tab comes to the front, or the split ends and the
         // other side's document is the one the reader is in.
@@ -780,14 +860,15 @@
       opening = true;
       try {
         await settleDocument();
-        const unsaved = tabs.all.filter((tab) => tab.edits.state.dirty).map((tab) => basename(tab.path));
+        const unsaved = oneEach(tabs.all).filter((tab) => tab.edits.state.dirty).map((tab) => basename(tab.path));
         if (unsaved.length && !await confirmDialog(
           unsaved.length === 1
             ? `Discard unsaved changes to ${unsaved[0]}?`
             : `Discard unsaved changes in ${unsaved.length} documents?`,
           { title: "Close all tabs", kind: "warning", okLabel: "Discard changes", cancelLabel: "Keep open" },
         )) return;
-        const ids = tabs.all.map((tab) => tab.doc.id);
+        const ids = tabs.all.map((tab) => tab.view);
+        const handles = oneEach(tabs.all).map((tab) => tab.doc.id);
         for (const beside of stage.parked) asDocument(beside, () => unmountDocument());
         bodyHeld = false;
         setSyncScroll(false);
@@ -795,7 +876,7 @@
         for (const id of ids) tabs.remove(id);
         panes.cleared();
         refreshTabs();
-        for (const id of ids) {
+        for (const id of handles) {
           // A teardown refusal must not keep the other handles open.
           await call("close_document", { doc: id }).catch((e) => {
             console.warn(`could not release document ${id}: ${e}`);
@@ -808,7 +889,7 @@
   }
 
   /** Middle-click on a tab closes it, as in a browser. */
-  function tabAuxClick(event: MouseEvent, id: number): void {
+  function tabAuxClick(event: MouseEvent, id: ViewId): void {
     if (event.button !== 1) return;
     event.preventDefault();
     if (!opening && !documentBusy) void closeTab(id);
@@ -818,7 +899,7 @@
     unmountDocument();
   }
 
-  function tabKey(event: KeyboardEvent, id: number): void {
+  function tabKey(event: KeyboardEvent, id: ViewId): void {
     const index = tabRows.findIndex((tab) => tab.id === id);
     let next: number;
     if (event.key === "ArrowRight") next = (index + 1) % tabRows.length;
@@ -1036,6 +1117,12 @@
    * backend has open and the frontend has forgotten is a leaked process.
    */
   let openDoc = -1;
+  /**
+   * Which view of {@link openDoc} the variables hold, or `NO_VIEW`. The stage,
+   * the sides and the tabs know a mounted document by this: a document shown
+   * on both sides is one handle and two views (`views.ts`).
+   */
+  let openView: ViewId = NO_VIEW;
 
   /**
    * The document's links, comments and outline exactly as the backend sent them.
@@ -1160,6 +1247,7 @@
    * about the window (a tool the reader armed, a colour they picked) does not.
    */
   const liveSlots: Slots<LiveDocument> = {
+    openView: { get: () => openView, set: (value) => { openView = value; } },
     openDoc: { get: () => openDoc, set: (value) => { openDoc = value; } },
     openPathName: { get: () => openPathName, set: (value) => { openPathName = value; } },
     openPageCount: { get: () => openPageCount, set: (value) => { openPageCount = value; } },
@@ -1197,7 +1285,7 @@
     fillingWords: { get: () => fillingWords, set: (value) => { fillingWords = value; } },
     fillingRedactionWords: { get: () => fillingRedactionWords, set: (value) => { fillingRedactionWords = value; } },
   };
-  const stage = new Stage(liveSlots, blankLive, () => openDoc);
+  const stage = new Stage<LiveDocument, ViewId>(liveSlots, blankLive, () => openView);
 
   /**
    * Runs `work` with document `id` in the variables above, when it is still
@@ -1209,7 +1297,7 @@
    * working in as well, and the code that handles them reads the variables.
    * `work` must not wait: what follows an `await` goes through here again.
    */
-  function asDocument<R>(id: number, work: () => R): R | undefined {
+  function asDocument<R>(id: ViewId, work: () => R): R | undefined {
     const done = stage.within(id, work);
     return done.ran ? done.value : undefined;
   }
@@ -1232,10 +1320,10 @@
     formLayer?.destroy();
     viewer?.destroy();
     sidebar?.destroy();
-    panes.unmounted(openDoc);
+    panes.unmounted(openView);
     // A lock on a document that is going is a lock on nothing. Whoever mounts
     // what replaces it locks again, at the new pair's places.
-    if (scrollLock.locks(openDoc)) { scrollLock.release(); lockedViewers.clear(); }
+    if (scrollLock.locks(openView)) { scrollLock.release(); lockedViewers.clear(); }
     stage.clear();
   }
 
@@ -1288,19 +1376,20 @@
     reloadDocument: () => void reloadDocument(),
     diskChangeMode: () => diskChangeMode,
     setDiskChangeMode: (mode) => setDiskChangeMode(mode),
-    closeDocument: () => void closeTab(openDoc),
+    closeDocument: () => void closeTab(openView),
     closeAllDocuments: () => void closeAllTabs(),
     sides: () => ({
       split: panes.split,
       focused: panes.focused,
-      others: tabs.all.filter((tab) => tab.doc.id !== openDoc).map((tab) => basename(tab.path)),
+      others: tabs.all.filter((tab) => tab.view !== openView).map((tab) => basename(tab.path)),
     }),
     showBeside: (index) => {
-      const partner = tabs.all.filter((tab) => tab.doc.id !== openDoc)[index];
-      if (partner) void moveTab(partner.doc.id, otherSide(panes.focused));
+      const partner = tabs.all.filter((tab) => tab.view !== openView)[index];
+      if (partner) void moveTab(partner.view, otherSide(panes.focused));
     },
-    moveToOtherSide: () => void moveTab(openDoc, otherSide(panes.focused)),
+    moveToOtherSide: () => void moveTab(openView, otherSide(panes.focused)),
     switchSides: () => switchSides(),
+    showOnBothSides: () => void showOnBothSides(),
     syncScrolling: () => syncScroll,
     toggleSyncScrolling: () => setSyncScroll(!syncScroll),
     focusOtherSide: () => { if (focusSide(otherSide(panes.focused))) viewer?.focus(); },
@@ -1312,7 +1401,7 @@
     clearRecentDocuments: () => void clearRecents(),
     tabLabels: () => tabLabelSize,
     resizeTabLabels: (direction) => { tabLabelPx = tabLabelSize.step(direction); refreshMenu(); },
-    nextDocument: (delta) => { const next = tabs.neighbour(delta); if (next) void activateTab(next.doc.id); },
+    nextDocument: (delta) => { const next = tabs.neighbour(delta); if (next) void activateTab(next.view); },
     documentCount: () => tabRows.length,
     busyOpening: () => opening || copyTaskBusy || documentBusy,
     busyDocument: () => copyTaskBusy || opening || documentBusy,
@@ -2113,7 +2202,7 @@
     //
     // The document is named here, when the edit is asked for. The queue runs
     // it later, and the reader may be working in the other side by then.
-    const id = openDoc;
+    const id = openView;
     pendingEdit = editing.run(() => runEdit(id, run));
     return pendingEdit;
   }
@@ -2158,7 +2247,7 @@
   }
 
   async function runEdit(
-    id: number,
+    id: ViewId,
     run: (edits: Edits) => Promise<EditState>,
   ): Promise<void> {
     const model = asDocument(id, () => (viewer ? edits : null));
@@ -2168,6 +2257,11 @@
       // Everything below reads and writes the variables of the document the
       // edit was made in, so it runs as that document.
       asDocument(id, () => adoptEdit(model, after));
+      // A second view of the document draws the same state. An edit is the
+      // document's, whichever view it was made in.
+      for (const twin of tabs.all) {
+        if (twin.edits === model && twin.view !== id) asDocument(twin.view, () => adoptEdit(model, after));
+      }
     } catch (e) {
       // Shown rather than logged. A refusal here is about the document --- a page
       // that is gone, a handle that is not open --- and a rotate command that
@@ -2236,11 +2330,11 @@
   async function fetchImportedLinks(model: Edits): Promise<void> {
     // The list is this document's own, held while the scans are in flight:
     // the variable is another document's when the reader changes sides.
-    const mine = importedLinks;
+    const mine = importedLinks, view = openView;
     for (const doc of mine.wanted(model.map)) {
       try {
         const result = await call("document_links", { doc });
-        const recorded = asDocument(model.doc, () => {
+        const recorded = asDocument(view, () => {
           if (edits !== model) return false;
           importedLinks.record(doc, result.items);
           applyPageOrder();
@@ -2335,7 +2429,7 @@
     // The walk waits for a page at a time, and the reader may change sides
     // while it does. Each round's reading and each round's writing runs as the
     // document the walk was started in, and so does lowering the flag.
-    const id = openDoc;
+    const id = openView;
     try {
       for (;;) {
         const round = asDocument(id, () => {
@@ -2423,7 +2517,7 @@
     fillingRedactionWords = true;
     // Held for the walk, as `fillCommentWords` holds its own: the variables
     // are another document's once the reader changes sides.
-    const id = openDoc, reader = viewer, panel = sidebar;
+    const id = openView, reader = viewer, panel = sidebar;
     try {
       // The walk is `redactlist.ts`, where a test can reach it; what stays here
       // is the wiring. Every lookup reads `model.map` at the moment it is asked,
@@ -2504,7 +2598,7 @@
         // The document is closed and the file is the one it always was. Reopening
         // is what gives the reader something to look at; their unsaved commands
         // are gone with the model, which is what the message says.
-        openDoc = -1;
+        openDoc = -1; openView = NO_VIEW;
         await openPath(path, false, place);
         // **After the reopen, and that ordering is the whole of it.** `openPath`
         // clears the message area on its way in, so saying this before the reopen
@@ -2519,7 +2613,7 @@
         if (!error) say(prompt.message, prompt.offers);
         return;
       }
-      openDoc = -1;
+      openDoc = -1; openView = NO_VIEW;
       await openPath(path, false, place);
     });
   }
@@ -3001,12 +3095,12 @@
           say(prompt.message, prompt.offers);
           return;
         }
-        openDoc = -1;
+        openDoc = -1; openView = NO_VIEW;
         await openPath(path, false, place);
         if (!error) say(prompt.message, prompt.offers);
         return;
       }
-      openDoc = -1;
+      openDoc = -1; openView = NO_VIEW;
       await openPath(path, false, place);
       if (!error) say(said);
     });
@@ -3402,7 +3496,7 @@
     contextMenu?.show(entries, at);
   }
 
-  function tabContextMenu(event: MouseEvent, id: number): void {
+  function tabContextMenu(event: MouseEvent, id: ViewId): void {
     event.preventDefault();
     event.stopPropagation();
     const tab = tabs.find(id);
@@ -3824,7 +3918,7 @@
    * scheduling preference rather than a dependency. Anything that waits on the
    * viewer without a way out is a feature that silently never arrives.
    */
-  function firstPaint(id = openDoc): Promise<void> {
+  function firstPaint(id: ViewId = openView): Promise<void> {
     return new Promise((resolve) => {
       const timer = setTimeout(done, 1000);
       const started = performance.now();
@@ -4255,7 +4349,7 @@
           opening = true;
           try {
             await settleDocument();
-            const unsaved = tabs.all.filter((tab) => tab.edits.state.dirty);
+            const unsaved = oneEach(tabs.all).filter((tab) => tab.edits.state.dirty);
             if (unsaved.length && !await confirmDialog(
               `Discard unsaved changes in ${unsaved.length} open document(s)?`,
               { title: "Close tpdf", kind: "warning", okLabel: "Discard changes", cancelLabel: "Keep open" },
@@ -4379,8 +4473,9 @@
           viewer: () => viewer,
           edits: () => edits,
           apply: (run) => applyEdit(run),
-          activate: activateTab,
-          close: closeTab,
+          // The check names a tab by the id `tabs` below gave it.
+          activate: (id) => activateTab(id as ViewId),
+          close: (id) => closeTab(id as ViewId),
           run: (id, argument) => { commands.run(id, argument); },
           importPages: (path) => importPagesFrom(path),
           answerSave: (path) => signSaves?.queue(path),
@@ -4432,7 +4527,7 @@
         setRestoreTabs,
         reopenLastTabs,
         tabsSettled: () => tabRecorder.settled(),
-        moveToOtherSide: () => moveTab(openDoc, otherSide(panes.focused)),
+        moveToOtherSide: () => moveTab(openView, otherSide(panes.focused)),
         recentCommands: () =>
           commands
             .all()
@@ -4570,8 +4665,15 @@
     return ready.then(() => opens.run(async () => {
       const existing = resume ? undefined : tabs.forPath(path);
       // A document already open is shown where it is, on its own side.
-      if (existing) { await showTabNow(existing.doc.id); viewer?.focus(); return; }
+      if (existing) { await showTabNow(existing.view); viewer?.focus(); return; }
       await openDocument(path, resuming, resume);
+      // A second view of a document that was saved or reloaded went with the
+      // old handle. It is mounted again on the new one, where it was.
+      if (resume && panes.plan().mount.length) {
+        opening = true;
+        try { await showPanes(); }
+        finally { opening = false; refreshMenu(); }
+      }
     }));
   }
 
@@ -4604,15 +4706,15 @@
           await call("close_document", { doc: doc.id }).catch(console.warn);
           throw new Error("document reports no pages");
         }
-        tabs.add({ doc, path, edits: editsFor(doc), place: null, ...freshState() });
-        panes.joined(doc.id);
+        tabs.add({ view: viewOf(doc.id), doc, path, edits: editsFor(doc), place: null, ...freshState() });
+        panes.joined(viewOf(doc.id));
         refreshTabs();
       }),
       arrange: (order) => { tabs.arrange(order); refreshTabs(); },
       showing: () => openDoc >= 0,
       showFirst: async () => {
         const first = tabs.all[0];
-        if (first) await activateTab(first.doc.id);
+        if (first) await activateTab(first.view);
       },
     };
   }
@@ -4684,12 +4786,22 @@
      */
     let replaced = false;
     let acquired = -1;
+    let twins: DocumentTab[] = [];
     try {
       const doc = retained?.doc ?? await openOrAsk(path);
       acquired = retained ? -1 : doc.id;
       await settleDocument();
       keepActiveTab();
-      const replaceId = override ? tabs.forPath(path)?.doc.id : undefined;
+      // A save or a reload opens the file again in the tab it is shown in.
+      // The tab the reader is in when the file is shown in two.
+      const replacing = override ? tabs.forPath(path, tabs.active) : undefined;
+      // Its other views are on the handle that is going. They are torn down
+      // with it, and whoever asked for this open mounts them again.
+      twins = replacing ? twinsOf(tabs.all, replacing) : [];
+      const replaceId = replacing?.doc.id;
+      // The first view of a document is named by its handle, and a tab that
+      // is returned to keeps the name it has.
+      const view = retained?.view ?? viewOf(doc.id);
       const page = doc.pages[0];
       if (!page) throw new Error("document reports no pages");
       // The whole table the open carried, not only its first entry. On a lazy
@@ -4704,12 +4816,16 @@
 
       // Whatever the outgoing document was owed, before its path is replaced.
       places.flush();
+      for (const twin of twins) {
+        asDocument(twin.view, () => { commitPopups(); keepActiveTab(); unmountDocument(); });
+      }
       replaced = true;
       // Everything about the outgoing document goes here, the answers about
       // its file and the lookups keyed by its ids included: a page number or a
       // mark id kept would be read as the next file's.
       unmountDocument();
       openDoc = doc.id;
+      openView = view;
       title = basename(path);
       openPathName = path;
       openPageCount = doc.page_count;
@@ -4734,7 +4850,7 @@
       surface = area;
       // Every callback the viewer and the panels are built with runs as this
       // document, whichever one the reader is working in when it fires.
-      const own = <R,>(work: () => R) => asDocument(doc.id, work);
+      const own = <R,>(work: () => R) => asDocument(view, work);
 
       // One record for every restore below, fresh for a document never kept,
       // and applied through `restoring` at each of the three points.
@@ -4888,13 +5004,21 @@
       edits = opening;
       dirty = opening.state.dirty;
       restore(kept, "model", restoring);
-      tabs.keep(retained ?? { doc, path, edits: opening, place: resume, ...freshState() }, replaceId);
+      tabs.keep(retained ?? { view, doc, path, edits: opening, place: resume, ...freshState() }, replacing?.view);
       // A tab returned to is in front of the side it is on. A save's new
       // handle takes the old one's side, and a document opened for the first
       // time joins the side the reader is working in.
-      if (replaceId !== undefined) panes.replaced(replaceId, doc.id);
-      if (retained || replaceId !== undefined) panes.fronted(doc.id);
-      else panes.opened(doc.id);
+      // The other views of a document that was saved or reloaded are views of
+      // the file as it is now: the new handle, and the model built for it.
+      for (const twin of twins) { twin.doc = doc; twin.edits = opening; }
+      // Two views of one document read one list of what its marks cover.
+      const mine = tabs.find(view);
+      const shared = mine && twinsOf(tabs.all, mine)
+        .map((twin) => asDocument(twin.view, () => covered)).find((list) => list !== undefined);
+      if (shared) covered = shared;
+      if (replacing) panes.replaced(replacing.view, view);
+      if (retained || replacing) panes.fronted(view);
+      else panes.opened(view);
       refreshTabs();
       if (replaceId !== undefined && replaceId !== doc.id)
         void call("close_document", { doc: replaceId }).catch(console.warn);
@@ -5125,7 +5249,7 @@
           say(message);
         },
       }, own));
-      panes.mounted(doc.id, slot);
+      panes.mounted(view, slot);
       // Before the first paint, so the reader sees their page rather than page
       // one and then a jump --- and before `focus`, which does not move the view
       // but would make the jump look like something they did.
@@ -5178,7 +5302,7 @@
       // Asked as the document, so the answer is the same whichever side the
       // reader is working in when a reply lands.
       const still = () => own(() => viewer === mounted) === true;
-      void firstPaint(wanted).then(() => {
+      void firstPaint(view).then(() => {
         if (!still()) return null;
         return call("document_form", { doc: wanted });
       }).then((form) => own(() => {
@@ -5198,7 +5322,7 @@
         if (edits) formLayer.update(edits.state);
         formLayer.setBusy(documentBusy);
       })).catch((error) => own(() => { if (viewer === mounted) say(String(error)); }));
-      void firstPaint(wanted)
+      void firstPaint(view)
         .then(() => {
           // Checked before asking as well as after. The wait is up to a second
           // and is no longer inside the open, so another document can arrive
@@ -5224,7 +5348,7 @@
       // margin against its 300 ms target, and this is off that path entirely.
       // A separate chain rather than a link in the one above, so a document
       // whose outline cannot be read still gets its comments and the reverse.
-      void firstPaint(wanted)
+      void firstPaint(view)
         .then(() => {
           if (!still()) return null;
           return call("document_comments", { doc: wanted });
@@ -5252,7 +5376,7 @@
       // clicking a cross-reference, so waiting for demand would mean the first
       // click on any document goes nowhere. It waits for first paint for the
       // same reason they do, and for nothing else.
-      void firstPaint(wanted)
+      void firstPaint(view)
         .then(() => {
           if (!still()) return null;
           return call("document_links", { doc: wanted });
@@ -5275,12 +5399,17 @@
         });
     } catch (e) {
       if (acquired >= 0) {
-        panes.closed(acquired, tabs.all.map((entry) => entry.doc.id));
-        tabs.remove(acquired);
+        panes.closed(viewOf(acquired), tabs.all.map((entry) => entry.view));
+        tabs.remove(viewOf(acquired));
         void call("close_document", { doc: acquired }).catch(console.warn);
         refreshTabs();
       }
       if (replaced) {
+        // The other views were torn down for a handle that never arrived.
+        for (const twin of twins) {
+          panes.closed(twin.view, tabs.all.map((entry) => entry.view));
+          tabs.remove(twin.view);
+        }
         // Whatever half-built state got as far as existing. A viewer left alive
         // while `title` is empty runs its frame loop against a detached surface
         // and keeps writing `status`, which the header renders --- a page count

@@ -34,9 +34,16 @@ import type { Offer } from "./recovery";
 import type { Sidebar } from "./sidebar";
 import type { TextEditor } from "./textedit";
 import type { Viewer, ViewerStatus } from "./viewer";
+import { NO_VIEW, type ViewId } from "./views";
 
 /** Everything `App.svelte` keeps about the document it has mounted. */
 export interface LiveDocument {
+  /**
+   * What this mounted view is named by, or {@link NO_VIEW}. The stage, the
+   * sides and the tabs know it by this and not by the handle below, which a
+   * second view of the same document shares.
+   */
+  openView: ViewId;
   /** The backend's handle, or -1 for no document. */
   openDoc: number;
   openPathName: string;
@@ -89,6 +96,7 @@ export interface LiveDocument {
 /** What every field holds when no document is mounted. New collections each call. */
 export function blankLive(): LiveDocument {
   return {
+    openView: NO_VIEW,
     openDoc: -1,
     openPathName: "",
     openPageCount: 0,
@@ -165,22 +173,22 @@ export function install<T>(slots: Slots<T>, record: T): void {
  * Nothing here destroys anything. A caller that ends a document tears its
  * viewer down first and then calls {@link clear} or {@link take}.
  */
-export class Stage<T> {
+export class Stage<T, Id extends number = number> {
   readonly #slots: Slots<T>;
   readonly #blank: () => T;
-  readonly #focusedId: () => number;
-  readonly #parked = new Map<number, T>();
+  readonly #focusedId: () => Id;
+  readonly #parked = new Map<Id, T>();
   #lent = 0;
 
   /** `focusedId` answers -1 when the slots hold no document. */
-  constructor(slots: Slots<T>, blank: () => T, focusedId: () => number) {
+  constructor(slots: Slots<T>, blank: () => T, focusedId: () => Id) {
     this.#slots = slots;
     this.#blank = blank;
     this.#focusedId = focusedId;
   }
 
   /** The handle of the document in the slots, or -1. */
-  get focused(): number {
+  get focused(): Id {
     return this.#focusedId();
   }
 
@@ -195,12 +203,12 @@ export class Stage<T> {
   }
 
   /** The handles of the parked documents, in the order they were parked. */
-  get parked(): number[] {
+  get parked(): Id[] {
     return [...this.#parked.keys()];
   }
 
   /** Whether `id` is mounted, focused or parked. */
-  holds(id: number): boolean {
+  holds(id: Id): boolean {
     return id >= 0 && (id === this.focused || this.#parked.has(id));
   }
 
@@ -224,7 +232,7 @@ export class Stage<T> {
    * Makes the parked document `id` the focused one; the document that was
    * focused is parked. False, and nothing moved, when `id` is not parked.
    */
-  focus(id: number): boolean {
+  focus(id: Id): boolean {
     const record = this.#parked.get(id);
     if (!record) return false;
     this.#parked.delete(id);
@@ -238,7 +246,7 @@ export class Stage<T> {
    * Removes the parked document `id` and hands its record over, for the
    * caller to tear down. Undefined when `id` is not parked.
    */
-  take(id: number): T | undefined {
+  take(id: Id): T | undefined {
     const record = this.#parked.get(id);
     this.#parked.delete(id);
     return record;
@@ -257,7 +265,7 @@ export class Stage<T> {
    * Returns `{ ran: false }` when `id` is not mounted, so that a reply for a
    * document that has gone is dropped by the caller and not applied to another.
    */
-  within<R>(id: number, work: () => R): { ran: true; value: R } | { ran: false } {
+  within<R>(id: Id, work: () => R): { ran: true; value: R } | { ran: false } {
     if (id < 0) return { ran: false };
     if (id === this.focused) return { ran: true, value: work() };
     const record = this.#parked.get(id);

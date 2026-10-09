@@ -4,9 +4,15 @@ import type { Place } from "./session";
 import type { Tab } from "./sidebar";
 import { PLAIN_SEARCH, type SearchOptions, type ScopeRange } from "./search";
 import type { Offer } from "./recovery";
+import type { ViewId } from "./views";
 
 /** State kept while a document has no mounted viewer. Backend handles stay open. */
 export interface DocumentTab {
+  /**
+   * What this tab is named by. The document's handle for the first view of a
+   * document, which is every tab unless a document is shown twice (`views.ts`).
+   */
+  view: ViewId;
   doc: DocumentInfo;
   path: string;
   edits: Edits;
@@ -36,7 +42,7 @@ export interface DocumentTab {
  * whole {@link FreshState}, so a new field is a compile error in both until it
  * is written in both.
  */
-export type TabState = Omit<DocumentTab, "doc" | "path">;
+export type TabState = Omit<DocumentTab, "view" | "doc" | "path">;
 
 /**
  * The part of a tab that has a value before the reader has done anything.
@@ -152,29 +158,38 @@ export function restore(kept: FreshState, point: RestorePoint, apply: Restore): 
   }
 }
 
-/** Ordered ownership of open handles. Only removal permits backend release. */
-export class DocumentTabs<T extends { doc: { id: number }; path: string }> {
+/**
+ * The open tabs, in order. A tab is named by its `view`; two tabs may show one
+ * document, and the handle is then released when the last of them is removed.
+ */
+export class DocumentTabs<T extends { view: number; path: string }> {
   private entries: T[] = [];
-  active = -1;
+  active: T["view"] = -1;
 
   get all(): readonly T[] { return this.entries; }
 
-  find(id: number): T | undefined {
-    return this.entries.find((tab) => tab.doc.id === id);
+  find(id: T["view"]): T | undefined {
+    return this.entries.find((tab) => tab.view === id);
   }
 
-  forPath(path: string): T | undefined {
+  /**
+   * A tab showing the file at `path`. With the file shown in two tabs, the one
+   * named `prefer` is the answer when it is one of them, and the first in the
+   * row otherwise.
+   */
+  forPath(path: string, prefer?: T["view"]): T | undefined {
     // Windows dialogs and launch events can spell the same drive path differently.
     const key = (value: string) => /^[a-z]:[\\/]|^\\\\/i.test(value)
       ? value.replaceAll("\\", "/").toLowerCase() : value;
-    return this.entries.find((tab) => key(tab.path) === key(path));
+    const showing = this.entries.filter((tab) => key(tab.path) === key(path));
+    return showing.find((tab) => tab.view === prefer) ?? showing[0];
   }
 
-  keep(tab: T, replacing = tab.doc.id): void {
-    const index = this.entries.findIndex((entry) => entry.doc.id === replacing);
+  keep(tab: T, replacing: T["view"] = tab.view): void {
+    const index = this.entries.findIndex((entry) => entry.view === replacing);
     if (index < 0) this.entries.push(tab);
     else this.entries[index] = tab;
-    this.active = tab.doc.id;
+    this.active = tab.view;
   }
 
   /**
@@ -182,7 +197,18 @@ export class DocumentTabs<T extends { doc: { id: number }; path: string }> {
    * the one the reader is looking at. A document already listed is left alone.
    */
   add(tab: T): void {
-    if (!this.find(tab.doc.id)) this.entries.push(tab);
+    if (!this.find(tab.view)) this.entries.push(tab);
+  }
+
+  /**
+   * Adds a tab right after the tab named `after`, without bringing it to the
+   * front: a second view of a document, beside the first in the row. At the
+   * end when `after` is not a tab.
+   */
+  addAfter(tab: T, after: T["view"]): void {
+    if (this.find(tab.view)) return;
+    const index = this.entries.findIndex((entry) => entry.view === after);
+    this.entries.splice(index < 0 ? this.entries.length : index + 1, 0, tab);
   }
 
   /**
@@ -204,8 +230,8 @@ export class DocumentTabs<T extends { doc: { id: number }; path: string }> {
    * shows its own tabs in this order, so the start of the whole order is the
    * start of the tab's own row.
    */
-  moveTo(id: number, where: "start" | "end"): void {
-    const index = this.entries.findIndex((tab) => tab.doc.id === id);
+  moveTo(id: T["view"], where: "start" | "end"): void {
+    const index = this.entries.findIndex((tab) => tab.view === id);
     if (index < 0) return;
     const [tab] = this.entries.splice(index, 1);
     if (!tab) return;
@@ -213,20 +239,36 @@ export class DocumentTabs<T extends { doc: { id: number }; path: string }> {
     else this.entries.push(tab);
   }
 
-  remove(id: number): T | undefined {
-    const index = this.entries.findIndex((tab) => tab.doc.id === id);
+  remove(id: T["view"]): T | undefined {
+    const index = this.entries.findIndex((tab) => tab.view === id);
     if (index < 0) return undefined;
     const [removed] = this.entries.splice(index, 1);
     if (this.active === id)
-      this.active = this.entries[Math.min(index, this.entries.length - 1)]?.doc.id ?? -1;
+      this.active = this.entries[Math.min(index, this.entries.length - 1)]?.view ?? -1;
     return removed;
   }
 
   neighbour(delta: number): T | undefined {
     if (!this.entries.length) return undefined;
-    const index = this.entries.findIndex((tab) => tab.doc.id === this.active);
+    const index = this.entries.findIndex((tab) => tab.view === this.active);
     return this.entries[(index + delta + this.entries.length) % this.entries.length];
   }
+}
+
+/**
+ * The other tabs showing the document `tab` shows.
+ *
+ * One document is one edit model, so the model is what two views of it have
+ * in common. Not the path: a file saved under another name keeps its tab, and
+ * not the handle, which a save replaces.
+ */
+export function twinsOf<T extends { edits: unknown }>(tabs: readonly T[], tab: T): T[] {
+  return tabs.filter((other) => other !== tab && other.edits === tab.edits);
+}
+
+/** One tab for each document: a document shown twice is counted once. */
+export function oneEach<T extends { edits: unknown }>(tabs: readonly T[]): T[] {
+  return tabs.filter((tab, index) => tabs.findIndex((other) => other.edits === tab.edits) === index);
 }
 
 /** A save may reopen its document; transitions wait outside their own queue. */

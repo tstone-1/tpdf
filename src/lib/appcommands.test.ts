@@ -120,6 +120,7 @@ function harness(
     showBeside: (index: number) => fired.push(`showBeside:${index}`),
     moveToOtherSide: () => fired.push("moveToOtherSide"),
     switchSides: () => fired.push("switchSides"),
+    showOnBothSides: () => fired.push("showOnBothSides"),
     focusOtherSide: () => fired.push("focusOtherSide"),
     syncScrolling: () => update.syncScrolling ?? false,
     toggleSyncScrolling: () => fired.push("toggleSyncScrolling"),
@@ -1851,6 +1852,7 @@ describe("the window shortcuts for editing", () => {
     showBeside: (index: number) => fired.push(`showBeside:${index}`),
     moveToOtherSide: () => fired.push("moveToOtherSide"),
     switchSides: () => fired.push("switchSides"),
+    showOnBothSides: () => fired.push("showOnBothSides"),
     focusOtherSide: () => fired.push("focusOtherSide"),
     syncScrolling: () => false,
     toggleSyncScrolling: () => fired.push("toggleSyncScrolling"),
@@ -2279,6 +2281,14 @@ describe("two documents side by side", () => {
     registry.run("view.focusOtherSide");
     registry.run("view.syncScrolling");
     expect(fired).toEqual(["moveToOtherSide", "switchSides", "focusOtherSide", "toggleSyncScrolling"]);
+  });
+
+  it("shows a document on both sides with no other document open", () => {
+    const { registry, fired } = harness(true, { sides: one });
+    expect(offers(registry, "view.bothSides")).toBe(true);
+    registry.run("view.bothSides");
+    expect(fired).toEqual(["showOnBothSides"]);
+    expect(offers(harness(false, { sides: one }).registry, "view.bothSides")).toBe(false);
   });
 
   it("names the scroll lock for what running it does", () => {

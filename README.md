@@ -223,8 +223,11 @@ project conventions.
   stays as many pages ahead of the other as it was, at any zoom, and a zoom step on one
   side is made on the other. Hold Alt while scrolling to move one side alone and keep the
   new distance. With *At launch: reopen all tabs* chosen, the two sides come back with
-  their tabs and the divider where it was.
-  <!-- built: view.sideBySide view.moveToOtherSide view.switchSides view.focusOtherSide view.syncScrolling -->
+  their tabs and the divider where it was. *Show this document on both sides* puts a
+  second view of one document beside the first, for a text and its figures or notes: both
+  views can be edited, a change made in one is drawn in the other at once, and closing
+  one of them leaves the document open in the other.
+  <!-- built: view.sideBySide view.moveToOtherSide view.bothSides view.switchSides view.focusOtherSide view.syncScrolling -->
 - Notices when another program rewrites the open file. By default it says so and offers
   a reload; *When the file changes on disk: reload automatically* reloads at once, keeping
   your page and zoom, which suits a document a build regenerates. *…: do nothing* turns the
