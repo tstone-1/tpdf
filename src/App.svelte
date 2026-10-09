@@ -185,7 +185,7 @@
   import { Viewer, type ViewerOptions, type ViewerStatus } from "./lib/viewer";
   import { Stage, blankLive, scoped, type LiveDocument, type Slots } from "./lib/livedocument";
   import {
-    dropAbandoned, openFailure, pageTable, placeOnSide, placeToResume, readerIsIn, repoint, sharedByTwin,
+    dropAbandoned, openFailure, pageTable, placeOnSide, placeToResume, readerIsIn, repoint, sharedByTwin, tabToKeep,
     toldAfterFallback,
     type OpenFound,
   } from "./lib/documentopen";
@@ -5103,12 +5103,12 @@
    * other views, the place to resume at and what the tab left behind.
    */
   function adoptModel(view: ViewId, doc: DocumentInfo, path: string, from: OpenFound): Edits {
-    const { retained, replacing, replaceId, twins, resume, kept } = from;
+    const { retained, replacing, replaceId, twins, kept } = from;
     const model = retained?.edits ?? editsFor(doc);
     edits = model;
     dirty = model.state.dirty;
     restore(kept, "model", restoring);
-    tabs.keep(retained ?? { view, doc, path, edits: model, place: resume, ...freshState() }, replacing?.view);
+    tabs.keep(tabToKeep(view, doc, path, model, from), replacing?.view);
     repoint(twins, doc, model);
     // Two views of one document read one list of what its marks cover.
     const shared = sharedByTwin(tabs.all, tabs.find(view), (twin) => asDocument(twin.view, () => covered));

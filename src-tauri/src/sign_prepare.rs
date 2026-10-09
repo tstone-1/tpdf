@@ -540,10 +540,10 @@ fn build(
         .get(b"Root")
         .and_then(Object::as_reference)
         .map_err(|_| "this document's catalog is not an object of its own".to_string())?;
-    let field = details
-        .field
-        .clone()
-        .unwrap_or_else(|| field_name(&prev, root));
+    let field = match &details.field {
+        Some(name) => name.clone(),
+        None => field_name(&prev)?,
+    };
     let annots = annots_site(&prev, page)?;
     let form = form_site(&prev, root)?;
 
@@ -651,40 +651,35 @@ fn certification(document: &Document) -> u8 {
     crate::docinfo::certification_of(document, signature)
 }
 
-/// `SignatureN` for the smallest `N` no top-level field is already called.
+/// `SignatureN` for the smallest `N` no field of the form is already called.
 ///
-/// Top level because the new field is added there, and a field's fully
-/// qualified name is its own `/T` when it has no parent: two top-level fields of
-/// one name are one field to every reader, which is what makes a collision a
-/// defect rather than a style.
+/// The new field is added at the top level, so its fully qualified name is
+/// its own `/T`, and two fields of one full name are one field to every
+/// reader, which is what makes a collision a defect rather than a style.
+///
+/// **Asked of full names, not of the top level's `/T`.** A parent with no
+/// `/T` adds nothing to its kids' names, so a `Signature1` under an unnamed
+/// group *is* `Signature1`; until 2026-10-09 only the top-level fields were
+/// read and such a document was given a second one.
+/// [`crate::fields::one_part_names`] is the set, and says why a name of
+/// several parts is not in it.
 ///
 /// **Compared as every reader compares them: decoded.** A `/T` is a text
-/// string, and `<FEFF005300690067...>` is `Signature1` in UTF-16BE. Until
-/// 2026-10-09 the raw bytes were compared, so a document naming its field
-/// that way was given a second top-level `Signature1`. A set, because the
-/// search asks it once per candidate and a form may hold thousands of fields.
-fn field_name(document: &Document, root: ObjectId) -> String {
-    let taken: std::collections::HashSet<String> = document
-        .get_dictionary(root)
-        .ok()
-        .and_then(|catalog| catalog.get(b"AcroForm").ok())
-        .and_then(|form| resolve(document, form).as_dict().ok())
-        .and_then(|form| form.get(b"Fields").ok())
-        .and_then(|fields| resolve(document, fields).as_array().ok())
-        .map(|fields| {
-            fields
-                .iter()
-                .filter_map(|field| resolve(document, field).as_dict().ok())
-                .filter_map(|field| field.get(b"T").ok())
-                .filter_map(|name| resolve(document, name).as_str().ok())
-                .map(crate::annots::decode_text_string)
-                .collect()
-        })
-        .unwrap_or_default();
-    (1..)
+/// string, and `<FEFF005300690067...>` is `Signature1` in UTF-16BE. Before
+/// that day the raw bytes were compared, so a document naming its field that
+/// way was given a second `Signature1` as well.
+///
+/// # Errors
+///
+/// A form whose field tree is past what tpdf reads: the names it has cannot
+/// all be known, so none is picked.
+fn field_name(document: &Document) -> Result<String, String> {
+    let taken = crate::fields::one_part_names(document)
+        .map_err(|why| format!("{why}, and a new signature field needs a name none has"))?;
+    Ok((1..)
         .map(|n| format!("Signature{n}"))
         .find(|name| !taken.contains(name))
-        .expect("an unbounded range always has a free name")
+        .expect("an unbounded range always has a free name"))
 }
 
 /// Where a page's `/Annots` is, which decides which object the widget changes.

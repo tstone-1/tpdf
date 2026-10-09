@@ -212,10 +212,15 @@ pub struct Unhandled {
     /// same thing three times and a reader cannot tell whether that is three
     /// findings or one printed thrice.
     pub at: usize,
-    /// What PDFium calls it: `image`, `path`, `shading`, `form`, `unsupported`.
+    /// What PDFium calls it (`image`, `path`, `shading`, `form`,
+    /// `unsupported`), or one of the kinds this module gives a reason of its
+    /// own: [`CLIP_PATH`], [`UNPLACED_PATH`], [`UNMEASURED_TEXT`].
     ///
-    /// A string for [`PageObject::kind`]'s reason, and it is the same string:
-    /// this is that field, carried through.
+    /// A string for [`PageObject::kind`]'s reason, and for the first five it
+    /// is the same string: this is that field, carried through. The review
+    /// panel has words for each (`UNHANDLED_KINDS` in `redactlist.ts`), and a
+    /// test there holds its list to the kinds defined here and in
+    /// `objects.rs`.
     pub kind: String,
     /// How many times the document draws it, when that is why it stays.
     ///
@@ -303,8 +308,7 @@ impl Unhandled {
 /// The kind a path is reported under when it is inside the region and also
 /// sets the clip, so taking its operators out would change what is drawn after.
 ///
-/// One word with a hyphen, because the review panel puts an article in front of
-/// a kind and an `s` after its first word.
+/// The review panel does not print this word; it has a phrase for each kind.
 pub const CLIP_PATH: &str = "clip-path";
 
 /// The kind a path is reported under when it is inside the region and the

@@ -2212,7 +2212,6 @@ pub fn append_update(
 ///
 /// An object the writer would leave out, named by its number.
 pub(crate) fn written_whole(incremental: &IncrementalDocument) -> Result<(), String> {
-    const LEFT_OUT: [&[u8]; 3] = [b"ObjStm", b"XRef", b"Linearized"];
     for (id, object) in &incremental.new_document.objects {
         let Ok(kind) = object.type_name() else {
             continue;
@@ -2228,6 +2227,83 @@ pub(crate) fn written_whole(incremental: &IncrementalDocument) -> Result<(), Str
         }
     }
     Ok(())
+}
+
+/// The three answers to `Object::type_name` that `lopdf` 0.45's plain writers
+/// leave out: [`written_whole`] for an update, [`reached_whole`] for a whole
+/// copy.
+const LEFT_OUT: [&[u8]; 3] = [b"ObjStm", b"XRef", b"Linearized"];
+
+/// Refuses a whole copy that `lopdf` would write without an object the
+/// document still uses.
+///
+/// [`written_whole`]'s defect in the full writer, which has the same filter
+/// (`writer.rs`, `save_internal`: an object whose type reads `ObjStm`, `XRef`
+/// or `Linearized` is not written, and nothing says so). There the filter is
+/// mostly **right**: the old file's object streams, its cross-reference
+/// streams and its linearization dictionary describe a layout the copy does
+/// not have, so a rule that refused every such object would refuse every
+/// modern document. What tells the two apart is whether anything names the
+/// object. The file's own containers are named by nothing a trailer reaches;
+/// a comment, a field or a form dictionary that a document has given a
+/// `/Linearized` key, or a wrong `/Type`, is named by its page or its
+/// catalog, and leaving it out leaves `/Annots` or `/Fields` pointing at
+/// nothing.
+///
+/// So: reachable from the trailer, by [`sweep::reachable`] --- the same mark
+/// the sweep collects by, so the two cannot disagree about what a document
+/// holds --- and of a type the writer leaves out. Asked of the document as it
+/// is about to be written, which is after a sweep where the path has one.
+///
+/// **Refused, not repaired.** Taking the stray key off would keep the object,
+/// and would change a document's content without saying so; nothing in this
+/// crate normalises a document's dictionaries for a writer's sake.
+///
+/// **Which writer, because the two differ.** `packed` is the writer with
+/// object streams (`save_with_object_streams`), which leaves out only a
+/// *stream* typed `ObjStm` and writes the other two --- measured: it keeps a
+/// comment with a `/Linearized` key that the plain writer loses --- and which
+/// hands an encrypted document to the plain writer. The question asked here
+/// is the one the writer about to run asks, so a smaller copy that would be
+/// whole is not refused for what a plain copy would lose. Read in `lopdf`
+/// 0.45.0's source, 2026-10-09; when the pin moves, read both loops again.
+///
+/// The mark is only walked when some object has such a type at all, which no
+/// document written by a writer without those containers does.
+///
+/// # Errors
+///
+/// A reachable object the writer would leave out, named by its number, or
+/// [`sweep::reachable`]'s own refusal.
+pub(crate) fn reached_whole(doc: &Document, packed: bool) -> Result<(), String> {
+    let plain = !packed || doc.is_encrypted();
+    let left_out: Vec<(ObjectId, &[u8])> = doc
+        .objects
+        .iter()
+        .filter_map(|(id, object)| {
+            let kind = object.type_name().ok()?;
+            let gone = if plain {
+                LEFT_OUT.contains(&kind)
+            } else {
+                matches!(object, Object::Stream(_)) && kind == b"ObjStm"
+            };
+            gone.then_some((*id, kind))
+        })
+        .collect();
+    if left_out.is_empty() {
+        return Ok(());
+    }
+    let reachable = sweep::reachable(doc)?;
+    match left_out.iter().find(|(id, _)| reachable.contains(id)) {
+        None => Ok(()),
+        Some((id, kind)) => Err(format!(
+            "this document describes one of its own objects, number {}, as part of the \
+             file's layout (/{}): a copy would be written without it and look complete, \
+             so tpdf does not write one",
+            id.0,
+            String::from_utf8_lossy(kind)
+        )),
+    }
 }
 
 /// A test document with its one `/Xinearized 1` spelt `/Linearized 1`: the
@@ -4686,6 +4762,8 @@ fn serialise_as(doc: &mut Document, what: &str, packed: bool) -> Result<Vec<u8>,
     // free. `sweep::collect` already does this for the graph it collects; here
     // it holds for every path, including a copy that dropped nothing.
     doc.max_id = doc.objects.keys().map(|id| id.0).max().unwrap_or(0);
+    // Before the writer, which would leave such an object out and say nothing.
+    reached_whole(doc, packed)?;
     let mut bytes = Vec::new();
     if packed {
         let options = lopdf::SaveOptions {

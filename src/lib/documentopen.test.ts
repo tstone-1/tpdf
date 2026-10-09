@@ -10,9 +10,15 @@ import { describe, expect, it } from "vitest";
 import app from "../App.svelte?raw";
 import {
   dropAbandoned, dropView, openFailure, pageTable, placeOnSide, placeToResume, readerIsIn, repoint, sharedByTwin,
-  toldAfterFallback,
+  tabToKeep, toldAfterFallback,
+  type OpenFound,
 } from "./documentopen";
-import { DocumentTabs } from "./documenttabs";
+import {
+  DocumentTabs, freshState, keepScope, restoredState, scopeToRestore, type DocumentTab,
+} from "./documenttabs";
+import type { Edits } from "./edits";
+import type { DocumentInfo } from "./ipc";
+import { pageId } from "./pages";
 import { Panes } from "./panes";
 import type { Place } from "./session";
 import { functionIn, missingFrom } from "./sourcetext";
@@ -59,9 +65,59 @@ describe("where an open puts the reader", () => {
 
 describe("the other views of a document that was saved", () => {
   it("are pointed at the new handle and the new model, every one of them", () => {
-    const twins = [{ doc: "old", edits: 1, path: "/a.pdf" }, { doc: "old", edits: 1, path: "/a.pdf" }];
+    const twin = () => ({ doc: "old", edits: 1, path: "/a.pdf", searchScope: null });
+    const twins = [twin(), twin()];
     repoint(twins, "new", 2);
-    expect(twins).toEqual([{ doc: "new", edits: 2, path: "/a.pdf" }, { doc: "new", edits: 2, path: "/a.pdf" }]);
+    expect(twins).toEqual([{ ...twin(), doc: "new", edits: 2 }, { ...twin(), doc: "new", edits: 2 }]);
+  });
+});
+
+describe("a search confined to a selection, when the file is opened again", () => {
+  const ranges = [{ page: 1, from: 4, to: 9 }];
+  const pages = (...ids: number[]) => ids.map((id) => ({ id: pageId(id) }));
+  // Two models of one file with as many pages: the ids start again with the
+  // model, so both number their pages alike.
+  const before = {} as Edits;
+  const after = {} as Edits;
+  const info = (id: number) => ({ id, page_count: 3 }) as DocumentInfo;
+  /** A tab on the old model, left with a search of "clause" inside a selection. */
+  const scoped = (view: number): DocumentTab => ({
+    view: view as DocumentTab["view"], doc: info(1), path: "/a.pdf", edits: before, place: null,
+    ...freshState(), query: "clause", searchScope: keepScope(ranges, pages(1, 2, 3)),
+  });
+  const found = (more: Partial<OpenFound>): OpenFound => ({
+    retained: undefined, replacing: undefined, replaceId: undefined, twins: [], resume: null,
+    kept: freshState(), ...more,
+  });
+
+  it("is gone from the tab a save or a reload opens the file again in", () => {
+    const old = scoped(1);
+    // The control, and the defect: by the page ids alone the scope goes back.
+    expect(scopeToRestore(old.searchScope, pages(1, 2, 3))).toBe(ranges);
+    const tab = tabToKeep(2 as DocumentTab["view"], info(2), "/a.pdf", after, found({ replacing: old, replaceId: 1 }));
+    expect(tab).not.toBe(old);
+    expect(tab.edits).toBe(after);
+    expect(tab.searchScope).toBeNull();
+    expect(scopeToRestore(restoredState(tab).searchScope, pages(1, 2, 3))).toBeNull();
+  });
+
+  it("is gone from the document's other views too, and their words stay", () => {
+    const twin = scoped(3);
+    expect(scopeToRestore(twin.searchScope, pages(1, 2, 3))).toBe(ranges);
+    repoint([twin], info(2), after);
+    expect(twin.edits).toBe(after);
+    expect(twin.searchScope).toBeNull();
+    // What mounting the twin again reads back.
+    expect(scopeToRestore(restoredState(twin).searchScope, pages(1, 2, 3))).toBeNull();
+    expect(restoredState(twin).query).toBe("clause");
+  });
+
+  it("stays with a tab the reader switched away from and came back to, on the model it had", () => {
+    const tab = scoped(1);
+    const kept = tabToKeep(tab.view, tab.doc, tab.path, tab.edits, found({ retained: tab, kept: restoredState(tab) }));
+    expect(kept).toBe(tab);
+    expect(kept.edits).toBe(before);
+    expect(scopeToRestore(restoredState(kept).searchScope, pages(1, 2, 3))).toBe(ranges);
   });
 });
 
@@ -252,6 +308,7 @@ describe("the open's wiring in App.svelte", () => {
       "if (said !== null) error = said;",
     ])).toEqual([]);
     expect(missingFrom(functionIn(app, "function adoptModel("), [
+      "tabs.keep(tabToKeep(view, doc, path, model, from), replacing?.view);",
       "repoint(twins, doc, model);",
       "const shared = sharedByTwin(tabs.all, tabs.find(view), (twin) => asDocument(twin.view, () => covered));",
       "if (shared) covered = shared;",

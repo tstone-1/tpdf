@@ -293,6 +293,60 @@ pub fn qualified_name(prefix: &str, partial: &str) -> String {
     }
 }
 
+/// Every fully qualified name in the form that has **one part**: a field
+/// with a `/T` whose ancestors, if it has any, have none.
+///
+/// The question a new top-level field asks before it takes a name. Its own
+/// full name is its `/T`, and the names it can repeat are not only those of
+/// the other top-level fields: a parent with no `/T` adds nothing to its
+/// kids' names, so a `Signature1` under such a group is called `Signature1`
+/// and nothing else. Until 2026-10-09 the two places that add a field read
+/// the top level alone and gave such a document a second field of that name.
+///
+/// **A name of two parts or more is not collected, and not walked to.** It
+/// holds a period, which a name of one part cannot --- so nothing under a
+/// field that has a `/T` can be called what a new top-level field will be,
+/// except that field's own unnamed kids, whose name is the one already taken.
+/// The walk stops at each named node, which is also what keeps it from
+/// building a name per node of somebody else's tree.
+///
+/// Bounded as [`crate::forms::scan`] bounds the same tree, and visiting no
+/// node that walk does not: a form the scan reads is never cut here.
+///
+/// # Errors
+///
+/// A tree past those bounds. The names found are then not all of them, and a
+/// caller that picked one anyway could pick one the form has.
+pub fn one_part_names(doc: &Document) -> Result<HashSet<String>, String> {
+    let bounds = Bounds {
+        nodes: 4096,
+        depth: Some(32),
+        dedup: true,
+        names: false,
+        order: Order::Document,
+    };
+    let mut names = HashSet::new();
+    let cut = walk(doc, &bounds, |node| {
+        let name = node
+            .dict
+            .map(|field| partial_name(doc, field))
+            .unwrap_or_default();
+        if name.is_empty() {
+            return Flow::Descend;
+        }
+        names.insert(name);
+        Flow::Leaf
+    });
+    if cut.dropped > 0 || cut.too_deep > 0 {
+        return Err(
+            "this form has more fields, or groups nested deeper, than tpdf reads, so it \
+             cannot tell which names the form's fields already have"
+                .into(),
+        );
+    }
+    Ok(names)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -551,5 +605,112 @@ mod tests {
         });
         assert_eq!(ids, vec![field, leaf]);
         assert_eq!(cut, Cut::default());
+    }
+
+    /// A field with this `/T`, or with none, holding `kids`.
+    fn node(doc: &mut Document, name: Option<&[u8]>, kids: Vec<Object>) -> Object {
+        let mut field = dictionary! {};
+        if let Some(name) = name {
+            field.set(
+                "T",
+                Object::String(name.to_vec(), lopdf::StringFormat::Literal),
+            );
+        }
+        if !kids.is_empty() {
+            field.set("Kids", kids);
+        }
+        Object::Reference(doc.add_object(field))
+    }
+
+    /// The names of one part are those a new top-level field could repeat:
+    /// every `/T` that has no named ancestor, at whatever depth, decoded.
+    #[test]
+    fn the_names_of_one_part_are_read_through_groups_with_no_name() {
+        let mut doc = Document::with_version("1.7");
+        let top = node(&mut doc, Some(b"Top"), vec![]);
+        let under = node(&mut doc, Some(b"Under"), vec![]);
+        let unnamed = node(&mut doc, None, vec![under]);
+        let deep = node(&mut doc, Some(b"\xFE\xFF\x00D\x00e\x00e\x00p"), vec![]);
+        let inner = node(&mut doc, None, vec![deep]);
+        let outer = node(&mut doc, None, vec![inner]);
+        // `Group.Inside` has two parts; the widget under `Group` has no name
+        // of its own and is `Group` again.
+        let inside = node(&mut doc, Some(b"Inside"), vec![]);
+        let widget = node(&mut doc, None, vec![]);
+        let group = node(&mut doc, Some(b"Group"), vec![inside, widget]);
+        // A name that is the empty string is no name.
+        let after_empty = node(&mut doc, Some(b"AfterEmpty"), vec![]);
+        let empty = node(&mut doc, Some(b""), vec![after_empty]);
+        form(&mut doc, vec![top, unnamed, outer, group, empty]);
+
+        let mut names: Vec<String> = one_part_names(&doc).expect("read").into_iter().collect();
+        names.sort();
+        assert_eq!(names, ["AfterEmpty", "Deep", "Group", "Top", "Under"]);
+
+        // The same set by the definition: the full names the readers' walk
+        // builds that hold no period.
+        let mut whole = Vec::new();
+        walk(&doc, &loose(64), |node| {
+            whole.push(node.name);
+            Flow::Descend
+        });
+        assert!(whole.contains(&"Group.Inside".to_string()), "{whole:?}");
+        let mut whole: Vec<String> = whole
+            .into_iter()
+            .filter(|name| !name.is_empty() && !name.contains('.'))
+            .collect();
+        whole.sort();
+        whole.dedup();
+        assert_eq!(whole, names);
+    }
+
+    /// No form, and a form with no fields, have no names and are not an error.
+    #[test]
+    fn a_document_with_no_form_has_no_names_and_is_not_refused() {
+        let mut doc = Document::with_version("1.7");
+        assert!(one_part_names(&doc).expect("read").is_empty());
+        form(&mut doc, vec![]);
+        assert!(one_part_names(&doc).expect("read").is_empty());
+    }
+
+    /// Past the bounds the set is not all the names, and is not handed over.
+    #[test]
+    fn the_names_of_a_tree_past_the_bounds_are_refused_and_not_cut_short() {
+        // 4,096 fields are read and one more is not.
+        let wide = |count: usize| {
+            let mut doc = Document::with_version("1.7");
+            let roots = (0..count)
+                .map(|at| node(&mut doc, Some(format!("F{at}").as_bytes()), vec![]))
+                .collect();
+            form(&mut doc, roots);
+            one_part_names(&doc)
+        };
+        assert_eq!(wide(4096).expect("read").len(), 4096);
+        let why = wide(4097).expect_err("cut short");
+        assert!(why.contains("cannot tell which names"), "{why}");
+
+        // A name 32 groups down is read and one 33 down is not.
+        let deep = |groups: usize| {
+            let mut doc = Document::with_version("1.7");
+            let mut held = node(&mut doc, Some(b"Bottom"), vec![]);
+            for _ in 0..groups {
+                held = node(&mut doc, None, vec![held]);
+            }
+            form(&mut doc, vec![held]);
+            one_part_names(&doc)
+        };
+        assert!(deep(32).expect("read").contains("Bottom"));
+        assert!(deep(33).is_err());
+
+        // A group that holds itself ends, and nothing was cut: it is visited
+        // once.
+        let mut doc = Document::with_version("1.7");
+        let id = doc.new_object_id();
+        doc.objects.insert(
+            id,
+            dictionary! { "Kids" => vec![Object::Reference(id)] }.into(),
+        );
+        form(&mut doc, vec![Object::Reference(id)]);
+        assert!(one_part_names(&doc).expect("read").is_empty());
     }
 }

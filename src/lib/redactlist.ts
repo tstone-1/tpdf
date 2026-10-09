@@ -314,10 +314,17 @@ export interface RedactListOptions {
  * reader can act on --- crop the page, or redact a document that does not share
  * its header. So the repeat count joins the grouping key: `an image drawn 22
  * times` is not the same row as `an image`.
+ *
+ * **No kind is printed as the backend spells it.** Each has words in
+ * {@link UNHANDLED_KINDS}, and one that is not there, which is a kind a later
+ * backend added, is said as {@link UNKNOWN_KIND}: something is there and
+ * stays, and the identifier is kept off the screen.
  */
 export function warningFor(plan: RegionPlan | undefined): string {
   if (!plan || plan.unhandled.length === 0) return "";
-  const kinds = new Map<string, number>();
+  // Keyed by the kind's place in the table and the repeat count, so the order
+  // of the sentence is the table's and does not depend on the file.
+  const kinds = new Map<string, { place: number; drawn: number; many: number }>();
   let unmeasured = false;
   for (const object of plan.unhandled) {
     // Not a thing with a name a reader knows, so it gets its own sentence
@@ -326,34 +333,84 @@ export function warningFor(plan: RegionPlan | undefined): string {
       unmeasured = true;
       continue;
     }
+    const known = UNHANDLED_KINDS.findIndex(([kind]) => kind === object.kind);
+    // Every kind the table does not hold is one row: two names a reader is
+    // not shown cannot be told apart by them.
+    const place = known < 0 ? UNHANDLED_KINDS.length : known;
     // The count is part of what the row says, so two pictures repeated
     // different numbers of times are two rows rather than one wrong one.
-    const said = object.drawn
-      ? `${object.kind} drawn ${object.drawn} times`
-      : object.kind;
-    kinds.set(said, (kinds.get(said) ?? 0) + 1);
+    const drawn = object.drawn ?? 0;
+    const key = `${place} ${drawn}`;
+    const row = kinds.get(key) ?? { place, drawn, many: 0 };
+    row.many += 1;
+    kinds.set(key, row);
   }
-  const said = [...kinds.entries()]
-    .sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))
-    // `an image`, `a path`. A rule rather than a table, because the kinds are
-    // PDFium's words and a table here would be a second list to keep in step
-    // with `objects.ts` --- which is the drift this panel has already avoided
-    // once by taking the kind rather than a sentence.
-    //
-    // Pluralised on the kind rather than on the whole phrase, so `an image
-    // drawn 22 times` becomes `2 images drawn 22 times` and not `2 image drawn
-    // 22 timess`.
-    .map(([kind, many]) =>
-      many === 1
-        ? `${/^[aeiou]/.test(kind) ? "an" : "a"} ${kind}`
-        : `${many} ${kind.replace(/^(\S+)/, "$1s")}`,
-    )
+  const said = [...kinds.values()]
+    .sort((a, b) => a.place - b.place || a.drawn - b.drawn)
+    // Both forms come from the table, so `an image drawn 22 times` becomes
+    // `2 images drawn 22 times` and a phrase with a verb in it agrees.
+    .map(({ place, drawn, many }) => {
+      const [, one, several] = UNHANDLED_KINDS[place] ?? UNKNOWN_KIND;
+      const what = many === 1 ? one : `${many} ${several}`;
+      return drawn > 0 ? `${what} drawn ${drawn} times` : what;
+    })
     .join(" and ");
   return [
     ...(kinds.size > 0 ? [`Also covers ${said}, which a removal cannot take`] : []),
     ...(unmeasured ? [UNMEASURED_TEXT_WARNING] : []),
   ].join(". ");
 }
+
+/**
+ * What a row calls each kind of object a removal leaves: the kind as the
+ * backend spells it, then the words for one and for several.
+ *
+ * A table, where this was a rule that put an article in front of the kind. The
+ * rule printed "a clip-path", "an unplaced-path", "a form" and "a shading",
+ * which are the backend's words; a reader has to be told what is there. The
+ * kinds are `kind_of`'s in `objects.rs` and the constants beside
+ * `Unhandled::sentence` in `redact.rs`, and `redactlist.test.ts` holds this
+ * list equal to those two, both ways. {@link UNMEASURED_TEXT} is not here: it
+ * has a sentence of its own.
+ *
+ * What each is, from the backend: an `image` is a picture; a `path` is a
+ * drawing the removal could neither take whole nor cut at the region's edge; a
+ * `clip-path` is a drawing inside the region that also sets the clip, so the
+ * things drawn after it show only inside its outline; an `unplaced-path` is a
+ * drawing inside the region whose operators could not be matched to it by
+ * position; a `shading` is an area filled with a gradient; a `form` is a Form
+ * XObject, content the file keeps once and can draw in several places; and
+ * `unsupported` is whatever PDFium gives no type for.
+ */
+export const UNHANDLED_KINDS: readonly (readonly [kind: string, one: string, several: string])[] = [
+  ["image", "an image", "images"],
+  ["path", "a drawing", "drawings"],
+  [
+    "clip-path",
+    "a drawing that also limits where the things after it are drawn",
+    "drawings that also limit where the things after them are drawn",
+  ],
+  [
+    "unplaced-path",
+    "a drawing tpdf could not find in the page's content",
+    "drawings tpdf could not find in the page's content",
+  ],
+  ["shading", "a colour gradient", "colour gradients"],
+  ["form", "a reusable block of content", "reusable blocks of content"],
+  ["unsupported", "something of a kind tpdf cannot read", "things of a kind tpdf cannot read"],
+];
+
+/**
+ * What a row calls an object of a kind {@link UNHANDLED_KINDS} does not hold.
+ *
+ * Shaped as a row of that table with no kind in it. It says the one thing that
+ * is known, that something is there and stays, and never the identifier.
+ */
+export const UNKNOWN_KIND: readonly [kind: string, one: string, several: string] = [
+  "",
+  "something else",
+  "other things",
+];
 
 /**
  * The kind `redact.rs` reports text under when it would be taken whole and
@@ -365,9 +422,9 @@ export const UNMEASURED_TEXT = "unmeasured-text";
 /**
  * What a row says of a region that covers such text.
  *
- * A sentence of its own, where every other kind is named by the rule in
- * {@link warningFor}: that rule printed "an unmeasured-text", which is the
- * backend's word and tells a reader nothing. What they need is that the text
+ * A sentence of its own, where every other kind is a few words inside the
+ * sentence {@link warningFor} builds: as one of those it read "an
+ * unmeasured-text", which is the backend's word and tells a reader nothing. What they need is that the text
  * stays and why: the text after it on its line begins where its pen stops, so
  * taking it out without knowing how far the pen moved would move that text.
  * Said once however many such objects there are, since the count is of

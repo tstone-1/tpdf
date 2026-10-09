@@ -131,6 +131,9 @@ fn rewrite(source: &lopdf::Document, view: &View) -> Result<Vec<u8>, String> {
     }
     document.trailer.remove(b"Encrypt");
     document.encryption_state = None;
+    // The preview is a whole copy written by the same writer a save uses: a
+    // page drawn without a comment the file has would not be this document.
+    crate::save::reached_whole(&document, false)?;
     let mut output = Limited(Vec::new());
     document.save_to(&mut output).map_err(|e| e.to_string())?;
     Ok(output.0)
@@ -177,6 +180,55 @@ mod tests {
         output.write_all(b"a").unwrap();
         assert!(output.write_all(b"b").is_err());
         assert_eq!(output.0.len(), MAX_PREVIEW_BYTES);
+    }
+
+    /// The text fixture with a comment on its first page that has no `/Type`
+    /// and a key called `key`.
+    fn commented(key: &str) -> (lopdf::Document, lopdf::ObjectId) {
+        use lopdf::{dictionary, Object};
+        let mut source = crate::textedit::tests::fixture();
+        let mut comment = dictionary! {
+            "Subtype" => "Text",
+            "Rect" => vec![10.into(), 10.into(), 30.into(), 30.into()],
+            "Contents" => Object::string_literal("SYNTHETIC COMMENT"),
+        };
+        comment.set(key, Object::Integer(1));
+        let comment = source.add_object(comment);
+        let page = crate::pagetree::ordered_pages(&source)[0];
+        source
+            .get_dictionary_mut(page)
+            .expect("a page")
+            .set("Annots", vec![Object::Reference(comment)]);
+        (source, comment)
+    }
+
+    /// The preview is written by `lopdf`'s full writer, which leaves out a
+    /// dictionary with a `/Linearized` key and no `/Type`: the page would be
+    /// drawn without a comment the file has. See `save::reached_whole`.
+    #[test]
+    fn a_preview_that_would_be_drawn_without_a_comment_of_the_file_is_refused() {
+        let view = |source: &lopdf::Document| View {
+            changes: vec![crate::textedit::tests::change(source)],
+            fields: Vec::new(),
+        };
+        let (source, _) = commented("Linearized");
+        let why = rewrite(&source, &view(&source)).expect_err("no preview");
+        assert!(
+            why.contains("as part of the file's layout (/Linearized)"),
+            "{why}"
+        );
+        // The control: under any other name the comment is in the preview.
+        let (source, comment) = commented("Xinearized");
+        let bytes = rewrite(&source, &view(&source)).expect("a preview");
+        let rendered = crate::encoding::load(&bytes, None).unwrap();
+        assert_eq!(
+            rendered
+                .get_dictionary(comment)
+                .and_then(|d| d.get(b"Contents"))
+                .and_then(lopdf::Object::as_str)
+                .expect("the comment"),
+            b"SYNTHETIC COMMENT"
+        );
     }
 
     /// One page of 300 by 200 points with a text field `Name` and a checkbox

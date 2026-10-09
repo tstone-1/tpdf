@@ -352,6 +352,98 @@ fn a_name_taken_in_another_encoding_is_taken() {
     }
 }
 
+/// [`shaped`]'s document with its text field called `Signature1` and moved
+/// under `groups`, outermost first: each a node of the form's tree that holds
+/// the next, with that `/T` or with none.
+fn grouped_under(groups: &[Option<&str>]) -> Vec<u8> {
+    let mut doc = Document::load_mem(&named_as(b"Signature1".to_vec())).expect("loads");
+    let find = |doc: &Document, key: &[u8]| {
+        doc.objects
+            .iter()
+            .find_map(|(id, object)| object.as_dict().ok()?.has(key).then_some(*id))
+            .expect("there is one")
+    };
+    let (form, field) = (find(&doc, b"Fields"), find(&doc, b"FT"));
+    let mut held = field;
+    for name in groups.iter().rev() {
+        let mut group = dictionary! { "Kids" => vec![Object::Reference(held)] };
+        if let Some(name) = name {
+            group.set("T", Object::string_literal(*name));
+        }
+        let group = doc.add_object(group);
+        doc.get_dictionary_mut(held)
+            .expect("a node")
+            .set("Parent", group);
+        held = group;
+    }
+    doc.get_dictionary_mut(form)
+        .expect("the form")
+        .set("Fields", vec![Object::Reference(held)]);
+    let mut bytes = Vec::new();
+    doc.save_to(&mut bytes).expect("saved");
+    bytes
+}
+
+/// A field's full name is its ancestors' names and its own, and a parent
+/// with no `/T` adds nothing: a `Signature1` under an unnamed group is
+/// `Signature1`. Until 2026-10-09 only the top level was read, and such a
+/// document was given a top-level `Signature1` beside it.
+#[test]
+fn a_name_taken_under_a_group_with_no_name_is_taken() {
+    for groups in [&[None][..], &[None, None]] {
+        let original = grouped_under(groups);
+        // The premise: the reader of signatures' own walk calls it that.
+        let mut names = Vec::new();
+        crate::fields::walk(
+            &Document::load_mem(&original).expect("loads"),
+            &crate::fields::Bounds {
+                nodes: 64,
+                depth: None,
+                dedup: true,
+                names: true,
+                order: crate::fields::Order::Document,
+            },
+            |node| {
+                names.push(node.name);
+                crate::fields::Flow::Descend
+            },
+        );
+        assert_eq!(names.last().map(String::as_str), Some("Signature1"));
+        assert_eq!(names.len(), groups.len() + 1, "and it is not top-level");
+
+        let unsigned = prepare(original, NOW, None).expect("prepared");
+        assert_eq!(unsigned.field, "Signature2", "{groups:?}");
+    }
+    // The control: under a group that has a name it is `Form.Signature1`,
+    // and `Signature1` is free.
+    for groups in [
+        &[Some("Form")][..],
+        &[None, Some("Form")],
+        &[Some("Form"), None],
+    ] {
+        let unsigned = prepare(grouped_under(groups), NOW, None).expect("prepared");
+        assert_eq!(unsigned.field, "Signature1", "{groups:?}");
+    }
+}
+
+/// A form whose tree is past what is read has names nobody saw. No name is
+/// picked for it, and the refusal says what it was for.
+#[test]
+fn a_form_too_deep_to_read_every_name_of_is_not_given_a_guessed_one() {
+    let why = match prepare(grouped_under(&[None; 33]), NOW, None) {
+        Err(why) => why,
+        Ok(_) => panic!("a name was picked"),
+    };
+    assert!(
+        why.contains("cannot tell which names the form's fields already have")
+            && why.contains("a new signature field needs a name none has"),
+        "{why}"
+    );
+    // One level less is read to the bottom.
+    let unsigned = prepare(grouped_under(&[None; 32]), NOW, None).expect("prepared");
+    assert_eq!(unsigned.field, "Signature2");
+}
+
 // ---------------------------- an object the writer would leave out
 
 /// [`shaped`]'s document, its form an object of its own that carries a key

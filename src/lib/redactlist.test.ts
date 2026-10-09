@@ -1,8 +1,10 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
+import objects from "../../src-tauri/src/objects.rs?raw";
 import backend from "../../src-tauri/src/redact.rs?raw";
 import {
   RedactList,
+  UNHANDLED_KINDS,
   UNMEASURED_TEXT,
   UNMEASURED_TEXT_WARNING,
   fillRedactionRegions,
@@ -296,7 +298,7 @@ describe("what a row says a removal will take", () => {
     };
     expect(takesFor(both)).toBe("Also removes a picture it covers, whole");
     expect(warningFor(both)).toBe(
-      "Also covers a path, which a removal cannot take",
+      "Also covers a drawing, which a removal cannot take",
     );
   });
 });
@@ -353,21 +355,113 @@ describe("what a row says a removal cannot take", () => {
 
   it("says it after the kinds a reader can name, each in its own sentence", () => {
     expect(warningFor(plan([UNMEASURED_TEXT, "image", "path"]))).toBe(
-      `Also covers an image and a path, which a removal cannot take. ${UNMEASURED_TEXT_WARNING}`,
+      `Also covers an image and a drawing, which a removal cannot take. ${UNMEASURED_TEXT_WARNING}`,
     );
   });
 
   it("knows the kind by the backend's spelling of it", () => {
     // The kind crosses the boundary as a string. Spelled differently there,
-    // the plain sentence is never said and the rule prints the new spelling.
+    // the plain sentence is never said and the row says "something else".
     expect(backend).toContain(`pub const UNMEASURED_TEXT: &str = "${UNMEASURED_TEXT}";`);
   });
 
+  it("has words for every kind the backend can report, and for no other", () => {
+    // Both Rust files read as text. `kind_of` in `objects.rs` is every word
+    // PDFium's object types are given; the constants in `redact.rs` whose
+    // value is one lower-case word, hyphens allowed, are the kinds the planner
+    // adds. A kind written in neither place is not seen by this.
+    const body = /fn kind_of\([^]*?\n}\n/.exec(objects)?.[0] ?? "";
+    const pdfium = [...body.matchAll(/=> "([a-z-]+)"/g)].map((match) => match[1]);
+    const planner = [...backend.matchAll(/pub const [A-Z_]+: &str = "([a-z-]+)";/g)].map(
+      (match) => match[1],
+    );
+    // The controls: each half found something, so two empty lists cannot agree.
+    expect(pdfium).toContain("path");
+    expect(planner).toContain("clip-path");
+    // Text a region covers is taken or cut, never listed as left under that
+    // name, so it is the one word of PDFium's with no row.
+    expect(pdfium).toContain("text");
+    const reported = [...pdfium, ...planner].filter((kind) => kind !== "text").sort();
+    const worded = [...UNHANDLED_KINDS.map(([kind]) => kind), UNMEASURED_TEXT].sort();
+    expect(worded).toEqual(reported);
+  });
+
+  it("says each kind in words a reader has, one and several", () => {
+    const one = (kind: string) => warningFor(plan([kind]));
+    const two = (kind: string) => warningFor(plan([kind, kind]));
+    expect(one("clip-path")).toBe(
+      "Also covers a drawing that also limits where the things after it are drawn, which a removal cannot take",
+    );
+    expect(two("clip-path")).toBe(
+      "Also covers 2 drawings that also limit where the things after them are drawn, which a removal cannot take",
+    );
+    expect(one("unplaced-path")).toBe(
+      "Also covers a drawing tpdf could not find in the page's content, which a removal cannot take",
+    );
+    expect(two("unplaced-path")).toBe(
+      "Also covers 2 drawings tpdf could not find in the page's content, which a removal cannot take",
+    );
+    expect(one("shading")).toBe("Also covers a colour gradient, which a removal cannot take");
+    expect(two("shading")).toBe("Also covers 2 colour gradients, which a removal cannot take");
+    expect(one("form")).toBe("Also covers a reusable block of content, which a removal cannot take");
+    expect(two("form")).toBe("Also covers 2 reusable blocks of content, which a removal cannot take");
+    expect(one("unsupported")).toBe(
+      "Also covers something of a kind tpdf cannot read, which a removal cannot take",
+    );
+    expect(two("unsupported")).toBe(
+      "Also covers 2 things of a kind tpdf cannot read, which a removal cannot take",
+    );
+  });
+
+  it("never prints a kind as the backend spells it", () => {
+    // Every row of the table, alone, and the words must not hold the
+    // identifier. `image` is the exception: the backend's word is the reader's.
+    const jargon = UNHANDLED_KINDS.map(([kind]) => kind).filter((kind) => kind !== "image");
+    // The control: the loop below runs over something.
+    expect(jargon).toContain("clip-path");
+    for (const kind of jargon) {
+      const said = warningFor(plan([kind]));
+      expect(said).toMatch(/^Also covers .+, which a removal cannot take$/);
+      expect(said).not.toMatch(new RegExp(`\\b${kind}\\b`));
+    }
+  });
+
+  it("says something is there when the kind is one it has never heard of", () => {
+    const said = warningFor(plan(["soft-mask"]));
+    expect(said).toBe("Also covers something else, which a removal cannot take");
+    // Two the table does not hold are one row: neither name is shown, so a
+    // reader could not tell two rows apart.
+    expect(warningFor(plan(["soft-mask", "glyph-run"]))).toBe(
+      "Also covers 2 other things, which a removal cannot take",
+    );
+    // After the kinds it can name.
+    expect(warningFor(plan(["soft-mask", "image"]))).toBe(
+      "Also covers an image and something else, which a removal cannot take",
+    );
+  });
+
+  it("says a reusable block stays because the document repeats it", () => {
+    expect(
+      warningFor({ ...plan([]), unhandled: [{ at: 2, kind: "form", drawn: 3 }] }),
+    ).toBe("Also covers a reusable block of content drawn 3 times, which a removal cannot take");
+    // Beside one that stays for another reason, and after it whichever the
+    // page lists first.
+    expect(
+      warningFor({
+        ...plan([]),
+        unhandled: [{ at: 2, kind: "form", drawn: 3 }, { at: 5, kind: "form" }],
+      }),
+    ).toBe(
+      "Also covers a reusable block of content and a reusable block of content drawn 3 times, " +
+        "which a removal cannot take",
+    );
+  });
+
   it("names every kind, in an order that does not depend on the file", () => {
-    // Sorted rather than left in the object order PDFium enumerated, so two
-    // regions covering the same two kinds read the same way.
+    // In the table's order rather than the object order PDFium enumerated, so
+    // two regions covering the same two kinds read the same way.
     expect(warningFor(plan(["path", "image", "path"]))).toBe(
-      "Also covers an image and 2 paths, which a removal cannot take",
+      "Also covers an image and 2 drawings, which a removal cannot take",
     );
   });
 

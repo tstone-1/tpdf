@@ -1999,3 +1999,72 @@ fn a_placed_signature_field_is_listed_and_flagged_and_cannot_be_read_only() {
     })
     .contains("no text to align"));
 }
+
+/// [`document`]'s form with its field `taken` moved under a group: a node of
+/// the form's tree that holds it, with that `/T` or with none.
+fn grouped(name: Option<&str>) -> Document {
+    let mut doc = document(Held::Direct, false);
+    let field = *widget_ids(&doc).first().expect("the field");
+    let mut group = dictionary! { "Kids" => vec![Object::Reference(field)] };
+    if let Some(name) = name {
+        group.set("T", Object::string_literal(name));
+    }
+    let group = doc.add_object(group);
+    doc.get_dictionary_mut(field).unwrap().set("Parent", group);
+    let root = doc.trailer.get(b"Root").unwrap().as_reference().unwrap();
+    doc.get_dictionary_mut(root).unwrap().set(
+        "AcroForm",
+        dictionary! { "Fields" => vec![Object::Reference(group)] },
+    );
+    reloaded(&mut doc)
+}
+
+/// The first page's widgets.
+fn widget_ids(doc: &Document) -> Vec<ObjectId> {
+    let page = crate::pagetree::ordered_pages(doc)[0];
+    doc.get_dictionary(page)
+        .and_then(|page| page.get(b"Annots"))
+        .and_then(|annots| doc.dereference(annots))
+        .and_then(|(_, annots)| annots.as_array())
+        .expect("the page's annotations")
+        .iter()
+        .map(|id| id.as_reference().expect("a reference"))
+        .collect()
+}
+
+/// A group with no `/T` adds nothing to the names of the fields it holds, so
+/// a `taken` under one is `taken`. Until 2026-10-09 only the top level was
+/// read, and a new field was given the name a field of the form had.
+#[test]
+fn a_name_a_field_under_a_group_with_no_name_has_is_taken() {
+    let new = field("taken", Kind::Text, 0, [10.0, 50.0, 50.0, 20.0]);
+    let page = |doc: &Document| crate::pagetree::ordered_pages(doc)[0];
+    let rect = [20.0, 60.0, 120.0, 80.0];
+
+    let mut doc = grouped(None);
+    assert_eq!(
+        crate::forms::scan(&doc).expect("read").widgets[0].name,
+        "taken"
+    );
+    let why = check(&doc, std::slice::from_ref(&new)).expect_err("taken twice");
+    assert!(
+        why[0].contains("already has a field of this name"),
+        "{why:?}"
+    );
+    let at = page(&doc);
+    let why = place(&mut doc, at, rect, "taken", &Kind::Text.into()).expect_err("taken twice");
+    assert!(why.contains("already has a field of this name"), "{why}");
+
+    // The control: under a group called `Group` it is `Group.taken`, and
+    // `taken` is free; `Group` is not.
+    let mut doc = grouped(Some("Group"));
+    assert_eq!(
+        crate::forms::scan(&doc).expect("read").widgets[0].name,
+        "Group.taken"
+    );
+    check(&doc, std::slice::from_ref(&new)).expect("free");
+    let group = field("Group", Kind::Text, 0, [10.0, 50.0, 50.0, 20.0]);
+    assert!(check(&doc, &[group]).is_err());
+    let at = page(&doc);
+    place(&mut doc, at, rect, "taken", &Kind::Text.into()).expect("free");
+}

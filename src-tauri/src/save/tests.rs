@@ -3963,6 +3963,350 @@ fn lopdf_still_leaves_such_an_object_out_of_an_update_without_an_error() {
     assert!(written_whole(&incremental).is_ok());
 }
 
+/// A two-page document whose comment, on the second page, has no `/Type`
+/// and carries a key called `key`.
+fn two_pages_with_a_keyed_comment(key: &str) -> (Vec<u8>, lopdf::ObjectId) {
+    let mut document = Document::with_version("1.7");
+    let pages_id = document.new_object_id();
+    let mut comment = dictionary! {
+        "Subtype" => "Text",
+        "Rect" => vec![10.into(), 10.into(), 30.into(), 30.into()],
+        "Contents" => Object::string_literal("SYNTHETIC COMMENT"),
+        "M" => Object::string_literal("D:20260101000000Z"),
+    };
+    comment.set(key, Object::Integer(1));
+    let annot = document.add_object(comment);
+    let page = |document: &mut Document, annots: Vec<Object>| {
+        document.add_object(dictionary! {
+            "Type" => "Page",
+            "Parent" => pages_id,
+            "MediaBox" => vec![0.into(), 0.into(), 595.into(), 842.into()],
+            "Annots" => annots,
+        })
+    };
+    let first = page(&mut document, Vec::new());
+    let second = page(&mut document, vec![annot.into()]);
+    document.objects.insert(
+        pages_id,
+        Object::Dictionary(dictionary! {
+            "Type" => "Pages",
+            "Kids" => vec![first.into(), second.into()],
+            "Count" => 2,
+        }),
+    );
+    let catalog = document.add_object(dictionary! {
+        "Type" => "Catalog",
+        "Pages" => pages_id,
+    });
+    document.trailer.set("Root", catalog);
+    let mut bytes = Vec::new();
+    document.save_to(&mut bytes).expect("the fixture must save");
+    (bytes, annot)
+}
+
+/// A plan for a two-page document that keeps its second page alone.
+fn second_page_alone() -> Plan {
+    let mut plan = plan_of(&[0, 0]);
+    plan.pages.remove(0);
+    assert!(!plan.is_appendable(), "a dropped page is a rewrite");
+    plan
+}
+
+/// The bodies of the comments a document's pages name, read through each
+/// page's `/Annots`: `None` for one that names an object the file lacks.
+fn comment_bodies(doc: &Document) -> Vec<Option<Vec<u8>>> {
+    doc.get_pages()
+        .values()
+        .flat_map(|page| {
+            doc.get_dictionary(*page)
+                .and_then(|page| page.get(b"Annots"))
+                .and_then(Object::as_array)
+                .cloned()
+                .unwrap_or_default()
+        })
+        .map(|named| {
+            let id = named.as_reference().ok()?;
+            let body = doc.get_dictionary(id).ok()?.get(b"Contents").ok()?;
+            body.as_str().ok().map(<[u8]>::to_vec)
+        })
+        .collect()
+}
+
+const LAYOUT_REFUSAL: &str = "as part of the file's layout (/Linearized)";
+
+/// The premise of [`reached_whole`], by experiment: `lopdf`'s full writer at
+/// this pin writes a copy without the comment, says nothing, and leaves the
+/// page naming it. **When this fails the library has changed**: read
+/// `save_internal` and `save_with_object_streams` again; `reached_whole` and
+/// this go together.
+#[test]
+fn lopdf_still_leaves_such_an_object_out_of_a_whole_copy_without_an_error() {
+    let (bytes, annot) = two_pages_with_a_keyed_comment("Xinearized");
+    let mut document = Document::load_mem(&marked_left_out(bytes)).expect("parses");
+    assert!(
+        reached_whole(&document, false).is_err(),
+        "the guard sees it"
+    );
+    let mut copy = Vec::new();
+    document.save_to(&mut copy).expect("no error");
+    let after = Document::load_mem(&copy).expect("parses");
+    assert!(after.get_object(annot).is_err(), "the comment is not in it");
+    assert_eq!(
+        comment_bodies(&after),
+        [None],
+        "and its page names it still"
+    );
+
+    // The writer with object streams keeps that comment, and is not refused
+    // it.
+    let packed = |document: &mut Document| {
+        let mut packed = Vec::new();
+        document
+            .save_with_options(
+                &mut packed,
+                lopdf::SaveOptions {
+                    use_object_streams: true,
+                    use_xref_streams: true,
+                    ..Default::default()
+                },
+            )
+            .expect("no error");
+        Document::load_mem(&packed).expect("parses")
+    };
+    reached_whole(&document, true).expect("written whole");
+    assert_eq!(
+        comment_bodies(&packed(&mut document)),
+        [Some(b"SYNTHETIC COMMENT".to_vec())]
+    );
+    // What it leaves out is a stream that calls itself an object stream:
+    // here, what the second page draws.
+    let mut drawn = document.clone();
+    let stream = lopdf::Stream::new(dictionary! { "Type" => "ObjStm" }, b"q Q".to_vec());
+    let stream = drawn.add_object(stream);
+    let page = crate::pagetree::ordered_pages(&drawn)[1];
+    drawn
+        .get_dictionary_mut(page)
+        .expect("a page")
+        .set("Contents", stream);
+    let why = reached_whole(&drawn, true).expect_err("the guard sees it");
+    assert!(why.contains("(/ObjStm)"), "{why}");
+    assert!(packed(&mut drawn).get_object(stream).is_err());
+    // And a dictionary of that type, which it writes.
+    drawn
+        .objects
+        .insert(stream, dictionary! { "Type" => "ObjStm" }.into());
+    reached_whole(&drawn, true).expect("written whole");
+    assert!(reached_whole(&drawn, false).is_err());
+    assert!(packed(&mut drawn).get_object(stream).is_ok());
+
+    // A dictionary that says what it is is written whatever else it holds,
+    // and is not refused.
+    document
+        .get_dictionary_mut(annot)
+        .expect("the comment")
+        .set("Type", "Annot");
+    reached_whole(&document, false).expect("typed");
+    let mut copy = Vec::new();
+    document.save_to(&mut copy).expect("no error");
+    assert_eq!(
+        comment_bodies(&Document::load_mem(&copy).expect("parses")),
+        [Some(b"SYNTHETIC COMMENT".to_vec())]
+    );
+}
+
+/// An object nothing reaches is the file's to describe as it likes: it holds
+/// nothing a copy could lose, and a real linearization dictionary is exactly
+/// that.
+#[test]
+fn an_object_of_such_a_type_that_nothing_reaches_is_not_a_refusal() {
+    let (bytes, annot) = two_pages_with_a_keyed_comment("Xinearized");
+    let mut document = Document::load_mem(&marked_left_out(bytes)).expect("parses");
+    assert!(reached_whole(&document, false).is_err(), "reached: refused");
+    for page in crate::pagetree::ordered_pages(&document) {
+        document
+            .get_dictionary_mut(page)
+            .expect("a page")
+            .remove(b"Annots");
+    }
+    assert!(
+        document.get_object(annot).is_ok(),
+        "the object is still held"
+    );
+    reached_whole(&document, false).expect("unreached: written without it, rightly");
+}
+
+/// The full rewrite: a document that marks a comment as part of the file's
+/// layout lost the comment in the copy, with no error, and the page went on
+/// naming it. A smaller copy is written by the writer that keeps such a
+/// comment, and is refused only when it is also encrypted, which `lopdf`
+/// writes with the plain writer.
+#[test]
+fn a_copy_the_writer_would_leave_a_comment_out_of_is_a_refusal_and_not_a_copy_without_it() {
+    const PASSWORD: &str = "tr0ub4dor";
+    let (original, _) = two_pages_with_a_keyed_comment("Xinearized");
+    let marked = marked_left_out(original.clone());
+    let smaller = |protection: Protection| {
+        let mut plan = second_page_alone();
+        plan.compress = crate::compress::Compress::Lossless;
+        plan.protection = protection;
+        plan
+    };
+    let comments = |copy: &[u8], password: Option<&str>| {
+        comment_bodies(&crate::encoding::load(copy, password).expect("parses"))
+    };
+    let whole = [Some(b"SYNTHETIC COMMENT".to_vec())];
+    for (plan, password) in [
+        (second_page_alone(), None),
+        (plan_of(&[1, 0]), None),
+        (smaller(Protection::Set(PASSWORD.into())), Some(PASSWORD)),
+    ] {
+        let why = rewrite_update(&marked, &plan, Job::Save, None)
+            .expect_err("a copy was written")
+            .message;
+        assert!(
+            why.contains(LAYOUT_REFUSAL) && why.contains("tpdf does not write one"),
+            "{why}"
+        );
+        // The control: the same comment with the key under any other name is
+        // in the copy.
+        let copy = rewrite_update(&original, &plan, Job::Save, None).expect("a copy");
+        assert_eq!(comments(&copy, password), whole);
+    }
+    // A smaller copy that is not encrypted has the comment, key and all.
+    let copy = rewrite_update(&marked, &smaller(Protection::Keep), Job::Save, None)
+        .expect("a smaller copy");
+    assert_eq!(comments(&copy, None), whole);
+}
+
+/// The merge writes through the same function, and is refused the same way.
+#[test]
+fn a_merge_the_writer_would_leave_a_comment_out_of_is_a_refusal() {
+    let scratch = Scratch::new("merge-left-out");
+    let (original, _) = two_pages_with_a_keyed_comment("Xinearized");
+    let (other, _) = document_with_a_comment_on_the_second_page();
+    let incoming = scratch.join("other.pdf");
+    std::fs::write(&incoming, &other).expect("plant the other document");
+    let (whole, each) = concatenated(&[incoming]).expect("read");
+    let inputs = Inputs {
+        whole: &whole,
+        each: &each,
+    };
+    let plan = plan_of(&[0, 0]);
+    let why = merge_update(&marked_left_out(original.clone()), &plan, inputs, None)
+        .expect_err("a merged document was written")
+        .message;
+    assert!(why.contains(LAYOUT_REFUSAL), "{why}");
+    // The control.
+    let (merged, pages) = merge_update(&original, &plan, inputs, None).expect("merged");
+    assert_eq!(pages, 4);
+    assert_eq!(
+        comment_bodies(&Document::load_mem(&merged).expect("parses")),
+        [
+            Some(b"SYNTHETIC COMMENT".to_vec()),
+            Some(b"before".to_vec())
+        ]
+    );
+}
+
+/// A print job of some pages is a whole copy too. The estimate of a smaller
+/// copy is written with object streams and not encrypted, and has the comment.
+#[test]
+fn a_print_job_that_would_lose_a_comment_is_a_refusal_and_an_estimate_has_it() {
+    use crate::print::{build_update, Job as PrintJob, PagePlan, Pages};
+    let (original, _) = two_pages_with_a_keyed_comment("Xinearized");
+    let marked = marked_left_out(original.clone());
+    let job = PrintJob {
+        pages: Pages::Only(vec![PagePlan {
+            number: 2,
+            turns: 0,
+        }]),
+        turns: 0,
+    };
+    let why = build_update(&marked, &job).expect_err("a job was built");
+    assert!(why.contains(LAYOUT_REFUSAL), "{why}");
+    let whole = [Some(b"SYNTHETIC COMMENT".to_vec())];
+    let printed = build_update(&original, &job).expect("a job");
+    assert_eq!(
+        comment_bodies(&Document::load_mem(&printed).expect("parses")),
+        whole
+    );
+
+    for bytes in [&marked, &original] {
+        let document = Document::load_mem(bytes).expect("parses");
+        let made = crate::compress::estimate(&document, crate::compress::Compress::Lossless)
+            .expect("an estimate");
+        assert_eq!(
+            comment_bodies(&Document::load_mem(&made.bytes).expect("parses")),
+            whole
+        );
+    }
+}
+
+/// `qpdf --linearize` of a synthetic two-page document with one comment on
+/// its second page (qpdf 12.4.0, `--deterministic-id`).
+const LINEARIZED: &[u8] = include_bytes!("fixtures/linearized.pdf");
+
+/// The same document through `qpdf --object-streams=generate`: object streams
+/// and a cross-reference stream.
+const OBJECT_STREAMS: &[u8] = include_bytes!("fixtures/object-streams.pdf");
+
+/// The types `lopdf` holds for a document after loading it that its writers
+/// leave out.
+fn layout_types(doc: &Document) -> Vec<String> {
+    let mut found: Vec<String> = doc
+        .objects
+        .values()
+        .filter_map(|object| object.type_name().ok())
+        .filter(|kind| [&b"ObjStm"[..], b"XRef", b"Linearized"].contains(kind))
+        .map(|kind| String::from_utf8_lossy(kind).into_owned())
+        .collect();
+    found.sort();
+    found.dedup();
+    found
+}
+
+/// The other side of [`reached_whole`]: a real linearization dictionary and
+/// real object and cross-reference streams are left out of a copy **rightly**,
+/// and a rule that refused every object of those types would refuse every
+/// modern document. With a sweep and without one, plain and with object
+/// streams.
+#[test]
+fn a_linearized_document_and_one_with_object_streams_are_still_rewritten_whole() {
+    // The premise, or the rewrites below say nothing: `lopdf` holds objects
+    // of these types for both files, so the guard has something to pass over.
+    let load = |bytes: &[u8]| Document::load_mem(bytes).expect("parses");
+    assert_eq!(layout_types(&load(LINEARIZED)), ["Linearized"]);
+    assert_eq!(layout_types(&load(OBJECT_STREAMS)), ["ObjStm", "XRef"]);
+
+    let smaller = || {
+        let mut plan = plan_of(&[0, 0]);
+        plan.compress = crate::compress::Compress::Lossless;
+        plan
+    };
+    for original in [LINEARIZED, OBJECT_STREAMS] {
+        for (plan, pages) in [
+            (plan_of(&[0, 1]), 2),
+            (second_page_alone(), 1),
+            (smaller(), 2),
+        ] {
+            let copy = rewrite_update(original, &plan, Job::Save, None).expect("a copy");
+            let after = load(&copy);
+            assert_eq!(after.get_pages().len(), pages);
+            assert_eq!(
+                comment_bodies(&after),
+                [Some(b"SYNTHETIC COMMENT".to_vec())]
+            );
+            // And a plain copy does not hold the old file's linearization
+            // dictionary. The writer with object streams keeps it, in an
+            // object stream and named by nothing: `qpdf --check` reads that
+            // copy as not linearized and without errors (2026-10-09).
+            if plan.compress == crate::compress::Compress::No {
+                assert!(!layout_types(&after).contains(&"Linearized".to_owned()));
+            }
+        }
+    }
+}
+
 /// A two-page document with one annotation, on the second page.
 ///
 /// Two pages so that a plan keeping one of them is **not** an append, which

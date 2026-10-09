@@ -5,14 +5,15 @@
  * viewer and the panels, and fills the component's variables. What it has to
  * *decide* on the way is here, where a test can call it: which page sizes the
  * viewer starts from, where the reader is put back, what a document shown
- * twice shares, which side the view goes on, and what a failed open says,
+ * twice shares, which tab it is kept in, which side the view goes on, and what a failed open says,
  * takes with it and still says once another tab is shown. The component keeps the order and the wiring.
  *
  * Nothing here waits, and nothing here reads the component's variables.
  */
 
 import { isOpenRefusal, type DocumentInfo, type PageSize } from "./ipc";
-import { twinsOf, type DocumentTab, type FreshState } from "./documenttabs";
+import { freshState, twinsOf, type DocumentTab, type FreshState, type KeptScope } from "./documenttabs";
+import type { Edits } from "./edits";
 import { clampPlace, type Place } from "./session";
 
 /**
@@ -79,9 +80,45 @@ export function placeToResume(
  *
  * They are views of the file as it is now: the new handle, and the model
  * built for it.
+ *
+ * **A search each had confined to a selection is not kept.** The scope is
+ * held with the ids of the pages it was taken on (`KeptScope`), and page ids
+ * start again with every model: a file read again with as many pages has the
+ * same ids in the same order, so `scopeToRestore` would put the ranges back
+ * onto whatever text is there now. Nothing says the file holds what it held,
+ * so a new model drops the scope and the search runs over the whole document.
+ * The words and how they are matched stay.
  */
-export function repoint<D, E>(twins: readonly { doc: D; edits: E }[], doc: D, edits: E): void {
-  for (const twin of twins) { twin.doc = doc; twin.edits = edits; }
+export function repoint<D, E>(
+  twins: readonly { doc: D; edits: E; searchScope: KeptScope | null }[],
+  doc: D,
+  edits: E,
+): void {
+  for (const twin of twins) {
+    twin.doc = doc;
+    twin.edits = edits;
+    twin.searchScope = null;
+  }
+}
+
+/**
+ * The tab an open keeps its document in: the one being returned to, as it
+ * is, or a new one around the model just built.
+ *
+ * A save or a reload opens the file again in the place of `from.replacing`,
+ * and nothing that tab kept is carried into the new one: its marks' words,
+ * its messages and its search were about a model that has gone. For the
+ * search's scope that is {@link repoint}'s reason. A tab returned to has the
+ * model it had, and keeps everything.
+ */
+export function tabToKeep(
+  view: DocumentTab["view"],
+  doc: DocumentInfo,
+  path: string,
+  edits: Edits,
+  from: OpenFound,
+): DocumentTab {
+  return from.retained ?? { view, doc, path, edits, place: from.resume, ...freshState() };
 }
 
 /**

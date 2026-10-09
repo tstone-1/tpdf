@@ -427,37 +427,20 @@ pub fn name_problem(name: &str) -> Option<String> {
     None
 }
 
-/// The names the form's top-level fields have, which a new one must not repeat.
+/// The names a new field must not repeat: every full name of one part the
+/// form has, which is more than its top-level fields' ---
+/// [`crate::fields::one_part_names`] says why.
 ///
 /// Read through the catalog, so a form written into it directly is seen as
 /// well as one that is an object of its own.
-fn taken(doc: &Document) -> HashSet<String> {
-    let mut names = HashSet::new();
-    let Some(fields) = doc
-        .catalog()
-        .ok()
-        .and_then(|catalog| catalog.get(b"AcroForm").ok())
-        .and_then(|o| doc.dereference(o).ok())
-        .and_then(|(_, o)| o.as_dict().ok())
-        .and_then(|form| form.get(b"Fields").ok())
-        .and_then(|o| doc.dereference(o).ok())
-        .and_then(|(_, o)| o.as_array().ok())
-    else {
-        return names;
-    };
-    for field in fields {
-        let name = doc
-            .dereference(field)
-            .ok()
-            .and_then(|(_, o)| o.as_dict().ok())
-            .and_then(|d| d.get(b"T").ok())
-            .and_then(|t| t.as_str().ok())
-            .map(crate::annots::decode_text_string);
-        if let Some(name) = name {
-            names.insert(name);
-        }
-    }
-    names
+///
+/// # Errors
+///
+/// A form past the bounds of that walk. Both callers have had
+/// [`forms::scan`] read the form first, which refuses every such form, so
+/// this is not reached from either.
+fn taken(doc: &Document) -> Result<HashSet<String>, String> {
+    crate::fields::one_part_names(doc)
 }
 
 /// A field's rectangle in the page's own space, or why it cannot be placed.
@@ -523,7 +506,10 @@ pub fn check(
         return Err(vec![why]);
     }
     let pages = crate::pagetree::ordered_pages(doc);
-    let existing = taken(doc);
+    let existing = match taken(doc) {
+        Ok(existing) => existing,
+        Err(why) => return Err(vec![why]),
+    };
     let mut seen: std::collections::HashMap<&str, Kind> = std::collections::HashMap::new();
     let mut values: HashSet<(&str, Vec<u8>)> = HashSet::new();
     let mut placed_at = Vec::new();
@@ -1131,7 +1117,7 @@ pub fn place(
     }
     // A radio button joins the group of its name; anything else needs a
     // name the form does not have.
-    if taken(doc).contains(name) && !(kind == Kind::Radio && radio_group(doc, name).is_some()) {
+    if taken(doc)?.contains(name) && !(kind == Kind::Radio && radio_group(doc, name).is_some()) {
         return Err(format!(
             "`{name}`: the form already has a field of this name"
         ));

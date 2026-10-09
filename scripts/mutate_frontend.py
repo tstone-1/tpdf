@@ -662,7 +662,7 @@ MUTATIONS = [
     Mutation("open: the caller's place wins over the tab's own", "src/lib/documentopen.ts", "  const remembered = kept ?? override ?? places.find", "  const remembered = override ?? kept ?? places.find", "is the tab's own place before the caller's, and the caller's before the snapshot"),
     Mutation("open: resume at the snapshot's first place whatever the path", "src/lib/documentopen.ts", "places.find((place) => place.path === path);", "places[0];", "is the snapshot's place for this path and no other's"),
     Mutation("open: resume past the end of a document that got shorter", "src/lib/documentopen.ts", "  return remembered ? clampPlace(remembered, pageCount) : null;", "  return remembered ?? null;", "is fitted to the pages the document has now"),
-    Mutation("open: leave the other views on the old model", "src/lib/documentopen.ts", "  for (const twin of twins) { twin.doc = doc; twin.edits = edits; }", "  for (const twin of twins) { twin.doc = doc; }", "are pointed at the new handle and the new model, every one of them"),
+    Mutation("open: leave the other views on the old model", "src/lib/documentopen.ts", "    twin.edits = edits;\n", "", "are pointed at the new handle and the new model, every one of them"),
     Mutation("open: take the first twin's answer though it has none", "src/lib/documentopen.ts", "  return twinsOf(tabs, tab).map(read).find((held) => held !== undefined);", "  return twinsOf(tabs, tab).map(read)[0];", "is what the first twin that answers holds, and never the view's own"),
     Mutation("open: share with every tab and not only the document's views", "src/lib/documentopen.ts", "  return twinsOf(tabs, tab).map(read).find((held) => held !== undefined);", "  return tabs.map(read).find((held) => held !== undefined);", "is nothing when no twin is mounted, when there is no twin and when there is no tab"),
     Mutation("open: move a tab returned to into the reader's side", "src/lib/documentopen.ts", "  if (returning || replacing !== undefined) panes.fronted(view);\n  else panes.opened(view);", "  panes.opened(view);", "is the side it is already on for a tab returned to, in front and with the reader"),
@@ -674,6 +674,12 @@ MUTATIONS = [
     Mutation("open: show a refusal as an object and not its sentence", "src/lib/documentopen.ts", "  return isOpenRefusal(why) ? why.reason : String(why);", "  return String(why);", "is the refusal's own sentence, and anything else as it is"),
     Mutation("open wiring: build the page table round the module", "src/App.svelte", "      const pages = pageTable(doc);", "      const pages = doc.pages as [PageSize, ...PageSize[]];", "asks this module for each decision, in the function that needs it"),
     Mutation("open wiring: word a failure round the module", "src/App.svelte", "      const said = openFailure(e, resuming);", "      const said = String(e);", "asks this module for each decision, in the function that needs it"),
+    # Page ids start again with a model, so a search confined to a selection
+    # is not carried onto a model a save or a reload built.
+    Mutation("open: the other views keep a search's scope on the new model", "src/lib/documentopen.ts", "    twin.searchScope = null;\n", "", "is gone from the document's other views too, and their words stay"),
+    Mutation("open: the new tab takes what the tab it replaces kept", "src/lib/documentopen.ts", "  return from.retained ?? { view, doc, path, edits, place: from.resume, ...freshState() };", "  return from.retained ?? { view, doc, path, edits, place: from.resume, ...freshState(), searchScope: from.replacing?.searchScope ?? null };", "is gone from the tab a save or a reload opens the file again in"),
+    Mutation("open: a tab returned to is kept as a new one", "src/lib/documentopen.ts", "  return from.retained ?? { view, doc, path, edits, place: from.resume, ...freshState() };", "  return { view, doc, path, edits, place: from.resume, ...freshState() };", "stays with a tab the reader switched away from and came back to, on the model it had"),
+    Mutation("open wiring: build the tab round the module", "src/App.svelte", "    tabs.keep(tabToKeep(view, doc, path, model, from), replacing?.view);", "    tabs.keep(retained ?? { view, doc, path, edits: model, place: from.resume, ...freshState() }, replacing?.view);", "asks this module for each decision, in the function that needs it"),
     Mutation("open wiring: the other views keep the handle that went", "src/App.svelte", "    repoint(twins, doc, model);\n", "", "asks this module for each decision, in the function that needs it"),
     Mutation("open wiring: a second view keeps a list of its own", "src/App.svelte", "    if (shared) covered = shared;\n", "", "asks this module for each decision, in the function that needs it"),
     Mutation("open wiring: a document that would not open keeps its tab", "src/App.svelte", "      { own: acquired >= 0 ? viewOf(acquired) : undefined, replaced, twins }, refreshTabs);", "      { own: undefined, replaced, twins }, refreshTabs);", "asks this module for each decision, in the function that needs it"),
@@ -830,6 +836,19 @@ MUTATIONS = [
     Mutation("redactlist: say nothing of unmeasured text", "src/lib/redactlist.ts", "    ...(unmeasured ? [UNMEASURED_TEXT_WARNING] : []),", "", "says it after the kinds a reader can name, each in its own sentence"),
     Mutation("redactlist: say the unmeasured text before the kinds", "src/lib/redactlist.ts", "  ].join(\". \");", "  ].reverse().join(\". \");", "says it after the kinds a reader can name, each in its own sentence"),
     Mutation("redactlist: spell the kind another way than the backend", "src/lib/redactlist.ts", "export const UNMEASURED_TEXT = \"unmeasured-text\";", "export const UNMEASURED_TEXT = \"unmeasured\";", "knows the kind by the backend's spelling of it"),
+    # Every kind a removal leaves has words in `UNHANDLED_KINDS`, held equal
+    # to the kinds the two Rust files define; one the table does not hold is
+    # said without its name.
+    Mutation("redactlist: have no words for a drawing that sets the clip", "src/lib/redactlist.ts", "  [\n    \"clip-path\",\n    \"a drawing that also limits where the things after it are drawn\",\n    \"drawings that also limit where the things after them are drawn\",\n  ],\n", "", "has words for every kind the backend can report, and for no other"),
+    Mutation("redactlist: have words for a kind the backend does not report", "src/lib/redactlist.ts", "  [\"shading\", \"a colour gradient\", \"colour gradients\"],", "  [\"shading\", \"a colour gradient\", \"colour gradients\"],\n  [\"text\", \"some text\", \"texts\"],", "has words for every kind the backend can report, and for no other"),
+    Mutation("redactlist: spell a kind another way than the backend", "src/lib/redactlist.ts", "  [\"unsupported\", \"something of a kind", "  [\"unknown\", \"something of a kind", "has words for every kind the backend can report, and for no other"),
+    Mutation("redactlist: say one drawing that sets the clip for several", "src/lib/redactlist.ts", "      const what = many === 1 ? one : `${many} ${several}`;", "      const what = one;", "says each kind in words a reader has, one and several"),
+    Mutation("redactlist: call a colour gradient by the backend's word", "src/lib/redactlist.ts", "  [\"shading\", \"a colour gradient\", \"colour gradients\"],", "  [\"shading\", \"a shading\", \"shadings\"],", "never prints a kind as the backend spells it"),
+    Mutation("redactlist: print the name of a kind it has no words for", "src/lib/redactlist.ts", "export const UNKNOWN_KIND: readonly [kind: string, one: string, several: string] = [\n  \"\",\n  \"something else\",", "export const UNKNOWN_KIND: readonly [kind: string, one: string, several: string] = [\n  \"\",\n  \"a soft-mask\",", "says something is there when the kind is one it has never heard of"),
+    Mutation("redactlist: say nothing of a kind it has no words for", "src/lib/redactlist.ts", "    const place = known < 0 ? UNHANDLED_KINDS.length : known;", "    if (known < 0) continue;\n    const place = known;", "says something is there when the kind is one it has never heard of"),
+    Mutation("redactlist: say a kind it has no words for before the ones it has", "src/lib/redactlist.ts", "    const place = known < 0 ? UNHANDLED_KINDS.length : known;", "    const place = known;", "says something is there when the kind is one it has never heard of"),
+    Mutation("redactlist: leave out how often a reusable block is drawn", "src/lib/redactlist.ts", "      return drawn > 0 ? `${what} drawn ${drawn} times` : what;", "      return what;", "says a reusable block stays because the document repeats it"),
+    Mutation("redactlist: say one kind's rows in the order the page lists them", "src/lib/redactlist.ts", "    .sort((a, b) => a.place - b.place || a.drawn - b.drawn)", "    .sort((a, b) => a.place - b.place)", "says a reusable block stays because the document repeats it"),
     Mutation("redactlist: cut a warning at the row's edge with no way to read the rest", "src/lib/redactlist.ts", "      said.title = warning;\n", "", "draws the warning under the words, and nothing when there is none"),
     Mutation(
         "toolbar: ignore command enablement",
@@ -5791,8 +5810,8 @@ MUTATIONS += [
         # tell three findings from one printed thrice.
         "redactlist: repeat a kind rather than counting it",
         "src/lib/redactlist.ts",
-        "    kinds.set(said, (kinds.get(said) ?? 0) + 1);",
-        "    kinds.set(`${said}${object.at}`, 1);",
+        "    const key = `${place} ${drawn}`;",
+        "    const key = `${place} ${drawn} ${object.at}`;",
         "counts objects of a kind rather than repeating the sentence",
     ),
     Mutation(
@@ -5803,8 +5822,8 @@ MUTATIONS += [
         # finding, so nothing else in the panel can tell.
         "redactlist: drop the repeat count from what a warning says",
         "src/lib/redactlist.ts",
-        '    const said = object.drawn\n      ? `${object.kind} drawn ${object.drawn} times`\n      : object.kind;',
-        "    const said = object.kind;",
+        "    const drawn = object.drawn ?? 0;",
+        "    const drawn = 0;",
         "says a picture stays because the document repeats it",
     ),
     Mutation(
@@ -5813,8 +5832,8 @@ MUTATIONS += [
         # the row saying it is the row a reader is deciding on.
         "redactlist: pluralise the phrase rather than the kind in it",
         "src/lib/redactlist.ts",
-        '        : `${many} ${kind.replace(/^(\\S+)/, "$1s")}`,',
-        "        : `${many} ${kind}s`,",
+        "      const what = many === 1 ? one : `${many} ${several}`;\n      return drawn > 0 ? `${what} drawn ${drawn} times` : what;",
+        "      const what = drawn > 0 ? `${one} drawn ${drawn} times` : one;\n      return many === 1 ? what : `${many} ${what}s`;",
         "pluralises the kind rather than the count in the phrase",
     ),
     Mutation(
@@ -5822,7 +5841,7 @@ MUTATIONS += [
         # the same two kinds read differently depending on the file.
         "redactlist: list the kinds in the order the file happened to draw them",
         "src/lib/redactlist.ts",
-        "    .sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))",
+        "    .sort((a, b) => a.place - b.place || a.drawn - b.drawn)",
         "    .sort(() => 0)",
         "names every kind, in an order that does not depend on the file",
     ),

@@ -54,8 +54,11 @@ have the binary.)
 
 ### Changed
 
-- A region that covers text a removal cannot measure says so in plain words, and the
-  second line of a row in the redaction list shows its full text on hover.
+- The redaction list says in plain words what a region covers and a removal leaves: a
+  drawing that also limits where later things are drawn, a drawing tpdf could not find in
+  the page's content, a colour gradient, a reusable block of content, text it cannot
+  measure. It printed internal names such as "a clip-path". The second line of a row
+  shows its full text on hover.
 
 ### Fixed
 
@@ -114,9 +117,15 @@ have the binary.)
   `tpdf sign` ended with exit code 4. The window now says the signature was intact when
   checked before writing and was not checked again, and `tpdf sign` ends with exit code 1.
   `--long-term` on such a document is refused with exit code 3 and that reason.
-- **Signing, or changing a comment, refuses a document it would otherwise write
-  incompletely.** A document that puts a `/Linearized` key on its form, on a field or on
-  a comment made the saved revision leave that object out without an error.
+- **A document that marks one of its own objects as part of the file's layout is refused
+  where a copy would lose that object.** A `/Linearized` key on a comment, a field or the
+  form made tpdf write the saved revision, a rewritten copy, a merge, a print selection or
+  the preview of a text edit without that object, with no error, and the page or form went
+  on naming it. Linearized documents and documents with object streams are copied as
+  before.
+- A new signature field, or a field added to a form, could be given the name of a field
+  that sits under a group with no name. Signing a document whose form is larger or nested
+  deeper than tpdf reads is refused instead of being given a guessed field name.
 - Choosing to retry a signature with long-term data and no timestamp authority no longer
   discards the signature being held.
 - **A search confined to a selection stayed confined after pages were deleted or moved**,

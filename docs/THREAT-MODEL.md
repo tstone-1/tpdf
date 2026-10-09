@@ -3421,10 +3421,15 @@ last: when the budget runs out first, the signature is reported as written and n
 again (`ReadBack::Unchecked`, exit code 1), and the only check of it is the seal's, made
 over the bytes before they were written; long-term data is refused for such a document.
 And an update is refused when an object it rewrites would be left out by `lopdf`'s
-incremental writer (`save::written_whole`). **Not covered:** the full rewrite, whose writer
-has the same filter. A reachable dictionary with no `/Type` and a `/Linearized` key is
-dropped there without an error (measured 2026-10-09), so a hostile document can lose an
-annotation in a rewrite and leave the page's `/Annots` pointing at nothing. **Also not
+incremental writer (`save::written_whole`). The full rewrite has the same filter and is covered by
+`save::reached_whole`: an object the writer about to run would leave out, and that the
+trailer still reaches, is a refusal, in every path through `save::serialise` and in the
+preview of a text edit; a linearization dictionary and object and cross-reference streams
+that nothing reaches are left out as before. The two writers differ, and the rule follows
+each: the plain one leaves out by type name, the one with object streams only a stream
+typed `ObjStm`. **Not covered:** the writer with object streams keeps an unreferenced
+linearization dictionary of the old file in a smaller copy (`qpdf` reads the copy as not
+linearized). **Also not
 covered:** a signature field's `/Lock` and `/SV` are not read; signing such a field sets
 the signature and locks nothing.
 

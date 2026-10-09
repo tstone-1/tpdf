@@ -26311,9 +26311,13 @@ nothing, and no error (2026-10-09). `save::written_whole` now refuses an update 
 lose an object, before the incremental save in signing, in the validation data and in the
 ordinary append; a test pins the library's behaviour so a new version is noticed.
 
-The full rewrite has the same filter and is not covered: there a real linearization
-dictionary and real object streams are dropped rightly, so the check has to be "reachable
-and would be dropped". Measured: the annotation goes and the page's `/Annots` dangles.
+The full rewrite has the same filter. `save::reached_whole` refuses an object the writer
+would leave out and the trailer still reaches, so a real linearization dictionary and real
+object streams, which nothing reaches after loading, are dropped as before. lopdf's two
+full writers do not leave out the same objects: the plain one goes by type name, the one
+with object streams drops only a stream typed `ObjStm` and hands an encrypted document to
+the plain one. One rule for both refused smaller copies that are written whole; the
+measurement per path showed it, not the reading.
 
 ### A name is not an identity for the thing that was just written
 

@@ -601,7 +601,11 @@ measured the Windows render constants come out 1.5–1.8x worse.
   which characters an instruction draws — text written right to left or down the page, a
   font whose codes it cannot count, a letter the engine gives no outline for — the whole
   instruction goes, which is often the whole line, and the panel shows that before anything
-  is written. Text inside a reusable block also still goes by the whole instruction. On a
+  is written. When an instruction goes whole, the text after it on the line stays where it
+  was. Where its width cannot be measured and more text follows it directly, it is left
+  and the panel says so. Text inside a reusable block also still goes by the whole
+  instruction, and there text that follows directly on the same line can move left by the
+  width of what went. On a
   document tagged for accessibility it takes the second copy
   of those words that the tag keeps beside them — both where it sits beside the words and
   where the document files it separately under the accessibility structure — and where that
