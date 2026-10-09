@@ -720,6 +720,7 @@ hop through the index.
 - Several processes' dyld lines share one stderr and interleave mid-line
 - Restoring a mutated source does not restore the binary built from it
 - Two readers each changed their reading of text that had only moved, and comparing whole readings blamed the edit
+- A press aimed with a rectangle measured from the viewer's corner missed its mark once the window grew a toolbar
 
 ## Windows and portability
 - The gates had never run on the platform where they fail
@@ -26076,3 +26077,27 @@ before pressing the update button in step 12.
 
 Not seen: the repaired restart on Windows. The function is tested without a disk, and the
 update that would show it needs a release after the one that carries the fix.
+
+### A press aimed with a rectangle measured from the viewer's corner missed its mark once the window grew a toolbar
+
+`mark_check.py` failed *a mark dragged across the page moves in the model* on every fixture,
+with the left edge unchanged, on the sources of 26.10.13 and of the commits after it.
+Dragging a mark worked. The check took the mark's rectangle from `Viewer.markAnchor`, which
+is measured from the viewer's own corner because the overlay is sampled in that space, and
+handed its centre to `drag`, which takes `clientX` and `clientY`. The two spaces differ by
+where the viewer starts in the window.
+
+The box the check draws is 90 CSS px tall, so the press lands inside it while the page
+area starts less than 45 px down the window. Where it started on 2026-08-22, when the check
+was written, was not measured; the window had no row of tabs then. On 2026-10-09 it started
+127 px down on `text-heavy.pdf` and 173 px down on `links.pdf`, the press landed above the
+box on bare page, and nothing moved. The check then skipped *and undo puts it
+back where it was*, so a shipped undo of a move was not being checked either.
+
+The check was right to go red: it asserts on the model, and the model had not moved. What
+was wrong is which press it made. Add the element's `getBoundingClientRect()` corner to
+anything read in the viewer's own space before it becomes a pointer event. A rectangle
+that is right for `getImageData` on the overlay is wrong for a press by exactly the
+height of what is above the page, and that height changes whenever the window's chrome
+does. Nobody read the red, because this harness needs a window and nothing runs it
+automatically.

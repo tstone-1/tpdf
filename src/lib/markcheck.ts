@@ -345,8 +345,18 @@ async function run(host: MarkCheckHost): Promise<void> {
 
       // --- Moving it, and undoing that ------------------------------------
       const home = [...mark.quads];
+      // The anchor is measured from the viewer's own corner, which is the space
+      // the overlay is sampled in above, and a press is given in the window's.
+      // The viewer's corner is added here. Until 2026-10-09 it was not, so the
+      // press landed above the box by the height of everything over the page:
+      // inside it while that was less than half the box, and outside it, moving
+      // nothing, once the toolbar and the row of tabs were there.
+      const corner = root.getBoundingClientRect();
       const centre = anchor
-        ? { x: (anchor.left + anchor.right) / 2, y: (anchor.top + anchor.bottom) / 2 }
+        ? {
+            x: corner.left + (anchor.left + anchor.right) / 2,
+            y: corner.top + (anchor.top + anchor.bottom) / 2,
+          }
         : mid;
       drag(root, centre, { x: centre.x - 60, y: centre.y - 40 });
 
@@ -358,7 +368,9 @@ async function run(host: MarkCheckHost): Promise<void> {
       check(
         "a mark dragged across the page moves in the model",
         moved && now !== undefined,
-        now ? `left ${home[0]?.toFixed(1)} -> ${now.quads[0]?.toFixed(1)}` : "the mark is gone",
+        now
+          ? `left ${home[0]?.toFixed(1)} -> ${now.quads[0]?.toFixed(1)}; the page area starts ${corner.top.toFixed(0)} px down the window`
+          : "the mark is gone",
       );
 
       if (moved) {

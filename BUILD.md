@@ -5521,7 +5521,7 @@ Rust — and never the viewer that produced the gesture, which is what keeps it 
 writer agreeing with its own reader. The single exception is the ink reading, whose job is
 the last hop a model assertion cannot see.
 
-⚠ **The launch half has never run.** It was written on a machine whose screen was locked,
+⚠ **The launch half had never run when this was written.** It was written on a machine whose screen was locked,
 and `webview_guard` refuses rather than hanging — correctly, since a suspended WebKit page
 does not run the check slowly, it does not run it at all. So **this harness is in the state
 `docs/TRAPS.md` warns about: one that has never executed produces no failures, and neither
@@ -5537,6 +5537,13 @@ a name found by prefix rather than by column. Run the real thing on an unlocked 
 before trusting a green line from it, and prove it can go red the way every other harness
 here was proved: reintroduce the slot lookup in `Edits.mark`, rebuild, and confirm the
 page-identity check fails.
+
+It ran on 2026-10-09 against the checks build: 11/11 on `links.pdf` and on `text-heavy.pdf`.
+Before that day's correction it failed *a mark dragged across the page moves in the model*
+on both, and on the sources of 26.10.13: the press was aimed with a rectangle measured from
+the viewer's corner and landed above the box (`docs/TRAPS.md`, *A press aimed with a
+rectangle measured from the viewer's corner missed its mark once the window grew a
+toolbar*). The page-identity mutation above was not run that day.
 
 ### Checking session restore
 
