@@ -45,6 +45,9 @@ jobs:
     env:
       # ssign v0.1.7. A commit and not a tag: a tag can be moved.
       SSIGN_REV: 5fd4daf22155b19b645aef3dd467f3c4c9e440b3
+      # The SHA-256 of the `ssign.exe` this workflow built from that commit and
+      # saved, as the run printed it. See the same line in `release.yml`.
+      SSIGN_SHA256: ''
       SIGNER: Open Source Developer Timo Stein
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
@@ -71,14 +74,30 @@ jobs:
           CACHED: ${{ steps.ssign.outputs.cache-hit }}
         run: |
           $root = Join-Path $env:RUNNER_TEMP 'ssign-client'
-          if ($env:CACHED -eq 'true') {
-            Write-Output "ssign $env:SSIGN_REV restored from the cache"
-          } else {
+          $bin = Join-Path $root 'bin'
+          $exe = Join-Path $bin 'ssign.exe'
+          # A restored copy is used only when it is the build whose digest is
+          # recorded above. The key says which commit a cache claims to hold,
+          # and anything that runs in a job on main can save a cache under any
+          # key, so the key alone does not say what the file is.
+          $use = $false
+          if ($env:CACHED -eq 'true' -and (Test-Path $exe)) {
+            $digest = (Get-FileHash $exe -Algorithm SHA256).Hash.ToLower()
+            if ($env:SSIGN_SHA256 -and $digest -eq $env:SSIGN_SHA256) {
+              Write-Output "ssign $env:SSIGN_REV restored from the cache, digest as recorded"
+              $use = $true
+            } else {
+              Write-Output "::warning::the cached ssign.exe has digest $digest, which is not the recorded one; building from source"
+              Remove-Item $root -Recurse -Force
+            }
+          }
+          if (-not $use) {
             cargo install --locked --git https://github.com/Le-Syl21/ssign --rev $env:SSIGN_REV --root $root ssign
             if ($LASTEXITCODE -ne 0) { exit 1 }
+            $digest = (Get-FileHash $exe -Algorithm SHA256).Hash.ToLower()
+            Write-Output "ssign.exe built from $env:SSIGN_REV, sha256 $digest"
           }
-          $bin = Join-Path $root 'bin'
-          & (Join-Path $bin 'ssign.exe') --version
+          & $exe --version
           if ($LASTEXITCODE -ne 0) { Write-Output '::error::the signing client does not start'; exit 1 }
           # The wrapper release.yml gives to Tauri, found where ssign is found.
           Copy-Item (Join-Path $env:GITHUB_WORKSPACE 'scripts\sign-windows.cmd') $bin -Force

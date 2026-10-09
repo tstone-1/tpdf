@@ -26,10 +26,13 @@ import {
   rowLabel,
   Runs,
   sentences,
+  showPassage,
   UNSAVED,
+  type CheckHost,
   type HiddenText,
   type Passage,
 } from "./hiddentext";
+import { functionIn, missingFrom } from "./sourcetext";
 
 function passage(over: Partial<Passage> = {}): Passage {
   return { page: 3, text: "Jane Example", rect: [60, 100, 140, 112], characters: 11, offPage: false, ...over };
@@ -178,67 +181,140 @@ describe("which check Stop is for", () => {
   });
 });
 
-/**
- * The join in `App.svelte`, which no test imports: read as text, each part
- * within the function it belongs to, so a line that moved out of it is missed.
- */
-describe("the window's wiring", () => {
-  /** The source from `from` up to the end of the function it begins. */
-  function body(from: string): string {
-    const start = app.indexOf(from);
-    // The control: a name that is not there would give the whole file, in
-    // which anything can be found.
-    expect(start, from).toBeGreaterThan(-1);
-    const end = app.indexOf("\n  }\n", start);
-    expect(end, from).toBeGreaterThan(start);
-    return app.slice(start, end);
+describe("going to a passage", () => {
+  const shifted = (filePage: number) => (filePage === 0 ? undefined : filePage - 1);
+  const went = (which: Passage) => {
+    const log: unknown[] = [];
+    showPassage(which, shifted, {
+      ring: (slot, rect) => log.push(["ring", slot, rect]),
+      page: (slot) => log.push(["page", slot]),
+      gone: () => log.push(["gone"]),
+    });
+    return log;
+  };
+
+  it("rings a passage on its page, in the slot the page is shown in", () => {
+    expect(went(passage())).toEqual([["ring", 1, [60, 100, 140, 112]]]);
+  });
+
+  it("shows the page alone for words outside it", () => {
+    expect(went(passage({ offPage: true, rect: [-400, 500, -300, 512] }))).toEqual([["page", 1]]);
+  });
+
+  it("says so, and goes nowhere, once the page has been deleted", () => {
+    expect(went(passage({ page: 1 }))).toEqual([["gone"]]);
+  });
+});
+
+describe("one check, from its number to its answer", () => {
+  /** A host that records what it is asked, in order. */
+  function host(over: Partial<CheckHost> = {}) {
+    const log: string[] = [];
+    const answer = checked();
+    const made: CheckHost = {
+      begun: async () => { log.push("begun"); },
+      ask: async (run) => { log.push(`ask ${run}`); return answer; },
+      current: () => { log.push("current?"); return true; },
+      show: (shown) => { log.push(shown === answer ? "show" : "show another"); },
+      ...over,
+    };
+    return { log, made };
   }
 
-  it("sends the check with its run's number, and Stop names the same run", () => {
-    const check = body("async function findHiddenText(): Promise<void> {");
-    const numbered = check.indexOf("const run = hiddenRuns.start();");
-    const sent = check.indexOf('await call("hidden_text", { doc: asked.doc, run });');
-    expect(numbered).toBeGreaterThan(-1);
-    // Numbered before it is sent, so a Stop pressed in between names this run.
-    expect(sent).toBeGreaterThan(numbered);
-    expect(app).toContain('call("hidden_text_cancel", { run: hiddenRuns.number })');
-    expect(app).toContain("{#if findingHidden}<button");
+  it("is numbered before the window shows it has begun, and sent under that number", async () => {
+    const runs = new Runs();
+    runs.start();
+    runs.finish();
+    const stopped: number[] = [];
+    const { log, made } = host({
+      begun: async () => {
+        // Stop is on screen from here on: a press now names the run about to be sent.
+        expect(runs.running).toBe(true);
+        runs.stop((run) => stopped.push(run));
+      },
+    });
+    await runs.check(made);
+    expect(stopped).toEqual([2]);
+    expect(log).toEqual(["ask 2", "current?", "show"]);
+    expect(runs.running).toBe(false);
   });
 
-  it("puts the answer in the sidebar's tab and opens it, and ends the run whatever happened", () => {
-    const check = body("async function findHiddenText(): Promise<void> {");
-    const shown = check.indexOf("sidebar?.setHiddenText(checked);");
-    expect(shown).toBeGreaterThan(-1);
-    expect(check.indexOf('showTab("hidden");')).toBeGreaterThan(shown);
-    // With the ring of the result it replaces taken away.
-    expect(check.indexOf("viewer?.clearRegion();")).toBeGreaterThan(shown);
-    // Only for the document that was asked about.
-    expect(check.indexOf("if (edits !== asked) return;")).toBeGreaterThan(-1);
-    expect(check.indexOf("if (edits !== asked) return;")).toBeLessThan(shown);
-    const last = check.slice(check.indexOf("} finally {"));
-    expect(last).toContain("hiddenRuns.finish();");
-    expect(last).toContain("findingHidden = false;");
-    expect(last).toContain("blockingTask = null;");
+  it("drops an answer about a document that is no longer the one in the window", async () => {
+    const runs = new Runs();
+    const { log, made } = host({ current: () => false });
+    await runs.check(made);
+    expect(log).toEqual(["begun", "ask 1"]);
+    expect(runs.running).toBe(false);
   });
 
-  it("shows a page's line only through the guard", () => {
-    expect(app).toContain("await listen<HiddenProgress>(HIDDEN_PROGRESS_EVENT, (event) => {");
-    expect(app).toContain("blockingTask = hiddenRuns.line(event.payload) ?? blockingTask;");
+  it("ends the run when the check is refused, and passes the refusal on", async () => {
+    const runs = new Runs();
+    const { log, made } = host({ ask: async () => { throw new Error("stopped"); } });
+    await expect(runs.check(made)).rejects.toThrow("stopped");
+    expect(log).toEqual(["begun"]);
+    expect(runs.running).toBe(false);
+    // An event that lands after it leaves no line behind.
+    const lines: string[] = [];
+    runs.report({ page: 1, of: 2 }, (line) => lines.push(line));
+    expect(lines).toEqual([]);
   });
 
-  it("takes a pressed row to its page through the page map, and rings it", () => {
-    expect(app).toContain("hidden: { onPick: (passage) => showHidden(passage) },");
-    const show = body("function showHidden(passage: Passage): void {");
-    expect(show).toContain("placeOf(passage, (page) => edits?.map.slotOf(page))");
-    expect(show).toContain("say(PAGE_GONE);");
-    expect(show).toContain("viewer.showRegion(place.slot, place.rect);");
-    // Words outside the page: the page, and no ring left from the row before.
-    const outside = show.slice(show.indexOf("} else {"));
-    expect(outside).toContain("viewer.clearRegion();");
-    expect(outside).toContain("viewer.goToDestination(place.slot, null);");
+  it("hands a page's line on only while a check is running", async () => {
+    const runs = new Runs();
+    const lines: string[] = [];
+    const at = { page: 2, of: 5 };
+    const { made } = host({ begun: async () => runs.report(at, (line) => lines.push(line)) });
+    runs.report(at, (line) => lines.push(line));
+    await runs.check(made);
+    runs.report(at, (line) => lines.push(line));
+    expect(lines).toEqual([progressLine(at)]);
   });
 
-  it("takes the ring away when another tab is chosen", () => {
-    expect(app).toContain('if (tab !== "hidden") viewer?.clearRegion();');
+  it("stops the run begun last, also after it has ended", () => {
+    const runs = new Runs();
+    const stopped: number[] = [];
+    runs.start();
+    runs.start();
+    runs.stop((run) => stopped.push(run));
+    runs.finish();
+    runs.stop((run) => stopped.push(run));
+    expect(stopped).toEqual([2, 2]);
+  });
+});
+
+/**
+ * What is left in `App.svelte`: that the window hands these functions their
+ * parts. Read as text with the comments taken out, which sees that a line is
+ * there and not whether it runs (`sourcetext.ts`); every decision that used to
+ * be checked this way is in the functions tested above.
+ */
+describe("the window's wiring", () => {
+  it("runs the check through Runs.check, and Stop and the progress line through the same Runs", () => {
+    const check = functionIn(app, "async function findHiddenText(): Promise<void> {");
+    expect(missingFrom(check, [
+      "await hiddenRuns.check({",
+      'ask: (run) => call("hidden_text", { doc: asked.doc, run }),',
+      "current: () => edits === asked,",
+      "sidebar?.setHiddenText(checked);",
+      "viewer?.clearRegion();",
+      'showTab("hidden");',
+    ])).toEqual([]);
+    expect(missingFrom(app, [
+      'onclick={() => hiddenRuns.stop((run) => void call("hidden_text_cancel", { run }))}',
+      "await listen<HiddenProgress>(HIDDEN_PROGRESS_EVENT, (event) => {",
+      "hiddenRuns.report(event.payload, (line) => { blockingTask = line; });",
+    ])).toEqual([]);
+  });
+
+  it("takes a pressed row through showPassage, and the ring away when another tab is chosen", () => {
+    expect(missingFrom(functionIn(app, "function showHidden(passage: Passage): void {"), [
+      "showPassage(passage, (page) => model.map.slotOf(page), {",
+      "page: (slot) => { shown.clearRegion(); shown.goToDestination(slot, null); },",
+      "gone: () => say(PAGE_GONE),",
+    ])).toEqual([]);
+    expect(missingFrom(app, [
+      "hidden: { onPick: (passage) => showHidden(passage) },",
+      'if (tab !== "hidden") viewer?.clearRegion();',
+    ])).toEqual([]);
   });
 });

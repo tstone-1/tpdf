@@ -1350,6 +1350,22 @@ async function run(host: OpenCheckHost, phase: string, expected: string): Promis
       await settled("the jump on the left", () => host.status()?.page === 2);
       check("either side leads", near(line(host.beside()), 3) && near(apart(), -held));
 
+      // Led from the side the reader is not in, as a wheel turned over it
+      // does. The focused document follows inside the other one's frame and
+      // reports its new page from in there, while the variables are lent to
+      // the document that led. The header has to take that report: dropped,
+      // it is not sent again, and the header keeps the page the reader left.
+      host.beside()!.goToPage(5);
+      await settled("the jump led from the other side", () => near(line(host.viewer()), 3));
+      await pause(150);
+      check("the reader stays in their side when the other one leads", focusedSide() === "left");
+      check("the header reads the focused document's page after the other side led",
+        host.status()?.page === 4);
+      host.beside()!.goToPage(3);
+      await settled("the way back led from the other side", () => near(line(host.viewer()), 1));
+      await pause(150);
+      check("and reads it again on the way back", host.status()?.page === 2);
+
       // A wheel turned with Alt held moves its own side and nothing else.
       const stayed = line(host.beside());
       document.querySelector(`.pane[data-side="left"] .surface`)?.dispatchEvent(

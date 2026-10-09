@@ -52,6 +52,28 @@ have the binary.)
   zoom step on one side is made on the other. Holding Alt while scrolling moves one side
   alone and keeps the new distance.
 
+### Fixed
+
+- **A page changed after a signature was reported as not rewritten, in two cases.** When a
+  page's content was replaced by content of the same length, and when a later
+  cross-reference section removed an object a page drew from, document properties and
+  `tpdf verify` said that no page was rewritten and `verify --strict` passed. Both are now
+  counted: removed objects are named in the *Appended* row and are `removed` in
+  `verify --json`, the pages that drew from them count as rewritten, and a cross-reference
+  section tpdf cannot follow makes the row read as unread. An independent read-only review
+  found both.
+- **Redacting a page that shares its content with another page changed the other page too.**
+  Where two pages name one content stream, as a repeated page does, the redacted text went
+  from both, with no box on the second and no line about it in the report. The redacted
+  page now gets a stream of its own.
+- A redaction that cuts the end of a line no longer moves the text after it when the line
+  is followed by spacing alone.
+- When the check of a saved file does not answer in time, tpdf waits up to two seconds for
+  the checking process to let go of the file before putting the file back. On Windows the
+  file could not be put back while it was still held.
+- A record of the open tabs that could not be written is written again at the next change,
+  and the failure is logged.
+
 ## [26.10.13] - 2026-10-08
 
 ### Added

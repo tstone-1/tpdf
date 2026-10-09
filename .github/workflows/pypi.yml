@@ -81,13 +81,20 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          answer=$(gh api "repos/$GITHUB_REPOSITORY/actions/workflows/ci.yml/runs?head_sha=$GITHUB_SHA&status=completed" \
-            --jq '[.workflow_runs[] | select(.conclusion == "success")] | length')
-          echo "green ci.yml runs on $GITHUB_SHA: $answer"
-          if [ "$answer" = "" ] || [ "$answer" -lt 1 ]; then
-            echo "::error::no green ci.yml run on $GITHUB_SHA; wait for CI, then start this again"
-            exit 1
-          fi
+          # The same test `release.yml` makes: a run for a push, with both
+          # gate legs green. A run of another event, or one leg, is not it.
+          runs=$(gh api "repos/$GITHUB_REPOSITORY/actions/workflows/ci.yml/runs?head_sha=$GITHUB_SHA&event=push&status=success&per_page=10" \
+            --jq '.workflow_runs[].id') || { echo "::error::could not list CI runs"; exit 1; }
+          for id in $runs; do
+            gates=$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$id/jobs?per_page=50" \
+              --jq '[.jobs[] | select(.name | startswith("Gates (")) | .conclusion] | "\(length) \(all(. == "success"))"') || continue
+            if [ "$gates" = "2 true" ]; then
+              echo "CI run $id passed both gate legs on $GITHUB_SHA"
+              exit 0
+            fi
+          done
+          echo "::error::no green two-leg ci.yml run on $GITHUB_SHA; wait for CI, then start this again"
+          exit 1
 
       # The two test files that need no tool.
       - name: Run the tests that need no tool

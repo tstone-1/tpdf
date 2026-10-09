@@ -29,8 +29,16 @@
 //! to do with outlines: the heading is the *title of a deleted page*. Somebody
 //! who extracts pages 6 to 8 to send them on would have sent the name of the
 //! chapter that begins on page 5, and the old whole-drop never did that. So no
-//! title survives unless its own page does, and the price is a flatter table of
-//! contents.
+//! title **that leads to a page of this document** survives unless that page
+//! does, and the price is a flatter table of contents.
+//!
+//! That is narrower than "no title survives unless its own page does", which
+//! this paragraph said until 2026-10-09 and the list above never did. An
+//! entry with no destination stays as long as it has no entries under it, or
+//! one of them is left; a web link, a remote destination and a name that
+//! resolves to nothing stay whatever pages go. None of those is known to be
+//! the title of a page that went, and a heading that only groups what is
+//! under it can still stand over entries whose pages stayed.
 //!
 //! ## When the old rule still applies
 //!

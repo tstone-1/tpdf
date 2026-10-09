@@ -81,12 +81,17 @@ describe("the command-line tool's wording", () => {
     expect(wording.after_redaction.some((c) => c.applied.verified)).toBe(true);
     expect(wording.after_redaction.some((c) => !c.applied.verified)).toBe(true);
     // An appendix that could not be read, and 7 things an appendix is called
-    // x 9 things it does to pages.
-    expect(wording.appended.length).toBe(1 + 7 * 9);
+    // x 9 things it does to pages. Then with objects removed: those 7 and
+    // nothing arriving at all x one removed or three x no page or one.
+    expect(wording.appended.length).toBe(1 + 7 * 9 + 8 * 2 * 2);
     expect(wording.appended.filter((c) => c.appendix.unread).length).toBe(1);
     // Validation data is called the same beside a signature, and three pages
     // of which one lists a field are said as three rewritten are.
-    expect(new Set(wording.appended.map((c) => c.sentence)).size).toBe(1 + 6 * 8);
+    const kept = wording.appended.filter((c) => c.appendix.removed === 0);
+    expect(new Set(kept.map((c) => c.sentence)).size).toBe(1 + 6 * 8);
+    const removed = wording.appended.filter((c) => c.appendix.removed > 0);
+    expect(new Set(removed.map((c) => c.sentence)).size).toBe(7 * 2 * 2);
+    expect(removed.filter((c) => c.sentence.includes("removed")).length).toBe(removed.length);
   });
 
   it("says what was appended after a signature as the properties dialog does", () => {

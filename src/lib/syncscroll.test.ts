@@ -153,4 +153,13 @@ describe("zoom across the lock", () => {
     expect(lock.zoomed(1, 0.7, { following: false, fitted: true })).toBeNull();
     expect(lock.zoomed(1, 1.4, set)).toBeCloseTo(2, 9);
   });
+
+  it("passes nothing from a zoom of nothing, and measures the next step from the real one", () => {
+    // A viewer locked before it has been laid out reports no zoom yet. A
+    // factor worked out from that is not a number to zoom the other side by.
+    const lock = new ScrollLock();
+    lock.lock({ id: 1, at: at(0), zoom: 0 }, { id: 2, at: at(0), zoom: 1 });
+    expect(lock.zoomed(1, 1.25, set)).toBeNull();
+    expect(lock.zoomed(1, 2.5, set)).toBeCloseTo(2, 9);
+  });
 });

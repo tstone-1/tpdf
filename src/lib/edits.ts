@@ -199,8 +199,11 @@ export const NOTHING_OPEN: EditState = {
  * The edit state of one open document, and the commands that change it.
  *
  * Constructed per document, and holds the handle so that a caller cannot pass
- * the wrong one --- which matters because the render service reuses document
- * numbers, so a stale handle names a real document rather than nothing.
+ * the wrong one. A handle is given once: the backend counts them up and never
+ * hands a number out again, which the view ids in `views.ts` depend on, since
+ * a first view is named by its handle. So a stale handle names no open
+ * document; a wrong live one would name another, which is what holding it here
+ * rules out.
  */
 export class Edits {
   /**
@@ -1036,4 +1039,33 @@ export class Edits {
     this.pageMap = new PageMap(joined.pages);
     return joined;
   }
+}
+
+/**
+ * Runs an edit that makes one mark and answers the mark it made, or nothing
+ * when none was made: the model refused, or the edit did not run.
+ *
+ * `apply` is the window's `applyEdit` for the view the mark is asked in. It
+ * answers the state the view adopted, or null when it adopted none.
+ *
+ * The mark is found by difference against the ids the model held **when the
+ * edit ran**, and against the state that edit answered with. Both come from
+ * the edit itself and neither from the window's variables: the window queues
+ * edits, so the ids read when the mark was asked for can be one edit old, and
+ * by the time the answer is back its variables may hold the other document.
+ * "The last mark" and "the highest id" are both guesses about how the model
+ * numbers and orders things; a difference needs no promise from it.
+ */
+export async function markMade(
+  apply: (run: (edits: Edits) => Promise<EditState>) => Promise<EditState | null>,
+  make: (edits: Edits) => Promise<EditState>,
+): Promise<MarkView | undefined> {
+  const seen: { before: ReadonlySet<number> | null } = { before: null };
+  const after = await apply((edits) => {
+    seen.before = new Set(edits.state.marks.map((mark) => mark.id));
+    return make(edits);
+  });
+  const before = seen.before;
+  if (!after || !before) return undefined;
+  return after.marks.find((mark) => !before.has(mark.id));
 }

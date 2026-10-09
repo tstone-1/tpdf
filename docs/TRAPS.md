@@ -95,6 +95,7 @@ hop through the index.
 - PDFium reports a glyph 1/64 larger than its outline, and a flat tolerance wide enough for that hid a 2.4% error
 - A recogniser's word boxes touch, and words written at them read back as one word
 - PDFium folds the horizontal scaling into a text object's matrix, so one em is the font size times that matrix's first row
+- A position measured from the engine already contains what moved the pen
 
 ## Text matching, and scripts that are not English
 - `FPDFText_GetUnicode` is a UTF-16 API, so an astral character is two characters
@@ -275,6 +276,7 @@ hop through the index.
 - PDFKit answers a button in text and draws the chosen radio button once, so a form filled in Preview read as unanswered
 - PDFKit draws a text field's answer itself and ignores the turn the field declares, so it cannot check a field on a turned page
 - A bookmark kept as a heading is the title of a deleted page
+- A diff of two parses by one library cannot see what that library ignores
 
 ## Tauri, the webview and startup
 - `AppHandle::exit` does not set the process's exit code
@@ -315,6 +317,7 @@ hop through the index.
 - A stop flag the command clears as it starts loses the stop that arrived first
 - The restart after an update hands one quoted path over without its quotes, so a path with spaces arrives in pieces
 - A viewer built in a page area that is still hidden restores its place against nothing
+- A helper that reads the focused document by default is the same read as naming the variable
 
 ## Rust and macOS
 - A locked macOS session cannot be unlocked from a script, so it must be prevented
@@ -580,6 +583,7 @@ hop through the index.
 
 - A page-text comparison that folds whitespace passes an added space
 - A box fills its rectangle whichever way it is set, so type running the wrong way passed every geometric check
+- A test that reads a component's source passes when the line is in a comment or cannot run
 ## Harnesses: running checks and reading what they print
 - A mutation harness needs the same control as the thing it is testing
 - A timeout that discards the transcript recreates the failure it was added to diagnose
@@ -26162,3 +26166,69 @@ The check now records any module with `pdfium` in its path and compares after re
 prefix, and it prints the path it found, so a wrong folder and a missing library read
 differently. When a path comes from another process, compare it in one form: strip `\\?\`
 before a prefix test, and print what was seen when nothing matches.
+
+### A diff of two parses by one library cannot see what that library ignores
+
+`read_appendix` decides what changed after a signature by parsing the signed prefix and the
+whole file with `lopdf` and comparing the two object tables. Two holes were found on
+2026-10-09, and both let a changed page read "no page was rewritten" and pass
+`verify --strict`.
+
+The comparison was `format!("{a:?}") == format!("{b:?}")`, and `lopdf` prints a stream as
+its dictionary followed by the literal `stream...endstream`. A content stream replaced by
+one of the same length compared as the same object. Every replacement in the tests changed
+the length, so the dictionary differed and they passed.
+
+The second hole is in the library, not in the comparison. `lopdf` 0.45 records no free
+entry of a cross-reference section at all, so an object a later section frees is still in
+the whole document's table, byte for byte, while PDFium stops finding it and draws the
+page without it. The first fix proposed for it, "walk the signed objects for ids missing
+from the whole", found nothing in its own test. `docinfo/freed.rs` now reads the appended
+cross-reference sections itself. Readers also disagree with each other: for a classic `f`
+entry PDFium 8066 keeps drawing the object and poppler does not, so both forms are counted.
+
+When one parser's view is the evidence for a verdict, ask what that parser leaves out, and
+do not use `Debug` text as an equality where a wrong "same" is the dangerous answer.
+
+### A position measured from the engine already contains what moved the pen
+
+A cut that reaches the end of a show closes the gap to where PDFium placed the next show.
+If a `TJ` that draws nothing (`[-500] TJ`) stands between the two, that position is already
+after its move, and the operator, left in place, moves the pen a second time: at 20 pt
+`NEXT` went from x = 130.42 to 140.42 (2026-10-09). `glyph_cut.rs` now removes the
+text-less `TJ`s up to the next show (`drop_spacing_after`).
+
+The first repair tried was the cautious-looking one, sending such a show down the path that
+removes it whole. Measured, it moved the next show 69 pt to the left, under the fill, and
+the run ended "not verified", against 10 pt for the defect it replaced. A fallback is a
+change like any other and needs the same measurement.
+
+### A helper that reads the focused document by default is the same read as naming the variable
+
+With two sides, `App.svelte`'s variables hold the focused document, and after an `await`
+that may be another one. `markSelection` read `edits` after `await applyEdit(...)`, and
+that was found by reading (2026-10-09). `cropTo` had no such name after its wait and was
+wrong in the same way: it called `applyEdit(run)`, which took `openView` itself, so a crop
+measured in one document was applied with that document's page id to the other. A check
+for "variable after await" does not see a helper that does the read for you.
+
+`applyEdit` now takes the view, and the `views` gate fails a call without one after a
+wait. The same day's classification of every top-level `let` found `findTimer`, the
+pending search of one viewer, shared by both sides: closing a tab on the other side
+dropped a search just typed. An identity guard that compares a handle also stops
+protecting anything once two views share the handle, so the guard is one function,
+`stillIn`.
+
+### A test that reads a component's source passes when the line is in a comment or cannot run
+
+Six suites asserted on `App.svelte` as text, five of them added in four days, as the way to
+cover a join no unit test reaches. On 2026-10-09 three mutations went through all 18 tests
+of one suite: the guard wrapped in `if (false) { ... }`, and twice the right line replaced
+by a wrong one with the old line kept in a comment. File order stood in for control flow,
+and a renamed variable turned them red with no change in behaviour.
+
+Each guarded decision is now a function in the `src/lib` module that the component calls
+and the test calls. What is left as text goes through `src/lib/sourcetext.ts`, which strips
+comments first, checks presence only, and says in its own comment that it cannot see
+whether a line runs. A text check on source is a statement that a string exists; write the
+decision where a test can call it.

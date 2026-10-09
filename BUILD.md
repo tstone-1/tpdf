@@ -6552,9 +6552,19 @@ Windows leg of 26.10.12, which took 19. Both workflows now install it into
 `%RUNNER_TEMP%\ssign-client` and keep that folder in a cache with the key
 `ssign-<os>-<arch>-<commit>`; a run that finds the cache does not build. A run on a tag can
 read a cache saved on `main` and none saved on another tag, so what a release finds is
-what `sign-rehearsal.yml` saved when it ran on `main`. Three things follow. After changing
-`SSIGN_REV`, in both workflows, run the rehearsal on `main` once, which is also the proof
-that the new client logs in. GitHub removes a cache nobody read for 7 days, and the next
+what `sign-rehearsal.yml` saved when it ran on `main`. A restored copy is used only when
+its SHA-256 is the one recorded as `SSIGN_SHA256` in both workflows; any other copy is
+deleted and the client is built from source, with a warning in the log. The key says which
+commit a cache claims to hold, and anything that runs in a job on `main` can save a cache
+under any key, so the key alone does not say what the file is. The workflow check holds
+both pins equal in the two files and refuses a job that holds a secret and restores a cache
+without such a comparison. **`SSIGN_SHA256` is empty since 2026-10-09**, so every run builds
+the client until a digest is recorded: run the rehearsal on `main`, copy the digest from its
+line `ssign.exe built from <commit>, sha256 <digest>` into both workflows, and the run after
+that restores. If the rehearsal restored an older copy instead of building, delete that
+cache entry first (`gh cache delete <key>`). Three things follow. After changing
+`SSIGN_REV`, in both workflows, clear `SSIGN_SHA256`, run the rehearsal on `main` once, which
+is also the proof that the new client logs in, and record the new digest. GitHub removes a cache nobody read for 7 days, and the next
 run then builds again and is slower, not wrong. And a release that finds no cache builds
 the client as it always did.
 
@@ -6624,17 +6634,17 @@ signature on an uninstaller; the next release run is that.
 
 ## Cutting a release
 
-**The twelve steps, one line each.** Each line links to its step in the list further down,
+**The steps, one line each.** Each line links to its step in the list further down,
 which follows the records of past releases and carries the reasons and the commands.
 
 1. [Fetch, and confirm the branch is not behind](#release-step-1)
 2. [Bump the four version files](#release-step-2)
 3. [Refresh both lockfiles with `cargo check`](#release-step-3)
 4. [Put the release date in `CHANGELOG.md`](#release-step-4)
-5. [Run `scripts/gates.py`](#release-step-5)
+5. [Run `scripts/gates.py`, then `scripts/window_checks.py` on a screen](#release-step-5)
 6. [Re-check `docs/THREAT-MODEL.md` against the code](#release-step-6)
 7. [Run the mutations for the changed behaviour](#release-step-7)
-8. [Build the bundle and smoke-test it](#release-step-8)
+8. [Build the bundle, smoke-test it, and run `scripts/installed_check.py` on Windows](#release-step-8)
 9. [Commit, push, and confirm the `Audit` run is green](#release-step-9)
 10. [Rehearse changed release mechanics, then tag](#release-step-10)
 11. [Publish the draft, and check it from outside the account](#release-step-11)
@@ -8462,8 +8472,11 @@ starts at 0 and increments within the month.
    version, removes a word with the installed `tpdf-cli.exe` and reads the copy back, starts
    the installed application on the document, waits for its window, for a worker that maps
    the installed `pdfium.dll` and for the session file to name the document, asks the window
-   to close, uninstalls, and reads the registry afterwards. It refuses to start where tpdf is
-   installed or running. Over ssh the window needs an interactive scheduled task
+   to close, uninstalls, and reads the registry and the folder afterwards. It refuses to start
+   where tpdf is installed or running. A step that does not end is a failed check and the
+   uninstall still runs. `--control NAME` breaks one thing on purpose (`no-install`,
+   `no-uninstall`, `engine`, `document`, `time-limit`) and exits 0 exactly when the checks
+   aimed at it failed and no other did; run them when the script or the installer changed. Over ssh the window needs an interactive scheduled task
    (`schtasks /Create ... /IT`, then `/Run`): started from the ssh session itself the
    application has no desktop to open a window on.
 
@@ -8473,6 +8486,14 @@ starts at 0 and increments within the month.
    run stopped at the tool's first check. The document and the word are not
    interchangeable: in `text-base14.pdf` the Windows recogniser does not read the 10 pt
    control word, so every removal there is written and reported as not verified.
+   **Second run, the same day, after an independent read-only review:** the installer had
+   been started outside the protection that runs the uninstall, so one that hung would have
+   left tpdf installed; eleven checks had never been seen to fail; and the application's
+   process was sampled only until its window appeared. All 22 checks passed, and each of the
+   five controls ended with exit code 0. `no-uninstall` showed that the installer does write
+   the `.pdf` class. Two checks are still not known to be able to fail: that the
+   application's own process maps no PDFium, and that the application's own registry key
+   reads as before, which it did before, during and after the install on that machine.
    What it does not do: read the page the window drew, or edit and save in the window. A
    normal build has no check harness, so those stay with `window_checks.py` on a checks
    build.

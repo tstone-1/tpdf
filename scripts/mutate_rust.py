@@ -4514,8 +4514,9 @@ MUTATIONS = [
         "a_turn_lands_on_the_page_it_named_and_nowhere_else",
     ),
     Mutation(
-        # Keep the previous document's journal under a reused handle. The render
-        # service reuses document numbers, so this is a real sequence.
+        # Keep the previous document's journal under a reused handle. Neither
+        # backend gives a handle out twice today; the replacement is held
+        # because the other outcome is one document's edits applied to another.
         "edits: keep the model already under a reopened handle",
         "src/edits.rs",
         "        self.docs.lock().expect(\"edits lock\").insert(\n            doc,\n            Open {",
@@ -10303,9 +10304,11 @@ MUTATIONS += [
         # `InWorker`'s behaviour, and the call it names lost its `crate::workers::`
         # prefix in the move, because naming that module in the import header is
         # the whole point of the move. Both halves of the anchor had to follow.
+        # Re-aimed 2026-10-09: the kill became the argument `awaited` hands to
+        # `awaited_then`, so that a test can stand in for it.
         "src/save_outside.rs",
-        "            kill_pid(pid);\n",
-        "",
+        "    awaited_then(rx, within, RELEASED_WITHIN, || kill_pid(pid))",
+        "    awaited_then(rx, within, RELEASED_WITHIN, || ())",
         "a_read_back_that_never_answers_ends_the_worker",
         only_on="macos",
     ),
@@ -17198,6 +17201,243 @@ MUTATIONS += [
         'a_passage_outside_the_page_is_listed_as_such',
     ),
 ]
+
+# --- the 2026-10-09 review's Rust findings ------------------------------------
+# What changed after a signature (`read_appendix`): a stream replaced at its
+# old length, and an object a later cross-reference section frees. Then a page
+# that shares its content stream under a redaction, the release a timed-out
+# read-back waits for, and spacing alone after a glyph cut. Each is named by
+# its area like its neighbours, so `--only 'freed:'` runs the reader of the
+# free entries and `--only 'appendix:'` what `read_appendix` makes of them.
+MUTATIONS += [
+    Mutation(
+        # `lopdf` prints a stream without its bytes, so the comparison by
+        # `Debug` alone calls a content stream written again at its old
+        # length unchanged, and `verify --strict` passes it.
+        "appendix: compare two streams by what lopdf prints of them",
+        "src/docinfo.rs",
+        "        if before.content != after.content {",
+        "        if false {",
+        "a_content_stream_replaced_with_the_same_length_touches_its_page",
+    ),
+    Mutation(
+        # The fourth condition of a listing: the page's content stream is in
+        # both parses, unchanged. Without the comparison a page whose stream
+        # was replaced beside a new signature field reads "the page's content
+        # is unchanged".
+        "appendix: call a page a listing whatever became of its content stream",
+        "src/docinfo.rs",
+        "                (Some(a), Some(b)) if same_object(a, b)",
+        "                (Some(_), Some(_))",
+        "a_same_length_replacement_beside_a_new_signature_field_is_not_a_listing",
+    ),
+    Mutation(
+        # `lopdf` keeps no free entry, so an object a later section frees is
+        # still in the whole parse as it was. Only the sections say it went.
+        "appendix: take what lopdf still holds for what a reader still finds",
+        "src/docinfo.rs",
+        "        .filter(|id| freed.contains(&id.0) || !whole.objects.contains_key(id))",
+        "        .filter(|id| !whole.objects.contains_key(id))",
+        "an_object_freed_after_signing_touches_the_page_that_drew_it",
+    ),
+    Mutation(
+        "appendix: miss an object the whole document no longer has",
+        "src/docinfo.rs",
+        "        .filter(|id| freed.contains(&id.0) || !whole.objects.contains_key(id))",
+        "        .filter(|id| freed.contains(&id.0))",
+        "an_object_the_whole_document_no_longer_has_is_removed",
+    ),
+    Mutation(
+        # A section that cannot be followed may be the one that frees a
+        # page's content. "Nothing was freed" is the reassuring answer.
+        "appendix: read sections that cannot be followed as freeing nothing",
+        "src/docinfo.rs",
+        "    let Some(freed) = freed::after(bytes, end, whole.xref_start, MAX_DECODE) else {\n"
+        "        return unread;\n"
+        "    };",
+        "    let freed = freed::after(bytes, end, whole.xref_start, MAX_DECODE).unwrap_or_default();",
+        "a_section_that_cannot_be_followed_makes_the_appendix_unread",
+    ),
+    Mutation(
+        "appendix: report a page that lost what it drew as only listing a field",
+        "src/docinfo.rs",
+        "        listings.retain(|(page, _)| !lost.contains(page));\n",
+        "",
+        "a_page_that_lost_what_it_drew_is_not_reported_as_only_listing_a_field",
+    ),
+    Mutation(
+        "appendix: count what was removed and touch no page for it",
+        "src/docinfo.rs",
+        "        touched.extend(lost);",
+        "        drop(lost);",
+        "strict_fails_a_signature_followed_by_a_freed_content_stream",
+    ),
+    Mutation(
+        # poppler honours a free entry in a classic table where PDFium 8066
+        # does not, so it is counted in either form.
+        "freed: read a free entry of a classic table as an object in use",
+        "src/docinfo/freed.rs",
+        '                b"f" => false,',
+        '                b"f" => true,',
+        "an_object_freed_in_a_classic_table_is_counted_too",
+    ),
+    Mutation(
+        "freed: read every entry of a stream section as an object in use",
+        "src/docinfo/freed.rs",
+        "            entries.insert(id, kind == 1 || kind == 2);",
+        "            entries.insert(id, true);",
+        "a_freed_object_is_followed_over_the_signed_document",
+    ),
+    Mutation(
+        "freed: read an object in an object stream as free",
+        "src/docinfo/freed.rs",
+        "            entries.insert(id, kind == 1 || kind == 2);",
+        "            entries.insert(id, kind == 1);",
+        "a_free_entry_is_read_in_either_form",
+    ),
+    Mutation(
+        "freed: let the oldest section that lists an object decide",
+        "src/docinfo/freed.rs",
+        "            decided.entry(id).or_insert(in_use);",
+        "            decided.insert(id, in_use);",
+        "the_newest_section_decides_and_a_signed_one_is_left_alone",
+    ),
+    Mutation(
+        # A section before the signed range's end was signed. What it frees
+        # is the signed revision's and is not something an append did.
+        "freed: follow the chain into the signed part",
+        "src/docinfo/freed.rs",
+        "    while at >= end {",
+        "    loop {",
+        "the_newest_section_decides_and_a_signed_one_is_left_alone",
+    ),
+    Mutation(
+        # A hybrid table lists as free what its own stream holds in object
+        # streams, so within one revision an object in use by either is in use.
+        "freed: let a hybrid table's free entry stand over its own stream",
+        "src/docinfo/freed.rs",
+        "            let entry = entries.entry(id).or_insert(in_use);\n            *entry |= in_use;",
+        "            entries.entry(id).or_insert(in_use);",
+        "an_object_in_use_by_a_tables_own_stream_is_in_use",
+    ),
+    Mutation(
+        "freed: stop the chain at a previous section it cannot read the place of",
+        "src/docinfo/freed.rs",
+        "        Ok(_) => None,",
+        "        Ok(_) => Some(None),",
+        "a_section_that_cannot_be_read_is_no_answer",
+    ),
+    Mutation(
+        "freed: take the last of two equal keys in a trailer",
+        "src/docinfo/freed.rs",
+        "                    if dict.has(&key) {\n                        return None;\n                    }\n",
+        "",
+        "a_section_that_cannot_be_read_is_no_answer",
+    ),
+    Mutation(
+        "freed: read a name's escapes as the characters they are written with",
+        "src/docinfo/freed.rs",
+        "            if byte != b'#' {",
+        "            if true {",
+        "an_escaped_key_is_the_key_it_spells",
+    ),
+    Mutation(
+        "freed: read a deflated section's bytes as its entries",
+        "src/docinfo/freed.rs",
+        "        Ok(filters) if !filters.is_empty() => stream.decompressed_content_with_limit(limit).ok()?,",
+        "        Ok(filters) if filters.is_empty() => stream.decompressed_content_with_limit(limit).ok()?,",
+        "a_deflated_stream_is_decoded",
+    ),
+    Mutation(
+        "verify: leave what was removed out of the report",
+        "src/cli/verify.rs",
+        "        removed: appendix.removed,",
+        "        removed: 0,",
+        "a_signature_reports_what_was_removed_after_it",
+    ),
+    Mutation(
+        "verify: say 0 objects in front of a removal that is all there is",
+        "src/cli/verify.rs",
+        "    } else if arrived == 0 && appendix.removed > 0 {",
+        "    } else if false {",
+        "a_signature_reports_what_was_removed_after_it",
+    ),
+    Mutation(
+        "verify: leave what was removed out of the sentence",
+        "src/cli/verify.rs",
+        "    match appendix.removed {\n        0 =>",
+        "    match 0 {\n        0 =>",
+        "a_signature_reports_what_was_removed_after_it",
+    ),
+    Mutation(
+        # A repeated page shares its content stream with its copy. Rewriting
+        # the object where it stands changes a page nobody marked, with no
+        # fill drawn there and no line in the report.
+        "redact: rewrite a content stream another page also names",
+        "src/redact.rs",
+        "        [only] if !named_by_another_page(doc, page, *only) => {",
+        "        [only] => {",
+        "a_redaction_on_one_of_two_pages_sharing_a_stream_leaves_the_other_page_as_it_was",
+    ),
+    Mutation(
+        "redact: give every page a new content stream",
+        "src/redact.rs",
+        "        .any(|other| other != page && doc.get_page_contents(other).contains(&stream))",
+        "        .any(|other| doc.get_page_contents(other).contains(&stream))",
+        "a_redaction_on_one_of_two_pages_sharing_a_stream_leaves_the_other_page_as_it_was",
+    ),
+    Mutation(
+        # The roll-back that follows a timeout is a `set_len`, which Windows
+        # refuses while the file is mapped, and the thread still holds the
+        # worker and its mapping when the process has only just been ended.
+        "save_outside: return from a timed-out wait before the worker is released",
+        "src/save_outside.rs",
+        "            let _ = rx.recv_timeout(released_within);\n",
+        "",
+        "a_timed_out_wait_returns_only_after_the_worker_is_released",
+    ),
+    Mutation(
+        # A thousand times the bound, which is what no bound looks like from
+        # inside a test, for the reason the read-back's own bound gives.
+        "save_outside: wait for a release a thousand times its bound",
+        "src/save_outside.rs",
+        "            let _ = rx.recv_timeout(released_within);",
+        "            let _ = rx.recv_timeout(released_within * 1000);",
+        "a_release_that_never_comes_is_not_waited_for_past_its_bound",
+    ),
+    Mutation(
+        # `[-500] TJ` draws nothing and moves the pen. The gap a cut to the
+        # end leaves goes to where PDFium placed the next show, which is after
+        # that move: left in, the `TJ` moves the next show a second time.
+        "glyph cut: leave spacing alone after a cut whose gap already holds it",
+        "src/redact/glyph_cut.rs",
+        "            drop_spacing_after(&mut content.operations, at);\n",
+        "",
+        "spacing_alone_after_a_cut_to_the_end_goes_into_the_gap",
+    ),
+    Mutation(
+        "glyph cut: take spacing out after a cut that stops short of the end",
+        "src/redact/glyph_cut.rs",
+        "        if continues && to_the_end {",
+        "        if continues {",
+        "spacing_alone_after_a_cut_to_the_end_goes_into_the_gap",
+    ),
+    Mutation(
+        "glyph cut: take spacing out before a show that is placed",
+        "src/redact/glyph_cut.rs",
+        "        if continues && to_the_end {",
+        "        if to_the_end {",
+        "spacing_alone_after_a_cut_to_the_end_goes_into_the_gap",
+    ),
+    Mutation(
+        "glyph cut: take out the spacing after the next show too",
+        "src/redact/glyph_cut.rs",
+        '        !(here > at && here < next && operation.operator == "TJ")',
+        '        !(here > at && operation.operator == "TJ")',
+        "spacing_alone_after_a_cut_to_the_end_goes_into_the_gap",
+    ),
+]
+
 
 if __name__ == "__main__":
     sys.exit(main())

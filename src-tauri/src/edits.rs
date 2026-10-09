@@ -862,10 +862,16 @@ impl Edits {
 
     /// Starts a model for a freshly opened document.
     ///
-    /// Replaces any model already under that handle. That is not defensive: the
-    /// render service reuses document numbers, so an id can legitimately name a
-    /// different file than it did, and keeping the old journal would apply one
-    /// document's edits to another.
+    /// Replaces any model already under that handle, so that a handle given
+    /// out twice could not apply one document's journal to another.
+    ///
+    /// No handle is given out twice today: both backends number a document by
+    /// its place in a list that only grows (`render.rs`'s `docs.len()`, and
+    /// the same in `workers.rs`'s `Engine::open`), and a closed document
+    /// leaves its place empty. This said the opposite until 2026-10-09. The
+    /// frontend's view ids depend on the list growing, since a first view is
+    /// numbered by its handle: a backend that reused a number would give two
+    /// tabs one id.
     pub fn open(&self, doc: u32, pages: u32, source: Option<Opened>) {
         let opened_as: Arc<OnceLock<Option<Fingerprint>>> = Arc::new(OnceLock::new());
         // **Recorded, not started.** Hashing reads the whole file --- 452 ms cold
@@ -5296,8 +5302,9 @@ mod tests {
         let edits = opened();
         let first = edits.state(7).expect("open").pages[0].id;
         edits.rotate(7, first, 2).expect("rotate");
-        // The render service reuses document numbers, so this is a real sequence
-        // and not a contrived one.
+        // Neither backend gives a number out twice, so no caller makes this
+        // sequence today. It is held because the other outcome is one
+        // document's edits applied to another.
         edits.open(7, 5, None);
         let state = edits.state(7).expect("reopened");
         assert_eq!(state.pages.len(), 5, "the new document's page count");

@@ -158,6 +158,7 @@ pub fn appendix_report(appendix: &docinfo::Appendix) -> AppendixReport {
         unread: appendix.unread,
         added: appendix.added,
         replaced: appendix.replaced,
+        removed: appendix.removed,
         kinds: appendix.kinds.clone(),
         catalog_gained: appendix.catalog_gained.clone(),
         pages_touched: appendix.pages_touched,
@@ -180,18 +181,28 @@ pub fn appendix_report(appendix: &docinfo::Appendix) -> AppendixReport {
 ///
 /// What arrived comes first, most specific reading first: validation data
 /// when the catalog gained `/DSS`, another signature when a `/Sig` is among
-/// the objects, otherwise the file's own names for them. Then the pages.
+/// the objects, otherwise the file's own names for them. Then what was
+/// removed, when anything was, and then the pages.
 #[must_use]
 pub fn appendix_sentence(appendix: &docinfo::Appendix) -> String {
     if appendix.unread {
         return "something, but its contents could not be read".into();
     }
+    let arrived = appendix.added + appendix.replaced;
     let what = if appendix.catalog_gained.iter().any(|key| key == "DSS") {
         "the certificates and revocation records a signature needs to be checked later".to_string()
     } else if appendix.kinds.iter().any(|kind| kind == "Sig") {
         "another signature".to_string()
+    } else if arrived == 0 && appendix.removed > 0 {
+        // Nothing arrived and something went: the removal is the whole of
+        // it, and "0 objects" in front of it would be noise.
+        let removed = match appendix.removed {
+            1 => "1 object was removed".to_string(),
+            n => format!("{n} objects were removed"),
+        };
+        return format!("{removed}, and {}", appendix_pages(appendix));
     } else {
-        let objects = match appendix.added + appendix.replaced {
+        let objects = match arrived {
             1 => "1 object".to_string(),
             n => format!("{n} objects"),
         };
@@ -201,7 +212,17 @@ pub fn appendix_sentence(appendix: &docinfo::Appendix) -> String {
             format!("{objects}: {}", appendix.kinds.join(", "))
         }
     };
-    format!("{what}, and {}", appendix_pages(appendix))
+    match appendix.removed {
+        0 => format!("{what}, and {}", appendix_pages(appendix)),
+        1 => format!(
+            "{what}, with 1 object removed, and {}",
+            appendix_pages(appendix)
+        ),
+        n => format!(
+            "{what}, with {n} objects removed, and {}",
+            appendix_pages(appendix)
+        ),
+    }
 }
 
 /// What the append did to pages: `properties.ts`'s `describePages`.

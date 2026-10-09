@@ -214,7 +214,14 @@ export class TabRecorder {
     const kept = sides && { ...sides, right: [...sides.right] };
     const write = () => this.send(list, active, kept);
     // A failed write must not stop the ones after it, so the tail never rejects.
-    this.queue = this.queue.then(write).catch(() => undefined);
+    this.queue = this.queue.then(write).catch((why: unknown) => {
+      // Forgotten as well as logged. The session does not hold this record,
+      // and remembering it as written would skip the same record noted again,
+      // which is the write that would put it there. Only while it is still
+      // the newest: a later record has replaced what this one would have said.
+      if (this.last === key) this.last = null;
+      console.warn(`could not record the open tabs: ${String(why)}`);
+    });
   }
 
   /**

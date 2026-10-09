@@ -121,6 +121,38 @@ export function placeOf(
 }
 
 /**
+ * Goes to a passage: `ring` for one with a place on its page, `page` for one
+ * outside the page, which has its page and nothing on it to ring, and `gone`
+ * for one whose page the reader has since deleted. Exactly one is called.
+ */
+export function showPassage(
+  passage: Passage,
+  slotOf: (filePage: number) => number | undefined,
+  on: {
+    ring(slot: number, rect: [number, number, number, number]): void;
+    page(slot: number): void;
+    gone(): void;
+  },
+): void {
+  const place = placeOf(passage, slotOf);
+  if (!place) on.gone();
+  else if (place.rect) on.ring(place.slot, place.rect);
+  else on.page(place.slot);
+}
+
+/** What the window supplies to one check. The order they are used in is {@link Runs.check}'s. */
+export interface CheckHost {
+  /** Shows that a check has begun, and waits until the window has drawn that. */
+  begun(): Promise<void>;
+  /** Sends the check, as the run numbered `run`. */
+  ask(run: number): Promise<HiddenText>;
+  /** Whether the document that was asked about is still the one in the window. */
+  current(): boolean;
+  /** Puts the answer in front of the reader. */
+  show(checked: HiddenText): void;
+}
+
+/**
  * Which check Stop is for, and whether one is running.
  *
  * A run's number and not a flag, for `Cancel`'s reason in `commands/ocr.rs`:
@@ -161,5 +193,37 @@ export class Runs {
    */
   line(at: Progress): string | null {
     return this.open ? progressLine(at) : null;
+  }
+
+  /** Hands `show` the line for a progress event, and nothing when no check is running. */
+  report(at: Progress, show: (line: string) => void): void {
+    const line = this.line(at);
+    if (line !== null) show(line);
+  }
+
+  /** Stop: hands `send` the number of the run begun last, which is the one on screen. */
+  stop(send: (run: number) => unknown): void {
+    send(this.last);
+  }
+
+  /**
+   * One check, from its number to its answer.
+   *
+   * Numbered before the window shows that it has begun, so a Stop pressed at
+   * any moment names this run. The answer is shown only when the document it
+   * is about is still the one in the window: it is dropped, not shown under
+   * another document's name. The run is ended whatever happened, a refusal
+   * included, which is passed on to the caller.
+   */
+  async check(host: CheckHost): Promise<void> {
+    const run = this.start();
+    try {
+      await host.begun();
+      const checked = await host.ask(run);
+      if (!host.current()) return;
+      host.show(checked);
+    } finally {
+      this.finish();
+    }
   }
 }

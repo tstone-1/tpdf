@@ -413,6 +413,48 @@ fn a_run_to_the_end_leaves_a_gap_up_to_a_show_that_starts_at_the_pen() {
     );
 }
 
+/// A `TJ` that draws nothing stands between the cut show and the next one,
+/// and moves the pen. The tail is where PDFium put the next show, which is
+/// after that move, so the gap up to it holds the move and the `TJ` goes:
+/// left in, it would move the next show a second time.
+#[test]
+fn spacing_alone_after_a_cut_to_the_end_goes_into_the_gap() {
+    // `abcd` ends at 2000 here and the spacing is 500 more: the next show is
+    // at 2500, and `c` is at 1000.
+    let stream =
+        "BT /F1 12 Tf (abcd) Tj 0 Tc [-500] TJ [()] TJ () Tj (next) Tj [-70] TJ (last) Tj ET";
+    let (mut doc, page) = one_page(stream);
+    let mut one = cut(0, 4, &[2, 3]);
+    one.tail = Some(2500.0);
+    cut_shows(&mut doc, page, &[one], 3).expect("cut");
+    assert_eq!(
+        content_of(&doc, page),
+        // What is not a `TJ` stays, and so does the spacing after the next
+        // show, which is not between the two.
+        "BT /F1 12 Tf [(ab) -1500] TJ 0 Tc () Tj (next) Tj [-70] TJ (last) Tj ET"
+    );
+
+    // A cut that stops short of the end leaves the pen where the last glyph
+    // left it, and the spacing with it.
+    let (mut doc, page) = one_page(stream);
+    let mut short = cut(0, 4, &[1, 2]);
+    short.tail = Some(2500.0);
+    cut_shows(&mut doc, page, &[short], 3).expect("cut");
+    assert_eq!(
+        content_of(&doc, page),
+        "BT /F1 12 Tf [(a) -1000 (d)] TJ 0 Tc [-500] TJ [()] TJ () Tj (next) Tj [-70] TJ (last) Tj ET"
+    );
+
+    // And so does a cut to the end of a show whose next one is placed: no
+    // gap is written, so nothing holds the move.
+    let (mut doc, page) = one_page("BT /F1 12 Tf (abcd) Tj [-500] TJ 0 -14 Td (next) Tj ET");
+    cut_shows(&mut doc, page, &[cut(0, 4, &[2, 3])], 2).expect("cut");
+    assert_eq!(
+        content_of(&doc, page),
+        "BT /F1 12 Tf [(ab)] TJ [-500] TJ 0 -14 Td (next) Tj ET"
+    );
+}
+
 /// `'` and `"` do more than show: the line moves, and `"` sets two spacings.
 #[test]
 fn a_quote_operator_keeps_what_it_did_before_showing() {

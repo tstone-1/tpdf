@@ -569,15 +569,21 @@ pub struct AppendixReport {
     pub added: usize,
     /// Objects it had, written again differently.
     pub replaced: usize,
+    /// Objects it had that a cross-reference section written after the
+    /// signed range marks free, or that are no longer in the document: what
+    /// was taken away with no object written for it. The pages that drew
+    /// from one are in `pages_touched`. Added to schema 1 on 2026-10-09, a
+    /// new key.
+    pub removed: usize,
     /// What the file calls those objects: `/Type`, with `/Subtype` where
     /// there is one, such as `Sig` and `Annot/Widget`. Sorted, each once.
     pub kinds: Vec<String>,
     /// Keys the document catalog gained; `DSS` is validation data.
     pub catalog_gained: Vec<String>,
     /// How many pages were touched: the page object, or anything the page
-    /// draws from, was added or replaced, or the page is no longer where it
-    /// was. A count and not a verdict: a page can be touched and look the
-    /// same.
+    /// draws from, was added, replaced or removed, or the page is no longer
+    /// where it was. A count and not a verdict: a page can be touched and
+    /// look the same.
     pub pages_touched: usize,
     /// The touched pages rewritten for one thing only, to list a new
     /// signature or timestamp field among their annotations. Counted in

@@ -20,10 +20,13 @@
 import { describe, expect, it, vi } from "vitest";
 import app from "../App.svelte?raw";
 
+import { functionIn, missingFrom, withoutComments } from "./sourcetext";
 import {
   finishPrompt,
   finishUpdate,
   installEndsProcess,
+  stepEndsProcess,
+  stepFor,
   percentOfDownload,
   Updates,
   updateLabel,
@@ -132,9 +135,14 @@ describe("automatic update preference", () => {
 
   it("wires startup through the preference and confines direct checking to the manual action", () => {
     // The module tests cannot see a caller that bypasses the preference entirely.
-    expect(app.match(/updates\.checkOnLaunch\(\)/g)).toHaveLength(1);
-    expect(app.match(/updates\.check\(\)/g)).toHaveLength(1);
-    expect(app).toMatch(/async function checkAndSay\(\)[\s\S]*?notice = updateNotice\(await updates\.check\(\), appVersion\);\s*}/);
+    // Counted in the code, comments taken out: one call of each, and the direct
+    // one is the manual action's. Text cannot say that either runs.
+    const code = withoutComments(app);
+    expect(code.match(/updates\.checkOnLaunch\(\)/g)).toHaveLength(1);
+    expect(code.match(/updates\.check\(\)/g)).toHaveLength(1);
+    expect(missingFrom(functionIn(app, "async function checkAndSay(): Promise<void> {"), [
+      "notice = updateNotice(await updates.check(), appVersion);",
+    ])).toEqual([]);
   });
 });
 
@@ -319,18 +327,19 @@ describe("updateLabel", () => {
     // something was the single state offering nothing to press: the only way
     // out was quitting the application by hand.
     //
-    // Source-level, like the three assertions above it, because `App.svelte` is
-    // the join and no test imports it --- `AGENTS.md` records that seam as the
-    // one three green layers do not cover.
-    const button = app.match(/<button\s+class="update"[\s\S]*?<\/button/);
+    // Which step the press runs is `stepFor`, and it is a step for the one
+    // state that asks for a press.
+    expect(stepFor({ kind: "ready", version: "26.9.0" })).toBe("restart");
+    expect(stepFor({ kind: "available", version: "26.9.0" })).toBe("install");
+    // What is left for the markup, read as text with the comments taken out
+    // (`sourcetext.ts`): the button is disabled by `busy` alone, and it runs
+    // the guarded step rather than `relaunch()` directly, which is what puts
+    // the unsaved-work question in front of it.
+    const button = withoutComments(app).match(/<button\s+class="update"[\s\S]*?<\/button/);
     expect(button, "the update button moved or was renamed").not.toBeNull();
     expect(button![0]).toContain("disabled={updates.busy}");
     expect(button![0]).not.toMatch(/disabled=\{[^}]*kind === "ready"/);
-    // And it runs the guarded step rather than `relaunch()` directly, which is
-    // what puts the unsaved-work question in front of it.
-    expect(button![0]).toMatch(
-      /finishUpdateStep\(\s*updateState\.kind === "ready" \? "restart" : "install",?\s*\)/,
-    );
+    expect(button![0]).toContain("onclick={() => void finishUpdateStep(stepFor(updateState))}");
   });
 
   it("distinguishes a download with a total from one without", () => {
@@ -553,10 +562,14 @@ describe("finishing an update", () => {
     // away from every macOS restart --- which is the one platform where the
     // restart is a step a reader presses at all.
     //
-    // Source-level, because `App.svelte` is the join and nothing imports it.
-    expect(app).toMatch(
-      /const ends = step === "restart" \|\| installEndsProcess\(isMac\(\)\);/,
-    );
+    for (const mac of [true, false]) expect(stepEndsProcess("restart", mac)).toBe(true);
+    // And an install is still the platform's answer.
+    expect(stepEndsProcess("install", true)).toBe(false);
+    expect(stepEndsProcess("install", false)).toBe(true);
+    // The shell asks that function, and not the platform alone.
+    expect(missingFrom(functionIn(app, "async function finishUpdateStep(step: FinishStep): Promise<void> {"), [
+      "const ends = stepEndsProcess(step, isMac());",
+    ])).toEqual([]);
   });
 
   it("waits for the reading position to land before ending the process", () => {
@@ -565,9 +578,14 @@ describe("finishing an update", () => {
     // wait, restoring after an update lands a position or two behind where an
     // ordinary restart lands, and the difference is invisible in every layer
     // that has tests.
-    expect(app).toMatch(
-      /await places\.settled\(\);[\s\S]*?const \{ relaunch \} = await import\("@tauri-apps\/plugin-process"\);/,
-    );
+    //
+    // Read as text with the comments taken out: the wait is in the step, and
+    // so is the relaunch. That the one comes before the other is not something
+    // text can say (`sourcetext.ts`).
+    expect(missingFrom(functionIn(app, "async function finishUpdateStep(step: FinishStep): Promise<void> {"), [
+      "await places.settled();",
+      'const { relaunch } = await import("@tauri-apps/plugin-process");',
+    ])).toEqual([]);
   });
 
   it("tells the reader when the step itself fails, rather than failing silently", async () => {

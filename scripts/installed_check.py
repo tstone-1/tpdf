@@ -35,11 +35,30 @@ kind of worker. `window_checks.py` is what drives the window, on a checks
 build.
 
 IT WRITES TO THE MACHINE: an uninstall entry, the application's own key and the
-`.pdf` class of the current user, all three taken away again by the uninstall,
-which step 6 reads back. It refuses to start when tpdf is installed or running
-there, so it is for a build machine and not for the one you read on. The
-session and the log go to a scratch folder (`TPDF_SESSION_FILE`,
-`TPDF_LOG_FILE`).
+`.pdf` class of the current user. Step 6 reads all three back against what was
+there before the install, and lists what the uninstaller left in the folder. It
+refuses to start when tpdf is installed or running there, so it is for a build
+machine and not for the one you read on. The session and the log go to a
+scratch folder (`TPDF_SESSION_FILE`, `TPDF_LOG_FILE`).
+
+A STEP THAT DOES NOT END is a failed check, not a traceback: every process
+started here has a time limit, running out of it is recorded like any other
+failure, and the uninstall still runs. The first version ran the installer
+outside that protection, so an installer that hung left tpdf installed and the
+next run refused to start.
+
+CONTROLS. `--control NAME` breaks one thing on purpose and names the checks
+that must fail for it. The run then ends with exit code 0 exactly when those
+checks failed and no other did, so each control is one command and a check that
+has stopped being able to fail shows as a failed control. `CONTROLS` below has
+them. One check has no control here: that the application's own process maps no
+PDFium. Nothing in a normal build maps it there on request. What stands behind
+it is that the same probe finds PDFium in the workers, that the process is
+sampled from its start until it has closed and not once, and that a process
+whose modules cannot be read fails the check. A second one is weaker than it
+looks: the application's own registry key read the same before the install,
+after it and after the uninstall on the machine this was written on
+(2026-10-09), so that check has not been seen to fail either.
 
 IT NEEDS A DESKTOP, because step 4 opens a window. Over ssh that means an
 interactive scheduled task; `BUILD.md`, *Cutting a release*, step 8.
@@ -58,6 +77,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import threading
 import time
 from ctypes import wintypes
 from pathlib import Path
@@ -67,6 +87,35 @@ from live_output import stream_results
 UNINSTALL_KEY = r"HKCU\Software\Microsoft\Windows\CurrentVersion\Uninstall\tpdf"
 PDF_CLASS = r"HKCU\Software\Classes\.pdf"
 NAME = re.compile(r"^tpdf_(\d+\.\d+\.\d+)_x64-setup\.exe$")
+
+APP_KEY = r"HKCU\Software\Timo Stein\tpdf"
+
+# What each control breaks, and the checks that must fail for it and no others.
+# A name here is the start of a check's name, as `Checks.note` is given it.
+CONTROLS: dict[str, tuple[str, list[str]]] = {
+    "no-install": ("the installer is not run", [
+        "the installer ends with exit code 0", "tpdf.exe is installed",
+        "tpdf-cli.exe is installed", "uninstall.exe is installed",
+        "pdfium/pdfium.dll is installed", "Windows lists tpdf as installed"]),
+    "no-uninstall": ("the uninstaller is not run until the checks have been read", [
+        "the application and its PDFium are removed",
+        "Windows no longer lists tpdf as installed",
+        "the .pdf class reads as it did before the install",
+        "the folder holds nothing but the uninstaller"]),
+    "engine": ("the worker's PDFium is compared with a folder that is not the install folder", [
+        "a worker has the installed PDFium mapped"]),
+    "document": ("the application is started on a file that is not a PDF", [
+        "the session file names the document"]),
+    "time-limit": ("the installer is given a fifth of a second", [
+        "every step ends, and within its time limit"]),
+}
+
+# What may fail besides, depending on how far the broken step got. An installer
+# stopped after a fifth of a second has usually written part of `tpdf.exe`.
+MAY_ALSO_FAIL: dict[str, list[str]] = {
+    "time-limit": ["the application and its PDFium are removed",
+                   "the folder holds nothing but the uninstaller"],
+}
 
 TH32CS_SNAPPROCESS = 0x00000002
 WM_CLOSE = 0x0010
@@ -91,7 +140,11 @@ class PROCESSENTRY32W(ctypes.Structure):
 
 
 def processes() -> list[tuple[int, int, str]]:
-    """Every process as (pid, parent pid, image name). Empty if it cannot be read."""
+    """Every process as (pid, parent pid, image name).
+
+    Raises when the snapshot cannot be taken. An empty list would read as a
+    machine with nothing running on it, and two checks here ask exactly that.
+    """
     kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
     kernel32.CreateToolhelp32Snapshot.restype = wintypes.HANDLE
     kernel32.Process32FirstW.argtypes = [wintypes.HANDLE, ctypes.POINTER(PROCESSENTRY32W)]
@@ -99,7 +152,7 @@ def processes() -> list[tuple[int, int, str]]:
     kernel32.CloseHandle.argtypes = [wintypes.HANDLE]
     snapshot = kernel32.CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0)
     if snapshot in (None, ctypes.c_void_p(-1).value):
-        return []
+        raise RuntimeError(f"the process list could not be read (error {ctypes.get_last_error()})")
     found: list[tuple[int, int, str]] = []
     try:
         entry = PROCESSENTRY32W()
@@ -182,9 +235,60 @@ class Checks:
         return ok
 
 
+class RanOut(Exception):
+    """A process started here did not end within its time limit."""
+
+
+def bounded(command: str, what: str, limit: float) -> int:
+    """Runs a command line as written and answers its exit code.
+
+    A string and not a list, because the installer reads `/D=` and the
+    uninstaller `_?=` only when they are unquoted.
+    """
+    try:
+        return subprocess.run(command, timeout=limit, check=False).returncode
+    except subprocess.TimeoutExpired as e:
+        raise RanOut(f"{what} did not end within {limit:g} s") from e
+
+
 def tool(cli: Path, *args: str, timeout: float = 120) -> subprocess.CompletedProcess[str]:
-    return subprocess.run([str(cli), *args], capture_output=True, text=True, encoding="utf-8",
-                          errors="replace", timeout=timeout, check=False)
+    try:
+        return subprocess.run([str(cli), *args], capture_output=True, text=True, encoding="utf-8",
+                              errors="replace", timeout=timeout, check=False)
+    except subprocess.TimeoutExpired as e:
+        raise RanOut(f"tpdf-cli {args[0]} did not end within {timeout:g} s") from e
+
+
+class Watch:
+    """Samples one process's modules from now until it is stopped.
+
+    A thread and not one look, for the reason `viewer_check.py` gives: PDFium
+    being mapped at any instant is the failure, so a look at a quiet moment
+    must not be able to pass it.
+    """
+
+    def __init__(self, pid: int) -> None:
+        from win_modules import maps_parser
+
+        self.mapped = False
+        self.peak = 0
+        self.samples = 0
+        self._stop = threading.Event()
+
+        def sample() -> None:
+            while not self._stop.is_set():
+                mapped, count = maps_parser(pid)
+                self.samples += 1
+                self.mapped = self.mapped or mapped
+                self.peak = max(self.peak, count)
+                self._stop.wait(0.05)
+
+        self._thread = threading.Thread(target=sample, daemon=True)
+        self._thread.start()
+
+    def stop(self) -> None:
+        self._stop.set()
+        self._thread.join(timeout=5)
 
 
 def check_files(checks: Checks, folder: Path, version: str) -> Path | None:
@@ -228,26 +332,22 @@ def check_tool(checks: Checks, cli: Path, pdf: Path, scratch: Path, word: str) -
 
 
 def check_window(checks: Checks, folder: Path, pdf: Path, scratch: Path, version: str,
-                 wait: float) -> None:
-    from win_modules import maps_parser, modules_of
+                 wait: float, engine_folder: Path) -> None:
+    from win_modules import modules_of
 
     print("--- the installed application opens the document ---")
     session = scratch / "session.json"
     env = dict(os.environ, TPDF_SESSION_FILE=str(session), TPDF_LOG_FILE=str(scratch / "tpdf.log"))
     app = subprocess.Popen([str(folder / "tpdf.exe"), str(pdf)], env=env, cwd=str(scratch))
-    engine = str(folder / "pdfium").lower()
+    engine = str(engine_folder / "pdfium").lower()
     title = f"tpdf v{version}"
+    watch = Watch(app.pid)
     windows: list[tuple[int, str]] = []
     workers: dict[int, str] = {}
     named = False
-    parser_in_app = False
-    peak = 0
     deadline = time.monotonic() + wait
     try:
         while time.monotonic() < deadline and app.poll() is None:
-            mapped, count = maps_parser(app.pid)
-            parser_in_app = parser_in_app or mapped
-            peak = max(peak, count)
             windows = [w for w in window_titles(app.pid) if w[1].startswith(title)]
             for pid in descendants(app.pid):
                 for module in modules_of(pid):
@@ -264,10 +364,6 @@ def check_window(checks: Checks, folder: Path, pdf: Path, scratch: Path, version
         checks.note(installed_engine(workers, engine), "a worker has the installed PDFium mapped",
                     ", ".join(sorted(set(workers.values()))) or f"no PDFium in: {started(app.pid)}")
         checks.note(named, "the session file names the document")
-        # The count is the control: zero modules is a process that could not be
-        # read, and that must not pass as a process with no parser in it.
-        checks.note(peak > 0 and not parser_in_app, "the application's own process maps no PDFium",
-                    f"{peak} modules seen")
 
         print("--- and closes when asked ---")
         user32 = ctypes.WinDLL("user32", use_last_error=True)
@@ -289,23 +385,45 @@ def check_window(checks: Checks, folder: Path, pdf: Path, scratch: Path, version
             alive = {pid for pid, _, _ in processes()} & set(workers)
         checks.note(bool(workers) and not alive, "its workers are gone too",
                     f"still running: {sorted(alive)}" if alive else "")
+        watch.stop()
+        # Read after the close, so the whole life of the process was sampled.
+        # The count is the control: zero modules is a process that could not be
+        # read, and that must not pass as a process with no parser in it.
+        checks.note(watch.peak > 0 and not watch.mapped,
+                    "the application's own process maps no PDFium",
+                    f"{watch.samples} samples from start to close, {watch.peak} modules at most")
     finally:
+        watch.stop()
         if app.poll() is None:
             subprocess.run(["taskkill", "/PID", str(app.pid), "/T", "/F"], capture_output=True, check=False)
             app.wait(timeout=10)
 
 
-def uninstall(checks: Checks, folder: Path, pdf_class_before: str | None) -> None:
+def uninstall(checks: Checks, folder: Path, before: dict[str, str | None], run_it: bool) -> None:
     print("--- uninstalling ---")
     remover = folder / "uninstall.exe"
-    if remover.is_file():
-        # `_?=` keeps the uninstaller in place and makes it wait; without it it
-        # copies itself to the temporary folder and returns at once.
-        subprocess.run(f'"{remover}" /S _?={folder}', timeout=180, check=False)
-    checks.note(not (folder / "tpdf.exe").exists() and not (folder / "pdfium" / "pdfium.dll").exists(),
-                "the application and its PDFium are removed")
-    checks.note(registry(UNINSTALL_KEY) is None, "Windows no longer lists tpdf as installed")
-    checks.note(registry(PDF_CLASS) == pdf_class_before, "the .pdf class reads as it did before the install")
+
+    def remove() -> None:
+        if remover.is_file():
+            # `_?=` keeps the uninstaller in place and makes it wait; without it
+            # it copies itself to the temporary folder and returns at once.
+            bounded(f'"{remover}" /S _?={folder}', "the uninstaller", 180)
+
+    try:
+        if run_it:
+            remove()
+        checks.note(not (folder / "tpdf.exe").exists() and not (folder / "pdfium" / "pdfium.dll").exists(),
+                    "the application and its PDFium are removed")
+        checks.note(registry(UNINSTALL_KEY) is None, "Windows no longer lists tpdf as installed")
+        for key, what in ((PDF_CLASS, "the .pdf class"), (APP_KEY, "the application's own key")):
+            checks.note(registry(key) == before[key], f"{what} reads as it did before the install")
+        left = sorted(str(path.relative_to(folder)) for path in folder.rglob("*") if path.is_file())
+        checks.note(left in ([], ["uninstall.exe"]), "the folder holds nothing but the uninstaller",
+                    ", ".join(left[:12]))
+        if not run_it:
+            remove()
+    except RanOut as e:
+        checks.note(False, "the uninstall ends within its time limit", str(e))
     shutil.rmtree(folder, ignore_errors=True)
 
 
@@ -318,6 +436,8 @@ def main() -> int:
                         help="a word of the document that the tool can remove and prove gone")
     parser.add_argument("--version", help="when the installer's name does not carry it")
     parser.add_argument("--wait", type=float, default=60, help="seconds to wait for the window")
+    parser.add_argument("--control", choices=sorted(CONTROLS),
+                        help="break one thing on purpose; exit 0 when exactly its checks fail")
     args = parser.parse_args()
 
     if sys.platform != "win32":
@@ -334,10 +454,15 @@ def main() -> int:
     if not version:
         print(f"[ERROR] {installer.name} does not name its version; pass --version")
         return 2
+    try:
+        running = any(image.lower() == "tpdf.exe" for _, _, image in processes())
+    except RuntimeError as e:
+        print(f"[ERROR] {e}")
+        return 2
     if registry(UNINSTALL_KEY) is not None:
         print("[ERROR] tpdf is installed on this machine; this check installs and removes it")
         return 2
-    if any(image.lower() == "tpdf.exe" for _, _, image in processes()):
+    if running:
         print("[ERROR] tpdf is running; a second start would be handed to it")
         return 2
     folder = Path(os.environ["LOCALAPPDATA"]) / "tpdf-installed-check"
@@ -345,24 +470,51 @@ def main() -> int:
         print(f"[ERROR] {folder} exists or has a space in it; remove it and run again")
         return 2
 
+    control = args.control
+    if control:
+        print(f"--- control: {CONTROLS[control][0]} ---")
     checks = Checks()
-    pdf_class_before = registry(PDF_CLASS)
+    before = {key: registry(key) for key in (PDF_CLASS, APP_KEY)}
     with tempfile.TemporaryDirectory(prefix="tpdf-installed-check-") as temporary:
         scratch = Path(temporary)
-        print(f"--- installing {installer.name} into {folder} ---")
-        # `/D=` is last and unquoted: that is how the installer reads it.
-        ran = subprocess.run(f'"{installer}" /S /D={folder}', timeout=300, check=False)
-        checks.note(ran.returncode == 0, "the installer ends with exit code 0", f"exit {ran.returncode}")
+        opened = pdf
+        if control == "document":
+            opened = scratch / "not-a-document.pdf"
+            opened.write_bytes(b"This file is not a PDF.\n")
+        # Everything from the install on is inside this, so that whatever
+        # happens the uninstall runs and the machine is put back.
         try:
+            print(f"--- installing {installer.name} into {folder} ---")
+            if control == "no-install":
+                checks.note(False, "the installer ends with exit code 0", "not run")
+            else:
+                # `/D=` is last and unquoted: that is how the installer reads it.
+                limit = 0.2 if control == "time-limit" else 300
+                code = bounded(f'"{installer}" /S /D={folder}', "the installer", limit)
+                checks.note(code == 0, "the installer ends with exit code 0", f"exit {code}")
             cli = check_files(checks, folder, version)
             if cli:
                 check_tool(checks, cli, pdf, scratch, args.word)
             if (folder / "tpdf.exe").is_file():
-                check_window(checks, folder, pdf, scratch, version, args.wait)
+                engine_folder = scratch if control == "engine" else folder
+                check_window(checks, folder, opened, scratch, version, args.wait, engine_folder)
+        except (RanOut, RuntimeError, OSError) as e:
+            checks.note(False, "every step ends, and within its time limit", str(e))
         finally:
-            uninstall(checks, folder, pdf_class_before)
+            uninstall(checks, folder, before, run_it=control != "no-uninstall")
 
     print()
+    if control:
+        expected = CONTROLS[control][1]
+        allowed = expected + MAY_ALSO_FAIL.get(control, [])
+        unexpected = [name for name in checks.failed if not any(name.startswith(e) for e in allowed)]
+        missing = [e for e in expected if not any(name.startswith(e) for name in checks.failed)]
+        if unexpected or missing:
+            print(f"[FAIL] control '{control}': did not fail but should have: {missing or 'nothing'}; "
+                  f"failed but should not have: {unexpected or 'nothing'}")
+            return 1
+        print(f"[OK] control '{control}': what it is aimed at failed ({len(expected)}), and nothing else")
+        return 0
     if checks.failed:
         print(f"[FAIL] {len(checks.failed)} of {checks.count} checks failed: {'; '.join(checks.failed)}")
         return 1

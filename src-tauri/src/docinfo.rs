@@ -219,6 +219,16 @@ pub struct Appendix {
     pub added: usize,
     /// Objects it defines differently from the signed revision.
     pub replaced: usize,
+    /// Objects the signed revision had that the document no longer has.
+    ///
+    /// A later cross-reference section can mark an object free, and a reader
+    /// then finds nothing where a page's content stream was. No object is
+    /// written for that, so neither count above sees it: a page that lost
+    /// what it draws read as an append that touched no page until
+    /// 2026-10-09. Counted whichever form the section has, because readers
+    /// differ on which they honour (`docinfo/freed.rs`). What the removed
+    /// objects were called is not in `kinds`, which names what arrived.
+    pub removed: usize,
     /// What the file calls them: `/Type`, with `/Subtype` where there is one.
     ///
     /// Sorted and de-duplicated, so the row is a set of kinds rather than a
@@ -239,7 +249,9 @@ pub struct Appendix {
     /// what it inherits from the page tree above it. Before that a content
     /// stream written again under an untouched page object counted as no page
     /// at all, which is the append this count exists to show. A page that is
-    /// no longer where it was in the document is counted too.
+    /// no longer where it was in the document is counted too, and so is a
+    /// page whose own object, or anything it drew from when it was signed,
+    /// was removed (`removed`).
     ///
     /// Still a count and not a verdict: a page can be touched for reasons that
     /// change nothing on screen, and this does not claim otherwise. And what
@@ -2509,11 +2521,18 @@ fn read_appendix(bytes: &[u8], end: usize, password: Option<&str>) -> Appendix {
         return unread;
     };
 
+    // What the appended sections mark free, or no answer at all: a section
+    // this cannot follow may be the one that frees a page's content.
+    let Some(freed) = freed::after(bytes, end, whole.xref_start, MAX_DECODE) else {
+        return unread;
+    };
+
     let mut out = Appendix::default();
     let mut kinds: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
     let mut changed: std::collections::BTreeSet<lopdf::ObjectId> =
         std::collections::BTreeSet::new();
     let mut touched = changed.clone();
+    let mut listings: Vec<(lopdf::ObjectId, PageListing)> = Vec::new();
     for (id, object) in &whole.objects {
         let before = signed.objects.get(id);
         match before {
@@ -2530,7 +2549,7 @@ fn read_appendix(bytes: &[u8], end: usize, password: Option<&str>) -> Appendix {
             if let Some(listing) =
                 before.and_then(|before| page_listing(&signed, &whole, *id, before, object))
             {
-                out.pages_listing.push(listing);
+                listings.push((*id, listing));
             }
         }
         kinds.insert(kind);
@@ -2538,6 +2557,29 @@ fn read_appendix(bytes: &[u8], end: usize, password: Option<&str>) -> Appendix {
     // And the pages whose own object stands as it was while something they
     // draw from does not, or which are no longer where they were.
     touched.extend(pages_drawing_from(&whole, &changed));
+    // And what the signed revision had that a reader of the document no
+    // longer finds. A cross-reference section that marks an object free
+    // writes no object, and `lopdf` keeps no free entry, so the object is
+    // still in the whole parse as it was and the walk above passes it by
+    // (`freed` has the measurement). The sections are read for it here; an
+    // object the whole parse itself no longer has is counted the same way.
+    // The pages that drew from one are found in the signed document, where
+    // they still reach it; a page that was itself removed is one of them.
+    let removed: std::collections::BTreeSet<lopdf::ObjectId> = signed
+        .objects
+        .keys()
+        .filter(|id| freed.contains(&id.0) || !whole.objects.contains_key(id))
+        .copied()
+        .collect();
+    out.removed = removed.len();
+    if !removed.is_empty() {
+        let lost = pages_drawing_from(&signed, &removed);
+        // A page that lost something it drew is not one that was only
+        // written again to list a field, whatever its own object says.
+        listings.retain(|(page, _)| !lost.contains(page));
+        touched.extend(lost);
+    }
+    out.pages_listing = listings.into_iter().map(|(_, listing)| listing).collect();
     let now = whole.get_pages();
     let moved = signed
         .get_pages()
@@ -2808,7 +2850,20 @@ fn is_signature_field(document: &Document, widget: &lopdf::Dictionary) -> bool {
 /// *did anything about this object change*, not a semantic equality. A false
 /// "changed" would over-report; a false "unchanged" would under-report, and this
 /// errs toward the first.
+///
+/// **A stream's bytes are compared as well, because `Debug` leaves them
+/// out.** `lopdf` prints a stream as its dictionary followed by the literal
+/// `stream...endstream`, so two streams of one length and different content
+/// print alike. Until 2026-10-09 a content stream written again at its old
+/// length was therefore an object nothing had changed, and its page one
+/// nobody had rewritten. A stream is an object of its own and never inside
+/// another, so the top level is the only place to look.
 fn same_object(before: &Object, after: &Object) -> bool {
+    if let (Object::Stream(before), Object::Stream(after)) = (before, after) {
+        if before.content != after.content {
+            return false;
+        }
+    }
     format!("{before:?}") == format!("{after:?}")
 }
 
@@ -2841,6 +2896,8 @@ fn kind_of(object: &Object) -> String {
 
 #[cfg(test)]
 mod revocation_tests;
+
+mod freed;
 
 #[cfg(test)]
 mod appendix_tests;

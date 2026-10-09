@@ -3,6 +3,7 @@ import type { Edits } from "./edits";
 import type { Place } from "./session";
 import type { Tab } from "./sidebar";
 import { PLAIN_SEARCH, type SearchOptions, type ScopeRange } from "./search";
+import { labelsFor } from "./recents";
 import type { Offer } from "./recovery";
 import type { ViewId } from "./views";
 
@@ -269,6 +270,31 @@ export function twinsOf<T extends { edits: unknown }>(tabs: readonly T[], tab: T
 /** One tab for each document: a document shown twice is counted once. */
 export function oneEach<T extends { edits: unknown }>(tabs: readonly T[]): T[] {
   return tabs.filter((tab, index) => tabs.findIndex((other) => other.edits === tab.edits) === index);
+}
+
+/**
+ * What "Show side by side with..." chooses among: one tab for each document
+ * other than the view the reader is in, and the name it is asked for by.
+ *
+ * A document on both sides is two tabs and one choice. Listed twice it was two
+ * equal names, and the question that picks by name can be satisfied by neither.
+ * The tab that stands for it is the one `across` says is already on the other
+ * side, when there is one: that is the tab the command brings to the front
+ * there, and moving the other would put both views on one side.
+ *
+ * The names are the basenames, lengthened where two files share one, as the
+ * tab row's own labels are. The order is the tab row's.
+ */
+export function partnersOf<T extends { view: unknown; edits: unknown; path: string }>(
+  tabs: readonly T[],
+  active: T["view"],
+  across: (tab: T) => boolean,
+): { tab: T; name: string }[] {
+  const others = tabs.filter((tab) => tab.view !== active);
+  const chosen = oneEach([...others.filter(across), ...others.filter((tab) => !across(tab))]);
+  const partners = others.filter((tab) => chosen.includes(tab));
+  const names = labelsFor(partners.map((tab) => tab.path));
+  return partners.map((tab, index) => ({ tab, name: names[index] ?? "" }));
 }
 
 /** A save may reopen its document; transitions wait outside their own queue. */

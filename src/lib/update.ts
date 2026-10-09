@@ -269,6 +269,28 @@ export function installEndsProcess(mac: boolean): boolean {
 /** Which half of the update a {@link finishUpdate} call is running. */
 export type FinishStep = "install" | "restart";
 
+/**
+ * Whether `step` ends the process on this platform.
+ *
+ * {@link installEndsProcess} answers for the install, and only for it. A
+ * restart ends the process on both platforms by definition, so the two are
+ * joined here: reading the platform alone would take the unsaved-work question
+ * away from every macOS restart, which is the one platform where the restart is
+ * a step a reader presses at all.
+ */
+export function stepEndsProcess(step: FinishStep, mac: boolean): boolean {
+  return step === "restart" || installEndsProcess(mac);
+}
+
+/**
+ * The step the header's button runs in `state`: the restart once an update has
+ * been installed, the install before that. Whether the state allows the step at
+ * all is {@link finishUpdate}'s to say.
+ */
+export function stepFor(state: UpdateState): FinishStep {
+  return state.kind === "ready" ? "restart" : "install";
+}
+
 /** What a reader is asked before a step that would discard their work. */
 export interface FinishPrompt {
   title: string;

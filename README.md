@@ -138,8 +138,8 @@ assert report["written"] and report["verified"]
 assert pdf.verify("contract-signed.pdf")["files"][0]["signatures"][0]["integrity"]["verdict"] == "intact"
 ```
 
-Twenty-seven commands in all: [Command-line tool](#command-line-tool) has each of them, how to
-install the tool, and the Python client.
+[Command-line tool](#command-line-tool) has every command, how to install the tool, and the
+Python client.
 
 ## Status
 
@@ -1791,11 +1791,14 @@ it with `[Console]::OutputEncoding = [Text.Encoding]::UTF8` set if a name may ca
   `appendix`, `null` exactly when `appended_bytes` is 0, what those bytes changed, by the
   names the file uses and never as a verdict: `unread` (`true` when tpdf could not read it;
   the counts are then 0, the lists empty, and they say nothing), `added` and `replaced`
-  (objects the signed revision did not have, and objects written again differently), `kinds`
-  (what the file calls those objects, such as `Sig` and `Annot/Widget`), `catalog_gained`
+  (objects the signed revision did not have, and objects written again differently),
+  `removed` (objects the signed revision had that a later cross-reference section marks
+  free, or that the document no longer has), `kinds`
+  (what the file calls the added and replaced objects, such as `Sig` and `Annot/Widget`),
+  `catalog_gained`
   (keys new in the document catalog; `DSS` is validation data), `pages_touched` (pages whose
-  object or anything they draw from was added or replaced, or that are no longer where they
-  were; a touched page can look the same), `pages_listing` (the touched pages rewritten only
+  object or anything they draw from was added, replaced or removed, or that are no longer
+  where they were; a touched page can look the same), `pages_listing` (the touched pages rewritten only
   to list a new signature or timestamp field among their annotations, each with its `page`,
   counted from 1, and `timestamp`, `true` when every field it gained is a document
   timestamp's) and `sentence`. This is what `--strict` reads: of the `intact` signature

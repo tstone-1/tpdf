@@ -173,6 +173,21 @@ export class RecognitionLanguage {
     this.asking = offered;
   }
 
+  /**
+   * Fetches the machine's list, holds it, and only then has the question
+   * asked: the palette reads the held list the moment it opens. A list that
+   * cannot be fetched is said, and nothing is asked.
+   */
+  async choose(fetch: () => Promise<Offered>, ask: () => void, say: (problem: string) => void): Promise<void> {
+    try {
+      this.hold(await fetch());
+    } catch (error) {
+      say(String(error));
+      return;
+    }
+    ask();
+  }
+
   /** The list being asked about, or null when nothing is being asked. */
   question(): Offered | null {
     return this.asking;

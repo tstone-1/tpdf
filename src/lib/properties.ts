@@ -86,6 +86,12 @@ export interface Encryption {
 export interface Appendix {
   added: number;
   replaced: number;
+  /**
+   * Objects the signed revision had that a later cross-reference section
+   * marks free, or that the document no longer has. Nothing is written for
+   * a removal, so it is in neither count above.
+   */
+  removed: number;
   kinds: string[];
   catalog_gained: string[];
   pages_touched: number;
@@ -613,7 +619,24 @@ export function appendixRow(signature: Signature): Row | null {
   }
 
   const what = describeAppendix(appendix);
-  return { name: "Appended", value: `${what}, and ${describePages(appendix)}`, warn: true };
+  const pages = describePages(appendix);
+  const arrived = appendix.added + appendix.replaced;
+  const named = appendix.catalog_gained.includes("DSS") || appendix.kinds.includes("Sig");
+  let value: string;
+  if (appendix.removed === 0) {
+    value = `${what}, and ${pages}`;
+  } else if (arrived === 0 && !named) {
+    // Nothing arrived and something went: the removal is the whole of it,
+    // and "0 objects" in front of it would be noise.
+    const removed =
+      appendix.removed === 1 ? "1 object was removed" : `${appendix.removed} objects were removed`;
+    value = `${removed}, and ${pages}`;
+  } else {
+    const removed =
+      appendix.removed === 1 ? "1 object removed" : `${appendix.removed} objects removed`;
+    value = `${what}, with ${removed}, and ${pages}`;
+  }
+  return { name: "Appended", value, warn: true };
 }
 
 /**

@@ -246,10 +246,13 @@ impl Session {
     /// Records which documents are open as tabs, which of them is showing, and
     /// how they are divided between two sides.
     ///
-    /// A path is listed once, at its first position: two tabs on one file do
-    /// not exist, so a repeat is a damaged record and not a second tab. The
-    /// active tab is kept only when it is in the list, because a launch opens
-    /// it first and it must be one of the tabs that come back.
+    /// A path is listed once, at its first position. A repeat is ordinary
+    /// and is not a damaged record: since one document can be shown on both
+    /// sides, the window has two tabs on one file then and sends its path
+    /// twice. Listing it once is what makes the document come back as one tab
+    /// at the next launch. The active tab is kept only when it is in the
+    /// list, because a launch opens it first and it must be one of the tabs
+    /// that come back.
     ///
     /// The sides are kept only when they describe a split of these tabs: some
     /// of them on the right and some not. The tab in front of the other side

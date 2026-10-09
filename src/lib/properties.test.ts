@@ -202,6 +202,7 @@ describe("appendixRow", () => {
     return {
       added: 15,
       replaced: 1,
+      removed: 0,
       kinds: ["Catalog", "DSS", "VRI", "stream", "untyped", "value"],
       catalog_gained: ["DSS"],
       pages_touched: 0,
@@ -215,6 +216,7 @@ describe("appendixRow", () => {
     return {
       added: 5,
       replaced: 3,
+      removed: 0,
       kinds: ["Annot/Widget", "FontDescriptor", "Page", "Sig", "stream", "untyped"],
       catalog_gained: [],
       pages_touched: 1,
@@ -275,6 +277,7 @@ describe("appendixRow", () => {
     const other: Appendix = {
       added: 2,
       replaced: 0,
+      removed: 0,
       kinds: ["Metadata", "StructTreeRoot"],
       catalog_gained: ["StructTreeRoot"],
       pages_touched: 0,
@@ -293,6 +296,7 @@ describe("appendixRow", () => {
     const unread: Appendix = {
       added: 0,
       replaced: 0,
+      removed: 0,
       kinds: [],
       catalog_gained: [],
       pages_touched: 0,
@@ -351,6 +355,37 @@ describe("appendixRow", () => {
     expect(appendixRow({ ...signed(), appendix: several })?.value).toBe(
       "another signature, and a signature or timestamp field was added to the annotations " +
         "of pages 1, 2 and 5 (their content is unchanged)",
+    );
+  });
+
+  it("says what was removed, beside what arrived and alone", () => {
+    // A cross-reference section that marks a page's content stream free
+    // writes no object. Until the worker counted that, this row read "no page
+    // was rewritten" over a page that had lost its text.
+    const freed: Appendix = {
+      added: 0,
+      replaced: 0,
+      removed: 1,
+      kinds: [],
+      catalog_gained: [],
+      pages_touched: 1,
+      pages_listing: [],
+      unread: false,
+    };
+    expect(appendixRow({ ...signed(), appendix: freed })?.value).toBe(
+      "1 object was removed, and 1 page was rewritten",
+    );
+    expect(appendixRow({ ...signed(), appendix: { ...freed, removed: 2 } })?.value).toBe(
+      "2 objects were removed, and 1 page was rewritten",
+    );
+    expect(
+      appendixRow({ ...signed(), appendix: { ...secondSignature(), removed: 1 } })?.value,
+    ).toBe("another signature, with 1 object removed, and 1 page was rewritten");
+    expect(
+      appendixRow({ ...signed(), appendix: { ...validationData(), removed: 3 } })?.value,
+    ).toBe(
+      "the certificates and revocation records a signature needs to be checked later, " +
+        "with 3 objects removed, and no page was rewritten",
     );
   });
 

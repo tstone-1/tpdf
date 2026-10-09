@@ -84,6 +84,7 @@
               "unread": false,
               "added": 12,
               "replaced": 2,
+              "removed": 0,
               "kinds": [
                 "Annot/Widget",
                 "Catalog",

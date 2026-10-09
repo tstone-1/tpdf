@@ -528,6 +528,26 @@ binary — there is a `bins` gate now, and it was proved to fail before being tr
 `cargo build --release` binary is *not* a production build: the frontend is embedded by a
 cargo **feature**, not by the profile. Both are in `docs/TRAPS.md`.
 
+**The landing page, the cache rule, and the two scripts that need a screen** (2026-10-09).
+
+- `site/` (`index.html`, `download.js`) is published to `https://tstone-1.github.io/tpdf/`
+  by `pages.yml` on a push to `main` that touches `site/` or `docs/img/`. The job that
+  checks the repository out holds `contents: read`; `pages: write` and `id-token: write`
+  are on the job that runs no repository code. The page restates facts the README owns,
+  and `src/lib/sitepage.test.ts` holds them to the README, which is the original.
+  `src/lib/sitedownload.test.ts` holds the rule that picks the two installers out of a
+  release's files.
+- The fork threat model in `AGENTS.md` is about tokens. Its other half is what a job on
+  `main` can hand to a job that holds a secret, and the one such thing is a cache: saving
+  one needs no more than running in a job. `check_workflow_parity.py` refuses a job that
+  names a secret or an environment and uses `Swatinem/rust-cache`, or uses `actions/cache`
+  without comparing a recorded digest, and holds `SSIGN_REV` and `SSIGN_SHA256` equal in
+  `release.yml` and `sign-rehearsal.yml`.
+- `scripts/window_checks.py` runs every window check against one checks build, and
+  `scripts/installed_check.py` runs the Windows installer and uses what it installed. Both
+  need a desktop and are release steps, not gates (`BUILD.md`, *Cutting a release*, steps 5
+  and 8).
+
 ## Quality gates: render constants on Windows
 
 **The render constants are measured on both platforms.** `tile-bench` and `pool-bench` run

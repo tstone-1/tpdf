@@ -267,6 +267,20 @@ describe("the sides a launch reads back", () => {
     expect(areas(panes)).toEqual([1, 3]);
   });
 
+  it("exchanges no areas for a reader's document that has no viewer yet", () => {
+    // There is no viewer to keep in place, so the sides are drawn where they
+    // are by default: the left in the first area.
+    const panes = new Panes();
+    const order = [1, 2, 3];
+    panes.opened(3);
+    panes.opened(2);
+    panes.opened(1);
+    panes.arrange([1, 2], 3, 1, order);
+    expect(panes.sideOf(1)).toBe("right");
+    expect(panes.focused).toBe("right");
+    expect([panes.slotOf("left"), panes.slotOf("right")]).toEqual([0, 1]);
+  });
+
   it("shows the first tab of a side whose front tab is not named or not open", () => {
     const { panes, order } = three();
     panes.arrange([2, 3, 9], 9, 1, order);
@@ -330,6 +344,12 @@ describe("naming the other document", () => {
     expect(pickPartner("a.pdf", ["a.pdf", "a.pdf"])).toEqual({
       problem: "2 open documents match. Type more of the name",
     });
+    // However it is typed, and nothing typed in full is left to add. So the
+    // list handed in holds a document once: `partnersOf` in `documenttabs.ts`.
+    expect(pickPartner("b.pdf", ["B.pdf", "B.pdf"])).toEqual({
+      problem: "2 open documents match. Type more of the name",
+    });
+    expect(pickPartner("b.pdf", ["B.pdf"])).toEqual({ index: 0 });
   });
 
   it("answers nothing typed only when there is one document to choose", () => {

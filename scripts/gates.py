@@ -329,6 +329,11 @@ def gates() -> "list[tuple[str, list[str], str]]":
             "a viewer callback is declared and not wired in App.svelte",
         ),
         (
+            "views",
+            [sys.executable, str(ROOT / "scripts" / "check_view_after_await.py")],
+            "App.svelte reads a document's variable after an await, or has a variable nobody classified",
+        ),
+        (
             "docs",
             [sys.executable, str(ROOT / "scripts" / "check_doc_comments.py")],
             "a doc comment documents nothing: an insertion separated it from its declaration",

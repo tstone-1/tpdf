@@ -32,6 +32,19 @@
 //!   said to be outside the region.
 //! * When the last glyph goes and the next show starts where this one's pen
 //!   stopped, PDFium placed that next show.
+//!
+//! ## A `TJ` that draws nothing, between a cut and the next show
+//!
+//! `[-500] TJ` makes no text object and still moves the pen, so the place
+//! PDFium reports for the next show is after that move. A gap that takes the
+//! pen there holds the move already. Left in the stream, the `TJ` moved the
+//! next show a second time: measured 2026-10-09 on
+//! `(ABCDE) Tj [-500] TJ (NEXT) Tj` at 20 points with `DE` cut, `NEXT` went
+//! from x = 130.42 to 140.42, and stayed at 120.42 in the same line without
+//! the `TJ`. So a cut that reaches the end of its show takes such a `TJ` out
+//! with it. Nothing is worked out from the number: the font size and the
+//! horizontal scaling at that `TJ` need not be this show's, and the
+//! measurement already has them.
 
 use lopdf::content::{Content, Operation};
 use lopdf::{Document, Object, ObjectId};
@@ -311,6 +324,29 @@ fn carries_on(operations: &[Operation], at: usize) -> bool {
     false
 }
 
+/// Takes out every `TJ` that makes no text object between the show at `at`
+/// and the next show that makes one.
+///
+/// For a cut that reaches the end of a show whose pen carries on. The gap
+/// such a cut leaves takes the pen to where PDFium placed the next show, and
+/// that place is after whatever these moved it by; see the module note. They
+/// draw nothing, so nothing a reader sees goes with them, and no show's
+/// ordinal changes.
+fn drop_spacing_after(operations: &mut Vec<Operation>, at: usize) {
+    let next = operations[at + 1..]
+        .iter()
+        .position(makes_text_object)
+        .map_or(operations.len(), |offset| at + 1 + offset);
+    // Nothing between the two makes a text object, which is what `next`
+    // means, so every `TJ` there is one that draws nothing.
+    let mut index = 0;
+    operations.retain(|operation| {
+        let here = index;
+        index += 1;
+        !(here > at && here < next && operation.operator == "TJ")
+    });
+}
+
 /// What `lopdf` can say about each show PDFium made text of, by ordinal, or
 /// `None` when the page's shows are not `expected` many or cannot be read.
 ///
@@ -507,6 +543,13 @@ pub fn cut_shows(
                 .to_string()
         })?;
         let continues = carries_on(&content.operations, at);
+        let to_the_end = cut
+            .take
+            .last()
+            .is_some_and(|last| last + 1 == cut.pens.len());
+        if continues && to_the_end {
+            drop_spacing_after(&mut content.operations, at);
+        }
         let replacement = cut_one(&content.operations[at], length, cut, continues)?;
         content.operations.splice(at..=at, replacement);
     }

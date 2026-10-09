@@ -9,6 +9,7 @@
 import { beforeEach, describe, expect, it } from "vitest";
 
 import app from "../App.svelte?raw";
+import { missingFrom } from "./sourcetext";
 import { drafted, MarkDrafts } from "./markdraft";
 import { INK_WIDTH } from "./markband";
 import { pageId, type MarkKind, type MarkView } from "./pages";
@@ -331,15 +332,19 @@ describe("a commit", () => {
 });
 
 describe("the drafts' wiring in App.svelte", () => {
-  // Source-level, because `App.svelte` is the join and nothing imports it.
+  // Read as text with the comments taken out, because `App.svelte` is the join
+  // and nothing imports it. That sees that a line is there and not whether it
+  // runs (`sourcetext.ts`), so these hold the hand-over and no decision.
   it("asks the command that wraps as the model does, with the box's edges", () => {
-    expect(app).toContain(
+    expect(missingFrom(app, [
       'onMarkDraft: (note, left, right) => call("annot_draft_lines", { note, left, right }),',
-    );
+    ])).toEqual([]);
   });
 
   it("hands the edit's promise back for a note, so a draft is held until the model answers", () => {
-    expect(app).toContain("if (!isSaved(mark)) return applyEdit((e) => e.renote(mark, note));");
-    expect(app).toContain("return to ? applyEdit((e) => e.refield([to])) : undefined;");
+    expect(missingFrom(app, [
+      "if (!isSaved(mark)) return applyEdit((e) => e.renote(mark, note));",
+      "return to ? applyEdit((e) => e.refield([to])) : undefined;",
+    ])).toEqual([]);
   });
 });

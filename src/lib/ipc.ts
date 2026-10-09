@@ -75,6 +75,7 @@ import type { Choices, Placement, SignOutcome, SignRecord } from "./signing";
 import type { AppearanceOptions, SignaturePreview } from "./signappearance";
 import type { PageText } from "./text";
 import type { PreparedImport } from "./pendingimport";
+import type { DocHandle } from "./views";
 
 /**
  * Page geometry in PDF points.
@@ -209,93 +210,93 @@ export interface Commands {
   };
   /** The file's length-and-time stamp at open and now. See `diskwatch.ts`. */
   document_stamp: {
-    args: { doc: number; path: string };
+    args: { doc: DocHandle; path: string };
     reply: [string | null, string | null];
   };
   /** Whether the file's bytes differ from what was opened; `null` for cannot tell. */
-  document_differs: { args: { doc: number; path: string }; reply: boolean | null };
+  document_differs: { args: { doc: DocHandle; path: string }; reply: boolean | null };
   page_rotate: {
-    args: { doc: number; page: PageId; turns: number };
+    args: { doc: DocHandle; page: PageId; turns: number };
     reply: EditState;
   };
   page_crop: {
-    args: { doc: number; page: PageId; to: Rect | null };
+    args: { doc: DocHandle; page: PageId; to: Rect | null };
     reply: EditState;
   };
   page_content_box: {
-    args: { doc: number; page: number };
+    args: { doc: DocHandle; page: number };
     reply: [number, number, number, number] | null;
   };
   page_geometry: {
-    args: { doc: number; page: FilePage; crop: Rect | null };
+    args: { doc: DocHandle; page: FilePage; crop: Rect | null };
     reply: CropGeometry;
   };
   page_crop_box: {
-    args: { doc: number; page: number; rect: Rect };
+    args: { doc: DocHandle; page: number; rect: Rect };
     reply: [number, number, number, number];
   };
-  page_delete: { args: { doc: number; page: PageId }; reply: EditState };
+  page_delete: { args: { doc: DocHandle; page: PageId }; reply: EditState };
   page_move: {
-    args: { doc: number; page: PageId; after: PageId | null };
+    args: { doc: DocHandle; page: PageId; after: PageId | null };
     reply: EditState;
   };
   page_insert: {
     args: {
-      doc: number;
+      doc: DocHandle;
       after: PageId | null;
       size: readonly [number, number];
     };
     reply: EditState;
   };
   page_import_prepare: {
-    args: { doc: number; path: string };
+    args: { doc: DocHandle; path: string };
     reply: PreparedImport;
   };
   page_import: {
-    args: { doc: number; pending: number; after: PageId | null; pages: number[] };
+    args: { doc: DocHandle; pending: number; after: PageId | null; pages: number[] };
     reply: EditState;
   };
-  page_import_cancel: { args: { doc: number; pending: number }; reply: boolean };
-  annot_mark: { args: { doc: number; mark: NewMark; sweep?: number }; reply: EditState };
+  page_import_cancel: { args: { doc: DocHandle; pending: number }; reply: boolean };
+  annot_mark: { args: { doc: DocHandle; mark: NewMark; sweep?: number }; reply: EditState };
   annot_remove: {
-    args: { doc: number; mark: number; sweep: number };
+    args: { doc: DocHandle; mark: number; sweep: number };
     reply: EditState;
   };
   redact_mark: {
-    args: { doc: number; page: PageId; area: Rect };
+    args: { doc: DocHandle; page: PageId; area: Rect };
     reply: EditState;
   };
   redact_remove: {
-    args: { doc: number; redaction: number };
+    args: { doc: DocHandle; redaction: number };
     reply: EditState;
   };
   redaction_plans: {
-    args: { doc: number; page: FilePage; regions: readonly Rect[] };
+    args: { doc: DocHandle; page: FilePage; regions: readonly Rect[] };
     reply: RegionPlan[];
   };
   redact_copy: {
-    args: { doc: number; source: string; path: string; fill: Fill };
+    args: { doc: DocHandle; source: string; path: string; fill: Fill };
     reply: Applied;
   };
   redact_raster_copy: {
-    args: { doc: number; source: string; path: string; fill: Fill };
+    args: { doc: DocHandle; source: string; path: string; fill: Fill };
     reply: Applied;
   };
-  redact_document: { args: { doc: number; source: string; fill: Fill }; reply: Applied };
+  redact_document: { args: { doc: DocHandle; source: string; fill: Fill }; reply: Applied };
   ocr_copy: {
-    args: { doc: number; source: string; path: string; run: number; language: string | null };
+    args: { doc: DocHandle; source: string; path: string; run: number; language: string | null };
     reply: Recognised;
   };
   ocr_cancel: { args: { run: number }; reply: void };
   ocr_languages: { args: NoArgs; reply: Offered };
-  hidden_text: { args: { doc: number; run: number }; reply: HiddenText };
+  hidden_text: { args: { doc: DocHandle; run: number }; reply: HiddenText };
   hidden_text_cancel: { args: { run: number }; reply: void };
   annot_erase: {
-    args: { doc: number; mark: number; remove: number[]; sweep: number };
+    args: { doc: DocHandle; mark: number; remove: number[]; sweep: number };
     reply: EditState;
   };
   annot_note: {
-    args: { doc: number; mark: number; note: string };
+    args: { doc: DocHandle; mark: number; note: string };
     reply: EditState;
   };
   /**
@@ -311,7 +312,7 @@ export interface Commands {
   };
   annot_rewrite: {
     args: {
-      doc: number;
+      doc: DocHandle;
       object: readonly [number, number];
       page: PageId;
       body: string;
@@ -319,59 +320,59 @@ export interface Commands {
     reply: EditState;
   };
   annot_discard: {
-    args: { doc: number; object: readonly [number, number]; page: PageId };
+    args: { doc: DocHandle; object: readonly [number, number]; page: PageId };
     reply: EditState;
   };
   annot_recolor: {
-    args: { doc: number; mark: number; color: MarkColor };
+    args: { doc: DocHandle; mark: number; color: MarkColor };
     reply: EditState;
   };
   annot_move: {
-    args: { doc: number; mark: number; dx: number; dy: number };
+    args: { doc: DocHandle; mark: number; dx: number; dy: number };
     reply: EditState;
   };
   annot_resize: {
-    args: { doc: number; mark: number; rect: [number, number, number, number] };
+    args: { doc: DocHandle; mark: number; rect: [number, number, number, number] };
     reply: EditState;
   };
   annot_arrange: {
     args: {
-      doc: number;
+      doc: DocHandle;
       moves: { mark: number; rect: [number, number, number, number] }[];
       sweep: number;
     };
     reply: EditState;
   };
   form_field_edit: {
-    args: { doc: number; targets: import("./savedfields").FieldTarget[]; sweep: number };
+    args: { doc: DocHandle; targets: import("./savedfields").FieldTarget[]; sweep: number };
     reply: EditState;
   };
   annot_field_props: {
-    args: { doc: number; mark: number; props: import("./savedfields").FieldProps };
+    args: { doc: DocHandle; mark: number; props: import("./savedfields").FieldProps };
     reply: EditState;
   };
-  form_tab_order: { args: { doc: number }; reply: EditState };
-  annot_resize_signature: { args: { doc: number; mark: number; width: number }; reply: EditState };
+  form_tab_order: { args: { doc: DocHandle }; reply: EditState };
+  annot_resize_signature: { args: { doc: DocHandle; mark: number; width: number }; reply: EditState };
   signature_store: { args: { action: { kind: "load" } | { kind: "save"; image: import("./signature").SignatureImage } | { kind: "forget" } }; reply: import("./signature").SignatureImage | null };
-  edit_undo: { args: { doc: number }; reply: EditState };
-  edit_redo: { args: { doc: number }; reply: EditState };
-  edit_state: { args: { doc: number }; reply: EditState };
-  save_document: { args: { doc: number; source: string }; reply: void };
+  edit_undo: { args: { doc: DocHandle }; reply: EditState };
+  edit_redo: { args: { doc: DocHandle }; reply: EditState };
+  edit_state: { args: { doc: DocHandle }; reply: EditState };
+  save_document: { args: { doc: DocHandle; source: string }; reply: void };
   save_copy: {
-    args: { doc: number; source: string; path: string };
+    args: { doc: DocHandle; source: string; path: string };
     reply: Copied;
   };
   protect_copy: {
-    args: { doc: number; source: string; path: string; password: string | null };
+    args: { doc: DocHandle; source: string; path: string; password: string | null };
     reply: Copied;
   };
   compress_estimate: {
-    args: { doc: number; source: string; pictures: import("./compress").Pictures | null };
+    args: { doc: DocHandle; source: string; pictures: import("./compress").Pictures | null };
     reply: import("./compress").Shrinkage;
   };
   compress_copy: {
     args: {
-      doc: number;
+      doc: DocHandle;
       source: string;
       path: string;
       pictures: import("./compress").Pictures | null;
@@ -379,15 +380,15 @@ export interface Commands {
     reply: Copied;
   };
   extract_pages: {
-    args: { doc: number; source: string; path: string; slots: number[] };
+    args: { doc: DocHandle; source: string; path: string; slots: number[] };
     reply: Copied;
   };
   split_document: {
-    args: { doc: number; source: string; path: string; groups: number[][] };
+    args: { doc: DocHandle; source: string; path: string; groups: number[][] };
     reply: Split;
   };
   merge_documents: {
-    args: { doc: number; source: string; path: string; others: string[] };
+    args: { doc: DocHandle; source: string; path: string; others: string[] };
     reply: Merged;
   };
   images_to_pdf: {
@@ -402,7 +403,7 @@ export interface Commands {
    */
   sign_preview: {
     args: {
-      doc: number;
+      doc: DocHandle;
       identity: string;
       size: [number, number];
       image: import("./signature").SignatureImage | null;
@@ -420,7 +421,7 @@ export interface Commands {
      * authority to ask, or `null` to ask nobody.
      */
     args: {
-      doc: number;
+      doc: DocHandle;
       source: string;
       identity: string;
       path: string;
@@ -457,17 +458,17 @@ export interface Commands {
     args: { state: Record<string, boolean> };
     reply: void;
   };
-  close_document: { args: { doc: number }; reply: void };
+  close_document: { args: { doc: DocHandle }; reply: void };
   reveal_file: { args: { path: string }; reply: void };
   /** The reply counts the documents released. */
   release_documents: { args: NoArgs; reply: number };
   page_text: {
-    args: { doc: number; page: FilePage; crop: Rect | null };
+    args: { doc: DocHandle; page: FilePage; crop: Rect | null };
     reply: PageText;
   };
   search_page: {
     args: {
-      doc: number;
+      doc: DocHandle;
       page: FilePage;
       /**
        * The whole run to answer, in walk order, `page` being its first entry.
@@ -486,13 +487,13 @@ export interface Commands {
     };
     reply: PageMatches;
   };
-  document_outline: { args: { doc: number }; reply: Outline };
-  document_text_runs: { args: { doc: number; page: number; change?: import("./textedit").TextChange }; reply: import("./textedit").TextRuns };
-  text_replace: { args: { doc: number; page: number; change: import("./textedit").TextChange }; reply: EditState };
-  document_form: { args: { doc: number }; reply: import("./forms").Form };
-  form_fill: { args: { doc: number; object: [number, number]; value: import("./forms").FormValue }; reply: EditState };
-  document_comments: { args: { doc: number }; reply: Comments };
-  document_links: { args: { doc: number }; reply: Links };
+  document_outline: { args: { doc: DocHandle }; reply: Outline };
+  document_text_runs: { args: { doc: DocHandle; page: number; change?: import("./textedit").TextChange }; reply: import("./textedit").TextRuns };
+  text_replace: { args: { doc: DocHandle; page: number; change: import("./textedit").TextChange }; reply: EditState };
+  document_form: { args: { doc: DocHandle }; reply: import("./forms").Form };
+  form_fill: { args: { doc: DocHandle; object: [number, number]; value: import("./forms").FormValue }; reply: EditState };
+  document_comments: { args: { doc: DocHandle }; reply: Comments };
+  document_links: { args: { doc: DocHandle }; reply: Links };
   /**
    * Opens a web link the reader confirmed.
    *
@@ -503,11 +504,11 @@ export interface Commands {
    * two number independently.
    */
   open_web_link: {
-    args: { doc: number; source: WebLinkSource; token: number };
+    args: { doc: DocHandle; source: WebLinkSource; token: number };
     reply: void;
   };
-  document_properties: { args: { doc: number }; reply: Properties };
-  document_mapping: { args: { doc: number }; reply: PageMapping[] };
+  document_properties: { args: { doc: DocHandle }; reply: Properties };
+  document_mapping: { args: { doc: DocHandle }; reply: PageMapping[] };
   /** The reply is the name of the event a double-click delivers a path on. */
   launch_open_event: { args: NoArgs; reply: string };
   app_version: { args: NoArgs; reply: string };
@@ -541,7 +542,7 @@ export interface Commands {
   print_document: {
     args: {
       path: string;
-      doc?: number | null;
+      doc?: DocHandle | null;
       pages: number[] | null;
       turns: number;
     };

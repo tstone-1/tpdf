@@ -254,6 +254,7 @@ fn samples() -> BTreeMap<&'static str, String> {
                 appendix: Some(docinfo::Appendix {
                     added: 4,
                     replaced: 1,
+                    removed: 0,
                     kinds: vec!["/Annot".into()],
                     catalog_gained: vec!["/AcroForm".into()],
                     pages_touched: 1,

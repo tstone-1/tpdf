@@ -827,12 +827,16 @@ class AppendixReport(TypedDict):
     added: int
     # Objects it had, written again differently.
     replaced: int
-    # What the file calls those objects, such as "Sig" and "Annot/Widget".
+    # Objects it had that a later cross-reference section marks free, or
+    # that the document no longer has.
+    removed: int
+    # What the file calls the added and replaced objects, such as "Sig" and
+    # "Annot/Widget".
     kinds: list[str]
     # Keys the document catalog gained; "DSS" is validation data.
     catalog_gained: list[str]
-    # Pages whose object, or anything they draw from, was added or replaced,
-    # or that are no longer where they were.
+    # Pages whose object, or anything they draw from, was added, replaced or
+    # removed, or that are no longer where they were.
     pages_touched: int
     # The touched pages rewritten only to list a field, in page order.
     pages_listing: list[ListedPage]

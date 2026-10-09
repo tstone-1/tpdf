@@ -3396,8 +3396,13 @@ and the same call gates the Windows *install*, which ends the process just as su
    that commit, and a job builds it only when the cache has none. A release runs on a tag
    and reads a cache saved by a run on `main` or by itself, so the copy that reads the
    login is one a run on `main` built; a pull request from a fork cannot write there.
-   Somebody who can run a workflow on `main` can replace it, and could change the workflow
-   as well. This is a second key beside the updater's and it protects a different thing: an
+   Somebody who can change a workflow on `main` can replace it. So could code that merely
+   runs in a job on `main` without being able to change anything, such as a dependency that
+   `ci.yml` installs: saving a cache needs no more than that. Since 2026-10-09 a restored
+   copy is therefore used only when its SHA-256 is the one recorded in the workflow, and the
+   release job restores no Rust build cache at all (`BUILD.md`, *Signing with the Certum
+   certificate*). Whether a step on today's hosted runners can in fact save a cache under a
+   key of its choosing was not tested; the check does not depend on the answer. This is a second key beside the updater's and it protects a different thing: an
    installed copy accepts an update by the minisign key alone, so a stolen Certum login
    lets somebody sign their own program under this name and does not let them update
    anybody's tpdf. The protocol is reverse-engineered, so Certum can end it without notice;

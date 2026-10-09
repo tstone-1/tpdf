@@ -6,6 +6,7 @@
 import { describe, expect, it } from "vitest";
 
 import app from "../App.svelte?raw";
+import { functionIn, missingFrom } from "./sourcetext";
 import commands from "./appcommands.ts?raw";
 import {
   AUTOMATIC,
@@ -164,6 +165,30 @@ describe("RecognitionLanguage", () => {
     expect(state.question()).toBeNull();
   });
 
+  it("fetches the machine's list and then asks the question about it", async () => {
+    const state = new RecognitionLanguage();
+    const log: string[] = [];
+    await state.choose(
+      async () => { log.push("fetch"); return mac; },
+      // The palette reads the list as it opens, so it has to be held by now.
+      () => log.push(state.question() === mac ? "ask, list held" : "ask, no list"),
+      (problem) => log.push(`say ${problem}`),
+    );
+    expect(log).toEqual(["fetch", "ask, list held"]);
+  });
+
+  it("says why the list could not be fetched, and asks nothing", async () => {
+    const state = new RecognitionLanguage();
+    const log: string[] = [];
+    await state.choose(
+      async () => { throw new Error("no recogniser"); },
+      () => log.push("ask"),
+      (problem) => log.push(`say ${problem}`),
+    );
+    expect(log).toEqual(["say Error: no recogniser"]);
+    expect(state.question()).toBeNull();
+  });
+
   it("takes an answer once, says it, and stops asking", () => {
     const state = new RecognitionLanguage();
     state.hold(mac);
@@ -194,30 +219,35 @@ describe("RecognitionLanguage", () => {
 });
 
 describe("the language's wiring in App.svelte", () => {
-  // Source-level, because `App.svelte` is the join and nothing imports it.
+  // Read as text with the comments taken out, because `App.svelte` is the join
+  // and nothing imports it. That sees that a line is there and not whether it
+  // runs (`sourcetext.ts`), so these hold the hand-over and no decision.
   it("recognises text in the language chosen", () => {
-    expect(app).toContain(
+    expect(missingFrom(functionIn(app, "async function recogniseText(): Promise<void> {"), [
       "await edits.ocrCopy(source, chosen, recognitionRun, recognitionLanguage.language),",
-    );
+    ])).toEqual([]);
   });
 
   it("takes the choice from the session at launch, and has the session keep a new one", () => {
-    expect(app).toContain("recognitionLanguage.restore(session.ocr_language);");
-    expect(app).toContain(
+    expect(missingFrom(app, [
+      "recognitionLanguage.restore(session.ocr_language);",
       'void call("session_set_ocr_language", { language: recognitionLanguage.language })',
-    );
+    ])).toEqual([]);
   });
 
-  it("fetches the machine's list and then asks the question about it", () => {
-    const held = app.indexOf('recognitionLanguage.hold(await call("ocr_languages"));');
-    const asked = app.indexOf('palette?.askFor("file.recogniseTextLanguage.choice");');
-    expect(held).toBeGreaterThan(-1);
-    expect(asked).toBeGreaterThan(held);
+  it("asks through the module, which fetches the list first", () => {
+    expect(missingFrom(functionIn(app, "async function chooseRecognitionLanguage(): Promise<void> {"), [
+      "await recognitionLanguage.choose(",
+      '() => call("ocr_languages"),',
+      '() => palette?.askFor("file.recogniseTextLanguage.choice"),',
+    ])).toEqual([]);
   });
 
   it("answers the palette's commands from the held list", () => {
-    expect(app).toContain("const offered = recognitionLanguage.question();");
-    expect(app).toContain("setRecognitionLanguage: (raw) => setRecognitionLanguage(raw),");
-    expect(app).toContain("dropRecognitionLanguages: () => recognitionLanguage.drop(),");
+    expect(missingFrom(app, [
+      "const offered = recognitionLanguage.question();",
+      "setRecognitionLanguage: (raw) => setRecognitionLanguage(raw),",
+      "dropRecognitionLanguages: () => recognitionLanguage.drop(),",
+    ])).toEqual([]);
   });
 });

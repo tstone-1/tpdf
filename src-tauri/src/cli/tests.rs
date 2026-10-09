@@ -1011,6 +1011,61 @@ fn a_signature_reports_what_was_appended_after_it() {
     assert_eq!(said.pages_touched - said.pages_listing.len(), 1);
 }
 
+/// What an append removed is reported as a count of its own and said in the
+/// sentence: beside what arrived, and alone when nothing did.
+#[test]
+fn a_signature_reports_what_was_removed_after_it() {
+    use super::verify::signature_report;
+    let said = |appendix: Appendix| {
+        signature_report(&appended_to(Some(appendix)))
+            .appendix
+            .expect("an appendix")
+    };
+    let alone = said(Appendix {
+        removed: 1,
+        ..touching(1, &[])
+    });
+    assert_eq!((alone.added, alone.replaced, alone.removed), (0, 0, 1));
+    assert_eq!(
+        alone.sentence,
+        "1 object was removed, and 1 page was rewritten"
+    );
+    assert_eq!(
+        said(Appendix {
+            removed: 2,
+            ..touching(0, &[])
+        })
+        .sentence,
+        "2 objects were removed, and no page was rewritten"
+    );
+    // Beside what arrived, whatever that is called.
+    let beside = said(Appendix {
+        added: 1,
+        removed: 1,
+        kinds: vec!["stream".into()],
+        ..touching(1, &[])
+    });
+    assert_eq!(
+        beside.sentence,
+        "1 object: stream, with 1 object removed, and 1 page was rewritten"
+    );
+    assert_eq!(
+        said(Appendix {
+            added: 4,
+            removed: 3,
+            kinds: vec!["Sig".into()],
+            ..touching(2, &[])
+        })
+        .sentence,
+        "another signature, with 3 objects removed, and 2 pages were rewritten"
+    );
+    // The control: with nothing removed the sentence is as it was.
+    assert_eq!(
+        said(touching(1, &[])).sentence,
+        "0 objects, and 1 page was rewritten"
+    );
+}
+
 /// An appendix that could not be read says so, and is neither `null` nor an
 /// appendix that holds nothing: `unread` is the one key that tells them apart.
 #[test]
@@ -1531,7 +1586,7 @@ fn wording() -> serde_json::Value {
             .collect(),
         ..Appendix::default()
     };
-    for what in [
+    let callings = [
         called(14, &["Catalog", "VRI", "stream"], &["DSS"]),
         // Validation data and a signature: the validation data is named.
         called(14, &["Catalog", "Sig", "stream"], &["DSS"]),
@@ -1540,7 +1595,8 @@ fn wording() -> serde_json::Value {
         called(0, &["Page"], &[]),
         called(0, &[], &[]),
         called(1, &[], &[]),
-    ] {
+    ];
+    for what in callings.clone() {
         for pages in [
             touching(0, &[]),
             touching(1, &[]),
@@ -1558,6 +1614,20 @@ fn wording() -> serde_json::Value {
                 pages_listing: pages.pages_listing,
                 ..what.clone()
             });
+        }
+    }
+    // With objects removed: one and several, beside each thing an appendix
+    // is called and beside nothing arriving at all, over no page and one.
+    let nothing_arrived = Appendix::default();
+    for what in callings.iter().chain([&nothing_arrived]) {
+        for removed in [1, 3] {
+            for pages_touched in [0, 1] {
+                appended.push(Appendix {
+                    removed,
+                    pages_touched,
+                    ..what.clone()
+                });
+            }
         }
     }
     let appended: Vec<serde_json::Value> = appended

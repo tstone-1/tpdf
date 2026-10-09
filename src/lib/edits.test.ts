@@ -18,6 +18,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
   Edits,
   NOTHING_OPEN,
+  markMade,
   type EditState,
   type MarkView,
 } from "./edits";
@@ -864,4 +865,49 @@ it("awaits save consent before every writing command and sends nothing when decl
     consent(); await pending;
     expect(core.invoke).toHaveBeenCalledOnce();
   }
+});
+
+describe("the mark an edit made", () => {
+  /** A model holding `marks`, as much of one as `markMade` reads. */
+  const holding = (marks: MarkView[]) => ({ state: { ...NOTHING_OPEN, marks } }) as unknown as Edits;
+  const with_ = (marks: MarkView[]): EditState => ({ ...NOTHING_OPEN, marks });
+
+  it("is the one in the answer that the model did not hold when the edit ran", async () => {
+    const model = holding([mark(1, 1), mark(2, 1)]);
+    const made = await markMade(
+      (run) => run(model),
+      async () => with_([mark(1, 1), mark(3, 1), mark(2, 1)]),
+    );
+    expect(made?.id).toBe(3);
+  });
+
+  it("is judged against the model as the queue reached it, not as it was when asked", async () => {
+    // Another mark landed between the asking and the running: the queue ran an
+    // earlier edit first. It is in the answer and it is not the one made here.
+    const model = holding([mark(1, 1)]);
+    const queued = async (run: (edits: Edits) => Promise<EditState>) => {
+      (model as unknown as { state: EditState }).state = with_([mark(1, 1), mark(2, 1)]);
+      return run(model);
+    };
+    const made = await markMade(queued, async () => with_([mark(1, 1), mark(2, 1), mark(3, 1)]));
+    expect(made?.id).toBe(3);
+  });
+
+  it("is nothing when the model answered with the marks it had", async () => {
+    const model = holding([mark(1, 1)]);
+    expect(await markMade((run) => run(model), async () => with_([mark(1, 1)]))).toBeUndefined();
+  });
+
+  it("is nothing when the view adopted no state, whatever the model answered", async () => {
+    const model = holding([mark(1, 1)]);
+    const gone = async (run: (edits: Edits) => Promise<EditState>) => { await run(model); return null; };
+    expect(await markMade(gone, async () => with_([mark(1, 1), mark(2, 1)]))).toBeUndefined();
+  });
+
+  it("is nothing when the edit was refused before it ran", async () => {
+    let ran = false;
+    const made = await markMade(async () => null, async () => { ran = true; return with_([mark(9, 1)]); });
+    expect(made).toBeUndefined();
+    expect(ran).toBe(false);
+  });
 });

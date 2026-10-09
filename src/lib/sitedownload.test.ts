@@ -43,6 +43,23 @@ describe("the landing page's download links", () => {
     expect(installers(elsewhere).mac).toBeNull();
   });
 
+  test("pass over an entry that is not a file with a name", () => {
+    const odd = {
+      tag_name: "v26.10.13",
+      assets: [
+        null,
+        { browser_download_url: `${BASE}tpdf_26.10.13_aarch64.dmg` },
+        { name: 7, browser_download_url: `${BASE}tpdf_26.10.13_x64-setup.exe` },
+        ...NAMES.map((name) => asset(name)),
+      ],
+    };
+    expect(installers(odd)).toEqual({
+      mac: `${BASE}tpdf_26.10.13_aarch64.dmg`,
+      windows: `${BASE}tpdf_26.10.13_x64-setup.exe`,
+      version: "26.10.13",
+    });
+  });
+
   test("name no version for a tag that is not one", () => {
     expect(installers({ tag_name: "pdfium-8066-tpdf.1", assets: [] }).version).toBeNull();
     expect(installers({ tag_name: "v26.10.14-rc1", assets: [] }).version).toBeNull();

@@ -1,9 +1,10 @@
 import { describe, expect, it } from "vitest";
 import {
-  DocumentTabs, DocumentTasks, RESTORE_POINTS, freshState, keepState, oneEach, restore, restoredState, restoredWith,
-  twinsOf,
+  DocumentTabs, DocumentTasks, RESTORE_POINTS, freshState, keepState, oneEach, partnersOf, restore, restoredState,
+  restoredWith, twinsOf,
   type DocumentTab, type FreshState, type Restore, type TabState,
 } from "./documenttabs";
+import { pickPartner } from "./panes";
 import { PLAIN_SEARCH } from "./search";
 import { handleWindowKey, registerAppCommands, type AppActions } from "./appcommands";
 import { CommandRegistry } from "./commands";
@@ -32,6 +33,14 @@ describe("document tabs", () => {
     expect(tabs.forPath("c:/fixture/example.pdf")?.doc.id).toBe(1);
     expect(tabs.forPath("/fixture/example.pdf")).toBeUndefined();
     expect(tabs.forPath("/fixture/Example.pdf")?.doc.id).toBe(2);
+  });
+
+  it("finds a document on a network share however the share is spelt", () => {
+    const tabs = new DocumentTabs<ReturnType<typeof tab>>();
+    tabs.keep(tab(1, "\\\\server\\share\\Example.pdf"));
+    expect(tabs.forPath("\\\\SERVER\\Share\\example.pdf")?.doc.id).toBe(1);
+    expect(tabs.forPath("\\\\server\\share/Example.pdf")?.doc.id).toBe(1);
+    expect(tabs.forPath("\\\\server\\other\\Example.pdf")).toBeUndefined();
   });
 
   it("names a document shown twice by the view asked for, else by the first", () => {
@@ -143,6 +152,47 @@ describe("document tabs", () => {
     tabs.active = 3;
     tabs.remove(3);
     expect(tabs.active).toBe(2);
+  });
+});
+
+describe("the documents that can be shown beside this one", () => {
+  const view = (id: number, path: string, edits: unknown[]) => ({ view: id, path, edits });
+
+  it("lists a document on both sides once, by the view already across", () => {
+    const a = view(1, "/fixture/A.pdf", [1]);
+    const model = [2];
+    const b = view(2, "/fixture/B.pdf", model);
+    const bAgain = view(9, "/fixture/B.pdf", model);
+    const tabs = [a, b, bAgain];
+    const partners = partnersOf(tabs, 1, (tab) => tab === bAgain);
+    expect(partners).toEqual([{ tab: bAgain, name: "B.pdf" }]);
+    // Which is what lets the question be answered: with both views listed it
+    // could not be (`panes.test.ts`, two documents with one name).
+    const names = partners.map((partner) => partner.name);
+    expect(pickPartner("b.pdf", names)).toEqual({ index: 0 });
+    // With neither view across, the first tab in the row stands for it.
+    expect(partnersOf(tabs, 1, () => false).map((partner) => partner.tab)).toEqual([b]);
+  });
+
+  it("leaves out the view the reader is in and keeps its second view", () => {
+    const model = [1];
+    const a = view(1, "/fixture/A.pdf", model);
+    const aAgain = view(9, "/fixture/A.pdf", model);
+    const b = view(2, "/fixture/B.pdf", [2]);
+    expect(partnersOf([a, aAgain, b], 1, () => true).map((partner) => partner.tab)).toEqual([aAgain, b]);
+    expect(partnersOf([a], 1, () => true)).toEqual([]);
+  });
+
+  it("keeps the tab row's order, and tells two files with one name apart", () => {
+    const first = view(1, "/fixture/2024/report.pdf", [1]);
+    const second = view(2, "/fixture/2025/report.pdf", [2]);
+    const third = view(3, "/fixture/notes.pdf", [3]);
+    const here = view(4, "/fixture/here.pdf", [4]);
+    const partners = partnersOf([first, here, second, third], 4, (tab) => tab === third);
+    expect(partners.map((partner) => partner.tab)).toEqual([first, second, third]);
+    const names = partners.map((partner) => partner.name);
+    expect(names).toEqual(["2024/report.pdf", "2025/report.pdf", "notes.pdf"]);
+    expect(pickPartner("2025", names)).toEqual({ index: 1 });
   });
 });
 

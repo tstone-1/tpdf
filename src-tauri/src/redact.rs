@@ -1997,6 +1997,13 @@ fn property_list<'a>(doc: &'a Document, page: ObjectId, name: &[u8]) -> Option<&
 /// stream is rewritten where it stands, and any other number is replaced by one
 /// new stream the page names directly.
 ///
+/// **One stream is rewritten where it stands only when no other page names
+/// it.** A page repeated by `qpdf` or `pdftk` shares its content stream with
+/// its copy, and rewriting the object changed both: until 2026-10-09 a word
+/// redacted on page 1 left page 2 as well, with no fill drawn there and no
+/// line in the report. A page that shares its stream gets a new one, as a
+/// page of several does, and the shared one stays as it is for the other page.
+///
 /// **The streams a page of several is taken off are left for the sweep, and
 /// that is a dependency rather than an oversight.** Deleting them here would
 /// need to know what else names them --- a letterhead stream is routinely one
@@ -2032,7 +2039,7 @@ fn replace_page_content(
         [] => {
             return Err("the page names no content stream, so there was nothing to replace".into());
         }
-        [only] => {
+        [only] if !named_by_another_page(doc, page, *only) => {
             let stream = doc
                 .get_object_mut(*only)
                 .and_then(|object| object.as_stream_mut())
@@ -2064,6 +2071,18 @@ fn replace_page_content(
         );
     }
     Ok(())
+}
+
+/// Whether a page other than `page` names `stream` among its content
+/// streams.
+///
+/// Asked of the page tree as it stands, once for each page a redaction
+/// rewrites. A page listed twice in the tree is one object and is not another
+/// page: what is written for it is what both of its places show.
+fn named_by_another_page(doc: &Document, page: ObjectId, stream: ObjectId) -> bool {
+    doc.get_pages()
+        .into_values()
+        .any(|other| other != page && doc.get_page_contents(other).contains(&stream))
 }
 
 /// Deletes the numbered show operators from a page's content stream.
@@ -7752,5 +7771,62 @@ mod tests {
         let (mut doc, page) = one_page("BT (name) Tj ET\n");
         super::replace_page_content(&mut doc, page, b"BT ET".to_vec()).expect("replaced");
         assert_eq!(doc.get_page_content(page), b"BT ET\n");
+    }
+
+    /// Two pages that name one content stream, as a repeated page is written:
+    /// what is removed from the first stays on the second, which nobody
+    /// marked.
+    #[test]
+    fn a_redaction_on_one_of_two_pages_sharing_a_stream_leaves_the_other_page_as_it_was() {
+        const BEFORE: &str = "BT (SYNTHETIC SECRET) Tj ET\nBT (kept) Tj ET\n";
+        let shared = || {
+            let (mut doc, first) = one_page(BEFORE);
+            let stream = doc.get_page_contents(first)[0];
+            let parent = doc
+                .get_dictionary(first)
+                .and_then(|page| page.get(b"Parent"))
+                .and_then(Object::as_reference)
+                .expect("the page tree");
+            let second = doc.add_object(dictionary! {
+                "Type" => "Page", "Parent" => parent, "Contents" => stream,
+            });
+            let tree = doc.get_dictionary_mut(parent).expect("the page tree");
+            tree.set("Kids", vec![first.into(), second.into()]);
+            tree.set("Count", 2);
+            assert_eq!(doc.get_pages().len(), 2, "two pages");
+            (doc, first, second, stream)
+        };
+
+        let (mut doc, first, second, stream) = shared();
+        let removed = remove_shows(&mut doc, first, &[0], 2).expect("removed");
+        assert_eq!(removed.removed, 1);
+        let says = |doc: &Document, page| {
+            String::from_utf8_lossy(&doc.get_page_content(page)).into_owned()
+        };
+        assert!(
+            !says(&doc, first).contains("SECRET"),
+            "{}",
+            says(&doc, first)
+        );
+        assert!(
+            says(&doc, first).contains("(kept)"),
+            "{}",
+            says(&doc, first)
+        );
+        assert_eq!(says(&doc, second), format!("{BEFORE}\n"), "the second page");
+        assert_eq!(doc.get_page_contents(second), [stream]);
+        assert_ne!(
+            doc.get_page_contents(first),
+            [stream],
+            "a stream of its own"
+        );
+
+        // The control: the same page alone is rewritten where it stands, so
+        // the new stream above is for the sharing and not for every page.
+        let (mut doc, page) = one_page(BEFORE);
+        let stream = doc.get_page_contents(page)[0];
+        remove_shows(&mut doc, page, &[0], 2).expect("removed");
+        assert_eq!(doc.get_page_contents(page), [stream]);
+        assert!(!says(&doc, page).contains("SECRET"), "{}", says(&doc, page));
     }
 }

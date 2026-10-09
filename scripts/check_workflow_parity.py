@@ -284,6 +284,79 @@ def other_workflows() -> list[str]:
     )
 
 
+def job_names(text: str) -> list[str]:
+    """The keys under `jobs:`, in file order."""
+    after = text.split("\njobs:\n", 1)
+    if len(after) != 2:
+        return []
+    return re.findall(r"(?m)^  ([A-Za-z0-9_-]+):\s*$", after[1])
+
+
+PINS = ("SSIGN_REV", "SSIGN_SHA256")
+SIGNING = (".github/workflows/release.yml", ".github/workflows/sign-rehearsal.yml")
+
+
+def restored_caches() -> tuple[list[str], int]:
+    """A job that holds a secret restores no cache it cannot check.
+
+    THE FIFTH INVARIANT, added 2026-10-09. A cache is written by whatever runs
+    in a job, under a key that job chooses, and a run on a tag restores caches
+    saved on `main`. `ci.yml` and `pdfium.yml` run third-party code on `main`
+    with a read-only token, which is enough to save a cache. The release job
+    restored two: the Rust build cache, before the build that holds the Apple,
+    updater and Certum secrets, and the built signing client, which is handed
+    the Certum login. An independent read-only review found it; every earlier
+    invariant here looks at tokens and none at caches.
+
+    Two rules, over every workflow file. A job that names a secret other than
+    `GITHUB_TOKEN`, or an `environment:`, must not use `Swatinem/rust-cache`,
+    whose contents nothing can check. And if it uses `actions/cache`, the job
+    must compare a digest of what was restored: it has to read the pin
+    `SSIGN_SHA256` and call `Get-FileHash`. That is a statement about the text
+    of the job and not about what the step does with the answer; the review
+    of that step is the reader's.
+
+    Third, the two workflows that build the signing client carry the same
+    pins, because the copy a release restores is the one the rehearsal saved.
+
+    Returns the findings and how many secret-holding jobs were looked at; the
+    caller refuses a count of zero, since a scan that found no such job would
+    pass every rule.
+    """
+    wrong: list[str] = []
+    looked = 0
+    directory = ROOT / ".github" / "workflows"
+    for path in sorted(list(directory.glob("*.yml")) + list(directory.glob("*.yaml"))):
+        text = path.read_text(encoding="utf-8")
+        name = str(path.relative_to(ROOT))
+        for job in job_names(text):
+            block = "\n".join(line for line in job_block(text, job)
+                               if not line.lstrip().startswith("#"))
+            secrets = set(re.findall(r"secrets\.([A-Za-z0-9_]+)", block)) - {"GITHUB_TOKEN"}
+            if not secrets and not re.search(r"(?m)^    environment:", block):
+                continue
+            looked += 1
+            if "Swatinem/rust-cache" in block:
+                wrong.append(f"{name}: job '{job}' holds a secret and restores a Rust build cache")
+            if re.search(r"uses:\s*actions/cache(/restore)?@", block) and not (
+                "SSIGN_SHA256" in block and "Get-FileHash" in block
+            ):
+                wrong.append(f"{name}: job '{job}' holds a secret and restores a cache "
+                             "without comparing a recorded digest")
+    pins: dict[str, list[str]] = {}
+    for workflow in SIGNING:
+        text = (ROOT / workflow).read_text(encoding="utf-8")
+        for pin in PINS:
+            values = re.findall(rf"(?m)^\s+{pin}:\s*(\S+)\s*$", text)
+            if len(values) != 1:
+                wrong.append(f"{workflow}: expected one {pin}, found {len(values)}")
+            pins.setdefault(pin, []).extend(values)
+    for pin, values in pins.items():
+        if len(set(values)) > 1:
+            wrong.append(f"{pin} differs between {' and '.join(SIGNING)}: {values}")
+    return wrong, looked
+
+
 def packaged_api(text: str) -> list[str]:
     """The release-only gate must execute on both platforms and fail the job.
 
@@ -312,6 +385,14 @@ def main() -> int:
     """Compares the two jobs and reports the first difference."""
     found: dict[str, list[str]] = {}
     checked_out = 0
+    cache_findings, secret_jobs = restored_caches()
+    if not secret_jobs:
+        print("[FAIL] no job holding a secret was found -- the cache scan found nothing")
+        return 1
+    if cache_findings:
+        for line in cache_findings:
+            print(f"[FAIL] {line}")
+        return 1
     others = other_workflows()
     for workflow in others:
         leaks = credentials(workflow, (ROOT / workflow).read_text(encoding="utf-8"))
@@ -354,6 +435,8 @@ def main() -> int:
     if left == right:
         print(f"[OK]   both '{JOB}' jobs run the same {len(left)} steps, in the same order")
         print(f"[OK]   both read-only, both installing {PINNED_TOOLS}")
+        print(f"[OK]   none of the {secret_jobs} jobs that hold a secret restores an unchecked cache, "
+              "and the signing client's pins agree")
         print(
             f"[OK]   all {checked_out} checkout(s) across {len(WORKFLOWS) + len(others)} "
             f"workflows persist no credential"

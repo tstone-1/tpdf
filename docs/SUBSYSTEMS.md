@@ -179,6 +179,15 @@ document, and `Stage` holds the other one's record. `App.svelte` carries the pla
 `showPanes` and changes side in `focusSide`, which is synchronous because the viewer in
 the side pressed handles the same press next.
 
+The `views` gate (`scripts/check_view_after_await.py`) holds the rule below as text: a
+variable of the focused document read after an `await` outside `asDocument`,
+`documentTasks.run` and `opens.run` fails, as does `applyEdit` after a wait without its
+view, and every top-level `let` in `App.svelte` is one of those variables or is named in
+the script as the window's. It reads text and does not follow calls. Code that must stop
+when the reader has left calls `stillIn(view, model)`, and `applyEdit` answers the state
+the view adopted. A frame led by the unfocused side runs inside a lend, and `Stage.within`
+keeps the lender's record so that the focused viewer's own callbacks run from in there.
+
 The rule: **code in `App.svelte` that runs without the reader pressing anything in that
 document runs through `asDocument(id, ...)`, and again after every `await`.** A frame, a
 late reply and the rest of an edit all read the variables, and by then they may be the

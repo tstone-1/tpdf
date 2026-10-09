@@ -23,6 +23,18 @@
 declare const viewBrand: unique symbol;
 export type ViewId = number & { readonly [viewBrand]: true };
 
+/**
+ * A document's handle, as a backend command takes it: any number that is not
+ * a {@link ViewId}.
+ *
+ * The other half of the brand. A view is not a handle, and the first view of a
+ * document *equals* its handle, so `call("...", { doc: openView })` would work
+ * until a document was shown twice and then name nothing the backend holds.
+ * Every `doc` argument in `ipc.ts` is this type, so that line does not compile.
+ * A plain `number` is one already; nothing is cast to it.
+ */
+export type DocHandle = number & { readonly [viewBrand]?: never };
+
 /** No view: what a side showing nothing has in front, and what no tab is active reads as. */
 export const NO_VIEW = -1 as ViewId;
 
@@ -32,8 +44,8 @@ export function viewOf(doc: number): ViewId {
 }
 
 /**
- * Where the ids of further views start. Handles are counted up from one by
- * the backend for as long as it runs, and do not get here.
+ * Where the ids of further views start. Handles are counted up from zero by
+ * the backend for as long as it runs, each given once, and do not get here.
  */
 export const FURTHER_VIEWS = 2 ** 40;
 

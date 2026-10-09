@@ -205,6 +205,56 @@ describe("work done within a document", () => {
     expect(v.now().id).toBe(3);
     expect(v.stage.parked.sort()).toEqual([1, 2]);
   });
+
+  it("runs work for the focused document asked for inside a lend to the other one, and both records come back", () => {
+    const v = variables();
+    v.open(1, "one");
+    v.stage.park();
+    v.open(2, "two");
+
+    const seen: number[] = [];
+    const lent: boolean[] = [];
+    const held: boolean[] = [];
+    let inner: { ran: boolean } = { ran: false };
+    v.stage.within(1, () => {
+      v.rename("one, scrolled");
+      lent.push(v.stage.lent);
+      held.push(v.stage.holds(2));
+      // The other side's frame makes the focused viewer follow, and that
+      // viewer reports its page from in here.
+      inner = v.stage.within(2, () => {
+        seen.push(v.now().id);
+        lent.push(v.stage.lent);
+        v.rename("two, followed");
+        // And back out to the document whose frame this is, which is not the
+        // record parked before the frame began.
+        v.stage.within(1, () => { seen.push(v.now().id); v.rename(`${v.now().name}, twice`); });
+      });
+      seen.push(v.now().id);
+      lent.push(v.stage.lent);
+    });
+
+    expect(inner.ran).toBe(true);
+    expect(seen).toEqual([2, 1, 1]);
+    expect(lent).toEqual([true, false, true]);
+    expect(held).toEqual([true]);
+    expect(v.stage.lent).toBe(false);
+    expect(v.now()).toEqual({ id: 2, name: "two, followed", words: ["two"] });
+    expect(v.stage.parked).toEqual([1]);
+    v.stage.focus(1);
+    expect(v.now()).toEqual({ id: 1, name: "one, scrolled, twice", words: ["one"] });
+  });
+
+  it("leaves the variables blank when work inside a lend ends the focused document", () => {
+    const v = variables();
+    v.open(1, "one");
+    v.stage.park();
+    v.open(2, "two");
+    v.stage.within(1, () => { v.stage.within(2, () => v.close()); });
+    expect(v.now().id).toBe(-1);
+    expect(v.stage.holds(2)).toBe(false);
+    expect(v.stage.parked).toEqual([1]);
+  });
 });
 
 describe("a blank live document", () => {
@@ -214,6 +264,7 @@ describe("a blank live document", () => {
     expect(blank.viewer).toBeNull();
     expect(blank.edits).toBeNull();
     expect(blank.title).toBe("");
+    expect(blank.findTimer).toBe(0);
   });
 
   it("shares no collection with the one before it", () => {

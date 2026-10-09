@@ -367,7 +367,7 @@ failure into a statement about your own change. Select the workflow rather than 
 run, and read the job count beside the conclusion — two jobs, not one.
 
 What CI structurally cannot cover, and the reason `BUILD.md` still schedules them by hand:
-`viewer_check.py` and `mutate_viewer.py` drive a real window and need an unlocked,
+`window_checks.py` and `mutate_viewer.py` drive a real window and need an unlocked,
 unoccluded screen, so on a headless runner they do not fail, **they hang** — which is the
 failure shape this repository is least able to read, since a hang and a pass both produce no
 red. The mutation harnesses rebuild per mutation and take minutes.
@@ -455,6 +455,7 @@ title, and it holds the thirteen group names above against the `## ` groups ther
   now exist. `release.yml` is tag-push-only and therefore unreachable from a fork; `ci.yml`
   references no secret, runs on `pull_request` rather than `pull_request_target`, and asks
   for `contents: read`. Keep that split — it is the whole of the fork threat model.
+- Landing page and cache rule: `docs/DETAIL.md` *Quality gates*.
 - Commit identity resolves automatically from the path via the `includeIf "gitdir:"` rule
   in `~/.gitconfig` — anything under `~/Developer/github.com/tstone-1/` gets
   `48162401+tstone-1@users.noreply.github.com`. Verify rather than assume if the clone

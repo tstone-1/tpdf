@@ -9,6 +9,7 @@
 import { describe, expect, it } from "vitest";
 
 import app from "../App.svelte?raw";
+import { functionIn, missingFrom } from "./sourcetext";
 import { CommandRegistry } from "./commands";
 import { MAX_RECENTS, RECENT_PREFIX } from "./recents";
 import type { Place } from "./session";
@@ -301,40 +302,51 @@ describe("behindWrites", () => {
 });
 
 describe("the page's wiring in App.svelte", () => {
-  // Source-level, because `App.svelte` is the join and nothing imports it.
+  // Read as text with the comments taken out, because `App.svelte` is the join
+  // and nothing imports it. That sees that a line is there and not whether it
+  // runs (`sourcetext.ts`), so these hold the hand-over and no decision.
   it("builds the palette's commands from the rows the page shows", () => {
-    expect(app).toContain(
+    expect(missingFrom(functionIn(app, "function offerRecents(from: Session) {"), [
       "recentCommands(startPage.offer(from), (path) => void openPath(path)),",
-    );
+    ])).toEqual([]);
   });
 
   it("runs a row's command, and the button's, through the registry", () => {
-    expect(app).toContain("onclick={() => runStartCommand(row.command)}");
-    expect(app).toContain('onclick={() => runStartCommand("file.open")}');
-    expect(app).toMatch(/function runStartCommand\(id: string\) \{\n\s+commands\.run\(id\);/);
+    expect(missingFrom(app, [
+      "onclick={() => runStartCommand(row.command)}",
+      'onclick={() => runStartCommand("file.open")}',
+    ])).toEqual([]);
+    expect(missingFrom(functionIn(app, "function runStartCommand(id: string) {"), ["commands.run(id);"])).toEqual([]);
   });
 
   it("tells the page when an open fails and when one succeeds", () => {
-    // After the existing message is set, so the message is what it was.
-    expect(app).toMatch(
-      /if \(!resuming\) error = isOpenRefusal\(e\) \? e\.reason : String\(e\);[^;]*?startPage\.failed\(path, e\);/,
-    );
-    expect(app).toMatch(/openPathName = path;\n\s+openPageCount = doc\.page_count;\n\s+startPage\.opened\(path\);/);
+    expect(missingFrom(functionIn(app, "async function openDocument("), [
+      "startPage.failed(path, e);",
+      "startPage.opened(path);",
+    ])).toEqual([]);
   });
 
   it("forgets behind the places already issued, and re-reads the list after", () => {
-    expect(app).toMatch(
-      /behindWrites\(places, \(\) => call\("session_forget", \{ path: row\.path \}\)\);\n\s+if \(said\) say\(said\);\n\s+await refreshRecents\(\);/,
-    );
-    expect(app).toMatch(
-      /behindWrites\(places, \(\) => call\("session_clear_places"\)\);\n\s+if \(said\) say\(said\);\n\s+places\.forgotten\(\);\n\s+notePlace\(\);\n\s+await refreshStartPage\(\);/,
-    );
+    // Behind the writes is `behindWrites`' doing, tested above. Here: that both
+    // commands go through it, and what each function also calls.
+    expect(missingFrom(functionIn(app, "async function forgetRecent(row: StartRow, index: number) {"), [
+      'behindWrites(places, () => call("session_forget", { path: row.path }));',
+      "if (said) say(said);",
+      "await refreshRecents();",
+    ])).toEqual([]);
+    expect(missingFrom(functionIn(app, "async function clearRecents() {"), [
+      'behindWrites(places, () => call("session_clear_places"));',
+      "if (said) say(said);",
+      "places.forgotten();",
+      "notePlace();",
+      "await refreshStartPage();",
+    ])).toEqual([]);
   });
 
   it("enters the list from the window only when nothing has the focus", () => {
-    expect(app).toContain(
+    expect(missingFrom(functionIn(app, "function onWindowKey(event: KeyboardEvent) {"), [
       "if (!title && (focused === null || focused === document.body) && startPageKey(event, -1)) return;",
-    );
+    ])).toEqual([]);
   });
 });
 

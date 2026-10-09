@@ -58,10 +58,43 @@ fn awaited<T>(
     within: std::time::Duration,
     pid: u32,
 ) -> Result<T, String> {
+    awaited_then(rx, within, RELEASED_WITHIN, || kill_pid(pid))
+}
+
+/// How long a timed-out exchange is given to let go of its worker once the
+/// worker has been ended.
+///
+/// What is waited for is a failed pipe read, a child reaped and a mapping
+/// closed, which is milliseconds. The bound is for the thread that does not
+/// get there: the caller is told the same thing either way, and must not wait
+/// for ever to be told it.
+const RELEASED_WITHIN: std::time::Duration = std::time::Duration::from_secs(2);
+
+/// [`awaited`], with what ends the worker and how long its release is waited
+/// for as arguments, so a test can stand in for both.
+///
+/// **A timeout does not return until the thread has let go of the worker, or
+/// `released_within` has passed.** [`asked_on_a_thread`] releases before it
+/// sends for the sake of the roll-back, which is a `set_len` that Windows
+/// refuses while the file is mapped. Until 2026-10-09 the timeout arm
+/// returned straight after ending the process, with the thread still holding
+/// the worker and its mapping --- the one path on which the roll-back is
+/// certain to follow, and so the one on which it could not work. The thread
+/// sends once it has released, or drops its sender if it panicked, and either
+/// is what is waited for here. The late answer itself is discarded: the
+/// deadline has passed, and an answer from a worker that was ended is not one
+/// to act on.
+fn awaited_then<T>(
+    rx: &std::sync::mpsc::Receiver<T>,
+    within: std::time::Duration,
+    released_within: std::time::Duration,
+    end: impl FnOnce(),
+) -> Result<T, String> {
     match rx.recv_timeout(within) {
         Ok(answer) => Ok(answer),
         Err(_) => {
-            kill_pid(pid);
+            end();
+            let _ = rx.recv_timeout(released_within);
             Err(format!(
                 "the worker checking the saved file did not answer within {:.0} s, so the \
                  save could not be confirmed",
@@ -1053,6 +1086,7 @@ mod tests {
     // Not gated: the ordering it exercises is the same on both platforms, and
     // the platform it was written for is the one that cannot run it.
     use super::asked_on_a_thread;
+    use super::awaited_then;
 
     /// The worker is released before its answer is sent, never after.
     ///
@@ -1102,6 +1136,73 @@ mod tests {
             ["released", "answered"],
             "the mapping has to be gone by the time the coordinator can act on the answer"
         );
+    }
+
+    /// The same on the path where nothing answers: the wait that times out
+    /// ends the worker and then returns only once the thread has let go of it.
+    ///
+    /// The exchange blocks until it is ended, as a read on a worker's pipe
+    /// does, and the release takes long enough that a return straight after
+    /// the kill comes first on every run.
+    #[test]
+    fn a_timed_out_wait_returns_only_after_the_worker_is_released() {
+        use std::sync::{Arc, Mutex};
+        use std::time::Duration;
+
+        type Order = Arc<Mutex<Vec<&'static str>>>;
+        struct Mapping(Order);
+        impl Drop for Mapping {
+            fn drop(&mut self) {
+                std::thread::sleep(Duration::from_millis(100));
+                note(&self.0, "released");
+            }
+        }
+        fn note(order: &Order, what: &'static str) {
+            order.lock().unwrap_or_else(|e| e.into_inner()).push(what);
+        }
+
+        let order: Order = Arc::new(Mutex::new(Vec::new()));
+        let (ended, blocked) = std::sync::mpsc::channel::<()>();
+        let rx = asked_on_a_thread(Mapping(Arc::clone(&order)), move |_| {
+            // Until the worker is ended, and then the read fails.
+            let _ = blocked.recv();
+            7_usize
+        });
+        let killed = Arc::clone(&order);
+        let why = awaited_then(
+            &rx,
+            Duration::from_millis(50),
+            Duration::from_secs(10),
+            || {
+                note(&killed, "ended");
+                let _ = ended.send(());
+            },
+        )
+        .expect_err("the deadline passed, so the late answer is not one");
+        note(&order, "returned");
+        assert!(why.contains("did not answer"), "{why}");
+
+        let order = order.lock().unwrap_or_else(|e| e.into_inner());
+        assert_eq!(
+            order.as_slice(),
+            ["ended", "released", "returned"],
+            "the mapping has to be gone before the caller can roll the file back"
+        );
+    }
+
+    /// And the wait for the release is bounded: a thread that never lets go
+    /// does not hold the caller past `released_within`.
+    #[test]
+    fn a_release_that_never_comes_is_not_waited_for_past_its_bound() {
+        use std::time::{Duration, Instant};
+        // Held, so the channel is silent and not closed.
+        let (_tx, rx) = std::sync::mpsc::channel::<usize>();
+        let began = Instant::now();
+        let bound = Duration::from_millis(100);
+        awaited_then(&rx, Duration::from_millis(20), bound, || ()).expect_err("nothing answered");
+        let waited = began.elapsed();
+        assert!(waited >= bound, "{waited:?}");
+        assert!(waited < bound * 20, "{waited:?}");
     }
 
     /// Why the ordering above is load-bearing, in the platform's own terms.
@@ -1189,9 +1290,15 @@ mod tests {
         // passes it --- measured: the same assertion stayed green while the test
         // took 150 seconds instead of 0.17. A bound whose failure mode is a
         // longer wait is not a bound. Twenty times the deadline is loose enough
-        // for a loaded runner and nowhere near a mistake worth catching.
+        // for a loaded runner and nowhere near a mistake worth catching. The
+        // wait for the release is added to it: nothing here ever lets go, so
+        // that wait runs to its end.
         assert!(
-            waited < within * 20,
+            waited >= within + super::RELEASED_WITHIN,
+            "it has to have waited for the release as well, and waited {waited:?}"
+        );
+        assert!(
+            waited < within * 20 + super::RELEASED_WITHIN,
             "the wait has to be about the deadline it was given, and took {waited:?}"
         );
         assert!(

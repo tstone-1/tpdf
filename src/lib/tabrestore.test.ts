@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import type { Place, Session, Sides } from "./session";
 import {
@@ -251,7 +251,10 @@ describe("recording the open tabs", () => {
     expect(sent).toEqual([["/first.pdf"], ["/a.pdf"]]);
   });
 
+  afterEach(() => vi.restoreAllMocks());
+
   it("keeps writing after a write fails", async () => {
+    const warned = vi.spyOn(console, "warn").mockImplementation(() => {});
     const sent: string[][] = [];
     const tabs = new TabRecorder((paths) => {
       sent.push(paths);
@@ -260,6 +263,44 @@ describe("recording the open tabs", () => {
     tabs.note(["/a.pdf"], null);
     tabs.note(["/b.pdf"], null);
     await expect(tabs.settled()).resolves.toBeUndefined();
+    expect(sent).toEqual([["/a.pdf"], ["/b.pdf"]]);
+    expect(warned).toHaveBeenCalledWith("could not record the open tabs: Error: disk full");
+  });
+
+  it("sends a record again when the write of it failed", async () => {
+    vi.spyOn(console, "warn").mockImplementation(() => {});
+    const sent: string[][] = [];
+    const tabs = new TabRecorder((paths) => {
+      sent.push(paths);
+      return sent.length === 1 ? Promise.reject(new Error("disk full")) : Promise.resolve();
+    });
+    tabs.note(["/a.pdf"], null);
+    // Still on its way: the same record noted meanwhile is one write.
+    tabs.note(["/a.pdf"], null);
+    await tabs.settled();
+    expect(sent).toEqual([["/a.pdf"]]);
+    // It did not arrive, so the session does not hold it and it is not "the same".
+    tabs.note(["/a.pdf"], null);
+    await tabs.settled();
+    expect(sent).toEqual([["/a.pdf"], ["/a.pdf"]]);
+    // That one did arrive, and is not sent a third time.
+    tabs.note(["/a.pdf"], null);
+    await tabs.settled();
+    expect(sent.length).toBe(2);
+  });
+
+  it("does not forget a later record because an earlier write failed", async () => {
+    vi.spyOn(console, "warn").mockImplementation(() => {});
+    const sent: string[][] = [];
+    const tabs = new TabRecorder((paths) => {
+      sent.push(paths);
+      return sent.length === 1 ? Promise.reject(new Error("disk full")) : Promise.resolve();
+    });
+    tabs.note(["/a.pdf"], null);
+    tabs.note(["/b.pdf"], null);
+    await tabs.settled();
+    tabs.note(["/b.pdf"], null);
+    await tabs.settled();
     expect(sent).toEqual([["/a.pdf"], ["/b.pdf"]]);
   });
 

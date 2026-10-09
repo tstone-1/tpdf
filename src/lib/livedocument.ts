@@ -58,7 +58,7 @@ export interface LiveDocument {
   formLayer: FormLayer | null;
   edits: Edits | null;
   /** The last edit still on its way to the model. */
-  pendingEdit: Promise<void>;
+  pendingEdit: Promise<unknown>;
 
   status: ViewerStatus | null;
   dirty: boolean;
@@ -68,6 +68,12 @@ export interface LiveDocument {
 
   query: string;
   findShown: boolean;
+  /**
+   * The search still waiting out its pause after the last key, or 0. It is
+   * for this document's viewer, and tearing another document down must not
+   * cancel it.
+   */
+  findTimer: number;
   error: string | null;
   offers: Offer[];
   notice: string | null;
@@ -114,6 +120,7 @@ export function blankLive(): LiveDocument {
     degradedGate: new DegradedLabel(),
     query: "",
     findShown: false,
+    findTimer: 0,
     error: null,
     offers: [],
     notice: null,
@@ -178,7 +185,14 @@ export class Stage<T, Id extends number = number> {
   readonly #blank: () => T;
   readonly #focusedId: () => Id;
   readonly #parked = new Map<Id, T>();
-  #lent = 0;
+  /**
+   * The documents whose values {@link within} has taken out of the slots, the
+   * outermost first. The focused document is the first of them for as long as
+   * the slots are lent, and it is in neither the slots nor {@link #parked} then.
+   */
+  readonly #lenders: { readonly id: Id; record: T }[] = [];
+  /** Whether a nested {@link within} has put the focused document back in the slots. */
+  #home = false;
 
   /** `focusedId` answers -1 when the slots hold no document. */
   constructor(slots: Slots<T>, blank: () => T, focusedId: () => Id) {
@@ -194,12 +208,12 @@ export class Stage<T, Id extends number = number> {
 
   /**
    * Whether the slots are on loan to a parked document right now, inside
-   * {@link within}. What is about the window and not about a document, the
+   * {@link within}, and not handed back to the focused one by a call inside it. What is about the window and not about a document, the
    * menu bar's enablement for one, is not to be pushed from in there: it would
    * describe a document the reader is not working in.
    */
   get lent(): boolean {
-    return this.#lent > 0;
+    return this.#lenders.length > 0 && !this.#home;
   }
 
   /** The handles of the parked documents, in the order they were parked. */
@@ -209,7 +223,8 @@ export class Stage<T, Id extends number = number> {
 
   /** Whether `id` is mounted, focused or parked. */
   holds(id: Id): boolean {
-    return id >= 0 && (id === this.focused || this.#parked.has(id));
+    if (id < 0) return false;
+    return id === this.focused || this.#parked.has(id) || this.#lenders.some((lender) => lender.id === id);
   }
 
   /** Puts the slots back to no document. The focused document's values are dropped. */
@@ -262,27 +277,41 @@ export class Stage<T, Id extends number = number> {
    * slots stays with `id`. `work` must not wait for anything: after an `await`
    * the slots belong to the focused document again.
    *
+   * Work asked for inside `work` for the document the slots were taken from,
+   * the focused one, runs too: a frame of the other side that makes the
+   * focused viewer follow has that viewer report its page from in here, and a
+   * report dropped is a header left on the old page. So the values taken out
+   * are kept where a nested call finds them, and are looked for before the
+   * parked records, whose copy of a document that is lending is out of date.
+   *
    * Returns `{ ran: false }` when `id` is not mounted, so that a reply for a
    * document that has gone is dropped by the caller and not applied to another.
    */
   within<R>(id: Id, work: () => R): { ran: true; value: R } | { ran: false } {
     if (id < 0) return { ran: false };
     if (id === this.focused) return { ran: true, value: work() };
-    const record = this.#parked.get(id);
+    let lender: { readonly id: Id; record: T } | undefined;
+    for (const entry of this.#lenders) if (entry.id === id) lender = entry;
+    const record = lender ? lender.record : this.#parked.get(id);
     if (!record) return { ran: false };
 
-    const focused = capture(this.#slots);
+    const outside = { id: this.focused, record: capture(this.#slots) };
+    const wasHome = this.#home;
+    this.#home = lender !== undefined && lender === this.#lenders[0];
+    this.#lenders.push(outside);
     install(this.#slots, record);
-    this.#lent++;
     try {
       return { ran: true, value: work() };
     } finally {
-      this.#lent--;
-      // Read back before the focused values return, so what `work` changed is
+      this.#home = wasHome;
+      this.#lenders.pop();
+      // Read back before the values outside return, so what `work` changed is
       // kept. If `work` ended the document, its record is not put back.
-      if (this.#focusedId() === id) this.#parked.set(id, capture(this.#slots));
+      const kept = this.#focusedId() === id;
+      if (lender) lender.record = kept ? capture(this.#slots) : this.#blank();
+      else if (kept) this.#parked.set(id, capture(this.#slots));
       else this.#parked.delete(id);
-      install(this.#slots, focused);
+      install(this.#slots, outside.record);
     }
   }
 }

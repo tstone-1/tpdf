@@ -11,8 +11,8 @@
   } from "./lib/diskwatch";
   import { getCurrentWindow } from "@tauri-apps/api/window";
   import {
-    DocumentTabs, DocumentTasks, freshState, keepState, oneEach, restore, restoredState, restoredWith,
-    twinsOf,
+    DocumentTabs, DocumentTasks, freshState, keepState, oneEach, partnersOf, restore, restoredState,
+    restoredWith, twinsOf,
     type DocumentTab, type Restore,
   } from "./lib/documenttabs";
   import { TabLabelSize } from "./lib/tablabels";
@@ -49,7 +49,7 @@
     PAGE_MENU,
   } from "./lib/contextmenu";
   import { contentBox, cropBox } from "./lib/crop";
-  import { Edits, type EditState } from "./lib/edits";
+  import { Edits, markMade, type EditState } from "./lib/edits";
   import {
     DEFAULT_SWATCH,
     swatch,
@@ -71,7 +71,7 @@
     PROGRESS_EVENT as HIDDEN_PROGRESS_EVENT,
     Runs as HiddenRuns,
     STARTING as HIDDEN_STARTING,
-    placeOf,
+    showPassage,
     type Passage,
     type Progress as HiddenProgress,
   } from "./lib/hiddentext";
@@ -180,7 +180,7 @@
   import { Serial } from "./lib/serial";
   import { DegradedLabel } from "./lib/degraded";
   import {
-    finishUpdate, installEndsProcess, Updates, updateLabel, updateNotice,
+    finishUpdate, stepEndsProcess, stepFor, Updates, updateLabel, updateNotice,
     type FinishStep, type UpdateState,
   } from "./lib/update";
   import { Viewer, type ViewerOptions, type ViewerStatus } from "./lib/viewer";
@@ -470,9 +470,12 @@
       commitPopups();
       return Promise.all([pendingEdit, formLayer?.settle(), textEditor?.settle()]);
     }));
-    await pendingEdit;
-    await formLayer?.settle();
-    await textEditor?.settle();
+    // Named before the first wait: after it the variables may hold the other
+    // document, whose drafts are the ones waited for just below.
+    const pending = pendingEdit, form = formLayer, editor = textEditor;
+    await pending;
+    await form?.settle();
+    await editor?.settle();
     await Promise.all(beside);
   }
 
@@ -1107,6 +1110,12 @@
    * time. Cleared with the document, since it is an answer about a file.
    */
   let properties: Properties | null = null;
+  /**
+   * The search waiting out its pause after the last key in the find field, or
+   * 0. One of the document's variables: it is for the viewer the words were
+   * typed for, and tearing down the document on the other side must not
+   * cancel it.
+   */
   let findTimer = 0;
   /**
    * The document the backend is holding for this window, or -1 for none.
@@ -1265,6 +1274,7 @@
     degradedGate: { get: () => degradedGate, set: (value) => { degradedGate = value; } },
     query: { get: () => query, set: (value) => { query = value; } },
     findShown: { get: () => findShown, set: (value) => { findShown = value; } },
+    findTimer: { get: () => findTimer, set: (value) => { findTimer = value; } },
     error: { get: () => error, set: (value) => { error = value; } },
     offers: { get: () => offers, set: (value) => { offers = value; } },
     notice: { get: () => notice, set: (value) => { notice = value; } },
@@ -1300,6 +1310,22 @@
   function asDocument<R>(id: ViewId, work: () => R): R | undefined {
     const done = stage.within(id, work);
     return done.ran ? done.value : undefined;
+  }
+
+  /**
+   * Whether the reader is still working in `view`, and it still shows `model`
+   * (and, when one is named, still in the viewer `mounted`).
+   *
+   * The guard after an `await` for what must stop when the reader has left:
+   * a question the palette is about to ask, a tool about to be armed. Work
+   * that should finish in its own document whichever side the reader is in
+   * goes through {@link asDocument} and needs no guard. One function, because
+   * the comparisons were written by hand at each wait and the older ones
+   * compared the handle, which two views of a document share.
+   */
+  function stillIn(view: ViewId, model: Edits | null, mounted?: Viewer | null): boolean {
+    return view !== NO_VIEW && openView === view && edits === model
+      && (mounted === undefined || viewer === mounted);
   }
 
   /**
@@ -1357,6 +1383,10 @@
    */
   const editing = new Serial();
 
+  /** The documents that can be shown beside this one; the rule is `partnersOf`. */
+  const besidePartners = () =>
+    partnersOf(tabs.all, openView, (tab) => panes.sideOf(tab.view) !== panes.focused);
+
   /**
    * Every command the application has, built in `appcommands.ts`.
    *
@@ -1381,10 +1411,10 @@
     sides: () => ({
       split: panes.split,
       focused: panes.focused,
-      others: tabs.all.filter((tab) => tab.view !== openView).map((tab) => basename(tab.path)),
+      others: besidePartners().map((partner) => partner.name),
     }),
     showBeside: (index) => {
-      const partner = tabs.all.filter((tab) => tab.view !== openView)[index];
+      const partner = besidePartners()[index]?.tab;
       if (partner) void moveTab(partner.view, otherSide(panes.focused));
     },
     moveToOtherSide: () => void moveTab(openView, otherSide(panes.focused)),
@@ -1423,8 +1453,8 @@
     commandLineToolOffered: (install) => commandLineTool.offered(install),
     makeDefaultPdfApp: () => {
       void call("default_pdf_app").then(
-        (said) => (notice = said),
-        (why: unknown) => (notice = String(why)),
+        (said) => tell(said),
+        (why: unknown) => tell(String(why)),
       );
     },
     // Wrapped rather than passed straight through, because a check that lands on
@@ -1448,14 +1478,7 @@
     dropImport: () => pendingImports.drop(),
     cropPage: (to) => void cropPage(to),
     redactRegion: () => viewer?.armRedact(),
-    // Marks the selection and leaves the tool armed, so the next word the
-    // reader double-clicks is marked without coming back to this command.
-    // Reported from use: choosing it again for every passage was the tedious
-    // part. Esc puts the tool away.
-    redactSelection: () => void redactSelection().then(() => {
-      viewer?.clearSelection();
-      viewer?.armRedact();
-    }),
+    redactSelection: () => void redactSelectionAndStayArmed(),
     redactMatches: () => void redactMatches(),
     matchCount: () => viewer?.matchCount ?? 0,
     movePage: (delta) => void movePage(delta),
@@ -1495,8 +1518,9 @@
     fieldProperties: () => void changeProperties(propertiesDeps),
     canOrderTabs: () => canOrderTabs(edits?.state ?? null, scannedForm),
     orderTabs: () => {
+      const view = openView;
       void applyEdit((e) => e.orderTabs()).then(() => {
-        notice = "Saving will put the form's fields in reading order for the Tab key.";
+        asDocument(view, () => { notice = "Saving will put the form's fields in reading order for the Tab key."; });
         refreshMenu();
       });
     },
@@ -1601,19 +1625,22 @@
    * the subtype the writer puts in the file differs.
    */
   async function markSelection(kind: MarkKind): Promise<void> {
+    // The document the marks are for. Each one is a wait, and the reader may
+    // press in the other side during it: what follows a wait is done as this
+    // document and never as "the one in the variables".
+    const view = openView;
     const marks = viewer?.selectionQuadsByPage() ?? [];
     for (const { page, quads, text } of marks) {
-      // Which ids existed before, so the one that appears can be identified by
-      // difference --- `addComment` below gives the argument for asking it this
-      // way rather than taking the last mark or the highest id.
-      const before = new Set((edits?.state.marks ?? []).map((mark) => mark.id));
-      await applyEdit((e) => e.mark(kind, page, quads, [], "", markColor.rgb));
-      const made = (edits?.state.marks ?? []).find(
-        (mark) => !before.has(mark.id),
+      // The mark that appears is identified by difference, in `markMade` ---
+      // `addComment` below gives the argument for asking it that way rather
+      // than taking the last mark or the highest id.
+      const made = await markMade(
+        (run) => applyEdit(run, view),
+        (e) => e.mark(kind, page, quads, [], "", markColor.rgb),
       );
       // Absent when the model refused. Nothing to record and nothing to say ---
       // `applyEdit` has already shown the refusal.
-      if (made) covered.set(made.id, text.slice(0, COVERED_CHARS));
+      if (made) asDocument(view, () => covered.set(made.id, text.slice(0, COVERED_CHARS)));
     }
     // `applyEdit` painted the panel already --- but it painted it *before* this
     // loop knew which id to file the words under, so every row it drew says
@@ -1621,9 +1648,9 @@
     // the loop after each `covered.set`: a selection over four pages makes four
     // marks, and the three intermediate paints would each be replaced within
     // the millisecond by the next `applyEdit`.
-    if (marks.length > 0 && edits) {
-      sidebar?.setMarks(markRows(edits.state.marks, edits.map));
-    }
+    if (marks.length > 0) asDocument(view, () => {
+      if (edits) sidebar?.setMarks(markRows(edits.state.marks, edits.map));
+    });
   }
 
   /**
@@ -1648,11 +1675,28 @@
    * and would part company the moment route B took a whole line.
    */
   async function redactSelection(): Promise<void> {
-    for (const { page, quads } of viewer?.selectionQuadsByPage() ?? []) {
+    const view = openView;
+    const selected = viewer?.selectionQuadsByPage() ?? [];
+    for (const { page, quads } of selected) {
       for (const area of areasFrom(quads)) {
-        await applyEdit((e) => e.redact(page, area));
+        await applyEdit((e) => e.redact(page, area), view);
       }
     }
+  }
+
+  /**
+   * {@link redactSelection}, and the tool left armed in the document it was
+   * asked in: the next word the reader double-clicks there is marked without
+   * coming back to the command. Reported from use: choosing it again for every
+   * passage was the tedious part. Esc puts the tool away.
+   */
+  async function redactSelectionAndStayArmed(): Promise<void> {
+    const view = openView;
+    await redactSelection();
+    asDocument(view, () => {
+      viewer?.clearSelection();
+      viewer?.armRedact();
+    });
   }
 
   /**
@@ -1673,23 +1717,24 @@
    * reader is then told is clean, which is the one thing §6 forbids.
    */
   async function redactMatches(): Promise<void> {
-    if (!viewer) return;
-    const refusal = tooManyMatchesToMark(viewer.matchCount);
+    const view = openView, searched = viewer;
+    if (!searched) return;
+    const refusal = tooManyMatchesToMark(searched.matchCount);
     if (refusal) {
       say(refusal);
       return;
     }
-    const found = await viewer.matchQuadsByPage();
+    const found = await searched.matchQuadsByPage();
     if (found === null) {
-      say(
+      asDocument(view, () => say(
         "Some of the pages with matches on them could not be read, so nothing " +
           "was marked. Nothing has been changed.",
-      );
+      ));
       return;
     }
     for (const { page, quads } of found) {
       for (const area of areasFrom(quads)) {
-        await applyEdit((e) => e.redact(page, area));
+        await applyEdit((e) => e.redact(page, area), view);
       }
     }
   }
@@ -1727,22 +1772,23 @@
       viewer?.armDraw("note");
       return;
     }
+    const view = openView;
     const where = viewer?.commentAt(at);
     if (!where) return;
     // Which ids existed before, so the one that appears can be identified by
     // difference rather than by guessing. "The last mark in the list" and "the
     // highest id" are both inferences about how the model numbers and orders
     // things, and neither is written down anywhere as a promise --- a set
-    // difference needs no promise at all.
-    const before = new Set((edits?.state.marks ?? []).map((mark) => mark.id));
-    await applyEdit((e) =>
-      e.mark("note", where.page, where.quads, [], "", markColor.rgb),
+    // difference needs no promise at all. `markMade` in `edits.ts` takes it.
+    const made = await markMade(
+      (run) => applyEdit(run, view),
+      (e) => e.mark("note", where.page, where.quads, [], "", markColor.rgb),
     );
-    const made = (edits?.state.marks ?? []).find((mark) => !before.has(mark.id));
     // Absent if the model refused --- an empty quad, a page that is gone. The
     // refusal has already been shown by `applyEdit`, so there is nothing to say
-    // here beyond not opening a note on a mark that was never made.
-    if (made) viewer?.showMark(made.id);
+    // here beyond not opening a note on a mark that was never made. The note
+    // opens in the document the comment was put in, wherever the reader is now.
+    if (made) asDocument(view, () => viewer?.showMark(made.id));
   }
 
   /**
@@ -1760,10 +1806,10 @@
    * document's.
    */
   async function addSignature(): Promise<void> {
-    const target = viewer, doc = openDoc;
+    const target = viewer, doc = openDoc, view = openView, model = edits;
     if (!target || doc < 0 || !signatureDialog || documentBusy || opening || copyTaskBusy) return;
     const image = await signatureDialog.ask();
-    if (image && viewer === target && openDoc === doc) target.armSignature(image);
+    if (image && stillIn(view, model, target)) target.armSignature(image);
   }
 
   async function drawn(
@@ -1772,7 +1818,8 @@
     shape: Drawn,
     stamp: StampName | null,
   ): Promise<void> {
-    const before = new Set((edits?.state.marks ?? []).map((mark) => mark.id));
+    // Called by the viewer the shape was drawn in, as its document.
+    const view = openView;
     // A field has to have a name the moment it exists. See `fieldnames.ts`.
     const placed = kind === "field"
       ? placing(
@@ -1782,7 +1829,7 @@
       : undefined;
     const field = placed?.field;
     const name = placed?.name ?? "";
-    await applyEdit((e) =>
+    const made = await markMade((run) => applyEdit(run, view), (e) =>
       e.mark(
         kind,
         page,
@@ -1804,11 +1851,12 @@
         field,
       ),
     );
-    const made = (edits?.state.marks ?? []).find((mark) => !before.has(mark.id));
     // A group is several buttons, so the tool stays armed for the next one
     // and no name box opens over the place it would go; Escape puts it down.
-    if (field?.kind === "radio") viewer?.armDraw("field");
-    else if (made) viewer?.showMark(made.id);
+    asDocument(view, () => {
+      if (field?.kind === "radio") viewer?.armDraw("field");
+      else if (made) viewer?.showMark(made.id);
+    });
   }
 
   /**
@@ -1953,7 +2001,7 @@
    */
   async function importPages(): Promise<void> {
     if (opening || !edits) return;
-    const model = edits;
+    const model = edits, view = openView;
     palette?.close();
     const picked = await openDialog({
       multiple: false,
@@ -1962,7 +2010,7 @@
       filters: [{ name: "PDF", extensions: ["pdf"] }],
     });
     const path = typeof picked === "string" ? picked : null;
-    if (!path || edits !== model) return;
+    if (!path || !stillIn(view, model)) return;
     await importPagesFrom(path);
   }
 
@@ -1975,18 +2023,20 @@
    * before the question is asked, in the backend's own sentence.
    */
   async function importPagesFrom(path: string): Promise<void> {
-    const model = edits;
+    const model = edits, view = openView;
     if (!model) return;
     let prepared;
     try {
       prepared = await model.prepareImport(path);
     } catch (error) {
-      if (edits === model) say(String(error));
+      asDocument(view, () => { if (edits === model) say(String(error)); });
       return;
     }
     // The document went away while the file opened: its close released the
-    // file already, and there is nothing to ask about.
-    if (edits !== model) return;
+    // file already, and there is nothing to ask about. A reader who has gone
+    // to the other side is not asked either: the question is put to the
+    // document they are in, and the file is released when this one closes.
+    if (!stillIn(view, model)) return;
     pendingImports.hold(model.doc, prepared);
     palette?.askFor("edit.insertPages.range");
   }
@@ -2044,7 +2094,11 @@
    */
   async function cropPage(to: "content" | "reset" | "drag"): Promise<void> {
     const at = viewer?.position.page;
-    if (at === undefined || !edits) return;
+    // The model and the view are named once, here. The measurement below is a
+    // wait, and an edit sent after it as "the document in the variables" would
+    // crop a page of the other side that happens to have the same id.
+    const model = edits, view = openView;
+    if (at === undefined || !model) return;
     if (to === "drag") {
       // Arms and returns: the rest of this gesture happens when the reader
       // lets go, in `cropTo`. Nothing is measured and no page is named here,
@@ -2059,23 +2113,23 @@
       // above this page has landed, and `at` would then name whichever page had
       // moved into the slot --- putting the file's box back on a page nobody
       // asked about. An id cannot move.
-      const page = edits.state.pages[at]?.id;
+      const page = model.state.pages[at]?.id;
       if (page === undefined) return;
       await applyEdit((e) => {
         const slot = slotOfIdIn(e.state.pages, page);
         return slot === undefined ? Promise.resolve(e.state) : e.crop(slot, null);
-      });
+      }, view);
       return;
     }
-    const view = edits.state.pages[at];
+    const shown = model.state.pages[at];
     // Where the page is drawn from, which for a page inserted from another file
     // is that file: its ink is measured by the worker that renders it.
-    const source = view === undefined ? undefined : addressOf(view, edits.doc);
-    if (view === undefined || source === undefined) {
+    const source = shown === undefined ? undefined : addressOf(shown, model.doc);
+    if (shown === undefined || source === undefined) {
       // Two ways to get here and only one of them is worth a message: a slot
       // that is not in the document is a stale press, and a page tpdf made is a
       // reader asking a reasonable question about a page with nothing on it.
-      if (view !== undefined) say("A blank page has nothing to crop to.");
+      if (shown !== undefined) say("A blank page has nothing to crop to.");
       return;
     }
     // The page's identity, taken before the measurement goes out. `at` is a
@@ -2083,16 +2137,16 @@
     // land after a deletion above it, and a crop sent against the old slot
     // crops whichever page has moved into it. `cropTo` next door does the same
     // for the same reason; a `source` is safe to read early and a slot is not.
-    const page = view.id;
+    const page = shown.id;
     const box = await contentBox(source.doc, source.page).catch(() => null);
     if (!box) {
-      say("There is nothing on this page to crop to.");
+      asDocument(view, () => say("There is nothing on this page to crop to."));
       return;
     }
     await applyEdit((e) => {
       const slot = slotOfIdIn(e.state.pages, page);
       return slot === undefined ? Promise.resolve(e.state) : e.crop(slot, box);
-    });
+    }, view);
   }
 
   /**
@@ -2127,16 +2181,19 @@
     id: number,
     rect: [number, number, number, number],
   ): Promise<void> {
-    if (!edits) return;
+    // Called by the viewer the rectangle was dragged in, as its document, and
+    // named here for the edit that follows the wait below.
+    const model = edits, view = openView;
+    if (!model) return;
     // What the viewer hands over is an id, spelt as a plain `number` because
     // that is what the callback's type says; named as one here so that the
     // slot lookup below cannot be handed the wrong kind of page number.
     const page = pageId(id);
-    const view = edits.state.pages.find((p) => p.id === page);
+    const shown = model.state.pages.find((p) => p.id === page);
     // For a page inserted from another file, the box is in *that* file's page
     // space and turned by its `/Rotate`, so it is that file's worker that is
     // asked --- the model writes the box onto the page object it imports.
-    const source = view === undefined ? undefined : addressOf(view, edits.doc);
+    const source = shown === undefined ? undefined : addressOf(shown, model.doc);
     if (source === undefined) {
       // `cropToContent`'s reasoning, and here the refusal is the model's as
       // well: a crop box is measured against a page of the file, and there is
@@ -2145,18 +2202,18 @@
       // has one and nothing gets that far. Its sibling for a redaction has no
       // such guard, which is how the shared message it used to carry --- about
       // marking --- was shown to somebody dragging a region.
-      if (view !== undefined) say("A blank page cannot be cropped.");
+      if (shown !== undefined) say("A blank page cannot be cropped.");
       return;
     }
     const box = await cropBox(source.doc, source.page, rect).catch(() => null);
     if (!box) {
-      say("That rectangle could not be turned into a crop.");
+      asDocument(view, () => say("That rectangle could not be turned into a crop."));
       return;
     }
     await applyEdit((e) => {
       const slot = slotOfIdIn(e.state.pages, page);
       return slot === undefined ? Promise.resolve(e.state) : e.crop(slot, box);
-    });
+    }, view);
   }
 
   /**
@@ -2184,7 +2241,7 @@
    * note while the box on screen shows the words. Every other caller is a
    * redraw, and a redraw that waits for the last one is a slower redraw.
    */
-  let pendingEdit: Promise<void> = Promise.resolve();
+  let pendingEdit: Promise<unknown> = Promise.resolve();
 
   /**
    * Runs one edit and moves the viewer to the state it produced.
@@ -2194,34 +2251,52 @@
    * the fifth caller is the one that forgets. What it must not become is a place
    * where the *next* state is computed --- it is handed one, and its whole job
    * is to redraw what differs.
+   *
+   * Resolves with the state `view` adopted, or with null when it adopted none:
+   * the edit was refused here or by the model, or the view has gone. A caller
+   * with something to do afterwards reads that answer and does it through
+   * `asDocument(view, ...)`. It does not read `edits` or `viewer` again, which
+   * are the other document's once the reader has pressed in the other side.
+   *
+   * `view` is the document the edit is for. Left out, it is the one the reader
+   * is in now, which is right for a caller that has not waited for anything; a
+   * caller that has waited passes the view it took when it was asked.
    */
-  function applyEdit(run: (edits: Edits) => Promise<EditState>): Promise<void> {
-    if (copyTaskBusy || (documentBusy && !committingPopup)) return Promise.resolve();
+  function applyEdit(
+    run: (edits: Edits) => Promise<EditState>,
+    view: ViewId = openView,
+  ): Promise<EditState | null> {
+    if (copyTaskBusy || (documentBusy && !committingPopup)) return Promise.resolve(null);
     // Queued rather than started, so a reply can never be adopted after a
     // later one. See {@link editing}.
     //
     // The document is named here, when the edit is asked for. The queue runs
     // it later, and the reader may be working in the other side by then.
-    const id = openView;
-    pendingEdit = editing.run(() => runEdit(id, run));
-    return pendingEdit;
+    const done = editing.run(() => runEdit(view, run));
+    // What a save waits for is the edit of its own document.
+    if (view === openView) pendingEdit = done;
+    else asDocument(view, () => { pendingEdit = done; });
+    return done;
   }
 
   async function editExistingText(): Promise<void> {
-    const model = edits, mounted = viewer, host = surface;
+    const model = edits, mounted = viewer, host = surface, view = openView;
     if (!model || !mounted || !host || documentBusy) return;
     const generation = ++textEditorGeneration;
+    // Asked again after each wait. A reader who has gone to the other side has
+    // left this, as one who switched tabs has.
+    const wanted = () => generation === textEditorGeneration && stillIn(view, model, mounted);
     try {
       await settleDocument();
-      if (generation !== textEditorGeneration || edits !== model || viewer !== mounted) return;
+      if (!wanted()) return;
       if (model.state.redactions.length) throw new Error("Finish or remove pending redactions before editing text.");
-      const page = model.state.pages[(status?.page ?? 1) - 1];
+      const page = model.state.pages[(asDocument(view, () => status?.page) ?? 1) - 1];
       if (!page) return;
       const runs = await call("document_text_runs", { doc: model.doc, page: page.id });
-      if (generation !== textEditorGeneration || edits !== model || viewer !== mounted) return;
+      if (!wanted()) return;
       if (!runs.runs.length) throw new Error("This page has no supported text to edit.");
-      textEditor?.destroy();
-      const editor = new TextEditor(host, page.id, runs,
+      asDocument(view, () => textEditor?.destroy());
+      const editor: TextEditor = new TextEditor(host, page.id, runs,
         // By the page's identity, not by `runs.page`: that number is a page
         // number of whichever document this page is drawn from, and for an
         // inserted page it names a different page of the opened file.
@@ -2233,46 +2308,54 @@
             if (current !== model) throw new Error("The document changed before the text was applied.");
             try { result = await current.replaceText(page.id, change); return result; }
             catch (error) { failure = error; throw error; }
-          });
+          }, view);
           if (!result) throw failure ?? new Error("Text editing is currently unavailable.");
           return result;
-        }, () => { editor.destroy(); if (textEditor === editor) textEditor = null; },
+        }, () => { editor.destroy(); asDocument(view, () => { if (textEditor === editor) textEditor = null; }); },
         (change) => call("document_text_runs", { doc: model.doc, page: page.id, change }),
         // No draft: the runs as the pending edits leave them, for the outlines.
         () => call("document_text_runs", { doc: model.doc, page: page.id }));
-      textEditor = editor; editor.update(model.state); editor.setBusy(documentBusy);
+      asDocument(view, () => { textEditor = editor; });
+      editor.update(model.state); editor.setBusy(documentBusy);
     } catch (error) {
-      if (generation === textEditorGeneration && edits === model) say(`Cannot edit this text: ${error instanceof Error ? error.message : String(error)}`);
+      if (generation === textEditorGeneration) asDocument(view, () => {
+        if (edits === model) say(`Cannot edit this text: ${error instanceof Error ? error.message : String(error)}`);
+      });
     }
   }
 
   async function runEdit(
     id: ViewId,
     run: (edits: Edits) => Promise<EditState>,
-  ): Promise<void> {
+  ): Promise<EditState | null> {
     const model = asDocument(id, () => (viewer ? edits : null));
-    if (!model) return;
+    if (!model) return null;
     try {
       const after = await run(model);
       // Everything below reads and writes the variables of the document the
       // edit was made in, so it runs as that document.
-      asDocument(id, () => adoptEdit(model, after));
+      const adopted = asDocument(id, () => adoptEdit(model, after)) === true;
       // A second view of the document draws the same state. An edit is the
       // document's, whichever view it was made in.
       for (const twin of tabs.all) {
         if (twin.edits === model && twin.view !== id) asDocument(twin.view, () => adoptEdit(model, after));
       }
+      return adopted ? after : null;
     } catch (e) {
       // Shown rather than logged. A refusal here is about the document --- a page
       // that is gone, a handle that is not open --- and a rotate command that
       // silently does nothing reads as a broken application.
       asDocument(id, () => say(String(e)));
+      return null;
     }
   }
 
-  /** Moves the mounted document's viewer and panels to the state an edit produced. */
-  function adoptEdit(model: Edits, after: EditState): void {
-    if (edits !== model) return;
+  /**
+   * Moves the mounted document's viewer and panels to the state an edit
+   * produced. False, and nothing moved, when the variables hold another model.
+   */
+  function adoptEdit(model: Edits, after: EditState): boolean {
+    if (edits !== model) return false;
     // Only when the pages moved, and the viewer is what answers that: every
     // call below throws work away --- the strip's thumbnails, the panels' rows
     // --- and a turn moves no page, so doing it unconditionally would make
@@ -2316,6 +2399,7 @@
     // Undo and Redo are the two menu items whose enablement moves on every
     // edit, which is why this is here rather than only at the ends of an open.
     refreshMenu();
+    return true;
   }
 
   /**
@@ -2518,6 +2602,7 @@
     // Held for the walk, as `fillCommentWords` holds its own: the variables
     // are another document's once the reader changes sides.
     const id = openView, reader = viewer, panel = sidebar;
+    const words = redactionWords, planned = redactionPlans;
     try {
       // The walk is `redactlist.ts`, where a test can reach it; what stays here
       // is the wiring. Every lookup reads `model.map` at the moment it is asked,
@@ -2532,8 +2617,8 @@
         sourceOf: (slot) => model.map.sourceOf(slot),
         text: async (slot) => (await reader.unturnedText(slot)) ?? null,
         plans: (page, regions) => call("redaction_plans", { doc: model.doc, page, regions }),
-        words: redactionWords,
-        planned: redactionPlans,
+        words,
+        planned,
         answered: () => panel?.setRedactionWords(),
         // Not raised to the reader. The rows keep saying what they said,
         // which is nothing about what a removal would take --- and the
@@ -2544,6 +2629,21 @@
     } finally {
       asDocument(id, () => { fillingRedactionWords = false; });
     }
+  }
+
+  /**
+   * Opens `path` again in the place of a document a write has just closed,
+   * with the reader put back at `place`.
+   *
+   * A save in place and a redaction in place close the document as part of
+   * the write, whether the write went through or was refused past the point
+   * of return. The handle is forgotten first, so that the open does not try
+   * to release one the backend already released. One function, because the
+   * two lines were written out at each of the four places that reopen.
+   */
+  async function reopenAfterWrite(path: string, place: Place | null): Promise<void> {
+    openDoc = -1; openView = NO_VIEW;
+    await openPath(path, false, place);
   }
 
   /**
@@ -2561,7 +2661,7 @@
    * object identity in the file has changed and the journal is spent. Opening
    * the path again is what gives the reader a document, and `openDoc` is cleared
    * first so the open does not try to release a handle the save already
-   * released.
+   * released. {@link reopenAfterWrite} is both lines.
    *
    * **The place is expressed in slots**, which is the one argument here that
    * could quietly be wrong --- see {@link currentPlace}. Captured before the
@@ -2598,8 +2698,7 @@
         // The document is closed and the file is the one it always was. Reopening
         // is what gives the reader something to look at; their unsaved commands
         // are gone with the model, which is what the message says.
-        openDoc = -1; openView = NO_VIEW;
-        await openPath(path, false, place);
+        await reopenAfterWrite(path, place);
         // **After the reopen, and that ordering is the whole of it.** `openPath`
         // clears the message area on its way in, so saying this before the reopen
         // showed it for zero frames: the one refusal a reader can do nothing about
@@ -2613,8 +2712,7 @@
         if (!error) say(prompt.message, prompt.offers);
         return;
       }
-      openDoc = -1; openView = NO_VIEW;
-      await openPath(path, false, place);
+      await reopenAfterWrite(path, place);
     });
   }
 
@@ -2925,12 +3023,25 @@
         refreshMenu();
       }
     });
-    if (!done.path || !done.said) return;
-    // Said twice on purpose. The first is for a copy that then fails to open:
-    // it is on disk, and the reader has to be told so on the tab they are on.
-    say(done.said);
-    await openPath(done.path);
-    if (openPathName === done.path) say(done.said);
+    await openWritten(done);
+  }
+
+  /**
+   * Opens the file a task wrote, and says what the task has to say about it.
+   *
+   * Said twice on purpose. The first is for a file that then fails to open:
+   * it is on disk, and the reader has to be told so on the tab they are on.
+   * The second is for the document once it is open, since opening one clears
+   * the message area; it is said in that document, which is the one the
+   * reader is left in.
+   */
+  async function openWritten(done: { path?: string; said?: string }): Promise<void> {
+    const { path, said } = done;
+    if (!path || !said) return;
+    say(said);
+    await openPath(path);
+    const opened = tabs.forPath(path, tabs.active);
+    if (opened) asDocument(opened.view, () => say(said));
   }
 
   /**
@@ -2956,22 +3067,26 @@
         await settled;
         if (!edits) return;
         const asked = edits;
-        // Numbered before Stop is shown, so a press at any moment names this run.
-        const run = hiddenRuns.start();
-        blockingTask = HIDDEN_STARTING;
-        findingHidden = true;
-        await tick();
-        const checked = await call("hidden_text", { doc: asked.doc, run });
-        // The document the answer is about, not whichever is open when it lands.
-        if (edits !== asked) return;
-        sidebar?.setHiddenText(checked);
-        // The ring over a passage of the result this one replaces.
-        viewer?.clearRegion();
-        showTab("hidden");
+        // The order, the run's number and the dropped answer are `Runs.check`'s.
+        await hiddenRuns.check({
+          begun: async () => {
+            blockingTask = HIDDEN_STARTING;
+            findingHidden = true;
+            await tick();
+          },
+          ask: (run) => call("hidden_text", { doc: asked.doc, run }),
+          // The document the answer is about, not whichever is open when it lands.
+          current: () => edits === asked,
+          show: (checked) => {
+            sidebar?.setHiddenText(checked);
+            // The ring over a passage of the result this one replaces.
+            viewer?.clearRegion();
+            showTab("hidden");
+          },
+        });
       } catch (e) {
         say(String(e));
       } finally {
-        hiddenRuns.finish();
         findingHidden = false;
         blockingTask = null;
         copyTaskBusy = false;
@@ -2988,18 +3103,14 @@
    * place on it to ring, so its page is what is shown.
    */
   function showHidden(passage: Passage): void {
-    if (!edits || !viewer) return;
-    const place = placeOf(passage, (page) => edits?.map.slotOf(page));
-    if (!place) {
-      say(PAGE_GONE);
-      return;
-    }
-    if (place.rect) {
-      viewer.showRegion(place.slot, place.rect);
-    } else {
-      viewer.clearRegion();
-      viewer.goToDestination(place.slot, null);
-    }
+    const model = edits, shown = viewer;
+    if (!model || !shown) return;
+    showPassage(passage, (page) => model.map.slotOf(page), {
+      ring: (slot, rect) => shown.showRegion(slot, rect),
+      // No ring left from the row before.
+      page: (slot) => { shown.clearRegion(); shown.goToDestination(slot, null); },
+      gone: () => say(PAGE_GONE),
+    });
   }
 
   /**
@@ -3011,13 +3122,11 @@
    * is asked.
    */
   async function chooseRecognitionLanguage(): Promise<void> {
-    try {
-      recognitionLanguage.hold(await call("ocr_languages"));
-    } catch (error) {
-      say(String(error));
-      return;
-    }
-    palette?.askFor("file.recogniseTextLanguage.choice");
+    await recognitionLanguage.choose(
+      () => call("ocr_languages"),
+      () => palette?.askFor("file.recogniseTextLanguage.choice"),
+      say,
+    );
   }
 
   /**
@@ -3095,13 +3204,11 @@
           say(prompt.message, prompt.offers);
           return;
         }
-        openDoc = -1; openView = NO_VIEW;
-        await openPath(path, false, place);
+        await reopenAfterWrite(path, place);
         if (!error) say(prompt.message, prompt.offers);
         return;
       }
-      openDoc = -1; openView = NO_VIEW;
-      await openPath(path, false, place);
+      await reopenAfterWrite(path, place);
       if (!error) say(said);
     });
   }
@@ -3280,10 +3387,7 @@
         refreshMenu();
       }
     });
-    if (!done.path || !done.said) return;
-    say(done.said);
-    await openPath(done.path);
-    if (openPathName === done.path) say(done.said);
+    await openWritten(done);
   }
 
   /**
@@ -3374,15 +3478,15 @@
       return;
     }
 
-    const wanted = openDoc;
+    const wanted = openDoc, view = openView, model = edits;
     propertiesDialog.show(null, "");
     try {
       const answer = await call("document_properties", { doc: wanted });
-      if (openDoc !== wanted || !propertiesDialog.isOpen) return;
-      properties = answer;
+      if (!stillIn(view, model) || !propertiesDialog.isOpen) return;
+      asDocument(view, () => { properties = answer; });
       propertiesDialog.show(answer, "");
     } catch (e) {
-      if (openDoc !== wanted || !propertiesDialog.isOpen) return;
+      if (!stillIn(view, model) || !propertiesDialog.isOpen) return;
       // Shown in the dialog rather than in the status line, because the dialog
       // is what the reader is looking at and an empty one beside a message
       // somewhere else reads as a document that states nothing.
@@ -3418,6 +3522,18 @@
    * it is never something that arrived on its own. See `updateNotice`.
    */
   let notice = $state<string | null>(null);
+
+  /**
+   * Puts the answer to something the reader asked in front of them, where
+   * they are when it arrives: the document they are working in by then, or
+   * the window with none. {@link say}'s counterpart for what is not a failure.
+   * For an answer that comes back after a wait and is about the window, a
+   * preference saved or a list cleared; one about a document is put in that
+   * document, through `asDocument`.
+   */
+  function tell(text: string | null): void {
+    notice = text;
+  }
   const updates = new Updates(
     {
       check: async () => {
@@ -3799,7 +3915,7 @@
    * does what it says.
    */
   async function reloadDocument(): Promise<void> {
-    const path = openPathName;
+    const path = openPathName, view = openView, model = edits;
     if (!path) return;
     // Reload reopens the file, which closes the document and spends the journal.
     // On an unedited document that costs nothing; on an edited one it is the
@@ -3807,9 +3923,13 @@
     // was written before there was anything to lose, and nothing revisited it
     // when there was. The second press is what confirms: `reloadAnyway` is the
     // offer this prompt carries.
-    const prompt = await reloadAsked({ settle: settleDrafts, dirty: () => dirty });
-    // The wait let another document in: the answer is about one that has gone.
-    if (openPathName !== path) return;
+    const prompt = await reloadAsked({
+      settle: settleDrafts,
+      dirty: () => asDocument(view, () => dirty) ?? false,
+    });
+    // The wait let another document in: the answer is about one that has gone,
+    // or about the side the reader has left.
+    if (!stillIn(view, model)) return;
     if (prompt) {
       say(prompt.message, prompt.offers);
       return;
@@ -4020,7 +4140,7 @@
     places.forgotten();
     notePlace();
     await refreshStartPage();
-    if (!said) notice = "Recent documents cleared.";
+    if (!said) tell("Recent documents cleared.");
   }
 
   /**
@@ -4108,8 +4228,11 @@
 
   function onFindInput() {
     clearTimeout(findTimer);
-    const wanted = query;
-    findTimer = setTimeout(() => { findTimer = 0; viewer?.search(wanted); }, FIND_DEBOUNCE_MS);
+    const wanted = query, view = openView;
+    findTimer = setTimeout(
+      () => asDocument(view, () => { findTimer = 0; viewer?.search(wanted); }),
+      FIND_DEBOUNCE_MS,
+    );
   }
 
   function onFindKey(event: KeyboardEvent) {
@@ -4198,7 +4321,8 @@
   });
 
   $effect(() => {
-    void (async () => {
+    // Named for `scripts/check_view_after_await.py`, which lists it by name.
+    void (async function boot() {
       // Automated spike runs, if their env var is set. Each exits the process
       // when done, so nothing below runs.
       if (await runStartupTimelineIfRequested()) return;
@@ -4414,7 +4538,7 @@
       });
       // The same guard, kept in `hiddentext.ts`.
       await listen<HiddenProgress>(HIDDEN_PROGRESS_EVENT, (event) => {
-        blockingTask = hiddenRuns.line(event.payload) ?? blockingTask;
+        hiddenRuns.report(event.payload, (line) => { blockingTask = line; });
       });
       // Together rather than one after the other. Neither answer feeds the
       // other --- one is what the launcher handed over, the other is what was on
@@ -4472,7 +4596,7 @@
           beside: () => asDocument(panes.front(otherSide(panes.focused)), () => viewer) ?? null,
           viewer: () => viewer,
           edits: () => edits,
-          apply: (run) => applyEdit(run),
+          apply: async (run) => { await applyEdit(run); },
           // The check names a tab by the id `tabs` below gave it.
           activate: (id) => activateTab(id as ViewId),
           close: (id) => closeTab(id as ViewId),
@@ -4582,12 +4706,13 @@
    * that it has none.
    */
   async function finishUpdateStep(step: FinishStep): Promise<void> {
-    const ends = step === "restart" || installEndsProcess(isMac());
+    const ends = stepEndsProcess(step, isMac());
     await finishUpdate(step, updates.state, ends, {
       unsaved: async () => {
         await documentTasks.idle();
         await settleDocument();
-        return tabs.all
+        // One name for each document: one on both sides is two tabs.
+        return oneEach(tabs.all)
           .filter((tab) => tab.edits.state.dirty)
           .map((tab) => basename(tab.path));
       },
@@ -4731,7 +4856,7 @@
     restoreTabs = restore;
     refreshMenu();
     void call("session_set_restore_tabs", { restore }).catch(() => {
-      notice = "Could not save that choice. It holds until tpdf is closed.";
+      tell("Could not save that choice. It holds until tpdf is closed.");
     });
   }
 
@@ -5316,7 +5441,9 @@
           return rect ? mounted.formAnchor({ page: widget.page, display_rect: rect }) : null;
         };
         formLayer = new FormLayer(surface, form, anchored,
-          (object, value) => applyEdit((model) => model.fill(object, value)),
+          // For this document by name: a control commits when it loses the
+          // keyboard, and the press that took it may have been in the other side.
+          async (object, value) => { await applyEdit((model) => model.fill(object, value), view); },
           (widget) => mounted.showForm(widget), say,
           (widget) => void signDocument(edits ? signTarget(widget, edits.state.pages) : null));
         if (edits) formLayer.update(edits.state);
@@ -5469,7 +5596,7 @@
         {#if recognising}<button data-testid="stop-recognition" title="Stop recognising text"
           onclick={() => void call("ocr_cancel", { run: recognitionRun })}>Stop</button>{/if}
         {#if findingHidden}<button data-testid="stop-hidden-text" title="Stop comparing text with the pages"
-          onclick={() => void call("hidden_text_cancel", { run: hiddenRuns.number })}>Stop</button>{/if}
+          onclick={() => hiddenRuns.stop((run) => void call("hidden_text_cancel", { run }))}>Stop</button>{/if}
       {:else if notice}<span class="notice" data-testid="notice">{notice}</span>{/if}
     </span>
     {#if status}
@@ -5503,9 +5630,7 @@
         title={updateState.kind === "ready"
           ? "Restart tpdf now to finish installing the update"
           : "Download and apply this update"}
-        onclick={() => void finishUpdateStep(
-          updateState.kind === "ready" ? "restart" : "install",
-        )}>{updateLabel(updateState)}</button
+        onclick={() => void finishUpdateStep(stepFor(updateState))}>{updateLabel(updateState)}</button
       >
     {/if}
   </header>

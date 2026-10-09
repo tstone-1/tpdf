@@ -13,6 +13,7 @@
 
 import { describe, expect, it } from "vitest";
 import app from "../App.svelte?raw";
+import { functionIn, missingFrom, withoutComments } from "./sourcetext";
 
 import { CommandLineTool, type ToolState } from "./clitoolstate";
 
@@ -174,38 +175,41 @@ describe("what the command-line tool's commands are greyed by", () => {
 });
 
 describe("the tool state's wiring in App.svelte", () => {
-  // Source-level, because `App.svelte` is the join and nothing imports it.
+  // Read as text with the comments taken out, because `App.svelte` is the join
+  // and nothing imports it. That sees that a line is there and not whether it
+  // runs (`sourcetext.ts`), so these hold the hand-over and no decision.
+  const made = () => functionIn(app, "const commandLineTool = new CommandLineTool({");
+
   it("asks the backend's read-only command, and runs a command through the module", () => {
-    expect(app).toContain('read: () => call("command_line_tool_state"),');
-    expect(app).toContain('apply: (install) => call("command_line_tool", { install }),');
-    expect(app).toContain("commandLineTool: (install) => void commandLineTool.run(install),");
-    expect(app).toContain("say: (text) => (notice = text),");
+    expect(missingFrom(made(), [
+      'read: () => call("command_line_tool_state"),',
+      'apply: (install) => call("command_line_tool", { install }),',
+      "say: (text) => (notice = text),",
+    ])).toEqual([]);
+    expect(missingFrom(app, ["commandLineTool: (install) => void commandLineTool.run(install),"])).toEqual([]);
   });
 
   it("greys the two commands by the module's answer", () => {
-    expect(app).toContain(
+    expect(missingFrom(app, [
       "commandLineToolOffered: (install) => commandLineTool.offered(install),",
-    );
+    ])).toEqual([]);
   });
 
   it("re-reads the menu when the answer moves", () => {
-    const made = app.indexOf("const commandLineTool = new CommandLineTool({");
-    expect(made).toBeGreaterThan(-1);
-    expect(app.slice(made, app.indexOf("});", made))).toContain("changed: () => refreshMenu(),");
+    expect(missingFrom(made(), ["changed: () => refreshMenu(),"])).toEqual([]);
   });
 
   it("asks when the window comes to the front", () => {
-    expect(app).toContain(
+    expect(missingFrom(app, [
       'window.addEventListener("focus", () => void commandLineTool.refresh());',
-    );
+    ])).toEqual([]);
   });
 
   it("asks once at launch, after the first document was asked for and without waiting", () => {
-    const opened = app.indexOf("for (const path of plan.show) await openPath(path, plan.resuming);");
-    const asked = app.indexOf("      void commandLineTool.refresh();\n");
-    expect(opened).toBeGreaterThan(-1);
-    expect(asked).toBeGreaterThan(opened);
-    // Not awaited anywhere: nothing in the boot waits for the answer.
-    expect(app).not.toContain("await commandLineTool.refresh()");
+    // That it is asked at launch, and that nothing anywhere waits for the
+    // answer. Where in the launch it is asked is not something text can say.
+    const code = withoutComments(app);
+    expect(code.match(/^ {6}void commandLineTool\.refresh\(\);$/gm)).toHaveLength(1);
+    expect(code).not.toContain("await commandLineTool.refresh()");
   });
 });

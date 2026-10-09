@@ -1743,6 +1743,7 @@
         "kinds": [],
         "pages_listing": [],
         "pages_touched": 0,
+        "removed": 0,
         "replaced": 0,
         "unread": true
       },
@@ -1761,6 +1762,7 @@
         ],
         "pages_listing": [],
         "pages_touched": 0,
+        "removed": 0,
         "replaced": 1,
         "unread": false
       },
@@ -1779,6 +1781,7 @@
         ],
         "pages_listing": [],
         "pages_touched": 1,
+        "removed": 0,
         "replaced": 1,
         "unread": false
       },
@@ -1797,6 +1800,7 @@
         ],
         "pages_listing": [],
         "pages_touched": 3,
+        "removed": 0,
         "replaced": 1,
         "unread": false
       },
@@ -1820,6 +1824,7 @@
           }
         ],
         "pages_touched": 1,
+        "removed": 0,
         "replaced": 1,
         "unread": false
       },
@@ -1843,6 +1848,7 @@
           }
         ],
         "pages_touched": 1,
+        "removed": 0,
         "replaced": 1,
         "unread": false
       },
@@ -1870,6 +1876,7 @@
           }
         ],
         "pages_touched": 2,
+        "removed": 0,
         "replaced": 1,
         "unread": false
       },
@@ -1897,6 +1904,7 @@
           }
         ],
         "pages_touched": 2,
+        "removed": 0,
         "replaced": 1,
         "unread": false
       },
@@ -1928,6 +1936,7 @@
           }
         ],
         "pages_touched": 3,
+        "removed": 0,
         "replaced": 1,
         "unread": false
       },
@@ -1951,6 +1960,7 @@
           }
         ],
         "pages_touched": 3,
+        "removed": 0,
         "replaced": 1,
         "unread": false
       },
@@ -1969,6 +1979,7 @@
         ],
         "pages_listing": [],
         "pages_touched": 0,
+        "removed": 0,
         "replaced": 1,
         "unread": false
       },
@@ -1987,6 +1998,7 @@
         ],
         "pages_listing": [],
         "pages_touched": 1,
+        "removed": 0,
         "replaced": 1,
         "unread": false
       },
@@ -2005,6 +2017,7 @@
         ],
         "pages_listing": [],
         "pages_touched": 3,
+        "removed": 0,
         "replaced": 1,
         "unread": false
       },
@@ -2028,6 +2041,7 @@
           }
         ],
         "pages_touched": 1,
+        "removed": 0,
         "replaced": 1,
         "unread": false
       },
@@ -2051,6 +2065,7 @@
           }
         ],
         "pages_touched": 1,
+        "removed": 0,
         "replaced": 1,
         "unread": false
       },
@@ -2078,6 +2093,7 @@
           }
         ],
         "pages_touched": 2,
+        "removed": 0,
         "replaced": 1,
         "unread": false
       },
@@ -2105,6 +2121,7 @@
           }
         ],
         "pages_touched": 2,
+        "removed": 0,
         "replaced": 1,
         "unread": false
       },
@@ -2136,6 +2153,7 @@
           }
         ],
         "pages_touched": 3,
+        "removed": 0,
         "replaced": 1,
         "unread": false
       },
@@ -2159,6 +2177,7 @@
           }
         ],
         "pages_touched": 3,
+        "removed": 0,
         "replaced": 1,
         "unread": false
       },
@@ -2175,6 +2194,7 @@
         ],
         "pages_listing": [],
         "pages_touched": 0,
+        "removed": 0,
         "replaced": 1,
         "unread": false
       },
@@ -2191,6 +2211,7 @@
         ],
         "pages_listing": [],
         "pages_touched": 1,
+        "removed": 0,
         "replaced": 1,
         "unread": false
       },
@@ -2207,6 +2228,7 @@
         ],
         "pages_listing": [],
         "pages_touched": 3,
+        "removed": 0,
         "replaced": 1,
         "unread": false
       },
@@ -2228,6 +2250,7 @@
           }
         ],
         "pages_touched": 1,
+        "removed": 0,
         "replaced": 1,
         "unread": false
       },
@@ -2249,6 +2272,7 @@
           }
         ],
         "pages_touched": 1,
+        "removed": 0,
         "replaced": 1,
         "unread": false
       },
@@ -2274,6 +2298,7 @@
           }
         ],
         "pages_touched": 2,
+        "removed": 0,
         "replaced": 1,
         "unread": false
       },
@@ -2299,6 +2324,7 @@
           }
         ],
         "pages_touched": 2,
+        "removed": 0,
         "replaced": 1,
         "unread": false
       },
@@ -2328,6 +2354,7 @@
           }
         ],
         "pages_touched": 3,
+        "removed": 0,
         "replaced": 1,
         "unread": false
       },
@@ -2349,6 +2376,7 @@
           }
         ],
         "pages_touched": 3,
+        "removed": 0,
         "replaced": 1,
         "unread": false
       },
@@ -2366,6 +2394,7 @@
         ],
         "pages_listing": [],
         "pages_touched": 0,
+        "removed": 0,
         "replaced": 1,
         "unread": false
       },
@@ -2383,6 +2412,7 @@
         ],
         "pages_listing": [],
         "pages_touched": 1,
+        "removed": 0,
         "replaced": 1,
         "unread": false
       },
@@ -2400,6 +2430,7 @@
         ],
         "pages_listing": [],
         "pages_touched": 3,
+        "removed": 0,
         "replaced": 1,
         "unread": false
       },
@@ -2422,6 +2453,7 @@
           }
         ],
         "pages_touched": 1,
+        "removed": 0,
         "replaced": 1,
         "unread": false
       },
@@ -2444,6 +2476,7 @@
           }
         ],
         "pages_touched": 1,
+        "removed": 0,
         "replaced": 1,
         "unread": false
       },
@@ -2470,6 +2503,7 @@
           }
         ],
         "pages_touched": 2,
+        "removed": 0,
         "replaced": 1,
         "unread": false
       },
@@ -2496,6 +2530,7 @@
           }
         ],
         "pages_touched": 2,
+        "removed": 0,
         "replaced": 1,
         "unread": false
       },
@@ -2526,6 +2561,7 @@
           }
         ],
         "pages_touched": 3,
+        "removed": 0,
         "replaced": 1,
         "unread": false
       },
@@ -2548,6 +2584,7 @@
           }
         ],
         "pages_touched": 3,
+        "removed": 0,
         "replaced": 1,
         "unread": false
       },
@@ -2562,6 +2599,7 @@
         ],
         "pages_listing": [],
         "pages_touched": 0,
+        "removed": 0,
         "replaced": 1,
         "unread": false
       },
@@ -2576,6 +2614,7 @@
         ],
         "pages_listing": [],
         "pages_touched": 1,
+        "removed": 0,
         "replaced": 1,
         "unread": false
       },
@@ -2590,6 +2629,7 @@
         ],
         "pages_listing": [],
         "pages_touched": 3,
+        "removed": 0,
         "replaced": 1,
         "unread": false
       },
@@ -2609,6 +2649,7 @@
           }
         ],
         "pages_touched": 1,
+        "removed": 0,
         "replaced": 1,
         "unread": false
       },
@@ -2628,6 +2669,7 @@
           }
         ],
         "pages_touched": 1,
+        "removed": 0,
         "replaced": 1,
         "unread": false
       },
@@ -2651,6 +2693,7 @@
           }
         ],
         "pages_touched": 2,
+        "removed": 0,
         "replaced": 1,
         "unread": false
       },
@@ -2674,6 +2717,7 @@
           }
         ],
         "pages_touched": 2,
+        "removed": 0,
         "replaced": 1,
         "unread": false
       },
@@ -2701,6 +2745,7 @@
           }
         ],
         "pages_touched": 3,
+        "removed": 0,
         "replaced": 1,
         "unread": false
       },
@@ -2720,6 +2765,7 @@
           }
         ],
         "pages_touched": 3,
+        "removed": 0,
         "replaced": 1,
         "unread": false
       },
@@ -2732,6 +2778,7 @@
         "kinds": [],
         "pages_listing": [],
         "pages_touched": 0,
+        "removed": 0,
         "replaced": 1,
         "unread": false
       },
@@ -2744,6 +2791,7 @@
         "kinds": [],
         "pages_listing": [],
         "pages_touched": 1,
+        "removed": 0,
         "replaced": 1,
         "unread": false
       },
@@ -2756,6 +2804,7 @@
         "kinds": [],
         "pages_listing": [],
         "pages_touched": 3,
+        "removed": 0,
         "replaced": 1,
         "unread": false
       },
@@ -2773,6 +2822,7 @@
           }
         ],
         "pages_touched": 1,
+        "removed": 0,
         "replaced": 1,
         "unread": false
       },
@@ -2790,6 +2840,7 @@
           }
         ],
         "pages_touched": 1,
+        "removed": 0,
         "replaced": 1,
         "unread": false
       },
@@ -2811,6 +2862,7 @@
           }
         ],
         "pages_touched": 2,
+        "removed": 0,
         "replaced": 1,
         "unread": false
       },
@@ -2832,6 +2884,7 @@
           }
         ],
         "pages_touched": 2,
+        "removed": 0,
         "replaced": 1,
         "unread": false
       },
@@ -2857,6 +2910,7 @@
           }
         ],
         "pages_touched": 3,
+        "removed": 0,
         "replaced": 1,
         "unread": false
       },
@@ -2874,6 +2928,7 @@
           }
         ],
         "pages_touched": 3,
+        "removed": 0,
         "replaced": 1,
         "unread": false
       },
@@ -2886,6 +2941,7 @@
         "kinds": [],
         "pages_listing": [],
         "pages_touched": 0,
+        "removed": 0,
         "replaced": 1,
         "unread": false
       },
@@ -2898,6 +2954,7 @@
         "kinds": [],
         "pages_listing": [],
         "pages_touched": 1,
+        "removed": 0,
         "replaced": 1,
         "unread": false
       },
@@ -2910,6 +2967,7 @@
         "kinds": [],
         "pages_listing": [],
         "pages_touched": 3,
+        "removed": 0,
         "replaced": 1,
         "unread": false
       },
@@ -2927,6 +2985,7 @@
           }
         ],
         "pages_touched": 1,
+        "removed": 0,
         "replaced": 1,
         "unread": false
       },
@@ -2944,6 +3003,7 @@
           }
         ],
         "pages_touched": 1,
+        "removed": 0,
         "replaced": 1,
         "unread": false
       },
@@ -2965,6 +3025,7 @@
           }
         ],
         "pages_touched": 2,
+        "removed": 0,
         "replaced": 1,
         "unread": false
       },
@@ -2986,6 +3047,7 @@
           }
         ],
         "pages_touched": 2,
+        "removed": 0,
         "replaced": 1,
         "unread": false
       },
@@ -3011,6 +3073,7 @@
           }
         ],
         "pages_touched": 3,
+        "removed": 0,
         "replaced": 1,
         "unread": false
       },
@@ -3028,10 +3091,519 @@
           }
         ],
         "pages_touched": 3,
+        "removed": 0,
         "replaced": 1,
         "unread": false
       },
       "sentence": "2 objects, and 3 pages were rewritten"
+    },
+    {
+      "appendix": {
+        "added": 14,
+        "catalog_gained": [
+          "DSS"
+        ],
+        "kinds": [
+          "Catalog",
+          "VRI",
+          "stream"
+        ],
+        "pages_listing": [],
+        "pages_touched": 0,
+        "removed": 1,
+        "replaced": 1,
+        "unread": false
+      },
+      "sentence": "the certificates and revocation records a signature needs to be checked later, with 1 object removed, and no page was rewritten"
+    },
+    {
+      "appendix": {
+        "added": 14,
+        "catalog_gained": [
+          "DSS"
+        ],
+        "kinds": [
+          "Catalog",
+          "VRI",
+          "stream"
+        ],
+        "pages_listing": [],
+        "pages_touched": 1,
+        "removed": 1,
+        "replaced": 1,
+        "unread": false
+      },
+      "sentence": "the certificates and revocation records a signature needs to be checked later, with 1 object removed, and 1 page was rewritten"
+    },
+    {
+      "appendix": {
+        "added": 14,
+        "catalog_gained": [
+          "DSS"
+        ],
+        "kinds": [
+          "Catalog",
+          "VRI",
+          "stream"
+        ],
+        "pages_listing": [],
+        "pages_touched": 0,
+        "removed": 3,
+        "replaced": 1,
+        "unread": false
+      },
+      "sentence": "the certificates and revocation records a signature needs to be checked later, with 3 objects removed, and no page was rewritten"
+    },
+    {
+      "appendix": {
+        "added": 14,
+        "catalog_gained": [
+          "DSS"
+        ],
+        "kinds": [
+          "Catalog",
+          "VRI",
+          "stream"
+        ],
+        "pages_listing": [],
+        "pages_touched": 1,
+        "removed": 3,
+        "replaced": 1,
+        "unread": false
+      },
+      "sentence": "the certificates and revocation records a signature needs to be checked later, with 3 objects removed, and 1 page was rewritten"
+    },
+    {
+      "appendix": {
+        "added": 14,
+        "catalog_gained": [
+          "DSS"
+        ],
+        "kinds": [
+          "Catalog",
+          "Sig",
+          "stream"
+        ],
+        "pages_listing": [],
+        "pages_touched": 0,
+        "removed": 1,
+        "replaced": 1,
+        "unread": false
+      },
+      "sentence": "the certificates and revocation records a signature needs to be checked later, with 1 object removed, and no page was rewritten"
+    },
+    {
+      "appendix": {
+        "added": 14,
+        "catalog_gained": [
+          "DSS"
+        ],
+        "kinds": [
+          "Catalog",
+          "Sig",
+          "stream"
+        ],
+        "pages_listing": [],
+        "pages_touched": 1,
+        "removed": 1,
+        "replaced": 1,
+        "unread": false
+      },
+      "sentence": "the certificates and revocation records a signature needs to be checked later, with 1 object removed, and 1 page was rewritten"
+    },
+    {
+      "appendix": {
+        "added": 14,
+        "catalog_gained": [
+          "DSS"
+        ],
+        "kinds": [
+          "Catalog",
+          "Sig",
+          "stream"
+        ],
+        "pages_listing": [],
+        "pages_touched": 0,
+        "removed": 3,
+        "replaced": 1,
+        "unread": false
+      },
+      "sentence": "the certificates and revocation records a signature needs to be checked later, with 3 objects removed, and no page was rewritten"
+    },
+    {
+      "appendix": {
+        "added": 14,
+        "catalog_gained": [
+          "DSS"
+        ],
+        "kinds": [
+          "Catalog",
+          "Sig",
+          "stream"
+        ],
+        "pages_listing": [],
+        "pages_touched": 1,
+        "removed": 3,
+        "replaced": 1,
+        "unread": false
+      },
+      "sentence": "the certificates and revocation records a signature needs to be checked later, with 3 objects removed, and 1 page was rewritten"
+    },
+    {
+      "appendix": {
+        "added": 4,
+        "catalog_gained": [],
+        "kinds": [
+          "Annot/Widget",
+          "Page",
+          "Sig"
+        ],
+        "pages_listing": [],
+        "pages_touched": 0,
+        "removed": 1,
+        "replaced": 1,
+        "unread": false
+      },
+      "sentence": "another signature, with 1 object removed, and no page was rewritten"
+    },
+    {
+      "appendix": {
+        "added": 4,
+        "catalog_gained": [],
+        "kinds": [
+          "Annot/Widget",
+          "Page",
+          "Sig"
+        ],
+        "pages_listing": [],
+        "pages_touched": 1,
+        "removed": 1,
+        "replaced": 1,
+        "unread": false
+      },
+      "sentence": "another signature, with 1 object removed, and 1 page was rewritten"
+    },
+    {
+      "appendix": {
+        "added": 4,
+        "catalog_gained": [],
+        "kinds": [
+          "Annot/Widget",
+          "Page",
+          "Sig"
+        ],
+        "pages_listing": [],
+        "pages_touched": 0,
+        "removed": 3,
+        "replaced": 1,
+        "unread": false
+      },
+      "sentence": "another signature, with 3 objects removed, and no page was rewritten"
+    },
+    {
+      "appendix": {
+        "added": 4,
+        "catalog_gained": [],
+        "kinds": [
+          "Annot/Widget",
+          "Page",
+          "Sig"
+        ],
+        "pages_listing": [],
+        "pages_touched": 1,
+        "removed": 3,
+        "replaced": 1,
+        "unread": false
+      },
+      "sentence": "another signature, with 3 objects removed, and 1 page was rewritten"
+    },
+    {
+      "appendix": {
+        "added": 2,
+        "catalog_gained": [
+          "Metadata"
+        ],
+        "kinds": [
+          "Page",
+          "stream"
+        ],
+        "pages_listing": [],
+        "pages_touched": 0,
+        "removed": 1,
+        "replaced": 1,
+        "unread": false
+      },
+      "sentence": "3 objects: Page, stream, with 1 object removed, and no page was rewritten"
+    },
+    {
+      "appendix": {
+        "added": 2,
+        "catalog_gained": [
+          "Metadata"
+        ],
+        "kinds": [
+          "Page",
+          "stream"
+        ],
+        "pages_listing": [],
+        "pages_touched": 1,
+        "removed": 1,
+        "replaced": 1,
+        "unread": false
+      },
+      "sentence": "3 objects: Page, stream, with 1 object removed, and 1 page was rewritten"
+    },
+    {
+      "appendix": {
+        "added": 2,
+        "catalog_gained": [
+          "Metadata"
+        ],
+        "kinds": [
+          "Page",
+          "stream"
+        ],
+        "pages_listing": [],
+        "pages_touched": 0,
+        "removed": 3,
+        "replaced": 1,
+        "unread": false
+      },
+      "sentence": "3 objects: Page, stream, with 3 objects removed, and no page was rewritten"
+    },
+    {
+      "appendix": {
+        "added": 2,
+        "catalog_gained": [
+          "Metadata"
+        ],
+        "kinds": [
+          "Page",
+          "stream"
+        ],
+        "pages_listing": [],
+        "pages_touched": 1,
+        "removed": 3,
+        "replaced": 1,
+        "unread": false
+      },
+      "sentence": "3 objects: Page, stream, with 3 objects removed, and 1 page was rewritten"
+    },
+    {
+      "appendix": {
+        "added": 0,
+        "catalog_gained": [],
+        "kinds": [
+          "Page"
+        ],
+        "pages_listing": [],
+        "pages_touched": 0,
+        "removed": 1,
+        "replaced": 1,
+        "unread": false
+      },
+      "sentence": "1 object: Page, with 1 object removed, and no page was rewritten"
+    },
+    {
+      "appendix": {
+        "added": 0,
+        "catalog_gained": [],
+        "kinds": [
+          "Page"
+        ],
+        "pages_listing": [],
+        "pages_touched": 1,
+        "removed": 1,
+        "replaced": 1,
+        "unread": false
+      },
+      "sentence": "1 object: Page, with 1 object removed, and 1 page was rewritten"
+    },
+    {
+      "appendix": {
+        "added": 0,
+        "catalog_gained": [],
+        "kinds": [
+          "Page"
+        ],
+        "pages_listing": [],
+        "pages_touched": 0,
+        "removed": 3,
+        "replaced": 1,
+        "unread": false
+      },
+      "sentence": "1 object: Page, with 3 objects removed, and no page was rewritten"
+    },
+    {
+      "appendix": {
+        "added": 0,
+        "catalog_gained": [],
+        "kinds": [
+          "Page"
+        ],
+        "pages_listing": [],
+        "pages_touched": 1,
+        "removed": 3,
+        "replaced": 1,
+        "unread": false
+      },
+      "sentence": "1 object: Page, with 3 objects removed, and 1 page was rewritten"
+    },
+    {
+      "appendix": {
+        "added": 0,
+        "catalog_gained": [],
+        "kinds": [],
+        "pages_listing": [],
+        "pages_touched": 0,
+        "removed": 1,
+        "replaced": 1,
+        "unread": false
+      },
+      "sentence": "1 object, with 1 object removed, and no page was rewritten"
+    },
+    {
+      "appendix": {
+        "added": 0,
+        "catalog_gained": [],
+        "kinds": [],
+        "pages_listing": [],
+        "pages_touched": 1,
+        "removed": 1,
+        "replaced": 1,
+        "unread": false
+      },
+      "sentence": "1 object, with 1 object removed, and 1 page was rewritten"
+    },
+    {
+      "appendix": {
+        "added": 0,
+        "catalog_gained": [],
+        "kinds": [],
+        "pages_listing": [],
+        "pages_touched": 0,
+        "removed": 3,
+        "replaced": 1,
+        "unread": false
+      },
+      "sentence": "1 object, with 3 objects removed, and no page was rewritten"
+    },
+    {
+      "appendix": {
+        "added": 0,
+        "catalog_gained": [],
+        "kinds": [],
+        "pages_listing": [],
+        "pages_touched": 1,
+        "removed": 3,
+        "replaced": 1,
+        "unread": false
+      },
+      "sentence": "1 object, with 3 objects removed, and 1 page was rewritten"
+    },
+    {
+      "appendix": {
+        "added": 1,
+        "catalog_gained": [],
+        "kinds": [],
+        "pages_listing": [],
+        "pages_touched": 0,
+        "removed": 1,
+        "replaced": 1,
+        "unread": false
+      },
+      "sentence": "2 objects, with 1 object removed, and no page was rewritten"
+    },
+    {
+      "appendix": {
+        "added": 1,
+        "catalog_gained": [],
+        "kinds": [],
+        "pages_listing": [],
+        "pages_touched": 1,
+        "removed": 1,
+        "replaced": 1,
+        "unread": false
+      },
+      "sentence": "2 objects, with 1 object removed, and 1 page was rewritten"
+    },
+    {
+      "appendix": {
+        "added": 1,
+        "catalog_gained": [],
+        "kinds": [],
+        "pages_listing": [],
+        "pages_touched": 0,
+        "removed": 3,
+        "replaced": 1,
+        "unread": false
+      },
+      "sentence": "2 objects, with 3 objects removed, and no page was rewritten"
+    },
+    {
+      "appendix": {
+        "added": 1,
+        "catalog_gained": [],
+        "kinds": [],
+        "pages_listing": [],
+        "pages_touched": 1,
+        "removed": 3,
+        "replaced": 1,
+        "unread": false
+      },
+      "sentence": "2 objects, with 3 objects removed, and 1 page was rewritten"
+    },
+    {
+      "appendix": {
+        "added": 0,
+        "catalog_gained": [],
+        "kinds": [],
+        "pages_listing": [],
+        "pages_touched": 0,
+        "removed": 1,
+        "replaced": 0,
+        "unread": false
+      },
+      "sentence": "1 object was removed, and no page was rewritten"
+    },
+    {
+      "appendix": {
+        "added": 0,
+        "catalog_gained": [],
+        "kinds": [],
+        "pages_listing": [],
+        "pages_touched": 1,
+        "removed": 1,
+        "replaced": 0,
+        "unread": false
+      },
+      "sentence": "1 object was removed, and 1 page was rewritten"
+    },
+    {
+      "appendix": {
+        "added": 0,
+        "catalog_gained": [],
+        "kinds": [],
+        "pages_listing": [],
+        "pages_touched": 0,
+        "removed": 3,
+        "replaced": 0,
+        "unread": false
+      },
+      "sentence": "3 objects were removed, and no page was rewritten"
+    },
+    {
+      "appendix": {
+        "added": 0,
+        "catalog_gained": [],
+        "kinds": [],
+        "pages_listing": [],
+        "pages_touched": 1,
+        "removed": 3,
+        "replaced": 0,
+        "unread": false
+      },
+      "sentence": "3 objects were removed, and 1 page was rewritten"
     }
   ],
   "authority": [
