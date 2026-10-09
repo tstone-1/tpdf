@@ -103,6 +103,30 @@ describe("formatBytes", () => {
     expect(formatBytes(894_280)).toBe("873 KB (894,280 bytes)");
   });
 
+  it("never prints a decimal on a figure that rounded up to ten", () => {
+    // 9.9502 KB with one decimal is 10.0, and the rule is no decimal from ten.
+    expect(formatBytes(10_189)).toBe("10 KB (10,189 bytes)");
+    // The control, one tenth below: still under ten, still with its digit.
+    expect(formatBytes(10_178)).toBe("9.9 KB (10,178 bytes)");
+    expect(formatBytes(1024)).toBe("1.0 KB (1,024 bytes)");
+  });
+
+  it("moves to the next unit when the figure rounds up to 1024 of this one", () => {
+    // 1023.6 KB. Printed as "1024 KB" it is a size the next unit exists for.
+    expect(formatBytes(1_048_167)).toBe("1.0 MB (1,048,167 bytes)");
+    // The control, which rounds down and stays.
+    expect(formatBytes(1_047_961)).toBe("1023 KB (1,047,961 bytes)");
+    expect(formatBytes(1024 ** 2)).toBe("1.0 MB (1,048,576 bytes)");
+    // And between the larger units, where the same loop decides.
+    expect(formatBytes(Math.round(1023.7 * 1024 ** 2))).toMatch(/^1\.0 GB /);
+  });
+
+  it("keeps the last unit for a size past the end of them", () => {
+    // Nowhere to move to. Without the bound the unit would be `undefined`.
+    expect(formatBytes(1024 ** 5)).toMatch(/^1024 TB /);
+    expect(formatBytes(3000 * 1024 ** 4)).toMatch(/^3000 TB /);
+  });
+
   it("says so rather than printing NaN for a size it was not given", () => {
     // The refusal matters because the alternative reads as a real measurement:
     // `NaN bytes` and `0 bytes` are both statements about the file, and neither

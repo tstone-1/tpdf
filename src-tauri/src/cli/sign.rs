@@ -10,7 +10,7 @@ use super::identities::{listing, resolve, store_identities, usable_of};
 use super::report::{self, SCHEMA};
 use super::verify::signature_report;
 use super::{json, opened, say, words, Env, Exit, Failure, Registered, Subcommand};
-use crate::commands::sign::{asking_the_world, finish, Asking, Finished, Stage, Stopped};
+use crate::commands::sign::{asking_the_world, finish, Asking, Finished, ReadBack, Stage, Stopped};
 use crate::docinfo;
 use crate::save;
 use crate::sign_cms;
@@ -1092,22 +1092,30 @@ fn run_sign(
         field,
         signatures,
         read_back,
+        ours,
     } = asking_the_world(env.anchors, |asking| {
         concluded(sign, made, env.now, &worker, asking)
     })?;
-    let found: Vec<&docinfo::Signature> = signatures.iter().filter(|s| s.signed).collect();
+    // The signed fields, each with whether it is the one just made: by what
+    // was written (`sign_cms::ours`), since a name can be an older field's too.
+    let found: Vec<(bool, &docinfo::Signature)> = signatures
+        .iter()
+        .enumerate()
+        .map(|(index, s)| (ours == Some(index), s))
+        .filter(|(_, s)| s.signed)
+        .collect();
     let name = sign.output.file_name().map_or_else(
         || sign.output.display().to_string(),
         |n| n.to_string_lossy().into_owned(),
     );
     let timestamp = found
         .iter()
-        .find(|s| s.field == field)
-        .and_then(|s| s.timestamp.as_ref())
+        .find(|(ours, _)| *ours)
+        .and_then(|(_, s)| s.timestamp.as_ref())
         .map(|stamp| super::verify::timestamp_report(stamp, false));
     // The document timestamps written after ours are the archive a long-term
     // signing adds; everything else is the signature or one before it.
-    let ours_at = found.iter().position(|s| s.field == field);
+    let ours_at = found.iter().position(|(ours, _)| *ours);
     let archive = |index: usize, s: &docinfo::Signature| {
         s.kind == "ETSI.RFC3161" && ours_at.is_some_and(|at| index > at)
     };
@@ -1117,8 +1125,8 @@ fn run_sign(
         &found
             .iter()
             .enumerate()
-            .filter(|(index, s)| !archive(*index, s))
-            .map(|(_, s)| (s.field.clone(), s.field == field, s.integrity.clone()))
+            .filter(|(index, (_, s))| !archive(*index, s))
+            .map(|(_, (ours, s))| (s.field.clone(), *ours, s.integrity.clone()))
             .collect::<Vec<_>>(),
         timestamp.as_ref().map(|t| {
             (
@@ -1129,8 +1137,8 @@ fn run_sign(
         &found
             .iter()
             .enumerate()
-            .filter(|(index, s)| archive(*index, s))
-            .map(|(_, s)| (s.field.clone(), s.integrity.clone()))
+            .filter(|(index, (_, s))| archive(*index, s))
+            .map(|(_, (_, s))| (s.field.clone(), s.integrity.clone()))
             .collect::<Vec<_>>(),
     );
     // Ours must read back intact, and --- when a timestamp was asked for ---
@@ -1138,7 +1146,7 @@ fn run_sign(
     // bytes and a worker then did not find is a written file that disagrees
     // with what was written, which is tpdf's failure (4). And for long-term
     // data, all that the check before writing held the same bytes to.
-    let ours_intact = read_back.holds();
+    let exit = exit_after(&read_back);
     let report = report::Signed {
         schema: SCHEMA,
         command: "sign".into(),
@@ -1148,7 +1156,7 @@ fn run_sign(
         identity: usable_of(&listed[at].0, &offer),
         visible: sign.visible.is_some(),
         appearance,
-        signatures: found.iter().map(|s| signature_report(s)).collect(),
+        signatures: found.iter().map(|(_, s)| signature_report(s)).collect(),
         summary: summary.clone(),
     };
     if sign.json {
@@ -1156,10 +1164,24 @@ fn run_sign(
     } else {
         say(out, &summary);
     }
-    if ours_intact {
-        Ok(Exit::Ok)
-    } else {
+    if exit != Exit::Ok {
         say(err, &format!("{}: {summary}", env.program));
-        Ok(Exit::Internal)
+    }
+    Ok(exit)
+}
+
+/// How `sign` ends for what the written file read back as.
+///
+/// 0 when it is what was asked for. **1 when the new signature was not
+/// checked again** ([`ReadBack::Unchecked`]): the copy was written from bytes
+/// whose signature the seal found intact, and the read-back ran out of
+/// hashing budget before reaching it --- written and not proved, which is
+/// what 1 means for `redact`, and not tpdf's failure. 4 for every other
+/// answer: a written file that disagrees with what was written.
+pub(super) fn exit_after(read_back: &ReadBack) -> Exit {
+    match read_back {
+        ReadBack::Holds => Exit::Ok,
+        ReadBack::Unchecked => Exit::Strict,
+        ReadBack::Signature | ReadBack::Timestamp | ReadBack::LongTerm(_) => Exit::Internal,
     }
 }

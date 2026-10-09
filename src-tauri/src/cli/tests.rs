@@ -792,6 +792,56 @@ fn the_exit_codes_are_the_documented_numbers() {
 }
 
 /// A long-term refusal is exit 3 when the document, an authority or a
+/// How `sign` ends for each thing the written file can read back as, and what
+/// it says of a new signature the read-back had no hashing budget left for:
+/// written, intact when it was made, and not checked again. Until 2026-10-09
+/// that copy ended the command with 4 and "Do not rely on that copy".
+#[test]
+fn a_signature_not_checked_again_ends_sign_with_1_and_says_which_check_happened() {
+    use super::sign::exit_after;
+    use crate::commands::sign::ReadBack;
+    assert_eq!(exit_after(&ReadBack::Holds), Exit::Ok);
+    assert_eq!(exit_after(&ReadBack::Unchecked), Exit::Strict);
+    for failed in [
+        ReadBack::Signature,
+        ReadBack::Timestamp,
+        ReadBack::LongTerm(crate::longterm::Refusal::Written("x".into())),
+    ] {
+        assert_eq!(exit_after(&failed), Exit::Internal, "{failed:?}");
+    }
+
+    let intact = integrity(Verdict::Intact, None, "SHA-256", "RSA");
+    let unchecked = |why| Some(integrity(Verdict::Unchecked, Some(why), "", ""));
+    let found = |why| {
+        vec![
+            ("Signature1".to_string(), false, Some(intact.clone())),
+            ("Signature2".to_string(), true, unchecked(why)),
+        ]
+    };
+    // The sentence `signing.test.ts` pins for the window, word for word.
+    assert_eq!(
+        words::after_signing(
+            "a-signed.pdf",
+            "Signature2",
+            &found(Why::Budget),
+            Some(("a timestamp row.", None)),
+            &[],
+        ),
+        "a-signed.pdf was written. The new signature Signature2 was intact when tpdf checked \
+         it before writing; reading the file back did not check it again, because the \
+         document's signatures together cover more data than tpdf checks at once. Earlier \
+         signature: Signature1 intact."
+    );
+    // Only for that reason: any other unchecked signature is a copy not to
+    // rely on, as it was.
+    let other = words::after_signing("a-signed.pdf", "Signature2", &found(Why::Range), None, &[]);
+    assert!(
+        other.starts_with("a-signed.pdf was written, but reading it back did not find")
+            && other.ends_with("Do not rely on that copy."),
+        "{other}"
+    );
+}
+
 /// certificate authority refused, and 4 when tpdf itself failed --- its own
 /// signature unreadable, or its worker's revision not what could be written,
 /// a worker that died included --- as the README's table says.

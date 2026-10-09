@@ -649,6 +649,53 @@ pub enum Reply {
     Warm,
 }
 
+impl Reply {
+    /// Which reply this is and how large, for a message about one that answers
+    /// the wrong question: `text (about 3 MB of JSON)`.
+    ///
+    /// **Never the payload.** A message built with `{reply:?}` holds the whole
+    /// reply --- a page's text, a merged document's bytes --- written out a
+    /// second time and longer, and it travels to the webview as an error
+    /// string. What a reader of that message needs is which end is confused:
+    /// the name, as the wire spells it, and the size.
+    #[must_use]
+    pub fn described(&self) -> String {
+        let value = serde_json::to_value(self).unwrap_or_default();
+        let name = value
+            .get("reply")
+            .and_then(serde_json::Value::as_str)
+            .unwrap_or("a reply with no name");
+        let bytes = serde_json::to_string(&value).map_or(0, |json| json.len());
+        format!("{name} ({})", about_bytes(bytes))
+    }
+}
+
+/// A size in the unit a reader thinks in: `412 bytes of JSON`, `about 3 MB of
+/// JSON`.
+fn about_bytes(bytes: usize) -> String {
+    match bytes {
+        0..=9_999 => format!("{bytes} bytes of JSON"),
+        10_000..=999_999 => format!("about {} kB of JSON", bytes / 1_000),
+        _ => format!("about {} MB of JSON", bytes / 1_000_000),
+    }
+}
+
+/// The start of a reply line that would not parse, and how long it was.
+///
+/// The start, because that is where a reply says what it is and it is what
+/// tells a truncated line from one that was never JSON; not the line, which
+/// may be megabytes of a document's own text.
+#[must_use]
+pub fn unreadable_reply(line: &str) -> String {
+    const SHOWN: usize = 120;
+    let start: String = line.chars().take(SHOWN).collect();
+    if start.len() == line.len() {
+        format!("{start:?}")
+    } else {
+        format!("{start:?}... ({} bytes in all)", line.len())
+    }
+}
+
 /// A reply, one JSON object per line on the worker's stdout.
 ///
 /// Payloads travel through the shared mapping, never inline: measured at
@@ -1386,7 +1433,54 @@ mod tests {
                 format!("{back:?}"),
                 "round trip changed {line}"
             );
+            // And each is named as the wire names it, for the message about a
+            // reply that answers the wrong question.
+            let tag = serde_json::from_str::<serde_json::Value>(&line).expect("json")["reply"]
+                .as_str()
+                .expect("a tag")
+                .to_string();
+            assert!(
+                reply.described().starts_with(&format!("{tag} (")),
+                "{}",
+                reply.described()
+            );
         }
+    }
+
+    /// A reply that answers the wrong question is described by its name and
+    /// its size. Until 2026-10-09 the message held the whole reply, debug
+    /// formatted --- a page's text, written out again and longer --- and went
+    /// to the webview as an error string.
+    #[test]
+    fn a_reply_is_described_by_its_name_and_size_and_never_its_payload() {
+        use super::Reply;
+        let text = crate::text::PageText {
+            codes: vec![u32::from('Q'); 400_000],
+            ..Default::default()
+        };
+        let said = Reply::Text(text).described();
+        assert!(
+            said.starts_with("text (about ") && said.ends_with(" MB of JSON)"),
+            "{said}"
+        );
+        assert!(said.len() < 40, "{}", said.len());
+        assert_eq!(Reply::Unlocked.described(), "unlocked (20 bytes of JSON)");
+        assert_eq!(super::about_bytes(9_999), "9999 bytes of JSON");
+        assert_eq!(super::about_bytes(10_000), "about 10 kB of JSON");
+        assert_eq!(super::about_bytes(999_999), "about 999 kB of JSON");
+        assert_eq!(super::about_bytes(1_000_000), "about 1 MB of JSON");
+
+        // A line that would not parse: its start and its length, or all of a
+        // short one.
+        assert_eq!(super::unreadable_reply("not json"), "\"not json\"");
+        let long = format!("{{\"reply\":\"text\",{}", "9".repeat(5_000));
+        let said = super::unreadable_reply(&long);
+        assert!(said.starts_with("\"{\\\"reply\\\":\\\"text\\\","), "{said}");
+        assert!(said.ends_with("... (5016 bytes in all)"), "{said}");
+        assert!(said.len() < 200, "{}", said.len());
+        // Cut between characters, not inside one.
+        let wide = "\u{e9}".repeat(200);
+        assert!(super::unreadable_reply(&wide).ends_with("... (400 bytes in all)"));
     }
 
     /// A reply carried by [`Response`] survives the framing it travels in.

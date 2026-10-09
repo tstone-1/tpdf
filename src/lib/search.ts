@@ -218,10 +218,12 @@ export const RUN_PAGES = 16;
  * pages that do not touch.
  *
  * Returns the *slots*, and a run of one is the caller's signal to use the
- * single-page path. Every entry whose scope is not the whole page ends the run
- * before it, because a hit spanning a break is clipped against two scope entries
- * and the run path files them the same way the single path does --- keeping the
- * two identical is worth more than one extra page per request.
+ * single-page path. An entry's `from` and `to` are not read here: a page scoped
+ * to part of itself joins a run like any other, because the backend is asked
+ * about whole pages on both paths and the scope is applied afterwards, by the
+ * one `file` both paths share. A hit spanning a break is clipped there against
+ * the entry of the page it starts on and the entry of the page it ends on,
+ * whichever request it came back in.
  */
 export function runFrom(
   plan: ScopeRange[],
@@ -449,6 +451,15 @@ export class Search {
     // The mapping is per page of the *file* and survives, which is why this is
     // `clear` rather than a rebuild: the pages that are left have the same fonts
     // they had.
+    //
+    // The scope goes as well, and `clear` does not take it: a `ScopeRange`
+    // names a slot, so a scope kept across a deletion or a move confines the
+    // next scan to pages and characters the reader never selected, under a
+    // counter that still says "in selection". Dropped rather than followed to
+    // where its pages went, for the reason the matches are: a selection over
+    // three pages one of which is gone, or which no longer follow one another,
+    // is not a selection the reader made.
+    this.scope = null;
     this.clear();
   }
 
@@ -541,6 +552,7 @@ export class Search {
     this.query = "";
     this.matches = [];
     this.scanned = 0;
+    this.toScan = 0;
     this.charsSeen = 0;
     this.problem = "";
     // The mapping is a property of the *document*, not of the query, so it

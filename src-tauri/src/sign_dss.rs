@@ -213,6 +213,9 @@ pub fn append(signed: &[u8], gathered: &Gathered) -> Result<Vec<u8>, String> {
         seen: 0,
         tail: Vec::with_capacity(gathered.bytes() + 4096),
     };
+    // An earlier `/DSS` is carried into the new one key for key, and it is
+    // the document's: one `lopdf` would leave out is a refusal.
+    crate::save::written_whole(&incremental)?;
     incremental
         .save_to(&mut sink)
         .map_err(|e| format!("could not build the validation data's revision: {e}"))?;

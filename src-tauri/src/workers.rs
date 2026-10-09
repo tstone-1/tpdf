@@ -2138,9 +2138,14 @@ impl Engine for Workers {
 /// `worker_child::answer`, which is a `match` over `Request` -- so this is a
 /// guard against that dispatch being edited wrongly, not against the wire.
 /// Named so the message says which end is confused: the request that was
-/// asked, and the variant that came back.
+/// asked, and the variant that came back --- its name and its size, never its
+/// payload, which may be a document's worth and reaches the webview in this
+/// string (`Reply::described`).
 fn mismatched(asked: &str, got: &Reply) -> String {
-    format!("a worker answered {got:?} to a request for {asked}")
+    format!(
+        "a worker answered {} to a request for {asked}",
+        got.described()
+    )
 }
 
 /// Serves jobs from `threads` threads sharing one receiver.
@@ -2253,6 +2258,25 @@ pub(crate) fn watch_calls(engine: &Arc<Workers>, deadline: Duration) {
 mod tests {
     use std::path::PathBuf;
     use std::time::{Duration, Instant};
+
+    /// A worker that answers the wrong question is named, and its answer is
+    /// not repeated: the message goes to the webview, and until 2026-10-09 it
+    /// held the whole reply, debug formatted.
+    #[test]
+    fn a_mismatched_reply_is_named_and_not_repeated() {
+        let text = crate::text::PageText {
+            codes: vec![u32::from('Q'); 400_000],
+            ..Default::default()
+        };
+        let said = super::mismatched("outline", &super::Reply::Text(text));
+        assert!(
+            said.starts_with("a worker answered text (about ")
+                && said.ends_with(" MB of JSON) to a request for outline"),
+            "{}",
+            &said[..said.len().min(200)]
+        );
+        assert!(said.len() < 100, "{}", said.len());
+    }
 
     use super::{
         overdue, payload_length, shrunk, CallWatch, Held, InFlight, Workers, DEFAULT_IDLE,

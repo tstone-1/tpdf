@@ -202,7 +202,7 @@ impl InWorker {
             other => Err(format!(
                 "the worker answered the re-read with {}",
                 match other {
-                    Some(reply) => format!("{reply:?}"),
+                    Some(reply) => reply.described(),
                     None => "no payload at all".to_string(),
                 }
             )),
@@ -273,7 +273,7 @@ impl Verifier for InWorker {
                 other => Err(format!(
                     "the worker answered the validation data with {}",
                     match other {
-                        Some(reply) => format!("{reply:?}"),
+                        Some(reply) => reply.described(),
                         None => "no payload at all".to_string(),
                     }
                 )),
@@ -300,7 +300,7 @@ impl Verifier for InWorker {
                 other => Err(format!(
                     "the worker answered the document timestamp with {}",
                     match other {
-                        Some(reply) => format!("{reply:?}"),
+                        Some(reply) => reply.described(),
                         None => "no payload at all".to_string(),
                     }
                 )),
@@ -327,7 +327,7 @@ impl InWorker {
             other => Err(format!(
                 "the worker answered the signature check with {}",
                 match other {
-                    Some(reply) => format!("{reply:?}"),
+                    Some(reply) => reply.described(),
                     None => "no payload at all".to_string(),
                 }
             )),
@@ -373,7 +373,7 @@ impl InWorker {
             other => Err(format!(
                 "the worker answered the verification with {}",
                 match other {
-                    Some(reply) => format!("{reply:?}"),
+                    Some(reply) => reply.described(),
                     None => "no payload at all".to_string(),
                 }
             )),
@@ -476,7 +476,8 @@ impl InWorker {
                 Reply::Unlocked => {}
                 other => {
                     return Err(Declined::Failed(format!(
-                        "the worker answered a password with {other:?}"
+                        "the worker answered a password with {}",
+                        other.described()
                     )))
                 }
             }
@@ -613,7 +614,8 @@ impl InWorker {
             match Self::asked(worker, &Request::Properties)? {
                 Reply::Properties(properties) => Ok(*properties),
                 other => Err(Declined::Failed(format!(
-                    "the worker answered the properties request with {other:?}"
+                    "the worker answered the properties request with {}",
+                    other.described()
                 ))),
             }
         });
@@ -646,7 +648,8 @@ impl InWorker {
             match Self::asked(worker, &Request::SignatureImage)? {
                 Reply::SignatureImage(image) => Ok(image),
                 other => Err(Declined::Failed(format!(
-                    "the worker answered the image request with {other:?}"
+                    "the worker answered the image request with {}",
+                    other.described()
                 ))),
             }
         });
@@ -686,7 +689,8 @@ impl InWorker {
         let rx = asked_on_a_thread(worker, move |worker| match Self::asked(worker, &request)? {
             Reply::PreparedSignature(unsigned) => Ok(unsigned),
             other => Err(Declined::Failed(format!(
-                "the worker answered the signature request with {other:?}"
+                "the worker answered the signature request with {}",
+                other.described()
             ))),
         });
         awaited(&rx, DEFAULT_DEADLINE, pid).map_err(Declined::Failed)?
@@ -858,7 +862,14 @@ impl Rewriter for InWorker {
             }
             match answered.reply {
                 Some(Reply::Merged { bytes, pages }) => Ok((bytes, pages)),
-                other => Err(format!("the worker answered the pictures with {other:?}").into()),
+                other => Err(format!(
+                    "the worker answered the pictures with {}",
+                    other.map_or_else(
+                        || "no payload at all".to_string(),
+                        |reply| reply.described()
+                    )
+                )
+                .into()),
             }
         });
         // The pictures' segment is the caller's and outlives the wait, as a
@@ -935,7 +946,7 @@ impl InWorker {
             other => Err(format!(
                 "the worker answered the rewrite with {}",
                 match other {
-                    Some(reply) => format!("{reply:?}"),
+                    Some(reply) => reply.described(),
                     None => "no payload at all".to_string(),
                 }
             )
@@ -985,7 +996,7 @@ impl InWorker {
             other => Err(format!(
                 "the worker answered the merge with {}",
                 match other {
-                    Some(reply) => format!("{reply:?}"),
+                    Some(reply) => reply.described(),
                     None => "no payload at all".to_string(),
                 }
             )
@@ -1014,7 +1025,7 @@ impl InWorker {
             other => Err(format!(
                 "the worker answered the print job with {}",
                 match other {
-                    Some(reply) => format!("{reply:?}"),
+                    Some(reply) => reply.described(),
                     None => "no payload at all".to_string(),
                 }
             )

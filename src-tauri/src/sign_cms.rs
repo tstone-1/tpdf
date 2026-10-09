@@ -181,22 +181,62 @@ pub struct Signed {
     pub signatures: Vec<Checked>,
 }
 
-/// The report for a file written with a new signature in `field`.
+/// Which of the signatures a worker read in a written file is the one this
+/// signing made, as an index into `found`.
+///
+/// **By what was written, not by the name alone.** A document can hold an
+/// older signature whose field reads as the same name --- one spelt in
+/// another encoding before 2026-10-09, or a child of an unnamed field, whose
+/// fully qualified name is its own --- and an older intact signature must not
+/// answer for a new one that is missing or damaged. The new signature's range
+/// ends where its own revision ends, so the bytes after it are exactly what
+/// this signing appended afterwards: `appended`, which is nothing, or the
+/// validation data and archive timestamp of a long-term signing.
+///
+/// Where two fields fit --- a field with a range nobody could read is given
+/// zero appended bytes too --- the intact one is ours: the other was never a
+/// signature over this file.
+#[must_use]
+pub fn ours(found: &[crate::docinfo::Signature], field: &str, appended: u64) -> Option<usize> {
+    let fits = |signature: &crate::docinfo::Signature| {
+        signature.signed && signature.field == field && signature.appended_bytes == appended
+    };
+    let intact = |signature: &crate::docinfo::Signature| {
+        signature
+            .integrity
+            .as_ref()
+            .is_some_and(|i| i.verdict == crate::integrity::Verdict::Intact)
+    };
+    found
+        .iter()
+        .position(|signature| fits(signature) && intact(signature))
+        .or_else(|| found.iter().position(fits))
+}
+
+/// The report for a file written with a new signature in `field`, which is
+/// `found[ours]` when the read-back found it ([`ours`]).
 ///
 /// Unsigned fields are left out: an empty signature field is not a signature,
 /// and listing one would read as a signature that failed.
 #[must_use]
-pub fn report(path: String, field: String, found: Vec<crate::docinfo::Signature>) -> Signed {
-    let signed: Vec<crate::docinfo::Signature> = found
+pub fn report(
+    path: String,
+    field: String,
+    found: Vec<crate::docinfo::Signature>,
+    ours: Option<usize>,
+) -> Signed {
+    let signed: Vec<(bool, crate::docinfo::Signature)> = found
         .into_iter()
-        .filter(|signature| signature.signed)
+        .enumerate()
+        .map(|(index, signature)| (ours == Some(index), signature))
+        .filter(|(_, signature)| signature.signed)
         .collect();
-    let at = signed.iter().position(|signature| signature.field == field);
+    let at = signed.iter().position(|(ours, _)| *ours);
     let signatures = signed
         .into_iter()
         .enumerate()
-        .map(|(index, signature)| Checked {
-            ours: signature.field == field,
+        .map(|(index, (ours, signature))| Checked {
+            ours,
             archive: signature.kind == "ETSI.RFC3161" && at.is_some_and(|at| index > at),
             field: signature.field,
             integrity: signature.integrity,

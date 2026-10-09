@@ -101,7 +101,10 @@ pub enum Exit {
     /// `verify --strict`: a document with no signature, or a signature that is
     /// not both intact and trusted. `redact`: the copy was written and could
     /// not be proved clean; the file is kept and every reason is reported.
-    /// `hidden`: text was found that a page does not show.
+    /// `hidden`: text was found that a page does not show. `sign`: the copy
+    /// was written and its new signature, intact when it was made, was not
+    /// checked again in the file because the document's signatures together
+    /// are past the hashing budget.
     Strict = 1,
     /// The command line is malformed.
     Usage = 2,

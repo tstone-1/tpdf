@@ -52,6 +52,11 @@ have the binary.)
   zoom step on one side is made on the other. Holding Alt while scrolling moves one side
   alone and keeps the new distance.
 
+### Changed
+
+- A region that covers text a removal cannot measure says so in plain words, and the
+  second line of a row in the redaction list shows its full text on hover.
+
 ### Fixed
 
 - **A page changed after a signature was reported as not rewritten, in two cases.** When a
@@ -95,6 +100,35 @@ have the binary.)
   way. They were put in place only when the page number, the zoom or what is drawn
   changed, so after a small scroll that changed none of these a control could sit beside
   its field.
+- **A line in two parts is read left to right.** A line with a wide gap in it, such as
+  `Date:        12 March`, could be copied, read aloud and extracted by `tpdf text` as
+  `12 March Date:` when the right part stood slightly higher than the left. A right-to-left
+  line in two parts is read from its right end.
+- **A new signature field no longer repeats a name the document already uses.** A field
+  named `Signature1` in UTF-16 was not recognised as taken, so signing added a second
+  `Signature1`. The check after signing now looks at the signature just written; an older
+  intact signature with the same field name could stand in for it.
+- **Signing a large document that already has several signatures no longer calls a correct
+  copy one not to rely on.** tpdf checks at most 1 GiB of signed data per document. When
+  the new signature was past that, the window said "Do not rely on that copy" and
+  `tpdf sign` ended with exit code 4. The window now says the signature was intact when
+  checked before writing and was not checked again, and `tpdf sign` ends with exit code 1.
+  `--long-term` on such a document is refused with exit code 3 and that reason.
+- **Signing, or changing a comment, refuses a document it would otherwise write
+  incompletely.** A document that puts a `/Linearized` key on its form, on a field or on
+  a comment made the saved revision leave that object out without an error.
+- Choosing to retry a signature with long-term data and no timestamp authority no longer
+  discards the signature being held.
+- **A search confined to a selection stayed confined after pages were deleted or moved**,
+  to pages and text that were never selected, and *Redact every search result* could have
+  marked those. The search covers the whole document again after such a change.
+- A reload that failed and went back to the document as it was now says why.
+- Tab in a form goes to the next field that is shown; it used to stop at a hidden one and
+  the keyboard went nowhere. An arrow key in a group of radio buttons no longer answers
+  with a button that is not shown.
+- A press on the page ends a selection of interface text, and copying takes the page's own
+  selection where both exist.
+- File sizes no longer read "10.0 KB" or "1024 KB".
 - A record of the open tabs that could not be written is written again at the next change,
   and the failure is logged.
 

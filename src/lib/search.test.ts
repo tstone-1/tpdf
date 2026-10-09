@@ -14,6 +14,7 @@ import {
   MAX_MATCHES_TO_MARK,
   PLAIN_SEARCH,
   RUN_PAGES,
+  Search,
   inSlots,
   runAnswers,
   runFrom,
@@ -208,9 +209,57 @@ describe("runFrom", () => {
     expect(runFrom(plan(0, 5), 0, of)).toEqual([]);
   });
 
+  it("takes a page scoped to part of itself into a run like any other", () => {
+    // What the doc comment says and the loop does: the scope is applied when a
+    // reply is filed, by the one function both paths share, so a selection
+    // that begins and ends inside a page is still one request.
+    const scoped: ScopeRange[] = [
+      { page: 4, from: 120, to: Infinity },
+      { page: 5, from: 0, to: Infinity },
+      { page: 6, from: 0, to: 37 },
+    ];
+    expect(runFrom(scoped, 0, same)).toEqual([4, 5, 6]);
+  });
+
   it("answers a single entry with a run of one, which is the per-page path", () => {
     expect(runFrom(plan(3, 1), 0, same)).toEqual([3]);
     expect(runFrom([], 0, same)).toEqual([]);
+  });
+});
+
+describe("Search.setPages", () => {
+  /**
+   * A scan nothing answers: no slot has a page behind it, so the walk asks the
+   * backend about none and this file stays without a mock.
+   */
+  const nowhere = (): PageAddress | undefined => undefined;
+
+  it("drops the scope with the matches, since both name slots", async () => {
+    // Mutation: `setPages` without `this.scope = null`. A scope is a list of
+    // slots and character ranges, and after a deletion or a move every later
+    // slot holds another page: the next scan would be confined to text the
+    // reader never selected and still be counted as "in selection".
+    const search = new Search(1, 3, () => {}, nowhere);
+    const scope: ScopeRange[] = [
+      { page: 1, from: 4, to: 9 },
+      { page: 2, from: 0, to: 3 },
+    ];
+    const scan = search.run("x", 0, PLAIN_SEARCH, scope);
+    // The precondition, without which the last line passes for a scan that
+    // never took the scope.
+    expect(search.scope).toEqual(scope);
+    expect(search.query).toBe("x");
+
+    // The count as it was, which is what a move leaves it.
+    search.setPages(3);
+
+    expect(search.scope).toBeNull();
+    expect(search.query).toBe("");
+    // And the count of pages it was to ask about, which the status shows.
+    expect(search.toScan).toBe(0);
+    await scan;
+    // The scan that was running was abandoned, so it cannot put it back.
+    expect(search.scope).toBeNull();
   });
 });
 

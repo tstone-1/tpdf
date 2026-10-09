@@ -438,6 +438,50 @@ describe("the words", () => {
     expect(missing).toContain("it is not in the file");
   });
 
+  it("says which check happened for a new signature the read-back had no budget for", () => {
+    // The hashing budget is one for the document and the new signature is
+    // reached last. The copy is correct --- the signature was found intact
+    // over the bytes that were then written --- and until 2026-10-09 this
+    // was "Do not rely on that copy". The sentence `cli/tests.rs` pins for
+    // the tool, word for word.
+    const signed = (why: "budget" | "range"): Signed => ({
+      path: "/docs/a-signed.pdf",
+      field: "Signature2",
+      signatures: [
+        {
+          field: "Signature1",
+          integrity: { verdict: "intact", why: null, digest: "SHA-256", method: "RSA" },
+          ours: false,
+        },
+        {
+          field: "Signature2",
+          integrity: { verdict: "unchecked", why, digest: "", method: "" },
+          ours: true,
+          // Read, and not said: there is no reading of the signature it is on.
+          timestamp: {
+            when: "2026-09-28 10:11:12 UTC",
+            authority: null,
+            integrity: { verdict: "intact", why: null, digest: "SHA-256", method: "RSA" },
+            trust: null,
+            attested: true,
+            revocation: null,
+            revocation_chain: null,
+          },
+        },
+      ],
+    });
+    expect(afterSigning(signed("budget"))).toBe(
+      "a-signed.pdf was written. The new signature Signature2 was intact when tpdf checked " +
+        "it before writing; reading the file back did not check it again, because the " +
+        "document's signatures together cover more data than tpdf checks at once. Earlier " +
+        "signature: Signature1 intact.",
+    );
+    // Only for that reason: any other unchecked signature is the failure it was.
+    const other = afterSigning(signed("range"));
+    expect(other.startsWith("a-signed.pdf was written, but reading it back did not find")).toBe(true);
+    expect(other).toContain("Do not rely on that copy.");
+  });
+
   it("never calls a signature valid, verified, authentic or genuine", () => {
     // `properties.test.ts`'s rule, for the same reason: the check is about the
     // bytes and the key, never about who holds the key.

@@ -939,6 +939,88 @@ describe("coveredText", () => {
 });
 
 
+describe("a line in two halves", () => {
+  /** Ten-point characters laid right to left, the first ending at `right`. */
+  const leftwards = (text: string, right: number, y: number) =>
+    [...text].map((char, at) => {
+      const edge = right - at * 10;
+      return [char, [edge - 10, y, edge, y + 12]] as [string, [number, number, number, number]];
+    });
+  /** One tagged paragraph over the whole page, so a wide gap is not a column cut. */
+  const tagged = (chars: [string, [number, number, number, number]][]): PageText => ({
+    ...page(chars),
+    runs: [{ tag: "P", path: ["P"], start: 0, end: chars.length }],
+  });
+
+  // The right half stands 1pt higher: ascenders beside x-height letters. Which
+  // fragments share a line is found from their top edges, and until 2026-10-09
+  // they were read in that order too.
+  it("is read left to right although the right half stands higher", () => {
+    const text = tagged([...word("Date:", 100, 100), ...word("12 March", 300, 99)]);
+    expect(usableRuns(text)).not.toBeNull();
+    expect(linesAs(text)).toEqual(["Date:12 March"]);
+  });
+
+  it("is read left to right by the geometry too, where no cut parts the halves", () => {
+    // A full line under both halves, overlapping their band by 1pt: no free
+    // band for a row cut, and no gutter for a column cut.
+    const text = page([
+      ...word("Date:", 100, 100),
+      ...word("12 March", 300, 99),
+      ...word("a full line under both halves", 100, 111),
+    ]);
+    expect(usableRuns(text)).toBeNull();
+    expect(linesAs(text)).toEqual(["Date:12 March", "a full line under both halves"]);
+  });
+
+  it("is read from its right end when its characters are written right to left", () => {
+    // PDFium hands a right-to-left run back in the order it is read, so the
+    // indices rise as the positions fall. The half read first is the right
+    // one and here the lower one: neither top edges nor ascending position
+    // puts it first.
+    const text = tagged([...leftwards("\u05d0\u05d1\u05d2\u05d3", 400, 100), ...leftwards("\u05d4\u05d5\u05d6", 200, 99)]);
+    expect(linesAs(text)).toEqual(["\u05d0\u05d1\u05d2\u05d3\u05d4\u05d5\u05d6"]);
+  });
+
+  it("is not turned round by one word written the other way", () => {
+    // Three steps forwards in each Latin half against two backwards in the
+    // Hebrew word between them: the line is a left-to-right one.
+    const text = tagged([
+      ...word("Date", 100, 100),
+      ...leftwards("\u05d0\u05d1\u05d2", 330, 99),
+      ...word("then", 500, 100),
+    ]);
+    expect(linesAs(text)).toEqual(["Date\u05d0\u05d1\u05d2then"]);
+  });
+
+  it("is not made of type of another size that merely touches the line", () => {
+    // Small type whose band reaches into large type lower down and further
+    // left. The gathering lets a short box join what it touches, so this is
+    // one line; it is not two halves of one row --- the overlap is 7 of the
+    // small type's 12 and of the large type's 30, so it is the taller one that
+    // says no --- and stays in the order of the top edges, as a row above a
+    // paragraph gathered into one tall fragment must, which is where this was
+    // measured.
+    const big = [..."BIG"].map((char, at) => {
+      const left = 100 + at * 20;
+      return [char, [left, 105, left + 20, 135]] as [string, [number, number, number, number]];
+    });
+    const text = tagged([...word("above", 300, 100), ...big]);
+    expect(linesAs(text)).toEqual(["aboveBIG"]);
+  });
+
+  it("is not turned round by a combining mark drawn left of its base", () => {
+    // The only step between neighbouring characters is from the base back to
+    // its mark, which is drawn over the base wherever its box starts.
+    const text = tagged([
+      ["e", [100, 100, 110, 112]],
+      ["\u0301", [99, 96, 104, 99]],
+      ["x", [300, 99, 310, 111]],
+    ]);
+    expect(linesAs(text)).toEqual(["e\u0301x"]);
+  });
+});
+
 describe("mixed text directions", () => {
   function mixed(turns: number): PageText {
     const label = turnedView(page([...word("ALPHA", 0, 0), ["\n", null], ...word("BETA", 0, 25)]), turns);

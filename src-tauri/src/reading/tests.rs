@@ -34,6 +34,17 @@ fn word(text: &str, x: f32, top: f32) -> Vec<Glyph> {
         .collect()
 }
 
+/// Ten-point characters laid right to left, the first ending at `right`.
+fn written_leftwards(text: &str, right: f32, top: f32) -> Vec<Glyph> {
+    text.chars()
+        .enumerate()
+        .map(|(at, c)| {
+            let edge = right - at as f32 * 5.5;
+            (c as u32, [edge - 5.5, top, edge, top + 11.3])
+        })
+        .collect()
+}
+
 /// PDFium's synthesised line break: two characters it placed nowhere.
 fn crlf() -> Vec<Glyph> {
     vec![(13, [0.0; 4]), (10, [0.0; 4])]
@@ -264,6 +275,87 @@ pub(crate) fn cases() -> Vec<Case> {
         ]]),
     });
 
+    // One line in two halves, a wide gap between them, and the right half
+    // standing 0.8pt higher: ascenders beside x-height letters. The halves are
+    // found top edge first, and read left to right all the same. Tagged, so
+    // the gap is not a column cut and both halves reach one block.
+    let label = word("Date:", 72.0, 100.0);
+    let value = word("12 March", 200.0, 99.2);
+    let mut split = page(vec![label.clone(), value.clone()]);
+    split.runs = vec![run("P", 0, (label.len() + value.len()) as u32)];
+    out.push(Case {
+        name: "split-line-tagged",
+        text: split,
+    });
+    // The same line by the geometry: a full line under it with no free band
+    // between the two, so neither a column cut nor a row cut parts the halves.
+    out.push(Case {
+        name: "split-line-tight",
+        text: page(vec![
+            label,
+            value,
+            word("a full line under both halves", 72.0, 110.9),
+        ]),
+    });
+    // A right-to-left line the same way: PDFium hands its characters back in
+    // the order they are read, so their indices rise as their positions fall.
+    // The half read first is on the right, and here it is the lower one, so
+    // neither the top edges nor ascending position puts it first.
+    let first = written_leftwards("\u{5d0}\u{5d1}\u{5d2}\u{5d3}", 300.0, 100.0);
+    let second = written_leftwards("\u{5d4}\u{5d5}\u{5d6}", 150.0, 99.2);
+    let mut leftwards = page(vec![first.clone(), second.clone()]);
+    leftwards.runs = vec![run("P", 0, (first.len() + second.len()) as u32)];
+    out.push(Case {
+        name: "split-line-right-to-left",
+        text: leftwards,
+    });
+
+    // One word written right to left between two written left to right: three
+    // steps forwards in each Latin half against two backwards, so the line is
+    // a left-to-right one and the Hebrew word keeps its place in it.
+    let mut mixed_line = word("Date", 72.0, 100.0);
+    mixed_line.extend(written_leftwards("\u{5d0}\u{5d1}\u{5d2}", 216.5, 99.2));
+    mixed_line.extend(word("then", 300.0, 100.0));
+    let mut mixed_line = page(vec![mixed_line]);
+    mixed_line.runs = vec![run("P", 0, 11)];
+    out.push(Case {
+        name: "split-line-mixed",
+        text: mixed_line,
+    });
+
+    // A combining mark drawn a point left of where its base starts, in a line
+    // of two one-letter halves: the only step between neighbouring characters
+    // is from the base back to its mark, and it must not make the line a
+    // right-to-left one.
+    let mut marked = page(vec![vec![
+        (u32::from('e'), [72.0, 100.0, 77.5, 111.3]),
+        (0x301, [71.0, 96.0, 74.5, 98.6]),
+        (u32::from('x'), [200.0, 99.2, 205.5, 110.5]),
+    ]]);
+    marked.runs = vec![run("P", 0, 3)];
+    out.push(Case {
+        name: "split-line-mark",
+        text: marked,
+    });
+
+    // Small type whose band reaches into large type lower down and further
+    // left: one line to the gathering, which lets a short box join what it
+    // touches, and not two halves of one row. The overlap is 7.3 of the small
+    // type's 11.3 and of the large type's 30, so it is the taller one that
+    // says no. It stays in the order of the top edges --- as a row above a
+    // paragraph gathered into one tall fragment must.
+    let mut unequal = word("above", 200.0, 100.0);
+    unequal.extend("BIG".chars().enumerate().map(|(at, c)| {
+        let left = 72.0 + at as f32 * 15.0;
+        (c as u32, [left, 104.0, left + 15.0, 134.0])
+    }));
+    let mut unequal = page(vec![unequal]);
+    unequal.runs = vec![run("P", 0, 8)];
+    out.push(Case {
+        name: "split-line-unequal",
+        text: unequal,
+    });
+
     // Degenerate pages.
     out.push(Case {
         name: "empty",
@@ -390,6 +482,64 @@ fn a_mark_a_sliver_and_a_comma_stay_on_their_line() {
         assert_eq!(lines.len(), 2, "{name}: {lines:?}");
         assert_eq!(lines[0], first, "{name}");
     }
+}
+
+/// Which fragments share a line is found from their top edges; the order they
+/// are read in is along the line. Until 2026-10-09 one sort answered both, and
+/// the first of these read `12 MarchDate:`.
+#[test]
+fn the_halves_of_a_split_line_are_read_along_it_whichever_stands_higher() {
+    let text = case("split-line-tagged");
+    let reading = read(&text);
+    assert_eq!(reading.route, Route::Tagged);
+    assert_eq!(text_of(&text, &reading.lines), ["Date:12 March"]);
+
+    let text = case("split-line-tight");
+    let reading = read(&text);
+    assert_eq!(reading.route, Route::Geometric);
+    assert_eq!(
+        text_of(&text, &reading.lines),
+        ["Date:12 March", "a full line under both halves"]
+    );
+}
+
+/// The direction is the line's own: a right-to-left line is read from its
+/// right end, where ascending position would read its second half first.
+#[test]
+fn a_right_to_left_line_in_two_halves_is_read_from_its_right_end() {
+    let text = case("split-line-right-to-left");
+    assert_eq!(
+        text_of(&text, &read(&text).lines),
+        ["\u{5d0}\u{5d1}\u{5d2}\u{5d3}\u{5d4}\u{5d5}\u{5d6}"]
+    );
+}
+
+/// Only halves of one row are put in order along it. Type of another size
+/// that merely touches the line keeps the order of the top edges: measured
+/// 2026-10-09, ordering those too moved a row behind the paragraph under it.
+#[test]
+fn type_of_another_size_touching_a_line_is_not_a_half_of_it() {
+    let text = case("split-line-unequal");
+    assert_eq!(text_of(&text, &read(&text).lines), ["aboveBIG"]);
+}
+
+/// A majority of the steps decides, so one word written the other way does
+/// not turn the sentence round.
+#[test]
+fn one_word_written_the_other_way_does_not_turn_its_line_round() {
+    let text = case("split-line-mixed");
+    assert_eq!(
+        text_of(&text, &read(&text).lines),
+        ["Date\u{5d0}\u{5d1}\u{5d2}then"]
+    );
+}
+
+/// A mark is drawn over its base, wherever the producer put its box: the step
+/// back to it says nothing about which way the line is written.
+#[test]
+fn a_combining_mark_does_not_turn_its_line_round() {
+    let text = case("split-line-mark");
+    assert_eq!(text_of(&text, &read(&text).lines), ["e\u{301}x"]);
 }
 
 #[test]

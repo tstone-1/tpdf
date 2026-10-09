@@ -32,7 +32,11 @@ const cases = reading.cases as unknown as Case[];
 
 describe("the command-line tool's reading order", () => {
   it("covers both routes, every rotation and the degenerate pages", () => {
-    expect(cases.length).toBe(18);
+    expect(cases.length).toBe(24);
+    // A line in two halves: by the tags, by the geometry, right to left, with
+    // one word written the other way, with a combining mark in it, and beside
+    // type of another size.
+    expect(cases.filter((c) => c.name.startsWith("split-line")).length).toBe(6);
     const routes = new Set(cases.map((c) => c.route));
     expect([...routes].sort()).toEqual(["geometric", "tagged"]);
     expect(new Set(cases.map((c) => c.text.quarter_turns)).size).toBe(4);

@@ -45,6 +45,22 @@ function dark(viewer: Viewer, box: { left: number; top: number; right: number; b
   return hit / (data.length / 4);
 }
 
+/**
+ * Whether the window has drawn `enough` frames since this was called.
+ *
+ * For a check that something did *not* happen, which has nothing of its own
+ * to wait on: what a command does without asking the backend, and every
+ * continuation it queued, has run by the time the window has drawn after it.
+ * A fixed pause says the same of a machine fast enough and nothing of a slow
+ * one.
+ */
+function drawnSince(enough: number): () => boolean {
+  let drawn = 0;
+  const next = () => { if (++drawn < enough) requestAnimationFrame(next); };
+  requestAnimationFrame(next);
+  return () => drawn >= enough;
+}
+
 /** A press, a move and a release on the page, in client pixels. */
 function drag(root: HTMLElement, from: { x: number; y: number }, to: { x: number; y: number }): void {
   const at = (type: string, point: { x: number; y: number }) =>
@@ -168,17 +184,18 @@ export async function fieldCheck(host: OpenCheckHost, expected: string, report: 
     // The checkbox first, so it is the one the others follow: its left edge
     // is the only one of the three that is not already where the others are.
     const order = [ids[1], ids[0], ids[2]].filter((id): id is number => id !== undefined);
-    host.run("edit.alignRight");
-    await host.idle();
-    check("an arrangement with nothing picked does nothing", fields().map((mark) => mark.quads.join()).join("|") === was.join("|"), lefts().join(" "));
-    // All three with Shift, so no field's name box opens under the check.
     // A press on the surface beside the page first: an earlier step pressed
-    // the text field, which picked it, and a press with Shift on a picked
-    // field takes it out.
+    // the text field, which picked it. Before the arrangement below, which is
+    // about nothing being picked and says nothing while one field is, and
+    // before the presses with Shift, one of which would take that field out.
     for (const type of ["pointerdown", "pointerup"]) {
       root.dispatchEvent(new PointerEvent(type, { button: 0, pointerId: 1, bubbles: true, clientX: box.left + 3, clientY: box.top + 3 }));
     }
     check("a press beside the fields picks none of them", viewer.pickedCount === 0, viewer.pickedMarks().join());
+    host.run("edit.alignRight");
+    await host.idle();
+    check("an arrangement with nothing picked does nothing", fields().map((mark) => mark.quads.join()).join("|") === was.join("|"), lefts().join(" "));
+    // All three with Shift, so no field's name box opens under the check.
     const trail: string[] = [];
     for (const id of order) {
       const anchor = viewer.markAnchor(id);
@@ -267,7 +284,14 @@ export async function fieldCheck(host: OpenCheckHost, expected: string, report: 
     );
     host.run("edit.undo");
     await host.idle();
-    check("undo takes the properties back", now()?.max_length === undefined && now()?.tooltip === undefined, JSON.stringify(now()));
+    // The field itself still there and of its kind: with `now()` undefined
+    // every comparison after it holds, which is an undo that took the field.
+    check(
+      "undo takes the properties back and leaves the field",
+      now() !== undefined && now()?.kind === "multiline"
+        && now()?.max_length === undefined && now()?.tooltip === undefined,
+      JSON.stringify(now() ?? "no such field"),
+    );
     host.run("edit.redo");
     await host.idle();
 
@@ -495,10 +519,16 @@ export async function fieldCheck(host: OpenCheckHost, expected: string, report: 
     // The moved field's properties, set in the panel the command opens: the
     // join of the pick, the command, the panel and the change it makes.
     viewer.pick([]);
+    const twoFrames = drawnSince(2);
     host.run("edit.fieldProperties");
-    await pause(100);
+    await host.idle();
+    const waited = await settle(twoFrames, SETTLE_MS);
     const panel = () => document.querySelector<HTMLElement>(`.${PROPERTIES_CLASS}`);
-    check("with no field picked the properties command opens nothing", panel()?.style.display !== "flex", String(panel()?.style.display));
+    check(
+      "with no field picked the properties command opens nothing",
+      waited && viewer.pickedCount === 0 && panel()?.style.display !== "flex",
+      `${waited ? "drawn since" : "the window did not draw"}, ${viewer.pickedCount} picked, panel ${String(panel()?.style.display)}`,
+    );
     viewer.pick([id]);
     host.run("edit.fieldProperties");
     const opened = await settle(() => panel()?.style.display === "flex", SETTLE_MS);
@@ -739,9 +769,15 @@ export async function fieldCheck(host: OpenCheckHost, expected: string, report: 
         open ? visible?.checked === true && (visible.parentElement?.textContent ?? "").includes("the field Signature 1") : /certificate/i.test(said()),
         open ? `chooser: ${visible?.parentElement?.textContent}` : `no chooser: ${said()}`,
       );
-      [...(open?.querySelectorAll("button") ?? [])].find((one) => one.textContent === "Cancel")?.click();
-      await settle(() => chooser() === null, SETTLE_MS);
-      check("and Cancel signs nothing", chooser() === null && host.edits()?.state.dirty === false, String(host.edits()?.state.dirty));
+      if (open) {
+        [...open.querySelectorAll("button")].find((one) => one.textContent === "Cancel")?.click();
+        await settle(() => chooser() === null, SETTLE_MS);
+        check("and Cancel signs nothing", chooser() === null && host.edits()?.state.dirty === false, String(host.edits()?.state.dirty));
+      } else {
+        // With no chooser there is no Cancel to press, and "nothing was
+        // signed" would hold of a window that never offered to.
+        report.skip("and Cancel signs nothing", "no chooser opened: this machine has no certificate to sign with");
+      }
     }
   }
 }

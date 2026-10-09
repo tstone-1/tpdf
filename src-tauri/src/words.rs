@@ -681,12 +681,18 @@ pub fn after_signing(
 ) -> String {
     let ours = signatures.iter().find(|(_, ours, _)| *ours);
     let earlier: Vec<_> = signatures.iter().filter(|(_, ours, _)| !ours).collect();
-    let intact = ours.is_some_and(|(_, _, integrity)| {
-        integrity
-            .as_ref()
-            .is_some_and(|i| i.verdict == Verdict::Intact)
-    });
-    if !intact {
+    let verdict_is = |wanted: Verdict| {
+        ours.is_some_and(|(_, _, integrity)| {
+            integrity.as_ref().is_some_and(|i| i.verdict == wanted)
+        })
+    };
+    // Not checked again for want of hashing budget: neither the failure
+    // below nor a signature read back intact. `signing.ts` says why.
+    let unchecked = verdict_is(Verdict::Unchecked)
+        && ours.is_some_and(|(_, _, integrity)| {
+            integrity.as_ref().and_then(|i| i.why) == Some(Why::Budget)
+        });
+    if !verdict_is(Verdict::Intact) && !unchecked {
         return format!(
             "{name} was written, but reading it back did not find the new signature \
              {field} intact: {}. Do not rely on that copy.",
@@ -696,10 +702,21 @@ pub fn after_signing(
             )
         );
     }
-    let mut text = format!(
-        "Signed as {field} and saved to {name}. Read back after writing, the signature is intact."
-    );
-    if let Some((timestamp, authority)) = timestamp {
+    let mut text = if unchecked {
+        format!(
+            "{name} was written. The new signature {field} was intact when tpdf checked it \
+             before writing; reading the file back did not check it again, because {}.",
+            why(Why::Budget)
+        )
+    } else {
+        format!(
+            "Signed as {field} and saved to {name}. Read back after writing, the signature is \
+             intact."
+        )
+    };
+    // The timestamp's row is said of a signature read back intact: for one
+    // not checked again there is no reading of it to report.
+    if let Some((timestamp, authority)) = timestamp.filter(|_| !unchecked) {
         text.push_str(&format!(" Timestamp: {timestamp}"));
         if let Some(authority) = authority {
             text.push_str(&format!(" Timestamp authority: {authority}"));

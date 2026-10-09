@@ -3833,6 +3833,136 @@ fn a_comment_out_of_the_file_is_overridden_by_its_object() {
     );
 }
 
+/// A one-page document whose comment has no `/Type` --- it is optional on an
+/// annotation --- and carries a key called `key`; and a plan that edits it.
+fn a_comment_with_a_key_and_its_edit(key: &str) -> (Vec<u8>, lopdf::ObjectId, Plan) {
+    let mut document = Document::with_version("1.7");
+    let pages_id = document.new_object_id();
+    let mut comment = dictionary! {
+        "Subtype" => "Text",
+        "Rect" => vec![10.into(), 10.into(), 30.into(), 30.into()],
+        "Contents" => Object::string_literal("before"),
+        "M" => Object::string_literal("D:20260101000000Z"),
+    };
+    comment.set(key, Object::Integer(1));
+    let annot = document.add_object(comment);
+    let page_id = document.add_object(dictionary! {
+        "Type" => "Page",
+        "Parent" => pages_id,
+        "MediaBox" => vec![0.into(), 0.into(), 595.into(), 842.into()],
+        "Annots" => vec![annot.into()],
+    });
+    document.objects.insert(
+        pages_id,
+        Object::Dictionary(dictionary! {
+            "Type" => "Pages",
+            "Kids" => vec![page_id.into()],
+            "Count" => 1,
+        }),
+    );
+    let catalog = document.add_object(dictionary! {
+        "Type" => "Catalog",
+        "Pages" => pages_id,
+    });
+    document.trailer.set("Root", catalog);
+    let mut original = Vec::new();
+    document
+        .save_to(&mut original)
+        .expect("the fixture must save");
+    let mut plan = plan_of(&[0]);
+    plan.notes = vec![crate::edits::PlannedNoteEdit {
+        object: (annot.0, annot.1),
+        body: "after".into(),
+        made: "D:20260829120000Z".into(),
+    }];
+    assert!(plan.is_appendable());
+    (original, annot, plan)
+}
+
+/// `lopdf`'s incremental writer leaves out, with no error, an object whose
+/// dictionary has a `/Linearized` key and no `/Type`. An annotation needs no
+/// `/Type`, so a comment edit on such a document saved, reported success and
+/// changed nothing. It is refused instead.
+#[test]
+fn an_edit_the_writer_would_leave_out_is_a_refusal_and_not_a_save_that_changed_nothing() {
+    let (original, _, plan) = a_comment_with_a_key_and_its_edit("Xinearized");
+    let why = match append_update(marked_left_out(original), &plan, None) {
+        Err(why) => why.message,
+        Ok(_) => panic!("an update was built"),
+    };
+    assert!(
+        why.contains("marked as part of the file's own structure (/Linearized)")
+            && why.contains("tpdf does not write one"),
+        "{why}"
+    );
+    // The control: the same comment with the key under any other name is
+    // edited.
+    let (original, annot, plan) = a_comment_with_a_key_and_its_edit("Xinearized");
+    let built = append_update(original.clone(), &plan, None).expect("the append must build");
+    let whole = [original.as_slice(), built.update.as_slice()].concat();
+    let after = Document::load_mem(&whole).expect("parses");
+    assert_eq!(
+        after
+            .get_dictionary(annot)
+            .and_then(|d| d.get(b"Contents"))
+            .and_then(Object::as_str)
+            .expect("a body"),
+        b"after"
+    );
+}
+
+/// The premise of [`written_whole`], by experiment and not from reading:
+/// `lopdf` at this pin writes an update without the object, and says nothing.
+/// **When this fails the library has changed**: read its incremental writer
+/// again, and if it now writes or refuses such an object, `written_whole` and
+/// this go together.
+#[test]
+fn lopdf_still_leaves_such_an_object_out_of_an_update_without_an_error() {
+    let (original, annot, _) = a_comment_with_a_key_and_its_edit("Xinearized");
+    let original = marked_left_out(original);
+    let load = |bytes: &[u8]| {
+        Document::load_mem_with_options(
+            bytes,
+            lopdf::LoadOptions {
+                strict: true,
+                ..Default::default()
+            },
+        )
+        .expect("parses")
+    };
+    let mut incremental = IncrementalDocument::create_from(original.clone(), load(&original));
+    incremental
+        .opt_clone_object_to_new_document(annot)
+        .expect("brought across");
+    incremental
+        .new_document
+        .get_dictionary_mut(annot)
+        .expect("a dictionary")
+        .set("Contents", Object::string_literal("after"));
+    assert!(written_whole(&incremental).is_err(), "the guard sees it");
+    let mut whole = Vec::new();
+    incremental.save_to(&mut whole).expect("no error");
+    assert!(whole.len() > original.len(), "an update was written");
+    assert_eq!(
+        load(&whole)
+            .get_dictionary(annot)
+            .and_then(|d| d.get(b"Contents"))
+            .and_then(Object::as_str)
+            .expect("a body"),
+        b"before",
+        "and the change is not in it"
+    );
+    // A dictionary that says what it is is written whatever else it holds.
+    let mut typed = dictionary! { "Type" => "Annot" };
+    typed.set("Linearized", Object::Integer(1));
+    incremental.new_document.objects.clear();
+    incremental
+        .new_document
+        .objects
+        .insert((900, 0), Object::Dictionary(typed));
+    assert!(written_whole(&incremental).is_ok());
+}
+
 /// A two-page document with one annotation, on the second page.
 ///
 /// Two pages so that a plan keeping one of them is **not** an append, which

@@ -177,6 +177,58 @@ export function sameAnswer(a: FormValue, b: FormValue): boolean {
   return Array.isArray(a) && Array.isArray(b) ? a.length === b.length && a.every((v, i) => v === b[i]) : a === b;
 }
 
+/**
+ * Where Tab takes the keyboard from the control at `at`, going `step` along
+ * the controls.
+ *
+ * The next control that can take it, and not simply the next: one whose field
+ * is being changed has no place on the page and is put away, and a control
+ * that is put away or withheld takes no keyboard, so a Tab sent to it went
+ * nowhere and said nothing. `placed` answers whether a control has a place at
+ * all, without moving anything. `reach` brings one into view and answers
+ * whether it can then take the keyboard; it is asked only of a control that is
+ * placed, since it scrolls the page.
+ *
+ * `to` is the control, or null when none further on can take the keyboard.
+ * `further` is whether there are controls further on at all: with none the
+ * key is the web view's, which leaves the form as it does from any last
+ * field, and with some that cannot be reached the keyboard stays where it is.
+ * `moved` is whether `reach` was asked of a control that then could not take
+ * it, which has scrolled the page away from the one the reader is in.
+ */
+export function tabStop<T>(
+  controls: readonly T[],
+  at: number,
+  step: 1 | -1,
+  placed: (control: T) => boolean,
+  reach: (control: T) => boolean,
+): { to: T | null; further: boolean; moved: boolean } {
+  let further = false;
+  let moved = false;
+  if (at < 0) return { to: null, further, moved };
+  for (let next = at + step; next >= 0 && next < controls.length; next += step) {
+    const control = controls[next] as T;
+    further = true;
+    if (!placed(control)) continue;
+    if (reach(control)) return { to: control, further, moved };
+    moved = true;
+  }
+  return { to: null, further, moved };
+}
+
+/**
+ * A radio group as an arrow key goes round it from the button at `at`: that
+ * button first, then the others in the order the key reaches them, round the
+ * end and back. {@link tabStop} then finds the first of them that is shown.
+ */
+export function ringFrom<T>(group: readonly T[], at: number, step: 1 | -1): T[] {
+  const here = group[at];
+  if (here === undefined) return [];
+  const ahead = step === 1 ? [...group.slice(at + 1), ...group.slice(0, at)]
+    : [...group.slice(0, at).reverse(), ...group.slice(at + 1).reverse()];
+  return [here, ...ahead];
+}
+
 /** Native page controls. Editing commits once on blur; pending text survives repaint. */
 export class FormLayer {
   private readonly node = document.createElement("div");
@@ -254,17 +306,21 @@ export class FormLayer {
         if (kind.kind === "radio" && ["ArrowDown", "ArrowRight", "ArrowUp", "ArrowLeft"].includes(event.key)) {
           const group = this.controls.filter((c) => fieldKey(c.widget.object) === fieldKey(widget.object));
           const direction = event.key === "ArrowDown" || event.key === "ArrowRight" ? 1 : -1;
-          const next = group[(group.indexOf(control) + direction + group.length) % group.length];
-          if (next) { this.reveal(next.widget); this.layout(); next.input.focus({ preventScroll: true }); next.input.click(); }
+          // The next button that is shown. An arrow key also answers, and it
+          // must not answer with a button the reader cannot see.
+          const ring = ringFrom(group, group.indexOf(control), direction);
+          const stop = this.stopIn(ring, 0, 1);
+          if (stop.to) { stop.to.input.focus({ preventScroll: true }); stop.to.input.click(); }
+          if (!stop.to && stop.moved) { this.reveal(widget); this.layout(); }
           event.preventDefault();
         }
         if (event.key === "Tab") {
-          const at = this.controls.indexOf(control);
-          const next = this.controls[at + (event.shiftKey ? -1 : 1)];
-          if (next) {
-            event.preventDefault();
-            this.reveal(next.widget); this.layout(); next.input.focus({ preventScroll: true });
-          }
+          const stop = this.stopIn(this.controls, this.controls.indexOf(control), event.shiftKey ? -1 : 1);
+          if (stop.further) event.preventDefault();
+          if (stop.to) stop.to.input.focus({ preventScroll: true });
+          // Looking for one scrolled the page. Back to the control the
+          // keyboard is still in, so the reader sees where they are.
+          else if (stop.moved) { this.reveal(widget); this.layout(); }
         }
         if (event.key === "Escape") { input.blur(); event.preventDefault(); }
       });
@@ -273,6 +329,17 @@ export class FormLayer {
       this.node.append(input);
     }
     this.layout();
+  }
+
+  /**
+   * The next control in `order` that can take the keyboard: one with a place
+   * on the page, shown once the page has been brought to it, and not
+   * withheld. Tab and a radio group's arrow keys both ask here.
+   */
+  private stopIn(order: readonly Mounted[], at: number, step: 1 | -1) {
+    return tabStop(order, at, step,
+      (one) => this.anchor(one.widget) !== null,
+      (one) => { this.reveal(one.widget); this.layout(); return one.input.style.display !== "none" && !one.input.disabled; });
   }
 
   /**

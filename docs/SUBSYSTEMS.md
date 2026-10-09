@@ -195,6 +195,12 @@ failure), and `buildSidebar`, `adoptModel`, `buildViewer`, `showModel` and
 controls are built by `buildFormLayer`, with every callback bound to its view. Inverted
 page colours and the pen nib are the window's and each viewer holds a copy, so
 `toggleInvert` and `chooseNib` set them through `Stage.each` on every mounted viewer.
+What the reader is told after a failed open has gone back to a tab the window already had
+is `toldAfterFallback` in `documentopen.ts`: `openDocument` answers what it said and
+`showPanes` says it again after the mounts, which put back each tab's own message. A tab
+keeps a search's scope with the page ids it was taken on (`KeptScope`), and
+`scopeToRestore` puts it back only while the order is the same; a mounted viewer drops it
+in `setPages`.
 What a failed open takes out of the tabs, and that the row is drawn after the last of
 them, is `dropAbandoned` in `documentopen.ts`; `abandonOpen` calls it on every path. A form
 control is placed by `controlRect` (`savedfields.ts`), asked through `asDocument(view,

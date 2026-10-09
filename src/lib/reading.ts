@@ -709,20 +709,20 @@ export function readingBlocks(text: PageText): ReadingBlock[] {
   if (tagged) {
     return ownership(text, tagged).map((owned, at) => ({
       tag: tagged[at]?.tag ?? null,
-      lines: linesOf(within(text, fragments, owned), axes),
+      lines: linesOf(text, within(text, fragments, owned), axes),
     }));
   }
   if (text.char_turns?.length) {
     return directionGroups(fragments, axes).flatMap(({ turns, fragments }) => {
       const ownAxes = axesFor(turns);
       return blocksOf(fragments, ownAxes, gap).map((block) => ({
-        tag: null, lines: linesOf(block, ownAxes),
+        tag: null, lines: linesOf(text, block, ownAxes),
       }));
     });
   }
   return blocksOf(fragments, axes, gap).map((block) => ({
     tag: null,
-    lines: linesOf(block, axes),
+    lines: linesOf(text, block, axes),
   }));
 }
 
@@ -758,27 +758,135 @@ function directionGroups(block: readonly Fragment[], axes: Axes): { turns: numbe
  * together --- so the *ordering within* one is decided in one place. Fragments in
  * the same band are one line, because a line broken by a wide word space is not
  * two lines.
+ *
+ * **Which fragments share a line and what order they are read in are two
+ * questions**, and until 2026-10-09 one sort answered both. Fragments are
+ * gathered in order of their top edge, which is what finds the lines; emitted
+ * in that order too, `Date:        12 March` read `12 March Date:` whenever
+ * the digits' ascenders stood a fraction above the x-height of `Date:`. So
+ * each line's fragments are put in order along it afterwards, by
+ * {@link alongLine}.
  */
-function linesOf(block: readonly Fragment[], axes: Axes): ReadingLine[] {
+function linesOf(text: PageText, block: readonly Fragment[], axes: Axes): ReadingLine[] {
   if (block.some((fragment) => fragment.turns !== undefined)) {
-    return directionGroups(block, axes).flatMap(({ turns, fragments }) => linesOf(fragments, axesFor(turns)));
+    return directionGroups(block, axes).flatMap(({ turns, fragments }) => linesOf(text, fragments, axesFor(turns)));
   }
   const ordered = [...block].sort((a, b) => {
     const [ea, eb] = [extentsOf(a.box, axes), extentsOf(b.box, axes)];
     return ea.crossStart - eb.crossStart || ea.alongStart - eb.alongStart;
   });
-  const lines: ReadingLine[] = [];
-  let current: ReadingLine | null = null;
+  const lines: { fragments: Fragment[]; box: Quad }[] = [];
+  let current: { fragments: Fragment[]; box: Quad } | null = null;
   for (const fragment of ordered) {
     if (current && sameBand(extentsOf(current.box, axes), extentsOf(fragment.box, axes))) {
-      current.ranges.push(...fragment.ranges);
+      current.fragments.push(fragment);
       absorb(current.box, fragment.box);
       continue;
     }
-    current = { ranges: [...fragment.ranges], box: { ...fragment.box } };
+    current = { fragments: [fragment], box: { ...fragment.box } };
     lines.push(current);
   }
-  return lines;
+  return lines.map((line) => ({
+    ranges: alongLine(text, line.fragments, axes).flatMap((fragment) => fragment.ranges),
+    box: line.box,
+  }));
+}
+
+/**
+ * Whether two fragments are halves of one row of text.
+ *
+ * They overlap by more than half of the **taller** one --- stricter than
+ * {@link sameBand}, which measures against the shorter and lets a short mark
+ * join whatever it touches. That is right for gathering a line and wrong for
+ * ordering one, for two reasons measured on real documents on 2026-10-09:
+ *
+ * - A line is not always one row. Its box grows as it gathers, and in tightly
+ *   leaded type the next row touches the grown box and joins, so a whole
+ *   paragraph can be one fragment 47pt tall. The row above it is "short"
+ *   beside that, and ordering the two along the line put the paragraph before
+ *   the row it follows.
+ * - A raised mark --- an asterisk, an opening quote --- that banded apart from
+ *   its line sits *inside* the line's extent. Where it belongs is between two
+ *   characters of another fragment, which no order of whole fragments gives.
+ *
+ * So only fragments set in the same type on the same row are ordered along
+ * it, and everything else stays where the top edges put it.
+ */
+function sameRow(a: Extents, b: Extents): boolean {
+  const overlap = Math.min(a.crossEnd, b.crossEnd) - Math.max(a.crossStart, b.crossStart);
+  const taller = Math.max(a.crossEnd - a.crossStart, b.crossEnd - b.crossStart);
+  return taller > 0 && overlap / taller > 0.5;
+}
+
+/**
+ * One line's fragments, in the order the line is read.
+ *
+ * `fragments` arrive in order of their top edges, which is the order that
+ * found the line. They are dealt into rows by {@link sameRow}, each fragment
+ * joining the first row it is a half of and opening one otherwise; the rows
+ * stay in the order they were opened, and each is put in order along the line.
+ *
+ * Along the line, and **which way along is the row's own**: PDFium hands a
+ * right-to-left run back in logical order, so its characters' indices rise as
+ * their positions fall, and a fragment keeps index order (`rangesOf`). The
+ * fragments of such a row are read from its far end, or the two halves of one
+ * Hebrew line would come out second half first. Ascending position is right
+ * for every other row and wrong for exactly that one.
+ *
+ * The direction is read from the characters and not from their script:
+ * {@link writtenBackwards} counts, between neighbouring indices, how often the
+ * position rises and how often it falls. A row of one fragment is returned as
+ * it is, so the count is only taken where it decides something.
+ */
+function alongLine(text: PageText, fragments: Fragment[], axes: Axes): Fragment[] {
+  if (fragments.length < 2) return fragments;
+  const rows: { first: Extents; fragments: Fragment[] }[] = [];
+  for (const fragment of fragments) {
+    const extents = extentsOf(fragment.box, axes);
+    const row = rows.find((candidate) => sameRow(candidate.first, extents));
+    if (row) row.fragments.push(fragment);
+    else rows.push({ first: extents, fragments: [fragment] });
+  }
+  return rows.flatMap(({ fragments: row }) => {
+    if (row.length < 2) return row;
+    const backwards = writtenBackwards(text, row, axes);
+    const start = (fragment: Fragment): number => {
+      const extents = extentsOf(fragment.box, axes);
+      return backwards ? -extents.alongEnd : extents.alongStart;
+    };
+    // `sort` is stable, so fragments that start together keep the order of
+    // their top edges.
+    return [...row].sort((a, b) => start(a) - start(b));
+  });
+}
+
+/**
+ * Whether a row's characters run against the page's along axis.
+ *
+ * A majority over every step between two neighbouring indices of one range,
+ * so the Latin word inside a Hebrew sentence does not turn the sentence
+ * round. An unplaced character and a combining mark are skipped: neither is
+ * where it reads. A tie, or a row with no step to count, is not backwards.
+ */
+function writtenBackwards(text: PageText, fragments: readonly Fragment[], axes: Axes): boolean {
+  let forwards = 0;
+  let backwards = 0;
+  for (const fragment of fragments) {
+    for (const range of fragment.ranges) {
+      let before: number | null = null;
+      for (let index = range.from; index < range.to; index++) {
+        const box = charQuad(text, index);
+        if (!placed(box) || combining(text.codes[index] ?? 0)) continue;
+        const at = extentsOf(box, axes).alongStart;
+        if (before !== null) {
+          if (at > before) forwards++;
+          else if (at < before) backwards++;
+        }
+        before = at;
+      }
+    }
+  }
+  return backwards > forwards;
 }
 
 /**

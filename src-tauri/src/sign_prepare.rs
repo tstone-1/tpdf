@@ -606,6 +606,9 @@ fn build(
         seen: 0,
         tail: Vec::with_capacity(RESERVED * 2 + 4096),
     };
+    // The form, the field list, a field and its widget are the document's
+    // own objects, rewritten here; one `lopdf` would leave out is a refusal.
+    crate::save::written_whole(&incremental)?;
     incremental
         .save_to(&mut sink)
         .map_err(|e| format!("could not build the signature's revision: {e}"))?;
@@ -654,8 +657,14 @@ fn certification(document: &Document) -> u8 {
 /// qualified name is its own `/T` when it has no parent: two top-level fields of
 /// one name are one field to every reader, which is what makes a collision a
 /// defect rather than a style.
+///
+/// **Compared as every reader compares them: decoded.** A `/T` is a text
+/// string, and `<FEFF005300690067...>` is `Signature1` in UTF-16BE. Until
+/// 2026-10-09 the raw bytes were compared, so a document naming its field
+/// that way was given a second top-level `Signature1`. A set, because the
+/// search asks it once per candidate and a form may hold thousands of fields.
 fn field_name(document: &Document, root: ObjectId) -> String {
-    let taken: Vec<Vec<u8>> = document
+    let taken: std::collections::HashSet<String> = document
         .get_dictionary(root)
         .ok()
         .and_then(|catalog| catalog.get(b"AcroForm").ok())
@@ -668,13 +677,13 @@ fn field_name(document: &Document, root: ObjectId) -> String {
                 .filter_map(|field| resolve(document, field).as_dict().ok())
                 .filter_map(|field| field.get(b"T").ok())
                 .filter_map(|name| resolve(document, name).as_str().ok())
-                .map(<[u8]>::to_vec)
+                .map(crate::annots::decode_text_string)
                 .collect()
         })
         .unwrap_or_default();
     (1..)
         .map(|n| format!("Signature{n}"))
-        .find(|name| !taken.iter().any(|t| t == name.as_bytes()))
+        .find(|name| !taken.contains(name))
         .expect("an unbounded range always has a free name")
 }
 

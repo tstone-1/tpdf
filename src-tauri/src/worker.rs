@@ -1121,9 +1121,12 @@ impl Worker {
     /// longer where the protocol says it is.
     pub fn read_reply(&mut self) -> Result<Response, String> {
         match read_reply_line(&mut self.stdout, MAX_REPLY_BYTES) {
-            Ok(reply) => {
-                serde_json::from_str(&reply).map_err(|e| format!("unreadable reply {reply:?}: {e}"))
-            }
+            Ok(reply) => serde_json::from_str(&reply).map_err(|e| {
+                format!(
+                    "unreadable reply {}: {e}",
+                    crate::worker_proto::unreadable_reply(&reply)
+                )
+            }),
             Err(ReplyError::Closed) => {
                 Err(format!("worker stopped answering ({})", self.epitaph()))
             }

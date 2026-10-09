@@ -22,7 +22,7 @@
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import { setMacSpelling } from "./keys";
+import { nativeCopy, setMacSpelling } from "./keys";
 import { DESTINATION_MARGIN_PT, type WebTarget } from "./outline";
 import { installFakeDom, settle, type FakeDom } from "./testdom";
 import { TEXT_CACHE_CHARS, type PageText } from "./text";
@@ -221,6 +221,63 @@ describe("Viewer lifetime", () => {
       expect(copy).toHaveBeenCalledTimes(type === "Range" ? 0 : 1);
       expect(preventDefault).toHaveBeenCalledTimes(type === "Range" ? 0 : 1);
     }
+    viewer.destroy();
+  });
+
+  it("copies the page's selection over interface text left selected elsewhere", async () => {
+    // Mutation: the viewer not naming its root to `keys.ts`. The web view's
+    // selection is the document's wherever the keyboard is, so an error
+    // message selected earlier is still a `Range` when the page is copied.
+    const viewer = build(dom);
+    const copy = vi.spyOn(viewer, "copySelection").mockResolvedValue(null);
+    const message = {};
+    const stale = {
+      type: "Range", anchorNode: message, focusNode: message, containsNode: () => false,
+    };
+    (dom.root as unknown as { ownerDocument: unknown }).ownerDocument = { getSelection: () => stale };
+    const chord = () => {
+      const preventDefault = vi.fn();
+      dom.root.dispatch("keydown", {
+        key: "c", ctrlKey: true, metaKey: false, altKey: false, shiftKey: false,
+        target: dom.root, preventDefault,
+      });
+      return preventDefault;
+    };
+
+    // The control: with nothing selected on the page the chord is the
+    // message's, and the surface steps aside.
+    expect(chord()).toHaveBeenCalledTimes(0);
+    expect(copy).toHaveBeenCalledTimes(0);
+
+    viewer.selectPage();
+    await settle();
+    expect(viewer.hasSelection).toBe(true);
+    expect(chord()).toHaveBeenCalledTimes(1);
+    expect(copy).toHaveBeenCalledTimes(1);
+
+    // And a viewer that has gone no longer answers for the element it left.
+    viewer.destroy();
+    expect(nativeCopy({
+      key: "c", ctrlKey: true, metaKey: false, altKey: false, shiftKey: false, target: dom.root,
+    } as unknown as KeyboardEvent)).toBe(true);
+  });
+
+  it("ends a selection of interface text when the page takes a press", async () => {
+    // Mutation: `onSelectStart` without `removeAllRanges`. Every path of the
+    // press prevents its default, which is what would have collapsed the web
+    // view's selection, so it is done by hand.
+    const viewer = build(dom);
+    let cleared = 0;
+    (dom.root as unknown as { ownerDocument: unknown }).ownerDocument = {
+      getSelection: () => ({ type: "Range", removeAllRanges: () => { cleared++; } }),
+    };
+    viewer.selectPage();
+    await settle();
+    expect(cleared).toBe(0);
+
+    press(dom, viewer, 0);
+
+    expect(cleared).toBe(1);
     viewer.destroy();
   });
 
@@ -497,6 +554,33 @@ describe("Viewer status", () => {
 
     expect(statuses.length).toBeGreaterThan(before);
     expect(statuses[statuses.length - 1]?.search.scoped).toBe(true);
+    viewer.destroy();
+  });
+
+  it("lets go of a search confined to a selection when the pages move", async () => {
+    // Mutation: `setPages` without `this.searchScope = null`. The scope is a
+    // snapshot of the selection in slots, the selection is cleared by the same
+    // call, and after a move every slot it names holds another page.
+    const viewer = build(dom, { onStatus: (s: ViewerStatus) => statuses.push(s) });
+    viewer.selectPage();
+    await settle();
+    await quiesce(viewer, dom);
+    expect(viewer.scopeSearchToSelection()).toBe(true);
+    dom.runFrames();
+    expect(statuses[statuses.length - 1]?.search.scoped).toBe(true);
+
+    // The control: a turn moves no page, so the scope is still about the
+    // pages it was taken on and stays.
+    const [first, middle, last] = viewer.pageOrder;
+    expect(viewer.setPages([{ ...first!, turns: 1 }, middle!, last!])).toBe(false);
+    expect(viewer.searchScoped).toBe(true);
+
+    expect(viewer.setPages([last!, first!, middle!])).toBe(true);
+    dom.runFrames();
+
+    expect(viewer.searchScoped).toBe(false);
+    expect(viewer.searchScopeRanges).toBeNull();
+    expect(statuses[statuses.length - 1]?.search.scoped).toBe(false);
     viewer.destroy();
   });
 

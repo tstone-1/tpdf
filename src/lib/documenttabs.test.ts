@@ -1,9 +1,12 @@
 import { describe, expect, it } from "vitest";
 import {
-  DocumentTabs, DocumentTasks, RESTORE_POINTS, freshState, keepState, oneEach, partnersOf, restore, restoredState,
-  restoredWith, twinsOf,
+  DocumentTabs, DocumentTasks, RESTORE_POINTS, freshState, keepScope, keepState, oneEach, partnersOf, restore,
+  restoredState, restoredWith, scopeToRestore, twinsOf,
   type DocumentTab, type FreshState, type Restore, type TabState,
 } from "./documenttabs";
+import { pageId } from "./pages";
+import app from "../App.svelte?raw";
+import { functionIn, missingFrom } from "./sourcetext";
 import { pickPartner } from "./panes";
 import { PLAIN_SEARCH } from "./search";
 import { handleWindowKey, registerAppCommands, type AppActions } from "./appcommands";
@@ -256,6 +259,49 @@ describe("tab commands", () => {
     handleWindowKey(key("w"), deps);
     expect(calls).toHaveLength(6);
     expect(matches("view.nextTab", { ...key("Tab"), ctrlKey: false, metaKey: true } as KeyboardEvent)).toBe(false);
+  });
+});
+
+describe("a search confined to a selection, kept by a tab", () => {
+  const pages = (...ids: number[]) => ids.map((id) => ({ id: pageId(id) }));
+  const ranges = [{ page: 1, from: 4, to: 9 }, { page: 2, from: 0, to: 3 }];
+
+  it("keeps nothing for a search of the whole document", () => {
+    expect(keepScope(null, pages(1, 2, 3))).toBeNull();
+    expect(scopeToRestore(null, pages(1, 2, 3))).toBeNull();
+  });
+
+  it("puts the scope back while the pages are the ones it was kept with", () => {
+    const kept = keepScope(ranges, pages(1, 2, 3));
+    expect(kept?.order).toEqual([1, 2, 3]);
+    // Other objects with the same ids: a turn or a crop makes a new page
+    // record and moves no page.
+    expect(scopeToRestore(kept, pages(1, 2, 3))).toBe(ranges);
+  });
+
+  it("drops the scope when a page went, came or moved while the tab was away", () => {
+    // The document's other view did it, and a tab without a viewer was not
+    // told: slot 1 and slot 2 hold other pages in each of these.
+    const kept = keepScope(ranges, pages(1, 2, 3));
+    // A move, which leaves the count as it was.
+    expect(scopeToRestore(kept, pages(3, 1, 2))).toBeNull();
+    // A deletion after the scope's pages, where every id left is in its slot.
+    expect(scopeToRestore(kept, pages(1, 2))).toBeNull();
+    // An insertion at the end, the mirror of it.
+    expect(scopeToRestore(kept, pages(1, 2, 3, 4))).toBeNull();
+    // One page replaced by another in the same slot.
+    expect(scopeToRestore(kept, pages(1, 5, 3))).toBeNull();
+  });
+
+  // Read as text, since nothing imports `App.svelte`: that the lines are
+  // there, and not that they run (`sourcetext.ts`).
+  it("is kept with the document's pages and put back through them, in the window", () => {
+    expect(missingFrom(functionIn(app, "function keepActiveTab("), [
+      "searchScope: keepScope(viewer.searchScopeRanges, edits.state.pages),",
+    ])).toEqual([]);
+    expect(missingFrom(functionIn(app, "const restoring: Restore = {"), [
+      "searchOptions: (value, kept) => viewer?.restoreSearch(kept.query, value, scopeToRestore(kept.searchScope, edits?.state.pages ?? [])),",
+    ])).toEqual([]);
   });
 });
 

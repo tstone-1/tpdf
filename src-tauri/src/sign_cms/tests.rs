@@ -559,12 +559,72 @@ fn the_report_marks_the_new_signature_and_leaves_out_unsigned_fields() {
     unsigned_field.field = "Empty".into();
     let mut found = first.clone();
     found.push(unsigned_field);
-    let report = report("/x.pdf".into(), "Signature1".into(), found);
+    let at = ours(&found, "Signature1", 0);
+    assert_eq!(at, Some(0));
+    let report = report("/x.pdf".into(), "Signature1".into(), found, at);
     assert_eq!(report.signatures.len(), 1);
     assert!(report.signatures[0].ours);
     assert_eq!(report.signatures[0].field, "Signature1");
-    let other = super::report("/x.pdf".into(), "Signature9".into(), first);
+    let at = ours(&first, "Signature9", 0);
+    let other = super::report("/x.pdf".into(), "Signature9".into(), first, at);
     assert!(!other.signatures[0].ours);
+}
+
+/// Which signature is the new one is decided by where its range ends. A name
+/// can be an older field's too, and until 2026-10-09 the name alone decided.
+#[test]
+fn the_new_signature_is_the_one_whose_range_ends_where_its_revision_does() {
+    use crate::docinfo::Signature;
+    use crate::integrity::{Integrity, Verdict, Why};
+    let field = |name: &str, appended, verdict, why| Signature {
+        field: name.into(),
+        signed: true,
+        appended_bytes: appended,
+        integrity: Some(Integrity {
+            verdict,
+            why,
+            ..Integrity::default()
+        }),
+        ..Signature::default()
+    };
+    let older = field("Signature1", 4_321, Verdict::Intact, None);
+    let new = field("Signature1", 0, Verdict::Intact, None);
+    let other = field("Signature2", 0, Verdict::Intact, None);
+
+    // An older signature of the same name, listed first: not ours.
+    let found = [older.clone(), new.clone()];
+    assert_eq!(ours(&found, "Signature1", 0), Some(1));
+    // And the report marks one signature as the new one, not both.
+    let marked: Vec<bool> = report(String::new(), "Signature1".into(), found.to_vec(), Some(1))
+        .signatures
+        .iter()
+        .map(|s| s.ours)
+        .collect();
+    assert_eq!(marked, [false, true]);
+    // The new one missing: the older one does not stand in for it.
+    assert_eq!(ours(std::slice::from_ref(&older), "Signature1", 0), None);
+    // After a long-term signing the new signature is followed by exactly what
+    // was appended to it, and the older one by more.
+    let extended = [
+        field("Signature1", 9_000, Verdict::Intact, None),
+        field("Signature1", 4_679, Verdict::Intact, None),
+    ];
+    assert_eq!(ours(&extended, "Signature1", 4_679), Some(1));
+    // The name still counts, and so does being signed.
+    assert_eq!(ours(std::slice::from_ref(&other), "Signature1", 0), None);
+    let mut empty = new.clone();
+    empty.signed = false;
+    assert_eq!(ours(&[empty], "Signature1", 0), None);
+    // A field whose range nobody could read is given no appended bytes
+    // either; where it shares the name, the intact one is ours, whichever is
+    // listed first --- and with no intact one, the first that fits.
+    let unread = field("Signature1", 0, Verdict::Unchecked, Some(Why::Range));
+    assert_eq!(
+        ours(&[unread.clone(), new.clone()], "Signature1", 0),
+        Some(1)
+    );
+    assert_eq!(ours(&[new, unread.clone()], "Signature1", 0), Some(0));
+    assert_eq!(ours(&[older, unread], "Signature1", 0), Some(1));
 }
 
 #[test]

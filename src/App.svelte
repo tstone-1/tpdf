@@ -11,8 +11,8 @@
   } from "./lib/diskwatch";
   import { getCurrentWindow } from "@tauri-apps/api/window";
   import {
-    DocumentTabs, DocumentTasks, freshState, keepState, oneEach, partnersOf, restore, restoredState,
-    restoredWith, twinsOf,
+    DocumentTabs, DocumentTasks, freshState, keepScope, keepState, oneEach, partnersOf, restore, restoredState,
+    restoredWith, scopeToRestore, twinsOf,
     type DocumentTab, type FreshState, type Restore,
   } from "./lib/documenttabs";
   import { TabLabelSize } from "./lib/tablabels";
@@ -186,6 +186,7 @@
   import { Stage, blankLive, scoped, type LiveDocument, type Slots } from "./lib/livedocument";
   import {
     dropAbandoned, openFailure, pageTable, placeOnSide, placeToResume, readerIsIn, repoint, sharedByTwin,
+    toldAfterFallback,
     type OpenFound,
   } from "./lib/documentopen";
   import { Panes, otherSide, type Side, type Slot } from "./lib/panes";
@@ -494,7 +495,7 @@
     keepState(tab, {
       edits, place: currentPlace(false), covered: new Map(covered), query,
       findShown, searchOptions: viewer.searchOptionsNow,
-      searchScope: viewer.searchScopeRanges, sidebarTab: sidebar?.tab ?? "outline",
+      searchScope: keepScope(viewer.searchScopeRanges, edits.state.pages), sidebarTab: sidebar?.tab ?? "outline",
       error, offers, notice, redactedCopyPath,
     });
     refreshTabs();
@@ -521,7 +522,10 @@
     },
     // A search is its words, how they are matched and where, restored by one
     // call so that a search confined to a selection is not widened on the way.
-    searchOptions: (value, kept) => viewer?.restoreSearch(kept.query, value, kept.searchScope),
+    // The scope only while the pages are the ones it was kept with: the
+    // document's other view may have deleted or moved one since.
+    searchOptions: (value, kept) => viewer?.restoreSearch(kept.query, value,
+      scopeToRestore(kept.searchScope, edits?.state.pages ?? [])),
     searchScope: restoredWith("searchOptions"),
     sidebarTab: (value) => sidebar?.selectTab(value),
   };
@@ -589,8 +593,12 @@
    * A document is torn down as itself, whichever side the reader is in. One is
    * mounted into blank variables: the document in them is parked first, and
    * `openDocument` then does what it does for the first document of a window.
+   *
+   * `failed` is what an open that could not finish said, when this is the
+   * window going back to the tabs it had. Each mount below puts back the
+   * message its tab kept, so the reason is said again at the end.
    */
-  async function showPanes(): Promise<void> {
+  async function showPanes(failed: string | null = null): Promise<void> {
     const plan = panes.plan();
     for (const { id } of plan.unmount) {
       asDocument(id, () => { commitPopups(); keepActiveTab(); unmountDocument(); });
@@ -640,7 +648,8 @@
     sidebar?.setVisible(sidebarShown);
     formLayer?.setBusy(documentBusy);
     textEditor?.setBusy(documentBusy);
-    if (refused) say(refused);
+    const told = toldAfterFallback(failed, refused);
+    if (told !== null) say(told);
     if (syncScroll) setSyncScroll(true);
     refreshTabs();
     refreshMenu();
@@ -4797,12 +4806,14 @@
       const existing = resume ? undefined : tabs.forPath(path);
       // A document already open is shown where it is, on its own side.
       if (existing) { await showTabNow(existing.view); viewer?.focus(); return; }
-      await openDocument(path, resuming, resume);
+      const failed = await openDocument(path, resuming, resume);
       // A second view of a document that was saved or reloaded went with the
-      // old handle. It is mounted again on the new one, where it was.
+      // old handle. It is mounted again on the new one, where it was. So is
+      // the tab of a reload that failed, on the handle it had, and the reader
+      // is then told why in the document that is shown.
       if (resume && panes.plan().mount.length) {
         opening = true;
-        try { await showPanes(); }
+        try { await showPanes(failed); }
         finally { opening = false; refreshMenu(); }
       }
     }));
@@ -5615,13 +5626,18 @@
    * document's variables after this function's waits, which is right under
    * `opening` and only there. What the open decides on the way is in
    * `documentopen.ts`.
+   *
+   * Answers what a failed open told the reader, and null for an open that
+   * worked or failed without a word. The message is in the variables too, and
+   * a caller that mounts another tab next replaces it there.
    */
   async function openDocument(
     path: string,
     resuming = false,
     override: Place | null = null,
     retained?: DocumentTab,
-  ) {
+  ): Promise<string | null> {
+    let failed: string | null = null;
     opening = true;
     /** Whether this body has already torn the outgoing document down: see {@link abandonOpen}. */
     let replaced = false;
@@ -5690,6 +5706,7 @@
       abandonOpen(acquired, replaced, twins);
       const said = openFailure(e, resuming);
       if (said !== null) error = said;
+      failed = said;
       // Whether or not it is reported: a row for a document that would not
       // open says so from here on, and keeps its control for removing it.
       startPage.failed(path, e);
@@ -5700,6 +5717,7 @@
       // leaves `viewer` null with the menu still saying otherwise.
       refreshMenu();
     }
+    return failed;
   }
 
   /**

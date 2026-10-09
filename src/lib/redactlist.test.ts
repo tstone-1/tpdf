@@ -1,7 +1,10 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
+import backend from "../../src-tauri/src/redact.rs?raw";
 import {
   RedactList,
+  UNMEASURED_TEXT,
+  UNMEASURED_TEXT_WARNING,
   fillRedactionRegions,
   nextUnreadRegion,
   noticeFor,
@@ -334,6 +337,32 @@ describe("what a row says a removal cannot take", () => {
     );
   });
 
+  it("says in plain words why text it cannot measure stays, and not the backend's name for it", () => {
+    // Mutation: `warningFor` without its own arm for the kind. The rule for
+    // the others printed "an unmeasured-text", which is no word a reader has.
+    const said = warningFor(plan([UNMEASURED_TEXT]));
+    expect(said).toBe(UNMEASURED_TEXT_WARNING);
+    expect(said).not.toContain("unmeasured");
+    // What it has to carry: that the text stays, and the reason.
+    expect(said).toContain("leaves in place");
+    expect(said).toContain("cannot measure");
+    expect(said).toContain("would move the text after it");
+    // Once, however many objects the content stream reports it as.
+    expect(warningFor(plan([UNMEASURED_TEXT, UNMEASURED_TEXT]))).toBe(UNMEASURED_TEXT_WARNING);
+  });
+
+  it("says it after the kinds a reader can name, each in its own sentence", () => {
+    expect(warningFor(plan([UNMEASURED_TEXT, "image", "path"]))).toBe(
+      `Also covers an image and a path, which a removal cannot take. ${UNMEASURED_TEXT_WARNING}`,
+    );
+  });
+
+  it("knows the kind by the backend's spelling of it", () => {
+    // The kind crosses the boundary as a string. Spelled differently there,
+    // the plain sentence is never said and the rule prints the new spelling.
+    expect(backend).toContain(`pub const UNMEASURED_TEXT: &str = "${UNMEASURED_TEXT}";`);
+  });
+
   it("names every kind, in an order that does not depend on the file", () => {
     // Sorted rather than left in the object order PDFium enumerated, so two
     // regions covering the same two kinds read the same way.
@@ -571,6 +600,11 @@ describe("RedactList", () => {
     // mutation that drew an empty warning element on every row survived a check
     // that read the text, because an empty line and no line are the same string.
     expect(list.rowText(8).warning).toBeNull();
+    // The line is cut where the row ends, so the whole of it is what hovering
+    // shows. Read off the element the panel built.
+    const [, , text] = [...(list.elementFor(7)?.children ?? [])] as HTMLElement[];
+    const line = ([...(text?.children ?? [])] as HTMLElement[]).find((part) => part.dataset?.part === "warning");
+    expect(line?.title).toBe("Also covers an image, which a removal cannot take");
   });
 
   it("says the count and the standing line above the rows", () => {

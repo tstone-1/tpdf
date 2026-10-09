@@ -97,6 +97,7 @@ hop through the index.
 - A recogniser's word boxes touch, and words written at them read back as one word
 - PDFium folds the horizontal scaling into a text object's matrix, so one em is the font size times that matrix's first row
 - A position measured from the engine already contains what moved the pen
+- A line in the reading order is not one row of text, and the one-line fix regressed real documents
 
 ## Text matching, and scripts that are not English
 - `FPDFText_GetUnicode` is a UTF-16 API, so an astral character is two characters
@@ -279,6 +280,8 @@ hop through the index.
 - A bookmark kept as a heading is the title of a deleted page
 - A diff of two parses by one library cannot see what that library ignores
 - A rule for what reaches a changed object counts the legitimate change as well
+- lopdf leaves a dictionary with a /Linearized key out of what it writes, with no error
+- A name is not an identity for the thing that was just written
 
 ## Tauri, the webview and startup
 - `AppHandle::exit` does not set the process's exit code
@@ -26278,3 +26281,49 @@ from its signed self in the keys of `SIGNING_WRITES` alone. Each key has its rea
 it, and `/Rect`, `/FT`, `/Parent` and the rest stay a change. When a reachability rule is
 tightened, list the legitimate writers of each kind of object it now reaches and build one
 fixture for each.
+
+### A line in the reading order is not one row of text, and the one-line fix regressed real documents
+
+`linesOf` (`reading.ts`, `reading.rs`) sorted a line's fragments by top edge and emitted
+them in that order, so `Date:        12 March` came out as `12 March Date:` when the right
+half stood a point higher. A read-only review proposed sorting each line's fragments along
+the line. That passed every unit test and both parity samples, and changed 95 of 1,772
+extracted documents, some for the worse (2026-10-09): the box of a "line" grows while it
+gathers, so in tight leading a whole paragraph is one fragment, and a sentence came out
+with its last words first.
+
+The rule that held is narrower. Two fragments are halves of one row only when they overlap
+by more than half of the taller one; those are ordered along the row, in the row's own
+direction by a majority of steps between neighbouring characters, and everything else
+keeps the old order. None of the tracked fixtures changed in either direction; the
+regression showed only in a diff over every PDF in the checkout. A proposed fix to
+ordering code is a claim to measure on real documents before and after, and the sample
+that holds two languages equal says nothing about whether both are right.
+
+### lopdf leaves a dictionary with a /Linearized key out of what it writes, with no error
+
+`lopdf` 0.45 does not write an object whose type reads `XRef`, `ObjStm` or `Linearized`
+(`writer.rs`), and `Dictionary::get_type` answers `Linearized` for any dictionary that has
+no `/Type` and a `/Linearized` key. An AcroForm dictionary, a field and a comment normally
+have no `/Type`. A document that puts that key on one of them made an appended revision
+leave the object out: a signature without its form entry, or a comment edit that changed
+nothing, and no error (2026-10-09). `save::written_whole` now refuses an update that would
+lose an object, before the incremental save in signing, in the validation data and in the
+ordinary append; a test pins the library's behaviour so a new version is noticed.
+
+The full rewrite has the same filter and is not covered: there a real linearization
+dictionary and real object streams are dropped rightly, so the check has to be "reachable
+and would be dropped". Measured: the annotation goes and the page's `/Annots` dangles.
+
+### A name is not an identity for the thing that was just written
+
+After signing, four places asked which signature was the new one and each answered by
+field name: the read-back, the check before long-term data is added, the report and the
+command-line summary. An older intact signature of the same name satisfied all four, and
+`field_name` compared raw `/T` bytes, so a `Signature1` stored as UTF-16 was not seen as
+taken and a second one was added (2026-10-09). The new signature is now the one whose byte
+range ends where the revision that was just written ends (`sign_cms::ours`).
+
+The same day `App.svelte` had the mirror of it: identity guards that compared a document
+handle, which two views of one document share. To find what was just made, use something
+only it can have: where it ends, the object that was allocated, the view it was made for.

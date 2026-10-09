@@ -5,8 +5,8 @@
  * viewer and the panels, and fills the component's variables. What it has to
  * *decide* on the way is here, where a test can call it: which page sizes the
  * viewer starts from, where the reader is put back, what a document shown
- * twice shares, which side the view goes on, and what a failed open says and
- * takes with it. The component keeps the order and the wiring.
+ * twice shares, which side the view goes on, and what a failed open says,
+ * takes with it and still says once another tab is shown. The component keeps the order and the wiring.
  *
  * Nothing here waits, and nothing here reads the component's variables.
  */
@@ -175,6 +175,24 @@ export function dropAbandoned<Id>(
 export function openFailure(why: unknown, resuming: boolean): string | null {
   if (resuming) return null;
   return isOpenRefusal(why) ? why.reason : String(why);
+}
+
+/**
+ * What the reader is told once the window has gone back to a tab it already
+ * had, or null to leave that tab's own message as it is.
+ *
+ * `failed` is what the open that could not finish said: a reload that failed
+ * after its document was torn down, whose tab is then mounted again on the
+ * handle it had. Mounting a tab puts back the message that tab kept, which is
+ * nothing or an older one, so the reason is said again afterwards and wins
+ * over it: the reader pressed Reload and is looking at the file as it was.
+ * `refused` is what a tab that would not mount again said. Both are told when
+ * there are both, the first failure first, since the second does not explain
+ * why the document is not as the reader asked.
+ */
+export function toldAfterFallback(failed: string | null, refused: string | null): string | null {
+  if (failed === null || refused === null) return failed ?? refused;
+  return failed === refused ? failed : `${failed}\n${refused}`;
 }
 
 /**

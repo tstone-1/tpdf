@@ -3409,6 +3409,25 @@ and the same call gates the Windows *install*, which ends the process just as su
    the cost of that is a release that fails to build, not one that ships unsigned, because
    the Windows leg reads every signature back.
 
+**The read-back after signing, corrected 2026-10-09.** Four statements, from an independent
+read-only review of the signing path and what was changed after it. `finish` reopens the
+written file by name after `write_signed` has renamed it into place and maps that handle
+into a fresh worker, so the verdict is about the file of that name at that moment and not
+about a handle carried over from the write. The new signature is the one whose range ends
+where the signed revision ends (`sign_cms::ours`); it used to be any signature of that
+field name, and a field name stored as UTF-16 was not recognised as taken. The read-back
+shares the document's one hashing budget (`MAX_HASHED`) and reaches the new signature
+last: when the budget runs out first, the signature is reported as written and not checked
+again (`ReadBack::Unchecked`, exit code 1), and the only check of it is the seal's, made
+over the bytes before they were written; long-term data is refused for such a document.
+And an update is refused when an object it rewrites would be left out by `lopdf`'s
+incremental writer (`save::written_whole`). **Not covered:** the full rewrite, whose writer
+has the same filter. A reachable dictionary with no `/Type` and a `/Linearized` key is
+dropped there without an error (measured 2026-10-09), so a hostile document can lose an
+annotation in a rewrite and leave the page's `/Annots` pointing at nothing. **Also not
+covered:** a signature field's `/Lock` and `/SV` are not read; signing such a field sets
+the signature and locks nothing.
+
 ### T10 — Asking a timestamp authority, added 2026-09-28
 
 **What changed.** A signing can carry an RFC 3161 timestamp (PAdES B-T): after the OS has made

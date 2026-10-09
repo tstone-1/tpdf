@@ -293,6 +293,112 @@ fn the_widget_is_an_invisible_locked_signature_field_on_the_first_page() {
     assert_eq!(sig_flags(&after), 3);
 }
 
+// ------------------------------------- the name, as every reader reads it
+
+/// [`shaped`]'s document with its text field's `/T` written as `name`.
+fn named_as(name: Vec<u8>) -> Vec<u8> {
+    let mut doc = Document::load_mem(&shaped(
+        Held::Inline,
+        Some((Held::Object, Held::Inline)),
+        None,
+    ))
+    .expect("loads");
+    let field = doc
+        .objects
+        .iter()
+        .find_map(|(id, object)| {
+            let dict = object.as_dict().ok()?;
+            (dict.get(b"FT").ok()?.as_name().ok()? == b"Tx").then_some(*id)
+        })
+        .expect("the text field");
+    doc.get_dictionary_mut(field)
+        .expect("a dictionary")
+        .set("T", Object::String(name, lopdf::StringFormat::Hexadecimal));
+    let mut bytes = Vec::new();
+    doc.save_to(&mut bytes).expect("saved");
+    bytes
+}
+
+/// A `/T` is a text string. `<FEFF0053...>` is `Signature1` to every reader,
+/// this one's own included, and until 2026-10-09 it was not to the search for
+/// a free name, which compared bytes: the document got a second `Signature1`.
+#[test]
+fn a_name_taken_in_another_encoding_is_taken() {
+    let utf8 = [&[0xEF, 0xBB, 0xBF][..], b"Signature1"].concat();
+    for (what, name) in [("UTF-16BE", utf16("Signature1")), ("UTF-8", utf8)] {
+        // The control: the bytes are not the name, and the decoded string is.
+        assert_ne!(name, b"Signature1", "{what}");
+        assert_eq!(
+            crate::annots::decode_text_string(&name),
+            "Signature1",
+            "{what}"
+        );
+        let original = named_as(name);
+        let unsigned = prepare(original.clone(), NOW, None).expect("prepared");
+        assert_eq!(unsigned.field, "Signature2", "{what}");
+        // And the file a reader opens holds each name once.
+        let after = reread(&original, &unsigned);
+        let mut names: Vec<String> = fields_of(&after)
+            .iter()
+            .map(|id| {
+                let dict = after.get_dictionary(*id).expect("a field");
+                crate::annots::decode_text_string(
+                    dict.get(b"T").expect("named").as_str().expect("a string"),
+                )
+            })
+            .collect();
+        names.sort();
+        assert_eq!(names, ["Signature1", "Signature2"], "{what}");
+    }
+}
+
+// ---------------------------- an object the writer would leave out
+
+/// [`shaped`]'s document, its form an object of its own that carries a key
+/// called `key`.
+fn form_with_key(key: &str) -> Vec<u8> {
+    let mut doc = Document::load_mem(&shaped(
+        Held::Inline,
+        Some((Held::Object, Held::Inline)),
+        Some(0),
+    ))
+    .expect("loads");
+    let form = doc
+        .catalog()
+        .expect("catalog")
+        .get(b"AcroForm")
+        .and_then(Object::as_reference)
+        .expect("a form of its own");
+    doc.get_dictionary_mut(form)
+        .expect("a dictionary")
+        .set(key, Object::Integer(1));
+    let mut bytes = Vec::new();
+    doc.save_to(&mut bytes).expect("saved");
+    bytes
+}
+
+/// `lopdf`'s incremental writer leaves out an object whose dictionary has a
+/// `/Linearized` key and no `/Type`, with no error, and a form dictionary has
+/// no `/Type`. Signing such a document wrote a revision without the form: no
+/// `/SigFlags`, and the new field in no `/Fields`. It is refused instead.
+#[test]
+fn a_form_the_writer_would_leave_out_is_a_refusal_and_not_a_revision_without_it() {
+    let marked = crate::save::marked_left_out(form_with_key("Xinearized"));
+    let why = prepare(marked, NOW, None).expect_err("refused");
+    assert!(
+        why.contains("marked as part of the file's own structure (/Linearized)")
+            && why.contains("tpdf does not write one"),
+        "{why}"
+    );
+    // The control: the same document with the key under any other name signs,
+    // and its form gains the flags and the field.
+    let original = form_with_key("Xinearized");
+    let unsigned = prepare(original.clone(), NOW, None).expect("prepared");
+    let after = reread(&original, &unsigned);
+    assert_eq!(sig_flags(&after), 3);
+    assert_eq!(fields_of(&after).len(), 2);
+}
+
 // ------------------------------------------ each shape the lists come in
 
 #[test]

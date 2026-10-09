@@ -217,7 +217,13 @@ pub fn sample() -> serde_json::Value {
         serde_json::from_str(&value.text()).expect("parses")
     };
     let mut runs = Vec::new();
-    for case in crate::reading::tests::cases() {
+    // Reading's `split-line` pages are left out: they ask in which order the
+    // halves of one line are read, and a region is found by index, so they
+    // would be three more pages of the kind already here.
+    let pages = crate::reading::tests::cases()
+        .into_iter()
+        .filter(|case| !case.name.starts_with("split-line"));
+    for case in pages {
         let mut text = case.text;
         text.extract_ms = 0.0;
         let len = u32::try_from(text.codes.len()).expect("a short page");

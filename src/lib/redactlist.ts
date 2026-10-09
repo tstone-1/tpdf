@@ -318,7 +318,14 @@ export interface RedactListOptions {
 export function warningFor(plan: RegionPlan | undefined): string {
   if (!plan || plan.unhandled.length === 0) return "";
   const kinds = new Map<string, number>();
+  let unmeasured = false;
   for (const object of plan.unhandled) {
+    // Not a thing with a name a reader knows, so it gets its own sentence
+    // below and stays out of the list of kinds.
+    if (object.kind === UNMEASURED_TEXT) {
+      unmeasured = true;
+      continue;
+    }
     // The count is part of what the row says, so two pictures repeated
     // different numbers of times are two rows rather than one wrong one.
     const said = object.drawn
@@ -342,8 +349,33 @@ export function warningFor(plan: RegionPlan | undefined): string {
         : `${many} ${kind.replace(/^(\S+)/, "$1s")}`,
     )
     .join(" and ");
-  return `Also covers ${said}, which a removal cannot take`;
+  return [
+    ...(kinds.size > 0 ? [`Also covers ${said}, which a removal cannot take`] : []),
+    ...(unmeasured ? [UNMEASURED_TEXT_WARNING] : []),
+  ].join(". ");
 }
+
+/**
+ * The kind `redact.rs` reports text under when it would be taken whole and
+ * could not be measured (`UNMEASURED_TEXT` there; `redactlist.test.ts` holds
+ * the two spellings equal).
+ */
+export const UNMEASURED_TEXT = "unmeasured-text";
+
+/**
+ * What a row says of a region that covers such text.
+ *
+ * A sentence of its own, where every other kind is named by the rule in
+ * {@link warningFor}: that rule printed "an unmeasured-text", which is the
+ * backend's word and tells a reader nothing. What they need is that the text
+ * stays and why: the text after it on its line begins where its pen stops, so
+ * taking it out without knowing how far the pen moved would move that text.
+ * Said once however many such objects there are, since the count is of
+ * content-stream objects and not of anything on the page a reader can count.
+ */
+export const UNMEASURED_TEXT_WARNING =
+  "Also covers text a removal leaves in place: it is written in a way tpdf cannot measure, " +
+  "such as vertically or right to left, and taking it out would move the text after it on its line";
 
 /**
  * What a region takes besides text, or `""` when it takes nothing else.
@@ -655,6 +687,9 @@ export class RedactList {
       const said = document.createElement("div");
       said.dataset.part = "warning";
       said.textContent = warning;
+      // The row is one line and cuts what does not fit, and a sentence that
+      // gives a reason is longer than a row is wide.
+      said.title = warning;
       said.style.cssText =
         "opacity:0.6;font-size:0.85em;overflow:hidden;text-overflow:ellipsis;" +
         "white-space:nowrap;";

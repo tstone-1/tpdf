@@ -32,7 +32,7 @@ import { redrawn, type FieldEdited } from "./savedfields";
  */
 
 import { AccessibleText } from "./a11y";
-import { inTextField, isMac, matches, nativeCopy } from "./keys";
+import { forgetPageSurface, inTextField, isMac, matches, namePageSurface, nativeCopy } from "./keys";
 import { drawSignature, fitSignature, rotateSignature, signatureCanvas, validSignature, type SignatureImage } from "./signature";
 import { CommentPopup } from "./commentpopup";
 import {
@@ -1556,6 +1556,9 @@ export class Viewer {
     // would keep firing after the viewer is gone.
     root.tabIndex = 0;
     root.style.outline = "none";
+    // The copy chord pressed here is for the page while the page has a
+    // selection, whatever interface text is still selected elsewhere.
+    namePageSurface(root, () => this.hasSelection);
 
     // A document nobody has edited, which is what every document is at the
     // instant it opens. Replaced by the model's own answer as soon as
@@ -2082,6 +2085,7 @@ export class Viewer {
     this.a11y.destroy();
     this.searcher.cancel();
     this.observer.disconnect();
+    forgetPageSurface(this.root);
     this.root.removeEventListener("wheel", this.onWheel);
     this.root.removeEventListener("keydown", this.onKeyDown);
     this.root.removeEventListener("pointerdown", this.onSelectStart);
@@ -2889,6 +2893,11 @@ export class Viewer {
     this.clearLinkFocus();
     this.closeComment();
     this.turnedLinks = null;
+    // A search confined to a selection is confined to slots too, and the
+    // selection it was a snapshot of has just gone. Dropped rather than
+    // followed: `Search.setPages` has the reason, and the two copies go
+    // together so that the button and the next scan cannot disagree.
+    this.searchScope = null;
 
     // Two things a reader has made and not yet handed over are kept under a
     // slot as well, and they are followed rather than dropped: the strokes are
@@ -5775,6 +5784,11 @@ export class Viewer {
     // The scrollbar is inside the root and has its own drag.
     if (this.track.contains(event.target as Node)) return;
     this.root.focus();
+    // A press on the page ends a selection of interface text, as a press
+    // anywhere else in a web view would. Done by hand because every path below
+    // prevents the press's default, which is what would have collapsed it, and
+    // a range left standing is what the copy chord reads first (`nativeCopy`).
+    this.root.ownerDocument?.getSelection()?.removeAllRanges();
 
     // **Before every hit test below**, and that ordering is the mode. A press
     // with a tool armed means "start here" whatever is under it --- a reader

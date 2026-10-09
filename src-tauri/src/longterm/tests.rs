@@ -16,6 +16,25 @@ use crate::integrity::test_tsa::{
 };
 use crate::sign_cms::testkeys::{plain_pdf, Soft};
 
+/// [`super::check`] of the signature in `field`. Every test here builds one
+/// signing, so the name finds it; which signature of several is the new one
+/// is `sign_cms::ours`'s to answer, and has its own tests.
+fn check(found: &[crate::docinfo::Signature], field: &str) -> Result<(), Refusal> {
+    super::check(found.iter().find(|s| s.signed && s.field == field))
+}
+
+/// The verdict of the signature in `field`, to change.
+fn verdict_of<'a>(
+    found: &'a mut [crate::docinfo::Signature],
+    field: &str,
+) -> &'a mut crate::integrity::Integrity {
+    found
+        .iter_mut()
+        .find(|s| s.field == field)
+        .and_then(|s| s.integrity.as_mut())
+        .expect("a verdict")
+}
+
 fn now() -> u64 {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -422,7 +441,8 @@ fn the_archive_timestamp_covers_the_signature_and_its_validation_data() {
     assert!(stamped.contains("\n    Timestamped: "), "{stamped}");
     // And the report after signing names it as the archive, not as an
     // earlier signature.
-    let report = crate::sign_cms::report(String::new(), signed.field.clone(), found.clone());
+    let ours = found.iter().position(|s| s.field == signed.field);
+    let report = crate::sign_cms::report(String::new(), signed.field.clone(), found.clone(), ours);
     let flags: Vec<(bool, bool)> = report
         .signatures
         .iter()
@@ -881,6 +901,32 @@ fn the_check_before_writing_wants_good_for_both_and_names_a_revocation() {
     );
     // Another field is not ours.
     assert!(check(&found(Says::Good, Says::Good), "Signature9").is_err());
+
+    // A new signature the scan had no hashing budget left for --- the budget
+    // is one for the document and the new signature is reached last --- is a
+    // bound and not tpdf's own check failing: the tool exits 3 for it, the
+    // window offers the signature without the data, and the sentence says
+    // what was not done. Until 2026-10-09 it read "does not read as intact".
+    let mut starved = found(Says::Good, Says::Good);
+    let verdict = verdict_of(&mut starved, &signed.field);
+    verdict.verdict = crate::integrity::Verdict::Unchecked;
+    verdict.why = Some(crate::integrity::Why::Budget);
+    let why = check(&starved, &signed.field).expect_err("not checked");
+    assert!(matches!(why, Refusal::Bound(_)), "{why:?}");
+    assert!(!why.tpdf_failed() && !why.revoked());
+    assert_eq!(
+        why.sentence(),
+        "the long-term validation data cannot be checked before it is written: the \
+         document's signatures together cover more data than tpdf checks at once, so the \
+         new signature was not checked again with the data added"
+    );
+    // Only that reason: unchecked for any other is the failure it was.
+    verdict_of(&mut starved, &signed.field).why = Some(crate::integrity::Why::Range);
+    let why = check(&starved, &signed.field).expect_err("not intact");
+    assert!(
+        matches!(&why, Refusal::Written(_)) && why.tpdf_failed(),
+        "{why:?}"
+    );
     // A certificate above either, read back revoked or not good: the chain
     // the reader judges is refused as the leaf would be.
     for authority in [false, true] {
@@ -1649,7 +1695,9 @@ fn a_worker_that_dies_while_extending_is_tpdfs_failure() {
 #[test]
 fn the_command_lines_read_back_asks_what_the_check_before_writing_asks() {
     let read_back_holds = |found: &[crate::docinfo::Signature], field: &str, stamped, data| {
-        crate::commands::sign::read_back(found, field, stamped, data).holds()
+        let ours = found.iter().find(|s| s.signed && s.field == field);
+        crate::commands::sign::read_back(ours, stamped, data)
+            == crate::commands::sign::ReadBack::Holds
     };
     let pki = Pki::start(good());
     let signed = sealed(&pki);

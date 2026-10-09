@@ -2178,6 +2178,7 @@ pub fn append_update(
         seen: 0,
         tail: Vec::with_capacity(4096),
     };
+    written_whole(&incremental)?;
     incremental
         .save_to(&mut sink)
         .map_err(|e| format!("could not build the update section: {e}"))?;
@@ -2187,6 +2188,63 @@ pub fn append_update(
         pages: pages.len(),
         built_against,
     })
+}
+
+/// Refuses an update `lopdf` would write less of than it holds.
+///
+/// `lopdf` 0.45's incremental writer leaves out, **with no error**, every
+/// object whose dictionary answers `ObjStm`, `XRef` or `Linearized` to
+/// `Object::type_name` (`writer.rs`, the loop over `new_document.objects`).
+/// It means the previous revision's own containers, which an update must not
+/// repeat. But `Dictionary::get_type` answers `Linearized` for any dictionary
+/// with no `/Type` that merely *has a key of that name*, and the objects an
+/// update rewrites are a document's to shape: a form dictionary, a field and
+/// an annotation need no `/Type`. A document that puts `/Linearized 1` on one
+/// gets an update with that object missing --- a signing without `/SigFlags`,
+/// without the new field in `/Fields`, or without the field's `/V`; a comment
+/// edit that saves and changes nothing --- and nothing says so.
+///
+/// So every object about to be written is asked the writer's own question
+/// first. Read in `lopdf` 0.45.0's source, 2026-10-09; when the pin moves,
+/// read that loop again.
+///
+/// # Errors
+///
+/// An object the writer would leave out, named by its number.
+pub(crate) fn written_whole(incremental: &IncrementalDocument) -> Result<(), String> {
+    const LEFT_OUT: [&[u8]; 3] = [b"ObjStm", b"XRef", b"Linearized"];
+    for (id, object) in &incremental.new_document.objects {
+        let Ok(kind) = object.type_name() else {
+            continue;
+        };
+        if LEFT_OUT.contains(&kind) {
+            return Err(format!(
+                "this change has to rewrite object {} of the document, and that object is \
+                 marked as part of the file's own structure (/{}): the update would be \
+                 written without it and look complete, so tpdf does not write one",
+                id.0,
+                String::from_utf8_lossy(kind)
+            ));
+        }
+    }
+    Ok(())
+}
+
+/// A test document with its one `/Xinearized 1` spelt `/Linearized 1`: the
+/// key [`written_whole`] is about.
+///
+/// Written under the other name and renamed in the bytes, because the key is
+/// one `lopdf` treats specially and a fixture should not depend on which of
+/// its readers and writers do. The same length, so every offset still holds.
+#[cfg(test)]
+pub(crate) fn marked_left_out(mut bytes: Vec<u8>) -> Vec<u8> {
+    let (from, to) = (b"/Xinearized 1", b"/Linearized 1");
+    let at: Vec<usize> = (0..bytes.len().saturating_sub(from.len()))
+        .filter(|at| bytes[*at..].starts_with(from))
+        .collect();
+    assert_eq!(at.len(), 1, "the placeholder, once");
+    bytes[at[0]..at[0] + to.len()].copy_from_slice(to);
+    bytes
 }
 
 /// A sink that discards the first `skip` bytes and keeps the rest.

@@ -10,6 +10,7 @@ import { describe, expect, it } from "vitest";
 import app from "../App.svelte?raw";
 import {
   dropAbandoned, dropView, openFailure, pageTable, placeOnSide, placeToResume, readerIsIn, repoint, sharedByTwin,
+  toldAfterFallback,
 } from "./documentopen";
 import { DocumentTabs } from "./documenttabs";
 import { Panes } from "./panes";
@@ -199,6 +200,42 @@ describe("what a failed open says", () => {
   it("is nothing for a document the launch tried to put back", () => {
     expect(openFailure({ reason: "No such file.", locked: false }, true)).toBeNull();
     expect(openFailure(new Error("gone"), true)).toBeNull();
+  });
+});
+
+describe("what the reader is told once the window has gone back to another tab", () => {
+  it("is why the open failed, which the tab's own message would otherwise replace", () => {
+    expect(toldAfterFallback("Error: no frame for this open", null)).toBe("Error: no frame for this open");
+  });
+
+  it("is why a tab would not mount again, when that is all there is", () => {
+    expect(toldAfterFallback(null, "The file is not a PDF.")).toBe("The file is not a PDF.");
+  });
+
+  it("is nothing when nothing failed, so the tab's own message stays", () => {
+    expect(toldAfterFallback(null, null)).toBeNull();
+  });
+
+  it("is both when there are both, the open's first and neither twice", () => {
+    expect(toldAfterFallback("The reload failed.", "The file is not a PDF."))
+      .toBe("The reload failed.\nThe file is not a PDF.");
+    expect(toldAfterFallback("No such file.", "No such file.")).toBe("No such file.");
+  });
+
+  it("is said by the function that mounts the tabs again, with what the open answered", () => {
+    expect(missingFrom(functionIn(app, "async function openDocument("), [
+      "let failed: string | null = null;",
+      "failed = said;",
+      "return failed;",
+    ])).toEqual([]);
+    expect(missingFrom(functionIn(app, "function openPath("), [
+      "const failed = await openDocument(path, resuming, resume);",
+      "try { await showPanes(failed); }",
+    ])).toEqual([]);
+    expect(missingFrom(functionIn(app, "async function showPanes("), [
+      "const told = toldAfterFallback(failed, refused);",
+      "if (told !== null) say(told);",
+    ])).toEqual([]);
   });
 });
 

@@ -5,6 +5,7 @@ import type { Tab } from "./sidebar";
 import { PLAIN_SEARCH, type SearchOptions, type ScopeRange } from "./search";
 import { labelsFor } from "./recents";
 import type { Offer } from "./recovery";
+import type { PageId } from "./pages";
 import type { ViewId } from "./views";
 
 /** State kept while a document has no mounted viewer. Backend handles stay open. */
@@ -22,12 +23,52 @@ export interface DocumentTab {
   query: string;
   findShown: boolean;
   searchOptions: SearchOptions;
-  searchScope: readonly ScopeRange[] | null;
+  searchScope: KeptScope | null;
   sidebarTab: Tab;
   error: string | null;
   offers: Offer[];
   notice: string | null;
   redactedCopyPath: string | null;
+}
+
+/**
+ * A search confined to a selection, as a tab keeps it: the ranges, and the
+ * pages the document had, in order, when they were taken.
+ *
+ * A `ScopeRange` names a page by its slot, and a tab that is not mounted has
+ * no viewer to be told that the slots moved: the document's other view deletes
+ * a page, and the ranges this tab kept are then about other pages. So the
+ * order is kept beside them and {@link scopeToRestore} compares it.
+ */
+export interface KeptScope {
+  ranges: readonly ScopeRange[];
+  order: readonly PageId[];
+}
+
+/** What a tab keeps of a search's scope, or null for a search of the whole document. */
+export function keepScope(
+  ranges: readonly ScopeRange[] | null,
+  pages: readonly { id: PageId }[],
+): KeptScope | null {
+  return ranges ? { ranges, order: pages.map((page) => page.id) } : null;
+}
+
+/**
+ * The ranges a tab being returned to confines its search to, or null.
+ *
+ * Null as well when the document's pages are no longer the ones the scope was
+ * kept with, in that order. The same rule a mounted viewer follows
+ * (`Viewer.setPages`): any change of order drops the scope, and it is not
+ * followed to where its pages went, because the selection it was taken from
+ * is not one the reader made on the pages as they are now.
+ */
+export function scopeToRestore(
+  kept: KeptScope | null,
+  pages: readonly { id: PageId }[],
+): readonly ScopeRange[] | null {
+  if (!kept) return null;
+  if (kept.order.length !== pages.length) return null;
+  return kept.order.every((id, slot) => pages[slot]?.id === id) ? kept.ranges : null;
 }
 
 /**

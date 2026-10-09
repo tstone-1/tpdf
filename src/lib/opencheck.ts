@@ -39,6 +39,7 @@ import { screenshotCheck } from "./screenshotcheck";
 
 import { pause, Report, settle } from "./checkreport";
 import { basename } from "./paths";
+import { isMac } from "./keys";
 import { SIDEBAR_CLASS } from "./sidebar";
 import type { Viewer, ViewerStatus } from "./viewer";
 import type { Edits, EditState } from "./edits";
@@ -1727,6 +1728,58 @@ async function run(host: OpenCheckHost, phase: string, expected: string): Promis
       check("and the row holds the tabs that are left and no other",
         host.tabs().map((tab) => tab.id).join() === [b.id, keptView].join() &&
         rows("left").join() === [b.id].join() && rows("right").join() === [keptView].join());
+      // Mounting the tab again puts back the message that tab kept, which was
+      // none, over the reason the reload left in the variables it failed in.
+      const shownProblem = () =>
+        document.querySelector('[data-testid="problem"]')?.textContent ?? "";
+      check("and the reader is told why, in the document that is shown",
+        shownProblem().includes("no frame for this open"));
+
+      report.emit("[views] the copy chord with a message selected and the keyboard on the page");
+      // The one moment this phase has a message and a document on screen at
+      // once. The web view's selection is the document's wherever the keyboard
+      // is, so the chord on the page has to say which of the two it is for.
+      const message = document.querySelector<HTMLElement>('[data-testid="problem"] .error');
+      const page = document.querySelector<HTMLElement>(".pane.focused .surface");
+      if (!message || !page) throw new Error("no message and page to copy from");
+      const selectMessage = () => {
+        document.getSelection()?.selectAllChildren(message);
+        if (document.getSelection()?.type !== "Range") throw new Error("the message could not be selected");
+      };
+      const copyChord = () => page.dispatchEvent(new KeyboardEvent("keydown", {
+        key: "c", code: "KeyC", metaKey: isMac(), ctrlKey: !isMac(), bubbles: true, cancelable: true,
+      }));
+      const copied: string[] = [];
+      const clipboardWrite = navigator.clipboard.writeText;
+      try {
+        navigator.clipboard.writeText = async (value) => { copied.push(value); };
+        host.viewer()!.clearSelection();
+        page.focus();
+        selectMessage();
+        copyChord();
+        await settle(() => copied.length === 1, SETTLE_MS);
+        report.check("a selected message is copied with the keyboard on a page that has nothing selected",
+          copied.length === 1 && (copied[0] ?? "").includes("no frame for this open"), JSON.stringify(copied));
+
+        host.viewer()!.selectPage();
+        if (!await settle(() => host.viewer()!.selectedText.trim() !== "", SETTLE_MS))
+          throw new Error("the page was not selected");
+        const words = host.viewer()!.selectedText;
+        // Still selected: nothing about selecting the page touches the web
+        // view's selection, which is the state under test.
+        const stale = document.getSelection()?.type === "Range";
+        copyChord();
+        await settle(() => copied.length === 2, SETTLE_MS);
+        report.check("a page's selection is copied over a message left selected",
+          stale && copied.length === 2 && copied[1] === words && !(copied[1] ?? "").includes("no frame for this open"),
+          `message still selected ${stale}, ${copied.length} copies, the last ${JSON.stringify((copied[1] ?? "").slice(0, 60))}`);
+      } finally { navigator.clipboard.writeText = clipboardWrite; }
+      selectMessage();
+      pressIn("right");
+      await host.idle();
+      report.check("a press on the page ends a selection of interface text",
+        document.getSelection()?.type !== "Range", `the selection is a ${document.getSelection()?.type ?? "nothing"}`);
+
       host.viewer()!.goToPage(1);
       await settled("the jump after the failed reload", () => host.status()?.page === 2);
       check("and the window still moves the document it kept", host.status()?.page === 2);

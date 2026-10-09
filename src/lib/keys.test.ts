@@ -4,8 +4,11 @@ import {
   accelerator,
   BINDINGS,
   copyInterfaceText,
+  forgetPageSurface,
   inTextField,
   label,
+  namePageSurface,
+  nativeCopy,
   setMacSpelling,
   setPrintedKeys,
   matches,
@@ -565,5 +568,99 @@ describe("copyInterfaceText", () => {
   it("does not let a clipboard that refuses become an unhandled rejection", () => {
     const { event: chord } = pressed("Range", "words");
     expect(copyInterfaceText(chord, () => Promise.reject(new Error("denied")))).toBe(true);
+  });
+});
+
+describe("the copy chord pressed on a page", () => {
+  /**
+   * A page surface with one node inside it, an error message outside it, and
+   * the copy chord pressed with the keyboard on the surface while the web
+   * view's selection runs from `from` to `to`.
+   */
+  function page() {
+    const inside = { name: "a node of the page" };
+    const message = { name: "the words of an error message" };
+    const surface = {
+      contains: (node: unknown) => node === surface || node === inside,
+      ownerDocument: { getSelection: (): unknown => null },
+    };
+    const chord = (from: unknown, to: unknown, across = false) => {
+      const selection = {
+        type: "Range",
+        anchorNode: from,
+        focusNode: to,
+        containsNode: (node: unknown, partly: boolean) => across && partly && node === surface,
+        toString: () => "Cannot edit this text",
+      };
+      surface.ownerDocument.getSelection = () => selection;
+      const prevented: string[] = [];
+      return {
+        prevented,
+        event: {
+          ...event("c", { accel: true }),
+          target: surface,
+          preventDefault: () => prevented.push("default"),
+        } as unknown as KeyboardEvent,
+      };
+    };
+    return { inside, message, surface, chord };
+  }
+
+  it("is the page's when the page has a selection and the selected interface text is elsewhere", () => {
+    // Mutation: `nativeCopy` answering on the selection's type alone. Words of
+    // an error message selected earlier are still a `Range` after the reader
+    // selected a paragraph of the page, and the copy then pasted the message.
+    const { message, surface, chord } = page();
+    namePageSurface(surface, () => true);
+    const written: string[] = [];
+    const { event: pressed, prevented } = chord(message, message);
+    expect(nativeCopy(pressed)).toBe(false);
+    expect(copyInterfaceText(pressed, async (text) => void written.push(text))).toBe(false);
+    expect(written).toEqual([]);
+    // Not taken, so the viewer's own handler copies the page's selection.
+    expect(prevented).toEqual([]);
+    forgetPageSurface(surface);
+  });
+
+  it("is still the interface text's when the page has nothing selected", () => {
+    // The other direction, and the one reported from use: an error message
+    // selected and copied with the keyboard still on the page.
+    const { message, surface, chord } = page();
+    let selected = false;
+    namePageSurface(surface, () => selected);
+    const written: string[] = [];
+    const { event: pressed, prevented } = chord(message, message);
+    expect(copyInterfaceText(pressed, async (text) => void written.push(text))).toBe(true);
+    expect(written).toEqual(["Cannot edit this text"]);
+    expect(prevented).toEqual(["default"]);
+    // The answer is asked for at each press and not kept from the naming.
+    selected = true;
+    expect(nativeCopy(pressed)).toBe(false);
+    forgetPageSurface(surface);
+  });
+
+  it("is the web view's when its selection reaches into the page", () => {
+    // One end at a time, and a range that runs across the page with both ends
+    // outside it: a test of the first end alone passes two of the three.
+    const { inside, message, surface, chord } = page();
+    namePageSurface(surface, () => true);
+    expect(nativeCopy(chord(inside, message).event)).toBe(true);
+    expect(nativeCopy(chord(message, inside).event)).toBe(true);
+    expect(nativeCopy(chord(message, message, true).event)).toBe(true);
+    // The control for the last: the same ends, not across.
+    expect(nativeCopy(chord(message, message).event)).toBe(false);
+    forgetPageSurface(surface);
+  });
+
+  it("is about an element a viewer named, and only while it is named", () => {
+    const { message, surface, chord } = page();
+    const { event: pressed } = chord(message, message);
+    // A dialog's button with a line of the dialog selected beside it is this
+    // shape too: the keyboard on one element, the selection outside it.
+    expect(nativeCopy(pressed)).toBe(true);
+    namePageSurface(surface, () => true);
+    expect(nativeCopy(pressed)).toBe(false);
+    forgetPageSurface(surface);
+    expect(nativeCopy(pressed)).toBe(true);
   });
 });

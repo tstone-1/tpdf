@@ -626,7 +626,7 @@ pub fn read(text: &PageText) -> Reading {
     if let Some(tagged) = usable_runs(&view) {
         let lines = ownership(&view, tagged)
             .into_iter()
-            .flat_map(|owned| lines_of(within(&view, &fragments, &owned), axes))
+            .flat_map(|owned| lines_of(&view, within(&view, &fragments, &owned), axes))
             .collect();
         return Reading {
             route: Route::Tagged,
@@ -636,16 +636,17 @@ pub fn read(text: &PageText) -> Reading {
     let lines = if view.char_turns.is_empty() {
         blocks_of(fragments, axes, gap, 0)
             .into_iter()
-            .flat_map(|block| lines_of(block, axes))
+            .flat_map(|block| lines_of(&view, block, axes))
             .collect()
     } else {
         direction_groups(&fragments, axes)
             .into_iter()
             .flat_map(|(turns, group)| {
                 let own = axes_for(turns);
+                let view = &view;
                 blocks_of(group, own, gap, 0)
                     .into_iter()
-                    .flat_map(move |block| lines_of(block, own))
+                    .flat_map(move |block| lines_of(view, block, own))
             })
             .collect()
     };
@@ -688,11 +689,11 @@ fn direction_groups(block: &[Fragment], axes: Axes) -> Vec<(u32, Vec<Fragment>)>
 }
 
 /// `linesOf`.
-fn lines_of(block: Vec<Fragment>, axes: Axes) -> Vec<Vec<Range>> {
+fn lines_of(view: &View, block: Vec<Fragment>, axes: Axes) -> Vec<Vec<Range>> {
     if block.iter().any(|f| f.turns.is_some()) {
         return direction_groups(&block, axes)
             .into_iter()
-            .flat_map(|(turns, group)| lines_of(group, axes_for(turns)))
+            .flat_map(|(turns, group)| lines_of(view, group, axes_for(turns)))
             .collect();
     }
     let mut ordered = block;
@@ -700,18 +701,96 @@ fn lines_of(block: Vec<Fragment>, axes: Axes) -> Vec<Vec<Range>> {
         let (ea, eb) = (extents_of(a.bounds, axes), extents_of(b.bounds, axes));
         by(ea.cross_start, eb.cross_start).then(by(ea.along_start, eb.along_start))
     });
-    let mut lines: Vec<(Vec<Range>, Quad)> = Vec::new();
+    let mut lines: Vec<(Vec<Fragment>, Quad)> = Vec::new();
     for fragment in ordered {
-        if let Some((ranges, bounds)) = lines.last_mut() {
+        if let Some((fragments, bounds)) = lines.last_mut() {
             if same_band(extents_of(*bounds, axes), extents_of(fragment.bounds, axes)) {
-                ranges.extend_from_slice(&fragment.ranges);
                 absorb(bounds, fragment.bounds);
+                fragments.push(fragment);
                 continue;
             }
         }
-        lines.push((fragment.ranges, fragment.bounds));
+        let bounds = fragment.bounds;
+        lines.push((vec![fragment], bounds));
     }
-    lines.into_iter().map(|(ranges, _)| ranges).collect()
+    lines
+        .into_iter()
+        .map(|(fragments, _)| {
+            along_line(view, fragments, axes)
+                .into_iter()
+                .flat_map(|fragment| fragment.ranges)
+                .collect()
+        })
+        .collect()
+}
+
+/// `sameRow`: halves of one row of text overlap by more than half of the
+/// taller one.
+fn same_row(a: Extents, b: Extents) -> bool {
+    let overlap = a.cross_end.min(b.cross_end) - a.cross_start.max(b.cross_start);
+    let taller = (a.cross_end - a.cross_start).max(b.cross_end - b.cross_start);
+    taller > 0.0 && overlap / taller > 0.5
+}
+
+/// `alongLine`: one line's fragments in the order the line is read. Dealt
+/// into rows by [`same_row`], the rows in the order they were opened, and each
+/// row from its far end when its characters are written against the along
+/// axis.
+fn along_line(view: &View, fragments: Vec<Fragment>, axes: Axes) -> Vec<Fragment> {
+    if fragments.len() < 2 {
+        return fragments;
+    }
+    let mut rows: Vec<(Extents, Vec<Fragment>)> = Vec::new();
+    for fragment in fragments {
+        let extents = extents_of(fragment.bounds, axes);
+        match rows.iter_mut().find(|(first, _)| same_row(*first, extents)) {
+            Some((_, row)) => row.push(fragment),
+            None => rows.push((extents, vec![fragment])),
+        }
+    }
+    rows.into_iter()
+        .flat_map(|(_, mut row)| {
+            if row.len() < 2 {
+                return row;
+            }
+            let backwards = written_backwards(view, &row, axes);
+            let start = |fragment: &Fragment| {
+                let extents = extents_of(fragment.bounds, axes);
+                if backwards {
+                    -extents.along_end
+                } else {
+                    extents.along_start
+                }
+            };
+            // Stable, as JavaScript's `sort` is.
+            row.sort_by(|a, b| by(start(a), start(b)));
+            row
+        })
+        .collect()
+}
+
+/// `writtenBackwards`.
+fn written_backwards(view: &View, fragments: &[Fragment], axes: Axes) -> bool {
+    let (mut forwards, mut backwards) = (0usize, 0usize);
+    for range in fragments.iter().flat_map(|fragment| &fragment.ranges) {
+        let mut before: Option<f64> = None;
+        for index in range.from..range.to {
+            let q = char_quad(view, index);
+            if !placed(q) || combining(view.codes.get(index).copied().unwrap_or(0)) {
+                continue;
+            }
+            let at = extents_of(q, axes).along_start;
+            if let Some(before) = before {
+                if at > before {
+                    forwards += 1;
+                } else if at < before {
+                    backwards += 1;
+                }
+            }
+            before = Some(at);
+        }
+    }
+    backwards > forwards
 }
 
 /// `usableRuns`: the tags, when they claim every visible character.

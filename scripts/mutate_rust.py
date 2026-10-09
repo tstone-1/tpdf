@@ -254,6 +254,12 @@ FILTERS = [
     # Added 2026-09-30 with installed-font matching, in the same edit as its
     # mutations: the app process's lookup and round trip are `sysfont::tests`.
     "sysfont::",
+    # Added 2026-10-09 with the description of a reply that answers the wrong
+    # question, in the same edit as its mutations: the tests are in
+    # `workers::tests` and `worker_proto::tests`, which `tests::` reaches
+    # today only by the accident the notes above refuse to rely on.
+    "workers::",
+    "worker_proto::",
 ]
 
 
@@ -12578,7 +12584,7 @@ MUTATIONS += [
     Mutation(
         "sign: name the new field Signature1 whatever exists",
         "src/sign_prepare.rs",
-        "        .find(|name| !taken.iter().any(|t| t == name.as_bytes()))",
+        "        .find(|name| !taken.contains(name))",
         "        .find(|_| true)",
         "a_list_that_is_its_own_object_is_rewritten_and_its_owner_is_not",
     ),
@@ -12724,8 +12730,8 @@ MUTATIONS += [
     Mutation(
         "sign: call every signature in the report the new one",
         "src/sign_cms.rs",
-        "            ours: signature.field == field,",
-        "            ours: true,",
+        "        .map(|(index, signature)| (ours == Some(index), signature))",
+        "        .map(|(_, signature)| (true, signature))",
         "the_report_marks_the_new_signature_and_leaves_out_unsigned_fields",
     ),
     Mutation(
@@ -14892,8 +14898,8 @@ MUTATIONS += [
     Mutation(
         "longterm: write a signature that does not read back intact",
         "src/longterm.rs",
-        "    if ours.integrity.as_ref().map(|i| i.verdict) != Some(Verdict::Intact) {",
-        "    if false {",
+        '        _ => return written("the new signature does not read as intact"),',
+        "        _ => {}",
         "the_check_before_writing_wants_good_for_both_and_names_a_revocation",
     ),
     Mutation(
@@ -15304,14 +15310,12 @@ MUTATIONS += [
         # beside it.
         "sign: read back only the signer's revocation after long-term signing",
         "src/commands/sign.rs",
-        "        if let Err(why) = crate::longterm::check(signatures, field) {",
-        "        if let Err(why) = crate::longterm::check(signatures, field).or_else(|why| {\n"
-        "            let signer_good = signatures.iter().any(|s| {\n"
-        "                s.field == field\n"
-        "                    && s.revocation\n"
-        "                        .as_ref()\n"
-        "                        .is_some_and(|r| r.standing == crate::revocation::Status::Good)\n"
-        "            });\n"
+        "        if let Err(why) = crate::longterm::check(Some(ours)) {",
+        "        if let Err(why) = crate::longterm::check(Some(ours)).or_else(|why| {\n"
+        "            let signer_good = ours\n"
+        "                .revocation\n"
+        "                .as_ref()\n"
+        "                .is_some_and(|r| r.standing == crate::revocation::Status::Good);\n"
         "            if signer_good { Ok(()) } else { Err(why) }\n"
         "        }) {",
         "the_command_lines_read_back_asks_what_the_check_before_writing_asks",
@@ -17849,6 +17853,284 @@ MUTATIONS += [
         "        let stays = without_drawing(&inside.operations[where_]);",
         "        let stays: Vec<Operation> = Vec::new();",
         "a_removed_quote_operator_in_a_form_still_moves_to_its_line",
+    ),
+]
+
+
+# Added 2026-10-09 with the fixes to two read-only reviews' findings, in the
+# same edit as the tests they name. Every one was seen red by hand before it
+# was written here --- the anchor once in its file, the edit applied, the named
+# test failing, the file restored --- because this table was not run that day:
+# another writer was in the checkout, and a harness that edits the tree must
+# not be.
+MUTATIONS += [
+    Mutation(
+        "reading: read a line's halves in the order of their top edges",
+        "src/reading.rs",
+        "    if fragments.len() < 2 {\n"
+        "        return fragments;\n"
+        "    }\n"
+        "    let mut rows",
+        "    if fragments.len() < usize::MAX {\n"
+        "        return fragments;\n"
+        "    }\n"
+        "    let mut rows",
+        "the_halves_of_a_split_line_are_read_along_it_whichever_stands_higher",
+    ),
+    Mutation(
+        "reading: read every row from its left end",
+        "src/reading.rs",
+        "            let backwards = written_backwards(view, &row, axes);",
+        "            let backwards = false;",
+        "a_right_to_left_line_in_two_halves_is_read_from_its_right_end",
+    ),
+    Mutation(
+        "reading: read every row from its right end",
+        "src/reading.rs",
+        "            let backwards = written_backwards(view, &row, axes);",
+        "            let backwards = true;",
+        "the_halves_of_a_split_line_are_read_along_it_whichever_stands_higher",
+    ),
+    Mutation(
+        "reading: let one step back turn a row round",
+        "src/reading.rs",
+        "    backwards > forwards\n"
+        "}",
+        "    backwards > 0\n"
+        "}",
+        "one_word_written_the_other_way_does_not_turn_its_line_round",
+    ),
+    Mutation(
+        "reading: count the step back to a combining mark",
+        "src/reading.rs",
+        "            if !placed(q) || combining(view.codes.get(index).copied().unwrap_or(0)) {",
+        "            if !placed(q) {",
+        "a_combining_mark_does_not_turn_its_line_round",
+    ),
+    Mutation(
+        "reading: take whatever touches a line for a half of its row",
+        "src/reading.rs",
+        "        match rows.iter_mut().find(|(first, _)| same_row(*first, extents)) {",
+        "        match rows.iter_mut().find(|(first, _)| same_band(*first, extents)) {",
+        "type_of_another_size_touching_a_line_is_not_a_half_of_it",
+    ),
+    Mutation(
+        "reading: measure a row against the shorter fragment",
+        "src/reading.rs",
+        "    let taller = (a.cross_end - a.cross_start).max(b.cross_end - b.cross_start);",
+        "    let taller = (a.cross_end - a.cross_start).min(b.cross_end - b.cross_start);",
+        "type_of_another_size_touching_a_line_is_not_a_half_of_it",
+    ),
+    Mutation(
+        "sign: compare a field's name as bytes",
+        "src/sign_prepare.rs",
+        "                .map(crate::annots::decode_text_string)\n"
+        "                .collect()",
+        "                .map(|raw| String::from_utf8_lossy(raw).into_owned())\n"
+        "                .collect()",
+        "a_name_taken_in_another_encoding_is_taken",
+    ),
+    Mutation(
+        "sign: take any signature of the name for the new one",
+        "src/sign_cms.rs",
+        "        signature.signed && signature.field == field && signature.appended_bytes == appended",
+        "        signature.signed && signature.field == field",
+        "an_older_intact_signature_of_the_same_name_does_not_answer_for_the_new_one",
+    ),
+    Mutation(
+        "sign: take the first field that fits for the new one, intact or not",
+        "src/sign_cms.rs",
+        "        .position(|signature| fits(signature) && intact(signature))\n"
+        "        .or_else(|| found.iter().position(fits))",
+        "        .position(fits)",
+        "the_new_signature_is_the_one_whose_range_ends_where_its_revision_does",
+    ),
+    Mutation(
+        "sign: take an unsigned field for the new signature",
+        "src/sign_cms.rs",
+        "        signature.signed && signature.field == field && signature.appended_bytes == appended",
+        "        signature.field == field && signature.appended_bytes == appended",
+        "the_new_signature_is_the_one_whose_range_ends_where_its_revision_does",
+    ),
+    Mutation(
+        "sign: look for the new signature as if nothing followed it",
+        "src/commands/sign.rs",
+        "    let ours = sign_cms::ours(&signatures, &field, (bytes.len() - sealed) as u64);",
+        "    let ours = sign_cms::ours(&signatures, &field, 0);",
+        "long_term_data_that_came_is_written_and_read_back_good",
+    ),
+    Mutation(
+        "longterm: look for the new signature as if nothing followed it",
+        "src/longterm.rs",
+        "    let ours = crate::sign_cms::ours(&extended.signatures, field, extended.update.len() as u64);",
+        "    let ours = crate::sign_cms::ours(&extended.signatures, field, 0);",
+        "a_b_lt_signature_is_written_and_reads_back_good_for_signer_and_authority",
+    ),
+    Mutation(
+        "sign: call a signature the read-back had no budget for a failed copy",
+        "src/commands/sign.rs",
+        "            return ReadBack::Unchecked\n",
+        "            return ReadBack::Signature\n",
+        "a_new_signature_the_read_back_had_no_budget_for_is_not_a_failed_copy",
+    ),
+    Mutation(
+        "sign: call any unchecked new signature one not checked again",
+        "src/commands/sign.rs",
+        "        Some(found) if found.verdict == Verdict::Unchecked && found.why == Some(Why::Budget) => {\n"
+        "            return ReadBack::Unchecked",
+        "        Some(found) if found.verdict == Verdict::Unchecked => {\n"
+        "            return ReadBack::Unchecked",
+        "a_copy_that_does_not_read_back_as_written_is_refused_in_the_window_too",
+    ),
+    Mutation(
+        "cli sign: exit 4 for a signature not checked again",
+        "src/cli/sign.rs",
+        "        ReadBack::Unchecked => Exit::Strict,",
+        "        ReadBack::Unchecked => Exit::Internal,",
+        "a_signature_not_checked_again_ends_sign_with_1_and_says_which_check_happened",
+    ),
+    Mutation(
+        "cli sign: exit 0 for a signature not checked again",
+        "src/cli/sign.rs",
+        "        ReadBack::Unchecked => Exit::Strict,",
+        "        ReadBack::Unchecked => Exit::Ok,",
+        "a_signature_not_checked_again_ends_sign_with_1_and_says_which_check_happened",
+    ),
+    Mutation(
+        "words: say do not rely of a signature not checked again",
+        "src/words.rs",
+        "    let unchecked = verdict_is(Verdict::Unchecked)\n"
+        "        && ",
+        "    let unchecked = false\n"
+        "        && ",
+        "a_signature_not_checked_again_ends_sign_with_1_and_says_which_check_happened",
+    ),
+    Mutation(
+        "words: say not checked again of any unchecked signature",
+        "src/words.rs",
+        "            integrity.as_ref().and_then(|i| i.why) == Some(Why::Budget)",
+        "            integrity.as_ref().and_then(|i| i.why).is_some()",
+        "a_signature_not_checked_again_ends_sign_with_1_and_says_which_check_happened",
+    ),
+    Mutation(
+        "words: report the timestamp of a signature not checked again",
+        "src/words.rs",
+        "    if let Some((timestamp, authority)) = timestamp.filter(|_| !unchecked) {",
+        "    if let Some((timestamp, authority)) = timestamp {",
+        "a_signature_not_checked_again_ends_sign_with_1_and_says_which_check_happened",
+    ),
+    Mutation(
+        "longterm: call a signature the check had no budget for tpdf's own failure",
+        "src/longterm.rs",
+        "        Some(found) if found.verdict == Verdict::Unchecked && found.why == Some(Why::Budget) => {\n"
+        "            return Err(Refusal::Bound(",
+        "        Some(found) if false && found.why == Some(Why::Budget) => {\n"
+        "            return Err(Refusal::Bound(",
+        "the_check_before_writing_wants_good_for_both_and_names_a_revocation",
+    ),
+    Mutation(
+        "longterm: call any unchecked new signature a bound",
+        "src/longterm.rs",
+        "        Some(found) if found.verdict == Verdict::Unchecked && found.why == Some(Why::Budget) => {\n"
+        "            return Err(Refusal::Bound(",
+        "        Some(found) if found.verdict == Verdict::Unchecked => {\n"
+        "            return Err(Refusal::Bound(",
+        "the_check_before_writing_wants_good_for_both_and_names_a_revocation",
+    ),
+    Mutation(
+        "sign: write a revision lopdf would leave an object out of",
+        "src/sign_prepare.rs",
+        "    crate::save::written_whole(&incremental)?;\n",
+        "",
+        "a_form_the_writer_would_leave_out_is_a_refusal_and_not_a_revision_without_it",
+    ),
+    Mutation(
+        "dss: write a revision lopdf would leave an object out of",
+        "src/sign_dss.rs",
+        "    crate::save::written_whole(&incremental)?;\n",
+        "",
+        "a_dss_the_writer_would_leave_out_is_a_refusal",
+    ),
+    Mutation(
+        "append: write an update lopdf would leave an object out of",
+        "src/save.rs",
+        "    written_whole(&incremental)?;\n"
+        "    incremental",
+        "    incremental",
+        "an_edit_the_writer_would_leave_out_is_a_refusal_and_not_a_save_that_changed_nothing",
+    ),
+    Mutation(
+        "append: do not ask about a /Linearized key",
+        "src/save.rs",
+        '    const LEFT_OUT: [&[u8]; 3] = [b"ObjStm", b"XRef", b"Linearized"];',
+        '    const LEFT_OUT: [&[u8]; 2] = [b"ObjStm", b"XRef"];',
+        "lopdf_still_leaves_such_an_object_out_of_an_update_without_an_error",
+    ),
+    Mutation(
+        "append: stop asking at the first object that is not a dictionary",
+        "src/save.rs",
+        "        let Ok(kind) = object.type_name() else {\n"
+        "            continue;\n"
+        "        };",
+        "        let Ok(kind) = object.type_name() else {\n"
+        "            return Ok(());\n"
+        "        };",
+        "a_dss_the_writer_would_leave_out_is_a_refusal",
+    ),
+    Mutation(
+        "sign: take a held signature before judging the answer",
+        "src/commands/sign.rs",
+        "            Some(found) if found.number == number => judge(&found.stage)?,",
+        "            Some(found) if found.number == number => {\n"
+        '                let taken = held.take().expect("held");\n'
+        "                judge(&taken.stage)?;\n"
+        "                return Ok(taken);\n"
+        "            }",
+        "an_answer_that_is_refused_leaves_the_signature_held",
+    ),
+    Mutation(
+        "sign: resume long-term signing with no timestamp authority",
+        "src/commands/sign.rs",
+        "            long_term_of(long_term, authority)?;\n"
+        "        }\n"
+        "        Ok(())\n"
+        "    })\n"
+        "}",
+        "        }\n"
+        "        Ok(())\n"
+        "    })\n"
+        "}",
+        "an_answer_that_is_refused_leaves_the_signature_held",
+    ),
+    Mutation(
+        "sign: hand a held signature to any number",
+        "src/commands/sign.rs",
+        "            Some(found) if found.number == number => judge(&found.stage)?,",
+        "            Some(found) => judge(&found.stage)?,",
+        "an_answer_that_is_refused_leaves_the_signature_held",
+    ),
+    Mutation(
+        "workers: repeat a mismatched reply whole",
+        "src/workers.rs",
+        '        "a worker answered {} to a request for {asked}",\n'
+        "        got.described()",
+        '        "a worker answered {:?} to a request for {asked}",\n'
+        "        got",
+        "a_mismatched_reply_is_named_and_not_repeated",
+    ),
+    Mutation(
+        "worker proto: describe a reply with its payload",
+        "src/worker_proto.rs",
+        '        format!("{name} ({})", about_bytes(bytes))',
+        '        format!("{name} ({}) {self:?}", about_bytes(bytes))',
+        "a_reply_is_described_by_its_name_and_size_and_never_its_payload",
+    ),
+    Mutation(
+        "worker proto: show an unreadable reply line whole",
+        "src/worker_proto.rs",
+        "    let start: String = line.chars().take(SHOWN).collect();",
+        "    let start: String = line.chars().collect();",
+        "a_reply_is_described_by_its_name_and_size_and_never_its_payload",
     ),
 ]
 

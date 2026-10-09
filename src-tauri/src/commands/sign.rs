@@ -208,6 +208,25 @@ impl Pending {
             None
         }
     }
+
+    /// [`Pending::take`], once `judge` has accepted the stage held under
+    /// `number`. A stage it refuses stays held.
+    ///
+    /// # Errors
+    ///
+    /// `number` is not the signature held, or `judge`'s refusal.
+    fn take_judged(
+        &self,
+        number: u64,
+        judge: impl FnOnce(&Stage) -> Result<(), String>,
+    ) -> Result<Held, String> {
+        let mut held = self.0.lock();
+        match held.as_ref() {
+            Some(found) if found.number == number => judge(&found.stage)?,
+            _ => return Err("this signature is no longer held --- sign the document again".into()),
+        }
+        Ok(held.take().expect("held: matched under this lock"))
+    }
 }
 
 /// The authority the frontend named, judged again here: the webview is not
@@ -277,6 +296,9 @@ pub(crate) struct Finished {
     pub signatures: Vec<crate::docinfo::Signature>,
     /// Whether that is what was asked for.
     pub read_back: ReadBack,
+    /// Which of `signatures` is the one this signing made, when it is among
+    /// them: [`sign_cms::ours`].
+    pub ours: Option<usize>,
 }
 
 /// Why a signing stopped after the OS had signed. Nothing was written for
@@ -313,6 +335,16 @@ pub(crate) enum ReadBack {
     Holds,
     /// The new signature is not in the file, or does not read as intact.
     Signature,
+    /// The new signature is in the file and was not checked again: the
+    /// document's signatures together cover more than one document's hashing
+    /// budget (`integrity::MAX_HASHED`), which is spent in the order the
+    /// fields are listed, and the new one is last. **Neither a failed copy nor
+    /// a checked one.** [`sign_cms::Made::seal`] found this signature intact
+    /// over the bytes that were then written, on a budget of its own; what
+    /// did not happen is the second look at the file. Since 2026-10-09: until
+    /// then this was [`ReadBack::Signature`], and a correct copy of a large
+    /// document with several signatures was called one not to rely on.
+    Unchecked,
     /// The new signature is intact and its timestamp is missing or is not.
     Timestamp,
     /// Both are intact and the long-term data does not read as it was
@@ -321,18 +353,14 @@ pub(crate) enum ReadBack {
 }
 
 impl ReadBack {
-    /// Whether the written file is what was asked for.
-    pub(crate) fn holds(&self) -> bool {
-        *self == ReadBack::Holds
-    }
-
     /// What the reader is told about a copy that was written and does not
     /// read back as it should, for the two answers the window's own sentence
     /// (`signing.ts`'s `afterSigning`) does not word: it words a signature
     /// that is missing or not intact, and nothing after that.
     fn sentence(&self, name: &str, field: &str) -> Option<String> {
         let what = match self {
-            ReadBack::Holds | ReadBack::Signature => return None,
+            // The window words these two from what was read: `afterSigning`.
+            ReadBack::Holds | ReadBack::Signature | ReadBack::Unchecked => return None,
             ReadBack::Timestamp => format!(
                 "reading it back did not find the timestamp of the new signature {field} intact"
             ),
@@ -344,41 +372,47 @@ impl ReadBack {
     }
 }
 
-/// What the file just written reads back as: ours intact, its timestamp
-/// intact when one was asked for, and --- for long-term data --- everything
+/// What the written file reads back as: ours intact, its timestamp intact
+/// when one was asked for, and --- for long-term data --- everything
 /// `longterm::check` held the same bytes to before they were written: the
 /// signer's and the authority's revocation `good`, and every certificate
 /// above either.
+///
+/// `ours` is the signature this signing made, chosen by what was written
+/// ([`sign_cms::ours`]) and not by its name: until 2026-10-09 any intact
+/// signature of that name answered for it, an older one included.
 ///
 /// **One rule for the window and the command line**, decided here and not in
 /// the window's TypeScript: until 2026-10-05 the window's sentence looked at
 /// the new signature's verdict alone, so a timestamp or long-term data that
 /// did not read back was a signing reported as done.
 pub(crate) fn read_back(
-    signatures: &[crate::docinfo::Signature],
-    field: &str,
+    ours: Option<&crate::docinfo::Signature>,
     timestamp: bool,
     long_term: bool,
 ) -> ReadBack {
-    let intact = |i: Option<&crate::integrity::Integrity>| {
-        i.is_some_and(|i| i.verdict == crate::integrity::Verdict::Intact)
-    };
-    let ours = |s: &&crate::docinfo::Signature| {
-        s.signed && s.field == field && intact(s.integrity.as_ref())
-    };
-    if !signatures.iter().any(|s| ours(&s)) {
+    use crate::integrity::{Verdict, Why};
+    let intact =
+        |i: Option<&crate::integrity::Integrity>| i.is_some_and(|i| i.verdict == Verdict::Intact);
+    let Some(ours) = ours else {
         return ReadBack::Signature;
+    };
+    match ours.integrity.as_ref() {
+        Some(found) if found.verdict == Verdict::Intact => {}
+        Some(found) if found.verdict == Verdict::Unchecked && found.why == Some(Why::Budget) => {
+            return ReadBack::Unchecked
+        }
+        _ => return ReadBack::Signature,
     }
-    let stamped = signatures.iter().filter(ours).any(|s| {
-        s.timestamp
-            .as_ref()
-            .is_some_and(|t| intact(t.integrity.as_ref()))
-    });
+    let stamped = ours
+        .timestamp
+        .as_ref()
+        .is_some_and(|t| intact(t.integrity.as_ref()));
     if timestamp && !stamped {
         return ReadBack::Timestamp;
     }
     if long_term {
-        if let Err(why) = crate::longterm::check(signatures, field) {
+        if let Err(why) = crate::longterm::check(Some(ours)) {
             return ReadBack::LongTerm(why);
         }
     }
@@ -388,9 +422,12 @@ pub(crate) fn read_back(
 /// The rest of a signing, from a made or sealed signature, **for the window
 /// and the command line alike**: the timestamp when one was asked for, the
 /// seal, the long-term data when it was asked for, the write, and the
-/// read-back by a worker through the handle of the file just written --- so
-/// the verdict a reader is shown is the one the properties dialog would give,
-/// computed where every other parse of the file happens.
+/// read-back by a worker of the file at `out` --- so the verdict a reader is
+/// shown is the one the properties dialog would give, computed where every
+/// other parse of the file happens. **`out` is reopened by name after the
+/// write has put it in place**, so the verdict is about the file of that name
+/// at that moment: the one just written, unless something replaced it in
+/// between. `write_signed` stages and renames and hands back no handle.
 ///
 /// What each ending means to its reader is the caller's: the window keeps a
 /// signature whose timestamp or data did not come ([`conclude`]), and the
@@ -446,6 +483,9 @@ pub(crate) fn finish(
         } => (bytes, Some(cms), field, authority),
     };
     let timestamped = cms.is_some();
+    // Where the new signature's own revision ends: what a long-term signing
+    // appends after it is how the read-back knows which signature is ours.
+    let sealed = bytes.len();
     let bytes = match (long_term, cms) {
         (false, _) => bytes,
         (true, None) => {
@@ -500,11 +540,13 @@ pub(crate) fn finish(
                 "the signed file was written and could not be checked: {e}"
             ))
         })?;
-    let read_back = read_back(&signatures, &field, timestamped, long_term);
+    let ours = sign_cms::ours(&signatures, &field, (bytes.len() - sealed) as u64);
+    let read_back = read_back(ours.map(|at| &signatures[at]), timestamped, long_term);
     Ok(Finished {
         field,
         signatures,
         read_back,
+        ours,
     })
 }
 
@@ -561,6 +603,7 @@ fn conclude(
                     out.display().to_string(),
                     finished.field,
                     finished.signatures,
+                    finished.ours,
                 )),
                 unstamped: None,
             })
@@ -807,14 +850,7 @@ pub async fn sign_resume(
         let held = app.state::<Pending>();
         let Held {
             stage, source, out, ..
-        } = held
-            .take(pending)
-            .ok_or("this signature is no longer held --- sign the document again".to_string())?;
-        // A made signature needs the timestamp for the data; a sealed one
-        // already carries it, and `timestamp` is not asked again.
-        if matches!(stage, Stage::Made(_)) {
-            long_term_of(long_term, authority.as_ref())?;
-        }
+        } = resumed(&held, pending, long_term, authority.as_ref())?;
         asking_the_world(crate::trust::Anchors::System, |asking| {
             conclude(
                 stage,
@@ -830,6 +866,33 @@ pub async fn sign_resume(
     })
     .await
     .map_err(|e| format!("the signing did not run: {e}"))?
+}
+
+/// The signature held under `pending`, taken for [`sign_resume`] once the
+/// reader's answer has been judged against it.
+///
+/// **Judged before it is taken**: a refusal leaves the signature held, so the
+/// reader can answer again without the key being asked for a second time.
+/// Until 2026-10-09 it was taken first, and a refused answer lost it.
+///
+/// # Errors
+///
+/// `pending` is not the signature held, or long-term data was asked for a
+/// made signature with no timestamp authority to ask.
+fn resumed(
+    held: &Pending,
+    pending: u64,
+    long_term: bool,
+    authority: Option<&url::Url>,
+) -> Result<Held, String> {
+    held.take_judged(pending, |stage| {
+        // A made signature needs the timestamp for the data; a sealed one
+        // already carries it, and `timestamp` is not asked again.
+        if matches!(stage, Stage::Made(_)) {
+            long_term_of(long_term, authority)?;
+        }
+        Ok(())
+    })
 }
 
 /// What signing has done in this process, as the checks build reads it.
@@ -1351,7 +1414,7 @@ mod tests {
                 asking,
             )
             .unwrap_or_else(|why| panic!("{}", why.message));
-            assert!(finished.read_back.holds(), "{:?}", finished.read_back);
+            assert_eq!(finished.read_back, ReadBack::Holds);
         });
 
         let window = window.into_inner().expect("the record");
@@ -1480,7 +1543,8 @@ mod tests {
             ..Signature::default()
         };
         let read = |found: &[Signature], timestamp, long_term| {
-            read_back(found, "Signature1", timestamp, long_term)
+            let ours = sign_cms::ours(found, "Signature1", 0);
+            read_back(ours.map(|at| &found[at]), timestamp, long_term)
         };
         let bare = [signature(Verdict::Intact, None)];
         let stamped = [signature(Verdict::Intact, Some(Verdict::Intact))];
@@ -1534,9 +1598,231 @@ mod tests {
             ) && said.ends_with(". Do not rely on that copy."),
             "{said}"
         );
-        // And the yes or no the command line exits by.
-        assert!(read(&stamped, true, false).holds());
-        assert!(!read(&stamped, true, true).holds());
-        assert!(!read_back(&stamped, "Signature9", true, false).holds());
+        // And another field is not ours, whatever it reads as.
+        assert_eq!(sign_cms::ours(&stamped, "Signature9", 0), None);
+        assert_eq!(read_back(None, true, false), ReadBack::Signature);
+
+        // A new signature the read-back had no hashing budget left for: its
+        // own answer, which is neither of the two above. Only for that
+        // reason --- any other unchecked signature is one not to rely on.
+        use crate::integrity::Why;
+        let unchecked = |why| {
+            let mut found = signature(Verdict::Unchecked, Some(Verdict::Intact));
+            found.integrity.as_mut().expect("a verdict").why = Some(why);
+            [found]
+        };
+        for (timestamp, long_term) in [(false, false), (true, false), (true, true)] {
+            assert_eq!(
+                read(&unchecked(Why::Budget), timestamp, long_term),
+                ReadBack::Unchecked
+            );
+        }
+        assert_eq!(
+            read(&unchecked(Why::Range), false, false),
+            ReadBack::Signature
+        );
+        assert_eq!(
+            ReadBack::Unchecked.sentence("signed.pdf", "Signature1"),
+            None,
+            "the window words it from what was read"
+        );
+    }
+
+    /// A verifier that reads the file as it is and then changes what it
+    /// reports, for the answers a real file cannot be made to give in a test.
+    struct Rewording(fn(Vec<crate::docinfo::Signature>) -> Vec<crate::docinfo::Signature>);
+
+    impl crate::save::Verifier for Rewording {
+        fn scan(
+            &self,
+            _: &mut std::fs::File,
+            _: usize,
+            _: &[String],
+            _: Option<&str>,
+        ) -> Result<crate::verify::Report, String> {
+            Err("not asked".into())
+        }
+
+        fn signatures(
+            &self,
+            file: &mut std::fs::File,
+            len: usize,
+        ) -> Result<Vec<crate::docinfo::Signature>, String> {
+            crate::save::Here.signatures(file, len).map(self.0)
+        }
+
+        fn validation(
+            &self,
+            signed: &[u8],
+            gathered: &crate::sign_dss::Gathered,
+        ) -> Result<crate::sign_dss::Extended, String> {
+            crate::save::Here.validation(signed, gathered)
+        }
+
+        fn document_timestamp(&self, signed: &[u8]) -> Result<sign_prepare::Unsigned, String> {
+            crate::save::Here.document_timestamp(signed)
+        }
+    }
+
+    /// [`finish`] from a sealed signature, read back by `checking`.
+    fn finished(name: &str, checking: &dyn crate::save::Verifier) -> Finished {
+        use crate::integrity::test_tsa::{Pki, Plan};
+        let pki = Pki::start(Plan::default());
+        let (source, out) = scratch(name);
+        let done = asking(test_vouch, |asking| {
+            finish(
+                sealed(&pki),
+                None,
+                false,
+                &out,
+                now(),
+                checking,
+                asking,
+                &|bytes| save::write_signed(&source, &out, bytes).map_err(|why| why.message),
+            )
+        });
+        match done {
+            Ok(done) => done,
+            Err(_) => panic!("{name}: the signing stopped"),
+        }
+    }
+
+    /// The new signature is the one this signing wrote, not any intact
+    /// signature of its name. Until 2026-10-09 the read-back matched by name,
+    /// so an older intact signature answered for a new one that did not read
+    /// back --- and a document can hold one: a field named in another
+    /// encoding before that day, or a child of an unnamed field.
+    #[test]
+    fn an_older_intact_signature_of_the_same_name_does_not_answer_for_the_new_one() {
+        use crate::integrity::Verdict;
+        // The file as written, with an older signature of the same name
+        // listed before the new one: intact, and followed by a later revision.
+        fn with_older(mut found: Vec<crate::docinfo::Signature>) -> Vec<crate::docinfo::Signature> {
+            let mut older = found[0].clone();
+            older.appended_bytes = 4_321;
+            older.covers_whole_file = false;
+            found.insert(0, older);
+            found
+        }
+        // The same, and the new signature does not read back.
+        fn with_older_and_altered(
+            found: Vec<crate::docinfo::Signature>,
+        ) -> Vec<crate::docinfo::Signature> {
+            let mut found = with_older(found);
+            found[1].integrity.as_mut().expect("a verdict").verdict = Verdict::Altered;
+            found
+        }
+
+        let done = finished("older-altered", &Rewording(with_older_and_altered));
+        assert_eq!(done.signatures.len(), 2);
+        assert_eq!(done.signatures[0].field, done.signatures[1].field);
+        assert_eq!(
+            done.signatures[0].integrity.as_ref().map(|i| i.verdict),
+            Some(Verdict::Intact),
+            "the older one is intact, which is what answered before"
+        );
+        assert_eq!(done.ours, Some(1));
+        assert_eq!(done.read_back, ReadBack::Signature);
+        // What the window is told: one signature is the new one, and it is
+        // the altered one.
+        let report = sign_cms::report(String::new(), done.field, done.signatures, done.ours);
+        let ours: Vec<_> = report.signatures.iter().filter(|s| s.ours).collect();
+        assert_eq!(ours.len(), 1);
+        assert_eq!(
+            ours[0].integrity.as_ref().map(|i| i.verdict),
+            Some(Verdict::Altered)
+        );
+
+        // The control: the same older signature beside a new one that does
+        // read back.
+        let done = finished("older-intact", &Rewording(with_older));
+        assert_eq!((done.ours, done.read_back), (Some(1), ReadBack::Holds));
+    }
+
+    /// The hashing budget is one for the document and the new signature is
+    /// reached last, so on a large file with several signatures it is the one
+    /// left unchecked. That copy is correct --- the seal checked this
+    /// signature on a budget of its own --- and until 2026-10-09 it was
+    /// reported as one not to rely on.
+    #[test]
+    fn a_new_signature_the_read_back_had_no_budget_for_is_not_a_failed_copy() {
+        use crate::integrity::{Verdict, Why};
+        fn starved(mut found: Vec<crate::docinfo::Signature>) -> Vec<crate::docinfo::Signature> {
+            let verdict = found[0].integrity.as_mut().expect("a verdict");
+            verdict.verdict = Verdict::Unchecked;
+            verdict.why = Some(Why::Budget);
+            found
+        }
+        let done = finished("starved", &Rewording(starved));
+        assert_eq!(done.read_back, ReadBack::Unchecked);
+
+        // The window: a signing reported, not an error, whose new signature
+        // carries the verdict `afterSigning` words.
+        use crate::integrity::test_tsa::{Pki, Plan};
+        let pki = Pki::start(Plan::default());
+        let (source, out) = scratch("starved-window");
+        let answer = asking(test_vouch, |asking| {
+            conclude(
+                sealed(&pki),
+                None,
+                false,
+                source,
+                out.clone(),
+                &Rewording(starved),
+                &Pending::default(),
+                asking,
+            )
+        })
+        .expect("reported, not refused");
+        let signed = answer.signed.expect("signed");
+        let ours = signed.signatures.iter().find(|s| s.ours).expect("ours");
+        assert_eq!(
+            ours.integrity.as_ref().map(|i| (i.verdict, i.why)),
+            Some((Verdict::Unchecked, Some(Why::Budget)))
+        );
+        assert!(out.exists());
+    }
+
+    /// An answer `sign_resume` refuses leaves the signature held: the reader
+    /// answers again and the key is not asked for a second time. Until
+    /// 2026-10-09 the signature was taken before the answer was judged.
+    #[test]
+    fn an_answer_that_is_refused_leaves_the_signature_held() {
+        use crate::integrity::test_tsa::{Pki, Plan};
+        use crate::sign_cms::testkeys::{plain_pdf, Soft};
+        let pki = Pki::start(Plan::default());
+        let at = now();
+        let original = plain_pdf();
+        let unsigned = sign_prepare::prepare(original.clone(), at, None).expect("prepared");
+        let made = sign_cms::sign(
+            original,
+            unsigned,
+            at,
+            &pki.signer.certificate,
+            &pki.chain,
+            &Soft::p256(pki.signer.seed),
+        )
+        .expect("made");
+        let pending = Pending::default();
+        let (source, out) = scratch("refused-answer");
+        let number = pending.keep(Stage::Made(made), source, out);
+
+        // Long-term data with no timestamp authority: refused.
+        let why = match resumed(&pending, number, true, None) {
+            Err(why) => why,
+            Ok(_) => panic!("taken"),
+        };
+        assert_eq!(why, crate::longterm::Refusal::NoTimestamp.sentence());
+        assert_eq!(pending.waiting(), Some(Waiting::Timestamp), "still held");
+        // A number that is not the held one takes nothing either.
+        assert!(resumed(&pending, number + 1, false, None).is_err());
+        assert_eq!(pending.waiting(), Some(Waiting::Timestamp));
+        // The answer that is accepted takes it.
+        assert!(resumed(&pending, number, false, None).is_ok());
+        assert_eq!(pending.waiting(), None);
+        assert!(
+            resumed(&pending, number, false, None).is_err(),
+            "taken once"
+        );
     }
 }

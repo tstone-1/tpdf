@@ -1036,22 +1036,42 @@ pub fn gather(
 }
 
 /// Refuses unless the worker's reading of the finished bytes says what a B-LT
-/// signing must: the new signature `field` intact, its timestamp intact, and
-/// the signer's and the authority's revocation standings `good` --- theirs and
+/// signing must: the new signature intact, its timestamp intact, and the
+/// signer's and the authority's revocation standings `good` --- theirs and
 /// their chains', since the reader judges the whole chain (2026-09-28).
+///
+/// `ours` is the new signature as the worker read it, chosen by
+/// `sign_cms::ours`: by where its range ends, not by its name alone.
 ///
 /// # Errors
 ///
-/// [`Refusal::Revoked`] when either standing is `revoked`; otherwise
+/// [`Refusal::Revoked`] when either standing is `revoked`;
+/// [`Refusal::Bound`] when the new signature was not checked because the
+/// document's signatures together are past the hashing budget; otherwise
 /// [`Refusal::Written`] with what was found instead.
-pub fn check(signatures: &[crate::docinfo::Signature], field: &str) -> Result<(), Refusal> {
-    use crate::integrity::Verdict;
+pub fn check(ours: Option<&crate::docinfo::Signature>) -> Result<(), Refusal> {
+    use crate::integrity::{Verdict, Why};
     let written = |why: &str| Err(Refusal::Written(why.to_string()));
-    let Some(ours) = signatures.iter().find(|s| s.signed && s.field == field) else {
+    let Some(ours) = ours else {
         return written("the new signature is not in it");
     };
-    if ours.integrity.as_ref().map(|i| i.verdict) != Some(Verdict::Intact) {
-        return written("the new signature does not read as intact");
+    match ours.integrity.as_ref() {
+        Some(found) if found.verdict == Verdict::Intact => {}
+        // The budget is one for the document, spent in the order the fields
+        // are listed, and the new signature is last: on a large file with
+        // several signatures it is the one left unchecked. That is a bound
+        // and not a failed check --- the seal found this signature intact on
+        // a budget of its own --- and until 2026-10-09 it was reported as
+        // tpdf's own check not passing, with the tool's exit code for that.
+        Some(found) if found.verdict == Verdict::Unchecked && found.why == Some(Why::Budget) => {
+            return Err(Refusal::Bound(
+                "cannot be checked before it is written: the document's signatures \
+                 together cover more data than tpdf checks at once, so the new signature \
+                 was not checked again with the data added"
+                    .into(),
+            ))
+        }
+        _ => return written("the new signature does not read as intact"),
     }
     let Some(stamp) = &ours.timestamp else {
         return written("the new signature's timestamp is not in it");
@@ -1258,7 +1278,9 @@ pub fn extend(
             bytes.len()
         )));
     }
-    check(&extended.signatures, field)?;
+    // The revision just built is all that follows the new signature's own.
+    let ours = crate::sign_cms::ours(&extended.signatures, field, extended.update.len() as u64);
+    check(ours.map(|at| &extended.signatures[at]))?;
     let mut whole = Vec::with_capacity(bytes.len() + extended.update.len());
     whole.extend_from_slice(bytes);
     whole.extend_from_slice(&extended.update);

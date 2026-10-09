@@ -190,13 +190,6 @@ impl DocumentGraph {
         self.password.as_deref()
     }
 
-    /// The document's bytes, however it was opened.
-    ///
-    /// A worker holds the mapping and can borrow it; a probe opened a path and
-    /// has to read it back, because PDFium keeps no copy anything here can
-    /// reach. `None` is a file that has gone or become unreadable since it was
-    /// opened --- which is a real state, not a defect: see `docs/PLAN.md` §5 on
-    /// external modification.
     /// The object graph, parsed on the first question that needs it.
     ///
     /// # Errors
@@ -225,6 +218,13 @@ impl DocumentGraph {
         self.parses.get()
     }
 
+    /// The document's bytes, however it was opened.
+    ///
+    /// A worker holds the mapping and can borrow it; a probe opened a path and
+    /// has to read it back, because PDFium keeps no copy anything here can
+    /// reach. `None` is a file that has gone or become unreadable since it was
+    /// opened --- which is a real state, not a defect: see `docs/PLAN.md` §5 on
+    /// external modification.
     fn bytes(&self) -> Option<std::borrow::Cow<'_, [u8]>> {
         match self.source.as_ref()? {
             Source::Bytes(bytes) => Some(std::borrow::Cow::Borrowed(*bytes)),
@@ -553,10 +553,6 @@ impl DocumentGraph {
             .and_then(|turns| turns.get(index as usize).copied())
     }
 
-    /// One page's box out of the page tree, parsing the document at most once.
-    ///
-    /// See [`DocumentGraph::sheets`] for why this is lazy and why most documents
-    /// never reach it.
     /// How many times the document draws each XObject one page draws.
     ///
     /// What a redaction plan needs and PDFium cannot answer: whether the
@@ -675,6 +671,10 @@ impl DocumentGraph {
         }
     }
 
+    /// One page's box out of the page tree, parsing the document at most once.
+    ///
+    /// See [`DocumentGraph::sheets`] for why this is lazy and why most documents
+    /// never reach it.
     #[must_use]
     pub fn sheet(&self, index: u32, pages: usize) -> Option<[f32; 4]> {
         self.sheets

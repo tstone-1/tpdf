@@ -262,24 +262,41 @@ function verdict(integrity: Integrity | null): string {
  * intact is stated first and plainly --- it should not happen, since the app
  * refuses to write one its own check would not call intact, and a sentence that
  * buried it would be the reassuring branch.
+ *
+ * **One verdict is neither**: a new signature the read-back did not check
+ * because the document's signatures together are past the hashing budget,
+ * which is spent in the order the fields are listed and reaches the new one
+ * last. The copy is not a failed one --- the signature was found intact over
+ * the bytes that were then written --- and it was not read back intact
+ * either, so the sentence says which check happened and which did not. Until
+ * 2026-10-09 this was the failure above, said of a correct copy.
  */
 export function afterSigning(signed: Signed): string {
   const name = basename(signed.path);
   const ours = signed.signatures.find((s) => s.ours);
   const earlier = signed.signatures.filter((s) => !s.ours && !s.archive);
   const archives = signed.signatures.filter((s) => s.archive);
-  if (!ours || ours.integrity?.verdict !== "intact") {
+  const unchecked =
+    ours?.integrity?.verdict === "unchecked" && ours.integrity.why === "budget";
+  if (!ours || (ours.integrity?.verdict !== "intact" && !unchecked)) {
     return (
       `${name} was written, but reading it back did not find the new signature ` +
       `${signed.field} intact: ${ours ? verdict(ours.integrity) : "it is not in the file"}. ` +
       "Do not rely on that copy."
     );
   }
-  let text = `Signed as ${signed.field} and saved to ${name}. Read back after writing, the signature is intact.`;
+  let text = unchecked
+    ? `${name} was written. The new signature ${signed.field} was intact when tpdf checked it ` +
+      `before writing; reading the file back did not check it again, because ${WHY.budget}.`
+    : `Signed as ${signed.field} and saved to ${name}. Read back after writing, the signature is intact.`;
+  // The timestamp is said of a signature read back intact: for one not
+  // checked again there is no reading of it to report. (Its revocation rows
+  // need no such rule: a standing is only ever beside an intact verdict.)
+  //
   // The authority's standing too: over plain HTTP a token from an authority
   // other than the one asked can arrive and check out, and it must not read
   // like the one the reader chose (`docs/THREAT-MODEL.md` §T10).
-  const stamp = ours.timestamp;
+  const stamp = unchecked ? null : ours.timestamp;
   if (stamp) {
     const by = stamp.authority?.subject_cn || stamp.authority?.subject || "";
     text += ` Timestamp: ${timestampRow(stamp.when, by, stamp.integrity, false).value}`;

@@ -122,6 +122,49 @@ fn an_earlier_dss_is_kept_and_added_to() {
     );
 }
 
+/// An earlier `/DSS` is carried into the new one key for key, and it is the
+/// document's own. With a `/Linearized` key in it, `lopdf`'s incremental
+/// writer would leave the new `/DSS` out and write a catalog pointing at an
+/// object that is not there; that is refused.
+#[test]
+fn a_dss_the_writer_would_leave_out_is_a_refusal() {
+    let (bytes, gathered) = world();
+    let first = append(&bytes, &gathered).expect("first");
+    let mut once = bytes.clone();
+    once.extend_from_slice(&first);
+    let with_key = {
+        let mut doc = Document::load_mem(&once).expect("parses");
+        let dss = doc
+            .catalog()
+            .expect("a catalog")
+            .get(b"DSS")
+            .and_then(Object::as_reference)
+            .expect("a /DSS of its own");
+        doc.get_dictionary_mut(dss)
+            .expect("a dictionary")
+            .set("Xinearized", Object::Integer(1));
+        let mut out = Vec::new();
+        doc.save_to(&mut out).expect("saved");
+        out
+    };
+    let more = Gathered {
+        certificates: Vec::new(),
+        responses: vec![b"not really a response".to_vec()],
+        lists: Vec::new(),
+    };
+    let why = append(&crate::save::marked_left_out(with_key.clone()), &more).expect_err("refused");
+    assert!(
+        why.contains("(/Linearized)") && why.contains("tpdf does not write one"),
+        "{why}"
+    );
+    // The control: the same `/DSS` with the key under any other name is
+    // carried over and added to.
+    let update = append(&with_key, &more).expect("appended");
+    let mut whole = with_key;
+    whole.extend_from_slice(&update);
+    assert_eq!(count(&dss_of(&whole), b"OCSPs"), 2);
+}
+
 #[test]
 fn nothing_to_add_or_too_much_is_refused() {
     let (bytes, gathered) = world();

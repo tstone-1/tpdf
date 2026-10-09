@@ -476,14 +476,63 @@ export function inTextField(event: KeyboardEvent): boolean {
 }
 
 /**
+ * The page surfaces, each with whether it has a selection of its own.
+ *
+ * A page's selection is drawn and copied by its viewer and is not the web
+ * view's, so nothing the web view knows says which of the two a copy is for.
+ * A viewer names its root here and {@link nativeCopy} asks. Weak, so a root
+ * that is gone takes its entry along.
+ */
+const pageSurfaces = new WeakMap<object, () => boolean>();
+
+/**
+ * Names `surface` as an element whose copy is its own while `hasSelection`
+ * answers true. Naming it again replaces the answer; {@link forgetPageSurface}
+ * takes it out.
+ */
+export function namePageSurface(surface: object, hasSelection: () => boolean): void {
+  pageSurfaces.set(surface, hasSelection);
+}
+
+/** Takes `surface` out again, when its viewer goes and the element stays. */
+export function forgetPageSurface(surface: object): void {
+  pageSurfaces.delete(surface);
+}
+
+/**
+ * Whether the web view's selection lies wholly outside `surface`: neither end
+ * is inside it and it does not run across it.
+ */
+function selectionOutside(selection: globalThis.Selection, surface: Node): boolean {
+  const inside = (node: Node | null) => node !== null && surface.contains(node);
+  if (inside(selection.anchorNode) || inside(selection.focusNode)) return false;
+  return !selection.containsNode(surface, true);
+}
+
+/**
  * Whether the copy chord was pressed over selected interface text: an error
  * message, a line of a dialog. The page's own selection is not the web view's,
  * so the surface and the window both step aside for this one.
+ *
+ * **Not when the key went to a page that has a selection of its own and the
+ * interface text is somewhere else.** The web view's selection is the
+ * document's, wherever the keyboard is: words of an error message selected
+ * earlier are still a `Range` when the reader has since selected a paragraph
+ * of the page, and a test of the type alone then copies the old message in
+ * place of the paragraph. A viewer clears the web view's selection when it
+ * takes a press, which covers a selection made with the pointer; this covers
+ * one made without a press, select all among them, and a web view that keeps
+ * a range anyway. A page with nothing selected leaves the chord to the
+ * interface text, as before.
  */
 export function nativeCopy(event: KeyboardEvent): boolean {
   if (!matches("edit.copy", event)) return false;
   const target = event.target as Node | null;
-  return target?.ownerDocument?.getSelection()?.type === "Range";
+  const selection = target?.ownerDocument?.getSelection();
+  if (!target || selection?.type !== "Range") return false;
+  const pageHasSelection = pageSurfaces.get(target);
+  if (pageHasSelection?.() && selectionOutside(selection, target)) return false;
+  return true;
 }
 
 /**
