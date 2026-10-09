@@ -8451,6 +8451,32 @@ starts at 0 and increments within the month.
    repository writes. Both need an unlocked screen; `save_check.py` refuses a locked one
    rather than reporting an application that ignores its menu.
 
+   **On Windows, run the installer itself and use what it installed.** One command, on a
+   Windows machine where tpdf is not installed, in a session with a desktop:
+
+   ```powershell
+   python scripts\installed_check.py <path>\tpdf_<version>_x64-setup.exe testdata\text-wide.pdf --word Ledger
+   ```
+
+   It installs silently into a folder of its own, reads the installed files and the tool's
+   version, removes a word with the installed `tpdf-cli.exe` and reads the copy back, starts
+   the installed application on the document, waits for its window, for a worker that maps
+   the installed `pdfium.dll` and for the session file to name the document, asks the window
+   to close, uninstalls, and reads the registry afterwards. It refuses to start where tpdf is
+   installed or running. Over ssh the window needs an interactive scheduled task
+   (`schtasks /Create ... /IT`, then `/Run`): started from the ssh session itself the
+   application has no desktop to open a window on.
+
+   **First run, 2026-10-09, Windows 11, against the published 26.10.13 installer:** 20 of 20
+   checks passed. Two controls failed as they should: with `--version 26.10.12` the tool's
+   version and the window's title failed, and with a word the document does not have the
+   run stopped at the tool's first check. The document and the word are not
+   interchangeable: in `text-base14.pdf` the Windows recogniser does not read the 10 pt
+   control word, so every removal there is written and reported as not verified.
+   What it does not do: read the page the window drew, or edit and save in the window. A
+   normal build has no check harness, so those stay with `window_checks.py` on a checks
+   build.
+
    **Windows produces an MSI and an NSIS installer**, since 2026-07-30. It did not until
    then, and the rule that came out of it is worth knowing before adding a probe:
    **`src/bin/` must contain only declared bin sources.** The bundler enumerates that

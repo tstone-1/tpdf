@@ -797,6 +797,7 @@ hop through the index.
 - Tauri 2.12 puts an empty `msvcrt.lib` on the library path of everything that depends on `tpdf`
 - A PowerShell `$env:` variable in double quotes is emptied by the remote bash, and `Test-Path` then answers False about another path
 - A process that is exiting refuses a query before its handle says it has exited
+- A module path read from another process can begin with `\\?\`, so a prefix test against a folder finds nothing
 
 ## Fixtures
 - The test fixtures are generated, not committed
@@ -26145,3 +26146,19 @@ there after the fit (`readingsNow`, `fitNewSplit`). The `views` phase of `tabs_c
 reads both pages; with either half removed, *the new view starts on the page the first was
 on* fails. Mount into an element only once it is laid out, and when a place has to survive
 a change of size, read it before the change.
+
+### A module path read from another process can begin with `\\?\`, so a prefix test against a folder finds nothing
+
+`scripts/installed_check.py` asks whether a worker of the installed application has the
+*installed* PDFium mapped, by comparing each module path of the worker with the install
+folder. Its first run on Windows (2026-10-09) found two worker processes with 36 modules
+each and none under the folder. The library was mapped: Toolhelp reported it as
+`\\?\C:\Users\...\tpdf-installed-check\pdfium\pdfium.dll`, because that is the form the
+worker loaded it by, and every other module of the same process came back without the
+prefix. A `startswith` on the folder therefore failed for exactly the one module the check
+was about.
+
+The check now records any module with `pdfium` in its path and compares after removing the
+prefix, and it prints the path it found, so a wrong folder and a missing library read
+differently. When a path comes from another process, compare it in one form: strip `\\?\`
+before a prefix test, and print what was seen when nothing matches.
