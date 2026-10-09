@@ -7777,6 +7777,36 @@ starts at 0 and increments within the month.
    it runs there, never as strong as the target it names**, and anything the real gate list
    does that the stand-in does not is a class of failure it cannot report while reading as
    coverage.
+
+   **And `scripts/window_checks.py` on a checks build, before a tag** (2026-10-09). No gate
+   opens a window, so what is wrong only at the join in `App.svelte` is found by these
+   checks or by a reader:
+
+   ```
+   npm run tauri build -- --config src-tauri/tauri.checks.conf.json --bundles app
+   scripts/window_checks.py "src-tauri/target/release/bundle/macos/tpdf Checks.app/Contents/MacOS/tpdf"
+   npm run build
+   ```
+
+   It runs the viewer check, the mark check on two documents, the tab phases `tabs`,
+   `tabs-position`, `sides` and `import`, and the session check, one after the other, and
+   exits 1 when any of them fails or a fixture is missing; `--list` prints the commands.
+   The last line puts the normal frontend back in `dist/`, which the checks build replaced.
+   It needs an unlocked screen and takes the keyboard while it runs, so it is not a gate.
+   The reason it is a step: two of these checks had been red for days when the two-sides
+   work began, one from command lists that had fallen behind the registry and one from a
+   drag aimed in the wrong coordinates, and nothing had run either. `--only` is for the
+   loop while one check is being worked on, and its run says that it is not the release's.
+   It runs the viewer check on one document. The sweep over every window corpus is
+   `scripts/viewer_sweep.py` (*Checking the viewer*), a longer run with its own table.
+
+   **It runs unmodified on Windows** against the `--no-bundle` checks build, from a session
+   that is logged on (2026-10-09, Windows 11): every check passed. **Open, and seen once:**
+   in that run the `sides` phase passed its checks and `tabs_check.py` then exited 1 with
+   `could not verify worker exit: [WinError 5] Access is denied`, from `OpenProcess` in
+   `win_worker_exit.py`. The phase ran seven more times that day, and `tabs` six, with no
+   repeat and no `tpdf.exe` left afterwards. The cause is not established; a rerun of the
+   one phase is what told a harness refusal from a worker that stayed.
 6. <a id="release-step-6"></a>**Re-check `docs/THREAT-MODEL.md` against the code**, and correct the document before
    trusting anything else in this list — §3's boundary table, §5's sandbox policy and
    §6's macOS column especially. Every present-tense sentence there claims something is
