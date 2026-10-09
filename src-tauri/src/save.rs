@@ -4317,15 +4317,20 @@ fn apply_redactions(
     let mut lost: std::collections::HashSet<lopdf::ObjectId> = std::collections::HashSet::new();
     let mut answers: Vec<String> = Vec::new();
     for (page, redaction) in targets {
-        // The cuts first. A cut always leaves a glyph of its show, so the
-        // page has as many shows afterwards and `remove_shows` counts the same.
+        // The cuts first. A cut of every glyph leaves no show where one was,
+        // so what `remove_shows` is given is the ordinals and the count as
+        // they stand afterwards.
         if !redaction.show_cuts.is_empty() {
             let cut = redact::cut_shows(doc, page, &redaction.show_cuts, redaction.text_objects)
                 .map_err(Refusal::from)?;
             done.shows += cut.removed;
         }
-        let took = redact::remove_shows(doc, page, &redaction.shows, redaction.text_objects)
-            .map_err(Refusal::from)?;
+        let (shows, text_objects) = redact::after_cuts(
+            &redaction.show_cuts,
+            &redaction.shows,
+            redaction.text_objects,
+        );
+        let took = redact::remove_shows(doc, page, &shows, text_objects).map_err(Refusal::from)?;
         done.shows += took.removed;
 
         // **Then the text inside Form XObjects**, which PDFium enumerates as one

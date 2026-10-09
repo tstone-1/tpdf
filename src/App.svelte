@@ -167,7 +167,7 @@
   import { barCommand } from "./lib/arrangebar";
   import {
     arrangeBoth, asMarks, isSaved, moved as fieldMoved, placed as fieldPlaced,
-    removal, renamed as fieldRenamed, shownAt,
+    controlRect, removal, renamed as fieldRenamed,
   } from "./lib/savedfields";
   import type { Form } from "./lib/forms";
   import {
@@ -185,7 +185,7 @@
   import { Viewer, type ViewerOptions, type ViewerStatus } from "./lib/viewer";
   import { Stage, blankLive, scoped, type LiveDocument, type Slots } from "./lib/livedocument";
   import {
-    dropView, openFailure, pageTable, placeOnSide, placeToResume, readerIsIn, repoint, sharedByTwin,
+    dropAbandoned, openFailure, pageTable, placeOnSide, placeToResume, readerIsIn, repoint, sharedByTwin,
     type OpenFound,
   } from "./lib/documentopen";
   import { Panes, otherSide, type Side, type Slot } from "./lib/panes";
@@ -5303,6 +5303,12 @@
       },
       onPosition: (at, top) => {
         sidebar?.setPosition(at, top);
+        // A form's controls and the text editor sit over the page, and
+        // `onStatus` does not fire for a scroll within a page that brings no
+        // new tile: the status has no place in it. Laid out there alone, a
+        // control stayed where it was while its field moved under it.
+        formLayer?.layout();
+        textEditor?.layout();
         notePlace();
         keepInStep();
       },
@@ -5376,8 +5382,13 @@
   function buildFormLayer(host: HTMLDivElement, view: ViewId, form: Form, mounted: Viewer): FormLayer {
     // A control sits where its field now is, and nowhere while the fields
     // are being changed: a press on one then picks it and does not type.
+    //
+    // Read as this document. The frames and the edits that lay the controls
+    // out arrive as it, and a control that lays itself out from its own key
+    // handler does not: the reader may be in the other side then, and the
+    // variables are that document's.
     const anchored = (widget: Form["widgets"][number]) => {
-      const rect = formEditing || !edits ? null : shownAt(widget, edits.state);
+      const rect = asDocument(view, () => controlRect(widget, formEditing, edits?.state ?? null)) ?? null;
       return rect ? mounted.formAnchor({ page: widget.page, display_rect: rect }) : null;
     };
     return new FormLayer(host, form, anchored,
@@ -5560,14 +5571,13 @@
    * that is gone.
    */
   function abandonOpen(acquired: number, replaced: boolean, twins: readonly DocumentTab[]): void {
-    if (acquired >= 0) {
-      dropView(panes, tabs, viewOf(acquired));
-      void call("close_document", { doc: acquired }).catch(console.warn);
-      refreshTabs();
-    }
+    // Which views go, and that the row is drawn after the last of them has
+    // gone, is `dropAbandoned`'s. On every path, the ones that drop nothing
+    // included: a row drawn once too often is the same row.
+    dropAbandoned(panes, tabs,
+      { own: acquired >= 0 ? viewOf(acquired) : undefined, replaced, twins }, refreshTabs);
+    if (acquired >= 0) void call("close_document", { doc: acquired }).catch(console.warn);
     if (replaced) {
-      // The other views were torn down for a handle that never arrived.
-      for (const twin of twins) dropView(panes, tabs, twin.view);
       // Whatever half-built state got as far as existing. A viewer left alive
       // while `title` is empty runs its frame loop against a detached surface
       // and keeps writing `status`, which the header renders --- a page count
@@ -5579,6 +5589,11 @@
       // label's clock goes with them, because a stale one would show the
       // next document's first blurry frame at once.
       unmountDocument();
+      // With no document left the page areas go too, so the window shows
+      // the start page and not two empty areas. `showPanes` sets this when
+      // it mounts something, and a failed open with nothing to go back to
+      // never gets there.
+      bodyHeld = stage.parked.length > 0;
     }
   }
 

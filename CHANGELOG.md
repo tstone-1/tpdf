@@ -68,15 +68,33 @@ have the binary.)
   or graphics state the page draws with, or changed a field the page already had, and
   added a signature field beside it, passed `verify --strict`. Such a page now counts as
   rewritten.
+- **`verify --strict` failed an honest second signature in two cases.** A signature put in
+  an empty signature field the document already had, as in a form prepared for two
+  signers, was reported as a rewritten page. It now reads "no page was rewritten" when
+  nothing changed on the field but the signature, its appearance, its flags and its date.
+  And a second signature in a new field was reported as a rewritten page when the page
+  keeps its list of annotations as a separate object.
 - **Redacting a page that shares its content with another page changed the other page too.**
   Where two pages name one content stream, as a repeated page does, the redacted text went
   from both, with no box on the second and no line about it in the report. The redacted
   page now gets a stream of its own.
 - A redaction that cuts the end of a line no longer moves the text after it when the line
   is followed by spacing alone.
+- **Text after a removed run moved.** When a redaction removed a whole run of text and more
+  text followed it on the line, that text moved left by the width of what went, could end
+  under the black box, and the copy then ended "not verified". It now stays where it was.
+  A removed line written with `'` or `"` no longer pulls the lines after it up by one, and
+  the same holds inside a reusable block.
+- Text whose width cannot be measured, such as vertical or right-to-left writing, and that
+  is followed directly by more text on its line, is now left in place and reported as not
+  removable. It used to be removed with the following text moved.
 - When the check of a saved file does not answer in time, tpdf waits up to two seconds for
   the checking process to let go of the file before putting the file back. On Windows the
   file could not be put back while it was still held.
+- A form's controls and the text being edited follow the page when it is scrolled a short
+  way. They were put in place only when the page number, the zoom or what is drawn
+  changed, so after a small scroll that changed none of these a control could sit beside
+  its field.
 - A record of the open tabs that could not be written is written again at the next change,
   and the failure is logged.
 

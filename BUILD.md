@@ -7799,10 +7799,14 @@ starts at 0 and increments within the month.
    ```
 
    It runs the viewer check, the mark check on two documents, the tab phases `tabs`,
-   `tabs-position`, `sides`, `views` and `import`, and the session check, one after the other, and
+   `tabs-position`, `sides`, `views`, `import`, `answers` and `form-beside`, and the session
+   check, one after the other, and
    exits 1 when any of them fails or a fixture is missing; `--list` prints the commands.
    The last line puts the normal frontend back in `dist/`, which the checks build replaced.
    It needs an unlocked screen and takes the keyboard while it runs, so it is not a gate.
+   The Tab check of `form-beside` needs a form of two controls and `testdata/form.pdf` has
+   one, so that run prints that it was not made; run it once by hand with the fixture the
+   `forms` phase uses (`tabs_check.py <binary> <fixture> --phase form-beside`).
    The reason it is a step: two of these checks had been red for days when the two-sides
    work began, one from command lists that had fallen behind the registry and one from a
    drag aimed in the wrong coordinates, and nothing had run either. `--only` is for the

@@ -420,6 +420,26 @@ export function shownAt(widget: FormWidget, state: Pick<EditState, "fields">): R
 }
 
 /**
+ * Where a widget's control is put for a document whose fields are, or are not,
+ * being changed: nowhere while they are, since a press on a field then picks
+ * it and does not type, nowhere for a document with no model, and otherwise
+ * {@link shownAt}.
+ *
+ * `editing` and `state` are the control's own document's. `App.svelte` reads
+ * them as that document, whichever one the reader is working in: a control
+ * lays itself out from its own key handler too, and the reader may be in the
+ * other side then.
+ */
+export function controlRect(
+  widget: FormWidget,
+  editing: boolean,
+  state: Pick<EditState, "fields"> | null,
+): Rect | null {
+  if (editing || !state) return null;
+  return shownAt(widget, state);
+}
+
+/**
  * The pages of the opened file that are drawn differently after a change to
  * its fields: every page with a widget whose pending change is not what it
  * was. Undoing a change counts, and so does a widget of a renamed field on

@@ -435,6 +435,156 @@ pub(super) fn part_of_a_line_is_removed(report: &mut Report) {
     );
 }
 
+/// What each line of [`whole_shows_pdf`] loses and keeps. The secret is a
+/// show operator of its own on every line, so the removal takes all of it,
+/// and what follows it is written in a different way on each.
+const WHOLE_LINES: [(&str, &str); 10] = [
+    // The next show starts at the pen.
+    ("SECRETA", "NEXTA"),
+    // A `TJ` that draws nothing moves the pen, and then a show starts there.
+    ("SECRETB", "NEXTB"),
+    // The last show of its text object: nothing follows.
+    ("SECRETC", "LEADC"),
+    // `Td`, `Tm` and `T*` place the next show from the start of the line.
+    ("SECRETD", "NEXTD"),
+    ("SECRETE", "NEXTE"),
+    ("SECRETF", "NEXTF"),
+    // The secret is shown by `'`, which moves to the next line first, and
+    // the line after it is another `'`.
+    ("SECRETG", "NEXTG"),
+    // Turned thirty degrees: the pen moves along the line, not along x. Two
+    // spaces end the secret's show, which keep the next word out of the
+    // upright box a search draws round a tilted one.
+    ("SECRETH", "NEXTH"),
+    // `"`, which also sets the two spacings the next show is drawn with.
+    ("SECRETI", "NEXTI"),
+    // Another size for the show that follows.
+    ("SECRETJ", "NEXTJ"),
+];
+
+/// One page, ten lines, on each a show that goes whole and something after
+/// it. Synthetic words throughout.
+fn whole_shows_pdf() -> Vec<u8> {
+    let mut doc = Document::with_version("1.7");
+    let pages = doc.new_object_id();
+    let font = doc.add_object(dictionary! {
+        "Type" => "Font", "Subtype" => "Type1", "BaseFont" => "Helvetica",
+        "Encoding" => "WinAnsiEncoding",
+    });
+    let body = "BT /F1 20 Tf 100 740 Td (SECRETA) Tj (NEXTA) Tj ET\n\
+                BT /F1 20 Tf 100 700 Td (SECRETB) Tj [-500] TJ (NEXTB) Tj ET\n\
+                BT /F1 20 Tf 100 660 Td (LEADC ) Tj (SECRETC) Tj ET\n\
+                BT /F1 20 Tf 100 620 Td (SECRETD) Tj 0 -30 Td (NEXTD) Tj ET\n\
+                BT /F1 20 Tf 100 550 Td (SECRETE) Tj 1 0 0 1 100 520 Tm (NEXTE) Tj ET\n\
+                BT /F1 20 Tf 30 TL 100 480 Td (SECRETF) Tj T* (NEXTF) Tj ET\n\
+                BT /F1 20 Tf 30 TL 100 440 Td (SECRETG) ' (NEXTG) ' ET\n\
+                BT /F1 20 Tf 0.866 0.5 -0.5 0.866 300 80 Tm (SECRETH  ) Tj (NEXTH) Tj ET\n\
+                BT /F1 20 Tf 30 TL 100 340 Td 4 1 (SECRETI) \" (NEXTI) Tj 0 Tw 0 Tc ET\n\
+                BT /F1 20 Tf 100 250 Td (SECRETJ) Tj /F1 11 Tf (NEXTJ) Tj ET\n";
+    let content = doc.add_object(Stream::new(dictionary! {}, body.as_bytes().to_vec()));
+    let page = doc.add_object(dictionary! {
+        "Type" => "Page", "Parent" => pages,
+        "Resources" => dictionary! { "Font" => dictionary! { "F1" => font } },
+        "MediaBox" => vec![0.into(), 0.into(), 612.into(), 792.into()],
+        "Contents" => content,
+    });
+    doc.objects.insert(
+        pages,
+        dictionary! { "Type" => "Pages", "Kids" => vec![page.into()], "Count" => 1 }.into(),
+    );
+    let catalog = doc.add_object(dictionary! { "Type" => "Catalog", "Pages" => pages });
+    doc.trailer.set("Root", catalog);
+    let mut bytes = Vec::new();
+    doc.save_to(&mut bytes).expect("saved");
+    bytes
+}
+
+/// A show that goes whole takes its words and nothing else: what is drawn
+/// after it stays where it was.
+///
+/// Taking the operator out took what it did to the pen and to the line with
+/// it. Measured 2026-10-09 on this fixture: the show after one that went was
+/// drawn where the one that went had started, and the line after a removed
+/// `'` one line up.
+pub(super) fn a_whole_show_goes_and_the_rest_stays(report: &mut Report) {
+    let dir = scratch("redact-whole");
+    let input = dir.join("whole.pdf");
+    std::fs::write(&input, whole_shows_pdf()).expect("fixture");
+    let secrets: Vec<&str> = WHOLE_LINES.iter().map(|line| line.0).collect();
+    let kept: Vec<&str> = WHOLE_LINES.iter().map(|line| line.1).collect();
+    let places = |path: &Path| -> Vec<serde_json::Value> {
+        kept.iter().map(|word| region_for(path, 1, word)).collect()
+    };
+    let was = places(&input);
+
+    let out = dir.join("redacted.pdf");
+    let queries: Vec<(SearchKind, &str)> = secrets
+        .iter()
+        .map(|secret| (SearchKind::Text, *secret))
+        .collect();
+    let line = [
+        vec![
+            "redact".to_string(),
+            s(&input),
+            "-o".into(),
+            s(&out),
+            "--json".into(),
+        ],
+        query_args(&queries),
+    ]
+    .concat();
+    let (code, json, stderr) = run(&line, &[]);
+    report.check(
+        "the copy is written and verified",
+        code == 0 && json["written"] == true && json["verified"] == true && out.exists(),
+        &format!("exit {code}: {stderr} {json}"),
+    );
+    if !out.exists() {
+        return;
+    }
+    let taking = json["pages"][0]["taking"].to_string();
+    report.check(
+        "the report takes each secret, and none of the words after them",
+        json["pages"][0]["text_removals"] == 10
+            && secrets.iter().all(|secret| taking.contains(secret))
+            && kept.iter().all(|word| !taking.contains(word)),
+        &json["pages"][0].to_string(),
+    );
+    let text = text_of(&out, &[], &[]);
+    report.check(
+        "no secret is in the copy's text, and every word after one is",
+        secrets.iter().all(|secret| !text.contains(secret))
+            && kept.iter().all(|word| text.contains(word)),
+        &text,
+    );
+    let now = places(&out);
+    let moved: Vec<String> = kept
+        .iter()
+        .zip(was.iter().zip(&now))
+        .filter(|(_, (a, b))| {
+            (0..4).any(|at| {
+                let (a, b) = (a["rect"][at].as_f64(), b["rect"][at].as_f64());
+                !matches!((a, b), (Some(a), Some(b)) if (a - b).abs() <= 0.05)
+            })
+        })
+        .map(|(word, (a, b))| format!("{word:?} was at {} and is at {}", a["rect"], b["rect"]))
+        .collect();
+    report.check(
+        "every word after a show that went is where it was, to a twentieth of a point",
+        moved.is_empty(),
+        &moved.join("; "),
+    );
+    // What the page's content holds now, so that "where it was" is not a
+    // position the fixture happened to give.
+    let content = content_of(&out);
+    report.check(
+        "the removed `'` and `\"` still move to their lines, and no secret is a string",
+        content.matches("T*").count() == 3
+            && secrets.iter().all(|secret| !content.contains(secret)),
+        &content,
+    );
+}
+
 /// One page drawing the same Form XObject twice, and a line of its own.
 ///
 /// The removal leaves a form the page draws more than once --- taking the one

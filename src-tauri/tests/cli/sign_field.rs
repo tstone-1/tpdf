@@ -71,6 +71,28 @@ fn drawn_in(path: &Path, name: &str) -> (Vec<f32>, String) {
     (rect, String::from_utf8_lossy(&content).into_owned())
 }
 
+/// The document at `path` with one more revision, which gives the field
+/// called `name` another rectangle and writes nothing else.
+fn with_the_field_moved(path: &Path, name: &str) -> Vec<u8> {
+    let bytes = std::fs::read(path).expect("the signed document");
+    let prev = lopdf::Document::load_mem(&bytes).expect("it parses");
+    let (id, mut field) = prev
+        .objects
+        .iter()
+        .find_map(|(id, object)| {
+            let dict = object.as_dict().ok()?;
+            (dict.has(b"T") && name_of(dict) == name).then(|| (*id, dict.clone()))
+        })
+        .expect("the field");
+    field.set("Rect", vec![0.into(), 0.into(), 300.into(), 300.into()]);
+    let mut incremental = lopdf::IncrementalDocument::create_from(bytes.clone(), prev);
+    incremental.new_document.set_object(id, field);
+    let mut out = Vec::new();
+    incremental.save_to(&mut out).expect("the revision saves");
+    assert_eq!(&out[..bytes.len()], bytes, "a revision appended");
+    out
+}
+
 pub fn signs_the_field(report: &mut Report) {
     let now = now();
     let dir = scratch("sign-field");
@@ -163,6 +185,48 @@ pub fn signs_the_field(report: &mut Report) {
                 lines.len() == 2 && lines.iter().all(|(_, verdict)| verdict == "intact")
             }),
         &format!("exit {code}; {stderr}; {read:?}"),
+    );
+
+    // What the first signature is told followed it: the second, in a place
+    // the document it signed already had. No page object is written for
+    // that, and the page is not one a signature fails to cover.
+    let found = super::verify_appendix::signatures(&twice);
+    // Only the first, so that `judged` reads its appendix and not the
+    // second's, which has none.
+    let first: Vec<serde_json::Value> = found
+        .iter()
+        .filter(|s| s["appended_bytes"].as_u64().is_some_and(|n| n > 0))
+        .cloned()
+        .collect();
+    let after_first = first
+        .first()
+        .map(|s| s["appendix"].clone())
+        .unwrap_or_default();
+    let (_, text, _) = super::tool(&["verify", &s(&twice)], &[]);
+    report.check(
+        "a second signature in a prepared field is not a page rewritten after the first",
+        found.len() == 2
+            && after_first["unread"] == false
+            && after_first["pages_touched"] == 0
+            && after_first["pages_listing"] == serde_json::json!([])
+            && after_first["sentence"] == "another signature, and no page was rewritten"
+            && first.len() == 1
+            && super::verify_appendix::judged(&first) == Some((false, 0))
+            && !text.contains("After the last signature"),
+        &format!("{after_first}\n{text}"),
+    );
+    // Control: the same field moved after the first signature, by a revision
+    // written here. One page, which no signature covers.
+    let moved = dir.join("moved.pdf");
+    std::fs::write(&moved, with_the_field_moved(&once, "Witness")).expect("the moved copy");
+    let found = super::verify_appendix::signatures(&moved);
+    let (code, text, _) = super::tool(&["verify", "--strict", &s(&moved)], &[]);
+    report.check(
+        "control: the empty field moved after the signature is a page rewritten",
+        code == 1
+            && super::verify_appendix::judged(&found) == Some((false, 1))
+            && text.contains("After the last signature: 1 page was rewritten"),
+        &format!("exit {code}; {found:?}\n{text}"),
     );
 
     // The window's own path to the worker: the render service's request, which

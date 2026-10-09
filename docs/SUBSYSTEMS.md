@@ -195,6 +195,13 @@ failure), and `buildSidebar`, `adoptModel`, `buildViewer`, `showModel` and
 controls are built by `buildFormLayer`, with every callback bound to its view. Inverted
 page colours and the pen nib are the window's and each viewer holds a copy, so
 `toggleInvert` and `chooseNib` set them through `Stage.each` on every mounted viewer.
+What a failed open takes out of the tabs, and that the row is drawn after the last of
+them, is `dropAbandoned` in `documentopen.ts`; `abandonOpen` calls it on every path. A form
+control is placed by `controlRect` (`savedfields.ts`), asked through `asDocument(view,
+...)`: a control lays itself out from its own key handler, and the reader may be in the
+other side then. `tabs_check.py --phase form-beside` drives a form on the unfocused side,
+and `--phase answers` the outline, comments and links a document is asked for after its
+first paint.
 
 The rule: **code in `App.svelte` that runs without the reader pressing anything in that
 document runs through `asDocument(id, ...)`, and again after every `await`.** A frame, a

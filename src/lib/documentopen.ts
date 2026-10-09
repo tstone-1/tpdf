@@ -142,6 +142,30 @@ export function dropView<Id>(
 }
 
 /**
+ * Takes out of the sides and the tabs every view a failed open leaves without
+ * a document, and then has the tab row drawn again.
+ *
+ * `own` is the view of the handle the open was given, or undefined when the
+ * handle was a tab's own, which keeps its tab. `twins` are the other views of
+ * the document the open was replacing: they go only when `replaced` says the
+ * outgoing document had been torn down, because they went down with it for a
+ * handle that never arrived. Before that they are still on screen.
+ *
+ * `refresh` is called once and last, on every path. Called between the two
+ * removals, as it was, it drew a row that still held the twins.
+ */
+export function dropAbandoned<Id>(
+  panes: { closed(id: Id, order: readonly Id[]): void },
+  tabs: { readonly all: readonly { view: Id }[]; remove(id: Id): unknown },
+  left: { own: Id | undefined; replaced: boolean; twins: readonly { view: Id }[] },
+  refresh: () => void,
+): void {
+  if (left.own !== undefined) dropView(panes, tabs, left.own);
+  if (left.replaced) for (const twin of left.twins) dropView(panes, tabs, twin.view);
+  refresh();
+}
+
+/**
  * What a failed open tells the reader, or null for nothing.
  *
  * A document that was open last time and is not there now is not a failure

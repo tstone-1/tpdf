@@ -53,6 +53,7 @@ hop through the index.
 - PDFium answers the same error for no password and for the wrong one
 - PDFium paints a pixel-aligned rectangle one pixel wider, so cutting it changes an edge the cut did not touch
 - PDFium makes no text object of a show operator that draws nothing, so counting operators counts too many
+- Removing an operator removes everything it did, not only what it drew
 
 ## PDFium: text, coordinates and outlines
 - A byte scan cannot verify a document with a Type0 font
@@ -277,6 +278,7 @@ hop through the index.
 - PDFKit draws a text field's answer itself and ignores the turn the field declares, so it cannot check a field on a turned page
 - A bookmark kept as a heading is the title of a deleted page
 - A diff of two parses by one library cannot see what that library ignores
+- A rule for what reaches a changed object counts the legitimate change as well
 
 ## Tauri, the webview and startup
 - `AppHandle::exit` does not set the process's exit code
@@ -26239,3 +26241,40 @@ and the test calls. What is left as text goes through `src/lib/sourcetext.ts`, w
 comments first, checks presence only, and says in its own comment that it cannot see
 whether a line runs. A text check on source is a statement that a string exists; write the
 decision where a test can call it.
+
+### Removing an operator removes everything it did, not only what it drew
+
+`remove_shows` deleted the operator of a show that a redaction takes whole. A show draws,
+and it also moves the pen; `'` and `"` move to the next line first, and `"` sets two
+spacings. All of that went with it (measured 2026-10-09, Helvetica 20 pt): the next show on
+the line moved from x = 195.98 to 101.52, under the fill, and the copy ended "not
+verified"; the line after a removed `'` moved one leading up; the text after a removed `"`
+came out 4 pt narrower. No test of `remove_shows` saw it, because they asserted which
+strings were left and not where anything was drawn.
+
+A whole show followed by a show at its pen is now a cut of every glyph, which leaves the
+advance as one `TJ` number, and a removed `'` or `"` leaves its `T*`, or `Tw Tc T*`. A show
+whose advance cannot be measured and that has text at its pen is refused. The partial cut ran
+before `remove_shows` on the stated ground that a cut always leaves a glyph, and
+`remove_shows` counted its ordinals on that: a cut of every glyph broke the count until
+`after_cuts` handed over the ordinals as they stand afterwards. Before deleting an
+operator, list what else it does to the state the following operators read, and when a
+step may now produce something it never produced, grep for the sentence that says so.
+
+### A rule for what reaches a changed object counts the legitimate change as well
+
+"A page is rewritten when anything it reaches changed" closed a real hole on 2026-10-09
+and, the same day, was found to fail an honest document: a form prepared for two signers.
+The second signature fills an empty signature field the document already had. No page
+object is written, and the page reaches the filled widget through the `/Annots` entry it
+always had, so `verify --strict` said one page was rewritten. The fixtures held only a
+signature in a new field, where the listing rule already left that edge out. The same went
+for a page that keeps `/Annots` as a separate object: the changed object was the array, and
+the listing question was asked of page objects only.
+
+`PageRead` in `docinfo.rs` now reads an annotation as a signed place when it was an empty
+signature widget, gained a `/V` that names a new dictionary with `/ByteRange`, and differs
+from its signed self in the keys of `SIGNING_WRITES` alone. Each key has its reason beside
+it, and `/Rect`, `/FT`, `/Parent` and the rest stay a change. When a reachability rule is
+tightened, list the legitimate writers of each kind of object it now reaches and build one
+fixture for each.

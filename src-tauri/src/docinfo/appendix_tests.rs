@@ -925,6 +925,579 @@ fn a_page_taken_out_of_the_document_is_counted() {
     assert_eq!(appendix.pages_touched, 2, "{appendix:?}");
 }
 
+// ------------------------------------------------- a place prepared for signing
+
+/// [`built`] with places on its first page that were there, empty, when the
+/// document was signed.
+struct Prepared {
+    built: Built,
+    /// An empty signature field that is its own widget.
+    place: ObjectId,
+    /// An empty signature field, and its widget as an object of its own.
+    split: (ObjectId, ObjectId),
+    /// What `place` says of its border, as an object of its own.
+    border: ObjectId,
+    /// An empty text field that is its own widget.
+    answer: ObjectId,
+    /// The first page's `/Annots`, when it is an object of its own.
+    annots: Option<ObjectId>,
+}
+
+/// `indirect` writes the first page's `/Annots` as an object of its own.
+fn prepared(indirect: bool) -> Prepared {
+    let mut built = built();
+    let mut doc = Document::load_mem(&built.bytes).expect("the document parses");
+    let first = built.page[0];
+    let empty = doc.add_object(form(b"0 0 80 30 re S", dictionary! {}));
+    let border = doc.add_object(dictionary! { "BC" => vec![0.into()] });
+    let place = doc.add_object(dictionary! {
+        "Type" => "Annot", "Subtype" => "Widget", "FT" => "Sig",
+        "T" => Object::string_literal("Synthetic place"), "P" => first, "F" => 4,
+        "Rect" => vec![100.into(), 100.into(), 180.into(), 130.into()],
+        "AP" => dictionary! { "N" => empty }, "MK" => border,
+    });
+    let field = doc.new_object_id();
+    let widget = doc.add_object(dictionary! {
+        "Type" => "Annot", "Subtype" => "Widget", "Parent" => field, "P" => first, "F" => 4,
+        "Rect" => vec![100.into(), 140.into(), 180.into(), 170.into()],
+    });
+    doc.objects.insert(
+        field,
+        Object::Dictionary(dictionary! {
+            "FT" => "Sig", "T" => Object::string_literal("Synthetic split place"),
+            "Kids" => vec![widget.into()],
+        }),
+    );
+    let answer = doc.add_object(dictionary! {
+        "Type" => "Annot", "Subtype" => "Widget", "FT" => "Tx",
+        "T" => Object::string_literal("Synthetic answer"), "P" => first,
+        "Rect" => vec![10.into(), 70.into(), 90.into(), 90.into()],
+    });
+    let mut annots = dict_of(&doc, first)
+        .get(b"Annots")
+        .and_then(Object::as_array)
+        .expect("the first page's annotations")
+        .clone();
+    annots.extend([place.into(), widget.into(), answer.into()]);
+    let held = indirect.then(|| doc.add_object(annots.clone()));
+    let page = doc.get_dictionary_mut(first).expect("the first page");
+    match held {
+        Some(held) => page.set("Annots", held),
+        None => page.set("Annots", annots),
+    }
+    let fields = doc
+        .get_dictionary_mut(built.catalog)
+        .and_then(|catalog| catalog.get_mut(b"AcroForm"))
+        .and_then(Object::as_dict_mut)
+        .and_then(|form| form.get_mut(b"Fields"))
+        .and_then(Object::as_array_mut)
+        .expect("the form's fields");
+    fields.extend([place.into(), field.into(), answer.into()]);
+    built.bytes.clear();
+    doc.save_to(&mut built.bytes).expect("saved");
+    Prepared {
+        built,
+        place,
+        split: (field, widget),
+        border,
+        answer,
+        annots: held,
+    }
+}
+
+/// A signature as a signer writes one into a field the document has: the
+/// field takes the signature, and its widget the date, the flags and an
+/// appearance with a font of its own. `field` and `widget` are one object
+/// when the field is its own widget. `more` is given the widget last.
+fn fills(
+    before: &Document,
+    new: &mut Document,
+    (field, widget): (ObjectId, ObjectId),
+    more: impl FnOnce(&mut Dictionary),
+) {
+    let value = new.add_object(dictionary! {
+        "Type" => "Sig", "Filter" => "Adobe.PPKLite", "SubFilter" => "adbe.pkcs7.detached",
+        "ByteRange" => vec![0.into(), 0.into(), 0.into(), 0.into()],
+        "Contents" => Object::String(vec![0; 8], lopdf::StringFormat::Hexadecimal),
+    });
+    let font = new.add_object(dictionary! {
+        "Type" => "Font", "Subtype" => "Type1", "BaseFont" => "Courier",
+    });
+    let appearance = new.add_object(form(
+        b"BT /F1 4 Tf (SYNTHETIC SIGNER) Tj ET",
+        dictionary! { "Font" => dictionary! { "F1" => font } },
+    ));
+    let mut shown = dict_of(before, widget);
+    if field != widget {
+        let mut holder = dict_of(before, field);
+        holder.set("V", value);
+        new.set_object(field, holder);
+    } else {
+        shown.set("V", value);
+    }
+    shown.set("F", 132);
+    shown.set("M", Object::string_literal("D:20260101000000Z"));
+    shown.set("AP", dictionary! { "N" => appearance });
+    more(&mut shown);
+    new.set_object(widget, shown);
+}
+
+/// The reading of an append with nothing about a page in it but a prepared
+/// place signed: no page rewritten, none listing a field, and `--strict`
+/// passes.
+fn untouched(appendix: Appendix) -> (usize, Vec<PageListing>, crate::cli::verify::After) {
+    (
+        appendix.pages_touched,
+        appendix.pages_listing.clone(),
+        strict(appendix),
+    )
+}
+
+/// A second signature in a place the signed document already had. The field
+/// and its widget are written again, with the signature and its appearance;
+/// no page object is. Until 2026-10-09 the page reached the changed widget
+/// through its `/Annots` and read "1 page was rewritten", and `--strict`
+/// failed a form signed where it asked to be signed.
+#[test]
+fn a_prepared_signature_field_signed_touches_no_page() {
+    use crate::cli::verify::After;
+    for indirect in [false, true] {
+        let prepared = prepared(indirect);
+        for (what, place) in [
+            ("its own widget", (prepared.place, prepared.place)),
+            ("a widget of its own", prepared.split),
+        ] {
+            let appendix = appended(&prepared.built, |before, new| {
+                fills(before, new, place, |_| {});
+            });
+            assert!(appendix.kinds.iter().any(|kind| kind == "Sig"));
+            assert_eq!(
+                untouched(appendix),
+                (0, Vec::new(), After::Unchanged),
+                "{what}, annotations held apart: {indirect}"
+            );
+        }
+        // Both places in one revision.
+        let appendix = appended(&prepared.built, |before, new| {
+            fills(before, new, (prepared.place, prepared.place), |_| {});
+            fills(before, new, prepared.split, |_| {});
+        });
+        assert_eq!(untouched(appendix), (0, Vec::new(), After::Unchanged));
+    }
+}
+
+/// What a signer does not write is still a change to the page. Each of
+/// these is one more thing in the revision that signs the place.
+#[test]
+fn a_prepared_signature_field_changed_beyond_signing_is_a_rewritten_page() {
+    use crate::cli::verify::After;
+    let prepared = prepared(false);
+    let merged = (prepared.place, prepared.place);
+    let rewritten = (1, Vec::new(), After::Pages(1));
+    type More = fn(&mut Dictionary);
+    let cases: [(&str, More); 6] = [
+        ("its rectangle grown", |widget| {
+            widget.set("Rect", vec![0.into(), 0.into(), 200.into(), 200.into()]);
+        }),
+        ("its kind of field changed", |widget| {
+            widget.set("FT", "Tx");
+        }),
+        ("its kind of annotation changed", |widget| {
+            widget.set("Subtype", "FreeText");
+        }),
+        ("an action given to it", |widget| {
+            widget.set("A", dictionary! { "S" => "JavaScript" });
+        }),
+        ("its page named anew", |widget| {
+            widget.remove(b"P");
+        }),
+        ("its name changed", |widget| {
+            widget.set("T", Object::string_literal("Synthetic other"));
+        }),
+    ];
+    for (what, more) in cases {
+        let appendix = appended(&prepared.built, |before, new| {
+            fills(before, new, merged, more);
+        });
+        assert_eq!(untouched(appendix), rewritten, "{what}");
+    }
+
+    // The widget of a field that is an object of its own, put under another
+    // field.
+    let appendix = appended(&prepared.built, |before, new| {
+        fills(before, new, prepared.split, |widget| {
+            widget.set("Parent", prepared.place);
+        });
+    });
+    assert_eq!(untouched(appendix), rewritten, "its field changed");
+
+    // And the field above the widget: only the signature may arrive there.
+    let appendix = appended(&prepared.built, |before, new| {
+        fills(before, new, prepared.split, |_| {});
+        let mut field = dict_of(new, prepared.split.0);
+        field.set("Lock", dictionary! { "Action" => "All" });
+        new.set_object(prepared.split.0, field);
+    });
+    assert_eq!(untouched(appendix), rewritten, "the field given a lock");
+    // Not even what a signer writes on the widget.
+    let appendix = appended(&prepared.built, |before, new| {
+        fills(before, new, prepared.split, |_| {});
+        let mut field = dict_of(new, prepared.split.0);
+        field.set("F", 2);
+        new.set_object(prepared.split.0, field);
+    });
+    assert_eq!(untouched(appendix), rewritten, "the field given flags");
+}
+
+/// A field whose `/Parent` leads back to itself is followed a bounded way and
+/// is no signed place: the document's word is not taken for where it ends.
+#[test]
+fn a_place_whose_fields_point_in_a_circle_is_a_rewritten_page() {
+    use crate::cli::verify::After;
+    let mut prepared = prepared(false);
+    let mut doc = Document::load_mem(&prepared.built.bytes).expect("parses");
+    // A field above the place's own, which says it is under itself. Neither
+    // is written by the signing, so nothing but the bound ends the way up.
+    let above = doc.new_object_id();
+    doc.objects.insert(
+        above,
+        Object::Dictionary(dictionary! {
+            "T" => Object::string_literal("Synthetic circle"), "Parent" => above,
+        }),
+    );
+    doc.get_dictionary_mut(prepared.split.0)
+        .expect("the field")
+        .set("Parent", above);
+    prepared.built.bytes.clear();
+    doc.save_to(&mut prepared.built.bytes).expect("saved");
+    let appendix = appended(&prepared.built, |before, new| {
+        fills(before, new, prepared.split, |_| {});
+    });
+    assert_eq!(untouched(appendix), (1, Vec::new(), After::Pages(1)));
+}
+
+/// A page object the append wrote that the page tree does not hold is a
+/// page all the same: it is counted by what the file calls it.
+#[test]
+fn a_page_object_written_outside_the_tree_is_counted() {
+    let built = built();
+    let appendix = appended(&built, |_, new| {
+        new.add_object(dictionary! { "Type" => "Page", "Parent" => built.pages });
+    });
+    assert_eq!(appendix.kinds, ["Page", "stream"], "{appendix:?}");
+    assert_eq!(appendix.pages_touched, 1, "{appendix:?}");
+}
+
+/// A signature the signed document already held, replaced by another: the
+/// place was not empty, so nothing about it is the signing of a prepared
+/// place.
+#[test]
+fn a_signature_replaced_after_signing_is_a_rewritten_page() {
+    use crate::cli::verify::After;
+    let prepared = prepared(false);
+    let merged = (prepared.place, prepared.place);
+    // The first signature goes into the signed part.
+    let once = revised(&prepared.built, |before, new| {
+        fills(before, new, merged, |_| {})
+    });
+    let signed_once = Built {
+        bytes: once,
+        ..prepared.built
+    };
+    let appendix = appended(&signed_once, |before, new| {
+        fills(before, new, merged, |_| {});
+    });
+    assert_eq!(untouched(appendix), (1, Vec::new(), After::Pages(1)));
+}
+
+/// A value that is not a signature does not make the place signed: one
+/// that is no signature dictionary, and one the signed document already had.
+#[test]
+fn a_prepared_signature_field_given_something_else_is_a_rewritten_page() {
+    use crate::cli::verify::After;
+    let prepared = prepared(false);
+    let rewritten = (1, Vec::new(), After::Pages(1));
+    let appendix = appended(&prepared.built, |before, new| {
+        let mut widget = dict_of(before, prepared.place);
+        widget.set("V", Object::string_literal("not a signature"));
+        new.set_object(prepared.place, widget);
+    });
+    assert_eq!(untouched(appendix), rewritten, "a string");
+
+    // A new dictionary that signs nothing: it has no range of bytes.
+    let appendix = appended(&prepared.built, |before, new| {
+        let value = new.add_object(dictionary! { "Type" => "Sig" });
+        let mut widget = dict_of(before, prepared.place);
+        widget.set("V", value);
+        new.set_object(prepared.place, widget);
+    });
+    assert_eq!(untouched(appendix), rewritten, "nothing signed");
+
+    // A signature the signed document already had, in a second place.
+    let mut first = None;
+    let once = revised(&prepared.built, |before, new| {
+        fills(before, new, prepared.split, |_| {});
+        first = dict_of(new, prepared.split.0)
+            .get(b"V")
+            .and_then(Object::as_reference)
+            .ok();
+    });
+    let first = first.expect("the first signature");
+    let signed_once = Built {
+        bytes: once,
+        ..prepared.built
+    };
+    let appendix = appended(&signed_once, |before, new| {
+        let mut widget = dict_of(before, prepared.place);
+        widget.set("V", first);
+        new.set_object(prepared.place, widget);
+    });
+    assert_eq!(untouched(appendix), rewritten, "a signature it already had");
+    // The control: the same place given a signature of its own.
+    let appendix = appended(&signed_once, |before, new| {
+        fills(before, new, (prepared.place, prepared.place), |_| {});
+    });
+    assert_eq!(untouched(appendix), (0, Vec::new(), After::Unchanged));
+}
+
+/// An annotation that is no widget is no place for a signature, whatever
+/// field entries it carries.
+#[test]
+fn a_signature_put_in_what_is_no_widget_is_a_rewritten_page() {
+    use crate::cli::verify::After;
+    let mut prepared = prepared(false);
+    let mut doc = Document::load_mem(&prepared.built.bytes).expect("parses");
+    doc.get_dictionary_mut(prepared.place)
+        .expect("the place")
+        .set("Subtype", "Square");
+    prepared.built.bytes.clear();
+    doc.save_to(&mut prepared.built.bytes).expect("saved");
+    let appendix = appended(&prepared.built, |before, new| {
+        fills(before, new, (prepared.place, prepared.place), |_| {});
+    });
+    assert_eq!(untouched(appendix), (1, Vec::new(), After::Pages(1)));
+}
+
+/// A prepared text field answered after signing is a form answer changed
+/// after the signature, whatever else the field has in common with a place
+/// for one.
+#[test]
+fn a_prepared_text_field_answered_after_signing_is_a_rewritten_page() {
+    use crate::cli::verify::After;
+    let prepared = prepared(false);
+    let appendix = appended(&prepared.built, |before, new| {
+        let mut answer = dict_of(before, prepared.answer);
+        answer.set("V", Object::string_literal("answered afterwards"));
+        new.set_object(prepared.answer, answer);
+    });
+    assert_eq!(untouched(appendix), (1, Vec::new(), After::Pages(1)));
+
+    // And as a signer would fill it, the signature dictionary included.
+    let appendix = appended(&prepared.built, |before, new| {
+        fills(before, new, (prepared.answer, prepared.answer), |_| {});
+    });
+    assert_eq!(untouched(appendix), (1, Vec::new(), After::Pages(1)));
+}
+
+/// The place signed, and beside it something the page draws replaced: each
+/// of these is the page's whatever was signed in the same revision.
+#[test]
+fn what_a_page_draws_replaced_beside_a_signed_place_is_a_rewritten_page() {
+    use crate::cli::verify::After;
+    let prepared = prepared(false);
+    let built = &prepared.built;
+    for (what, id, pages) in [
+        ("a font the page inherits", built.inherited_font, 2),
+        ("a font two forms down", built.nested_font, 1),
+        ("the text field's dictionary", built.field, 1),
+        ("the other place's widget", prepared.split.1, 1),
+        // What the signed place itself refers to, apart from its signature.
+        ("the place's own border", prepared.border, 1),
+    ] {
+        let appendix = appended(built, |before, new| {
+            fills(before, new, (prepared.place, prepared.place), |_| {});
+            let mut dict = dict_of(before, id);
+            dict.set("Synthetic", 1);
+            new.set_object(id, dict);
+        });
+        assert_eq!(
+            untouched(appendix),
+            (pages, Vec::new(), After::Pages(pages)),
+            "{what}"
+        );
+    }
+    // The page's content stream, at the length it had.
+    let appendix = appended(built, |before, new| {
+        fills(before, new, (prepared.place, prepared.place), |_| {});
+        new.set_object(
+            built.content[0],
+            Stream::new(dictionary! {}, b"/Fm9 Do".to_vec()),
+        );
+    });
+    assert_eq!(untouched(appendix), (1, Vec::new(), After::Pages(1)));
+}
+
+/// What leaves out a signed place is the page's entry for it in `/Annots`,
+/// and not the widget wherever it is found: a page that also names the
+/// widget in its resources draws with it.
+#[test]
+fn a_signed_place_the_page_also_draws_with_is_a_rewritten_page() {
+    use crate::cli::verify::After;
+    let mut prepared = prepared(false);
+    let mut doc = Document::load_mem(&prepared.built.bytes).expect("parses");
+    let page = doc
+        .get_dictionary_mut(prepared.built.page[0])
+        .expect("the first page");
+    let states = page
+        .get_mut(b"Resources")
+        .and_then(Object::as_dict_mut)
+        .and_then(|resources| resources.get_mut(b"ExtGState"))
+        .and_then(Object::as_dict_mut)
+        .expect("the page's graphics states");
+    states.set("GS8", prepared.place);
+    prepared.built.bytes.clear();
+    doc.save_to(&mut prepared.built.bytes).expect("saved");
+
+    let appendix = appended(&prepared.built, |before, new| {
+        fills(before, new, (prepared.place, prepared.place), |_| {});
+    });
+    assert_eq!(untouched(appendix), (1, Vec::new(), After::Pages(1)));
+}
+
+/// A second signature in a new field, on a page whose `/Annots` is an object
+/// of its own: the append writes that array again and not the page. It is
+/// the listing a page written again is, and until 2026-10-09 it read "1 page
+/// was rewritten" because the question was only asked of a page object.
+#[test]
+fn a_new_signature_field_listed_in_annotations_held_apart_is_a_listing() {
+    use crate::cli::verify::After;
+    let prepared = prepared(true);
+    let held = prepared.annots.expect("held apart");
+    let listed = |new: &mut Document, before: &Document, more: Vec<Object>, drop: bool| {
+        let widget = new.add_object(dictionary! {
+            "Type" => "Annot", "Subtype" => "Widget", "FT" => "Sig",
+            "T" => Object::string_literal("Synthetic second signer"),
+            "P" => prepared.built.page[0],
+            "Rect" => vec![0.into(), 0.into(), 0.into(), 0.into()],
+        });
+        let mut annots = before
+            .get_object(held)
+            .and_then(Object::as_array)
+            .expect("the annotations")
+            .clone();
+        if drop {
+            annots.remove(0);
+        }
+        annots.push(widget.into());
+        annots.extend(more);
+        new.set_object(held, annots);
+    };
+    let appendix = appended(&prepared.built, |before, new| {
+        listed(new, before, Vec::new(), false)
+    });
+    assert_eq!(appendix.replaced, 1, "{appendix:?}");
+    assert_eq!(
+        untouched(appendix),
+        (
+            1,
+            vec![PageListing {
+                page: 1,
+                timestamp: false
+            }],
+            After::Unchanged
+        )
+    );
+
+    // An annotation that is no signature field beside it, and one taken
+    // away: the page is rewritten.
+    let appendix = appended(&prepared.built, |before, new| {
+        let note = new.add_object(dictionary! {
+            "Type" => "Annot", "Subtype" => "Square",
+            "Rect" => vec![0.into(), 0.into(), 200.into(), 200.into()],
+        });
+        listed(new, before, vec![note.into()], false);
+    });
+    assert_eq!(untouched(appendix), (1, Vec::new(), After::Pages(1)));
+    let appendix = appended(&prepared.built, |before, new| {
+        listed(new, before, Vec::new(), true)
+    });
+    assert_eq!(untouched(appendix), (1, Vec::new(), After::Pages(1)));
+    // The list written again with an annotation taken off it, in the
+    // revision that signs a place on the same page: the place is no reason
+    // to read the list as it was.
+    let appendix = appended(&prepared.built, |before, new| {
+        fills(before, new, (prepared.place, prepared.place), |_| {});
+        let mut annots = before
+            .get_object(held)
+            .and_then(Object::as_array)
+            .expect("the annotations")
+            .clone();
+        annots.remove(0);
+        new.set_object(held, annots);
+    });
+    assert_eq!(untouched(appendix), (1, Vec::new(), After::Pages(1)));
+
+    // And with something the page draws replaced beside it.
+    let appendix = appended(&prepared.built, |before, new| {
+        listed(new, before, Vec::new(), false);
+        let mut font = dict_of(before, prepared.built.nested_font);
+        font.set("Synthetic", 1);
+        new.set_object(prepared.built.nested_font, font);
+    });
+    assert_eq!(untouched(appendix), (1, Vec::new(), After::Pages(1)));
+}
+
+/// The fixture's own control: with places prepared and nothing signed, an
+/// ordinary second signature in a new field is the listing it was, and
+/// validation data touches nothing.
+#[test]
+fn prepared_places_left_empty_change_no_other_reading() {
+    use crate::cli::verify::After;
+    let prepared = prepared(false);
+    let built = &prepared.built;
+    let appendix = appended(built, |before, new| {
+        signs_the_first_page(built, before, new)
+    });
+    assert_eq!(
+        untouched(appendix),
+        (
+            1,
+            vec![PageListing {
+                page: 1,
+                timestamp: false
+            }],
+            After::Unchanged
+        )
+    );
+    let appendix = appended(built, |before, new| {
+        let certificate = new.add_object(Stream::new(dictionary! {}, vec![0x30, 0x00]));
+        let dss = new.add_object(dictionary! { "Certs" => vec![certificate.into()] });
+        let mut catalog = dict_of(before, built.catalog);
+        catalog.set("DSS", dss);
+        new.set_object(built.catalog, catalog);
+    });
+    assert_eq!(appendix.catalog_gained, ["DSS"]);
+    assert_eq!(untouched(appendix), (0, Vec::new(), After::Unchanged));
+
+    // A place signed and a new field listed in one revision: the page is
+    // the listing, and the signed place takes nothing from it.
+    let appendix = appended(built, |before, new| {
+        signs_the_first_page(built, before, new);
+        fills(before, new, prepared.split, |_| {});
+    });
+    assert_eq!(
+        untouched(appendix),
+        (
+            1,
+            vec![PageListing {
+                page: 1,
+                timestamp: false
+            }],
+            After::Unchanged
+        )
+    );
+}
+
 // ------------------------------------------ what `verify --strict` makes of it
 
 /// A signed field with this verdict, this many bytes after its range, and

@@ -2265,10 +2265,17 @@ pub fn redaction_plans_of(
             } else {
                 let facts = show_facts
                     .get_or_init(|| document.graph().show_facts(index, objects.glyphs.len()));
-                redact::cut_within(&mut plan, &objects.glyphs, facts.as_deref(), want)
+                redact::cut_within(
+                    &mut plan,
+                    &objects.all,
+                    &objects.glyphs,
+                    facts.as_deref(),
+                    want,
+                )
             };
             // What the page's own text loses, in the order it is drawn: all of
-            // a show that goes whole, and the glyphs taken out of a cut one.
+            // a show that goes whole, as a removal or as a cut of every glyph,
+            // and the glyphs taken out of one cut in part.
             // And every show any part of goes from, in full: `lines`.
             let mut touched: Vec<usize> = plan
                 .shows
@@ -2300,7 +2307,14 @@ pub fn redaction_plans_of(
             let mut own: Vec<(usize, &str)> = plan
                 .shows
                 .iter()
-                .filter_map(|ordinal| Some((*ordinal, objects.text.get(*ordinal)?.as_str())))
+                .copied()
+                .chain(
+                    plan.show_cuts
+                        .iter()
+                        .filter(|cut| cut.takes_all())
+                        .map(|cut| cut.ordinal),
+                )
+                .filter_map(|ordinal| Some((ordinal, objects.text.get(ordinal)?.as_str())))
                 .chain(
                     cut_text
                         .iter()

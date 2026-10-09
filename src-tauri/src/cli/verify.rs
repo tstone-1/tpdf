@@ -430,10 +430,12 @@ pub fn passes_strict(signature: &report::Signature) -> bool {
 /// an exit code has nowhere to state it, so `--strict` judges it.
 ///
 /// **What it lets pass** is what signing itself appends: validation data
-/// (`/DSS`), which reaches no page, and a signature or timestamp field listed
+/// (`/DSS`), which reaches no page; a signature or timestamp field listed
 /// among a page's annotations with the page otherwise as it was
-/// (`docinfo::Appendix::pages_listing`). tpdf's own long-term revisions are
-/// those two and nothing else.
+/// (`docinfo::Appendix::pages_listing`); and a signature put in an empty
+/// signature field the signed revision already had, which is not counted as
+/// a page touched at all (`docinfo::Appendix::pages_touched`). tpdf's own
+/// revisions after a signature are those three and nothing else.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum After {
     /// Nothing, or nothing that touches a page other than to list a field.

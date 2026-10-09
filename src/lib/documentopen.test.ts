@@ -9,7 +9,7 @@ import { describe, expect, it } from "vitest";
 
 import app from "../App.svelte?raw";
 import {
-  dropView, openFailure, pageTable, placeOnSide, placeToResume, readerIsIn, repoint, sharedByTwin,
+  dropAbandoned, dropView, openFailure, pageTable, placeOnSide, placeToResume, readerIsIn, repoint, sharedByTwin,
 } from "./documentopen";
 import { DocumentTabs } from "./documenttabs";
 import { Panes } from "./panes";
@@ -141,6 +141,55 @@ describe("a view an open could not finish", () => {
   });
 });
 
+describe("the views a failed open leaves without a document", () => {
+  /**
+   * A document shown twice beside another one: `other` and the first view on
+   * the left, the second view on the right with the reader in it.
+   */
+  const shownTwice = () => {
+    const tabs = new DocumentTabs<{ view: number; path: string }>();
+    for (const view of [1, 2, 3]) tabs.keep({ view, path: view === 1 ? "/other.pdf" : "/twice.pdf" });
+    const panes = new Panes<number>();
+    panes.fronted(2);
+    panes.move(3, "right", [1, 2, 3]);
+    return { tabs, panes, twin: tabs.find(2)! };
+  };
+  /** What the row would draw, each time it is drawn. */
+  const rowOf = (tabs: DocumentTabs<{ view: number; path: string }>) => {
+    const drawn: number[][] = [];
+    return { drawn, refresh: () => { drawn.push(tabs.all.map((tab) => tab.view)); } };
+  };
+
+  it("are gone from the row when it is drawn, which is once and after the last of them", () => {
+    const { tabs, panes, twin } = shownTwice();
+    // A reload got as far as its new handle taking the tab over, and failed.
+    tabs.keep({ view: 9, path: "/twice.pdf" }, 3);
+    panes.replaced(3, 9);
+    const row = rowOf(tabs);
+    dropAbandoned(panes, tabs, { own: 9, replaced: true, twins: [twin] }, row.refresh);
+    expect(row.drawn).toEqual([[1]]);
+    expect(panes.split).toBe(false);
+    expect(panes.front("left")).toBe(1);
+  });
+
+  it("are the other views alone when the handle was a tab's own, and the row is drawn then too", () => {
+    const { tabs, panes, twin } = shownTwice();
+    const row = rowOf(tabs);
+    dropAbandoned(panes, tabs, { own: undefined, replaced: true, twins: [twin] }, row.refresh);
+    expect(row.drawn).toEqual([[1, 3]]);
+    expect(panes.sideOf(3)).toBe("right");
+  });
+
+  it("do not include the other views of a document that was never torn down", () => {
+    const { tabs, panes, twin } = shownTwice();
+    const row = rowOf(tabs);
+    // The handle is one the row never held: the open failed before its tab.
+    dropAbandoned(panes, tabs, { own: 9, replaced: false, twins: [twin] }, row.refresh);
+    expect(row.drawn).toEqual([[1, 2, 3]]);
+    expect(panes.split).toBe(true);
+  });
+});
+
 describe("what a failed open says", () => {
   it("is the refusal's own sentence, and anything else as it is", () => {
     expect(openFailure({ reason: "The file is not a PDF.", locked: false }, false)).toBe("The file is not a PDF.");
@@ -172,13 +221,13 @@ describe("the open's wiring in App.svelte", () => {
       "placeOnSide(panes, view, replacing?.view, retained !== undefined);",
     ])).toEqual([]);
     expect(missingFrom(functionIn(app, "function abandonOpen("), [
-      "dropView(panes, tabs, viewOf(acquired));",
-      "for (const twin of twins) dropView(panes, tabs, twin.view);",
+      "dropAbandoned(panes, tabs, { own: acquired >= 0 ? viewOf(acquired) : undefined, replaced, twins }, refreshTabs);",
     ])).toEqual([]);
   });
 
-  it("runs what a form control says, and a press on a place for a signature, as the form's own document", () => {
+  it("places a form control, runs what it says and a press on a place for a signature, as the form's own document", () => {
     expect(missingFrom(functionIn(app, "function buildFormLayer("), [
+      "const rect = asDocument(view, () => controlRect(widget, formEditing, edits?.state ?? null)) ?? null;",
       "(message) => { asDocument(view, () => say(message)); },",
       "if (!readerIsIn(view, openView, () => focusSide(panes.sideOf(view)))) {",
     ])).toEqual([]);

@@ -45,13 +45,40 @@
 //! with it. Nothing is worked out from the number: the font size and the
 //! horizontal scaling at that `TJ` need not be this show's, and the
 //! measurement already has them.
+//!
+//! ## A show that goes whole, with a show after it at its pen
+//!
+//! Until 2026-10-09 such a show was deleted like any other that goes whole,
+//! and the pen it moved went with it. Measured that day on
+//! `(SECRETA) Tj (NEXTA) Tj` at 20 points: `NEXTA` went from x = 195.98 to
+//! 101.52, under the fill, and the run ended "not verified". The same on a
+//! line turned thirty degrees, along the line.
+//!
+//! It is the cut above with every glyph taken ([`ShowCut::takes_all`]): the
+//! gap runs from the first pen to where PDFium placed the next show, and it
+//! is all that is written. Such a cut counts no codes, because no glyph
+//! stays that a wrong count could misplace, so it also serves a show whose
+//! codes cannot be counted and one that had to go whole for another reason.
+//! The measurement is along the show's own baseline, so a turned or scaled
+//! line needs nothing more.
+//!
+//! **Where the distance cannot be measured, the show is left and the region
+//! says so** ([`UNMEASURED_TEXT`]): PDFium placed its glyphs off one
+//! baseline or backwards --- vertical writing, right-to-left text --- or
+//! placed the next show behind it. Removing it would move the text after it,
+//! and nothing here could say by how much.
+//!
+//! `Td`, `TD`, `Tm`, `T*`, `'` and `"` place the next show from the start of
+//! the line and not from the pen, so a show followed by one of those leaves
+//! nothing to carry: measured on the same page, each stayed where it was.
 
 use lopdf::content::{Content, Operation};
 use lopdf::{Document, Object, ObjectId};
 
 use super::{
     clear_shadow_text, clear_struct_shadow_text, decode_whole, makes_text_object,
-    replace_page_content, Plan, Rect, Removed, MAX_CONTENT_BYTES,
+    replace_page_content, without_drawing, PageObject, Plan, Rect, Removed, Unhandled,
+    MAX_CONTENT_BYTES, UNMEASURED_TEXT,
 };
 use crate::objects::{Glyph, TextGlyphs};
 
@@ -78,11 +105,21 @@ pub struct ShowCut {
     pub take: Vec<usize>,
 }
 
+impl ShowCut {
+    /// Whether every glyph goes, so that nothing of the show is left but the
+    /// distance its pen moved.
+    #[must_use]
+    pub fn takes_all(&self) -> bool {
+        self.take.len() >= self.pens.len()
+    }
+}
+
 /// What `lopdf` can say about one show operator that PDFium made text of.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ShowFacts {
-    /// How many codes its string holds.
-    pub codes: usize,
+    /// How many codes its string holds, or `None` when the font's code
+    /// length is not known or the strings do not divide by it.
+    pub codes: Option<usize>,
     /// Whether the next show starts where this one's pen stops, with nothing
     /// in between that places it.
     pub carries_on: bool,
@@ -139,20 +176,29 @@ fn taken(glyphs: &[Glyph], region: Rect) -> Option<Vec<usize>> {
 }
 
 /// Turns the whole-show removals of a plan into cuts where a cut can be
-/// proved, and returns what each cut takes, by ordinal.
+/// proved, and returns what each cut of a part takes, by ordinal.
 ///
-/// A show the region covers all of stays in [`Plan::shows`]. One whose glyphs
-/// are all outside the region leaves the plan: its box overlaps the region and
-/// none of its ink does. Everything this cannot describe stays in
-/// [`Plan::shows`] and goes whole, as before.
+/// A show whose glyphs are all outside the region leaves the plan: its box
+/// overlaps the region and none of its ink does. One the region takes a part
+/// of becomes a cut. Everything else goes whole, and how depends on what
+/// follows it:
 ///
-/// `glyphs` and `facts` are by text-object ordinal. A `facts` of `None` ---
-/// the content could not be read, or its shows are not as many as PDFium's
-/// text objects --- cuts nothing.
+/// * nothing starts at its pen: it stays in [`Plan::shows`];
+/// * the next show starts at its pen, and PDFium placed both: a cut of all
+///   its glyphs, which leaves the distance the pen moved;
+/// * the next show starts at its pen, and the distance cannot be measured:
+///   it is left, and reported in [`Plan::unhandled`] as [`UNMEASURED_TEXT`].
+///
+/// `glyphs` and `facts` are by text-object ordinal, and `objects` is the
+/// page's object list, which an unmeasured show is named by its place in. A
+/// `facts` of `None` --- the content could not be read, or its shows are not
+/// as many as PDFium's text objects --- changes nothing: every show stays in
+/// [`Plan::shows`], and the writer refuses on the same disagreement.
 pub fn cut_within(
     plan: &mut Plan,
+    objects: &[PageObject],
     glyphs: &[Option<TextGlyphs>],
-    facts: Option<&[Option<ShowFacts>]>,
+    facts: Option<&[ShowFacts]>,
     region: Rect,
 ) -> Vec<(usize, String)> {
     let Some(facts) = facts else {
@@ -161,40 +207,62 @@ pub fn cut_within(
     let mut said = Vec::new();
     let mut whole = Vec::new();
     for ordinal in std::mem::take(&mut plan.shows) {
-        let known = glyphs
-            .get(ordinal)
-            .and_then(Option::as_ref)
-            .zip(facts.get(ordinal).copied().flatten())
-            .filter(|(text, fact)| fact.codes == text.glyphs.len());
-        let Some((text, fact)) = known else {
+        let Some(fact) = facts.get(ordinal).copied() else {
             whole.push(ordinal);
             continue;
         };
-        let Some(take) = taken(&text.glyphs, region) else {
+        let text = glyphs.get(ordinal).and_then(Option::as_ref);
+        let part = text
+            .filter(|text| fact.codes == Some(text.glyphs.len()))
+            .and_then(|text| Some((text, taken(&text.glyphs, region)?)));
+        if let Some((text, take)) = part {
+            if take.is_empty() {
+                continue;
+            }
+            let to_the_end = take.last() == Some(&(text.glyphs.len() - 1));
+            let all = take.len() == text.glyphs.len();
+            if !all && !(to_the_end && fact.carries_on && text.tail.is_none()) {
+                said.push((
+                    ordinal,
+                    take.iter()
+                        .map(|at| text.glyphs[*at].draws.as_str())
+                        .collect(),
+                ));
+                plan.show_cuts.push(ShowCut {
+                    ordinal,
+                    pens: text.glyphs.iter().map(|glyph| glyph.pen).collect(),
+                    tail: text.tail,
+                    take,
+                });
+                continue;
+            }
+        }
+        // It goes whole.
+        if !fact.carries_on {
             whole.push(ordinal);
             continue;
-        };
-        if take.is_empty() {
-            continue;
         }
-        let to_the_end = take.last() == Some(&(text.glyphs.len() - 1));
-        if take.len() == text.glyphs.len() || (to_the_end && fact.carries_on && text.tail.is_none())
-        {
-            whole.push(ordinal);
-            continue;
+        match text.filter(|text| text.tail.is_some()) {
+            Some(text) => plan.show_cuts.push(ShowCut {
+                ordinal,
+                pens: text.glyphs.iter().map(|glyph| glyph.pen).collect(),
+                tail: text.tail,
+                take: (0..text.glyphs.len()).collect(),
+            }),
+            None => {
+                let at = objects
+                    .iter()
+                    .enumerate()
+                    .filter(|(_, object)| object.kind == "text")
+                    .nth(ordinal)
+                    .map_or(ordinal, |(at, _)| at);
+                plan.unhandled.push(Unhandled {
+                    at,
+                    kind: UNMEASURED_TEXT.to_string(),
+                    drawn: None,
+                });
+            }
         }
-        said.push((
-            ordinal,
-            take.iter()
-                .map(|at| text.glyphs[*at].draws.as_str())
-                .collect(),
-        ));
-        plan.show_cuts.push(ShowCut {
-            ordinal,
-            pens: text.glyphs.iter().map(|glyph| glyph.pen).collect(),
-            tail: text.tail,
-            take,
-        });
     }
     plan.shows = whole;
     said
@@ -203,8 +271,11 @@ pub fn cut_within(
 /// Merges the cuts several regions make on one page.
 ///
 /// Two regions over one line each cut the same show, and the show loses both
-/// parts. One that another region takes whole (`shows`, sorted) is dropped,
-/// and one whose parts add up to all of it joins `shows`.
+/// parts. One that another region takes whole (`shows`, sorted) is dropped.
+/// One whose parts add up to all of it joins `shows` when it has no tail,
+/// which is a show with nothing at its pen to carry to ([`cut_within`] gives
+/// every cut that reaches the end of such a show a tail, or makes none); with
+/// a tail it stays a cut, of all its glyphs.
 pub fn merge_cuts(cuts: Vec<ShowCut>, shows: &mut Vec<usize>) -> Vec<ShowCut> {
     let mut merged: Vec<ShowCut> = Vec::new();
     for cut in cuts {
@@ -221,11 +292,11 @@ pub fn merge_cuts(cuts: Vec<ShowCut>, shows: &mut Vec<usize>) -> Vec<ShowCut> {
         }
     }
     merged.retain(|cut| {
-        let all = cut.take.len() >= cut.pens.len();
-        if all {
+        let whole = cut.takes_all() && cut.tail.is_none();
+        if whole {
             shows.push(cut.ordinal);
         }
-        !all
+        !whole
     });
     // Sorted again and not de-duplicated: an ordinal that joins here was not
     // in `shows`, or its cut would have been dropped above.
@@ -349,30 +420,20 @@ fn drop_spacing_after(operations: &mut Vec<Operation>, at: usize) {
 
 /// What `lopdf` can say about each show PDFium made text of, by ordinal, or
 /// `None` when the page's shows are not `expected` many or cannot be read.
-///
-/// An entry is `None` for a show whose font's code length is not known or
-/// whose strings do not divide by it.
 #[must_use]
-pub fn show_facts(
-    doc: &Document,
-    page: ObjectId,
-    expected: usize,
-) -> Option<Vec<Option<ShowFacts>>> {
+pub fn show_facts(doc: &Document, page: ObjectId, expected: usize) -> Option<Vec<ShowFacts>> {
     let data = doc
         .get_page_content_with_limit(page, MAX_CONTENT_BYTES)
         .ok()?;
     let operations = Content::decode(&data).ok()?.operations;
     let lengths = code_lengths(doc, page, &operations);
-    let facts: Vec<Option<ShowFacts>> = operations
+    let facts: Vec<ShowFacts> = operations
         .iter()
         .enumerate()
         .filter(|(_, operation)| makes_text_object(operation))
-        .map(|(at, operation)| {
-            let codes = codes_in(operation, lengths[at]?)?;
-            Some(ShowFacts {
-                codes,
-                carries_on: carries_on(&operations, at),
-            })
+        .map(|(at, operation)| ShowFacts {
+            codes: lengths[at].and_then(|length| codes_in(operation, length)),
+            carries_on: carries_on(&operations, at),
         })
         .collect();
     (facts.len() == expected).then_some(facts)
@@ -471,11 +532,67 @@ fn cut_one(
     Ok(out)
 }
 
+/// A show with every glyph taken, as the operations that replace it: what it
+/// did besides drawing, and the distance its pen moved when the next show
+/// starts there.
+///
+/// No code is counted: nothing of the show stays that a wrong count could
+/// put in the wrong place. The numbers a `TJ` holds before its first string
+/// stay, as [`cut_one`] keeps them: the first pen is after them.
+fn take_all(
+    operation: &Operation,
+    cut: &ShowCut,
+    continues: bool,
+) -> Result<Vec<Operation>, String> {
+    let mut out = without_drawing(operation);
+    if !continues {
+        return Ok(out);
+    }
+    let wrong = || {
+        "a line of text was not measured to the show after it, so nothing was removed".to_string()
+    };
+    let (first, tail) = cut.pens.first().copied().zip(cut.tail).ok_or_else(wrong)?;
+    let mut shown: Vec<Object> = match (operation.operator.as_str(), &operation.operands[..]) {
+        ("TJ", [Object::Array(parts)]) => parts
+            .iter()
+            .take_while(|part| matches!(part, Object::Integer(_) | Object::Real(_)))
+            .cloned()
+            .collect(),
+        _ => Vec::new(),
+    };
+    shown.push(Object::Real(first - tail));
+    out.push(Operation::new("TJ", vec![Object::Array(shown)]));
+    Ok(out)
+}
+
+/// The whole shows and the count of text objects as they stand once `cuts`
+/// are written.
+///
+/// A cut of every glyph leaves no text object, so each show after it is one
+/// earlier among the page's shows than its ordinal says, and the page has one
+/// fewer. [`super::remove_shows`] runs after [`cut_shows`] and has to be
+/// given both as they are then: with the ordinals as planned it would take
+/// the show after the one meant, or refuse over the count.
+#[must_use]
+pub fn after_cuts(cuts: &[ShowCut], shows: &[usize], text_objects: usize) -> (Vec<usize>, usize) {
+    let emptied: Vec<usize> = cuts
+        .iter()
+        .filter(|cut| cut.takes_all())
+        .map(|cut| cut.ordinal)
+        .collect();
+    let shows = shows
+        .iter()
+        .map(|show| show - emptied.iter().filter(|gone| *gone < show).count())
+        .collect();
+    (shows, text_objects.saturating_sub(emptied.len()))
+}
+
 /// Takes the glyphs each cut names out of its show operator.
 ///
-/// The shows a page has, and which of them PDFium made text of, do not change:
-/// a cut always leaves a glyph. So this runs before [`super::remove_shows`]
-/// and the ordinals both are given mean the same operators.
+/// A cut of a part leaves a glyph, and the show is still one PDFium makes
+/// text of. A cut of every glyph leaves none, so the page has one show fewer
+/// for each: this runs before [`super::remove_shows`], which is given the
+/// ordinals and the count [`after_cuts`] makes of them.
 ///
 /// The alternate text of every marked-content span around a cut show is
 /// cleared, as it is around a removed one: it restates the words that went.
@@ -538,10 +655,6 @@ pub fn cut_shows(
     // Backwards, so a show that becomes several operations does not move one
     // still to be cut.
     for (at, cut) in work.into_iter().rev() {
-        let length = lengths[at].ok_or_else(|| {
-            "a line of text is in a font whose codes this cannot count, so nothing was removed"
-                .to_string()
-        })?;
         let continues = carries_on(&content.operations, at);
         let to_the_end = cut
             .take
@@ -550,7 +663,15 @@ pub fn cut_shows(
         if continues && to_the_end {
             drop_spacing_after(&mut content.operations, at);
         }
-        let replacement = cut_one(&content.operations[at], length, cut, continues)?;
+        let replacement = if cut.takes_all() {
+            take_all(&content.operations[at], cut, continues)?
+        } else {
+            let length = lengths[at].ok_or_else(|| {
+                "a line of text is in a font whose codes this cannot count, so nothing was removed"
+                    .to_string()
+            })?;
+            cut_one(&content.operations[at], length, cut, continues)?
+        };
         content.operations.splice(at..=at, replacement);
     }
 

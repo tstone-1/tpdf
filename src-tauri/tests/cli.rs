@@ -145,7 +145,7 @@ fn main() {
     run_outside_cargo_deps(&argv);
     // The order is load-bearing: never_maps_pdfium asserts this process has
     // not mapped PDFium, so it must precede the in-process PDFium readers.
-    let checks: [Check; 37] = [
+    let checks: [Check; 38] = [
         ("verify agrees with the in-process reader", verify_agrees),
         (
             "verify reports what was appended after each signature",
@@ -254,6 +254,10 @@ fn main() {
         (
             "redact removes part of a line and leaves the rest where it was",
             redact::part_of_a_line_is_removed,
+        ),
+        (
+            "redact removes a whole show and leaves what follows it where it was",
+            redact::a_whole_show_goes_and_the_rest_stays,
         ),
         (
             "redact passes over a show operator that draws nothing",

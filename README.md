@@ -1137,8 +1137,8 @@ the page as it is displayed:
   500 matches in one run are refused rather than marked partly. `--pages 1-3,7` limits the
   search, not the regions file. **What goes is the characters in a rectangle, where tpdf can prove which those are**, and
   the rest of the line stays in place. Where it cannot, it removes the whole run of text the
-  document drew in one piece, which is often the whole line; the report says what each
-  page's removal takes. The copy is
+  document drew in one piece, which is often the whole line, and what is drawn after that run
+  stays where it was; the report says what each page's removal takes. The copy is
   then read back: searched for every removed string, searched again for every `--text` and
   `--pattern`, and each removed area rendered and read by the system's text recogniser to prove
   nothing legible is left, before the boxes are drawn. **Exit code 0 means every check
@@ -1798,7 +1798,8 @@ it with `[Console]::OutputEncoding = [Text.Encoding]::UTF8` set if a name may ca
   `catalog_gained`
   (keys new in the document catalog; `DSS` is validation data), `pages_touched` (pages whose
   object or anything they draw from was added, replaced or removed, or that are no longer
-  where they were; a touched page can look the same), `pages_listing` (the touched pages rewritten only
+  where they were; a touched page can look the same; a signature put in an empty signature
+  field the signed revision already had does not touch its page), `pages_listing` (the touched pages rewritten only
   to list a new signature or timestamp field among their annotations, each with its `page`,
   counted from 1, and `timestamp`, `true` when every field it gained is a document
   timestamp's) and `sentence`. This is what `--strict` reads: of the `intact` signature

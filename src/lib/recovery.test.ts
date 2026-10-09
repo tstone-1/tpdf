@@ -1,5 +1,7 @@
 import { describe, expect, it } from "vitest";
 
+import app from "../App.svelte?raw";
+import { withoutComments } from "./sourcetext";
 import {
   afterCopy,
   afterMerge,
@@ -194,15 +196,25 @@ describe("the offers these rules can return", () => {
     // **The one check standing between a new `Offer` and a prompt with a dead
     // button.** Nothing renders `App.svelte`, so the `{#each offers}` block is
     // reachable from no unit test; what is reachable is every rule that decides
-    // what goes in it. A variant added to `Offer` and returned by a rule turns
-    // this red, and the message says where the arm goes.
+    // what goes in it, and the block's text. A variant returned by a rule and
+    // given no arm turns this red, and the message says where the arm goes.
     //
-    // Written out rather than derived from the type: a check that reads `Offer`
-    // to decide what `Offer` may contain agrees with itself whatever the type
-    // says, which is this repository's own note about a writer and its own
-    // reader. The cost is that adding a variant edits this line, and that is
-    // the point.
-    const drawn = new Set<Offer>(["saveCopy", "reload", "redact", "rasterCopy"]);
+    // The arms are read off the component with its comments taken out
+    // (`sourcetext.ts`), and no longer written out here: a list kept in this
+    // file agreed with itself whatever the markup said, so an arm taken out of
+    // the component, or left behind in a comment, was found by nothing. What
+    // text can say is that an arm and its button are there. That the button
+    // does what the offer promises is not something it can.
+    const code = withoutComments(app);
+    const from = code.indexOf("{#each offers as offer (offer)}");
+    expect(from, "the block that draws the offers moved or was renamed").toBeGreaterThanOrEqual(0);
+    expect(code.indexOf("{#each offers as offer (offer)}", from + 1), "there are two such blocks").toBe(-1);
+    const block = code.slice(from, code.indexOf("{/each}", from));
+    const drawn = new Set<string>(
+      [...block.matchAll(/offer === "(\w+)"/g)]
+        .map((arm) => arm[1] ?? "")
+        .filter((offer) => block.includes(`data-testid="offer-${offer}"`)),
+    );
     const everything: Offer[] = [
       ...afterRefusal({ message: "x", changed: true }).offers,
       ...afterRefusal({ message: "x", changed: true, reopen: true }).offers,

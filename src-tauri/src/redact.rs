@@ -278,6 +278,13 @@ impl Unhandled {
                      page's content by position, so it was left"
                 )
             }
+            (UNMEASURED_TEXT, None) => {
+                return format!(
+                    "object {at} is text whose width could not be measured, and the text after \
+                     it on its line starts where it ends. Removing it would move that text, so \
+                     it was left"
+                )
+            }
             _ => {}
         }
         match drawn {
@@ -303,6 +310,11 @@ pub const CLIP_PATH: &str = "clip-path";
 /// The kind a path is reported under when it is inside the region and the
 /// page's content could not be matched to PDFium's objects by position.
 pub const UNPLACED_PATH: &str = "unplaced-path";
+
+/// The kind a text object is reported under when it would go whole, the text
+/// after it starts where its pen stops, and how far its pen moves could not
+/// be measured. Taking it would move that text; see [`cut_within`].
+pub const UNMEASURED_TEXT: &str = "unmeasured-text";
 
 /// What removing one region would take, as somebody outside this process reads it.
 ///
@@ -2085,7 +2097,37 @@ fn named_by_another_page(doc: &Document, page: ObjectId, stream: ObjectId) -> bo
         .any(|other| other != page && doc.get_page_contents(other).contains(&stream))
 }
 
+/// What a show operator does besides drawing, as the operators that do it:
+/// what replaces a show that goes whole.
+///
+/// `'` moves to the next line before it shows, and `"` sets the word and
+/// character spacing first. Taking the operator out took those with it:
+/// measured 2026-10-09 on `(SECRETG) ' (NEXTG) '`, the line after the one
+/// that went was drawn one leading higher, where the removed line had been,
+/// and after a `"` the text was also drawn with the spacing the `"` should
+/// have set. `Tj` and `TJ` do nothing else, and nothing replaces them.
+///
+/// **Not what a show does to the pen.** The text after a removed show starts
+/// where the show started when no operator places it. That distance is a
+/// measurement of the page and not something an operator states, so it is
+/// [`glyph_cut`]'s: a show whose pen carries on is taken as a cut of all its
+/// glyphs, which leaves the gap.
+fn without_drawing(operation: &Operation) -> Vec<Operation> {
+    let next_line = || Operation::new("T*", Vec::new());
+    match (operation.operator.as_str(), &operation.operands[..]) {
+        ("\"", [word, character, _]) => vec![
+            Operation::new("Tw", vec![word.clone()]),
+            Operation::new("Tc", vec![character.clone()]),
+            next_line(),
+        ],
+        ("'" | "\"", _) => vec![next_line()],
+        _ => Vec::new(),
+    }
+}
+
 /// Deletes the numbered show operators from a page's content stream.
+///
+/// A `'` or a `"` leaves what it did besides drawing ([`without_drawing`]).
 ///
 /// `ordinals` are positions among the page's show operators, as [`covered`]
 /// produces them. `text_objects` is how many text objects PDFium reported on
@@ -2157,7 +2199,8 @@ pub fn remove_shows(
     let carriers = clear_shadow_text(doc, page, &mut content.operations, &positions)?;
 
     for at in positions.into_iter().rev() {
-        content.operations.remove(at);
+        let stays = without_drawing(&content.operations[at]);
+        content.operations.splice(at..=at, stays);
     }
 
     // **After the content stream, and it could not be before it.** The link from
@@ -2307,7 +2350,8 @@ pub fn remove_form_shows(
     // Descending, for `remove_shows`' reason: an earlier removal moves every
     // later index.
     for where_ in positions.into_iter().rev() {
-        inside.operations.remove(where_);
+        let stays = without_drawing(&inside.operations[where_]);
+        inside.operations.splice(where_..=where_, stays);
     }
 
     let encoded = inside
@@ -4626,7 +4670,9 @@ pub fn marked_pages_note(report: &verify::Report, marked: &[u32]) -> Option<Stri
 }
 
 mod glyph_cut;
-pub use glyph_cut::{cut_shows, cut_within, merge_cuts, show_facts, ShowCut, ShowFacts};
+pub use glyph_cut::{
+    after_cuts, cut_shows, cut_within, merge_cuts, show_facts, ShowCut, ShowFacts,
+};
 
 #[cfg(test)]
 mod form_image_tests;
@@ -6714,6 +6760,61 @@ mod tests {
             ["BT", "TL", "Tj", "TJ", "'", "Tj", "ET"],
             "the empty `'` still moves `two` to the next line"
         );
+    }
+
+    /// **`'` and `"` do more than show.** A removed one still moves to the
+    /// next line, and `"` still sets its two spacings: until 2026-10-09 the
+    /// operator was deleted, and the line after it was drawn where the
+    /// removed line had been.
+    #[test]
+    fn a_removed_quote_operator_still_moves_to_its_line() {
+        let (mut doc, page) = one_page("BT 14 TL (one) ' (two) ' (three) ' ET");
+        remove_shows(&mut doc, page, &[1], 3).expect("remove");
+        assert_eq!(shown(&doc, page), vec!["one".to_string(), "three".into()]);
+        assert_eq!(
+            operators(&doc, page),
+            ["BT", "TL", "'", "T*", "'", "ET"],
+            "`three` is still two lines under `one`"
+        );
+
+        let (mut doc, page) = one_page("BT 14 TL (one) Tj 3 1 (two) \" (three) Tj ET");
+        remove_shows(&mut doc, page, &[1], 3).expect("remove");
+        assert_eq!(
+            operators(&doc, page),
+            ["BT", "TL", "Tj", "Tw", "Tc", "T*", "Tj", "ET"],
+            "and is drawn with the spacing the `\"` set"
+        );
+        let data = doc.get_page_content(page);
+        let spaced = String::from_utf8_lossy(&data);
+        assert!(
+            spaced.contains("3 Tw") && spaced.contains("1 Tc"),
+            "{spaced}"
+        );
+    }
+
+    /// The same inside a form.
+    #[test]
+    fn a_removed_quote_operator_in_a_form_still_moves_to_its_line() {
+        let (mut doc, page, ids) = page_with_forms(1, 2);
+        doc.get_object_mut(ids[0])
+            .and_then(|object| object.as_stream_mut())
+            .expect("the form")
+            .set_plain_content(b"BT 14 TL (f0L0) ' (f0L1) ' ET".to_vec());
+        remove_form_shows(&mut doc, page, &[(0, 2)], 0, &[0]).expect("removed");
+        let stream = doc
+            .get_object(ids[0])
+            .and_then(|object| object.as_stream())
+            .expect("the form");
+        let body = stream
+            .decompressed_content()
+            .unwrap_or_else(|_| stream.content.clone());
+        let operators: Vec<String> = Content::decode(&body)
+            .expect("decodes")
+            .operations
+            .into_iter()
+            .map(|operation| operation.operator)
+            .collect();
+        assert_eq!(operators, ["BT", "TL", "T*", "'", "ET"]);
     }
 
     #[test]

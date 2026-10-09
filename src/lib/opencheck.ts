@@ -24,7 +24,9 @@
  */
 
 import { call } from "./ipc";
-import { filePage } from "./pages";
+import { allLinksIn, commentsIn, filePage } from "./pages";
+import { rowsOf } from "./comments";
+import { fieldKey } from "./forms";
 import { DESTINATION_MARGIN_PT } from "./outline";
 import { signatureCheck } from "./signaturecheck";
 import { compressCheck } from "./compresscheck";
@@ -183,6 +185,52 @@ function sideProbe(host: OpenCheckHost) {
     document.querySelector(`.pane[data-side="${side}"] .surface`)
       ?.dispatchEvent(new PointerEvent("pointerdown", { bubbles: true, button: 0 }));
   return { rows, frontOf, focusedSide, split, mountedAreas, shownSidebars, check, settled, pressIn };
+}
+
+/**
+ * Makes the next open fail after it has torn the outgoing document down and
+ * before it has a tab: the wait for a frame that `openDocument` makes between
+ * the two throws once. `fired` says whether it has.
+ *
+ * No file can do this. A file that does not open fails before anything is
+ * torn down, which is the `tabs` phase's failed open. The wait is told from
+ * every other request for a frame by what it hands over: a promise's own
+ * resolver, which is a function of no source and has no name, where the
+ * viewers and this harness hand over functions of theirs.
+ */
+function failNextFrameWait(): { fired: () => boolean } {
+  const real = window.requestAnimationFrame;
+  let fired = false;
+  window.requestAnimationFrame = (callback) => {
+    if (!fired && callback.name === "" && Function.prototype.toString.call(callback).includes("[native code]")) {
+      fired = true;
+      window.requestAnimationFrame = real;
+      throw new Error("synthetic: no frame for this open");
+    }
+    return real.call(window, callback);
+  };
+  return { fired: () => fired };
+}
+
+/**
+ * Makes the next viewer fail while it is being built, which is after the open
+ * has given the document its tab: the canvas a viewer draws its selection on
+ * is refused once. It is the one canvas asked for with no options that takes
+ * no pointer and is hidden from a screen reader.
+ */
+function failNextViewer(): { fired: () => boolean } {
+  const real = HTMLCanvasElement.prototype.getContext;
+  let fired = false;
+  HTMLCanvasElement.prototype.getContext = function (this: HTMLCanvasElement, ...args: unknown[]) {
+    if (!fired && args.length === 1 && this.style.pointerEvents === "none" &&
+      this.getAttribute("aria-hidden") === "true") {
+      fired = true;
+      HTMLCanvasElement.prototype.getContext = real;
+      throw new Error("synthetic: no canvas for this viewer");
+    }
+    return (real as (...given: unknown[]) => unknown).apply(this, args);
+  } as typeof real;
+  return { fired: () => fired };
 }
 
 /** How many sidebars are mounted. More than one is the defect `race` looks for. */
@@ -1664,12 +1712,227 @@ async function run(host: OpenCheckHost, phase: string, expected: string): Promis
       check("the second view is on the handle of the second save",
         host.edits()?.doc === resaved && focusedSide() === "right");
 
+      report.emit("[views] a reload that fails after its document was torn down");
+      // The reader is in the second view. The reload gets a new handle, tears
+      // both views down and fails before the handle has a tab: the first view
+      // went down for a handle that never arrived and is dropped, and the tab
+      // the reader was in is mounted again on the handle it had.
+      const keptView = frontOf("right");
+      const frameless = failNextFrameWait();
+      host.run("file.reload");
+      await settled("the failed reload", () => frameless.fired() && split() && mountedAreas() === 2 &&
+        host.hasViewer() && host.tabs().length === 2);
+      check("a reload that fails after the teardown leaves the document on the handle it had",
+        host.edits()?.doc === resaved && focusedSide() === "right" && frontOf("right") === keptView);
+      check("and the row holds the tabs that are left and no other",
+        host.tabs().map((tab) => tab.id).join() === [b.id, keptView].join() &&
+        rows("left").join() === [b.id].join() && rows("right").join() === [keptView].join());
+      host.viewer()!.goToPage(1);
+      await settled("the jump after the failed reload", () => host.status()?.page === 2);
+      check("and the window still moves the document it kept", host.status()?.page === 2);
+
       report.emit("[views] closing every tab with a document shown twice");
       host.run("file.closeAll");
       await settled("the empty window", () => host.tabs().length === 0);
       check("closing every tab leaves an empty window",
         !host.hasViewer() && sidebars() === 0 && !split() && host.path() === "");
       check("and the document shown twice is released once and for good", await released(resaved));
+
+      report.emit("[views] a reload that fails once its new handle has the tab");
+      // The document alone in the window, on both sides. This time the open
+      // fails while its viewer is built: the new handle has taken the tab over
+      // and the old one is released, so no view has a document left and the
+      // row has to be drawn after the last of them has gone. Drawn before the
+      // second view went, it kept that tab over an empty window.
+      await host.open(first);
+      host.run("view.bothSides");
+      await settled("the document alone on both sides", () => split() && mountedAreas() === 2 &&
+        host.tabs().length === 2);
+      const before = host.edits()?.doc ?? -1;
+      const unbuilt = failNextViewer();
+      host.run("file.reload");
+      if (!await settle(() => unbuilt.fired() && !host.hasViewer() && host.path() === "", SETTLE_MS))
+        throw new Error("the reload did not fail while its viewer was built");
+      await host.idle();
+      check("a reload that fails with its document on both sides leaves no tab of it in the row",
+        host.tabs().length === 0 && rows("left").length === 0 && rows("right").length === 0 && !split());
+      check("the reader is told why",
+        (document.querySelector('[data-testid="problem"]')?.textContent ?? "").includes("no canvas for this viewer"));
+      check("and the handle the document had is released", await released(before));
+      await host.open(first);
+      check("the window opens a document again after it",
+        host.tabs().length === 1 && host.hasViewer() && host.path() === first && sidebars() === 1);
+      break;
+    }
+    case "answers": {
+      // What a document is asked once its first screen is up, read off the
+      // window: the outline in the sidebar, the comments in their panel and
+      // the links the viewer holds. `first` is a document with an outline and
+      // `other` one with comments and a link; `testdata/outline-simple.pdf`
+      // and `testdata/comments.pdf` are the pair in the tree, and
+      // `tabs_check.py --phase answers --other <pdf>` supplies them.
+      //
+      // Each count is held against what the backend answers for the same
+      // handle, through the translation the window puts it through, and has
+      // to be more than none: a panel with nothing in it agrees with a reply
+      // that never arrived.
+      const [first, other] = expected.split("|");
+      if (!first || !other) throw new Error("a document with an outline and one with comments are required");
+      const outlineRows = () => Array.from(document.querySelectorAll<HTMLElement>(
+        `.${SIDEBAR_CLASS} [role="tree"] [role="treeitem"][aria-level="1"]`));
+      const commentRows = () => document.querySelectorAll('#tpdf-panel-comments [role="option"]').length;
+
+      report.emit("[answers] opening the document with an outline");
+      await host.open(first); await host.idle();
+      const a = host.tabs()[0];
+      if (!a || !host.viewer()) throw new Error("the first document did not open");
+      const outline = await call("document_outline", { doc: host.edits()!.doc });
+      const top = outline.items[0]?.title ?? "";
+      const entries = await settle(() => outlineRows().length > 0, SETTLE_MS);
+      report.check("a document opened with an outline has its entries in the sidebar",
+        entries && outline.items.length > 0 && outlineRows().length === outline.items.length,
+        JSON.stringify({ shown: outlineRows().length, answered: outline.items.length }));
+      report.check("and the first of them carries its title",
+        top !== "" && (outlineRows()[0]?.textContent ?? "").includes(top),
+        JSON.stringify({ shown: (outlineRows()[0]?.textContent ?? "").slice(0, 40), answered: top.slice(0, 40) }));
+
+      report.emit("[answers] opening the document with comments and a link");
+      await host.open(other); await host.idle();
+      const model = host.edits();
+      if (!model || host.tabs().length !== 2) throw new Error("the second document did not open");
+      const comments = await call("document_comments", { doc: model.doc });
+      const links = await call("document_links", { doc: model.doc });
+      const listed = rowsOf(commentsIn(comments.items, model.map)).length;
+      const followed = allLinksIn(links.items, new Map(), model.map).length;
+      const noted = await settle(() => commentRows() > 0, SETTLE_MS);
+      report.check("a document opened with comments has them in the sidebar",
+        noted && listed > 0 && commentRows() === listed,
+        JSON.stringify({ shown: commentRows(), answered: listed }));
+      const linked = await settle(() => (host.viewer()?.linkCount ?? 0) > 0, SETTLE_MS);
+      report.check("and the viewer holds its links",
+        linked && followed > 0 && host.viewer()?.linkCount === followed,
+        JSON.stringify({ held: host.viewer()?.linkCount ?? -1, answered: followed }));
+
+      report.emit("[answers] returning to the first tab");
+      // The answers are not kept with the tab. They are asked again by the
+      // viewer a tab comes back in, because the panel they fill went with the
+      // last one.
+      await host.activate(a.id); await host.idle();
+      const again = await settle(() => outlineRows().length > 0, SETTLE_MS);
+      report.check("a tab returned to has its outline again",
+        again && outlineRows().length === outline.items.length && host.path() === first,
+        String(outlineRows().length));
+      const own = allLinksIn((await call("document_links", { doc: a.id })).items, new Map(), host.edits()!.map).length;
+      // The two documents have to differ in how many links they have, or the
+      // other one's list left in the viewer would pass for this one's.
+      report.check("and its own links, which are not the other document's",
+        own !== followed && await settle(() => host.viewer()?.linkCount === own, SETTLE_MS),
+        JSON.stringify({ held: host.viewer()?.linkCount ?? -1, own, other: followed }));
+      break;
+    }
+    case "form-beside": {
+      // A form on the side the reader is not in. Its controls are placed, and
+      // what one of them says is shown, as the form's own document: both are
+      // reached from that document's frames and from a control's own
+      // handlers, and the variables are the other document's then.
+      //
+      // Two copies of one form, which `testdata/form.pdf` is enough for. With
+      // a form of two controls or more (the `forms` phase's fixture has them)
+      // the Tab check runs as well; it is the one that fails when a control
+      // is placed by whichever document is focused.
+      const [first, second] = expected.split("|");
+      if (!first || !second) throw new Error("two disposable form paths required");
+      const { focusedSide, split, mountedAreas, settled, pressIn } = sideProbe(host);
+      const check = (name: string, ok: boolean, detail: unknown = "form beside") =>
+        report.check(name, ok, typeof detail === "string" ? detail : JSON.stringify(detail));
+      type Control = HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement;
+      const controlsIn = (side: "left" | "right") => Array.from(document.querySelectorAll<Control>(
+        `.pane[data-side="${side}"] .form-fields input, .pane[data-side="${side}"] .form-fields select, ` +
+        `.pane[data-side="${side}"] .form-fields textarea`));
+      const shownIn = (side: "left" | "right") =>
+        controlsIn(side).filter((control) => control.style.display !== "none").length;
+      const problem = () => document.querySelector('[data-testid="problem"]')?.textContent?.trim() ?? "";
+
+      report.emit("[form-beside] two forms side by side, the reader on the right");
+      await host.open(first); await host.open(second);
+      const [a, b] = host.tabs();
+      if (!a || !b || !host.viewer()) throw new Error("the two forms did not open");
+      host.run("view.moveToOtherSide");
+      await settled("the split", () => split() && mountedAreas() === 2 && focusedSide() === "right");
+      if (!await settle(() => shownIn("left") > 0 && shownIn("right") > 0, SETTLE_MS))
+        throw new Error("the form controls did not mount on both sides");
+      const form = await call("document_form", { doc: a.id });
+      const field = controlsIn("left").find((control) =>
+        control instanceof HTMLInputElement && control.type === "text") as HTMLInputElement | undefined;
+      const widget = form.widgets.find((entry) => fieldKey(entry.object) === field?.dataset.field);
+      const leftViewer = host.beside();
+      if (!field || !widget || !leftViewer) throw new Error("the form on the left has no text field to follow");
+      // Where the layer put the control, and where its viewer says the field
+      // is now. The second is asked at the moment of the check, so the two
+      // agree only when the layer was laid out after the last move.
+      const placedAt = () => parseFloat(field.style.top);
+      const fieldAt = () => leftViewer.formAnchor(widget)?.top ?? NaN;
+      const inPlace = () => field.style.display !== "none" && Math.abs(placedAt() - fieldAt()) < 1;
+
+      report.emit("[form-beside] the reader's own fields being changed, the other side scrolled");
+      host.run("edit.formEditOn");
+      await settled("the reader's fields in change", () => shownIn("right") === 0);
+      check("changing the reader's own fields leaves the other form's controls where they were",
+        shownIn("left") === controlsIn("left").length && inPlace(),
+        { shown: shownIn("left"), of: controlsIn("left").length });
+      // Room to scroll in whatever the window's size is, with the field near
+      // the top of the view, and then a wheel over the side the reader is not
+      // in, which moves it and takes them nowhere. Up when there is anything
+      // above, which keeps the field on screen.
+      leftViewer.setZoomFixed(leftViewer.currentZoom * 2);
+      leftViewer.showForm(widget);
+      if (!await settle(() => leftViewer.idle && inPlace(), SETTLE_MS)) throw new Error("the zoomed form did not settle");
+      const startedAt = placedAt();
+      const turn = leftViewer.offset > 80 ? -60 : 60;
+      document.querySelector(`.pane[data-side="left"] .surface`)?.dispatchEvent(
+        new WheelEvent("wheel", { deltaY: turn, bubbles: true, cancelable: true }));
+      const moved = await settle(() => Math.abs(placedAt() - startedAt) > 20 && inPlace(), SETTLE_MS);
+      check("a control on the side the reader is not in follows its page when that side is scrolled",
+        moved, { started: startedAt, placed: placedAt(), field: fieldAt() });
+      check("and the reader stays where they were", focusedSide() === "right" && host.edits()?.doc === b.id);
+
+      if (controlsIn("left").length >= 2) {
+        // Tab in a control lays the layer out from the control's own handler,
+        // before the keyboard arrives in the next one. Read at once: placed by
+        // the focused document, whose fields are being changed, every control
+        // here was hidden, and the next one could not take the keyboard.
+        field.dispatchEvent(new KeyboardEvent("keydown", { key: "Tab", bubbles: true, cancelable: true }));
+        check("Tab in the other side's form leaves its controls in place",
+          shownIn("left") === controlsIn("left").length, { shown: shownIn("left"), of: controlsIn("left").length });
+        // The keyboard went into the left side and took the reader with it.
+        if (focusedSide() !== "right") { pressIn("right"); await host.idle(); }
+      } else {
+        report.emit("[form-beside] one control in this form: the Tab check needs two and was not run");
+      }
+      host.run("edit.formEditOff");
+      await settled("the reader's fields back", () => shownIn("right") > 0);
+
+      report.emit("[form-beside] a control on the left refusing its answer");
+      // Not typed and not pressed, either of which would take the reader to
+      // the left: the control is given an answer it refuses and told it lost
+      // the keyboard, which is when it says so.
+      const quiet = problem();
+      const was = field.value;
+      field.value = `${was} \u20ac`;
+      field.dispatchEvent(new Event("blur"));
+      await pause(100);
+      check("what a form says is not shown over the other document",
+        focusedSide() === "right" && problem() === quiet, problem().slice(0, 80));
+      pressIn("left");
+      if (!await settle(() => focusedSide() === "left", SETTLE_MS)) throw new Error("the press did not reach the left side");
+      const said = await settle(() => problem() !== "" && problem() !== quiet, SETTLE_MS);
+      check("and is shown in its own document", said && host.edits()?.doc === a.id, problem().slice(0, 80));
+      // The answer it had, so that nothing is left waiting to be corrected.
+      field.value = was;
+      field.dispatchEvent(new Event("blur"));
+      await host.idle();
+      check("the form is left as it was opened", host.edits()?.state.dirty === false && field.value === was,
+        field.value.slice(0, 40));
       break;
     }
     case "opened": {

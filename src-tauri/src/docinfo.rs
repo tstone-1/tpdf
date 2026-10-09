@@ -253,6 +253,15 @@ pub struct Appendix {
     /// page whose own object, or anything it drew from when it was signed,
     /// was removed (`removed`).
     ///
+    /// **One change a page reaches is not counted: a signature put in a
+    /// place the signed revision had empty for one** (`PageRead::signed_place`).
+    /// The field and its widget are written again with the signature and its
+    /// appearance, no page object is, and the widget is where and what the
+    /// signed revision said. Until 2026-10-09 the page counted, through the
+    /// `/Annots` entry it always had, and a form signed where it asked to be
+    /// signed failed `verify --strict`. Anything else about that widget, and
+    /// anything else the page reaches, still counts.
+    ///
     /// Still a count and not a verdict: a page can be touched for reasons that
     /// change nothing on screen, and this does not claim otherwise. And what
     /// reaches no page is not in it --- the catalog's own entries, such as the
@@ -262,11 +271,12 @@ pub struct Appendix {
     /// timestamp field among the page's annotations.
     ///
     /// A field has to be listed in a page's `/Annots`, so signing or
-    /// timestamping rewrites that page object and changes nothing the page
+    /// timestamping writes that list again --- the page object, or the array
+    /// when the list is an object of its own --- and changes nothing the page
     /// draws. Without this a reader is told "1 page was rewritten" under a
     /// signature and takes it for a change to the page, which is the one
     /// thing they opened the row to rule out. A page is named here only when
-    /// every part of that was proved: [`page_listing`] for the page's own
+    /// every part of that was proved: [`PageRead::listing`] for the page's own
     /// object, and `read_appendix` for what the page draws from --- no content
     /// stream, no resource however far down, no annotation it already had and
     /// nothing it inherits was added, changed or removed. What the new field
@@ -2536,12 +2546,8 @@ fn read_appendix(bytes: &[u8], end: usize, password: Option<&str>) -> Appendix {
     let mut kinds: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
     let mut changed: std::collections::BTreeSet<lopdf::ObjectId> =
         std::collections::BTreeSet::new();
-    let mut touched = changed.clone();
-    let mut listings: Vec<(lopdf::ObjectId, PageListing)> = Vec::new();
-    let mut apart_from_new_fields = Referring::new();
     for (id, object) in &whole.objects {
-        let before = signed.objects.get(id);
-        match before {
+        match signed.objects.get(id) {
             None => out.added += 1,
             Some(before) if !same_object(before, object) => out.replaced += 1,
             // Present and unchanged: the overwhelming majority, and the reason
@@ -2549,37 +2555,61 @@ fn read_appendix(bytes: &[u8], end: usize, password: Option<&str>) -> Appendix {
             Some(_) => continue,
         }
         changed.insert(*id);
-        let kind = kind_of(object);
-        if kind == "Page" {
-            touched.insert(*id);
-            if let Some((listing, refers_to)) =
-                before.and_then(|before| page_listing(&signed, &whole, *id, before, object))
-            {
-                listings.push((*id, listing));
-                apart_from_new_fields.insert(*id, refers_to);
-            }
-        }
-        kinds.insert(kind);
+        kinds.insert(kind_of(object));
     }
-    // And the pages whose own object stands as it was while something they
-    // draw from does not, or which are no longer where they were.
-    touched.extend(pages_drawing_from(&whole, &changed));
+    // What each page refers to apart from signing, for the pages that signing
+    // reached: one that lists a new signature field, and one with a place a
+    // signature was put in. The walks below take a page's word from here.
+    let mut listings: Vec<(lopdf::ObjectId, PageListing)> = Vec::new();
+    let mut apart_from_signing = Referring::new();
+    for (number, id) in whole.get_pages() {
+        let (Some(before), Some(after)) = (signed.objects.get(&id), whole.objects.get(&id)) else {
+            continue;
+        };
+        let read = PageRead {
+            signed: &signed,
+            whole: &whole,
+            changed: &changed,
+        };
+        if let Some((timestamp, refers_to)) = read.listing(id, before, after) {
+            listings.push((
+                id,
+                PageListing {
+                    page: number,
+                    timestamp,
+                },
+            ));
+            apart_from_signing.insert(id, refers_to);
+        } else if let Some(refers_to) = read.signed_places(after) {
+            apart_from_signing.insert(id, refers_to);
+        }
+    }
+    // The pages written again, and the pages whose own object stands as it
+    // was while something they draw from does not. A page that lists a new
+    // field is one of them whichever object holds the list.
+    let mut touched = pages_reaching(&whole, &changed, &apart_from_signing);
+    touched.extend(
+        changed
+            .iter()
+            .filter(|id| whole.objects.get(id).is_some_and(|o| kind_of(o) == "Page")),
+    );
+    touched.extend(listings.iter().map(|(page, _)| *page));
     // A page written again to list a field is only that when nothing it
     // draws from was added or changed: its content streams, its resources
     // and what they name however far down, the annotations it already had,
     // what it inherits. The same walk answers it, over the same changes, with
     // two things taken out. The page's own object is one of the changes, and
-    // `page_listing` has compared it entry by entry. And the fields the page
-    // gained are reached from it, with their appearance streams; they are
-    // what the row names, so each such page stands in the walk as referring
-    // to everything it names except those entries.
+    // `PageRead::listing` has compared it entry by entry. And the fields the
+    // page gained are reached from it, with their appearance streams; they
+    // are what the row names, so each such page stands in the walk as
+    // referring to everything it names except those entries.
     if !listings.is_empty() {
         let besides: std::collections::BTreeSet<lopdf::ObjectId> = changed
             .iter()
-            .filter(|id| !apart_from_new_fields.contains_key(id))
+            .filter(|id| !apart_from_signing.contains_key(id))
             .copied()
             .collect();
-        let redrawn = pages_reaching(&whole, &besides, &apart_from_new_fields);
+        let redrawn = pages_reaching(&whole, &besides, &apart_from_signing);
         listings.retain(|(page, _)| !redrawn.contains(page));
     }
     // And what the signed revision had that a reader of the document no
@@ -2688,10 +2718,11 @@ fn pages_drawing_from(
 type Referring = std::collections::BTreeMap<lopdf::ObjectId, Vec<lopdf::ObjectId>>;
 
 /// [`pages_drawing_from`], with what the objects in `stated` refer to taken
-/// from there. That is how a page is asked what it draws from apart from the
-/// fields it gained: by leaving those entries of its `/Annots` out of what it
-/// refers to. The edge is left out and not the field, so a field the page
-/// reaches some other way --- named in its resources as well --- is reached.
+/// from there. That is how a page is asked what it draws from apart from
+/// signing ([`PageRead`]): by leaving out of what it refers to the entries of
+/// its `/Annots` it gained, and the signature of a place that was signed. The
+/// edge is left out and not the field, so a field the page reaches some other
+/// way --- named in its resources as well --- is reached.
 fn pages_reaching(
     whole: &Document,
     changed: &std::collections::BTreeSet<lopdf::ObjectId>,
@@ -2765,100 +2796,305 @@ fn pages_reaching(
     pages.intersection(&reaching).copied().collect()
 }
 
-/// Whether a page was rewritten only to list a new signature or timestamp
-/// field, and which of the two.
+/// What a signer writes on the widget of a signature field the document
+/// already has, when it puts a signature there. A widget that differs from
+/// its signed self in these entries and no other has been signed in its
+/// place; one that differs in anything else has been changed as well, and its
+/// page is then a page something was done to.
 ///
-/// `Some` only when all three hold, each checked against both parses:
+/// - `V`: the signature. It is what makes the place signed, and
+///   [`PageRead::signed_place`] asks more of it than of the others: there was
+///   none, in the field or above it, and this one is a signature dictionary
+///   the signed revision did not have.
+/// - `AP`: what the signature shows. The signed revision gave the place its
+///   rectangle on the page, and an appearance is drawn inside that rectangle
+///   whatever it holds (PDF 32000-1 §12.5.5), so it shows where the signed
+///   document said a signature would.
+/// - `F`: the annotation's flags. A signer sets Print and Locked on the
+///   widget it fills, as it does on one it adds. This is the one entry here
+///   that can also hide the place; a place that is hidden shows nothing of
+///   the page that the signed revision did not show around it.
+/// - `M`: the date the annotation was last changed, which is the signing.
 ///
-/// 1. the page dictionary is the same apart from `/Annots`;
-/// 2. the new `/Annots` is the old one with entries added --- none removed,
-///    none replaced;
-/// 3. every added entry is a widget of a signature field (`/FT /Sig`, its own
-///    or inherited).
-///
-/// Anything else is `None`, and the page is then reported as rewritten with
-/// no reason given: a false "only a field was listed" is the reassuring
-/// answer, so every doubt goes the other way.
-///
-/// **These three are about the page's own object, and a listing needs a
-/// fourth that is not: nothing the page draws from was added or changed.**
-/// `read_appendix` holds that one, with the walk that finds which pages an
-/// append touched, because it is a question about every object the page
-/// reaches and not about this dictionary. Until 2026-10-09 the fourth was
-/// held here and read `/Contents` alone, so a form, a font or a graphics
-/// state replaced in the page's resources beside a new signature field read
-/// "the page's content is unchanged". What comes back with the listing is
-/// what that walk needs: every object the page refers to **apart from the
-/// entries it gained**. A visible signature draws through its widget's
-/// appearance, which is the field and is what the row names.
-fn page_listing(
-    signed: &Document,
-    whole: &Document,
-    id: lopdf::ObjectId,
-    before: &Object,
-    after: &Object,
-) -> Option<(PageListing, Vec<lopdf::ObjectId>)> {
-    let (before, after) = (before.as_dict().ok()?, after.as_dict().ok()?);
-    let apart_from_annots = |dict: &lopdf::Dictionary| {
-        let mut rest = dict.clone();
-        rest.remove(b"Annots");
-        format!("{rest:?}")
-    };
-    if apart_from_annots(before) != apart_from_annots(after) {
-        return None;
-    }
+/// Deliberately not here, each of them an entry a signer has no need to
+/// write: `Rect` (where the place is and how large), `FT`, `Subtype` and
+/// `Parent` (what it is), `T` (which field), `P`, `MK`, `A` and `AA` (what it
+/// does when pressed), `Lock` and `SV` (what the form's author asked of the
+/// signer), `OC` (whether it shows at all), and anything not named. A signer
+/// that writes one of those reads as a rewritten page, which is the answer
+/// to be wrong with.
+const SIGNING_WRITES: [&[u8]; 4] = [b"V", b"AP", b"F", b"M"];
 
-    let annots = |document: &Document, dict: &lopdf::Dictionary| -> Option<Vec<Object>> {
-        match dict.get(b"Annots") {
+/// And on a field above the widget, when the two are objects of their own:
+/// the signature and nothing else.
+const SIGNING_WRITES_ABOVE: [&[u8]; 1] = [b"V"];
+
+/// How far up `/Parent` a place is followed. `/Parent` is the document's
+/// word and can point in a circle; a field deeper than this is not read as a
+/// signed place, and its page is counted.
+const PLACE_DEPTH: usize = 16;
+
+/// One page of an appended revision, asked what signing did to it.
+///
+/// Signing reaches a page in two ways, and neither is a change to the page:
+///
+/// - **A new field is listed** ([`PageRead::listing`]). A field has to be in
+///   a page's `/Annots`, so the append writes that list again --- the page
+///   object, or the array when the list is an object of its own.
+/// - **A place is signed** ([`PageRead::signed_place`]). The signed revision
+///   already had an empty signature field on the page, and the append writes
+///   the field and its widget again with the signature in it. No page object
+///   is written at all; the page reaches the changed widget through the
+///   `/Annots` it always had.
+///
+/// Both answers come with what the page refers to **apart from that**: every
+/// object it names, leaving out the entries of `/Annots` it gained and the
+/// signing entries of the places that were signed. `read_appendix` walks from
+/// there, so anything else the page draws from that was added or changed
+/// still counts. **An edge is left out and never an object**: a widget the
+/// page also names in its resources is reached through the resources.
+struct PageRead<'a> {
+    signed: &'a Document,
+    whole: &'a Document,
+    /// Every object the append added or wrote differently.
+    changed: &'a std::collections::BTreeSet<lopdf::ObjectId>,
+}
+
+impl PageRead<'_> {
+    /// A page's `/Annots` entries, wherever the array is held. No entry is no
+    /// annotations; one that is not an array is no answer.
+    fn annots(document: &Document, page: &lopdf::Dictionary) -> Option<Vec<Object>> {
+        match page.get(b"Annots") {
             Ok(entry) => resolve(document, entry).as_array().ok().cloned(),
             Err(_) => Some(Vec::new()),
         }
-    };
-    let (old, new) = (annots(signed, before)?, annots(whole, after)?);
-    let listed = |entry: &Object| old.iter().any(|o| same_object(o, entry));
-    if !old.iter().all(|o| new.iter().any(|n| same_object(o, n))) {
-        return None;
     }
-    let gained: Vec<&Object> = new.iter().filter(|entry| !listed(entry)).collect();
-    if gained.is_empty() {
-        return None;
+
+    /// Whether `/Annots` is an object of its own that the append wrote.
+    fn list_rewritten(&self, page: &lopdf::Dictionary) -> bool {
+        page.get(b"Annots")
+            .and_then(Object::as_reference)
+            .is_ok_and(|held| self.changed.contains(&held))
     }
-    let mut timestamp = true;
-    for entry in gained {
-        let widget = resolve(whole, entry).as_dict().ok()?;
-        let is_widget = widget
-            .get(b"Subtype")
-            .ok()
-            .and_then(|o| resolve(whole, o).as_name().ok())
-            == Some(b"Widget".as_slice());
-        if !is_widget || !is_signature_field(whole, widget) {
+
+    /// Whether the append wrote the page's annotations again only to list a
+    /// new signature or timestamp field: whether the new field is a
+    /// timestamp's, and what the page refers to apart from signing.
+    ///
+    /// `Some` only when all three hold, each checked against both parses:
+    ///
+    /// 1. the page dictionary is the same apart from `/Annots`;
+    /// 2. the new `/Annots` is the old one with entries added --- none
+    ///    removed, none replaced;
+    /// 3. every added entry is a widget of a signature field (`/FT /Sig`, its
+    ///    own or inherited).
+    ///
+    /// Anything else is `None`, and the page is then reported as rewritten
+    /// with no reason given: a false "only a field was listed" is the
+    /// reassuring answer, so every doubt goes the other way.
+    ///
+    /// **`/Annots` is compared as its entries, wherever they are held.** A
+    /// list that is an object of its own is written again without the page
+    /// object, and until 2026-10-09 this was asked only of a page object
+    /// that had itself been written, so that ordinary second signature read
+    /// "1 page was rewritten".
+    ///
+    /// **These three are about the page's own annotations, and a listing
+    /// needs a fourth that is not: nothing the page draws from was added or
+    /// changed.** `read_appendix` holds that one, with the walk that finds
+    /// which pages an append touched, because it is a question about every
+    /// object the page reaches and not about this dictionary. Until
+    /// 2026-10-09 the fourth was held here and read `/Contents` alone, so a
+    /// form, a font or a graphics state replaced in the page's resources
+    /// beside a new signature field read "the page's content is unchanged".
+    /// A visible signature draws through its widget's appearance, which is
+    /// the field and is what the row names.
+    fn listing(
+        &self,
+        id: lopdf::ObjectId,
+        before: &Object,
+        after: &Object,
+    ) -> Option<(bool, Vec<lopdf::ObjectId>)> {
+        let (before, after) = (before.as_dict().ok()?, after.as_dict().ok()?);
+        // Not a condition, only the cost: a page gains an entry by one of
+        // these two objects being written, and every other page of the
+        // document is answered here without a comparison.
+        if !self.changed.contains(&id) && !self.list_rewritten(after) {
             return None;
         }
-        timestamp &= inherited(whole, widget, b"V")
-            .and_then(|v| resolve(whole, v).as_dict().ok())
-            .is_some_and(|sig| name_of(whole, sig, b"SubFilter") == "ETSI.RFC3161");
-    }
-
-    // Everything the page refers to apart from the fields it gained: its
-    // other entries, and the annotations it had. `/Annots` is taken as the
-    // entries compared above and not as the object that holds them, so an
-    // array written as an object of its own is neither a change the page
-    // draws from nor a way around the comparison.
-    let mut refers_to = Vec::new();
-    for (key, value) in after.iter() {
-        if key.as_slice() != b"Annots" {
-            references_in(value, &mut refers_to);
+        if !same_apart_from(before, after, &[b"Annots"]) {
+            return None;
         }
-    }
-    for entry in new.iter().filter(|entry| listed(entry)) {
-        references_in(entry, &mut refers_to);
+        let old = Self::annots(self.signed, before)?;
+        let new = Self::annots(self.whole, after)?;
+        let listed = |entry: &Object| old.iter().any(|o| same_object(o, entry));
+        if !old.iter().all(|o| new.iter().any(|n| same_object(o, n))) {
+            return None;
+        }
+        let (kept, gained): (Vec<&Object>, Vec<&Object>) =
+            new.iter().partition(|entry| listed(entry));
+        if gained.is_empty() {
+            return None;
+        }
+        let mut timestamp = true;
+        for entry in gained {
+            let widget = resolve(self.whole, entry).as_dict().ok()?;
+            if !is_widget(self.whole, widget) || !is_signature_field(self.whole, widget) {
+                return None;
+            }
+            timestamp &= inherited(self.whole, widget, b"V")
+                .and_then(|v| resolve(self.whole, v).as_dict().ok())
+                .is_some_and(|sig| name_of(self.whole, sig, b"SubFilter") == "ETSI.RFC3161");
+        }
+        // `/Annots` is taken as the entries compared above and not as the
+        // object that holds them, so an array written as an object of its
+        // own is neither a change the page draws from nor a way around the
+        // comparison.
+        Some((timestamp, self.apart_from_signing(after, &kept).0))
     }
 
-    let page = whole
-        .get_pages()
-        .into_iter()
-        .find_map(|(number, page)| (page == id).then_some(number))?;
-    Some((PageListing { page, timestamp }, refers_to))
+    /// What a page the append did not list a field on refers to apart from
+    /// signing, when a place on it was signed; `None` when none was, and the
+    /// page is then read as it stands.
+    ///
+    /// **Not of a page whose list of annotations was written again as an
+    /// object of its own.** What comes back names the list's entries in
+    /// place of the list, which is right while the list stands as it was;
+    /// one written again and not a listing --- an annotation taken off it,
+    /// or one added that is no signature field --- is a change the page
+    /// reaches through that object, and has to stay one. A page whose own
+    /// object was written again needs no such care: it is counted for that,
+    /// whatever it is said to refer to.
+    fn signed_places(&self, after: &Object) -> Option<Vec<lopdf::ObjectId>> {
+        let after = after.as_dict().ok()?;
+        if self.list_rewritten(after) {
+            return None;
+        }
+        let entries = Self::annots(self.whole, after)?;
+        let entries: Vec<&Object> = entries.iter().collect();
+        let (refers_to, places) = self.apart_from_signing(after, &entries);
+        (places > 0).then_some(refers_to)
+    }
+
+    /// Every object `page` refers to outside `/Annots`, and through each of
+    /// `entries`, with a signed place standing as what it refers to apart
+    /// from its signature. The second answer is how many places were signed.
+    fn apart_from_signing(
+        &self,
+        page: &lopdf::Dictionary,
+        entries: &[&Object],
+    ) -> (Vec<lopdf::ObjectId>, usize) {
+        let mut refers_to = Vec::new();
+        for (key, value) in page.iter() {
+            if key.as_slice() != b"Annots" {
+                references_in(value, &mut refers_to);
+            }
+        }
+        let mut places = 0;
+        for entry in entries {
+            match self.signed_place(entry) {
+                Some(rest) => {
+                    places += 1;
+                    refers_to.extend(rest);
+                }
+                None => references_in(entry, &mut refers_to),
+            }
+        }
+        (refers_to, places)
+    }
+
+    /// Whether an annotation the page already had is a place for a signature
+    /// that the append signed and did nothing else to; and then what it
+    /// refers to apart from the signature.
+    ///
+    /// `Some` only when all of these hold:
+    ///
+    /// 1. it is an object of its own in both revisions, and in the signed
+    ///    one a widget of a signature field (`/FT /Sig`, its own or
+    ///    inherited);
+    /// 2. the signed revision gave it no `/V`, its own or inherited --- a
+    ///    signature that was there and is replaced is not a place signed;
+    /// 3. it now has one, which is an object the signed revision did not
+    ///    have and a dictionary with a `/ByteRange` --- which every
+    ///    signature in a field has (PDF 32000-1 table 252), and a text
+    ///    field's answer does not;
+    /// 4. the widget differs from its signed self in [`SIGNING_WRITES`]
+    ///    alone, and each field above it in [`SIGNING_WRITES_ABOVE`] alone.
+    ///
+    /// So the widget is where it was, the size it was, the kind of thing it
+    /// was, under the field it was under. What comes back is every object
+    /// the widget and the fields above it refer to through any other entry:
+    /// those are the page's as they were before, and a change to one of them
+    /// is a change the page draws from. Left out with the signing entries
+    /// are `/Parent`, which this follows itself, and a field's `/Kids`: its
+    /// widgets are each on a page by that page's own `/Annots`, and are
+    /// asked there.
+    fn signed_place(&self, entry: &Object) -> Option<Vec<lopdf::ObjectId>> {
+        let mut id = entry.as_reference().ok()?;
+        let was = self.signed.get_dictionary(id).ok()?;
+        let now = self.whole.get_dictionary(id).ok()?;
+        // Asked of the signed revision alone: what it is cannot have changed
+        // and pass the comparison below, which leaves `/Subtype`, `/FT` and
+        // `/Parent` in.
+        if !is_widget(self.signed, was)
+            || !is_signature_field(self.signed, was)
+            || inherited(self.signed, was, b"V").is_some()
+        {
+            return None;
+        }
+        let signature = inherited(self.whole, now, b"V")?.as_reference().ok()?;
+        if self.signed.objects.contains_key(&signature)
+            || !self.whole.get_dictionary(signature).ok()?.has(b"ByteRange")
+        {
+            return None;
+        }
+
+        let mut refers_to = Vec::new();
+        let mut writes: &[&[u8]] = &SIGNING_WRITES;
+        for depth in 0..PLACE_DEPTH {
+            let now = self.whole.get_dictionary(id).ok()?;
+            if self.changed.contains(&id)
+                && !same_apart_from(self.signed.get_dictionary(id).ok()?, now, writes)
+            {
+                return None;
+            }
+            for (key, value) in now.iter() {
+                let followed_here =
+                    key.as_slice() == b"Parent" || (depth > 0 && key.as_slice() == b"Kids");
+                if !followed_here && !writes.contains(&key.as_slice()) {
+                    references_in(value, &mut refers_to);
+                }
+            }
+            match now.get(b"Parent") {
+                Err(_) => return Some(refers_to),
+                Ok(parent) => id = parent.as_reference().ok()?,
+            }
+            writes = &SIGNING_WRITES_ABOVE;
+        }
+        None
+    }
+}
+
+/// Whether two dictionaries are the same with the entries `apart` left out
+/// of both.
+fn same_apart_from(before: &lopdf::Dictionary, after: &lopdf::Dictionary, apart: &[&[u8]]) -> bool {
+    let rest = |dict: &lopdf::Dictionary| {
+        let mut rest = dict.clone();
+        for key in apart {
+            rest.remove(key);
+        }
+        Object::Dictionary(rest)
+    };
+    same_object(&rest(before), &rest(after))
+}
+
+/// Whether an annotation is a widget.
+fn is_widget(document: &Document, annotation: &lopdf::Dictionary) -> bool {
+    annotation
+        .get(b"Subtype")
+        .ok()
+        .and_then(|o| resolve(document, o).as_name().ok())
+        == Some(b"Widget".as_slice())
 }
 
 /// A field's own entry for `key`, or the nearest ancestor's. Bounded, because
@@ -3310,7 +3546,7 @@ mod tests {
 
     /// A page rewritten for any other reason is not excused as a field listing.
     ///
-    /// The refusals of [`page_listing`], each on a page built for it, and the
+    /// The refusals of [`PageRead::listing`], each on a page built for it, and the
     /// acceptance beside them so that a function answering `None` to
     /// everything does not pass. What it refuses is what the page's own
     /// object shows; a content stream or a resource changed beside the field
@@ -3363,24 +3599,22 @@ mod tests {
         let link = Object::Reference((5, 0));
         let widget = Object::Reference((4, 0));
         let signed = build(vec![link.clone()], 0, b"q Q", b"Sig");
+        let the_page = std::collections::BTreeSet::from([(2, 0)]);
         let asked = |whole: &Document| {
-            page_listing(
-                &signed,
+            PageRead {
+                signed: &signed,
                 whole,
-                (2, 0),
-                &signed.objects[&(2, 0)],
-                &whole.objects[&(2, 0)],
-            )
+                changed: &the_page,
+            }
+            .listing((2, 0), &signed.objects[&(2, 0)], &whole.objects[&(2, 0)])
         };
-        let ask = |whole: &Document| asked(whole).map(|(listing, _)| listing);
+        // Whether the field is a timestamp's, of a page that is a listing.
+        let ask = |whole: &Document| asked(whole).map(|(timestamp, _)| timestamp);
 
         let listed = vec![link.clone(), widget.clone()];
         assert_eq!(
             ask(&build(listed.clone(), 0, b"q Q", b"Sig")),
-            Some(PageListing {
-                page: 1,
-                timestamp: false
-            }),
+            Some(false),
             "a signature field added to the list, and nothing else"
         );
         assert_eq!(

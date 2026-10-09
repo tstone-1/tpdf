@@ -62,6 +62,19 @@ A fixture of four pages or more.
 
   uv run scripts/tabs_check.py <checks-binary> testdata/text-heavy.pdf --phase views
 
+--phase answers opens a document with an outline and, from --other, one with comments
+and a link, and reads off the window what each was asked once its first screen was up:
+the outline's entries and the comments in the sidebar, and the links the viewer holds.
+
+  uv run scripts/tabs_check.py <checks-binary> testdata/outline-simple.pdf --phase answers --other testdata/comments.pdf
+
+--phase form-beside puts a form on the side the reader is not in: its controls follow
+their page when that side is scrolled, and what one of them says is shown in its own
+document. With a form of two controls or more (the forms phase's fixture) it also
+presses Tab in one of them; testdata/form.pdf has one, and the transcript says so.
+
+  uv run scripts/tabs_check.py <checks-binary> testdata/form.pdf --phase form-beside
+
 --phase pictures runs New document from pictures in the window, with no document open.
 
   uv run scripts/tabs_check.py <checks-binary> testdata/text-base14.pdf --phase pictures
@@ -106,8 +119,8 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("binary", type=Path)
     parser.add_argument("pdf", type=Path)
-    parser.add_argument("--phase", choices=("tabs", "sides", "views", "tabs-position", "tabs-rotation", "forms", "signatures", "textedit", "textedit-dash", "textedit-cff-unicode", "textedit-cff-ligatures", "textedit-passport", "textedit-agenda", "textedit-agenda-page2", "textedit-factsheet", "textedit-factsheet-body", "textedit-w3c", "textedit-latin1", "textedit-cid-latin1", "textedit-overhang", "textedit-multipage", "textedit-wrapped", "textedit-wide-spacing", "textedit-list-child", "textedit-grow", "textedit-push", "textedit-w9", "textedit-centred", "import", "redact-pages", "sign", "recognise", "protect", "pictures", "compress", "fields", "fields-turned"), default="tabs")
-    parser.add_argument("--other", type=Path, help="The file --phase import inserts pages from")
+    parser.add_argument("--phase", choices=("tabs", "sides", "views", "answers", "form-beside", "tabs-position", "tabs-rotation", "forms", "signatures", "textedit", "textedit-dash", "textedit-cff-unicode", "textedit-cff-ligatures", "textedit-passport", "textedit-agenda", "textedit-agenda-page2", "textedit-factsheet", "textedit-factsheet-body", "textedit-w3c", "textedit-latin1", "textedit-cid-latin1", "textedit-overhang", "textedit-multipage", "textedit-wrapped", "textedit-wide-spacing", "textedit-list-child", "textedit-grow", "textedit-push", "textedit-w9", "textedit-centred", "import", "redact-pages", "sign", "recognise", "protect", "pictures", "compress", "fields", "fields-turned"), default="tabs")
+    parser.add_argument("--other", type=Path, help="The second file --phase import and --phase answers read")
     parser.add_argument("--identity", help="--phase sign only: the SHA-256 of the signing certificate")
     # 90 s by default; the signing phase waits on a person answering the
     # keychain's prompt three times and on two authorities, so it gets 900.
@@ -125,7 +138,9 @@ def main() -> int:
         first, second = room / "first.pdf", room / "second.pdf"
         shutil.copyfile(args.pdf, first)
         copies = [first, second]
-        if args.phase == "import":
+        if args.phase == "answers" and not args.other:
+            parser.error("--phase answers needs --other, a PDF with comments and a link")
+        if args.phase in ("import", "answers"):
             if not args.other:
                 parser.error("--phase import needs --other, a second PDF of three or more pages with different text")
             # A copy as well, so a save that went wrong could not touch the input.

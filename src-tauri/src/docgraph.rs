@@ -615,7 +615,7 @@ impl DocumentGraph {
     /// rule for a graph that will not parse: the answer that cuts nothing, so
     /// every show a region touches goes whole.
     #[must_use]
-    pub fn show_facts(&self, index: u32, shows: usize) -> Option<Vec<Option<redact::ShowFacts>>> {
+    pub fn show_facts(&self, index: u32, shows: usize) -> Option<Vec<redact::ShowFacts>> {
         let document = self.parsed().ok()?;
         let page = pagetree::ordered_pages(document)
             .get(index as usize)

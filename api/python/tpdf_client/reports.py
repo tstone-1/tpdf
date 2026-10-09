@@ -836,7 +836,8 @@ class AppendixReport(TypedDict):
     # Keys the document catalog gained; "DSS" is validation data.
     catalog_gained: list[str]
     # Pages whose object, or anything they draw from, was added, replaced or
-    # removed, or that are no longer where they were.
+    # removed, or that are no longer where they were. A signature put in an
+    # empty signature field the signed revision had does not touch its page.
     pages_touched: int
     # The touched pages rewritten only to list a field, in page order.
     pages_listing: list[ListedPage]

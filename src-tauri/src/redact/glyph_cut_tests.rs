@@ -36,11 +36,20 @@ fn over(from: usize, to: usize) -> Rect {
     [from as f32 * 10.0, 90.0, to as f32 * 10.0, 120.0]
 }
 
-fn fact(codes: usize) -> Option<ShowFacts> {
-    Some(ShowFacts {
-        codes,
+/// A show of `codes` codes with nothing after it that starts at its pen.
+fn fact(codes: usize) -> ShowFacts {
+    ShowFacts {
+        codes: Some(codes),
         carries_on: false,
-    })
+    }
+}
+
+/// The same with the next show starting at its pen.
+fn carried(codes: usize) -> ShowFacts {
+    ShowFacts {
+        codes: Some(codes),
+        carries_on: true,
+    }
 }
 
 /// A plan that takes show 0 whole, as `covered` leaves it.
@@ -115,6 +124,7 @@ fn a_show_partly_under_a_region_becomes_a_cut_and_says_what_it_takes() {
     let mut plan = whole();
     let said = cut_within(
         &mut plan,
+        &[],
         &[Some(glyphs("abcdef"))],
         Some(&[fact(6)]),
         over(2, 4),
@@ -137,6 +147,7 @@ fn a_show_wholly_under_a_region_still_goes_whole() {
     let mut plan = whole();
     let said = cut_within(
         &mut plan,
+        &[],
         &[Some(glyphs("abc"))],
         Some(&[fact(3)]),
         over(0, 3),
@@ -152,6 +163,7 @@ fn a_show_with_no_glyph_under_the_region_leaves_the_plan() {
     let mut plan = whole();
     cut_within(
         &mut plan,
+        &[],
         &[Some(glyphs("abc"))],
         Some(&[fact(3)]),
         [0.0, 109.5, 30.0, 130.0],
@@ -168,6 +180,7 @@ fn a_show_that_cannot_be_described_goes_whole() {
     let mut plan = whole();
     cut_within(
         &mut plan,
+        &[],
         std::slice::from_ref(&cuttable),
         Some(&[fact(6)]),
         region,
@@ -176,18 +189,17 @@ fn a_show_that_cannot_be_described_goes_whole() {
 
     let mut unboxed = glyphs("abcdef");
     unboxed.glyphs[5].bounds = None;
-    type Case = (
-        &'static str,
-        Option<TextGlyphs>,
-        Option<Vec<Option<ShowFacts>>>,
-    );
+    type Case = (&'static str, Option<TextGlyphs>, Option<Vec<ShowFacts>>);
     let cases: [Case; 5] = [
         ("PDFium could not place it", None, Some(vec![fact(6)])),
         ("the content could not be read", cuttable.clone(), None),
         (
             "its font's codes cannot be counted",
             cuttable.clone(),
-            Some(vec![None]),
+            Some(vec![ShowFacts {
+                codes: None,
+                carries_on: false,
+            }]),
         ),
         (
             "it holds more codes than glyphs",
@@ -198,40 +210,51 @@ fn a_show_that_cannot_be_described_goes_whole() {
     ];
     for (why, text, facts) in cases {
         let mut plan = whole();
-        let said = cut_within(&mut plan, &[text], facts.as_deref(), region);
+        let said = cut_within(&mut plan, &[], &[text], facts.as_deref(), region);
         assert!(said.is_empty(), "{why}");
         assert_eq!(plan.shows, vec![0], "{why}");
         assert!(plan.show_cuts.is_empty(), "{why}");
+        assert!(plan.unhandled.is_empty(), "{why}");
     }
 }
 
 /// The last glyph goes and the next show starts at this one's pen: the gap
-/// needs the place PDFium put that next show, and without it the show goes
-/// whole.
+/// needs the place PDFium put that next show. Without it the show cannot be
+/// cut, and it cannot go whole either, because that would move the next
+/// show: it is left, and the region says so.
 #[test]
 fn a_cut_to_the_end_needs_the_next_start_only_when_the_pen_carries_on() {
-    let carried = Some(ShowFacts {
-        codes: 4,
-        carries_on: true,
-    });
     let mut plan = whole();
     cut_within(
         &mut plan,
+        &[],
         &[Some(glyphs("abcd"))],
-        Some(&[carried]),
+        Some(&[carried(4)]),
         over(2, 4),
     );
-    assert_eq!(plan.shows, vec![0], "no tail, and the pen carries on");
+    assert!(
+        plan.shows.is_empty() && plan.show_cuts.is_empty(),
+        "no tail, and the pen carries on"
+    );
+    assert_eq!(plan.unhandled.len(), 1, "it is reported");
 
     let mut with_tail = glyphs("abcd");
     with_tail.tail = Some(2000.0);
     let mut plan = whole();
-    cut_within(&mut plan, &[Some(with_tail)], Some(&[carried]), over(2, 4));
+    cut_within(
+        &mut plan,
+        &[],
+        &[Some(with_tail)],
+        Some(&[carried(4)]),
+        over(2, 4),
+    );
     assert_eq!(plan.show_cuts.len(), 1, "a tail");
+    assert_eq!(plan.show_cuts[0].take, vec![2, 3]);
 
     let mut plan = whole();
     cut_within(
         &mut plan,
+        &[],
         &[Some(glyphs("abcd"))],
         Some(&[fact(4)]),
         over(2, 4),
@@ -242,11 +265,155 @@ fn a_cut_to_the_end_needs_the_next_start_only_when_the_pen_carries_on() {
     let mut plan = whole();
     cut_within(
         &mut plan,
+        &[],
         &[Some(glyphs("abcd"))],
-        Some(&[carried]),
+        Some(&[carried(4)]),
         over(1, 3),
     );
     assert_eq!(plan.show_cuts.len(), 1, "the last glyph stays");
+    assert!(plan.unhandled.is_empty());
+}
+
+/// A page object of `kind`, which is all [`cut_within`] reads of one.
+fn object(kind: &str) -> PageObject {
+    PageObject {
+        bounds: [0.0, 0.0, 1.0, 1.0],
+        kind: kind.to_string(),
+    }
+}
+
+/// **A show that goes whole takes the pen it moved with it**, so one with a
+/// show after it at its pen is not deleted: it becomes a cut of every glyph,
+/// which leaves the distance to where PDFium placed that next show.
+#[test]
+fn a_whole_show_with_a_show_at_its_pen_becomes_a_cut_of_every_glyph() {
+    let mut text = glyphs("abc");
+    text.tail = Some(1500.0);
+    let all = ShowCut {
+        ordinal: 0,
+        pens: vec![0.0, 500.0, 1000.0],
+        tail: Some(1500.0),
+        take: vec![0, 1, 2],
+    };
+    assert!(all.takes_all());
+
+    let mut plan = whole();
+    let said = cut_within(
+        &mut plan,
+        &[],
+        &[Some(text.clone())],
+        Some(&[carried(3)]),
+        over(0, 3),
+    );
+    // Nothing is said of it here: what a whole show takes is its text, which
+    // the caller has.
+    assert!(said.is_empty());
+    assert!(plan.shows.is_empty() && plan.unhandled.is_empty());
+    assert_eq!(plan.show_cuts, vec![all.clone()]);
+
+    // The control: with nothing at its pen it is deleted, as it was.
+    let mut plan = whole();
+    cut_within(
+        &mut plan,
+        &[],
+        &[Some(text.clone())],
+        Some(&[fact(3)]),
+        over(0, 3),
+    );
+    assert_eq!(plan.shows, vec![0]);
+    assert!(plan.show_cuts.is_empty() && plan.unhandled.is_empty());
+
+    // A show that cannot be cut in part goes whole the same way, whatever
+    // the region covers of it: its codes cannot be counted, or do not match.
+    for codes in [None, Some(7)] {
+        let mut plan = whole();
+        let said = cut_within(
+            &mut plan,
+            &[],
+            &[Some(text.clone())],
+            Some(&[ShowFacts {
+                codes,
+                carries_on: true,
+            }]),
+            over(0, 1),
+        );
+        assert!(said.is_empty(), "{codes:?}");
+        assert_eq!(plan.show_cuts, vec![all.clone()], "{codes:?}");
+        assert!(plan.shows.is_empty(), "{codes:?}");
+    }
+}
+
+/// The distance cannot be measured: PDFium placed no glyphs for the show
+/// along one line, which is what vertical writing and right-to-left text
+/// are, or placed the next show behind it. It is left, and reported by its
+/// place among the page's objects.
+#[test]
+fn a_whole_show_that_cannot_be_measured_is_left_and_reported() {
+    let objects = [
+        object("path"),
+        object("text"),
+        object("image"),
+        object("text"),
+    ];
+    let reported = |plan: &Plan| -> Vec<(usize, String)> {
+        plan.unhandled
+            .iter()
+            .map(|left| (left.at, left.kind.clone()))
+            .collect()
+    };
+    let second = || Plan {
+        shows: vec![1],
+        ..Plan::default()
+    };
+
+    // No glyphs at all.
+    let mut plan = second();
+    cut_within(
+        &mut plan,
+        &objects,
+        &[None, None],
+        Some(&[fact(3), carried(3)]),
+        over(0, 3),
+    );
+    assert!(plan.shows.is_empty() && plan.show_cuts.is_empty());
+    assert_eq!(reported(&plan), vec![(3, UNMEASURED_TEXT.to_string())]);
+    assert!(!plan.is_complete());
+
+    // Glyphs, and no place for the next show.
+    let mut plan = second();
+    cut_within(
+        &mut plan,
+        &objects,
+        &[None, Some(glyphs("abc"))],
+        Some(&[fact(3), carried(3)]),
+        over(0, 3),
+    );
+    assert_eq!(reported(&plan), vec![(3, UNMEASURED_TEXT.to_string())]);
+
+    // The control: the same show with nothing at its pen is deleted.
+    let mut plan = second();
+    cut_within(
+        &mut plan,
+        &objects,
+        &[None, None],
+        Some(&[fact(3), fact(3)]),
+        over(0, 3),
+    );
+    assert_eq!(plan.shows, vec![1]);
+    assert!(plan.is_complete());
+
+    // And what a reader is told.
+    let said = Unhandled {
+        at: 3,
+        kind: UNMEASURED_TEXT.to_string(),
+        drawn: None,
+    }
+    .sentence();
+    assert!(
+        said.contains("object 3 is text whose width could not be measured")
+            && said.contains("would move that text"),
+        "{said}"
+    );
 }
 
 fn cut(ordinal: usize, glyphs: usize, take: &[usize]) -> ShowCut {
@@ -282,6 +449,20 @@ fn cuts_that_add_up_to_the_whole_show_take_it_whole() {
     );
     assert_eq!(merged, vec![cut(5, 4, &[0])]);
     assert_eq!(shows, vec![3, 9], "sorted, for `remove_shows`");
+}
+
+/// With a tail the show may have another at its pen, and deleting it would
+/// lose the distance: it stays a cut, of all its glyphs.
+#[test]
+fn cuts_that_add_up_to_a_whole_show_with_a_tail_stay_a_cut() {
+    let with_tail = |take: &[usize]| ShowCut {
+        tail: Some(2000.0),
+        ..cut(3, 4, take)
+    };
+    let mut shows = vec![9];
+    let merged = merge_cuts(vec![with_tail(&[0, 1]), with_tail(&[2, 3])], &mut shows);
+    assert_eq!(merged, vec![with_tail(&[0, 1, 2, 3])]);
+    assert_eq!(shows, vec![9]);
 }
 
 /// One page whose content is `stream`, with a simple font `F1` and a
@@ -511,6 +692,189 @@ fn two_cuts_on_one_page_each_land_on_their_own_show() {
     );
 }
 
+/// A cut of every glyph of `SECRET`, whose pens are 500 apart from 0, with
+/// the next show placed at `tail`.
+fn all_of_secret(ordinal: usize, tail: Option<f32>) -> ShowCut {
+    ShowCut {
+        tail,
+        ..cut(ordinal, 6, &[0, 1, 2, 3, 4, 5])
+    }
+}
+
+/// What `stream` is after the show at `ordinal` of its `shows` goes whole as
+/// a cut of every glyph, the next show having been placed at 3400.
+fn without_secret(stream: &str, ordinal: usize, shows: usize) -> String {
+    let (mut doc, page) = one_page(stream);
+    cut_shows(
+        &mut doc,
+        page,
+        &[all_of_secret(ordinal, Some(3400.0))],
+        shows,
+    )
+    .expect("cut");
+    content_of(&doc, page)
+}
+
+/// **The show after one that goes whole stays where it was.** Until
+/// 2026-10-09 the operator was deleted and `NEXT` was drawn where `SECRET`
+/// had started. The gap is from the first pen to where PDFium placed `NEXT`.
+#[test]
+fn a_whole_show_leaves_the_distance_to_a_show_that_starts_at_its_pen() {
+    assert_eq!(
+        without_secret("BT /F1 20 Tf 100 700 Td (SECRET) Tj (NEXT) Tj ET", 0, 2),
+        "BT /F1 20 Tf 100 700 Td [-3400] TJ (NEXT) Tj ET"
+    );
+    // What sets spacing or the font between the two moves no pen.
+    assert_eq!(
+        without_secret("BT /F1 20 Tf (SECRET) Tj 2 Tc /F1 9 Tf (NEXT) Tj ET", 0, 2),
+        "BT /F1 20 Tf [-3400] TJ 2 Tc /F1 9 Tf (NEXT) Tj ET"
+    );
+    // The numbers a `TJ` holds before its first string are before the first
+    // pen, and stay; those after it are inside the distance.
+    assert_eq!(
+        without_secret(
+            "BT /F1 20 Tf [-120 (SEC) 30 (RET) -40] TJ (NEXT) Tj ET",
+            0,
+            2
+        ),
+        "BT /F1 20 Tf [-120 -3400] TJ (NEXT) Tj ET"
+    );
+}
+
+/// A `TJ` that draws nothing between the two is in the distance already,
+/// which is measured to where the next show was placed: left in, it would
+/// move that show a second time.
+#[test]
+fn spacing_alone_after_a_whole_show_goes_into_the_distance() {
+    assert_eq!(
+        without_secret(
+            "BT /F1 20 Tf (SECRET) Tj [-500] TJ (NEXT) Tj [-70] TJ ET",
+            0,
+            2
+        ),
+        "BT /F1 20 Tf [-3400] TJ (NEXT) Tj [-70] TJ ET"
+    );
+}
+
+/// Nothing starts at the pen of the last show of a text object, and `Td`,
+/// `Tm`, `T*`, `'` and `"` place what follows from the start of the line: no
+/// distance is written, and spacing that follows stays where it was.
+#[test]
+fn a_whole_show_with_nothing_at_its_pen_leaves_nothing() {
+    for (stream, shows, want) in [
+        (
+            "BT /F1 20 Tf (lead) Tj (SECRET) Tj ET",
+            2,
+            "BT /F1 20 Tf (lead) Tj ET",
+        ),
+        (
+            "BT /F1 20 Tf (lead) Tj (SECRET) Tj ET BT (NEXT) Tj ET",
+            3,
+            "BT /F1 20 Tf (lead) Tj ET BT (NEXT) Tj ET",
+        ),
+        (
+            "BT /F1 20 Tf (lead) Tj (SECRET) Tj [-500] TJ 0 -14 Td (NEXT) Tj ET",
+            3,
+            "BT /F1 20 Tf (lead) Tj [-500] TJ 0 -14 Td (NEXT) Tj ET",
+        ),
+        (
+            "BT /F1 20 Tf (lead) Tj (SECRET) Tj 1 0 0 1 50 60 Tm (NEXT) Tj ET",
+            3,
+            "BT /F1 20 Tf (lead) Tj 1 0 0 1 50 60 Tm (NEXT) Tj ET",
+        ),
+        (
+            "BT /F1 20 Tf 14 TL (lead) Tj (SECRET) Tj T* (NEXT) Tj ET",
+            3,
+            "BT /F1 20 Tf 14 TL (lead) Tj T* (NEXT) Tj ET",
+        ),
+        (
+            "BT /F1 20 Tf 14 TL (lead) Tj (SECRET) Tj (NEXT) ' ET",
+            3,
+            "BT /F1 20 Tf 14 TL (lead) Tj (NEXT) ' ET",
+        ),
+    ] {
+        assert_eq!(without_secret(stream, 1, shows), want, "{stream}");
+    }
+}
+
+/// `'` and `"` do more than show, and a whole one still does it: the line
+/// moves, and `"` sets the two spacings the next show is drawn with.
+#[test]
+fn a_whole_quote_operator_keeps_what_it_did_before_showing() {
+    assert_eq!(
+        without_secret("BT /F1 20 Tf 14 TL (SECRET) ' (NEXT) Tj ET", 0, 2),
+        "BT /F1 20 Tf 14 TL T* [-3400] TJ (NEXT) Tj ET"
+    );
+    assert_eq!(
+        without_secret("BT /F1 20 Tf 14 TL 2 1 (SECRET) \" (NEXT) Tj ET", 0, 2),
+        "BT /F1 20 Tf 14 TL 2 Tw 1 Tc T* [-3400] TJ (NEXT) Tj ET"
+    );
+    // With another `'` after it, nothing starts at its pen and the line
+    // still moves.
+    assert_eq!(
+        without_secret("BT /F1 20 Tf 14 TL (SECRET) ' (NEXT) ' ET", 0, 2),
+        "BT /F1 20 Tf 14 TL T* (NEXT) ' ET"
+    );
+}
+
+/// No code is counted for a show that goes whole, so its font's codes need
+/// not be countable and the pens need not be as many as its codes.
+#[test]
+fn a_whole_show_counts_no_codes() {
+    assert_eq!(
+        without_secret("BT /F3 20 Tf (SECRET) Tj (NEXT) Tj ET", 0, 2),
+        "BT /F3 20 Tf [-3400] TJ (NEXT) Tj ET"
+    );
+    let (mut doc, page) = one_page("BT /F1 20 Tf (SECRETS) Tj (NEXT) Tj ET");
+    cut_shows(&mut doc, page, &[all_of_secret(0, Some(3900.0))], 2).expect("cut");
+    assert_eq!(
+        content_of(&doc, page),
+        "BT /F1 20 Tf [-3900] TJ (NEXT) Tj ET"
+    );
+}
+
+/// A show at its pen and no place for it: nothing says how far the pen
+/// moved, so nothing is written.
+#[test]
+fn a_whole_show_not_measured_to_the_show_at_its_pen_is_refused() {
+    let stream = "BT /F1 20 Tf (SECRET) Tj (NEXT) Tj ET";
+    let (mut doc, page) = one_page(stream);
+    let before = content_of(&doc, page);
+    let why = cut_shows(&mut doc, page, &[all_of_secret(0, None)], 2).expect_err("no tail");
+    assert!(why.contains("not measured to the show after it"), "{why}");
+    assert_eq!(content_of(&doc, page), before);
+    // The control: with nothing at its pen the same cut needs no tail.
+    let (mut doc, page) = one_page("BT /F1 20 Tf (SECRET) Tj 0 -14 Td (NEXT) Tj ET");
+    cut_shows(&mut doc, page, &[all_of_secret(0, None)], 2).expect("cut");
+    assert_eq!(content_of(&doc, page), "BT /F1 20 Tf 0 -14 Td (NEXT) Tj ET");
+}
+
+/// A cut of every glyph leaves no show, so the shows deleted after it are
+/// counted from what is left.
+#[test]
+fn the_shows_after_a_cut_of_every_glyph_are_counted_from_what_is_left() {
+    let cuts = [
+        all_of_secret(1, Some(3400.0)),
+        cut(3, 6, &[2]),
+        all_of_secret(4, Some(3400.0)),
+    ];
+    assert_eq!(after_cuts(&cuts, &[0, 2, 5, 6], 7), (vec![0, 1, 3, 4], 5));
+    // The control: cuts of a part change nothing.
+    assert_eq!(after_cuts(&cuts[1..2], &[0, 2, 5], 7), (vec![0, 2, 5], 7));
+
+    // And on a page: the second show goes as a cut, the fourth is deleted.
+    let stream = "BT /F1 20 Tf (keep) Tj (SECRET) Tj (NEXT) Tj 0 -14 Td (gone) Tj (last) Tj ET";
+    let (mut doc, page) = one_page(stream);
+    let cuts = [all_of_secret(1, Some(3400.0))];
+    cut_shows(&mut doc, page, &cuts, 5).expect("cut");
+    let (shows, text_objects) = after_cuts(&cuts, &[3], 5);
+    super::super::remove_shows(&mut doc, page, &shows, text_objects).expect("removed");
+    assert_eq!(
+        content_of(&doc, page),
+        "BT /F1 20 Tf (keep) Tj [-3400] TJ (NEXT) Tj 0 -14 Td (last) Tj ET"
+    );
+}
+
 /// Each refusal, and the content untouched by it.
 #[test]
 fn a_cut_that_does_not_fit_its_show_is_refused_and_writes_nothing() {
@@ -577,7 +941,14 @@ fn the_facts_of_each_show_are_its_codes_and_whether_the_pen_carries_on() {
         "BT /F1 12 Tf (abc) Tj () Tj [(de) -20 (f)] TJ 0 -14 Td \
          /F2 12 Tf <00010002> Tj /F3 12 Tf (zz) Tj /F2 12 Tf <000102> Tj (ab) ' ET",
     );
-    let known = |codes, carries_on| Some(ShowFacts { codes, carries_on });
+    let known = |codes, carries_on| ShowFacts {
+        codes: Some(codes),
+        carries_on,
+    };
+    let unknown = |carries_on| ShowFacts {
+        codes: None,
+        carries_on,
+    };
     assert_eq!(
         show_facts(&doc, page, 6),
         Some(vec![
@@ -587,10 +958,12 @@ fn the_facts_of_each_show_are_its_codes_and_whether_the_pen_carries_on() {
             known(3, false),
             // Two codes of two bytes.
             known(2, true),
-            // A CMap whose codes this cannot count.
-            None,
-            // Three bytes do not divide into two-byte codes.
-            None,
+            // A CMap whose codes this cannot count. Whether the next show
+            // starts at its pen is known all the same.
+            unknown(true),
+            // Three bytes do not divide into two-byte codes, and a `'` places
+            // what follows.
+            unknown(false),
             // `F2` is still in force, so `ab` is one code of two bytes; and
             // nothing follows it.
             known(1, false),

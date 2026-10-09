@@ -3,7 +3,7 @@ import { describe, expect, it } from "vitest";
 import type { Form, FormWidget } from "./forms";
 import { pageId, type MarkView, type PageView } from "./pages";
 import {
-  SAVED_BASE, arrangeBoth, asMarks, isSaved, leafName, moved, placed, properties, propertied, removed, renamed,
+  SAVED_BASE, arrangeBoth, asMarks, controlRect, isSaved, leafName, moved, placed, properties, propertied, removed, renamed,
   redrawn, removal, shownAt, split, standing,
   type FieldEdited,
 } from "./savedfields";
@@ -193,6 +193,24 @@ describe("where a field's control is put", () => {
     expect(shownAt(name, state([{ object: [11, 0], page: 5, rect: [1, 2, 3, 4], removed: true }]))).toBeNull();
     // Another widget's change is not this one's.
     expect(shownAt(name, state([{ object: [12, 0], page: 5, removed: true }]))).toEqual([20, 20, 120, 40]);
+  });
+});
+
+describe("where a control is put for a document", () => {
+  const name = FORM.widgets[0]!;
+  const movedTo = state([{ object: [11, 0], page: 5, rect: [1, 2, 3, 4], removed: false }]);
+
+  it("is where its field is shown, by the document's own changes", () => {
+    expect(controlRect(name, false, state())).toEqual([20, 20, 120, 40]);
+    expect(controlRect(name, false, movedTo)).toEqual([1, 2, 3, 4]);
+  });
+
+  it("is nowhere while that document's fields are being changed", () => {
+    expect(controlRect(name, true, movedTo)).toBeNull();
+  });
+
+  it("is nowhere for a document with no model", () => {
+    expect(controlRect(name, false, null)).toBeNull();
   });
 });
 

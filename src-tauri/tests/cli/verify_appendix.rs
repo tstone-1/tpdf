@@ -34,7 +34,7 @@ fn with_a_page_rewritten(bytes: &[u8]) -> Vec<u8> {
 }
 
 /// The document's signatures as `verify --json` reports them.
-fn signatures(path: &Path) -> Vec<serde_json::Value> {
+pub(super) fn signatures(path: &Path) -> Vec<serde_json::Value> {
     let (_, stdout, _) = tool(&["verify", "--json", &path.display().to_string()], &[]);
     let json: serde_json::Value = serde_json::from_str(&stdout).unwrap_or_default();
     json["files"][0]["signatures"]
@@ -47,7 +47,7 @@ fn signatures(path: &Path) -> Vec<serde_json::Value> {
 /// of the intact signature with the fewest `appended_bytes`, whether its
 /// appendix is unread and how many pages it touches beyond those listing a
 /// field. Nothing appended is `(false, 0)`.
-fn judged(signatures: &[serde_json::Value]) -> Option<(bool, u64)> {
+pub(super) fn judged(signatures: &[serde_json::Value]) -> Option<(bool, u64)> {
     let last = signatures
         .iter()
         .filter(|s| s["integrity"]["verdict"] == "intact")

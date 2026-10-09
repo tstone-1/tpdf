@@ -2983,8 +2983,10 @@ MUTATIONS = [
         # moving, and an ambiguous anchor is refused. The operand is what tells
         # the two apart -- one removes from the page's content, the other from a
         # decoded copy of it that is written back whole.
-        "    for at in positions.into_iter().rev() {\n        content.operations.remove(at);\n    }\n\n    // **After the content stream",
-        "    for at in positions.into_iter() {\n        content.operations.remove(at);\n    }\n\n    // **After the content stream",
+        "    for at in positions.into_iter().rev() {\n"
+        "        let stays = without_drawing(&content.operations[at]);",
+        "    for at in positions.into_iter() {\n"
+        "        let stays = without_drawing(&content.operations[at]);",
         "removing_two_operators_removes_the_two_that_were_named",
     ),
     Mutation(
@@ -3117,22 +3119,22 @@ MUTATIONS = [
     Mutation(
         "glyph cut: cut a show whose codes are not as many as its glyphs",
         "src/redact/glyph_cut.rs",
-        "            .filter(|(text, fact)| fact.codes == text.glyphs.len());",
-        "            .filter(|_| true);",
+        "            .filter(|text| fact.codes == Some(text.glyphs.len()))",
+        "            .filter(|_| true)",
         "a_show_that_cannot_be_described_goes_whole",
     ),
     Mutation(
         "glyph cut: take a show whole when none of its glyphs is under the region",
         "src/redact/glyph_cut.rs",
-        "        if take.is_empty() {\n            continue;\n        }",
-        "        if take.is_empty() {\n            whole.push(ordinal);\n            continue;\n        }",
+        "            if take.is_empty() {\n                continue;\n            }",
+        "            if take.is_empty() {\n                whole.push(ordinal);\n                continue;\n            }",
         "a_show_with_no_glyph_under_the_region_leaves_the_plan",
     ),
     Mutation(
         "glyph cut: cut a show the region covers all of",
         "src/redact/glyph_cut.rs",
-        "        if take.len() == text.glyphs.len() || (to_the_end",
-        "        if false || (to_the_end",
+        "            if !all && !(to_the_end",
+        "            if !(to_the_end",
         "a_show_wholly_under_a_region_still_goes_whole",
     ),
     Mutation(
@@ -3152,8 +3154,8 @@ MUTATIONS = [
     Mutation(
         "glyph cut: keep a cut that takes every glyph",
         "src/redact/glyph_cut.rs",
-        "        let all = cut.take.len() >= cut.pens.len();",
-        "        let all = false;",
+        "        let whole = cut.takes_all() && cut.tail.is_none();",
+        "        let whole = false;",
         "cuts_that_add_up_to_the_whole_show_take_it_whole",
     ),
     Mutation(
@@ -3452,10 +3454,12 @@ MUTATIONS = [
         "    let carriers = clear_shadow_text(doc, page, &mut content.operations, &positions)?;\n"
         "\n"
         "    for at in positions.into_iter().rev() {\n"
-        "        content.operations.remove(at);\n"
+        "        let stays = without_drawing(&content.operations[at]);\n"
+        "        content.operations.splice(at..=at, stays);\n"
         "    }",
         "    for at in positions.clone().into_iter().rev() {\n"
-        "        content.operations.remove(at);\n"
+        "        let stays = without_drawing(&content.operations[at]);\n"
+        "        content.operations.splice(at..=at, stays);\n"
         "    }\n"
         "\n"
         "    let carriers = clear_shadow_text(doc, page, &mut content.operations, &positions)?;",
@@ -7405,8 +7409,8 @@ MUTATIONS += [
         # did not, and without it the two rows read identically.
         "docinfo: stop counting the pages an appendix rewrote",
         "src/docinfo.rs",
-        '        if kind == "Page" {',
-        '        if kind == "Pages" {',
+        "    out.pages_touched = touched.len() + moved;",
+        "    out.pages_touched = moved;",
         "a_second_signature_is_reported_as_a_signature_rather_than_as_a_size",
     ),
     Mutation(
@@ -9931,8 +9935,10 @@ MUTATIONS += [
         # second ordinal names whatever slid into its place.
         "form: remove a form's lines in ascending order",
         "src/redact.rs",
-        "    for where_ in positions.into_iter().rev() {\n        inside.operations.remove(where_);\n    }\n\n    let encoded = inside\n        .encode()\n        .map_err(|why| format!(\"the rewritten form stream will not encode: {why}\"))?;\n    let stream = doc",
-        "    for where_ in positions.into_iter() {\n        inside.operations.remove(where_);\n    }\n\n    let encoded = inside\n        .encode()\n        .map_err(|why| format!(\"the rewritten form stream will not encode: {why}\"))?;\n    let stream = doc",
+        "    for where_ in positions.into_iter().rev() {\n"
+        "        let stays = without_drawing(&inside.operations[where_]);",
+        "    for where_ in positions.into_iter() {\n"
+        "        let stays = without_drawing(&inside.operations[where_]);",
         "removing_two_lines_from_one_form_takes_both_and_keeps_the_rest",
     ),
     Mutation(
@@ -15359,8 +15365,8 @@ MUTATIONS += [
     Mutation(
         "appendix: count only the page objects an append wrote",
         "src/docinfo.rs",
-        "    touched.extend(pages_drawing_from(&whole, &changed));",
-        "    let _ = pages_drawing_from(&whole, &changed);",
+        "    let mut touched = pages_reaching(&whole, &changed, &apart_from_signing);",
+        "    let mut touched = std::collections::BTreeSet::new();",
         "a_content_stream_replaced_after_signing_touches_its_page_and_no_other",
     ),
     Mutation(
@@ -17246,8 +17252,8 @@ MUTATIONS += [
         # written again beside the new signature changes what its widget shows.
         "appendix: follow none of the annotations a page already had",
         "src/docinfo.rs",
-        "    for entry in new.iter().filter(|entry| listed(entry)) {",
-        "    for entry in new.iter().filter(|_| false) {",
+        "        Some((timestamp, self.apart_from_signing(after, &kept).0))",
+        "        Some((timestamp, self.apart_from_signing(after, &[]).0))",
         "an_annotation_changed_beside_a_new_signature_field_is_not_a_listing",
     ),
     Mutation(
@@ -17256,16 +17262,16 @@ MUTATIONS += [
         # second signature would read as a rewritten page.
         "appendix: follow the field a page gained to what it brings",
         "src/docinfo.rs",
-        "    for entry in new.iter().filter(|entry| listed(entry)) {",
-        "    for entry in new.iter().filter(|_| true) {",
+        "        Some((timestamp, self.apart_from_signing(after, &kept).0))",
+        "        Some((timestamp, self.apart_from_signing(after, &new.iter().collect::<Vec<_>>()).0))",
         "a_visible_second_signature_is_a_listing_whatever_its_widget_brings",
     ),
     Mutation(
-        # The page's own object is one of the changes, and `page_listing` has
-        # already compared it entry by entry.
+        # The page's own object is one of the changes, and `PageRead::listing`
+        # has already compared it entry by entry.
         "appendix: count a page's own rewrite as something it draws from",
         "src/docinfo.rs",
-        "            .filter(|id| !apart_from_new_fields.contains_key(id))",
+        "            .filter(|id| !apart_from_signing.contains_key(id))",
         "            .filter(|_| true)",
         "a_visible_second_signature_is_a_listing_whatever_its_widget_brings",
     ),
@@ -17491,6 +17497,358 @@ MUTATIONS += [
         '        !(here > at && here < next && operation.operator == "TJ")',
         '        !(here > at && operation.operator == "TJ")',
         "spacing_alone_after_a_cut_to_the_end_goes_into_the_gap",
+    ),
+]
+
+# --- a place prepared for a signature, and a list of annotations held apart ---
+# `PageRead` in `docinfo.rs`: a signature put in an empty signature field the
+# signed revision already had is not a change to its page, and a new field
+# listed in an `/Annots` that is an object of its own is the listing a page
+# written again is. Each mutation was seen red by hand on 2026-10-09 before
+# it was written here.
+MUTATIONS += [
+    Mutation(
+        # The append writes the field and its widget again and no page object.
+        # The page reaches the changed widget through the `/Annots` entry it
+        # always had, and until 2026-10-09 that was a rewritten page.
+        "appendix: count a page for a signature put in a place it had empty",
+        "src/docinfo.rs",
+        "        } else if let Some(refers_to) = read.signed_places(after) {",
+        "        } else if let Some(refers_to) = read.signed_places(after).filter(|_| false) {",
+        "a_prepared_signature_field_signed_touches_no_page",
+    ),
+    Mutation(
+        # A field's widgets are each on a page by that page's own `/Annots`.
+        # Followed from the field, the signed widget is reached again.
+        "appendix: reach a signed place's own field through the field's kids",
+        "src/docinfo.rs",
+        '                    key.as_slice() == b"Parent" || (depth > 0 && key.as_slice() == b"Kids");',
+        '                    key.as_slice() == b"Parent";',
+        "a_prepared_signature_field_signed_touches_no_page",
+    ),
+    Mutation(
+        "appendix: reach a signed place's field as the widget's parent",
+        "src/docinfo.rs",
+        '                    key.as_slice() == b"Parent" || (depth > 0 && key.as_slice() == b"Kids");',
+        '                    depth > 0 && key.as_slice() == b"Kids";',
+        "a_prepared_signature_field_signed_touches_no_page",
+    ),
+    Mutation(
+        # Where the place is and how large is the signed revision's word.
+        "appendix: let a signer move the place it signs",
+        "src/docinfo.rs",
+        'const SIGNING_WRITES: [&[u8]; 4] = [b"V", b"AP", b"F", b"M"];',
+        'const SIGNING_WRITES: [&[u8]; 5] = [b"V", b"AP", b"F", b"M", b"Rect"];',
+        "a_prepared_signature_field_changed_beyond_signing_is_a_rewritten_page",
+    ),
+    Mutation(
+        "appendix: compare nothing of a place that was signed",
+        "src/docinfo.rs",
+        "                && !same_apart_from(self.signed.get_dictionary(id).ok()?, now, writes)",
+        "                && false",
+        "a_prepared_signature_field_changed_beyond_signing_is_a_rewritten_page",
+    ),
+    Mutation(
+        "appendix: let a signer lock the field above its widget",
+        "src/docinfo.rs",
+        'const SIGNING_WRITES_ABOVE: [&[u8]; 1] = [b"V"];',
+        'const SIGNING_WRITES_ABOVE: [&[u8]; 2] = [b"V", b"Lock"];',
+        "a_prepared_signature_field_changed_beyond_signing_is_a_rewritten_page",
+    ),
+    Mutation(
+        # Only the signature arrives on a field above the widget.
+        "appendix: let a signer write on the field above what it writes on the widget",
+        "src/docinfo.rs",
+        "            writes = &SIGNING_WRITES_ABOVE;\n",
+        "",
+        "a_prepared_signature_field_changed_beyond_signing_is_a_rewritten_page",
+    ),
+    Mutation(
+        # The place has to have been empty when the document was signed.
+        "appendix: take a signature replaced for a place signed",
+        "src/docinfo.rs",
+        '            || inherited(self.signed, was, b"V").is_some()\n',
+        "",
+        "a_signature_replaced_after_signing_is_a_rewritten_page",
+    ),
+    Mutation(
+        # A text field answered after signing is a form answer changed.
+        "appendix: take any field filled for a signature place",
+        "src/docinfo.rs",
+        "            || !is_signature_field(self.signed, was)\n",
+        "",
+        "a_prepared_text_field_answered_after_signing_is_a_rewritten_page",
+    ),
+    Mutation(
+        "appendix: take any annotation for a signature's widget",
+        "src/docinfo.rs",
+        "        if !is_widget(self.signed, was)\n"
+        "            || !is_signature_field(self.signed, was)",
+        "        if !is_signature_field(self.signed, was)",
+        "a_signature_put_in_what_is_no_widget_is_a_rewritten_page",
+    ),
+    Mutation(
+        # A signature in a field has a `/ByteRange`; a dictionary without one
+        # signs nothing.
+        "appendix: take a dictionary that signs nothing for a signature",
+        "src/docinfo.rs",
+        '            || !self.whole.get_dictionary(signature).ok()?.has(b"ByteRange")\n',
+        "",
+        "a_prepared_signature_field_given_something_else_is_a_rewritten_page",
+    ),
+    Mutation(
+        "appendix: take a signature the signed revision had for a new one",
+        "src/docinfo.rs",
+        "        if self.signed.objects.contains_key(&signature)\n"
+        "            || ",
+        "        if ",
+        "a_prepared_signature_field_given_something_else_is_a_rewritten_page",
+    ),
+    Mutation(
+        "appendix: follow nothing else from a page with a signed place",
+        "src/docinfo.rs",
+        "                None => references_in(entry, &mut refers_to),",
+        "                None => {}",
+        "what_a_page_draws_replaced_beside_a_signed_place_is_a_rewritten_page",
+    ),
+    Mutation(
+        # The edge left out is the signature's. What the widget names through
+        # any other entry is the page's as it was.
+        "appendix: follow nothing a signed place refers to besides its signature",
+        "src/docinfo.rs",
+        "                if !followed_here && !writes.contains(&key.as_slice()) {",
+        "                if false {",
+        "what_a_page_draws_replaced_beside_a_signed_place_is_a_rewritten_page",
+    ),
+    Mutation(
+        # An edge is left out and never an object: a widget the page also
+        # names in its resources is reached through the resources.
+        "appendix: leave a page's resources out beside a signed place",
+        "src/docinfo.rs",
+        '        if key.as_slice() != b"Annots" {',
+        '        if key.as_slice() != b"Annots" && key.as_slice() != b"Resources" {',
+        "a_signed_place_the_page_also_draws_with_is_a_rewritten_page",
+    ),
+    Mutation(
+        # `/Parent` is the document's word and can point in a circle.
+        "appendix: take a field that leads back to itself for a signed place",
+        "src/docinfo.rs",
+        "            writes = &SIGNING_WRITES_ABOVE;\n"
+        "        }\n"
+        "        None\n",
+        "            writes = &SIGNING_WRITES_ABOVE;\n"
+        "        }\n"
+        "        Some(refers_to)\n",
+        "a_place_whose_fields_point_in_a_circle_is_a_rewritten_page",
+    ),
+    Mutation(
+        # A list of annotations held as an object of its own is written again
+        # without the page object.
+        "appendix: ask only a rewritten page object whether it lists a field",
+        "src/docinfo.rs",
+        "        if !self.changed.contains(&id) && !self.list_rewritten(after) {",
+        "        if !self.changed.contains(&id) {",
+        "a_new_signature_field_listed_in_annotations_held_apart_is_a_listing",
+    ),
+    Mutation(
+        "appendix: count no page for a field listed in a list held apart",
+        "src/docinfo.rs",
+        "    touched.extend(listings.iter().map(|(page, _)| *page));\n",
+        "",
+        "a_new_signature_field_listed_in_annotations_held_apart_is_a_listing",
+    ),
+    Mutation(
+        # A page with a signed place names its list's entries in place of the
+        # list, which is right only while the list stands as it was.
+        "appendix: read a rewritten list as it stood beside a signed place",
+        "src/docinfo.rs",
+        "        if self.list_rewritten(after) {\n"
+        "            return None;\n"
+        "        }\n",
+        "",
+        "a_new_signature_field_listed_in_annotations_held_apart_is_a_listing",
+    ),
+    Mutation(
+        "appendix: follow a signed place like any other annotation a page kept",
+        "src/docinfo.rs",
+        "            match self.signed_place(entry) {",
+        "            match None::<Vec<lopdf::ObjectId>> {",
+        "prepared_places_left_empty_change_no_other_reading",
+    ),
+    Mutation(
+        # A page object is counted by what the file calls it, in the tree or
+        # not.
+        "appendix: count a page object only when the tree holds it",
+        "src/docinfo.rs",
+        '            .filter(|id| whole.objects.get(id).is_some_and(|o| kind_of(o) == "Page")),',
+        '            .filter(|id| whole.objects.get(id).is_some_and(|o| kind_of(o) == "Pages")),',
+        "a_page_object_written_outside_the_tree_is_counted",
+    ),
+]
+
+# --- a show that goes whole, and what follows it ------------------------------
+# A show removed whole took what it did to the pen and to the line with it.
+# `glyph_cut.rs` now takes one with a show at its pen as a cut of every glyph,
+# which leaves the distance, and `redact.rs` leaves what a `'` or a `"` did
+# besides drawing. Each mutation was seen red by hand on 2026-10-09.
+MUTATIONS += [
+    Mutation(
+        # Until 2026-10-09 this was what happened: the operator went, the pen it
+        # moved went with it, and the next show was drawn where it had started.
+        "glyph cut: delete a whole show that has a show at its pen",
+        "src/redact/glyph_cut.rs",
+        "        if !fact.carries_on {\n"
+        "            whole.push(ordinal);",
+        "        if true {\n"
+        "            whole.push(ordinal);",
+        "a_whole_show_with_a_show_at_its_pen_becomes_a_cut_of_every_glyph",
+    ),
+    Mutation(
+        # The control's direction: with nothing at its pen a show is deleted.
+        "glyph cut: delete a show at whose pen another starts when it has no show there",
+        "src/redact/glyph_cut.rs",
+        "        if !fact.carries_on {\n"
+        "            whole.push(ordinal);",
+        "        if false {\n"
+        "            whole.push(ordinal);",
+        "a_whole_show_with_a_show_at_its_pen_becomes_a_cut_of_every_glyph",
+    ),
+    Mutation(
+        # No place for the next show is no distance. The show is left and the
+        # region says so.
+        "glyph cut: take a show whole with no place for the show at its pen",
+        "src/redact/glyph_cut.rs",
+        "        match text.filter(|text| text.tail.is_some()) {",
+        "        match text {",
+        "a_whole_show_that_cannot_be_measured_is_left_and_reported",
+    ),
+    Mutation(
+        "glyph cut: name an unmeasured show by the first text on the page",
+        "src/redact/glyph_cut.rs",
+        "                    .nth(ordinal)\n",
+        "                    .nth(0)\n",
+        "a_whole_show_that_cannot_be_measured_is_left_and_reported",
+    ),
+    Mutation(
+        "glyph cut: say of an unmeasured show what is said of a picture",
+        "src/redact.rs",
+        "            (UNMEASURED_TEXT, None) => {",
+        '            ("synthetic", None) => {',
+        "a_whole_show_that_cannot_be_measured_is_left_and_reported",
+    ),
+    Mutation(
+        "glyph cut: leave no distance where a whole show was",
+        "src/redact/glyph_cut.rs",
+        "    shown.push(Object::Real(first - tail));",
+        "    shown.push(Object::Real(0.0));",
+        "a_whole_show_leaves_the_distance_to_a_show_that_starts_at_its_pen",
+    ),
+    Mutation(
+        # The first pen is after the numbers a `TJ` holds before its first string.
+        "glyph cut: drop the numbers before a whole show's first string",
+        "src/redact/glyph_cut.rs",
+        "            .take_while(|part| matches!(part, Object::Integer(_) | Object::Real(_)))",
+        "            .take_while(|_| false)",
+        "a_whole_show_leaves_the_distance_to_a_show_that_starts_at_its_pen",
+    ),
+    Mutation(
+        # The distance is measured to where the next show was placed, which is
+        # after a `TJ` that draws nothing. Left in, it moves that show twice.
+        "glyph cut: leave spacing in after a whole show",
+        "src/redact/glyph_cut.rs",
+        "        if continues && to_the_end {",
+        "        if continues && to_the_end && !cut.takes_all() {",
+        "spacing_alone_after_a_whole_show_goes_into_the_distance",
+    ),
+    Mutation(
+        # `Td`, `Tm`, `T*`, `'` and `"` place what follows from the line's start.
+        "glyph cut: leave a distance after a whole show with nothing at its pen",
+        "src/redact/glyph_cut.rs",
+        "    if !continues {\n"
+        "        return Ok(out);\n"
+        "    }\n",
+        "",
+        "a_whole_show_with_nothing_at_its_pen_leaves_nothing",
+    ),
+    Mutation(
+        "glyph cut: take what a quote operator did with a whole show",
+        "src/redact/glyph_cut.rs",
+        "    let mut out = without_drawing(operation);",
+        "    let mut out: Vec<Operation> = Vec::new();",
+        "a_whole_quote_operator_keeps_what_it_did_before_showing",
+    ),
+    Mutation(
+        # Nothing of the show stays that a wrong count could misplace.
+        "glyph cut: count the codes of a show that goes whole",
+        "src/redact/glyph_cut.rs",
+        "        let replacement = if cut.takes_all() {",
+        "        let replacement = if false {",
+        "a_whole_show_counts_no_codes",
+    ),
+    Mutation(
+        "glyph cut: write a whole show's distance to nowhere",
+        "src/redact/glyph_cut.rs",
+        "    let (first, tail) = cut.pens.first().copied().zip(cut.tail).ok_or_else(wrong)?;",
+        "    let (first, tail) = cut\n"
+        "        .pens\n"
+        "        .first()\n"
+        "        .copied()\n"
+        "        .zip(cut.tail.or(Some(0.0)))\n"
+        "        .ok_or_else(wrong)?;",
+        "a_whole_show_not_measured_to_the_show_at_its_pen_is_refused",
+    ),
+    Mutation(
+        # A cut of every glyph leaves no text object, so every show after it is
+        # one earlier than its ordinal says.
+        "glyph cut: delete the shows after a cut of every glyph by their planned ordinals",
+        "src/redact/glyph_cut.rs",
+        "        .map(|show| show - emptied.iter().filter(|gone| *gone < show).count())",
+        "        .map(|show| *show)",
+        "the_shows_after_a_cut_of_every_glyph_are_counted_from_what_is_left",
+    ),
+    Mutation(
+        "glyph cut: count the shows a cut of every glyph took as still there",
+        "src/redact/glyph_cut.rs",
+        "    (shows, text_objects.saturating_sub(emptied.len()))",
+        "    (shows, text_objects)",
+        "the_shows_after_a_cut_of_every_glyph_are_counted_from_what_is_left",
+    ),
+    Mutation(
+        "glyph cut: delete a show whose cuts add up to all of it though it has a tail",
+        "src/redact/glyph_cut.rs",
+        "        let whole = cut.takes_all() && cut.tail.is_none();",
+        "        let whole = cut.takes_all();",
+        "cuts_that_add_up_to_a_whole_show_with_a_tail_stay_a_cut",
+    ),
+    Mutation(
+        # `'` moves to the next line before it shows. Deleted whole, the line
+        # after it was drawn where the removed line had been.
+        "redact: take a removed quote operator's line move with it",
+        "src/redact.rs",
+        '        ("\'" | "\\"", _) => vec![next_line()],',
+        '        ("\'" | "\\"", _) => Vec::new(),',
+        "a_removed_quote_operator_still_moves_to_its_line",
+    ),
+    Mutation(
+        "redact: take the word spacing a removed double quote set with it",
+        "src/redact.rs",
+        '            Operation::new("Tw", vec![word.clone()]),\n',
+        "",
+        "a_removed_quote_operator_still_moves_to_its_line",
+    ),
+    Mutation(
+        "redact: delete a removed show and what it did besides drawing",
+        "src/redact.rs",
+        "        let stays = without_drawing(&content.operations[at]);",
+        "        let stays: Vec<Operation> = Vec::new();",
+        "a_removed_quote_operator_still_moves_to_its_line",
+    ),
+    Mutation(
+        "form: delete a removed show and what it did besides drawing",
+        "src/redact.rs",
+        "        let stays = without_drawing(&inside.operations[where_]);",
+        "        let stays: Vec<Operation> = Vec::new();",
+        "a_removed_quote_operator_in_a_form_still_moves_to_its_line",
     ),
 ]
 
