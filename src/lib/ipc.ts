@@ -451,6 +451,16 @@ export interface Commands {
   sign_discard: { args: { pending: number }; reply: void };
   /** How often the OS was asked for a key, and what is held. The checks build's alone. */
   sign_record: { args: NoArgs; reply: SignRecord };
+  /**
+   * Adds long-term validation data for the open document's signatures, and
+   * an archive timestamp from `timestamp` over the whole, and writes the
+   * result to `path`, a new file. The reply is the sentence to show. See
+   * `validationdata.ts`.
+   */
+  add_validation_data: {
+    args: { doc: DocHandle; source: string; path: string; timestamp: string };
+    reply: string;
+  };
   keyboard_positions: { args: NoArgs; reply: Record<string, string> };
   /** The reply is the event name the menu emits on, or null when none was built. */
   set_menu: { args: { sections: SectionSpec[] }; reply: string | null };

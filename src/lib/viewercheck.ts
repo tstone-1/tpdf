@@ -3300,6 +3300,7 @@ async function appCommandChecks(
     mergeDocuments: () => fired.push("mergeDocuments"),
     fromPictures: () => fired.push("fromPictures"),
     signDocument: () => fired.push("signDocument"),
+    addValidationData: () => fired.push("addValidationData"),
     signableFields: () => 1,
     signField: () => fired.push("signField"),
     showProperties: () => fired.push("showProperties"),
@@ -4329,6 +4330,15 @@ async function appCommandChecks(
       // covered here, and the field it signs is `signfield.test.ts`'s.
       id: "file.signField",
       ...shell("signField"),
+      read: () => fired.join(","),
+    },
+    {
+      // Driven for `file.signDocument`'s reason: the action is a recorder, so
+      // no dialog opens, nobody is asked for anything and nothing is written.
+      // What this covers is the palette reaching the action; the sequence
+      // behind it is `validationdata.test.ts`.
+      id: "file.addValidationData",
+      ...shell("addValidationData"),
       read: () => fired.join(","),
     },
     {

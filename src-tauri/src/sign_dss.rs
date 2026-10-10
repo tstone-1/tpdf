@@ -86,6 +86,153 @@ pub struct Extended {
     pub signatures: Vec<crate::docinfo::Signature>,
 }
 
+/// What a document that is already signed holds, as the worker reads it
+/// before any long-term validation data is added: the question
+/// `longterm::existing` plans from.
+///
+/// **Crosses the worker boundary, toward the app process.** The app process
+/// fetches revocation data and so has to know which certificates to ask
+/// about; they are in each signature's CMS, which this hands over as the DER
+/// it is. It is the document's data --- anybody's --- and the app process
+/// reads it with the readers and the bounds it reads a timestamp token from
+/// the network with (`longterm::existing`, `docs/THREAT-MODEL.md` §T10).
+#[derive(Clone, Debug, Default, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct Survey {
+    /// Why this document can take no validation data at all, as a sentence:
+    /// it does not parse as a file a revision can be appended to, it is
+    /// encrypted, or its signatures are more than the answer carries. `None`
+    /// when it can. **A field and not an error**, so that a document's own
+    /// refusal is told apart from a worker that died or did not answer,
+    /// which is the only thing the call itself fails for.
+    pub refused: Option<String>,
+    /// Every signature field, as `docinfo::scan` reads the document now.
+    pub signatures: Vec<crate::docinfo::Signature>,
+    /// Each **signed** field's value, DER: its full name, and the CMS --- for
+    /// a document timestamp, the token. In the order of `signatures`.
+    pub values: Vec<(String, Vec<u8>)>,
+    /// The certificates the document's `/DSS` already carries, DER: candidate
+    /// issuers the reader of the result will have.
+    pub store: Vec<Vec<u8>>,
+    /// Whether every signature field was reached and every value read. When
+    /// it is not, nothing can be said to cover *the document's* signatures.
+    pub complete: bool,
+    /// How many entries the `/DSS` holds already, as its `/Certs`, `/OCSPs`
+    /// and `/CRLs` arrays list them: the reader takes a bounded number of
+    /// each (`revocation::MAX_DSS_CERTIFICATES`, `MAX_RESPONSES`,
+    /// `MAX_LISTS`), so what is added past that could not be read back.
+    #[serde(default)]
+    pub held: [usize; 3],
+    /// Whether the reader already leaves some of the `/DSS` out, or cannot
+    /// read some of it: every answer then reads as not checked.
+    #[serde(default)]
+    pub store_cut: bool,
+    /// The DocMDP level the catalog's `/Perms` certification grants, 1 to 3,
+    /// or zero: what `sign_prepare` refuses a further signature field by. A
+    /// certification need not be a field of the form, so the fields'
+    /// own levels do not answer for it.
+    #[serde(default)]
+    pub certified: u8,
+}
+
+impl Survey {
+    /// How many bytes of DER it holds.
+    #[must_use]
+    pub fn bytes(&self) -> usize {
+        self.values
+            .iter()
+            .map(|(_, value)| value.len())
+            .chain(self.store.iter().map(Vec::len))
+            .sum()
+    }
+
+    /// What every refusal of an encrypted document says, whichever process
+    /// found it out: the worker that opened it, or the one that was started
+    /// over it with no password and answered that it is locked.
+    #[must_use]
+    pub fn encrypted() -> Self {
+        Survey::refusing(
+            "this document is encrypted, and tpdf adds long-term validation data only to a \
+             document that is not"
+                .into(),
+        )
+    }
+
+    /// A document that can take no validation data, and why.
+    fn refusing(why: String) -> Self {
+        Survey {
+            refused: Some(why),
+            ..Survey::default()
+        }
+    }
+}
+
+/// What `signed` --- a document somebody has already signed --- holds:
+/// its signatures as the properties dialog reads them, and their values.
+///
+/// `pages` is what the scan reports as the page count, which nothing here
+/// reads.
+///
+/// Refused, in [`Survey::refused`]: a document that does not parse strictly,
+/// which could take no revision; an encrypted one, whose `/DSS` would be
+/// written in the clear beside encrypted objects; and signatures whose
+/// values together are over [`MAX_BYTES`], which the answer could not carry
+/// back.
+#[must_use]
+pub fn survey(signed: &[u8], pages: u32) -> Survey {
+    survey_within(signed, pages, MAX_BYTES)
+}
+
+/// [`survey`], with `bound` the most DER the answer may carry: split so a
+/// test reaches the bound with a document of ordinary size.
+fn survey_within(signed: &[u8], pages: u32, bound: usize) -> Survey {
+    let document = match Document::load_mem_with_options(
+        signed,
+        lopdf::LoadOptions {
+            // The strictness [`append`] will need of the same bytes: a
+            // document it could not extend is refused here, before anything
+            // is fetched for it.
+            strict: true,
+            max_decompressed_size: Some(MAX_DECODE),
+            ..Default::default()
+        },
+    ) {
+        Ok(document) => document,
+        Err(e) => return Survey::refusing(format!("this document could not be parsed: {e}")),
+    };
+    if document.is_encrypted() || document.was_encrypted() {
+        return Survey::encrypted();
+    }
+    // The `/DSS` as [`append`] will take it up: one it could not extend is
+    // refused here, before anything is fetched for it.
+    let held = match earlier(&document) {
+        Ok(found) => found.arrays.map(|array| array.len()),
+        Err(why) => return Survey::refusing(why),
+    };
+    let found = match crate::docinfo::scan_from(&document, signed, pages, None) {
+        Ok(found) => found,
+        Err(why) => return Survey::refusing(format!("this document could not be read: {why}")),
+    };
+    let values = crate::docinfo::signature_values(&document);
+    let survey = Survey {
+        refused: None,
+        signatures: found.signatures,
+        values: values.values,
+        store: values.store,
+        complete: values.complete,
+        held,
+        store_cut: values.store_cut,
+        certified: crate::sign_prepare::certification(&document),
+    };
+    if survey.bytes() > bound {
+        return Survey::refusing(format!(
+            "this document's signatures and the certificates it already carries are {} bytes \
+             together, more than the {bound} tpdf reads to add validation data",
+            survey.bytes()
+        ));
+    }
+    survey
+}
+
 /// The largest validation data the worker takes, in DER bytes.
 ///
 /// The app process gathers at most `longterm::MAX_GATHERED`, which is this;
@@ -115,8 +262,66 @@ pub fn extend(signed: &[u8], gathered: &Gathered, pages: u32) -> Result<Extended
     })
 }
 
+/// A document's `/DSS` as it stands: the dictionary, and its `/Certs`,
+/// `/OCSPs` and `/CRLs` arrays, each resolved to the array it is.
+struct Earlier {
+    dictionary: Option<Dictionary>,
+    arrays: [Vec<Object>; 3],
+}
+
+/// [`Earlier`] of a parsed document; empty arrays where it has no `/DSS`.
+///
+/// # Errors
+///
+/// A `/DSS` that is not a dictionary, or one of the three that is not an
+/// array: a shape [`append`] cannot extend without dropping what it holds.
+fn earlier(document: &Document) -> Result<Earlier, String> {
+    let dictionary = match document
+        .catalog()
+        .ok()
+        .and_then(|catalog| catalog.get(b"DSS").ok())
+    {
+        None => None,
+        Some(found) => Some(
+            resolve(document, found)
+                .as_dict()
+                .map_err(|_| "this document's /DSS is not a dictionary".to_string())?
+                .clone(),
+        ),
+    };
+    let carried = |key: &[u8]| -> Result<Vec<Object>, String> {
+        let Some(dss) = &dictionary else {
+            return Ok(Vec::new());
+        };
+        match dss.get(key) {
+            Err(_) => Ok(Vec::new()),
+            Ok(found) => resolve(document, found).as_array().cloned().map_err(|_| {
+                format!(
+                    "this document's /DSS /{} is not an array",
+                    String::from_utf8_lossy(key)
+                )
+            }),
+        }
+    };
+    let arrays = [carried(b"Certs")?, carried(b"OCSPs")?, carried(b"CRLs")?];
+    Ok(Earlier { dictionary, arrays })
+}
+
+/// What the streams `array` names hold, each within `bound` as the reader
+/// decodes it (`docinfo::dss_content`). One that is no stream, or will not
+/// decode, holds nothing anybody could find a duplicate of.
+fn contents(document: &Document, array: &[Object], bound: usize) -> Vec<Vec<u8>> {
+    array
+        .iter()
+        .filter_map(|item| resolve(document, item).as_stream().ok())
+        .filter_map(|stream| crate::docinfo::dss_content(stream, bound))
+        .collect()
+}
+
 /// The update section that gives `signed`'s catalog a `/DSS` holding
-/// `gathered`, beside whatever `/DSS` it already has.
+/// `gathered`, beside whatever `/DSS` it already has. An entry the `/DSS`
+/// already holds byte for byte is not written again; nothing it holds is
+/// rewritten or dropped.
 ///
 /// # Errors
 ///
@@ -160,45 +365,38 @@ pub fn append(signed: &[u8], gathered: &Gathered) -> Result<Vec<u8>, String> {
         .clone();
     // What an earlier writer left: its arrays, each resolved to the array it
     // is, so the new dictionary carries them over by value.
-    let earlier = match catalog.get(b"DSS") {
-        Err(_) => None,
-        Ok(found) => Some(
-            resolve(&prev, found)
-                .as_dict()
-                .map_err(|_| "this document's /DSS is not a dictionary".to_string())?
-                .clone(),
-        ),
-    };
-    let carried = |key: &[u8]| -> Result<Vec<Object>, String> {
-        let Some(dss) = &earlier else {
-            return Ok(Vec::new());
-        };
-        match dss.get(key) {
-            Err(_) => Ok(Vec::new()),
-            Ok(found) => resolve(&prev, found).as_array().cloned().map_err(|_| {
-                format!(
-                    "this document's /DSS /{} is not an array",
-                    String::from_utf8_lossy(key)
-                )
-            }),
-        }
-    };
-    let (mut certs, mut ocsps, mut crls) =
-        (carried(b"Certs")?, carried(b"OCSPs")?, carried(b"CRLs")?);
-    let mut dss = earlier.unwrap_or_default();
+    let Earlier {
+        dictionary,
+        arrays: [mut certs, mut ocsps, mut crls],
+    } = earlier(&prev)?;
+    // What those arrays' streams hold, so that nothing is written a second
+    // time: a later run gathers the same certificates again, and the reader
+    // takes a bounded number of streams of each kind.
+    let mut there = [
+        (&certs, crate::trust::MAX_CERTIFICATE_BYTES),
+        (&ocsps, crate::revocation::MAX_RESPONSE_BYTES),
+        (&crls, crate::revocation::MAX_LIST_BYTES),
+    ]
+    .map(|(array, bound)| contents(&prev, array, bound));
+    let mut dss = dictionary.unwrap_or_default();
 
     let mut incremental = IncrementalDocument::create_from(signed.to_vec(), prev);
     let doc = &mut incremental.new_document;
-    let mut add = |into: &mut Vec<Object>, items: &[Vec<u8>]| {
+    let mut add = |into: &mut Vec<Object>, there: &mut Vec<Vec<u8>>, items: &[Vec<u8>]| {
         for item in items {
+            if there.contains(item) {
+                continue;
+            }
+            there.push(item.clone());
             into.push(Object::Reference(
                 doc.add_object(Stream::new(Dictionary::new(), item.clone())),
             ));
         }
     };
-    add(&mut certs, &gathered.certificates);
-    add(&mut ocsps, &gathered.responses);
-    add(&mut crls, &gathered.lists);
+    let [certs_there, ocsps_there, crls_there] = &mut there;
+    add(&mut certs, certs_there, &gathered.certificates);
+    add(&mut ocsps, ocsps_there, &gathered.responses);
+    add(&mut crls, crls_there, &gathered.lists);
     for (key, items) in [("Certs", certs), ("OCSPs", ocsps), ("CRLs", crls)] {
         if !items.is_empty() {
             dss.set(key, Object::Array(items));

@@ -746,6 +746,53 @@ pub fn after_signing(
     text
 }
 
+/// The sentence after long-term validation data and an archive timestamp
+/// were added to a document that was already signed, said by the window and
+/// the command line alike.
+///
+/// `name` is the written file's base name; `covered` the fields the data was
+/// added for --- every signature and timestamp the document held --- each
+/// with whether it is a document timestamp, which is said as one: an earlier
+/// archive timestamp is nobody's signature. `archive` is the new timestamp's
+/// field. It claims what the read-back of the written file established
+/// (`longterm::existing::read_back`) and nothing else: who signed, and
+/// whether this computer trusts them, is the properties dialog's and
+/// `verify`'s to say.
+#[must_use]
+pub fn after_long_term(name: &str, covered: &[(String, bool)], archive: &str) -> String {
+    let named = |timestamps: bool, one: &str, many: &str| {
+        let fields: Vec<&str> = covered
+            .iter()
+            .filter(|(_, timestamp)| *timestamp == timestamps)
+            .map(|(field, _)| field.as_str())
+            .collect();
+        match fields.as_slice() {
+            [] => None,
+            [field] => Some(format!("{one} {field}")),
+            fields => Some(format!("{many} {}", fields.join(", "))),
+        }
+    };
+    let listed: Vec<String> = [
+        named(false, "the signature", "the signatures"),
+        named(true, "the timestamp", "the timestamps"),
+    ]
+    .into_iter()
+    .flatten()
+    .collect();
+    let each = match covered {
+        [(_, false)] => "that signature is",
+        [(_, true)] => "that timestamp is",
+        _ => "each of them is",
+    };
+    format!(
+        "Added long-term validation data for {}, then the archive timestamp {archive} over the \
+         whole, and saved the result to {name}. Read back after writing: {each} intact, every \
+         certificate asked about reads as not revoked from the document's own data, and the \
+         archive timestamp covers the whole file.",
+        listed.join(" and ")
+    )
+}
+
 /// The sentence after a redaction: `recovery.ts`'s `afterRedaction(applied)`.
 ///
 /// **The one place a verdict is worded**, and it is the window's word for word

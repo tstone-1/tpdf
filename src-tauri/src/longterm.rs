@@ -99,6 +99,14 @@
 //! the command line exits 3 --- or 4 where the failure is tpdf's own
 //! ([`Refusal::tpdf_failed`]). A revocation is the one refusal with no second
 //! choice ([`Refusal::revoked`]).
+//!
+//! ## A document somebody else signed
+//!
+//! [`existing`] adds the same data, and the archive timestamp, to a document
+//! that is already signed. It walks with [`walked`], fetches with [`gather`],
+//! holds the result to [`leaves_good`] and [`chains_good`] and ends with
+//! [`archived`] --- this module's own steps --- and says in its own note what
+//! changes when every certificate comes from the document.
 
 use std::time::{Duration, Instant};
 
@@ -481,8 +489,20 @@ pub fn vouched_by_os(token: &[u8], now: u64) -> Vouched {
 /// or the command-line tool's environment names.
 #[must_use]
 pub fn vouched_under(token: &[u8], now: u64, anchors: crate::trust::Anchors<'_>) -> Vouched {
-    let (trust, chain) =
-        crate::trust::of_blob_with_chain(token, crate::trust::Purpose::Timestamping, now, anchors);
+    vouched_for(token, crate::trust::Purpose::Timestamping, now, anchors)
+}
+
+/// [`vouched_under`] for a stated purpose: a timestamp authority's token for
+/// timestamping, and --- for a signature already in a document
+/// (`longterm::existing`) --- its signer for signing documents.
+#[must_use]
+pub fn vouched_for(
+    blob: &[u8],
+    purpose: crate::trust::Purpose,
+    now: u64,
+    anchors: crate::trust::Anchors<'_>,
+) -> Vouched {
+    let (trust, chain) = crate::trust::of_blob_with_chain(blob, purpose, now, anchors);
     Vouched { trust, chain }
 }
 
@@ -509,17 +529,26 @@ pub fn vouched(cms: &[u8], now: u64, vouch: &Vouch<'_>) -> Result<Vec<Vec<u8>>, 
     if trust.standing == Standing::Trusted {
         return Ok(chain);
     }
+    let (name, why) = unvouched(&trust, &token, "the authority's");
+    Err(Refusal::Untrusted { name, why })
+}
+
+/// Who was not vouched for, and why not as a clause: the signer of `blob` (a
+/// CMS `ContentInfo`, DER) by its common name, and what the store said of it.
+/// `whose` is how the clause names the certificate: *the authority's*.
+fn unvouched(trust: &crate::trust::Trust, blob: &[u8], whose: &str) -> (String, String) {
+    use crate::trust::Standing;
     let computer = crate::words::computer(trust.store);
     let why = match (trust.standing, trust.why) {
         (Standing::Expired | Standing::NotYetValid, _) => {
             "its certificate is not in force now".to_string()
         }
-        (_, Some(doubt)) => crate::words::doubt_about(doubt, computer, "the authority's"),
+        (_, Some(doubt)) => crate::words::doubt_about(doubt, computer, whose),
         (_, None) => "no reason was given".to_string(),
     };
-    let name = signed_data(&token)
+    let name = signed_data(blob)
         .ok()
-        .and_then(|token| signer_of(&token))
+        .and_then(|signed| signer_of(&signed))
         .map_or_else(
             || "whose certificate is not identified".to_string(),
             |certificate| {
@@ -531,7 +560,7 @@ pub fn vouched(cms: &[u8], now: u64, vouch: &Vouch<'_>) -> Result<Vec<Vec<u8>>, 
                 }
             },
         );
-    Err(Refusal::Untrusted { name, why })
+    (name, why)
 }
 
 /// What to ask about, and every certificate the `/DSS` should carry.
@@ -664,6 +693,42 @@ fn planned(
         .collect();
     let everyone: Vec<&Certificate> = candidates.iter().collect();
 
+    let signer = Leg {
+        leaf: &signer,
+        own: Whose::Signer,
+        above: Whose::SignerIssuer,
+        admitted: &above_signer,
+    };
+    let authority = Leg {
+        leaf: &authority,
+        own: Whose::Authority,
+        above: Whose::AuthorityIssuer,
+        admitted: &above_authority,
+    };
+    if with_signer {
+        walked(&[signer, authority], &everyone)
+    } else {
+        walked(&[authority], &everyone)
+    }
+}
+
+/// One chain to walk: its leaf, how the sentences name the leaf and the
+/// certificates above it, and which certificates may stand above it, DER.
+struct Leg<'a> {
+    leaf: &'a Certificate,
+    own: Whose,
+    above: Whose,
+    admitted: &'a [Vec<u8>],
+}
+
+/// What to ask about on each of `legs`, and every certificate to carry, with
+/// `everyone` the candidates the reader of the written file will have.
+/// [`plan`]'s walk, and `existing::plan`'s for a signature already in a
+/// document: one walk, whoever made the signature.
+fn walked(
+    legs: &[Leg<'_>],
+    everyone: &[&Certificate],
+) -> Result<(Vec<Subject>, Vec<Vec<u8>>), Refusal> {
     let mut subjects: Vec<Subject> = Vec::new();
     let mut carried: Vec<Vec<u8>> = Vec::new();
     let mut carry = |certificate: &Certificate| {
@@ -673,18 +738,13 @@ fn planned(
             }
         }
     };
-    for (leaf, own, above, admitted) in [
-        (&signer, Whose::Signer, Whose::SignerIssuer, &above_signer),
-        (
-            &authority,
-            Whose::Authority,
-            Whose::AuthorityIssuer,
-            &above_authority,
-        ),
-    ] {
-        if own == Whose::Signer && !with_signer {
-            continue;
-        }
+    for &Leg {
+        leaf,
+        own,
+        above,
+        admitted,
+    } in legs
+    {
         // The walk is the reader's (`revocation::chain::walk`), so what is
         // asked about here is what the reader judges in the file written.
         // A root needs nothing --- unless it is the signer or the authority
@@ -700,7 +760,7 @@ fn planned(
         // the response unauthorised --- measured on DigiCert's and Sectigo's
         // real data (`docs/TRAPS.md`). The token still carries the
         // cross-certificate for whoever builds that path.
-        let walked = walk(leaf, &everyone);
+        let walked = walk(leaf, everyone);
         if walked.links.is_empty() {
             return Err(Refusal::NotPublished(named(leaf, own)));
         }
@@ -1085,7 +1145,7 @@ pub fn check(ours: Option<&crate::docinfo::Signature>) -> Result<(), Refusal> {
             |c| format!("{whose} ({})", c.subject_cn),
         )
     };
-    for (revocation, whose) in [
+    leaves_good(&[
         (
             ours.revocation.as_ref(),
             name(ours.certificate.as_ref(), "the signer's certificate"),
@@ -1097,7 +1157,29 @@ pub fn check(ours: Option<&crate::docinfo::Signature>) -> Result<(), Refusal> {
                 "the timestamp authority's certificate",
             ),
         ),
-    ] {
+    ])?;
+    // And every certificate above them, as the reader judges the file: the
+    // ones the gathering asked about, each read back `good`, and none past
+    // the bound. Above only --- the chain's first certificate is the leaf,
+    // answered for above, and a second check of it would hide either one.
+    chains_good(&[
+        (ours.revocation_chain.as_ref(), "the signer's"),
+        (stamp.revocation_chain.as_ref(), "the timestamp authority's"),
+    ])
+}
+
+/// Refuses unless each certificate's own revocation answer, as the worker
+/// read the finished bytes, is `good`: [`check`]'s rule for the signer's and
+/// the authority's certificate, and `existing::covered`'s for every signature
+/// a document already holds. `whose` is how a refusal names the certificate.
+///
+/// # Errors
+///
+/// [`Refusal::Revoked`] for `revoked`, [`Refusal::Written`] for anything
+/// else that is not `good`.
+fn leaves_good(leaves: &[(Option<&crate::revocation::Revocation>, String)]) -> Result<(), Refusal> {
+    for (revocation, whose) in leaves {
+        let whose = whose.clone();
         let Some(revocation) = revocation else {
             return Err(Refusal::Written(format!(
                 "no revocation answer for {whose}"
@@ -1127,14 +1209,19 @@ pub fn check(ours: Option<&crate::docinfo::Signature>) -> Result<(), Refusal> {
             }
         }
     }
-    // And every certificate above them, as the reader judges the file: the
-    // ones the gathering asked about, each read back `good`, and none past
-    // the bound. Above only --- the chain's first certificate is the leaf,
-    // answered for above, and a second check of it would hide either one.
-    for (chain, above) in [
-        (ours.revocation_chain.as_ref(), "the signer's"),
-        (stamp.revocation_chain.as_ref(), "the timestamp authority's"),
-    ] {
+    Ok(())
+}
+
+/// Refuses unless every certificate **above** each leaf read back `good`,
+/// and none was past the reader's bound: the second half of [`check`]'s
+/// rule, shared as [`leaves_good`] is. `above` is whose chain a refusal names.
+///
+/// # Errors
+///
+/// As [`leaves_good`].
+fn chains_good(chains: &[(Option<&crate::revocation::chain::Chain>, &str)]) -> Result<(), Refusal> {
+    let written = |why: &str| Err(Refusal::Written(why.to_string()));
+    for (chain, above) in chains {
         let Some(chain) = chain else {
             return written("no revocation answer for a chain");
         };
@@ -1330,6 +1417,8 @@ fn archived(
     };
     crate::sign_cms::seal_document_timestamp(whole, unsigned, &token).map_err(Refusal::Archive)
 }
+
+pub mod existing;
 
 #[cfg(test)]
 mod tests;

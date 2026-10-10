@@ -71,11 +71,18 @@ function known(server: string): boolean {
 /**
  * The remembered choice, or none. **Whole or nothing**, `readPreference`'s
  * rule: one field tpdf would not have written means none of it is trusted.
+ *
+ * `key` is where it lives: a signing's by default, and a key of its own for
+ * the one other question that names an authority (`validationdata.ts`), so
+ * that answering one never changes what the other remembers.
  */
-export function readStampChoice(storage: () => Store = () => window.localStorage): StampChoice {
+export function readStampChoice(
+  storage: () => Store = () => window.localStorage,
+  key: string = CHOICE_KEY,
+): StampChoice {
   let raw: string | null;
   try {
-    raw = storage().getItem(CHOICE_KEY);
+    raw = storage().getItem(key);
   } catch {
     return noStamp();
   }
@@ -93,13 +100,14 @@ export function readStampChoice(storage: () => Store = () => window.localStorage
   return { server, url };
 }
 
-/** Keeps `choice`; `false` when storage refused, which changes nothing now. */
+/** Keeps `choice` under `key`; `false` when storage refused, which changes nothing now. */
 export function writeStampChoice(
   choice: StampChoice,
   storage: () => Store = () => window.localStorage,
+  key: string = CHOICE_KEY,
 ): boolean {
   try {
-    storage().setItem(CHOICE_KEY, JSON.stringify(choice));
+    storage().setItem(key, JSON.stringify(choice));
     return true;
   } catch {
     return false;

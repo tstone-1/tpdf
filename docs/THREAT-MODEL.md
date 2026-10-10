@@ -72,7 +72,7 @@ Five principals, each trusting only what is below it in the table; the command-l
 
 | Principal | Authority it holds | Authority it does not |
 |---|---|---|
-| **Webview** (Svelte) | Draws, receives tiles, issues commands — fifteen of which write files on its behalf (§T6.1), drives the updater's optional launch check and can ask for the process to be ended and started again once an update is applied (§T9), can ask for a document web link to be opened (§T8), reads signature images explicitly selected through its file input (§T6.17), can ask for a second PDF to be opened for reading so its pages can be inserted (§T6.20), can ask for the command-line tool's link in `/usr/local/bin` to be made or removed (§T6.23) and whether it is there, which changes nothing (§T6.38), and can ask for tpdf to be made the default application for PDFs (§T6.27) | No general filesystem access, no network reach of its own and no PDF parsing. It can name an address only in two ways: a document web link the reader confirms (§T8), and the timestamp authority `sign_document` and `sign_resume` are handed --- any `http` or `https` host without credentials, loopback and private addresses included on purpose (§T10) |
+| **Webview** (Svelte) | Draws, receives tiles, issues commands — sixteen of which write files on its behalf (§T6.1), drives the updater's optional launch check and can ask for the process to be ended and started again once an update is applied (§T9), can ask for a document web link to be opened (§T8), reads signature images explicitly selected through its file input (§T6.17), can ask for a second PDF to be opened for reading so its pages can be inserted (§T6.20), can ask for the command-line tool's link in `/usr/local/bin` to be made or removed (§T6.23) and whether it is there, which changes nothing (§T6.38), and can ask for tpdf to be made the default application for PDFs (§T6.27) | No general filesystem access, no network reach of its own and no PDF parsing. It can name an address only in two ways: a document web link the reader confirms (§T8), and the timestamp authority `sign_document`, `sign_resume` and `add_validation_data` are handed --- any `http` or `https` host without credentials, loopback and private addresses included on purpose (§T10) |
 | **Coordinator** (Rust, the Tauri process) | Opens files the user chose, owns the window, spawns and kills workers, owns every shared mapping; asks the OS key store to sign one digest when the reader signs a document (§T6.21); asks the timestamp authority the reader chose for a token over that signature, when they chose one, and the certificate authorities for revocation data, when they also asked for long-term data (§T10) | Parses no PDF syntax on the *viewing* path — with one exception, printing, described below; holds no private key, and parses no part of a document it signs |
 | **Command-line tool** (`tpdf-cli`, the same crate) | A coordinator without a window, run by the reader's own account: opens the files named on its command line, spawns and kills the same workers, asks the OS key store to sign one digest, writes signed, filled or redacted copies, page-operation outputs or a document's text, and reads a document's password from an environment variable it is told the name of (§T6.23) | The coordinator's limits exactly --- parses no part of a document, holds no private key --- and no webview, no updater, and no network but the timestamp authority `sign --timestamp` names and the certificate authorities `--long-term` asks (§T10) |
 | **Worker** (Rust + PDFium) | Parses and renders whatever bytes it is handed | No path to the document and cannot create a file, on both platforms; no filesystem and no network on **macOS** — on Windows, no writes, and reads and sockets are the disclosed ceiling |
@@ -89,10 +89,10 @@ mounts a viewer. Resource limits remain per worker, not an aggregate limit acros
 The dialog permissions open panels and write nothing; the message
 permission provides the image-only redaction confirmation. But it can issue `save_copy`,
 `save_document`, `extract_pages`, `split_document`, `merge_documents`, `print_document`,
-`redact_copy`, `redact_document`, `redact_raster_copy`, `ocr_copy`, `protect_copy`, `images_to_pdf`, `compress_copy`, `sign_document` and `sign_resume`, and all fifteen write a file at the
+`redact_copy`, `redact_document`, `redact_raster_copy`, `ocr_copy`, `protect_copy`, `images_to_pdf`, `compress_copy`, `sign_document`, `sign_resume` and `add_validation_data`, and all sixteen write a file at the
 process's authority with a path the caller chose.
-<!-- writers: save_copy save_document extract_pages split_document merge_documents print_document redact_copy redact_document redact_raster_copy ocr_copy protect_copy images_to_pdf compress_copy sign_document sign_resume --> So the accurate statement is that the webview cannot touch the
-filesystem *itself* and can ask for fifteen specific writes; the flat version reads as the
+<!-- writers: save_copy save_document extract_pages split_document merge_documents print_document redact_copy redact_document redact_raster_copy ocr_copy protect_copy images_to_pdf compress_copy sign_document sign_resume add_validation_data --> So the accurate statement is that the webview cannot touch the
+filesystem *itself* and can ask for sixteen specific writes; the flat version reads as the
 stronger claim, and a reader who stops at this table gets the wrong answer. §T6.1 has the worked-out version and says why neither path checks its argument
 against the document actually open.
 
@@ -860,7 +860,7 @@ summary going stale, and re-pointing it every time would erase its own evidence.
 **nine** as of 2026-09-07 with `redact_raster_copy`, **ten** as of 2026-09-26 with
 `sign_document` (§T6.21), and **eleven** as of 2026-09-28 with `sign_resume`, which writes the
 signature `sign_document` made and held when its timestamp did not come, to the path that call
-named (§T10), and **twelve** as of 2026-10-03 with `ocr_copy` (§T6.28), and **thirteen** the same day with `protect_copy` (§T6.30), and **fourteen** with `images_to_pdf` (§T6.31), and **fifteen** with `compress_copy` (§T6.32). It reached eight on 2026-08-30 without anybody adding three of them here or
+named (§T10), and **twelve** as of 2026-10-03 with `ocr_copy` (§T6.28), and **thirteen** the same day with `protect_copy` (§T6.30), and **fourteen** with `images_to_pdf` (§T6.31), and **fifteen** with `compress_copy` (§T6.32), and **sixteen** as of 2026-10-10 with `add_validation_data`, which writes a signed document with validation data and an archive timestamp appended, to a new path (§T10). It reached eight on 2026-08-30 without anybody adding three of them here or
 there: `split_document`, `redact_copy` and `redact_document` were each disclosed in their own
 entries and absent from the one place that answers *how many*. That is this paragraph's own
 subject arriving a third time, which is the argument for the mechanical check §3 now names —
@@ -3610,6 +3610,99 @@ revision over a snapshot of bytes not yet written, as for the `/DSS`. **No new a
 new parser**: one request more under the same limits, and a refusal writes nothing, like any
 other long-term failure.
 
+#### Validation data for a document that is already signed, added 2026-10-10
+
+**What changed.** *Add long-term validation data…* and `tpdf long-term` do for a document
+somebody has already signed what a long-term signing does for the signature it just made:
+gather revocation data for every signature's and timestamp's certificates, have a worker
+append it as a `/DSS` revision, and end with an archive timestamp over the whole
+(`longterm/existing.rs`, `commands/validation.rs`, `cli/long_term.rs`; `docs/PLAN.md` §9,
+*Validation data for a document that is already signed*). **The network authorities are the
+same two in kind** --- the certificate authorities the certificates name, and one timestamp
+authority the reader chose --- under the same limits, the same parsers and the same client.
+`add_validation_data` is the sixteenth command that writes a file (§3). What is new is where
+the certificates come from, and three things follow from it.
+
+**The certificates are the document's, so every leaf is gated, not only the authority's.**
+While signing, the signer's certificate comes from the reader's own key store and only the
+token comes from elsewhere. Here the signature's CMS, its token and every certificate in
+either are bytes of a document that came from anywhere, and the addresses asked are the ones
+certificates name. So `longterm::existing::plan_one` holds **the signer of every signature and
+the authority of every timestamp** to the rule `longterm::vouched` holds a signing's authority
+to: its chain must end at a root the OS store trusts for that purpose --- signing documents,
+or timestamping --- now and offline, and only certificates on the chain the store assembled
+may stand above it (`longterm::walked`, the signing's own walk). A document signed with a
+self-made certificate naming `http://192.168.0.1/` as its responder is refused before any
+request: measured offline, a signer whose root is not anchored is refused with **zero**
+requests reaching the fake PKI's server, and so is an authority's, and the same signatures
+with their roots anchored are gathered for. A trusted chain is what makes the addresses the
+certificate authority's, so loopback and private addresses are still not refused, for the
+reason above.
+
+**The coordinator reads the document's signature values, and still parses no PDF.** The
+worker parses the file; `sign_dss::survey` answers what `docinfo::scan` reads and each signed
+field's `/Contents` as the DER it is, with the certificates the `/DSS` already carries
+(`Request::SurveySignatures`). The coordinator, or the tool's process, then reads that DER
+with `cms`, `der` and `x509-cert` to find the certificates, and hands them to the OS for the
+gate. **This is new**: until now the only CMS the coordinator read was one tpdf had just
+made, and the only foreign certificates were a timestamp token's from the network. The
+parsers and the bounds are the ones that token is read with --- each value ended where its
+structure ends and under 1 MiB (`docinfo::signature_contents`), the answer under 4 MiB
+together (`sign_dss::MAX_BYTES`), at most 32 signatures, and at most 16 certificates each
+under 64 KiB handed to the OS (`trust::certificates_with`). **Those bounds are held twice,
+and the second time is the one that counts**: the worker holds its own answer to them, and
+the coordinator holds the answer to them again before it parses any of it
+(`longterm::existing::bounded`, since the review of 2026-10-10 --- until then only the
+worker did, and the only bound on this side was `MAX_REPLY_BYTES`, so a worker a document
+had taken over could have answered thousands of values and had each one parsed and put to
+the OS). The `/DSS`'s certificates are parsed once for all signatures, not once for each. The alternative --- planning and
+judging in the worker, with the coordinator a blind transport --- would let a worker that a
+document had taken over name any address for the coordinator to ask, which is the network
+authority the worker's profile denies it; the gate has to run where the request is made.
+Residual 37.
+
+**All of the document's signatures, or nothing; and nothing earlier is written.** The archive
+timestamp covers the whole file, so a partial result would read as a document kept for the
+long term with a signature in it nobody could vouch for. Any signature that cannot be covered
+--- it does not verify, its signer or authority is not trusted, a certificate publishes
+nothing, an answer does not come or does not check out, a certificate is revoked --- refuses
+the whole, with nothing written and, for the first two, nothing fetched. Refused before
+anything is asked too: a document with no signature, an encrypted one, one whose signature
+fields or values could not all be read, a certification with no changes permitted --- by a
+signature field or by the catalog's `/Perms` alone, written as `1` or `1.0` --- a `/DSS`
+that holds as much as tpdf's reader takes or that the writer could not extend, and
+signatures covering more together than a reading has the budget to hash
+(`integrity::MAX_HASHED`), since a result tpdf could not check is one it does not write. Both
+revisions are appended over a snapshot of the bytes read, each through `save::written_whole`,
+and before the copy is written the worker's reading of the result is held against its reading
+of the original (`longterm::existing::covered`): every signature there by name and by where
+its range ends, intact, no page rewritten and no object removed after it that was not before,
+and its certificate, its authority's and every certificate above either `good`. The written
+file is read back by a fresh worker and held to the same, with the archive timestamp intact
+over the whole file. **The archive timestamp's authority is gated as well**: its token is
+sealed only if its chain ends at a root the store trusts for timestamping, because over
+`http://` a substituted authority's token would otherwise be sealed intact (residual 29) and
+read as an archive that attests nothing.
+
+**What is sent, and what an attacker can do.** What a long-term signing sends: an OCSP
+`CertID` per certificate or a `GET` for a list, and one `TimeStampReq` carrying a SHA-256 over
+the covered pieces of the file and a nonce. **The certificates are not the reader's**, so
+what each certificate authority learns is that somebody at this address is checking that
+certificate now (residual 32, widened). An attacker who can hand the reader a document chooses
+*which* trusted certificate authorities are asked --- by signing with, or embedding a
+signature made with, a certificate one of them issued --- and nothing else: the addresses are
+those authorities', the request bodies are `CertID`s built in the coordinator, and at most 16
+requests are made in 90 s. A document cannot make the coordinator ask an address of the
+attacker's choosing unless a certificate authority the reader's store trusts issued a
+certificate naming it. The replay of residual 33 applies unchanged.
+
+**Judged now.** Each answer is judged at the present, as while signing, and anything but
+`good` refuses --- including a certificate revoked *after* the signature's timestamp, which a
+reader would not count against the signature. Data that says so is data a reader has to
+weigh, and this adds only data that reads `good`; the cost is a document that could be
+preserved and is not, which is the safe direction. A certificate that has expired is refused
+the same way, since nothing is vouched for it now.
+
 ### T8 — The webview
 
 **The threat.** Content injected into the UI layer reaching Tauri's command surface.
@@ -4955,6 +5048,22 @@ which is what makes it evidence rather than a milestone.
     detect can still certify. Below macOS 13 and on Windows there is no detection, so only the
     script rule protects. A Latin name under a Japanese control, or the reverse, is now
     `NotVerified`: the control chooser does not prefer a control in the covered script.
+37. **A document's signature values are read in the coordinator, and decide which certificate
+    authorities it asks** (§T10), added 2026-10-10. Adding validation data to a document that
+    is already signed hands each signature's CMS from the worker to the coordinator or
+    `tpdf-cli`, neither of which is contained, where `cms`, `der` and `x509-cert` read it and
+    the OS chain builder is handed its certificates --- the widening of residual 25, now from
+    a document rather than from a token. Bounded by counts and sizes the coordinator itself
+    holds the worker's answer to before parsing it (`longterm::existing::bounded`: 32
+    signatures, 1 MiB a value, 32 certificates of the `/DSS` at 64 KiB each, 4 MiB together)
+    --- the worker holds the same bounds, and its word for them is not taken --- by the
+    parsers being memory-safe Rust that reads nothing past its input, and by being done only
+    when the reader asks for it for one document.
+    What the document then decides is which certificate authorities are asked, among those
+    the reader's store trusts; each learns that one of its certificates is being checked from
+    this address (residual 32, which this widens from the reader's own certificate to
+    anybody's). Not closed: the request has to be made where the network is, and the gate
+    where the request is made.
 
 ## 8. How to re-verify any of this
 

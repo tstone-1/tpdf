@@ -95,7 +95,7 @@ pub use crate::certificate::{parse_certificate, Certificate};
 const MAX_FIELDS: usize = 64;
 
 /// Most signature fields walked.
-const MAX_SIGNATURES: usize = 32;
+pub(crate) const MAX_SIGNATURES: usize = 32;
 
 /// Most `/Fields` entries popped walking the form's field tree.
 ///
@@ -115,7 +115,7 @@ const MAX_FIELD_NODES: usize = 4_096;
 /// the blob is attacker-chosen DER handed to a parser, and a document is free
 /// to make it a megabyte of nesting. Exceeding it is reported through
 /// [`Limits::certificates_unread`] rather than passed off as "no certificate".
-const MAX_SIG_BLOB: usize = 1024 * 1024;
+pub(crate) const MAX_SIG_BLOB: usize = 1024 * 1024;
 
 /// The `/Info` keys PDF 32000-1 §14.3.3 defines, in the order a reader wants.
 ///
@@ -1342,6 +1342,80 @@ fn read_signatures(
     out
 }
 
+/// Every signed signature field's `/Contents` --- the CMS, or for a document
+/// timestamp the token, ended where its structure ends --- by the field's
+/// full name, in the order [`read_signatures`] reports the fields, and the
+/// `/DSS`'s certificates beside them.
+///
+/// **For adding long-term validation data to a document already signed**
+/// (`sign_dss::survey`): the app process, which fetches, has to be told which
+/// certificates to ask about, and they are in these values. Read by the walk
+/// and the bounds the scan reads them by --- [`MAX_SIGNATURES`],
+/// [`MAX_FIELD_NODES`], [`MAX_SIG_BLOB`] --- so a field the scan reports and
+/// this does not is one of the two having been cut, which `complete` says: a
+/// value that is absent, all zeros or over the bound is an empty entry and
+/// `complete` false, and so is a walk that was cut.
+pub(crate) struct Values {
+    /// `(full name, value)` for each field with a `/V`; the value is empty
+    /// when it could not be read.
+    pub(crate) values: Vec<(String, Vec<u8>)>,
+    /// The `/DSS`'s certificates, DER.
+    pub(crate) store: Vec<Vec<u8>>,
+    /// Whether every signed field was reached and its value read.
+    pub(crate) complete: bool,
+    /// Whether the scan's own reading of the `/DSS` left any of it out or
+    /// could not read some of it: every revocation answer then reads as not
+    /// checked, whatever is added.
+    pub(crate) store_cut: bool,
+}
+
+/// [`Values`] of a parsed document.
+pub(crate) fn signature_values(document: &Document) -> Values {
+    let bounds = fields::Bounds {
+        nodes: MAX_FIELD_NODES,
+        depth: Some(8),
+        dedup: false,
+        names: true,
+        order: fields::Order::Document,
+    };
+    let mut values = Vec::new();
+    let mut complete = true;
+    let cut = fields::walk(document, &bounds, |node| {
+        let Some(field) = node.dict else {
+            complete = false;
+            return fields::Flow::Leaf;
+        };
+        if name_of(document, field, b"FT") == "Sig" {
+            if let Some(sig) = field
+                .get(b"V")
+                .ok()
+                .and_then(|o| resolve(document, o).as_dict().ok())
+            {
+                // Only a signed value past the bound is one left out: a form
+                // of exactly that many signatures and other fields after
+                // them is whole.
+                if values.len() >= MAX_SIGNATURES {
+                    complete = false;
+                    return fields::Flow::Leaf;
+                }
+                let mut unread = 0;
+                let value = signature_contents(document, sig, MAX_SIG_BLOB, &mut unread);
+                complete &= value.is_some();
+                values.push((node.name, value.unwrap_or_default()));
+            }
+        }
+        fields::Flow::Descend
+    });
+    complete &= cut.dropped == 0 && cut.too_deep == 0;
+    let store = read_dss(document);
+    Values {
+        values,
+        store_cut: store.dropped > 0 || store.unread > 0,
+        store: store.certificates,
+        complete,
+    }
+}
+
 /// A moment an archive timestamp attests, and how far into the file its
 /// signed range reaches: everything written before `end` existed at `at`.
 #[derive(Clone, Copy, Debug)]
@@ -1775,7 +1849,7 @@ fn read_dss(document: &Document) -> crate::revocation::Material {
 
 /// One `/DSS` stream's content within `bound`: decoded when it has a filter,
 /// as it is when it has none, `None` when it will not decode inside the bound.
-fn dss_content(stream: &lopdf::Stream, bound: usize) -> Option<Vec<u8>> {
+pub(crate) fn dss_content(stream: &lopdf::Stream, bound: usize) -> Option<Vec<u8>> {
     if stream.dict.has(b"Filter") {
         stream.decompressed_content_with_limit(bound).ok()
     } else {
@@ -2459,7 +2533,17 @@ pub(crate) fn certification_of(document: &Document, sig: &Dictionary) -> u8 {
             .ok()
             .and_then(|o| resolve(document, o).as_dict().ok())
             .and_then(|params| params.get(b"P").ok())
-            .and_then(|o| resolve(document, o).as_i64().ok())
+            .map(|o| resolve(document, o))
+            .and_then(|o| match o {
+                Object::Integer(level) => Some(*level),
+                // A level written as a real number: readers take `1.0` for 1,
+                // and reading it as no certification would let a document
+                // certified against any change pass for one that is not.
+                // (The cast is exact: only an integral value is taken.)
+                #[allow(clippy::cast_possible_truncation)]
+                Object::Real(level) if level.fract() == 0.0 => Some(*level as i64),
+                _ => None,
+            })
             .unwrap_or(0);
         // §12.8.2.2 defines 1, 2 and 3. Anything else is a document saying
         // something the specification does not define, and is not repeated.

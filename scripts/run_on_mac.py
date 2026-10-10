@@ -84,8 +84,10 @@ if ioreg -n Root -d1 -a | grep -A1 CGSSessionScreenIsLocked | grep -q '<true/>';
   stop "the session on this Mac is locked, so no window can be checked. The screen saver locks it: defaults -currentHost write com.apple.screensaver idleTime -int 0, then unlock it once"
 fi
 cd "$clone" || stop "cannot enter $clone"
-[ -f "$run/tree.bundle" ] && git fetch --quiet "$run/tree.bundle" "{ref}" 2>/dev/null
+# The remote first: the bundle holds only what the remote does not have, and
+# cannot be read into a clone that is behind it.
 git cat-file -e "$sha^{{commit}}" 2>/dev/null || git -c credential.helper= fetch --quiet origin 2>/dev/null
+[ -f "$run/tree.bundle" ] && git fetch --quiet "$run/tree.bundle" "{ref}" 2>/dev/null
 git cat-file -e "$sha^{{commit}}" 2>/dev/null || stop "this Mac does not have commit $sha"
 [ -d "$tree" ] || git worktree add --quiet --detach "$tree" "$sha" || stop "cannot make the worktree $tree"
 cd "$tree" || stop "cannot enter $tree"

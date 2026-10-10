@@ -620,6 +620,14 @@ export interface AppActions {
    * written.
    */
   signDocument(): void;
+  /**
+   * Add long-term validation data, and an archive timestamp, for the
+   * signatures the open document already has, into a new file.
+   *
+   * The sequence and what it says first are `validationdata.ts`; the original
+   * file is never written.
+   */
+  addValidationData(): void;
   /** How many empty signature fields the open document has to sign. */
   signableFields(): number;
   /** Signs the first of them, as a press on it does. */
@@ -1930,6 +1938,19 @@ export function registerAppCommands(
       title: "Sign in the signature field\u2026",
       enabled: () => withDocument() && actions.signableFields() >= 1,
       run: () => actions.signField(),
+    },
+    {
+      // For a document somebody has already signed: no key is used and no
+      // signature is made. Offered on any open document, as signing is: one
+      // with no signature is told so at once, which is an answer a reader
+      // looking for the command would otherwise have to guess.
+      //
+      // The ellipsis is the dialog and the save panel that follow, and the
+      // result is a new file.
+      id: "file.addValidationData",
+      title: "Add long-term validation data\u2026",
+      enabled: withDocument,
+      run: () => actions.addValidationData(),
     },
     {
       // "and save as", for `file.redactCopy`'s reason: the open document is not

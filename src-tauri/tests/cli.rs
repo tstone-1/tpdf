@@ -100,6 +100,8 @@ mod forms;
 mod hidden;
 #[path = "cli/images.rs"]
 mod images;
+#[path = "cli/long_term.rs"]
+mod long_term;
 #[path = "cli/ocr.rs"]
 mod ocr;
 #[path = "cli/os_key.rs"]
@@ -145,7 +147,7 @@ fn main() {
     run_outside_cargo_deps(&argv);
     // The order is load-bearing: never_maps_pdfium asserts this process has
     // not mapped PDFium, so it must precede the in-process PDFium readers.
-    let checks: [Check; 38] = [
+    let checks: [Check; 39] = [
         ("verify agrees with the in-process reader", verify_agrees),
         (
             "verify reports what was appended after each signature",
@@ -186,6 +188,10 @@ fn main() {
         (
             "sign --long-term gathers from a local PKI, and writes nothing when it fails",
             long_term_when_signing,
+        ),
+        (
+            "long-term adds validation data and an archive timestamp to a signed document",
+            long_term::adds_to_a_signed_document,
         ),
         ("the tool's process never maps PDFium", never_maps_pdfium),
         ("the tool's workers are sandboxed", workers_are_sandboxed),

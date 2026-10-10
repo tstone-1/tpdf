@@ -35,7 +35,7 @@ fn verdict_of<'a>(
         .expect("a verdict")
 }
 
-fn now() -> u64 {
+pub(super) fn now() -> u64 {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map_or(0, |d| d.as_secs())
@@ -43,18 +43,18 @@ fn now() -> u64 {
 
 /// A signature made, timestamped and sealed with `pki`'s signer and
 /// authority: the B-T document, its CMS and its field.
-struct Sealed {
-    bytes: Vec<u8>,
-    cms: Vec<u8>,
-    field: String,
+pub(super) struct Sealed {
+    pub(super) bytes: Vec<u8>,
+    pub(super) cms: Vec<u8>,
+    pub(super) field: String,
 }
 
-fn sealed(pki: &Pki) -> Sealed {
+pub(super) fn sealed(pki: &Pki) -> Sealed {
     sealed_by(pki, &pki.tsa)
 }
 
 /// [`sealed`], timestamped by `tsa` rather than the PKI's own authority.
-fn sealed_by(pki: &Pki, tsa: &crate::integrity::test_tsa::TestTsa) -> Sealed {
+pub(super) fn sealed_by(pki: &Pki, tsa: &crate::integrity::test_tsa::TestTsa) -> Sealed {
     let at = now();
     let original = plain_pdf();
     let key = Soft::p256(pki.signer.seed);
@@ -83,7 +83,7 @@ fn sealed_by(pki: &Pki, tsa: &crate::integrity::test_tsa::TestTsa) -> Sealed {
 }
 
 /// The real client, with a short total so a silent server costs a second.
-fn quick(
+pub(super) fn quick(
     url: &url::Url,
     body: Option<(&str, Vec<u8>)>,
     limits: &tsa::Limits,
@@ -152,7 +152,7 @@ fn extended(signed: &Sealed) -> Result<Vec<u8>, Refusal> {
     )
 }
 
-fn good() -> Plan {
+pub(super) fn good() -> Plan {
     Plan {
         signer_ocsp: Some(Serve::Good),
         authority_ocsp: Some(Serve::Good),
@@ -172,9 +172,9 @@ fn read(bytes: &[u8]) -> crate::docinfo::Signature {
 
 /// The `/DSS` streams of `bytes`, by array.
 /// Streams' contents, as DER.
-type Streams = Vec<Vec<u8>>;
+pub(super) type Streams = Vec<Vec<u8>>;
 
-fn dss(bytes: &[u8]) -> (Streams, Streams, Streams) {
+pub(super) fn dss(bytes: &[u8]) -> (Streams, Streams, Streams) {
     let document = lopdf::Document::load_mem(bytes).expect("parses");
     let catalog = document.catalog().expect("a catalog");
     let dss = crate::encoding::resolve(&document, catalog.get(b"DSS").expect("a /DSS"))
@@ -1169,6 +1169,10 @@ impl crate::save::Verifier for Elsewhere {
     fn document_timestamp(&self, signed: &[u8]) -> Result<crate::sign_prepare::Unsigned, String> {
         crate::save::Here.document_timestamp(signed)
     }
+
+    fn survey(&self, signed: &[u8]) -> Result<crate::sign_dss::Survey, String> {
+        crate::save::Here.survey(signed)
+    }
 }
 
 #[test]
@@ -1642,6 +1646,10 @@ impl crate::save::Verifier for Dead {
             return Err("the worker exited with signal 9".into());
         }
         crate::save::Here.document_timestamp(signed)
+    }
+
+    fn survey(&self, signed: &[u8]) -> Result<crate::sign_dss::Survey, String> {
+        crate::save::Here.survey(signed)
     }
 }
 

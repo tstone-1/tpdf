@@ -1294,6 +1294,11 @@ mod tests {
             self.note("archive timestamp prepared");
             crate::save::Here.document_timestamp(signed)
         }
+
+        fn survey(&self, signed: &[u8]) -> Result<crate::sign_dss::Survey, String> {
+            self.note("signatures surveyed");
+            crate::save::Here.survey(signed)
+        }
     }
 
     /// The window and the command line run one tail: from the same made
@@ -1472,6 +1477,10 @@ mod tests {
 
         fn document_timestamp(&self, signed: &[u8]) -> Result<sign_prepare::Unsigned, String> {
             crate::save::Here.document_timestamp(signed)
+        }
+
+        fn survey(&self, signed: &[u8]) -> Result<crate::sign_dss::Survey, String> {
+            crate::save::Here.survey(signed)
         }
     }
 
@@ -1661,6 +1670,10 @@ mod tests {
 
         fn document_timestamp(&self, signed: &[u8]) -> Result<sign_prepare::Unsigned, String> {
             crate::save::Here.document_timestamp(signed)
+        }
+
+        fn survey(&self, signed: &[u8]) -> Result<crate::sign_dss::Survey, String> {
+            crate::save::Here.survey(signed)
         }
     }
 

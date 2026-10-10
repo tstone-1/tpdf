@@ -573,6 +573,10 @@ fn every_registered_command_is_reached_by_its_name_and_listed_in_help() {
         ("unprotect", "unprotect a.pdf -o b.pdf --password-env OLD"),
         ("images", "images a.png b.jpg -o c.pdf --paper a4"),
         ("hidden", "hidden a.pdf --pages 1-2 --json"),
+        (
+            "long-term",
+            "long-term a.pdf -o b.pdf --timestamp digicert --json",
+        ),
         ("path", "path --add"),
         ("completions", "completions zsh"),
     ];
@@ -2274,6 +2278,22 @@ fn samples() -> Vec<(&'static str, String)> {
         signatures: vec![full_signature(), bare_signature()],
         summary,
     };
+    // A signature, and an archive timestamp an earlier run added.
+    let covered = vec!["Signature1".to_string(), "Signature2".to_string()];
+    let kinds = [
+        ("Signature1".to_string(), false),
+        ("Signature2".to_string(), true),
+    ];
+    let long_term = report::LongTerm {
+        schema: report::SCHEMA,
+        command: "long-term".into(),
+        input: "contract-signed.pdf".into(),
+        output: "contract-kept.pdf".into(),
+        summary: words::after_long_term("contract-kept.pdf", &kinds, "Signature3"),
+        covered,
+        archive: "Signature3".into(),
+        signatures: vec![full_signature(), bare_signature()],
+    };
     vec![
         (
             "render",
@@ -2532,6 +2552,7 @@ fn samples() -> Vec<(&'static str, String)> {
         ("identities", pretty(&identities)),
         ("verify", pretty(&verify)),
         ("sign", pretty(&sign)),
+        ("long-term", pretty(&long_term)),
         ("wording", pretty(&wording())),
         ("info", pretty(&info_sample())),
         ("text", pretty(&text_sample())),
@@ -2617,7 +2638,7 @@ fn the_samples_directory_holds_one_file_per_sample_and_nothing_else() {
         .map(|(name, _)| format!("{name}.json"))
         .collect();
     want.sort();
-    assert_eq!(want.len(), 26, "the sample table itself");
+    assert_eq!(want.len(), 27, "the sample table itself");
     assert_eq!(found, want);
 }
 
@@ -3509,6 +3530,166 @@ fn json_output_is_ascii_and_means_the_same_text() {
     assert!(text.contains("\\ud834\\udd1e"), "{text}");
     let back: serde_json::Value = serde_json::from_str(&text).expect("decodes");
     assert_eq!(back, value);
+}
+
+/// `long-term` names its document, its output and its authority, and asks
+/// nobody that was not named: each missing one is a malformed line, before
+/// any worker or socket.
+#[test]
+fn long_term_needs_its_output_and_an_authority_it_was_told_to_ask() {
+    use super::long_term::parse;
+    let line = |rest: &[&str]| parse(&rest.iter().map(ToString::to_string).collect::<Vec<_>>());
+    let parsed =
+        line(&["a.pdf", "-o", "b.pdf", "--timestamp", "sectigo", "--force"]).expect("parsed");
+    assert_eq!(parsed.input, PathBuf::from("a.pdf"));
+    assert_eq!(parsed.output, PathBuf::from("b.pdf"));
+    assert_eq!(parsed.timestamp.host_str(), Some("timestamp.sectigo.com"));
+    assert!(parsed.force && !parsed.json);
+
+    for (rest, said) in [
+        (&["a.pdf", "-o", "b.pdf"][..], "needs `--timestamp`"),
+        (
+            &["a.pdf", "--timestamp", "digicert"][..],
+            "needs `-o <out.pdf>`",
+        ),
+        (
+            &["-o", "b.pdf", "--timestamp", "digicert"][..],
+            "needs the signed document",
+        ),
+        (
+            &["a.pdf", "-o", "a.pdf", "--timestamp", "digicert"][..],
+            "the output names the input",
+        ),
+        (
+            &["a.pdf", "c.pdf", "-o", "b.pdf", "--timestamp", "digicert"][..],
+            "takes one document",
+        ),
+        (
+            &[
+                "a.pdf",
+                "-o",
+                "b.pdf",
+                "--timestamp",
+                "digicert",
+                "--identity",
+                "A",
+            ][..],
+            "--identity",
+        ),
+    ] {
+        let why = line(rest).expect_err("refused");
+        assert!(why.contains(said), "{rest:?}: {why}");
+    }
+    // An address tpdf does not ask is refused here, as `sign --timestamp`'s is.
+    for address in ["ftp://example.com/tsa", "https://user:secret@example.com/"] {
+        assert!(
+            line(&["a.pdf", "-o", "b.pdf", "--timestamp", address]).is_err(),
+            "{address}"
+        );
+    }
+}
+
+/// What can be refused without a worker is: an output that exists, an input
+/// that does not, and the two being one file.
+#[test]
+fn long_term_refuses_an_existing_output_and_a_missing_input_before_any_worker() {
+    let dir = scratch("long-term");
+    let s = |p: &Path| p.display().to_string();
+    let input = dir.join("in.pdf");
+    let out = dir.join("out.pdf");
+    std::fs::write(&input, b"%PDF-1.7").expect("an input");
+    std::fs::write(&out, b"already here").expect("an output");
+    let store = Soft256(Vec::new());
+    let long_term = |input: &Path, out: &Path, extra: &[&str]| {
+        let mut words = vec![
+            "long-term".to_string(),
+            s(input),
+            "-o".into(),
+            s(out),
+            "--timestamp".into(),
+            "http://127.0.0.1:9/".into(),
+        ];
+        words.extend(extra.iter().map(ToString::to_string));
+        ran(&words, &store)
+    };
+    let (code, _, err) = long_term(&input, &out, &[]);
+    assert_eq!(code, 3, "{err}");
+    assert!(err.contains("already exists"), "{err}");
+    assert_eq!(std::fs::read(&out).expect("kept"), b"already here");
+
+    let (code, _, err) = long_term(&dir.join("missing.pdf"), &dir.join("x.pdf"), &[]);
+    assert_eq!(code, 3, "{err}");
+    assert!(err.contains("could not read"), "{err}");
+
+    let empty = dir.join("empty.pdf");
+    std::fs::write(&empty, b"").expect("an empty file");
+    let (code, _, err) = long_term(&empty, &dir.join("x.pdf"), &[]);
+    assert_eq!(code, 3, "{err}");
+    assert!(err.contains("is empty"), "{err}");
+
+    let link = dir.join("same.pdf");
+    std::fs::hard_link(&input, &link).expect("a second name");
+    let (code, _, err) = long_term(&input, &link, &["--force"]);
+    assert_eq!(code, 2, "{err}");
+    assert!(err.contains("under another name"), "{err}");
+
+    // Without `--timestamp` the line is malformed: 2, and with `--json` the
+    // failure is one JSON document.
+    let (code, out_json, _) = ran(
+        &line(&[
+            "long-term",
+            &s(&input),
+            "-o",
+            &s(&dir.join("y.pdf")),
+            "--json",
+        ]),
+        &store,
+    );
+    assert_eq!(code, 2);
+    let failed: serde_json::Value = serde_json::from_str(&out_json).expect("one document");
+    assert_eq!(failed["command"], "long-term");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// How a run that stopped ends: 4 where the failure is tpdf's own, 3 for a
+/// refusal of the document's or an authority's and for a copy that could not
+/// be written.
+#[test]
+fn a_long_term_run_that_stopped_is_4_only_when_the_failure_is_tpdfs() {
+    use super::long_term::stopped_failure;
+    use crate::commands::validation::Stopped;
+    use crate::longterm::existing::Refusal;
+    for (stopped, exit) in [
+        (Stopped::Refused(Refusal::Unsigned), Exit::Refused),
+        (Stopped::Refused(Refusal::Budget), Exit::Refused),
+        (
+            Stopped::Refused(Refusal::Failed("a worker died".into())),
+            Exit::Internal,
+        ),
+        (
+            Stopped::Refused(Refusal::About {
+                field: None,
+                why: crate::longterm::Refusal::Written("no".into()),
+            }),
+            Exit::Internal,
+        ),
+        (
+            Stopped::Refused(Refusal::About {
+                field: Some("Signature1".into()),
+                why: crate::longterm::Refusal::NotPublished("the signer's certificate".into()),
+            }),
+            Exit::Refused,
+        ),
+        (Stopped::Unwritten("the disk is full".into()), Exit::Refused),
+        (Stopped::Unread("gone".into()), Exit::Internal),
+        (
+            Stopped::ReadBack(Refusal::Archive("it is not in it".into())),
+            Exit::Internal,
+        ),
+    ] {
+        let failure = stopped_failure(&stopped, "kept.pdf");
+        assert_eq!(failure.exit, exit, "{}", failure.message);
+    }
 }
 
 #[test]

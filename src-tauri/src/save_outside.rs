@@ -308,6 +308,40 @@ impl Verifier for InWorker {
         });
         awaited(&rx, DEFAULT_DEADLINE, pid)?
     }
+
+    fn survey(&self, signed: &[u8]) -> Result<crate::sign_dss::Survey, String> {
+        // [`Verifier::validation`]'s snapshot: the bytes as they were read,
+        // which are the bytes every revision after this is built against ---
+        // not whatever the file of that name holds a moment later.
+        let mut mapped = Shm::create(signed.len())?;
+        mapped.as_mut_slice().copy_from_slice(signed);
+        let worker = Worker::spawn_shared(std::sync::Arc::new(mapped), &self.library_dir)?;
+        let pid = worker.pid();
+        let rx = asked_on_a_thread(worker, move |worker| {
+            let answered = worker.call(&Request::SurveySignatures)?;
+            // A document that needs a password: the worker was started with
+            // none and answers that it is locked, which is the document's
+            // refusal and not this worker's failure. No password is sent to
+            // open it: an encrypted document gets no validation data.
+            if answered.locked {
+                return Ok(crate::sign_dss::Survey::encrypted());
+            }
+            if !answered.ok {
+                return Err(answered.error);
+            }
+            match answered.reply {
+                Some(Reply::Surveyed(survey)) => Ok(*survey),
+                other => Err(format!(
+                    "the worker answered the survey of the signatures with {}",
+                    match other {
+                        Some(reply) => reply.described(),
+                        None => "no payload at all".to_string(),
+                    }
+                )),
+            }
+        });
+        awaited(&rx, DEFAULT_DEADLINE, pid)?
+    }
 }
 
 impl InWorker {

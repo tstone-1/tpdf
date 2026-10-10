@@ -93,6 +93,7 @@
   import type { DocumentInfo, PageSize } from "./lib/ipc";
   import { call } from "./lib/ipc";
   import * as signing from "./lib/signing";
+  import * as validationData from "./lib/validationdata";
   import { emptySignatureFields, signTarget, type SignTarget } from "./lib/signfield";
   import { openWithPassword } from "./lib/unlock";
   import { isMac, label, setPrintedKeys } from "./lib/keys";
@@ -1594,6 +1595,7 @@
     mergeDocuments: () => void mergeDocuments(),
     fromPictures: () => void fromPictures(),
     signDocument: () => void signDocument(),
+    addValidationData: () => void addValidationData(),
     signableFields: () => emptySignatureFields(scannedForm).length,
     signField: () => {
       const first = emptySignatureFields(scannedForm)[0];
@@ -3463,6 +3465,50 @@
             call("sign_resume", { pending, timestamp, longTerm }),
           discard: (pending) => call("sign_discard", { pending }),
         }, field);
+        if (said) say(said);
+      } catch (e) {
+        say(String(e));
+      }
+    });
+  }
+
+  /**
+   * Adds long-term validation data, and an archive timestamp, for the
+   * signatures the document already has, into a new file. The sequence and
+   * what it says first are `validationdata.ts`'s, and every refusal is the
+   * backend's; this supplies the properties, the dialog, the save panel and
+   * the command.
+   */
+  async function addValidationData(): Promise<void> {
+    if (opening) return;
+    return documentTasks.run(async () => {
+      if (!edits || !openPathName || openDoc < 0) return;
+      const doc = openDoc;
+      const source = openPathName;
+      try {
+        const said = await validationData.addValidationData({
+          // Inside the task, where a signing calls it.
+          settle: settleDrafts,
+          dirty: () => dirty,
+          openPath: source,
+          // The reading the properties dialog shows, asked of this document's
+          // worker.
+          properties: () => call("document_properties", { doc }),
+          chooseAuthority: () => validationData.askAuthority(),
+          saveAs: (suggested) =>
+            saveDialog({
+              title: "Save the document with long-term validation data",
+              defaultPath: suggested,
+              filters: [{ name: "PDF", extensions: ["pdf"] }],
+            }),
+          add: (path, timestamp) =>
+            call("add_validation_data", { doc, source, path, timestamp }),
+          // The line the copy and redaction flows show while they work.
+          waiting: (message) => {
+            blockingTask = message;
+            refreshMenu();
+          },
+        });
         if (said) say(said);
       } catch (e) {
         say(String(e));

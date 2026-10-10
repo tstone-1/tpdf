@@ -65,6 +65,32 @@ result (`sign_dss.rs`, `Request::AppendValidation`, `save::Verifier::validation`
 sealed bytes as `Pending`'s `Sealed` stage; `tpdf sign --long-term` exits 3. `docs/PLAN.md` §9,
 *Long-term validation data when signing*.
 
+**Long-term validation data for a document that is already signed (2026-10-10)** is the same
+second half, started from a file somebody else signed: *Add long-term validation data…*
+(`file.addValidationData`, `validationdata.ts`, `add_validation_data`) and `tpdf long-term`
+(`cli/long_term.rs`), which share `commands::validation::finish`. A worker reads the file and
+hands over each signed field's `/Contents` beside its scan (`sign_dss::survey`,
+`Request::SurveySignatures`, `save::Verifier::survey`); `longterm::existing::add` plans from
+those --- every signature's signer chain and every timestamp's authority chain, through
+`longterm::walked`, the signing's own walk --- gathers with `longterm::gather`, has a worker
+append the `/DSS` (`sign_dss::extend`) and ends with `longterm::archived`, the signing's
+document timestamp, from the authority the reader chose. What is its own: **every leaf must
+chain to a root the OS trusts before anything is fetched for it** (`existing::plan_one`,
+`longterm::vouched_for`), since every certificate here is the document's; **all of the
+document's signatures are covered or nothing is written**; a certification with no changes
+permitted, an encrypted document and a survey that is not complete are refused before anybody
+is asked; and the worker's reading of the result is held against its reading of the original
+before the copy is written and again after (`existing::covered`, `existing::read_back`). The
+survey's counts and sizes are held again in the app process before any of it is parsed
+(`existing::bounded`); a `/DSS` with no room left for what a run adds is refused before
+anything is fetched (`existing::room`), and `sign_dss::append` writes no entry the `/DSS`
+already holds. A document that needs a password is the encrypted refusal, also where the
+worker only answers that it is locked. A later run works while the certificates are still
+valid, and is refused once one has expired. No key
+is used, so nothing is held between tries, and the signed-save warning is not shown, for
+signing's reason. `docs/PLAN.md` §9, *Validation data for a document that is already signed*,
+and `docs/THREAT-MODEL.md` §T10.
+
 **Whether the OS trusts a signer (2026-09-27)** is asked in the worker, inside
 `docinfo::scan_from`, of every signature whose integrity verdict is intact or weak, and
 nowhere else: `trust.rs` hands the signer's certificate and the rest of the signature's set,

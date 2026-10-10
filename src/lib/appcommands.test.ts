@@ -252,6 +252,7 @@ function harness(
     mergeDocuments: () => fired.push("mergeDocuments"),
     fromPictures: () => fired.push("fromPictures"),
     signDocument: () => fired.push("signDocument"),
+    addValidationData: () => fired.push("addValidationData"),
     showProperties: () => fired.push("showProperties"),
   };
   const registry = new CommandRegistry();
@@ -1242,6 +1243,24 @@ describe("the page operations", () => {
     expect(closed.fired).toEqual([]);
   });
 
+  it("adds validation data through its own command, offered on any open document", () => {
+    // Reaching its action, and only its own: wired to the signing it sits
+    // beside, it would ask the reader for a key nobody needs.
+    const { registry, fired } = harness();
+    const command = registry.all().find((entry) => entry.id === "file.addValidationData");
+    expect(command?.title).toBe("Add long-term validation data\u2026");
+    expect(registry.run("file.addValidationData")).toBe(true);
+    expect(fired).toEqual(["addValidationData"]);
+    // Offered on an edited document too: the refusal is `validationdata.ts`'s
+    // sentence, and a command that vanished would leave the reader looking.
+    const edited = harness(true, {}, {}, false, false, true);
+    expect(edited.registry.run("file.addValidationData")).toBe(true);
+    // And withheld with no document at all.
+    const closed = harness(false);
+    expect(closed.registry.run("file.addValidationData")).toBe(false);
+    expect(closed.fired).toEqual([]);
+  });
+
   it("redact the open file through the command, with no value to carry", () => {
     // Registered, guarded on a document, and reaching its action --- the last of
     // those being the half that shipped inert once before.
@@ -1967,6 +1986,7 @@ describe("the window shortcuts for editing", () => {
     mergeDocuments: () => fired.push("mergeDocuments"),
     fromPictures: () => fired.push("fromPictures"),
     signDocument: () => fired.push("signDocument"),
+    addValidationData: () => fired.push("addValidationData"),
     showProperties: () => fired.push("showProperties"),
     };
     return { fired, actions };

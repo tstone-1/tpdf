@@ -42,8 +42,9 @@ tpdf contacts the network in three cases, and in no other:
   github.com. It can be switched off.
 - **A timestamp on a signature**, when you ask for one, sends a hash of the signature to
   the timestamp authority you chose. The document is not sent.
-- **Long-term validation data**, when you ask for it while signing, is fetched from the
-  revocation hosts that the certificates themselves name.
+- **Long-term validation data**, when you ask for it while signing or for a document that
+  is already signed, is fetched from the revocation hosts that the certificates themselves
+  name, and sealed with a timestamp from the authority you chose.
 
 A web link in a document opens in your browser, and only after you confirm the site.
 Everything else happens on your computer: there is no cloud service, no AI assistant and no
@@ -79,7 +80,7 @@ under an annotation, in the background's colour or outside the page.
 
 **Sign and check signatures.** Sign with a certificate from the macOS keychain or the
 Windows certificate store, with a timestamp and long-term validation data if you want
-them. For a signed document, tpdf says whether each signature is intact, whether your
+them, or add that data later to a document somebody has already signed. For a signed document, tpdf says whether each signature is intact, whether your
 computer trusts the signer, and what was added after signing.
 
 ![Document properties, one card for each of two signatures](docs/img/signatures.png)
@@ -343,6 +344,39 @@ measured the Windows render constants come out 1.5–1.8x worse.
   its signer to lock other fields of the form, or that sets requirements its signature has
   to meet, is not signed: tpdf does neither, and says so.
   <!-- built: file.signDocument file.signField -->
+
+- **Long-term validation data for a document that is already signed.** *Add long-term
+  validation data…* takes a document somebody has signed — with tpdf or anything else — and
+  writes a copy that stays checkable after the certificates expire: it asks the certificate
+  authorities whether each signature's certificate, each timestamp authority's and the ones
+  above them are revoked, adds the answers and the certificates to the document, and asks a
+  timestamp authority you choose for an archive timestamp over the whole (PAdES B-LTA). No
+  key is used and no signature is made. The original is not changed: the copy is the
+  original with two revisions after it, and tpdf writes it only if every signature reads
+  afterwards as it did before. Run on a document that already has an archive timestamp, it
+  adds the data for that timestamp's authority and a further archive timestamp, which is
+  what keeps a document checkable past that authority's own certificate. **It works only
+  while every certificate involved is still valid**: a further archive timestamp has to be
+  added before the earlier authority's certificate expires, and a run after that day is
+  refused, because nothing vouches for an expired certificate now. What the document already
+  carries is not written a second time.
+  **Every signature in the document is covered, or nothing is written.** It refuses, and
+  says which signature and why: a document with no signature; an encrypted document; a
+  document with unsaved edits; a signature or a signature's timestamp that does not verify;
+  a signature that certifies the document with no changes permitted; a signer or a
+  timestamp authority whose certificate does not chain to a root this computer trusts,
+  before anything is fetched for it, because the addresses asked come from the certificates
+  and a document can carry any certificate; a certificate that is self-made, has expired,
+  names nowhere its revocation data is published, or that its authority says is revoked —
+  also when the signature's timestamp shows it was made before the revocation; an authority
+  that does not answer or whose answer does not check out; a timestamp authority for the
+  archive timestamp that this computer does not trust; a document that already carries as
+  much validation data as tpdf reads (32 certificates, 32 OCSP responses or 8 revocation
+  lists), since what would be added could not be read back; and signatures that together
+  cover more data than tpdf checks at once (1 GiB for one document). "Every signature" means
+  every signature field of the document's form: a usage-rights signature that is not a field
+  is not looked at. `tpdf long-term` does the same from a terminal.
+  <!-- built: file.addValidationData -->
 
 - **Saving signed or certified documents requires confirmation.** The current writer
   may invalidate their cryptographic signatures, including when filling permitted
@@ -836,7 +870,7 @@ both.
 ## Command-line tool
 
 `tpdf sign`, `tpdf verify`, `tpdf identities`, `tpdf info`, `tpdf text`, `tpdf search`, `tpdf fields`,
-`tpdf fill`, `tpdf redact`, `tpdf merge`, `tpdf extract`, `tpdf split`, `tpdf rotate`,
+`tpdf fill`, `tpdf redact`, `tpdf long-term`, `tpdf merge`, `tpdf extract`, `tpdf split`, `tpdf rotate`,
 `tpdf crop`, `tpdf edit`, `tpdf comments`, `tpdf text-runs`, `tpdf render`, `tpdf ocr`,
 `tpdf protect`, `tpdf unprotect`, `tpdf compress`, `tpdf form`, `tpdf images` and
 `tpdf hidden` expose document workflows to scripts; `tpdf path` puts the tool on your `PATH` on Windows,
@@ -847,7 +881,8 @@ the private key never leaves the operating system, and every signed, filled or r
 read back and checked before success is reported. Nothing is uploaded, and nothing goes online
 except the request `sign --timestamp` makes to the timestamp authority you name and, with
 `sign --long-term`, up to 16 revocation requests to the certificate authorities and a second
-request to the same timestamp authority for the archive timestamp.
+request to the same timestamp authority for the archive timestamp; `long-term` makes those
+revocation requests and that one request to the timestamp authority you name.
 
 **Installing it.** On macOS the tool is inside the application. Choose **Install
 command-line tool…** in the tpdf menu (or the command palette): it links
@@ -901,6 +936,7 @@ tpdf sign contract.pdf -o contract-signed.pdf --identity "Jane Doe" --visible \
     --anchor "Signature:" --offset 70,-20 --size 180,50 --contact "jane@example.com"
 tpdf sign contract.pdf -o contract-signed.pdf --identity "Jane Doe" --timestamp digicert
 tpdf sign contract.pdf -o contract-signed.pdf --identity "Jane Doe" --timestamp sectigo --long-term
+tpdf long-term received-signed.pdf -o received-kept.pdf --timestamp digicert --json
 tpdf verify contract-signed.pdf other.pdf
 tpdf verify --strict --json *.pdf
 tpdf info report.pdf
@@ -1066,6 +1102,31 @@ the page as it is displayed:
   message says to run it again without `--long-term`; a certificate its authority says is
   revoked is exit 3 too, and no advice to sign without the data. If tpdf's own worker fails
   while adding the data, nothing is written and the exit code is 4.
+- **`long-term <signed.pdf> -o <out.pdf> --timestamp <authority>`** adds long-term
+  validation data, and an archive timestamp, to a document that is already signed — by
+  anybody; no `--identity` and no key. It asks the certificate authorities about the
+  certificate of every signature and of every timestamp in the document, and the ones above
+  them, adds the answers and the certificates (the `/DSS`), and asks the authority
+  `--timestamp` names for a document timestamp over the whole (PAdES B-LTA). `--timestamp` is
+  required and takes what `sign --timestamp` takes; nobody is asked that the line does not
+  name or the document's certificates do not. The copy is the input with two revisions
+  appended, written only when tpdf's reading of it says every signature the input held is
+  still intact, with no page changed after it, and every certificate asked about reads `good`
+  from the document's own data; the written file is then read back and held to the same.
+  **All of the document's signatures are covered or nothing is written**, and each refusal
+  names the signature and the reason: no signature at all, an encrypted document, a
+  signature or timestamp that does not verify, a certification with no changes permitted, a
+  signer or timestamp authority this computer does not trust (nothing is fetched for it), a
+  certificate that publishes no revocation data, has expired or is revoked, an authority that
+  does not answer, or more than 8 certificates to ask about. Certificates are judged now: one
+  revoked since the signature was made is refused, also where the signature's timestamp is
+  earlier. Run on its own result, it adds a further archive timestamp and the data for the
+  previous one's authority, and writes nothing the document already holds --- **while the
+  certificates involved are still valid**: once a signer's or an authority's certificate has
+  expired the run is refused, so the next archive timestamp has to be added before that day.
+  A document that needs a password is refused as encrypted, and one whose validation data
+  already holds as much as tpdf reads is refused before anything is fetched. Whether this
+  computer trusts a signer is not changed by any of this, and `verify` still says it.
 - **`verify <file.pdf>...`** says, for every signature, whether it is intact and whether this
   computer trusts its signer, in the words of the application's properties dialog — and, for
   a signature carrying an RFC 3161 timestamp or a document timestamp, whether the timestamp
@@ -1646,9 +1707,9 @@ built.
 |---|---|
 | 0 | Done. For `verify`, every document was read, whatever the verdicts. |
 | 1 | `verify --strict`: a document with no signature, or a signature that is not both intact and trusted, or pages rewritten after the last signature. `redact`: the copy was written and could not be proved clean — it is kept, and every reason is reported. `search`: every document was read and nothing matched. `hidden`: text was found that a page does not show. `sign`: the copy was written, and its new signature — intact when tpdf checked it before writing — was not checked again in the written file, because the document's signatures together cover more data than tpdf checks at once (1 GiB for one document); the summary says so. |
-| 2 | The command line is malformed: a missing `-o` or `--values`, an output that names the input or the answers or regions file, a bad `--rect` or `--pages`, a `--timestamp` that is not a listed authority or an `http`/`https` address without a password in it, `--long-term` without `--timestamp`, nothing for `redact` to remove or `search` to find, a `--pattern` that does not compile or a query that can match nothing, an unknown option, or a `--password-env` naming a variable that is not set. |
-| 3 | Refused: an identity that is unknown, ambiguous or cannot sign; a document that cannot be read or signed; for `text`, `search`, `fields` and `fill`, a locked document; for `search`, more than 10,000 matches in one document; for `text`, a page past its end; for `fields` and `fill`, an XFA form; for `fill`, a signed document or answers it cannot write, with nothing written; for `sign --timestamp`, an authority that could not be reached, did not answer in time, declined, or answered with a timestamp that does not check out, with nothing written; for `sign --long-term`, a timestamp authority this computer does not trust, or revocation data or an archive timestamp that could not be had, does not check out, or says a certificate is revoked, with nothing written; for `redact`, a signed document without `--invalidate-signatures`, an XFA form, a regions file it cannot read, a page it cannot read, more than 500 matches, matches it cannot mark, or a document the removal cannot rewrite, with nothing written; an output that exists; a key the system would not use, or a prompt that was cancelled. |
-| 4 | tpdf failed: a worker died or did not answer, the certificate store could not be searched, or the written file did not read back as written — for `sign --long-term`, also the validation data tpdf built not reading back as it must, with nothing written; for `fill`, the copy is then removed; for `redact`, a copy that could not be read back or finished is removed. |
+| 2 | The command line is malformed: a missing `-o` or `--values`, an output that names the input or the answers or regions file, a bad `--rect` or `--pages`, a `--timestamp` that is not a listed authority or an `http`/`https` address without a password in it, `--long-term` without `--timestamp`, `long-term` without `--timestamp`, nothing for `redact` to remove or `search` to find, a `--pattern` that does not compile or a query that can match nothing, an unknown option, or a `--password-env` naming a variable that is not set. |
+| 3 | Refused: an identity that is unknown, ambiguous or cannot sign; a document that cannot be read or signed; for `text`, `search`, `fields` and `fill`, a locked document; for `search`, more than 10,000 matches in one document; for `text`, a page past its end; for `fields` and `fill`, an XFA form; for `fill`, a signed document or answers it cannot write, with nothing written; for `sign --timestamp`, an authority that could not be reached, did not answer in time, declined, or answered with a timestamp that does not check out, with nothing written; for `sign --long-term`, a timestamp authority this computer does not trust, or revocation data or an archive timestamp that could not be had, does not check out, or says a certificate is revoked, with nothing written; for `long-term`, a document with no signature, an encrypted or certified-against-change document, one that already carries as much validation data as tpdf reads, a signature that does not verify, a signer or timestamp authority this computer does not trust, or revocation data or an archive timestamp that could not be had, does not check out, or says a certificate is revoked, with nothing written; for `redact`, a signed document without `--invalidate-signatures`, an XFA form, a regions file it cannot read, a page it cannot read, more than 500 matches, matches it cannot mark, or a document the removal cannot rewrite, with nothing written; an output that exists; a key the system would not use, or a prompt that was cancelled. |
+| 4 | tpdf failed: a worker died or did not answer, the certificate store could not be searched, or the written file did not read back as written — for `sign --long-term`, also the validation data tpdf built not reading back as it must, with nothing written; for `long-term`, the same, and a written copy that does not read back as built, which is named and not to be relied on; for `fill`, the copy is then removed; for `redact`, a copy that could not be read back or finished is removed. |
 
 Errors are one sentence each on stderr. With **`--json`**, commands also return
 one JSON document on failure, including malformed arguments (2), refusals (3) and
@@ -1791,6 +1852,10 @@ it with `[Console]::OutputEncoding = [Text.Encoding]::UTF8` set if a name may ca
   and an image, the image has the left half of a wide rectangle or the top half of a tall
   one, and the words the other half; without words the image has the whole rectangle. The
   image keeps its proportions and is centred in its part.
+- `long-term`: `input`, `output`, `covered` (the fields validation data was added for:
+  every signature and timestamp the input held), `archive` (the field of the archive
+  timestamp added over the whole), `signatures` (every signature in the written file, read
+  back, the archive timestamp last) and `summary` (the sentence the application shows).
 - A signature: `field`; `document_timestamp` (`true` for an RFC 3161 document or archive
   timestamp, `false` for a document signature, including one with an attached timestamp); `signer` and `issuer` (from its certificate, empty when none could
   be read); `claimed_time` (the time the signer's computer gave; not checked);
@@ -1909,6 +1974,12 @@ certificate is being used now. Most of those services are plain HTTP as well. It
 when the timestamp authority's certificate chains to a root this computer trusts. It then asks
 the same timestamp authority a second time, for an archive timestamp over the signed document
 with that data: again a hash and a random number, nothing of the document.
+*Add long-term validation data…* makes the same two kinds of request for a document that is
+already signed: the certificate authorities of every signature's and timestamp's certificates
+are asked, each request carrying a certificate's serial number, and only for certificates
+that chain to a root this computer trusts; the timestamp authority you choose is then sent a
+hash of the document and a random number. The certificates in such a document are not yours,
+so their authorities learn that somebody is checking them now, from your address.
 Links in PDFs open in the browser only after confirmation, where the destination's
 privacy policy applies. Use **Disable automatic update checks** in
 the tpdf menu on macOS or command palette to remember an opt-out on this device. Manual
@@ -1946,11 +2017,10 @@ unbuilt while they shipped.
   reusable block is removed or cut by the same rules as one on the page. A picture is removed, bytes included, whether the page
   draws it or a reusable block on the page does; one the document draws in other places too
   is taken off the marked page only, and the report says it is still in the file.
-- Adding long-term-validation data, or a further archive timestamp, to a document that is
-  already signed, and certification signatures. Signing adds long-term validation data and an
-  archive timestamp when you ask for them with a timestamp; what is not built is adding them
-  later to a signature already in a document.
-  <!-- not-built: file.addValidationData -->
+- Certification signatures: a signature that states which changes a document permits
+  afterwards. tpdf reads a certification and says what it permits, signs a document that has
+  one without a visible appearance, and does not make one.
+  <!-- not-built: file.certifyDocument -->
 - General text editing: arbitrary fonts and layouts, adding glyphs to a document's own
   embedded font (new characters come from an installed copy of that font or from Noto),
   paragraph reflow and unsupported complex content streams.

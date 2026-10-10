@@ -392,6 +392,23 @@ impl DocumentGraph {
         crate::sign_dss::extend(&bytes, gathered, pages)
     }
 
+    /// What these bytes --- a document somebody has signed --- hold: their
+    /// signatures and the signatures' values. Uncached, and parsed strictly
+    /// by `sign_dss::survey` itself rather than read from the graph's own
+    /// parse: the question is whether a revision can be appended to exactly
+    /// these bytes.
+    ///
+    /// # Errors
+    ///
+    /// The bytes are unreadable. What `sign_dss::survey` refuses about the
+    /// document is in its answer.
+    pub fn survey_signatures(&self, pages: u32) -> Result<crate::sign_dss::Survey, String> {
+        let bytes = self
+            .bytes()
+            .ok_or_else(|| "the document's bytes could not be read".to_string())?;
+        Ok(crate::sign_dss::survey(&bytes, pages))
+    }
+
     /// Applies a plan to these bytes and serialises the whole document.
     ///
     /// The counterpart of [`DocumentGraph::append`] for every plan an append

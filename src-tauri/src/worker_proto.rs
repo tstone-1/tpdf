@@ -268,6 +268,17 @@ pub enum Request {
     /// written. It carries nothing; the answer is the revision, whose digest the
     /// app process has a timestamp authority stamp.
     PrepareDocumentTimestamp,
+    /// Read the signatures the mapped document already holds, and hand over
+    /// their values.
+    ///
+    /// Adding long-term validation data to a document that is already signed
+    /// (`longterm::existing`): the first question, before anything is fetched.
+    /// Here for [`Request::AppendValidation`]'s reason --- `sign_dss::survey`
+    /// parses the document --- and it carries nothing. The answer is what
+    /// `docinfo::scan` reads, each signature's CMS as the DER it is, and the
+    /// certificates the `/DSS` already carries: the app process finds in them
+    /// which certificates to ask the certificate authorities about.
+    SurveySignatures,
     /// Decode the image file handed over as this worker's second mapping.
     ///
     /// `sign --image`: a PNG or JPEG the reader named, decoded here because an
@@ -601,6 +612,9 @@ pub enum Reply {
     /// A `/DSS` revision and what the signatures read as with it appended.
     /// Boxed for [`Reply::Properties`]' reason: it carries signatures.
     Validated(Box<crate::sign_dss::Extended>),
+    /// The signatures a signed document holds, and their values. Boxed for
+    /// [`Reply::Properties`]' reason.
+    Surveyed(Box<crate::sign_dss::Survey>),
     /// How many bytes a rewrite wrote into the handed-over file.
     ///
     /// A length and nothing else: the document itself went down the output
@@ -1016,6 +1030,12 @@ mod tests {
                  document's pool",
             ),
             (
+                "SurveySignatures",
+                "asked by `save::InWorker` of a worker it spawned itself over a snapshot \
+                 of the signed document's bytes as they were read, which is the copy the \
+                 revisions are then built against",
+            ),
+            (
                 "SignatureImage",
                 "asked by `save::InWorker` of a worker it spawned itself with the image \
                  file as its second mapping, which no pooled worker has",
@@ -1371,6 +1391,16 @@ mod tests {
                 built_against: 777,
                 signatures: Vec::new(),
             })),
+            Reply::Surveyed(Box::new(crate::sign_dss::Survey {
+                refused: Some("encrypted".into()),
+                signatures: Vec::new(),
+                values: vec![("Signature1".into(), vec![48, 3])],
+                store: vec![vec![48, 0]],
+                complete: true,
+                held: [1, 2, 0],
+                store_cut: false,
+                certified: 2,
+            })),
             // The second confusable pair, and the same trick: `Reread` and
             // `Rewrote` are both one `usize`, so given the same number only the
             // tag separates a page count from a byte count.
@@ -1414,6 +1444,7 @@ mod tests {
                 | Reply::SignatureImage(_)
                 | Reply::SignaturePreview(_)
                 | Reply::Validated(_)
+                | Reply::Surveyed(_)
                 | Reply::Reread(_)
                 | Reply::Rewrote(_)
                 | Reply::Verified(_)

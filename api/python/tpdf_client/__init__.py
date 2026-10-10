@@ -746,3 +746,37 @@ class Tpdf:
         if force:
             args.append('--force')
         return self.run('sign', *args, '--', source).typed
+
+    def long_term(
+        self, source: str | os.PathLike[str], output: str | os.PathLike[str], *,
+        timestamp: str, force: bool = False,
+    ) -> reports.LongTermReport:
+        """Add long-term validation data to a document that is already signed.
+
+        No identity and no key: the document was signed by somebody, with
+        anything. The copy at output is source with the certificate
+        authorities' answers about every signature's and timestamp's
+        certificates, and an archive timestamp over the whole from timestamp,
+        a CLI authority name or URL. timestamp is required and explicitly
+        enables the network requests: to that authority, and to the revocation
+        hosts the document's certificates name, which are asked only for
+        certificates that chain to a root this computer trusts.
+
+        Every signature in the document is covered or nothing is written. A
+        refusal raises CommandError and names the signature and the reason: no
+        signature, an encrypted document, a signature that does not verify, a
+        certification with no changes permitted, a signer or authority this
+        computer does not trust, or revocation data that cannot be had or says
+        a certificate is revoked. report['covered'] lists the fields the data
+        was added for and report['archive'] the new timestamp's field.
+
+        Running it again on its own result adds a further archive timestamp.
+        That works only while every certificate involved is still valid: once
+        one has expired the run is refused.
+        """
+        if not isinstance(timestamp, str) or not timestamp.strip():
+            raise ValueError('timestamp must name the timestamp authority to ask')
+        args = ['-o', os.fspath(output), '--timestamp', timestamp]
+        if force:
+            args.append('--force')
+        return self.run('long-term', *args, '--', source).typed

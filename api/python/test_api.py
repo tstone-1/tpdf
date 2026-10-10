@@ -211,7 +211,7 @@ class ClientTests(unittest.TestCase):
 
     def test_external_workflow_and_discovery(self):
         commands = {c['name'] for c in self.pdf.help()['commands']}
-        self.assertTrue({'edit', 'comments', 'text-runs', 'redact', 'fill', 'sign', 'search', 'ocr', 'protect', 'unprotect', 'images', 'compress', 'form', 'hidden'} <= commands)
+        self.assertTrue({'edit', 'comments', 'text-runs', 'redact', 'fill', 'sign', 'search', 'ocr', 'protect', 'unprotect', 'images', 'compress', 'form', 'hidden', 'long-term'} <= commands)
         self.assertEqual([c['name'] for c in self.pdf.help('search')['commands']], ['search'])
         output = self.root / 'changed.pdf'
         self.pdf.edit(self.source, output, [
@@ -500,6 +500,41 @@ class ClientTests(unittest.TestCase):
             client.sign('--force', 'unused.pdf', identity=identity)
         self.assertEqual(caught.exception.exit_code, 3)
         self.assertFalse((self.root / 'unused.pdf').exists())
+
+    def test_long_term_names_its_authority_and_refuses_without_writing(self):
+        # The line the client builds, and that it asks for no identity.
+        with patch('tpdf_client.subprocess.Popen') as popen:
+            process = popen.return_value
+            process.returncode = 0
+            process.communicate.return_value = (b'{"schema":1,"command":"long-term"}', b'')
+            self.pdf.long_term('--signed.pdf', '-kept.pdf', timestamp='digicert', force=True)
+            self.assertEqual(popen.call_args.args[0][1:], [
+                'long-term', '--json', '-o', '-kept.pdf', '--timestamp', 'digicert', '--force',
+                '--', '--signed.pdf'])
+            popen.reset_mock()
+            for timestamp in ['', '   ', None]:
+                with self.subTest(timestamp=timestamp), self.assertRaises(ValueError):
+                    self.pdf.long_term('signed.pdf', 'kept.pdf', timestamp=timestamp)
+            popen.assert_not_called()
+        # Through the tool: an address it does not ask is a malformed line, and
+        # a document nobody signed is refused before anybody is asked. The
+        # address is one nothing listens at, and nothing is sent to it.
+        original = self.source.read_bytes()
+        output = self.root / 'kept.pdf'
+        with self.assertRaises(CommandError) as caught:
+            self.pdf.long_term(self.source, output, timestamp='ftp://invalid.example')
+        self.assertEqual(caught.exception.exit_code, 2)
+        with self.assertRaises(CommandError) as caught:
+            self.pdf.long_term(self.source, output, timestamp='http://127.0.0.1:9/')
+        self.assertEqual(caught.exception.exit_code, 3)
+        self.assertIn('has no signature', str(caught.exception))
+        self.assertFalse(output.exists())
+        output.write_bytes(b'EXISTING OUTPUT')
+        with self.assertRaises(CommandError) as caught:
+            self.pdf.long_term(self.source, output, timestamp='http://127.0.0.1:9/')
+        self.assertEqual(caught.exception.exit_code, 3)
+        self.assertEqual(output.read_bytes(), b'EXISTING OUTPUT')
+        self.assertEqual(self.source.read_bytes(), original)
 
     def test_signing_options_and_discovery_use_the_json_contract(self):
         with patch('tpdf_client.subprocess.Popen') as popen:

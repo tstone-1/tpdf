@@ -2637,6 +2637,15 @@ pub(crate) fn run_prepare_document_timestamp(
     document.graph().prepare_document_timestamp()
 }
 
+/// Reads the signatures the mapped document already holds, with their
+/// values, on the render thread. See
+/// `crate::worker_proto::Request::SurveySignatures`.
+pub(crate) fn run_survey_signatures(
+    document: &OpenDocument,
+) -> Result<crate::sign_dss::Survey, String> {
+    document.graph().survey_signatures(document.page_count())
+}
+
 /// Draws a visible signature's appearance before anything is signed.
 ///
 /// `sign_prepare::preview` builds a one-page file holding exactly the revision

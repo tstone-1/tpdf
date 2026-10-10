@@ -66,6 +66,7 @@ mod hidden;
 pub mod identities;
 mod images;
 pub mod info;
+pub mod long_term;
 mod ocr;
 mod pages;
 pub mod path;
@@ -496,6 +497,7 @@ pub const COMMANDS: &[Registered] = &[
     protect::UNPROTECT,
     images::COMMAND,
     hidden::COMMAND,
+    long_term::COMMAND,
     path::COMMAND,
     completions::COMMAND,
 ];

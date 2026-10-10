@@ -64,6 +64,7 @@ __all__ = [
     "IntegrityVerdict",
     "IntegrityWhy",
     "ListedPage",
+    "LongTermReport",
     "MetadataField",
     "NotEditable",
     "NotUsableIdentity",
@@ -954,6 +955,26 @@ class SignReport(TypedDict):
     summary: str
 
 
+class LongTermReport(TypedDict):
+    """`long-term --json`."""
+
+    schema: int
+    command: str
+    # The signed document, as given.
+    input: str
+    # The copy with the data added, as given.
+    output: str
+    # The fields validation data was added for: every signature and timestamp
+    # the input held.
+    covered: list[str]
+    # The field of the archive timestamp added over the whole.
+    archive: str
+    # Every signature in the written file, read back after writing.
+    signatures: list[Signature]
+    # The application's closing sentence, word for word.
+    summary: str
+
+
 # --- info ------------------------------------------------------------------
 
 
@@ -1373,6 +1394,7 @@ REPORTS: dict[str, type] = {
     "compress": CompressReport,
     "form": FormReport,
     "info": InfoReport,
+    "long-term": LongTermReport,
     "ocr": OcrReport,
     "pages": PagesReport,
     "protect": ProtectReport,

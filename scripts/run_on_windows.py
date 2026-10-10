@@ -30,11 +30,17 @@ changed; only its object store gains the commits sent. The first run is a cold
 build and takes a quarter of an hour or more. Later runs are incremental.
 
 WHAT THE HOST HAS TO BE. A Windows machine with git, Rust, Node and Python on
-its `PATH`, whose SSH login shell is WSL's bash. That shell is why everything
-below goes in on standard input: `wsl.exe` as a login shell takes no command,
-and a Windows program started from it reads the rest of standard input ---
-which is the script --- unless its own is redirected. Its output is written to
-a file and read back by a second connection for the same reason.
+its `PATH`, whose SSH login shell is WSL's bash or Windows PowerShell. The
+script asks the host which one it is before it sends anything, because what
+suits one is noise to the other: until 2026-10-10 it assumed bash, and a
+PowerShell host read the base64 of the bundle as one command per line.
+
+Under bash everything goes in on standard input: `wsl.exe` as a login shell
+takes no command, and a Windows program started from it reads the rest of
+standard input --- which is the script --- unless its own is redirected. Its
+output is written to a file and read back by a second connection for the same
+reason. Under PowerShell the script and the bundle are copied with `scp` and
+the run is one command, with the same result file read back the same way.
 
 WHAT THE ANSWER MEANS. Exit 0 only when the remote run printed its own exit
 marker and that marker is 0. A connection that fails, a build that does not
@@ -190,12 +196,93 @@ def bash(clone: str, sha: str, suite: str, bundle: bytes | None) -> str:
     return "\n".join(lines) + "\n"
 
 
+SSH_OPTIONS = ["-o", "ConnectTimeout=15", "-o", "BatchMode=yes", "-o", "ServerAliveInterval=30"]
+
+
 def ssh(host: str, script: str, timeout: float) -> subprocess.CompletedProcess[str]:
+    """Runs `script` as the login shell's standard input."""
     return subprocess.run(
-        ["ssh", "-T", "-o", "ConnectTimeout=15", "-o", "BatchMode=yes",
-         "-o", "ServerAliveInterval=30", host],
+        ["ssh", "-T", *SSH_OPTIONS, host],
         input=script, capture_output=True, text=True, timeout=timeout,
     )
+
+
+def ssh_command(host: str, command: str, timeout: float) -> subprocess.CompletedProcess[str]:
+    """Runs one command. Only a PowerShell login shell takes one."""
+    return subprocess.run(
+        ["ssh", "-T", *SSH_OPTIONS, host, command],
+        stdin=subprocess.DEVNULL, capture_output=True, text=True, timeout=timeout,
+    )
+
+
+SHELL_PROBE = 'echo "TPDF-SHELL [$BASH_VERSION] [$PSEdition]"\nexit\n'
+
+
+def shell_named(output: str) -> str | None:
+    """`bash` or `powershell` from the probe's answer, or `None` for neither.
+
+    An interactive PowerShell prints the line it was given before it runs it,
+    so the answer is the line where neither name is still a variable.
+    """
+    for bash_version, edition in re.findall(r"TPDF-SHELL \[([^\]]*)\] \[([^\]]*)\]", output):
+        if "$" in bash_version or "$" in edition:
+            continue
+        if bash_version and not edition:
+            return "bash"
+        if edition and not bash_version:
+            return "powershell"
+    return None
+
+
+def run_under_bash(host: str, clone: str, sha: str, suite: str, bundle: bytes | None,
+                   timeout: float) -> subprocess.CompletedProcess[str] | str:
+    """The result file's text, or the connection that failed."""
+    ran = ssh(host, bash(clone, sha, suite, bundle), timeout)
+    if ran.returncode != 0:
+        return ran
+    return ssh(host, f'cat "{wsl_path(clone)}-check-run/result.txt"\n', 120).stdout
+
+
+def run_under_powershell(host: str, clone: str, sha: str, suite: str, bundle: bytes | None,
+                         timeout: float) -> subprocess.CompletedProcess[str] | str:
+    """The same run where the login shell is PowerShell: files by `scp`.
+
+    Each command ends in `exit 0`: `powershell -c` exits 1 when its last
+    statement failed, which removing a file that is not there does, and the
+    verdict is the run's own marker in the result file and never this exit.
+    """
+    if "'" in clone:
+        raise SystemExit("[FAIL] --clone with a single quote in it cannot be quoted for PowerShell")
+    run = clone.rstrip("\\/") + "-check-run"
+    made = ssh_command(
+        host,
+        f"New-Item -ItemType Directory -Force '{run}' | Out-Null; "
+        f"Remove-Item '{run}\\result.txt','{run}\\tree.bundle' -ErrorAction SilentlyContinue; exit 0",
+        120,
+    )
+    if made.returncode != 0:
+        return made
+    with tempfile.TemporaryDirectory() as scratch:
+        files = [Path(scratch) / "run.ps1"]
+        files[0].write_text(powershell(clone, sha, suite), encoding="ascii", newline="\r\n")
+        if bundle is not None:
+            files.append(Path(scratch) / "tree.bundle")
+            files[1].write_bytes(bundle)
+        copied = subprocess.run(
+            ["scp", "-q", *SSH_OPTIONS, *map(str, files), f"{host}:{run.replace(chr(92), '/')}/"],
+            stdin=subprocess.DEVNULL, capture_output=True, text=True, timeout=600,
+        )
+    if copied.returncode != 0:
+        return copied
+    ran = ssh_command(
+        host,
+        f"powershell -NoProfile -ExecutionPolicy Bypass -File '{run}\\run.ps1' "
+        f"*> '{run}\\result.txt'; exit 0",
+        timeout,
+    )
+    if ran.returncode != 0:
+        return ran
+    return ssh_command(host, f"Get-Content '{run}\\result.txt'", 120).stdout
 
 
 def verdict(output: str) -> int:
@@ -226,16 +313,22 @@ def main() -> int:
     sent = "already on origin/main" if bundle is None else f"{len(bundle):,} bytes of commits sent"
     print(f"[..] {what} ({sha[:9]}, {sent}) on {args.host}: suite {args.suite}")
     try:
-        ran = ssh(args.host, bash(args.clone, sha, args.suite, bundle), args.timeout)
-        if ran.returncode != 0:
-            print(f"[FAIL] the connection to {args.host} ended with {ran.returncode}: "
-                  f"{(ran.stderr or ran.stdout).strip()[-400:]}")
+        asked = ssh(args.host, SHELL_PROBE, 60)
+        shell = shell_named(asked.stdout)
+        if shell is None:
+            print(f"[FAIL] {args.host} did not say whether its login shell is bash or PowerShell, "
+                  f"so nothing was sent: {(asked.stderr or asked.stdout).strip()[-400:]}")
             return 2
-        read = ssh(args.host, f'cat "{wsl_path(args.clone)}-check-run/result.txt"\n', 120)
+        run = run_under_bash if shell == "bash" else run_under_powershell
+        read = run(args.host, args.clone, sha, args.suite, bundle, args.timeout)
+        if not isinstance(read, str):
+            print(f"[FAIL] the connection to {args.host} ended with {read.returncode}: "
+                  f"{(read.stderr or read.stdout).strip()[-400:]}")
+            return 2
     except subprocess.TimeoutExpired:
         print(f"[FAIL] no answer from {args.host} within {args.timeout:.0f} s")
         return 2
-    output = read.stdout.replace("\r", "")
+    output = read.replace("\r", "")
     for line in output.splitlines():
         if not line.startswith(MARKER):
             print(f"     {line}")

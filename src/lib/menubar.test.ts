@@ -252,7 +252,9 @@ describe("buildMenu", () => {
       "command",
       "command",
       "separator",
-      // Sign document, and Sign in the signature field.
+      // Sign document, Sign in the signature field, and Add long-term
+      // validation data.
+      "command",
       "command",
       "command",
       "separator",

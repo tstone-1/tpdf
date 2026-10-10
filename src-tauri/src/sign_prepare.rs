@@ -691,7 +691,7 @@ fn certified_without_changes(document: &Document) -> bool {
 
 /// The DocMDP level the catalog's certification grants, or zero when the
 /// document is not certified.
-fn certification(document: &Document) -> u8 {
+pub(crate) fn certification(document: &Document) -> u8 {
     let Ok(catalog) = document.catalog() else {
         return 0;
     };

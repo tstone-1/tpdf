@@ -2754,6 +2754,20 @@ pub trait Verifier: Send {
     /// What `sign_prepare::prepare_document_timestamp` refuses, or the worker
     /// failing.
     fn document_timestamp(&self, signed: &[u8]) -> Result<crate::sign_prepare::Unsigned, String>;
+
+    /// What `signed` --- a document somebody has already signed, as it was
+    /// read from disk --- holds: its signatures, and their values
+    /// (`sign_dss::survey`). The first question of adding long-term
+    /// validation data to it, asked before anything is fetched.
+    ///
+    /// **A parse of the document, so it is asked of a worker** wherever there
+    /// is one, for [`Verifier::validation`]'s reason.
+    ///
+    /// # Errors
+    ///
+    /// The worker failing. What the document itself rules out --- it is
+    /// encrypted, it does not parse --- is `Survey::refused`, not an error.
+    fn survey(&self, signed: &[u8]) -> Result<crate::sign_dss::Survey, String>;
 }
 
 /// Re-reads in the coordinator, which is the process that just did the writing.
@@ -2813,6 +2827,16 @@ impl Verifier for Here {
 
     fn document_timestamp(&self, signed: &[u8]) -> Result<crate::sign_prepare::Unsigned, String> {
         crate::sign_prepare::prepare_document_timestamp(signed.to_vec(), None)
+    }
+
+    fn survey(&self, signed: &[u8]) -> Result<crate::sign_dss::Survey, String> {
+        // The page count is the scan's to report and nobody's to read here,
+        // and a file that does not parse is the survey's own refusal.
+        let pages = reread_pages(signed, None)
+            .ok()
+            .and_then(|pages| u32::try_from(pages).ok())
+            .unwrap_or(0);
+        Ok(crate::sign_dss::survey(signed, pages))
     }
 }
 

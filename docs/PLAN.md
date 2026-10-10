@@ -16006,8 +16006,9 @@ and the order is the order in which a claim can be made honestly.
    PAdES B-LT --- is done 2026-09-28** (*Long-term validation data when signing*, below).
    **Step 3 is complete up to B-LTA** since 2026-09-28 (*Archive timestamps*, below): a
    long-term signing ends with an archive timestamp over the whole, and the reader judges a
-   timestamp authority at the moment a later archive attests. What is not built is adding
-   validation data, or a further archive timestamp, to a signature already in a document.
+   timestamp authority at the moment a later archive attests. **Adding validation data, or a
+   further archive timestamp, to a document that is already signed is done 2026-10-10**
+   (*Validation data for a document that is already signed*, below).
 
 #### Is the signature intact --- done 2026-09-26
 
@@ -17501,8 +17502,8 @@ visible answer, the backend's authority, *try again* with the authority, and the
 not-built line.
 
 **Not done.** PAdES B-LTA: archive timestamps over the validation data, written or read
-(done since, *Archive timestamps*, below). Adding validation data to a signature already in a document, which the README lists as not
-built. Revocation of the certificates above the signer's and the authority's is gathered,
+(done since, *Archive timestamps*, below). Adding validation data to a signature already in a document, which the README listed as not
+built (done since, *Validation data for a document that is already signed*, below). Revocation of the certificates above the signer's and the authority's is gathered,
 checked and written, and judged by the reader since *The whole chain*, below. A signer certificate
 from a real CA, measured end to end. Windows: the code is the same and `scripts/check_windows.py`
 compiles it; no request has been made from a Windows machine. The window's flow with a real
@@ -17747,8 +17748,193 @@ the same redundancy and was deleted rather than tested. Three earlier anchors re
 **Not done.** Adding a further archive timestamp, with the validation data for the previous
 archive's authority, to a document already archived: what keeps a document checkable past the
 archive authority's own certificate, and the next step if documents are kept for decades.
-Adding validation data to a signature already in a document. A Windows run against the real
+Adding validation data to a signature already in a document. (Both done since, *Validation
+data for a document that is already signed*, below.) A Windows run against the real
 authorities; `scripts/check_windows.py` compiles it.
+
+#### Validation data for a document that is already signed --- done 2026-10-10
+
+Phase 6 step 3's remainder: what a long-term signing does for the signature it has just made,
+done **afterwards, for a document somebody else signed**. *Add long-term validation data…*
+(`file.addValidationData`) in the window, `tpdf long-term <signed.pdf> -o <out.pdf> --timestamp
+X` from a terminal. The copy is the original with two revisions after it: a `/DSS` holding the
+certificates and revocation data for every signature's and every timestamp's chain, and a
+document timestamp over the whole --- PAdES B-LTA reached after the fact. Run on its own
+result it adds the data for the previous archive's authority and a further archive, which
+closes the *not done* of *Archive timestamps*.
+
+| Half | Where | What it does |
+|---|---|---|
+| What the document holds | worker, `sign_dss::survey` (`Request::SurveySignatures`, `save::Verifier::survey`) | `docinfo::scan` of the bytes as read, each signed field's `/Contents` as DER (`docinfo::signature_values`, the scan's walk and bounds), the `/DSS`'s certificates, and whether every field and value was reached. A document that is encrypted, does not parse strictly or carries more than 4 MiB of values is refused **in the answer**, so that a worker that died is told apart from a document that cannot be done. |
+| Whether it can be done at all | app process, `longterm::existing::held` | No signature; a survey not complete, or values that do not match the signed fields name for name; a certification with no changes permitted; a signature or a signature's timestamp not `intact`; signatures already past the hashing budget. Each a refusal before anybody is asked. |
+| Whose chains may be asked about | app process, `existing::plan_one`, `longterm::vouched_for` | **Every leaf**: a signature's signer for signing documents, its token's authority and a document timestamp's authority for timestamping, each trusted by the OS store now and offline, with only the chain the store assembled admitted above it. |
+| What to ask about | app process, `longterm::walked` | The signing's own walk, taken out of `longterm::planned` so that both call one function; each certificate once however many signatures name it; at most 8 in one run. |
+| Fetching and checking | app process, `longterm::gather` | Unchanged: OCSP first, the list when no responder answered, every answer judged at the present. |
+| The two revisions | worker, `sign_dss::extend`, `sign_prepare::prepare_document_timestamp` | Unchanged, over a snapshot of the bytes read. The archive timestamp's token is sealed only if its authority is trusted for timestamping. |
+| The check before writing | app process, `existing::covered` | The worker's reading of the result against its reading of the original, signature by signature: there by name and by where its range ends, intact, its appendix read, no page rewritten and no object removed after it that was not before, its certificate, its token authority's and every certificate above either `good` (`longterm::leaves_good`, `chains_good`, the two halves of `longterm::check`). |
+| The write and the read-back | `commands::validation::finish`, `save::write_signed` | A new file; a fresh worker reads it, and `existing::read_back` holds it to `covered` again and to an intact archive timestamp over the whole file. |
+| The window | `validationdata.ts`, `App.svelte` | Unsaved edits and a document with no signature are told before any dialog; one dialog names the timestamp authority and says who is asked; the save panel; the backend's sentence. |
+
+Decisions taken in building it, each with its reason:
+
+- **A command of its own, `tpdf long-term`, not a mode of `sign`.** `sign` makes a signature
+  and requires `--identity`, a key and the OS's consent; this makes none and works on a
+  document somebody else signed. A flag on `sign` would have needed every one of its required
+  arguments made optional for one mode. The word is `sign --long-term`'s, because it is the
+  same data added later. `--timestamp` is required: the archive timestamp is half of what is
+  added, and nobody is asked who was not named.
+- **All of the document's signatures, or nothing.** The archive timestamp covers the whole
+  file, and a reader takes a document carrying one as kept for the long term. A partial
+  result --- data for the signatures that could be covered, silence about the one that could
+  not --- would be reported by other readers as B-LTA for the covered ones and would look, at
+  a glance at the file, like a document that had been taken care of. The cost is real: a
+  document with one self-made signature beside a qualified one cannot be done at all. It is
+  the smallest safe version, and the alternative is the owner's call (*Not done*).
+- **Every leaf is gated by the OS store, the signer included.** While signing, the signer's
+  certificate comes from the reader's key store; here it comes from the document, with the
+  addresses it names. `docs/THREAT-MODEL.md` §T10 has the argument and the measurement.
+- **The app process reads the signature values; the worker does not plan.** The worker has
+  no network, so the app process has to decide whom to ask, and a decision it took from the
+  worker would be the worker's: a worker a document had taken over could name any address.
+  So the worker hands over DER and the gate runs where the request is made --- with the
+  parsers and bounds a timestamp token from the network is already read with. Residual 37.
+- **Judged now, as while signing.** `gather` judges each answer at the present and refuses
+  anything but `good`. A certificate revoked after the signature's timestamp --- which the
+  reader would not count against the signature --- is refused here too: the data that says so
+  is data a reader has to weigh, and judging answers at each signature's own moment would
+  have been a second judging rule beside the signing's. An expired certificate is refused by
+  the gate, since the store vouches for nothing out of its dates.
+- **A certification with no changes permitted is refused.** `sign_prepare::build` refuses
+  any further signature field on such a document, and a document timestamp is one. PDF 2.0's
+  DocMDP rules are recalled as excepting `/DSS` and document-timestamp updates from the
+  restriction; the standard's text was not re-read for this, and no reader has been measured
+  on a `/P 1` document extended this way. Refused rather than guessed; levels 2 and 3 are
+  covered, as an invisible signature on them is.
+- **`/VRI` is still not written**, for the reason *Long-term validation data when signing*
+  gives; an earlier `/DSS` is carried into the new one key for key, its `/VRI` included,
+  and an entry it already holds byte for byte is not written again.
+- **No second implementation.** `longterm::planned`'s loop became `longterm::walked`,
+  `longterm::check`'s two rules became `leaves_good` and `chains_good`, `vouched`'s naming
+  became `unvouched`, and `vouched_under` gained a purpose (`vouched_for`). The existing
+  module's tests and mutation anchors are unchanged.
+- **The survey is complete only if the walk says so.** A first version also read four of the
+  scan's `Limits`; a value that cannot be read sets one of them and the walk's own flag, so
+  neither clause could fail alone, and the reads that remained after the gate (`cms`, the
+  token) refuse the same documents with a better sentence. They were deleted, not tested.
+- **The window's authority is remembered under its own key** (`tpdf.validationAuthority`).
+  A signing's remembered choice is *none* until the reader chooses one there, and choosing an
+  authority for this must not make the next signing ask a server by default.
+- **The summary sentence is Rust's alone** (`words::after_long_term`), sent to the window as
+  the command's reply: one implementation, no TypeScript port to hold equal.
+- **Zero packages.**
+
+**Measured**, macOS arm64 (macOS 27.0), 2026-10-10, offline: every test is against the fake
+PKI on 127.0.0.1 or synthetic readings, and no real authority was asked.
+`longterm::existing::tests` signs documents with the test signer --- timestamped, not
+timestamped, twice --- and hands them to `existing::add` as bytes: the data and the archive
+written and read back `good`; a signature with no timestamp of its own; a second run on the
+first one's result, every `/DSS` entry of the first still there; each certificate asked once
+however many signatures name it; and every refusal, with the fake PKI's request log empty
+where nothing may be fetched --- no signature, an encrypted document opened or not, a
+signature that does not verify, a signer and an authority not trusted, a self-made second
+signature, data that cannot be had, a revoked certificate, an untrusted archive authority, a
+survey not complete, a certification, the hashing budget before fetching and before writing,
+a worker that died, and a result in which an earlier signature reads differently in each of
+the ways `covered` looks for. `sign_dss::tests` has the survey and the walk's three bounds,
+`commands::validation::tests` the shared tail from a signed file to the sentence, `cli::tests`
+the tool's line and exit codes, and `validationdata.test.ts` the window's order and its
+dialog. `tests/cli.rs` runs it **through real sandboxed workers**: a document signed by the
+tool, then `long-term` on it, the built tool and the in-process reader agreeing on the
+result, a second run, and each refusal --- the encrypted and the `/P 1` fixtures pyHanko
+wrote included --- exit 3 with nothing written and nothing fetched.
+
+**Oracles on minted data** (`write_documents_with_data_added_for_other_readers`, an ignored
+instrument, `docs/VERIFICATION.md`). pyHanko 0.37.0 with the two test roots, no fetching,
+revocation data required: each earlier signature reads *INTACT:TRUSTED,
+EXTENDED_WITH_LTA_UPDATES, ACCEPTABLE_MODIFICATIONS* --- with *TIMESTAMP_TOKEN<INTACT:TRUSTED>*
+where it carries one --- modification level *LTA_UPDATES*, after one run and after two; the
+newest archive timestamp covers *ENTIRE_FILE*; the same signatures before anything was added
+cannot be validated at all under those settings, so the trust comes from what was added. The
+newest archive timestamp of a document whose signature had no timestamp reads
+*INTACT:UNTRUSTED* after one run and *TRUSTED* after two: its authority's data is added by
+the next run, by decision (*Archive timestamps*). `qpdf --check` 12.4.0: no syntax or stream
+errors (the test page's missing `/Resources`, as before). **pyHanko's EN 319 102-1 long-term
+procedure, `ades_lta_validation`, is no oracle here and no agreement is claimed on it**: it
+answers *INDETERMINATE, NO_POE* for these files and for a document tpdf made long-term while
+signing alike, and its log names the reason as no revocation information for the test root
+in its time-sliding step --- the minted PKI again, as *The whole chain* found. For the
+signature with no timestamp of its own it answers *SIG_CONSTRAINTS_FAILURE*, which was not
+diagnosed.
+
+**Proved able to fail**: every refusal above has a mutation in `scripts/mutate_rust.py`
+(`existing:`, `values:`, `validation:`, and the new `dss:`, `cli:` and `words:` entries) or
+`scripts/mutate_frontend.py` (`validation-data:`), each seen red by hand against the test it
+names --- applied, the test run, the file restored. The harnesses themselves were not run:
+another writer was in the checkout. One of them did not compile as first written and was
+rewritten; none survived. Three guards were found unfalsifiable while the mutations were
+being written and were deleted rather than tested (the survey's reads of the scan's limits,
+a second look at a document timestamp's own verdict, the dialog's first of two checks for
+no authority).
+
+**Not done.**
+- **Covering some signatures of a document and not others.** All or nothing is the smallest
+  safe version; a document with one signature that can never be covered cannot be done at
+  all. Whether to offer the rest, and how the result then says what it left out, is the
+  owner's decision.
+- **A certification with no changes permitted**, until a reader has been measured on it.
+- **A certificate revoked after its signature's timestamp, and an expired one.** Both are
+  refused; the first could be preserved by judging each answer at the signature's own
+  attested moment and writing data that says *revoked after*.
+- **Issuers the document carries only in its `/DSS`** are not offered to the OS when a signer
+  or authority is vouched for (`trust::of_blob_with_chain` takes the value's own set), so
+  such a signer reads as not trusted here where the properties dialog, which offers them,
+  reads it trusted. Refused, the safe direction.
+- **A real certificate authority and a real timestamp authority.** Nothing here was run
+  against one; the signing's own real-server measurements cover the fetching and the
+  archive request, which are the same code, and not the gate over a real signer's chain.
+- **The window.** No window check drives the command: it needs a signed document whose
+  signer the system store trusts, and the network. `viewercheck.ts` covers the palette
+  reaching the action and nothing after it; the Tauri command's own body is not run by any
+  test, as `sign_document`'s is not.
+- **Windows.** The code is the same; nothing was run or compiled there.
+- **A usage-rights signature that is no field of the form** (`/Perms /UR3`) is not surveyed:
+  "every signature" is every signature field.
+- **A later run after a certificate has expired.** The gate vouches for nothing out of its
+  dates, so the further archive timestamp that keeps a document checkable past an
+  authority's certificate has to be added while that certificate is still valid; a run
+  after that day is refused (`a_later_run_is_refused_once_a_certificate_has_expired`), and
+  every text that offers the second run says so. Widening the gate to "trusted at the
+  earlier archive's moment" is the change that would lift it.
+
+**Changed after an independent read-only review, 2026-10-10**, each with a test and a
+mutation that proved it:
+
+- **The survey's bounds are held in the app process** (`existing::bounded`), before any value
+  is parsed: until then the worker held its own answer to them and this side took its word.
+  The `/DSS`'s certificates are parsed once, and candidates are told apart by a set.
+- **No `/DSS` entry is written twice** (`sign_dss::append`), and nothing held is rewritten or
+  dropped. tpdf's reader takes a bounded number of streams of each kind and reads every
+  answer as not checked past it, so a run on a document with no room left is refused before
+  anything is fetched (`existing::room`, `Refusal::Full`), with the most a run can add: the
+  certificates the `/DSS` does not hold, and a response and a list for every certificate
+  asked about. **The signing path shares the writer and so the first half; it has no survey
+  and so not the second**: signing a document whose `/DSS` is already at the reader's bound
+  still ends as *tpdf's own check did not pass*, after the certificate authorities were
+  asked and before the archive timestamp is.
+- **A `/DSS` the writer cannot extend is refused in the survey**, not after the fetching.
+- **A document that needs a password is the encrypted refusal through a real worker**: a
+  worker started without the password answers that it is locked, and that was read as a
+  worker failing (exit 4). The unit test had passed through `save::Here`, which opens
+  nothing; `tests/cli.rs` now runs the fixture that needs a password.
+- **The catalog's certification decides, not only a field's.** A certification that is no
+  field of the form was not seen until the document timestamp's revision refused it, after
+  the fetching; the survey now carries `sign_prepare::certification`. `/P 1.0` reads as 1
+  (`docinfo::certification_of`), here and for signing.
+- **The window checks the original's own name up front** (`refuse_same_file`) and says it is
+  waiting while the backend works (`validationdata.ts` `WAITING`).
+- **The sentence names an earlier document timestamp as a timestamp.**
+- **A form of exactly as many signatures as are read, with other fields after them,** is
+  complete (`docinfo::signature_values`).
 
 ### Cross-cutting
 

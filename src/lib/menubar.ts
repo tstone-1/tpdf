@@ -157,9 +157,11 @@ export const MENU_LAYOUT: LayoutSection[] = [
       SEPARATOR,
       // A group of its own: every item above writes the document's content
       // somewhere, and this one adds a signature to it --- the one write whose
-      // result a reader will hand to somebody else as proof.
+      // result a reader will hand to somebody else as proof. The third keeps
+      // the signatures a document already has checkable, and makes none.
       "file.signDocument",
       "file.signField",
+      "file.addValidationData",
       SEPARATOR,
       "file.print",
       SEPARATOR,

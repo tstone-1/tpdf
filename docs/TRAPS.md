@@ -282,6 +282,7 @@ hop through the index.
 - A rule for what reaches a changed object counts the legitimate change as well
 - lopdf leaves a dictionary with a /Linearized key out of what it writes, with no error
 - A name is not an identity for the thing that was just written
+- A bound the worker holds on its own answer is the worker's word, and the parse it bounds is on the other side
 
 ## Tauri, the webview and startup
 - `AppHandle::exit` does not set the process's exit code
@@ -846,6 +847,7 @@ hop through the index.
 - A fixture rewritten to reach one parser leaves the standard, and every other reader then judges it differently
 - A fake server that answers once encodes how many requests the code makes
 - An empty Private DICT reads the same wherever its offset points
+- A fixture written through the library spells a value the library's way, and the branch for the other spelling is never read
 
 ## Documents as controls
 - A mitigation present and disclaimed is quieter than one claimed and absent
@@ -889,6 +891,7 @@ hop through the index.
 - The decision was right, its cost basis had doubled, and the share was the half that had not moved
 - A YAML comment binds to nothing, so an inserted step can steal the one below it
 - A cache whose entries can never go stale still needs the argument written down
+- Building the last feature a checked list calls unbuilt takes away what the list's own control stands on
 
 ---
 ### PDFium: removed objects come back unless you regenerate the content stream
@@ -26353,3 +26356,55 @@ uninstall leaves. `installed_check.py` does since that day.
 The same run showed that a check which compares a machine with itself before the run
 passes on a machine an earlier run has already marked: the application's own registry key
 "read as before" only because an earlier run had left the same folder name in it.
+
+### Building the last feature a checked list calls unbuilt takes away what the list's own control stands on
+
+The README's *Not built yet* section and the release notes' *What it is not, yet* each
+carried one `not-built:` marker, `file.addValidationData`, and `src/lib/readme.test.ts`
+refuses a section with none: a list whose markers were stripped agrees with any registry.
+Building that command (2026-10-10) therefore turned several things red at once, and only
+one of them was the claim being false. The others were the emptiness control of each
+document, the agreement between the two, and the mutation anchors aimed at the marker's
+line in `scripts/mutate_frontend.py`. The item still unbuilt, certification signatures, had
+shared the bullet and had no marker of its own, because no command had been named for it;
+it got `file.certifyDocument`, a name for a command nobody has written, which is the shape
+*A gate over claimed absences only catches the name the claim guessed* is about.
+
+The general form: a control that refuses an empty set also says the set is never rightly
+empty. When the last member goes, either something else is a member and has to be written
+down, or the control has to learn that empty is an answer. Count the members before
+removing one, in every document that keeps a copy of the list.
+
+### A bound the worker holds on its own answer is the worker's word, and the parse it bounds is on the other side
+
+`sign_dss::survey` hands the app process each signature's value so that it can decide whom
+to ask, and holds its answer to the scan's bounds: a number of signatures, a size for each
+value, a size together. The app process parsed what arrived. Its only bound was the reply's
+size, so the bounds held exactly as long as the worker was the worker --- and the reason
+the values cross at all is that the worker may not be (found by review, 2026-10-10; the
+tests passed, since every worker in them was honest). `existing::bounded` now asks the same
+counts and sizes again before anything is parsed.
+
+The general form: a bound belongs on the side that does the work it limits. When data
+crosses from the process that parses hostile input to the one that holds authority, a
+check in the sender is a courtesy and a check in the receiver is the control, and a test
+with an honest sender cannot tell which of the two is there.
+
+The same review found the mirror in the test seam: a document that needs a password was
+refused correctly through `save::Here`, which the unit tests use, and reported as a worker
+failing through a real worker, which answers *locked* before it reads anything. A seam
+that stands in for a process boundary has none of the boundary's own answers.
+
+### A fixture written through the library spells a value the library's way, and the branch for the other spelling is never read
+
+`docinfo::certification_of` read a DocMDP level with `as_i64`, so `/P 1.0` read as no
+certification. The fix takes a real number that is whole, and its test built the document
+with `Object::Real(1.0)`. The test passed, and went on passing with the new branch taken
+out: `lopdf` writes that value as `1`, which reads back as an integer, so no real number
+was ever in the file (2026-10-10, found by the hand mutation, not by the test). The fixture
+now writes another real and respells the bytes to `1.0`.
+
+The general form: a fixture made with the writer under the same roof holds only what that
+writer emits. For a branch about how *another* producer spells something --- a real for an
+integer, a name for a string, an indirect object for a direct one --- write the bytes, or
+check the fixture's bytes for the spelling before trusting a pass.

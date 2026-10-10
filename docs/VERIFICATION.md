@@ -6645,3 +6645,116 @@ harness. The swatches were not looked at before this was written.
 corpus. The OCR gate's figures in `BUILD.md` and `docs/PLAN.md` §6, taken when a marked
 word took its whole line. Any of this on Windows before CI.
 
+### Long-term validation data for a document already signed — measured 2026-10-10
+
+macOS arm64 (macOS 27.0). Offline throughout: the certificate authority, its responders and
+the timestamp authority are the fake PKI on 127.0.0.1 (`integrity/test_tsa.rs`). No real
+authority was asked, no window was opened, and nothing was run on Windows.
+
+```bash
+cargo test --locked --manifest-path src-tauri/Cargo.toml --lib -- \
+    longterm:: sign_dss:: commands::validation:: cli::tests::long_term
+cargo test --locked --manifest-path src-tauri/Cargo.toml --test cli -- \
+    --filter "long-term adds"
+npx vitest run src/lib/validationdata.test.ts src/lib/appcommands.test.ts \
+    src/lib/menubar.test.ts src/lib/ipc.test.ts
+python3 -m unittest discover -s api/python -p 'test_*.py'
+```
+
+The second line is the one through real sandboxed workers: `sign --timestamp` writes the
+document, `long-term` adds to it and to its own result, the built tool reads both back, and
+each refusal exits 3 with nothing written.
+
+**Other readers.** An ignored instrument writes a signed document with and without a
+timestamp, each after one run and after two, and the two test roots:
+
+```bash
+TPDF_LONG_TERM_OUT=/tmp/tpdf-long-term-added cargo test --locked \
+    --manifest-path src-tauri/Cargo.toml --lib \
+    write_documents_with_data_added_for_other_readers -- --ignored
+cd /tmp/tpdf-long-term-added
+for f in *-added*.pdf; do qpdf --check "$f"; done
+```
+
+pyHanko over the same folder, no fetching, revocation data required, the two roots the only
+trust. Save as `lta.py` and run `uv run --with pyhanko python lta.py /tmp/tpdf-long-term-added`:
+
+```python
+import sys
+from pathlib import Path
+from asn1crypto import x509
+from pyhanko.pdf_utils.reader import PdfFileReader
+from pyhanko.sign.validation import (DocumentSecurityStore, validate_pdf_signature,
+                                     validate_pdf_timestamp)
+from pyhanko.sign.validation.settings import KeyUsageConstraints
+
+out = Path(sys.argv[1])
+roots = [x509.Certificate.load((out / n).read_bytes()) for n in ("root.der", "tsa-root.der")]
+settings = {"trust_roots": roots, "allow_fetching": False, "revocation_mode": "require"}
+for path in sorted(out.glob("*-added*.pdf")):
+    reader = PdfFileReader(path.open("rb"))
+    context = lambda: DocumentSecurityStore.read_dss(reader).as_validation_context(settings)
+    for sig in reader.embedded_signatures:
+        if str(sig.sig_object.get("/Type", "/Sig")) == "/DocTimeStamp":
+            status = validate_pdf_timestamp(sig, validation_context=context())
+        else:
+            status = validate_pdf_signature(
+                sig, signer_validation_context=context(), ts_validation_context=context(),
+                key_usage_settings=KeyUsageConstraints(key_usage=set()))
+        print(path.name, sig.field_name, status.summary(), status.coverage.name,
+              status.modification_level.name)
+```
+
+2026-10-10, pyHanko 0.37.0, pyhanko-certvalidator 0.32.1:
+
+| File | Field | pyHanko |
+|---|---|---|
+| `stamped-added.pdf` | `Signature1` | INTACT:TRUSTED, TIMESTAMP_TOKEN<INTACT:TRUSTED>, EXTENDED_WITH_LTA_UPDATES, ACCEPTABLE_MODIFICATIONS; LTA_UPDATES |
+| | `Signature2`, the archive | INTACT:TRUSTED; ENTIRE_FILE |
+| `stamped-added-twice.pdf` | `Signature1` | as above |
+| | `Signature2` | INTACT:TRUSTED; ENTIRE_REVISION, LTA_UPDATES |
+| | `Signature3`, the archive | INTACT:TRUSTED; ENTIRE_FILE |
+| `unstamped-added.pdf` | `Signature1` | INTACT:TRUSTED, EXTENDED_WITH_LTA_UPDATES, ACCEPTABLE_MODIFICATIONS; LTA_UPDATES |
+| | `Signature2`, the archive | INTACT:UNTRUSTED; ENTIRE_FILE |
+| `unstamped-added-twice.pdf` | `Signature1` | as above |
+| | `Signature2` | INTACT:TRUSTED; ENTIRE_REVISION, LTA_UPDATES |
+| | `Signature3`, the archive | INTACT:TRUSTED; ENTIRE_FILE |
+
+The control: `stamped.pdf` and `unstamped.pdf`, the same signatures before anything was
+added, have no `/DSS`, and pyHanko refuses to validate them under these settings. The one
+*UNTRUSTED* row is the newest archive of a document that until then named no timestamp
+authority: the data for an archive's own authority is added by the next run, and the row
+after it shows that.
+
+**What was tried and is not an oracle.** `pyhanko.sign.validation.ades.ades_lta_validation`,
+the EN 319 102-1 long-term procedure, with `RevinfoOnlineFetchingRule.LOCAL_ONLY` and
+`REQUIRE_REVINFO`, with and without `retroactive_revinfo`: *INDETERMINATE, NO_POE* for the
+timestamped files, and the same for `b-lt-ocsp.pdf`, which
+`write_b_lt_documents_for_other_readers` makes by signing. Its log: *No revocation info from
+before … found for certificate tpdf test PKI root*. For the files whose signature has no
+timestamp: *SIG_CONSTRAINTS_FAILURE* at the current time, not diagnosed. Stopped after those
+two configurations; no agreement on that procedure is claimed for any of them.
+
+`qpdf --check` 12.4.0 on the four files: *operation succeeded with warnings*, the one warning
+being the test page's missing `/Resources`, which the unsigned test document has.
+
+**Proved able to fail by hand**, since the mutation harnesses edit the tree and another
+writer was in the checkout: each entry added to `scripts/mutate_rust.py` and
+`scripts/mutate_frontend.py` for this was applied, the test it names run and seen red, and
+the file restored and compared with what it was. None survived; one did not compile as
+first written and was rewritten.
+
+**Not measured.** A real certificate authority or timestamp authority. The command in a
+window. Windows. Acrobat or any reader other than pyHanko and tpdf itself. A document
+certified with no changes permitted, which is refused.
+
+**After an independent read-only review, the same day.** Its findings were checked against
+the code and the ones that held were fixed, each with a test seen red under a hand mutation:
+the survey's bounds held in the app process, no `/DSS` entry written twice and a full
+`/DSS` refused before fetching, a document that needs a password refused as encrypted
+through a real worker (`incr-encrypted-pw.pdf` in `tests/cli.rs`), a later run refused once
+a certificate has expired, a look-alike issuer offered in the signature, the token and the
+`/DSS` never asked about, `--force` replacing an output, and a certification in the catalog
+alone, written as `1` or `1.0`. The instrument's files were written again with the changed
+writer: `qpdf --check` and the pyHanko script above read them as the table says, row for row.
+

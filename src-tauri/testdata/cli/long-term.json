@@ -1,0 +1,204 @@
+{
+  "schema": 1,
+  "command": "long-term",
+  "input": "contract-signed.pdf",
+  "output": "contract-kept.pdf",
+  "covered": [
+    "Signature1",
+    "Signature2"
+  ],
+  "archive": "Signature3",
+  "signatures": [
+    {
+      "document_timestamp": false,
+      "field": "Signature1",
+      "signer": "First Signer",
+      "issuer": "tpdf test root CA",
+      "claimed_time": "2026-09-26 20:20:13 +02:00",
+      "covers_whole_file": false,
+      "appended_bytes": 9101,
+      "appendix": {
+        "unread": false,
+        "added": 12,
+        "replaced": 2,
+        "removed": 0,
+        "kinds": [
+          "Annot/Widget",
+          "Catalog",
+          "DocTimeStamp",
+          "Page",
+          "VRI",
+          "stream",
+          "untyped"
+        ],
+        "catalog_gained": [
+          "DSS"
+        ],
+        "pages_touched": 1,
+        "pages_listing": [
+          {
+            "page": 1,
+            "timestamp": true
+          }
+        ],
+        "sentence": "the certificates and revocation records a signature needs to be checked later, and a timestamp field was added to page 1's annotations (the page's content is unchanged)"
+      },
+      "integrity": {
+        "verdict": "intact",
+        "why": null,
+        "digest": "SHA-256",
+        "method": "RSA",
+        "sentence": "intact — the signed bytes are unchanged and the signature checks out under the key in its certificate (SHA-256, RSA). It covers the document as it was when signed; what was appended afterwards is not part of it."
+      },
+      "trust": {
+        "standing": "untrusted",
+        "why": "root",
+        "store": "mac",
+        "attested_at": "",
+        "sentence": "not trusted — its chain ends at a root this Mac does not trust. A certificate somebody issued to themselves reads this way, and so does one whose root only Adobe's trust list carries. So nothing establishes that the key belongs to the person the certificate names."
+      },
+      "timestamp": {
+        "time": "2026-09-26 18:20:14 UTC",
+        "authority": "Acme Time Authority",
+        "attested": true,
+        "integrity": {
+          "verdict": "intact",
+          "why": null,
+          "digest": "SHA-256",
+          "method": "ECDSA P-256",
+          "sentence": "2026-09-26 18:20:14 UTC, attested by Acme Time Authority — the timestamp checks out under the key in its certificate and covers this signature (SHA-256, ECDSA P-256)."
+        },
+        "trust": {
+          "standing": "untrusted",
+          "why": "root",
+          "store": "mac",
+          "attested_at": "",
+          "sentence": "not trusted — its chain ends at a root this Mac does not trust. A certificate somebody issued to themselves reads this way, and so does one whose root only Adobe's trust list carries. So nothing establishes who attests this time."
+        },
+        "revocation": {
+          "standing": "none",
+          "why": null,
+          "source": null,
+          "issued": "",
+          "next": "",
+          "revoked": "",
+          "reason": null,
+          "basis": "stated",
+          "moment": "2026-09-26 18:20:14 UTC",
+          "after_moment": false,
+          "sentence": "not checked — the document carries no revocation data for the authority's certificate, and tpdf does not fetch any, so a certificate its issuer has since withdrawn reads the same as one it has not."
+        },
+        "revocation_chain": {
+          "standing": "none",
+          "after_moment": false,
+          "decided_by": 0,
+          "dropped": 0,
+          "end": "root",
+          "certificates": [
+            {
+              "subject": "Acme Time Authority",
+              "serial": "0B",
+              "revocation": {
+                "standing": "none",
+                "why": null,
+                "source": null,
+                "issued": "",
+                "next": "",
+                "revoked": "",
+                "reason": null,
+                "basis": "stated",
+                "moment": "2026-09-26 18:20:14 UTC",
+                "after_moment": false,
+                "sentence": "not checked — the document carries no revocation data for the authority's certificate, and tpdf does not fetch any, so a certificate its issuer has since withdrawn reads the same as one it has not."
+              }
+            }
+          ],
+          "sentence": "not checked — the same as the row above: no certificate stands between the authority's certificate and a root."
+        }
+      },
+      "revocation": {
+        "standing": "good",
+        "why": null,
+        "source": "ocsp",
+        "issued": "2026-09-26 12:00:00 UTC",
+        "next": "2026-09-27 12:00:00 UTC",
+        "revoked": "",
+        "reason": null,
+        "basis": "claimed",
+        "moment": "2026-09-26 18:20:13 UTC",
+        "after_moment": false,
+        "sentence": "not revoked — an OCSP response in the document, signed by its issuer or a responder its issuer authorised, issued 2026-09-26 12:00:00 UTC and meant to hold until 2026-09-27 12:00:00 UTC, says the signer's certificate had not been revoked, and it reaches 2026-09-26 18:20:13 UTC, the signing date the signer gave, which is their own claim."
+      },
+      "revocation_chain": {
+        "standing": "good",
+        "after_moment": false,
+        "decided_by": null,
+        "dropped": 0,
+        "end": "root",
+        "certificates": [
+          {
+            "subject": "First Signer",
+            "serial": "05",
+            "revocation": {
+              "standing": "good",
+              "why": null,
+              "source": "ocsp",
+              "issued": "2026-09-26 12:00:00 UTC",
+              "next": "2026-09-27 12:00:00 UTC",
+              "revoked": "",
+              "reason": null,
+              "basis": "claimed",
+              "moment": "2026-09-26 18:20:13 UTC",
+              "after_moment": false,
+              "sentence": "not revoked — an OCSP response in the document, signed by its issuer or a responder its issuer authorised, issued 2026-09-26 12:00:00 UTC and meant to hold until 2026-09-27 12:00:00 UTC, says the signer's certificate had not been revoked, and it reaches 2026-09-26 18:20:13 UTC, the signing date the signer gave, which is their own claim."
+            }
+          },
+          {
+            "subject": "tpdf test issuing CA",
+            "serial": "07",
+            "revocation": {
+              "standing": "good",
+              "why": null,
+              "source": "ocsp",
+              "issued": "2026-09-26 12:00:00 UTC",
+              "next": "2026-09-27 12:00:00 UTC",
+              "revoked": "",
+              "reason": null,
+              "basis": "claimed",
+              "moment": "2026-09-26 18:20:13 UTC",
+              "after_moment": false,
+              "sentence": "not revoked — an OCSP response in the document, signed by its issuer or a responder its issuer authorised, issued 2026-09-26 12:00:00 UTC and meant to hold until 2026-09-27 12:00:00 UTC, says the issuing certificate tpdf test issuing CA had not been revoked, and it reaches 2026-09-26 18:20:13 UTC, the signing date the signer gave, which is their own claim."
+            }
+          }
+        ],
+        "sentence": "not revoked — the document's revocation data says neither the signer's certificate nor the issuing certificate tpdf test issuing CA had been revoked, and it reaches 2026-09-26 18:20:13 UTC, the signing date the signer gave, which is their own claim."
+      },
+      "pades_level": "B-LTA",
+      "pades": "B-LTA by its parts — signed, timestamped, carrying revocation data that answers for every certificate, and sealed by a document timestamp. Conformance to the standard is not tested."
+    },
+    {
+      "document_timestamp": false,
+      "field": "Signature2",
+      "signer": "",
+      "issuer": "",
+      "claimed_time": "",
+      "covers_whole_file": true,
+      "appended_bytes": 0,
+      "appendix": null,
+      "integrity": {
+        "verdict": "unchecked",
+        "why": "format",
+        "digest": "",
+        "method": "",
+        "sentence": "not checked — tpdf does not check signatures in this format. This says nothing either way about whether the document changed."
+      },
+      "trust": null,
+      "timestamp": null,
+      "revocation": null,
+      "revocation_chain": null,
+      "pades_level": null,
+      "pades": null
+    }
+  ],
+  "summary": "Added long-term validation data for the signature Signature1 and the timestamp Signature2, then the archive timestamp Signature3 over the whole, and saved the result to contract-kept.pdf. Read back after writing: each of them is intact, every certificate asked about reads as not revoked from the document's own data, and the archive timestamp covers the whole file."
+}

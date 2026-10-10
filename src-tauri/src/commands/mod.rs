@@ -39,6 +39,7 @@ pub mod save;
 pub mod session;
 pub mod sign;
 pub mod spike;
+pub mod validation;
 
 use crate::render::RenderService;
 use crate::{pdfium_library_dir, render};

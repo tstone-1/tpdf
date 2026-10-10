@@ -19,8 +19,34 @@ have the binary.)
 
 ## [26.10.15] - Unreleased
 
+### Added
+
+- **Long-term validation data for a document that is already signed.** *Add long-term
+  validation data…* in the File menu takes a document somebody has signed, with tpdf or
+  with anything else, and writes a copy that can still be checked after the certificates
+  expire. tpdf asks the certificate authorities whether each signature's certificate, each
+  timestamp authority's and the ones above them are revoked, adds the answers to the
+  document, and asks a timestamp authority you choose for a timestamp over the whole. No
+  key is used and no signature is made. The original is not changed. Run on a document
+  that already has such a timestamp, it adds a further one and the data for the earlier
+  one's authority. That works while the certificates involved are still valid, so it has
+  to be done before they expire.
+- **Every signature in the document is covered, or nothing is written.** The message names
+  the signature and the reason: a signature that does not verify, a signer or timestamp
+  authority this computer does not trust, a certificate that publishes no revocation data,
+  has expired or is revoked, an authority that does not answer, an encrypted document, a
+  document that needs a password, a document that already carries as much validation data
+  as tpdf reads, or a document certified with no changes permitted. Nothing is fetched for a signer this
+  computer does not trust.
+- **`tpdf long-term signed.pdf -o kept.pdf --timestamp digicert`** does the same from a
+  terminal, with `--json`. The Python client has `long_term()`.
+
 ### Fixed
 
+- **A certification that states its level as `1.0` was read as no certification.** A
+  document certified against any change, whose level was written as a number with a
+  decimal point, could be signed, which breaks its certification. It is now read as
+  level 1 and refused.
 - **Windows: uninstalling tpdf after an update left `.pdf` assigned to nothing that exists.**
   The installer remembers what opened PDF files before tpdf so that the uninstaller can
   put it back. An update ran the installer again, and the second run remembered tpdf

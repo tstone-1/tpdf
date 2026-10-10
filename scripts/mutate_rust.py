@@ -251,6 +251,11 @@ FILTERS = [
     "longterm::",
     "sign_dss::",
     "commands::sign::",
+    # Added 2026-10-10 with validation data for a document already signed, in
+    # the same edit as its mutations: the shared tail's tests are in
+    # `commands::validation::tests`. `longterm::` already reaches
+    # `longterm::existing::tests`.
+    "commands::validation::",
     # Added 2026-09-30 with installed-font matching, in the same edit as its
     # mutations: the app process's lookup and round trip are `sysfont::tests`.
     "sysfont::",
@@ -14949,8 +14954,8 @@ MUTATIONS += [
     Mutation(
         "dss: drop what an earlier /DSS held",
         "src/sign_dss.rs",
-        '        (carried(b"Certs")?, carried(b"OCSPs")?, carried(b"CRLs")?);',
-        "        (Vec::new(), Vec::new(), Vec::new());",
+        '    let arrays = [carried(b"Certs")?, carried(b"OCSPs")?, carried(b"CRLs")?];',
+        "    let arrays = [Vec::new(), Vec::new(), Vec::new()];",
         "an_earlier_dss_is_kept_and_added_to",
     ),
     Mutation(
@@ -18267,6 +18272,751 @@ MUTATIONS += [
         "    let start: String = line.chars().take(SHOWN).collect();",
         "    let start: String = line.chars().collect();",
         "a_reply_is_described_by_its_name_and_size_and_never_its_payload",
+    ),
+]
+
+
+# --- long-term validation data for a document that is already signed ---------
+#
+# `longterm/existing.rs`, `sign_dss::survey`, `docinfo::signature_values`,
+# `commands/validation.rs`, `cli/long_term.rs`, 2026-10-10. What can go wrong
+# here is a refusal that is skipped --- data fetched for a signer nobody
+# vouched for, a copy written with one signature left out of the check --- so
+# nearly every entry removes one refusal and names the test that holds it.
+# Every one was seen red by hand before it was written here: the anchor once
+# in its file, the edit applied, the named test failing, the file restored.
+# This table was not run that day, because another writer was in the checkout.
+MUTATIONS += [
+    Mutation(
+        "existing: add data to a document with no signature",
+        "src/longterm/existing.rs",
+        "    if signed.is_empty() {",
+        "    if false && signed.is_empty() {",
+        "a_document_with_no_signature_is_refused",
+    ),
+    Mutation(
+        "existing: take a survey that says it is not complete",
+        "src/longterm/existing.rs",
+        "    if !survey.complete || !agree {",
+        "    if !agree {",
+        "a_survey_that_is_not_complete_is_refused",
+    ),
+    Mutation(
+        "existing: take values that do not match the signatures",
+        "src/longterm/existing.rs",
+        "    if !survey.complete || !agree {",
+        "    if !survey.complete {",
+        "a_survey_that_is_not_complete_is_refused",
+    ),
+    Mutation(
+        "existing: append to a document certified against any change",
+        "src/longterm/existing.rs",
+        "        if signature.certification == 1 {",
+        "        if false && signature.certification == 1 {",
+        "a_certification_with_no_changes_permitted_is_refused_and_the_others_are_not",
+    ),
+    Mutation(
+        "existing: gather for a signature that does not verify",
+        "src/longterm/existing.rs",
+        "        match signature.integrity.as_ref() {\n"
+        "            Some(found) if found.verdict == Verdict::Intact => {}",
+        "        match signature.integrity.as_ref() {\n"
+        "            Some(_) => {}",
+        "a_signature_that_does_not_verify_is_refused_before_anything_is_fetched",
+    ),
+    Mutation(
+        "existing: gather for a signature whose timestamp does not verify",
+        "src/longterm/existing.rs",
+        "            if stamp.integrity.as_ref().map(|i| i.verdict) != Some(Verdict::Intact) {\n"
+        "                return Err(Refusal::NotIntact {",
+        "            if false {\n"
+        "                return Err(Refusal::NotIntact {",
+        "a_timestamp_that_does_not_verify_is_refused_by_name",
+    ),
+    Mutation(
+        "existing: take any standing as a chain vouched for",
+        "src/longterm/existing.rs",
+        "    if trust.standing == Standing::Trusted {",
+        "    if true || trust.standing == Standing::Trusted {",
+        "a_signer_this_computer_does_not_trust_is_refused_and_nothing_is_fetched",
+    ),
+    Mutation(
+        "existing: judge a document timestamp's authority as a signer of documents",
+        "src/longterm/existing.rs",
+        "    let document_timestamp = kind == DOCUMENT_TIMESTAMP;",
+        "    let document_timestamp = false;",
+        "a_document_already_archived_gets_a_further_archive_and_keeps_its_dss",
+    ),
+    Mutation(
+        "existing: ask about one certificate once for every signature that names it",
+        "src/longterm/existing.rs",
+        "            if !subjects.iter().any(|s| der(&s.certificate) == this) {",
+        "            if true {",
+        "every_signature_of_a_document_is_covered_and_each_certificate_asked_once",
+    ),
+    Mutation(
+        "existing: ask about any number of certificates",
+        "src/longterm/existing.rs",
+        "    if subjects.len() > most {",
+        "    if false {",
+        "more_certificates_than_one_run_asks_about_is_a_refusal",
+    ),
+    Mutation(
+        "existing: find an earlier signature by its name alone",
+        "src/longterm/existing.rs",
+        "                && s.appended_bytes == was.appended_bytes.saturating_add(appended)\n",
+        "",
+        "a_result_in_which_an_earlier_signature_reads_differently_is_not_written",
+    ),
+    Mutation(
+        "existing: write a result in which an earlier signature is not intact",
+        "src/longterm/existing.rs",
+        "        match now.integrity.as_ref() {\n"
+        "            Some(found) if found.verdict == Verdict::Intact => {}",
+        "        match now.integrity.as_ref() {\n"
+        "            Some(_) => {}",
+        "a_result_in_which_an_earlier_signature_reads_differently_is_not_written",
+    ),
+    Mutation(
+        "existing: take an appendix tpdf could not read",
+        "src/longterm/existing.rs",
+        "            Some(appendix) if !appendix.unread => {}",
+        "            Some(_) => {}",
+        "every_earlier_signature_must_read_good_with_the_data_added",
+    ),
+    Mutation(
+        "existing: write a result with a page changed after a signature",
+        "src/longterm/existing.rs",
+        "        if pages > pages_were || removed > removed_were {",
+        "        if removed > removed_were {",
+        "a_result_in_which_an_earlier_signature_reads_differently_is_not_written",
+    ),
+    Mutation(
+        "existing: write a result with an object removed after a signature",
+        "src/longterm/existing.rs",
+        "        if pages > pages_were || removed > removed_were {",
+        "        if pages > pages_were {",
+        "every_earlier_signature_must_read_good_with_the_data_added",
+    ),
+    Mutation(
+        "existing: count a page that only lists a new field as changed",
+        "src/longterm/existing.rs",
+        "                .saturating_sub(appendix.pages_listing.len()),",
+        "                .saturating_sub(0),",
+        "every_earlier_signature_must_read_good_with_the_data_added",
+    ),
+    Mutation(
+        "existing: write a result in which a signature lost its timestamp",
+        "src/longterm/existing.rs",
+        "        } else if was.timestamp.is_some() {",
+        "        } else if false {",
+        "a_result_in_which_an_earlier_signature_reads_differently_is_not_written",
+    ),
+    Mutation(
+        "existing: write a result whose timestamp no longer verifies",
+        "src/longterm/existing.rs",
+        "            if stamp.integrity.as_ref().map(|i| i.verdict) != Some(Verdict::Intact) {\n"
+        "                return Err(changed(",
+        "            if false {\n"
+        "                return Err(changed(",
+        "every_earlier_signature_must_read_good_with_the_data_added",
+    ),
+    Mutation(
+        "existing: leave the certificates' own answers unread",
+        "src/longterm/existing.rs",
+        "        leaves_good(&leaves).map_err(about)?;",
+        "        let _ = &leaves;",
+        "every_earlier_signature_must_read_good_with_the_data_added",
+    ),
+    Mutation(
+        "existing: leave the chains above the certificates unread",
+        "src/longterm/existing.rs",
+        "        chains_good(&chains).map_err(about)?;",
+        "        let _ = &chains;",
+        "every_earlier_signature_must_read_good_with_the_data_added",
+    ),
+    Mutation(
+        "existing: leave a signature's timestamp authority unread",
+        "src/longterm/existing.rs",
+        "            leaves.push((\n"
+        "                stamp.revocation.as_ref(),",
+        "            leaves.push((\n"
+        "                now.revocation.as_ref(),",
+        "every_earlier_signature_must_read_good_with_the_data_added",
+    ),
+    Mutation(
+        "existing: leave the chain above a timestamp authority unread",
+        "src/longterm/existing.rs",
+        "            chains.push((stamp.revocation_chain.as_ref(), \"the timestamp authority's\"));",
+        "            chains.push((now.revocation_chain.as_ref(), \"the timestamp authority's\"));",
+        "every_earlier_signature_must_read_good_with_the_data_added",
+    ),
+    Mutation(
+        "existing: name a document timestamp's certificate as a signer's",
+        "src/longterm/existing.rs",
+        "        let document_timestamp = now.kind == DOCUMENT_TIMESTAMP;",
+        "        let document_timestamp = false;",
+        "every_earlier_signature_must_read_good_with_the_data_added",
+    ),
+    Mutation(
+        "existing: take any signature ending at the last byte for the archive",
+        "src/longterm/existing.rs",
+        "        .find(|s| s.signed && s.kind == DOCUMENT_TIMESTAMP && s.appended_bytes == 0)",
+        "        .find(|s| s.signed && s.appended_bytes == 0)",
+        "the_written_file_must_hold_the_archive_over_the_whole_file",
+    ),
+    Mutation(
+        "existing: take an earlier timestamp for the archive",
+        "src/longterm/existing.rs",
+        "        .find(|s| s.signed && s.kind == DOCUMENT_TIMESTAMP && s.appended_bytes == 0)",
+        "        .find(|s| s.signed && s.kind == DOCUMENT_TIMESTAMP)",
+        "the_written_file_must_hold_the_archive_over_the_whole_file",
+    ),
+    Mutation(
+        "existing: pass an archive that does not cover the whole file",
+        "src/longterm/existing.rs",
+        "    if !archive.covers_whole_file {",
+        "    if false {",
+        "the_written_file_must_hold_the_archive_over_the_whole_file",
+    ),
+    Mutation(
+        "existing: pass an archive that is not intact",
+        "src/longterm/existing.rs",
+        "        Some(found) if found.verdict == Verdict::Intact => Ok(()),",
+        "        Some(_) => Ok(()),",
+        "the_written_file_must_hold_the_archive_over_the_whole_file",
+    ),
+    Mutation(
+        "existing: read the written file without the earlier signatures",
+        "src/longterm/existing.rs",
+        "    covered(before, after, appended)?;\n"
+        "    let Some(archive) = archive_of(after) else {",
+        "    let Some(archive) = archive_of(after) else {",
+        "the_written_file_must_hold_the_archive_over_the_whole_file",
+    ),
+    Mutation(
+        "existing: go on with a document its worker refused",
+        "src/longterm/existing.rs",
+        "    if let Some(why) = &survey.refused {",
+        "    if let Some(why) = survey.refused.as_ref().filter(|_| false) {",
+        "a_worker_that_died_is_tpdfs_failure_and_a_document_it_refuses_is_not",
+    ),
+    Mutation(
+        "existing: fetch before the budget is known to hold",
+        "src/longterm/existing.rs",
+        "    if past_budget(&held, original.len()) {",
+        "    if false {",
+        "signatures_past_the_hashing_budget_are_refused_before_anything_is_fetched",
+    ),
+    Mutation(
+        "existing: write a result past the budget to check it",
+        "src/longterm/existing.rs",
+        "    if past_budget(&held, bytes.len()) {",
+        "    if false {",
+        "signatures_past_the_hashing_budget_are_refused_before_anything_is_fetched",
+    ),
+    Mutation(
+        "existing: take a revision built against other bytes",
+        "src/longterm/existing.rs",
+        "    if extended.built_against != original.len() {",
+        "    if false {",
+        "a_result_in_which_an_earlier_signature_reads_differently_is_not_written",
+    ),
+    Mutation(
+        "existing: write a result the worker's reading was not held to",
+        "src/longterm/existing.rs",
+        "    covered(\n"
+        "        &survey.signatures,\n"
+        "        &extended.signatures,\n"
+        "        extended.update.len() as u64,\n"
+        "    )?;",
+        "",
+        "a_result_in_which_an_earlier_signature_reads_differently_is_not_written",
+    ),
+    Mutation(
+        "existing: seal an archive timestamp from an authority nobody vouched for",
+        "src/longterm/existing.rs",
+        "        let token = archive(pieces)?;\n",
+        "        let token = archive(pieces)?;\n"
+        "        if !token.is_empty() {\n"
+        "            return Ok(token);\n"
+        "        }\n",
+        "an_archive_timestamp_from_an_authority_nobody_trusts_is_refused",
+    ),
+    Mutation(
+        "existing: call a worker's death the document's refusal",
+        "src/longterm/existing.rs",
+        "            Refusal::Failed(_) | Refusal::Changed { .. } | Refusal::Archive(_) => true,",
+        "            Refusal::Changed { .. } | Refusal::Archive(_) => true,",
+        "a_worker_that_died_is_tpdfs_failure_and_a_document_it_refuses_is_not",
+    ),
+    Mutation(
+        "existing: say of a revoked certificate what a signing says",
+        "src/longterm/existing.rs",
+        "        super::Refusal::Revoked { name, at, by } => format!(",
+        "        super::Refusal::Revoked { name, at, by } if false => format!(",
+        "revocation_data_that_cannot_be_had_writes_nothing",
+    ),
+    Mutation(
+        "existing: say of a certificate publishing nothing what a signing says",
+        "src/longterm/existing.rs",
+        "        super::Refusal::NotPublished(name) => format!(",
+        "        super::Refusal::NotPublished(name) if false => format!(",
+        "revocation_data_that_cannot_be_had_writes_nothing",
+    ),
+    Mutation(
+        "dss: survey a document that was encrypted and opened",
+        "src/sign_dss.rs",
+        "    if document.is_encrypted() || document.was_encrypted() {\n"
+        "        return Survey::encrypted();",
+        "    if document.is_encrypted() {\n"
+        "        return Survey::encrypted();",
+        "an_encrypted_document_is_refused_whether_or_not_it_opens",
+    ),
+    Mutation(
+        "dss: survey a document no password opened",
+        "src/sign_dss.rs",
+        "    if document.is_encrypted() || document.was_encrypted() {\n"
+        "        return Survey::encrypted();",
+        "    if document.was_encrypted() {\n"
+        "        return Survey::encrypted();",
+        "an_encrypted_document_is_refused_whether_or_not_it_opens",
+    ),
+    Mutation(
+        "dss: answer a survey of any size",
+        "src/sign_dss.rs",
+        "    if survey.bytes() > bound {",
+        "    if false {",
+        "a_document_that_can_take_no_revision_is_refused_in_the_answer",
+    ),
+    Mutation(
+        "dss: call a survey complete whatever the walk said",
+        "src/sign_dss.rs",
+        "        complete: values.complete,",
+        "        complete: true,",
+        "a_value_that_cannot_be_read_makes_the_survey_incomplete",
+    ),
+    Mutation(
+        "dss: hand over no store",
+        "src/sign_dss.rs",
+        "        store: values.store,",
+        "        store: Vec::new(),",
+        "the_survey_hands_over_each_signature_s_value_and_what_the_dss_carries",
+    ),
+    Mutation(
+        "values: call an unread value read",
+        "src/docinfo.rs",
+        "                complete &= value.is_some();",
+        "                complete &= true;",
+        "a_value_that_cannot_be_read_makes_the_survey_incomplete",
+    ),
+    Mutation(
+        "values: stop at the signature bound without saying so",
+        "src/docinfo.rs",
+        "                if values.len() >= MAX_SIGNATURES {\n"
+        "                    complete = false;",
+        "                if values.len() >= MAX_SIGNATURES {",
+        "values_cut_short_by_a_bound_of_the_walk_are_not_complete",
+    ),
+    Mutation(
+        "values: pass over an entry that is no field without saying so",
+        "src/docinfo.rs",
+        "        let Some(field) = node.dict else {\n"
+        "            complete = false;\n"
+        "            return fields::Flow::Leaf;\n"
+        "        };\n"
+        '        if name_of(document, field, b"FT") == "Sig" {\n'
+        "            if let Some(sig) = field",
+        "        let Some(field) = node.dict else {\n"
+        "            return fields::Flow::Leaf;\n"
+        "        };\n"
+        '        if name_of(document, field, b"FT") == "Sig" {\n'
+        "            if let Some(sig) = field",
+        "values_cut_short_by_a_bound_of_the_walk_are_not_complete",
+    ),
+    Mutation(
+        "values: stop at the depth bound without saying so",
+        "src/docinfo.rs",
+        "    complete &= cut.dropped == 0 && cut.too_deep == 0;",
+        "    complete &= cut.dropped == 0;",
+        "values_cut_short_by_a_bound_of_the_walk_are_not_complete",
+    ),
+    Mutation(
+        "validation: report a copy nobody read back",
+        "src/commands/validation.rs",
+        "    existing::read_back(&added.before, &signatures, appended).map_err(Stopped::ReadBack)?;",
+        "    let _ = appended;",
+        "a_copy_that_does_not_read_back_as_built_is_named_and_is_tpdfs_failure",
+    ),
+    Mutation(
+        "validation: go on after a copy that could not be written",
+        "src/commands/validation.rs",
+        "    write(&added.bytes).map_err(Stopped::Unwritten)?;",
+        "    let _ = write(&added.bytes);",
+        "a_copy_that_could_not_be_written_is_not_tpdfs_failure",
+    ),
+    Mutation(
+        "validation: read the written file as if nothing had been appended",
+        "src/commands/validation.rs",
+        "    let appended = (added.bytes.len() - original.len()) as u64;",
+        "    let appended = 0u64;",
+        "the_copy_is_written_read_back_and_said_in_one_sentence",
+    ),
+    Mutation(
+        "validation: call a copy that did not read back the document's refusal",
+        "src/commands/validation.rs",
+        "            Stopped::Unread(_) | Stopped::ReadBack(_) => true,",
+        "            Stopped::Unread(_) | Stopped::ReadBack(_) => false,",
+        "a_copy_that_does_not_read_back_as_built_is_named_and_is_tpdfs_failure",
+    ),
+    Mutation(
+        "validation: say nothing was written about a copy that was",
+        "src/commands/validation.rs",
+        '            Stopped::Refused(why) => format!("{} --- nothing was written", why.sentence()),\n'
+        "            Stopped::Unwritten(why) | Stopped::Unread(why) => why.clone(),\n"
+        "            Stopped::ReadBack(why) => format!(\n"
+        '                "{name} was written, but reading it back did not find what was added: {}. Do \\\n'
+        '                 not rely on that copy.",\n'
+        "                why.sentence()\n"
+        "            ),",
+        "            Stopped::Refused(why) | Stopped::ReadBack(why) => {\n"
+        '                format!("{} --- nothing was written{}", why.sentence(), &name[..0])\n'
+        "            }\n"
+        "            Stopped::Unwritten(why) | Stopped::Unread(why) => why.clone(),",
+        "a_copy_that_does_not_read_back_as_built_is_named_and_is_tpdfs_failure",
+    ),
+    Mutation(
+        "validation: add to a document with unsaved edits",
+        "src/commands/validation.rs",
+        "    if dirty {\n"
+        "        return Err(\n"
+        '            "Save your changes first: validation data',
+        "    if false && dirty {\n"
+        "        return Err(\n"
+        '            "Save your changes first: validation data',
+        "unsaved_edits_and_a_document_too_large_are_refused",
+    ),
+    Mutation(
+        "validation: add to a document of any size",
+        "src/commands/validation.rs",
+        "    if len > save::APPEND_MAX_BYTES {\n"
+        "        return Err(format!(\n"
+        '            "This document is {} MB, and tpdf adds validation data',
+        "    if false {\n"
+        "        return Err(format!(\n"
+        '            "This document is {} MB, and tpdf adds validation data',
+        "unsaved_edits_and_a_document_too_large_are_refused",
+    ),
+    Mutation(
+        "cli: long-term over its own input",
+        "src/cli/long_term.rs",
+        "    if lexically_same(&input, &output) {\n"
+        "        return Err(\n"
+        '            "the output names the input --- the document with the data added',
+        "    if false {\n"
+        "        return Err(\n"
+        '            "the output names the input --- the document with the data added',
+        "long_term_needs_its_output_and_an_authority_it_was_told_to_ask",
+    ),
+    Mutation(
+        "cli: long-term asks an address as typed",
+        "src/cli/long_term.rs",
+        "                    crate::tsa::authority(value(arg, &mut rest)?)\n"
+        '                        .map_err(|why| why.sentence(""))?,\n'
+        "                );\n"
+        "            }\n"
+        '            (false, "--json") => json = true,\n'
+        '            (false, "--force") => force = true,\n'
+        "            (false, flag) if flag.starts_with('-') && flag != \"-\" => {\n"
+        '                return Err(unknown("long-term", flag))',
+        "                    url::Url::parse(value(arg, &mut rest)?).map_err(|e| e.to_string())?,\n"
+        "                );\n"
+        "            }\n"
+        '            (false, "--json") => json = true,\n'
+        '            (false, "--force") => force = true,\n'
+        "            (false, flag) if flag.starts_with('-') && flag != \"-\" => {\n"
+        '                return Err(unknown("long-term", flag))',
+        "long_term_needs_its_output_and_an_authority_it_was_told_to_ask",
+    ),
+    Mutation(
+        "cli: long-term over an output that exists",
+        "src/cli/long_term.rs",
+        "        if !self.force && self.output.exists() {\n"
+        "            return Err(Failure::new(\n"
+        "                Exit::Refused,\n"
+        "                format!(\n"
+        '                    "{} already exists --- choose another name, or give --force to replace it",\n'
+        "                    self.output.display()\n"
+        "                ),\n"
+        "            ));\n"
+        "        }\n"
+        "        // Read once",
+        "        // Read once",
+        "long_term_refuses_an_existing_output_and_a_missing_input_before_any_worker",
+    ),
+    Mutation(
+        "cli: long-term takes an empty file to a worker",
+        "src/cli/long_term.rs",
+        "        if original.is_empty() {",
+        "        if false {",
+        "long_term_refuses_an_existing_output_and_a_missing_input_before_any_worker",
+    ),
+    Mutation(
+        "cli: long-term exits 3 for tpdf's own failure",
+        "src/cli/long_term.rs",
+        "    let exit = if stopped.tpdf_failed() {",
+        "    let exit = if false {",
+        "a_long_term_run_that_stopped_is_4_only_when_the_failure_is_tpdfs",
+    ),
+    Mutation(
+        "words: say one signature in the plural",
+        "src/words.rs",
+        '        [(_, false)] => "that signature is",',
+        '        [(_, false)] => "each of them is",',
+        "the_copy_is_written_read_back_and_said_in_one_sentence",
+    ),
+]
+
+# --- the same, after an independent read-only review (2026-10-10) -------------
+#
+# The survey's bounds held in the app process, a `/DSS` with no room left
+# refused before fetching and no entry written twice, the catalog's
+# certification and a level spelt as a real number, a later run after a
+# certificate has expired, and a look-alike issuer. Each seen red by hand
+# against the test it names, as the block above. One survived its first run:
+# the fixture wrote the level `1.0` through `lopdf`, which spells it `1`, so
+# the real-number branch was never read (`docs/TRAPS.md`); the fixture now
+# respells the bytes. **Not here, because `tests/cli.rs` is a binary this
+# table cannot select**: `save_outside.rs`'s `if answered.locked {` made
+# `if false {` turns *long-term refuses a document that needs a password*
+# red (exit 4 for 3), by hand.
+MUTATIONS += [
+    Mutation(
+        "existing: take a survey of any size from the worker",
+        "src/longterm/existing.rs",
+        "    bounded(&survey)?;\n",
+        "",
+        "a_survey_past_a_workers_bounds_is_refused_before_any_of_it_is_parsed",
+    ),
+    Mutation(
+        "existing: take any number of signatures from the worker",
+        "src/longterm/existing.rs",
+        "    let over = survey.signatures.len() > crate::docinfo::MAX_SIGNATURES\n",
+        "    let over = false\n",
+        "a_survey_past_a_workers_bounds_is_refused_before_any_of_it_is_parsed",
+    ),
+    Mutation(
+        "existing: take any number of values from the worker",
+        "src/longterm/existing.rs",
+        "        || survey.values.len() > crate::docinfo::MAX_SIGNATURES\n",
+        "",
+        "a_survey_past_a_workers_bounds_is_refused_before_any_of_it_is_parsed",
+    ),
+    Mutation(
+        "existing: take a value of any size from the worker",
+        "src/longterm/existing.rs",
+        "            .any(|(_, value)| value.len() > crate::docinfo::MAX_SIG_BLOB)",
+        "            .any(|(_, value)| value.len() > usize::MAX)",
+        "a_survey_past_a_workers_bounds_is_refused_before_any_of_it_is_parsed",
+    ),
+    Mutation(
+        "existing: take any number of stored certificates from the worker",
+        "src/longterm/existing.rs",
+        "        || survey.store.len() > crate::revocation::MAX_DSS_CERTIFICATES\n",
+        "",
+        "a_survey_past_a_workers_bounds_is_refused_before_any_of_it_is_parsed",
+    ),
+    Mutation(
+        "existing: take a stored certificate of any size from the worker",
+        "src/longterm/existing.rs",
+        "            .any(|der| der.len() > crate::trust::MAX_CERTIFICATE_BYTES)",
+        "            .any(|der| der.len() > usize::MAX)",
+        "a_survey_past_a_workers_bounds_is_refused_before_any_of_it_is_parsed",
+    ),
+    Mutation(
+        "existing: take any amount of DER from the worker",
+        "src/longterm/existing.rs",
+        "        || survey.bytes() > crate::sign_dss::MAX_BYTES;",
+        "        || false;",
+        "a_survey_past_a_workers_bounds_is_refused_before_any_of_it_is_parsed",
+    ),
+    Mutation(
+        "existing: fetch for a document whose store has no room",
+        "src/longterm/existing.rs",
+        "    room(&survey, &subjects, &certificates)?;\n",
+        "",
+        "a_dss_with_no_room_left_is_refused_before_anything_is_fetched",
+    ),
+    Mutation(
+        "existing: fetch for a store the reader already cuts",
+        "src/longterm/existing.rs",
+        "    let fits = !survey.store_cut\n",
+        "    let fits = true\n",
+        "a_dss_with_no_room_left_is_refused_before_anything_is_fetched",
+    ),
+    Mutation(
+        "existing: add certificates past what the reader takes",
+        "src/longterm/existing.rs",
+        "        && certificates + new <= crate::revocation::MAX_DSS_CERTIFICATES\n",
+        "",
+        "a_dss_with_no_room_left_is_refused_before_anything_is_fetched",
+    ),
+    Mutation(
+        "existing: add responses past what the reader takes",
+        "src/longterm/existing.rs",
+        "        && responses + subjects.len() <= crate::revocation::MAX_RESPONSES\n",
+        "",
+        "a_dss_with_no_room_left_is_refused_before_anything_is_fetched",
+    ),
+    Mutation(
+        "existing: add lists past what the reader takes",
+        "src/longterm/existing.rs",
+        "        && lists + subjects.len() <= crate::revocation::MAX_LISTS;",
+        "        && true;",
+        "a_dss_with_no_room_left_is_refused_before_anything_is_fetched",
+    ),
+    Mutation(
+        "existing: count a certificate the store holds as one more",
+        "src/longterm/existing.rs",
+        "        .filter(|der| !survey.store.contains(der))",
+        "        .filter(|der| !der.is_empty())",
+        "a_dss_with_no_room_left_is_refused_before_anything_is_fetched",
+    ),
+    Mutation(
+        "existing: go on with a catalog certified against any change",
+        "src/longterm/existing.rs",
+        "    if survey.certified == 1 {",
+        "    if false {",
+        "a_document_certified_in_its_catalog_is_judged_by_the_level_it_states",
+    ),
+    Mutation(
+        "existing: walk into a certificate the store did not vouch for",
+        "src/longterm.rs",
+        "            if at > 0 && !admitted.contains(&der) {",
+        "            if false {",
+        "a_look_alike_issuer_is_never_asked_about_wherever_the_document_offers_it",
+    ),
+    Mutation(
+        "existing: gather for a signer whose certificate has expired",
+        "src/longterm/existing.rs",
+        "    if trust.standing == Standing::Trusted {",
+        "    if trust.standing == Standing::Trusted || trust.standing == Standing::Expired {",
+        "a_later_run_is_refused_once_a_certificate_has_expired",
+    ),
+    Mutation(
+        "dss: write an entry the store already holds",
+        "src/sign_dss.rs",
+        "            if there.contains(item) {\n"
+        "                continue;\n"
+        "            }\n",
+        "",
+        "an_entry_the_dss_already_holds_is_not_written_again",
+    ),
+    Mutation(
+        "dss: forget what this revision has just written",
+        "src/sign_dss.rs",
+        "            there.push(item.clone());\n",
+        "",
+        "an_entry_the_dss_already_holds_is_not_written_again",
+    ),
+    Mutation(
+        "dss: survey a /DSS the writer cannot extend",
+        "src/sign_dss.rs",
+        "        Err(why) => return Survey::refusing(why),\n"
+        "    };\n"
+        "    let found",
+        "        Err(_) => [0; 3],\n"
+        "    };\n"
+        "    let found",
+        "a_dss_that_cannot_be_extended_or_read_whole_is_said_in_the_survey",
+    ),
+    Mutation(
+        "dss: say the store holds nothing",
+        "src/sign_dss.rs",
+        "        Ok(found) => found.arrays.map(|array| array.len()),",
+        "        Ok(found) => found.arrays.map(|_| 0),",
+        "an_entry_the_dss_already_holds_is_not_written_again",
+    ),
+    Mutation(
+        "dss: leave the catalog's certification out of the survey",
+        "src/sign_dss.rs",
+        "        certified: crate::sign_prepare::certification(&document),",
+        "        certified: 0,",
+        "a_document_certified_in_its_catalog_is_judged_by_the_level_it_states",
+    ),
+    Mutation(
+        "values: call a store the reader cut whole",
+        "src/docinfo.rs",
+        "        store_cut: store.dropped > 0 || store.unread > 0,",
+        "        store_cut: store.unread > 0,",
+        "a_dss_that_cannot_be_extended_or_read_whole_is_said_in_the_survey",
+    ),
+    Mutation(
+        "values: call a store with an unread entry whole",
+        "src/docinfo.rs",
+        "        store_cut: store.dropped > 0 || store.unread > 0,",
+        "        store_cut: store.dropped > 0,",
+        "a_dss_that_cannot_be_extended_or_read_whole_is_said_in_the_survey",
+    ),
+    Mutation(
+        "values: call any field after the bound a signature left out",
+        "src/docinfo.rs",
+        "        let Some(field) = node.dict else {\n"
+        "            complete = false;\n"
+        "            return fields::Flow::Leaf;\n"
+        "        };\n"
+        '        if name_of(document, field, b"FT") == "Sig" {\n'
+        "            if let Some(sig) = field",
+        "        if values.len() >= MAX_SIGNATURES {\n"
+        "            complete = false;\n"
+        "            return fields::Flow::Leaf;\n"
+        "        }\n"
+        "        let Some(field) = node.dict else {\n"
+        "            complete = false;\n"
+        "            return fields::Flow::Leaf;\n"
+        "        };\n"
+        '        if name_of(document, field, b"FT") == "Sig" {\n'
+        "            if let Some(sig) = field",
+        "values_cut_short_by_a_bound_of_the_walk_are_not_complete",
+    ),
+    Mutation(
+        "certification: read a level written as a real number as none",
+        "src/docinfo.rs",
+        "                Object::Real(level) if level.fract() == 0.0 => Some(*level as i64),",
+        "                Object::Real(level) if level.is_nan() => Some(*level as i64),",
+        "a_document_certified_in_its_catalog_is_judged_by_the_level_it_states",
+    ),
+    Mutation(
+        "certification: read a level that is no whole number as one",
+        "src/docinfo.rs",
+        "                Object::Real(level) if level.fract() == 0.0 => Some(*level as i64),",
+        "                Object::Real(level) if level.is_finite() => Some(*level as i64),",
+        "a_document_certified_in_its_catalog_is_judged_by_the_level_it_states",
+    ),
+    Mutation(
+        "validation: take the original's own name for the copy",
+        "src/commands/validation.rs",
+        "    if save::same_file(source, out) {\n"
+        "        return Err(\n"
+        '            "The document with the data added',
+        "    if false {\n"
+        "        return Err(\n"
+        '            "The document with the data added',
+        "the_originals_own_name_is_refused_before_anybody_is_asked",
+    ),
+    Mutation(
+        "words: call an earlier timestamp a signature",
+        "src/words.rs",
+        "            .filter(|(_, timestamp)| *timestamp == timestamps)",
+        "            .filter(|_| !timestamps)",
+        "the_sentence_names_a_timestamp_as_one",
+    ),
+    Mutation(
+        "words: call a lone timestamp that signature",
+        "src/words.rs",
+        '        [(_, true)] => "that timestamp is",',
+        '        [(_, true)] => "that signature is",',
+        "the_sentence_names_a_timestamp_as_one",
     ),
 ]
 

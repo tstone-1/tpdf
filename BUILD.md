@@ -5884,6 +5884,23 @@ A purchased certificate is not needed for the private-CA integration check:
 
 ```sh
 cargo test --locked --manifest-path src-tauri/Cargo.toml --test cli -- --filter 'sign --long-term'
+# Long-term validation data for a document that is ALREADY signed (`tpdf long-term`,
+# `longterm/existing.rs`). Through real workers, against the same private CA, offline:
+cargo test --locked --manifest-path src-tauri/Cargo.toml --test cli -- --filter 'long-term adds'
+# The unit tests, which hold every refusal and the check before writing:
+cargo test --locked --manifest-path src-tauri/Cargo.toml --lib -- \
+    longterm::existing sign_dss:: commands::validation::
+# Documents for other readers (qpdf, pyHanko); docs/VERIFICATION.md has the pyHanko script
+# and the readings of 2026-10-10:
+TPDF_LONG_TERM_OUT=/tmp/tpdf-long-term-added cargo test --locked \
+    --manifest-path src-tauri/Cargo.toml --lib \
+    write_documents_with_data_added_for_other_readers -- --ignored
+# Proved by hand, since tests/cli.rs is not selectable by mutate_rust.py:
+# save_outside.rs `if answered.locked {` made `if false {` turns "long-term refuses a
+# document that needs a password" red (exit 4 for 3). Needs testdata/incr-encrypted-pw.pdf.
+# Not measured: a real certificate authority or timestamp authority, and Windows.
+# pyHanko's ades_lta_validation answers NO_POE for these files and for tpdf's signing-time
+# output alike on the private CA, so it is not an oracle here.
 ```
 
 This section also runs in the normal gates. Its private CA and local timestamp,
@@ -7753,6 +7770,16 @@ starts at 0 and increments within the month.
    be red: on `224be2a` it reported the two redaction checks that had failed on the
    runner and exited 1, and on the tree with the fix it exited 0 with 464 checks passed.
    A host that does not answer, or a run that never prints its exit marker, exits 2.
+
+   The host's SSH login shell may be WSL's bash or Windows PowerShell; the script asks
+   which before it sends anything, and a host that answers neither exits 2 with nothing
+   sent (2026-10-10). Until then it assumed bash, and a PowerShell host read the bundle's
+   base64 as commands, one line each. The suite's independent read-backs need `qpdf` on
+   that host's `PATH`, and without it they print `[SKIP]` and the run still exits 0, so
+   read the skip lines of a first run on a new machine. The first run against a PowerShell host,
+   on a Windows 11 machine with `qpdf` 12.4.2, passed 567 checks with 4 skipped, none of
+   them for `qpdf`; the run before it, without the fixture packages, exited 2 at the
+   fixture step with nothing tested.
 
    The day it was written it found two things CI had not. `Windows.Media.Ocr` does not
    read a 16 px control word reliably (`docs/TRAPS.md` has the entry), which CI showed

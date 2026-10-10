@@ -785,6 +785,30 @@ pub struct Signed {
     pub summary: String,
 }
 
+/// `tpdf long-term --json`.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct LongTerm {
+    /// Always [`SCHEMA`].
+    pub schema: u32,
+    /// Always `"long-term"`.
+    pub command: String,
+    /// The signed document, as given.
+    pub input: String,
+    /// The copy with the data added, as given.
+    pub output: String,
+    /// The fields long-term validation data was added for: every signature
+    /// and timestamp the document held.
+    pub covered: Vec<String>,
+    /// The field of the archive timestamp added over the whole.
+    pub archive: String,
+    /// Every signature in the written file, as a worker read it back after
+    /// writing --- the archive timestamp included, named by
+    /// [`LongTerm::archive`].
+    pub signatures: Vec<Signature>,
+    /// The window's closing sentence, word for word.
+    pub summary: String,
+}
+
 /// `tpdf info --json`.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Info {

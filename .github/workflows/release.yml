@@ -700,13 +700,11 @@ jobs:
           Windows the installer puts `tpdf-cli.exe` beside `tpdf.exe`. See the
           README's *Command-line tool* section.
 
-          **What it is not, yet.** Adding validation data or a further archive
-          timestamp to an already signed document, and certification signatures.
-          Signing a new signature can include long-term validation data and an
-          archive timestamp. Text editing does not support automatic table
-          resizing, flow across pages or complex-script shaping. See the roadmap
-          in `docs/PLAN.md`.
-          <!-- not-built: file.addValidationData -->
+          **What it is not, yet.** Certification signatures: tpdf reads one and
+          says what it permits, and does not make one. Text editing does not
+          support automatic table resizing, flow across pages or complex-script
+          shaping. See the roadmap in `docs/PLAN.md`.
+          <!-- not-built: file.certifyDocument -->
 
           (Stamps were listed here until `26.8.8`, one release after they
           shipped, and *Merge documents* was missing from the paragraph above

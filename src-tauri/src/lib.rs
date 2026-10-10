@@ -172,7 +172,7 @@ use tauri::Manager;
 use commands::document::start_eager_open;
 use commands::{
     app::*, compress::*, document::*, edit::*, hidden::*, menubar::*, ocr::*, print::*, protect::*,
-    read::*, redact::*, save::*, session::*, sign::*, spike::*,
+    read::*, redact::*, save::*, session::*, sign::*, spike::*, validation::*,
 };
 
 /// The window's *Redact and save as*, without the window.
@@ -962,6 +962,7 @@ pub fn run() {
             sign_resume,
             sign_discard,
             sign_record,
+            add_validation_data,
             keyboard_positions,
             set_menu,
             set_menu_enabled,
@@ -1180,6 +1181,10 @@ mod tests {
             _signed: &[u8],
         ) -> Result<crate::sign_prepare::Unsigned, String> {
             Err("a redaction's read-back never asks for a document timestamp".into())
+        }
+
+        fn survey(&self, _signed: &[u8]) -> Result<crate::sign_dss::Survey, String> {
+            Err("a redaction's read-back never asks what a document's signatures are".into())
         }
     }
 

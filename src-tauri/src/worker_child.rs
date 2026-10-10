@@ -689,6 +689,10 @@ fn handle(
                 Err(e) => Response::err(e),
             }
         }
+        Request::SurveySignatures => match render::run_survey_signatures(document) {
+            Ok(survey) => Response::reply(Reply::Surveyed(Box::new(survey))),
+            Err(e) => Response::err(e),
+        },
         Request::SignatureImage => match inputs {
             None => Response::err(
                 "this worker was not started with an image file, so it has none to decode",
