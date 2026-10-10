@@ -17,7 +17,7 @@ as *downloadable*, while the release sat as a draft that GitHub showed to nobody
 are given now because they are different facts, and only the second one means a reader can
 have the binary.)
 
-## [26.10.14] - Unreleased
+## [26.10.14] - 2026-10-10
 
 ### Added
 
@@ -54,11 +54,20 @@ have the binary.)
 
 ### Changed
 
+- **A signature field that asks something of its signer is no longer signed.** A form's
+  author can ask the signer of a field to lock other fields (`/Lock`), or set requirements
+  the signature has to meet (`/SV` with a requirement marked as required). tpdf does
+  neither, and until now it signed such a field as any other, so the field read as signed
+  while the request was not met. *Sign in the signature field…* and `tpdf sign --field`
+  now refuse it and say which of the two it is. A field with preferences only is signed as
+  before, and so is the document with a signature field of its own.
 - The redaction list says in plain words what a region covers and a removal leaves: a
   drawing that also limits where later things are drawn, a drawing tpdf could not find in
   the page's content, a colour gradient, a reusable block of content, text it cannot
   measure. It printed internal names such as "a clip-path". The second line of a row
-  shows its full text on hover.
+  shows its full text on hover. `tpdf redact` and the message after a redaction use the
+  same words, where they said "of kind form" and "of kind shading", and both say
+  "picture" where the list said "image".
 
 ### Fixed
 

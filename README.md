@@ -339,7 +339,9 @@ measured the Windows render constants come out 1.5–1.8x worse.
   A document that has an empty signature field shows a *Sign* button over it: press it, or
   run *Sign in the signature field…*, which takes the first empty one, and the signature
   goes into that field. A visible signature is then drawn in the field's rectangle, so
-  nothing is dragged. *Add a form field: signature* makes such a field.
+  nothing is dragged. *Add a form field: signature* makes such a field. A field that asks
+  its signer to lock other fields of the form, or that sets requirements its signature has
+  to meet, is not signed: tpdf does neither, and says so.
   <!-- built: file.signDocument file.signField -->
 
 - **Saving signed or certified documents requires confirmation.** The current writer
@@ -1022,7 +1024,8 @@ the page as it is displayed:
   signs an empty signature field the document already has, one `tpdf form` or another
   program made: the signature is written into that field and no field is added, and with
   `--visible` it is drawn in the field's rectangle, so `--rect`, `--page` and `--anchor`
-  are left out. `tpdf fields` lists the names. `--text` draws your own lines instead of the standard ones: `{name}`, `{date}`,
+  are left out. A field that asks its signer to lock other fields, or sets requirements
+  its signature has to meet, is refused. `tpdf fields` lists the names. `--text` draws your own lines instead of the standard ones: `{name}`, `{date}`,
   `{reason}` and `{location}` are replaced by the certificate's name, the signing time, and
   the reason and location you gave, `{{` and `}}` are a brace each, the two characters `\n`
   start a new line, and `--text` may be given more than once, each adding lines. With

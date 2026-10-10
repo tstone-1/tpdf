@@ -292,16 +292,37 @@ impl Unhandled {
             }
             _ => {}
         }
+        let what = said(kind);
         match drawn {
             Some(times) => format!(
-                "object {at} is of kind {kind} and is drawn {times} time(s) in this document; \
+                "object {at} is {what} drawn {times} time(s) in this document; \
                  removing it here would leave every other copy, and the object itself, in the \
                  file \u{2014} so it was left"
             ),
-            None => format!(
-                "object {at} is of kind {kind} and overlaps the region; only text is removed here"
-            ),
+            None => {
+                format!("object {at} is {what} that overlaps the region; only text is removed here")
+            }
         }
+    }
+}
+
+/// What a reader is told an object of `kind` is.
+///
+/// The sentence printed the kind itself until 2026-10-10: "of kind form", "of
+/// kind shading", which are this program's words. These are the review
+/// panel's, `UNHANDLED_KINDS` in `redactlist.ts`, and `redactlist.test.ts`
+/// holds each arm with a kind written out here equal to that table's row. A
+/// kind neither names is said as the one thing known of it.
+fn said(kind: &str) -> &'static str {
+    match kind {
+        "image" => "a picture",
+        "path" => "a drawing",
+        "shading" => "a colour gradient",
+        "form" => "a reusable block of content",
+        // A drawing whichever of the two reasons it stays for; each has a
+        // sentence of its own when it is not a repeated one.
+        CLIP_PATH | UNPLACED_PATH => "a drawing",
+        _ => "something of a kind tpdf cannot read",
     }
 }
 
@@ -5472,7 +5493,9 @@ mod tests {
             kind: "image".to_string(),
             drawn: Some(22),
         };
-        assert!(repeated.sentence().contains("drawn 22 time(s)"));
+        assert!(repeated
+            .sentence()
+            .starts_with("object 3 is a picture drawn 22 time(s)"));
         assert!(repeated.sentence().contains("every other copy"));
         let ordinary = Unhandled {
             at: 3,
@@ -5480,7 +5503,41 @@ mod tests {
             drawn: None,
         };
         assert!(!ordinary.sentence().contains("copy"));
-        assert!(ordinary.sentence().contains("only text is removed here"));
+        assert_eq!(
+            ordinary.sentence(),
+            "object 3 is a colour gradient that overlaps the region; only text is removed here"
+        );
+        // No kind is printed as the program spells it, a later one included.
+        for (kind, what) in [
+            ("form", "a reusable block of content"),
+            ("unsupported", "something of a kind tpdf cannot read"),
+            ("a-later-kind", "something of a kind tpdf cannot read"),
+        ] {
+            let left = Unhandled {
+                at: 0,
+                kind: kind.to_string(),
+                drawn: None,
+            };
+            assert_eq!(
+                left.sentence(),
+                format!("object 0 is {what} that overlaps the region; only text is removed here")
+            );
+            let repeated = Unhandled {
+                drawn: Some(2),
+                ..left
+            };
+            assert!(repeated
+                .sentence()
+                .starts_with(&format!("object 0 is {what} drawn 2 time(s)")));
+        }
+        let clip = Unhandled {
+            at: 0,
+            kind: CLIP_PATH.to_string(),
+            drawn: Some(2),
+        };
+        assert!(clip
+            .sentence()
+            .starts_with("object 0 is a drawing drawn 2 time(s)"));
     }
 
     #[test]

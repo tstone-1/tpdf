@@ -2316,6 +2316,140 @@ fn a_field_that_cannot_be_signed_is_refused_and_says_why() {
     assert!(refused(&locked, None, "Approved").contains("read-only"));
 }
 
+/// `with_fields`, with `entry` set to `value` on the `Approved` field.
+fn asking(entry: &str, value: Object) -> Vec<u8> {
+    let mut doc = Document::load_mem(&with_fields(0)).expect("loads");
+    let id = scanned(&doc, "Approved").widget;
+    doc.get_dictionary_mut((id.0, id.1))
+        .expect("field")
+        .set(entry, value);
+    let mut bytes = Vec::new();
+    doc.save_to(&mut bytes).expect("saved");
+    bytes
+}
+
+/// A field whose author asked its signer to lock fields, or set requirements
+/// the signature has to meet, is refused: neither is done here, and signing
+/// it would say the form's request was met.
+#[test]
+fn a_field_that_asks_something_of_its_signer_is_refused() {
+    use lopdf::dictionary;
+    let refused = |bytes: Vec<u8>| {
+        prepare_noted(bytes, NOW, None, None, &into("Approved")).expect_err("refused")
+    };
+    let signed = |bytes: Vec<u8>| {
+        prepare_noted(bytes, NOW, None, None, &into("Approved")).expect("prepared")
+    };
+    let lock = dictionary! { "Type" => "SigFieldLock", "Action" => "All" };
+    let why = refused(asking("Lock", lock.clone().into()));
+    assert!(why.contains("`Approved` asks its signer to lock"), "{why}");
+
+    // A seed value with a constraint marked required, and one whose flags
+    // cannot be read.
+    for flags in [Object::Integer(1), Object::Integer(64), "Required".into()] {
+        let seed = dictionary! { "Type" => "SV", "Ff" => flags.clone() };
+        let why = refused(asking("SV", seed.into()));
+        assert!(
+            why.contains("sets requirements its signature has to meet"),
+            "{flags:?}: {why}"
+        );
+    }
+    // And one that is not a dictionary at all.
+    assert!(refused(asking("SV", Object::Integer(7))).contains("sets requirements"));
+
+    // Preferences alone bind nobody: no flags, or none set.
+    signed(asking(
+        "SV",
+        dictionary! { "Type" => "SV", "Reasons" => vec!["Approval".into()] }.into(),
+    ));
+    signed(asking(
+        "SV",
+        dictionary! { "Type" => "SV", "Ff" => 0 }.into(),
+    ));
+    // `null` is no entry.
+    signed(asking("Lock", Object::Null));
+    signed(asking("SV", Object::Null));
+
+    // On the field above a widget written apart from it, both are still read.
+    for (entry, value) in [
+        ("Lock", Object::Dictionary(lock)),
+        ("SV", dictionary! { "Ff" => 2 }.into()),
+    ] {
+        let mut doc = Document::load_mem(&with_fields(0)).expect("loads");
+        let id = scanned(&doc, "Approved").widget;
+        let id = (id.0, id.1);
+        let mut widget = doc.get_dictionary(id).expect("field").clone();
+        let parent = doc.new_object_id();
+        let mut field = Dictionary::new();
+        for key in ["FT", "T"] {
+            field.set(
+                key,
+                widget.remove(key.as_bytes()).expect("the field's entry"),
+            );
+        }
+        field.set("Kids", vec![Object::Reference(id)]);
+        field.set(entry, value);
+        widget.set("Parent", parent);
+        doc.objects.insert(id, Object::Dictionary(widget));
+        doc.objects.insert(parent, Object::Dictionary(field));
+        let root = doc
+            .trailer
+            .get(b"Root")
+            .and_then(Object::as_reference)
+            .expect("a catalog");
+        let form = doc
+            .get_dictionary(root)
+            .expect("catalog")
+            .get(b"AcroForm")
+            .expect("a form")
+            .clone();
+        let form = resolve(&doc, &form).as_dict().expect("a form").clone();
+        let fields = form.get(b"Fields").expect("fields").clone();
+        let replaced: Vec<Object> = resolve(&doc, &fields)
+            .as_array()
+            .expect("an array")
+            .iter()
+            .map(|kid| {
+                if kid.as_reference().ok() == Some(id) {
+                    parent.into()
+                } else {
+                    kid.clone()
+                }
+            })
+            .collect();
+        match (
+            doc.get_dictionary(root)
+                .expect("catalog")
+                .get(b"AcroForm")
+                .expect("a form")
+                .clone(),
+            fields,
+        ) {
+            (_, Object::Reference(list)) => {
+                doc.objects.insert(list, Object::Array(replaced));
+            }
+            (Object::Reference(form), _) => doc
+                .get_dictionary_mut(form)
+                .expect("the form")
+                .set("Fields", replaced),
+            _ => panic!("the form is written inside the catalog"),
+        }
+        let mut bytes = Vec::new();
+        doc.save_to(&mut bytes).expect("saved");
+        // The fixture is a field the scan still reads as `Approved`, empty.
+        let read = Document::load_mem(&bytes).expect("loads");
+        assert!(matches!(
+            scanned(&read, "Approved").control,
+            crate::forms::Control::Signature { signed: false }
+        ));
+        assert_ne!(
+            scanned(&read, "Approved").object,
+            scanned(&read, "Approved").widget
+        );
+        assert!(refused(bytes).contains("`Approved`"), "{entry}");
+    }
+}
+
 #[test]
 fn with_no_field_named_the_signature_still_makes_its_own() {
     let original = with_fields(0);

@@ -326,7 +326,7 @@ describe("what a row says a removal cannot take", () => {
 
   it("names the one object a removal cannot take", () => {
     expect(warningFor(plan(["image"]))).toBe(
-      "Also covers an image, which a removal cannot take",
+      "Also covers a picture, which a removal cannot take",
     );
   });
 
@@ -335,7 +335,7 @@ describe("what a row says a removal cannot take", () => {
     // reading three identical sentences cannot tell that from one printed
     // thrice.
     expect(warningFor(plan(["image", "image", "image"]))).toBe(
-      "Also covers 3 images, which a removal cannot take",
+      "Also covers 3 pictures, which a removal cannot take",
     );
   });
 
@@ -355,7 +355,7 @@ describe("what a row says a removal cannot take", () => {
 
   it("says it after the kinds a reader can name, each in its own sentence", () => {
     expect(warningFor(plan([UNMEASURED_TEXT, "image", "path"]))).toBe(
-      `Also covers an image and a drawing, which a removal cannot take. ${UNMEASURED_TEXT_WARNING}`,
+      `Also covers a picture and a drawing, which a removal cannot take. ${UNMEASURED_TEXT_WARNING}`,
     );
   });
 
@@ -384,6 +384,17 @@ describe("what a row says a removal cannot take", () => {
     const reported = [...pdfium, ...planner].filter((kind) => kind !== "text").sort();
     const worded = [...UNHANDLED_KINDS.map(([kind]) => kind), UNMEASURED_TEXT].sort();
     expect(worded).toEqual(reported);
+  });
+
+  it("uses the words the backend's sentence uses for a kind", () => {
+    // `said` in `redact.rs`, read as text: each arm that writes a kind out.
+    const body = /fn said\([^]*?\n}\n/.exec(backend)?.[0] ?? "";
+    const arms = [...body.matchAll(/"([a-z-]+)" => "([^"]+)"/g)].map((m) => [m[1], m[2]]);
+    expect(arms.map(([kind]) => kind)).toContain("form");
+    const table = new Map(UNHANDLED_KINDS.map(([kind, one]) => [kind, one]));
+    for (const [kind, words] of arms) expect([kind, table.get(kind ?? "")]).toEqual([kind, words]);
+    // And what it says of a kind it does not name is the table's last row.
+    expect(body).toContain(`_ => "${table.get("unsupported")}"`);
   });
 
   it("says each kind in words a reader has, one and several", () => {
@@ -436,7 +447,7 @@ describe("what a row says a removal cannot take", () => {
     );
     // After the kinds it can name.
     expect(warningFor(plan(["soft-mask", "image"]))).toBe(
-      "Also covers an image and something else, which a removal cannot take",
+      "Also covers a picture and something else, which a removal cannot take",
     );
   });
 
@@ -461,7 +472,7 @@ describe("what a row says a removal cannot take", () => {
     // In the table's order rather than the object order PDFium enumerated, so
     // two regions covering the same two kinds read the same way.
     expect(warningFor(plan(["path", "image", "path"]))).toBe(
-      "Also covers an image and 2 drawings, which a removal cannot take",
+      "Also covers a picture and 2 drawings, which a removal cannot take",
     );
   });
 
@@ -474,11 +485,11 @@ describe("what a row says a removal cannot take", () => {
         ...plan(["image"]),
         unhandled: [{ at: 3, kind: "image", drawn: 22 }],
       }),
-    ).toBe("Also covers an image drawn 22 times, which a removal cannot take");
+    ).toBe("Also covers a picture drawn 22 times, which a removal cannot take");
   });
 
   it("keeps a repeated object apart from one of the same kind that is not", () => {
-    // The control for the grouping key. Folding these into `2 images` would
+    // The control for the grouping key. Folding these into `2 pictures` would
     // print one row that is wrong about both.
     expect(
       warningFor({
@@ -489,7 +500,7 @@ describe("what a row says a removal cannot take", () => {
         ],
       }),
     ).toBe(
-      "Also covers an image and an image drawn 22 times, which a removal cannot take",
+      "Also covers a picture and a picture drawn 22 times, which a removal cannot take",
     );
   });
 
@@ -502,7 +513,7 @@ describe("what a row says a removal cannot take", () => {
           { at: 3, kind: "image", drawn: 22 },
         ],
       }),
-    ).toBe("Also covers 2 images drawn 22 times, which a removal cannot take");
+    ).toBe("Also covers 2 pictures drawn 22 times, which a removal cannot take");
   });
 
   it("reads a null count as no count, which is what an older reply sends", () => {
@@ -511,7 +522,7 @@ describe("what a row says a removal cannot take", () => {
         ...plan([]),
         unhandled: [{ at: 1, kind: "image", drawn: null }],
       }),
-    ).toBe("Also covers an image, which a removal cannot take");
+    ).toBe("Also covers a picture, which a removal cannot take");
   });
 });
 
@@ -686,7 +697,7 @@ describe("RedactList", () => {
       region({ id: 8, area: [10, 400, 90, 440] }),
     ]);
     expect(list.rowText(7).warning).toBe(
-      "Also covers an image, which a removal cannot take",
+      "Also covers a picture, which a removal cannot take",
     );
     // The control, on a row of the same panel: a region with no plan draws no
     // second line **at all**, so the warning is a fact about the region rather
@@ -698,7 +709,7 @@ describe("RedactList", () => {
     // shows. Read off the element the panel built.
     const [, , text] = [...(list.elementFor(7)?.children ?? [])] as HTMLElement[];
     const line = ([...(text?.children ?? [])] as HTMLElement[]).find((part) => part.dataset?.part === "warning");
-    expect(line?.title).toBe("Also covers an image, which a removal cannot take");
+    expect(line?.title).toBe("Also covers a picture, which a removal cannot take");
   });
 
   it("says the count and the standing line above the rows", () => {

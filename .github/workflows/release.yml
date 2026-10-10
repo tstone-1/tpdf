@@ -509,6 +509,20 @@ jobs:
           workers cannot read arbitrary user files or access the network;
           Windows workers use low integrity and resource-limited jobs.
 
+          **New in 26.10.14.** Two documents are shown side by side: *Show
+          side by side with...*, or drag a tab onto the left or right half
+          of the pages. One document can be on both sides, the two sides
+          can scroll together, and they come back at the next launch.
+          Fixed in what tpdf says about a signed document: a page changed
+          after a signature was reported as not rewritten in three cases,
+          and `tpdf verify --strict` passed them; it also failed an honest
+          second signature in two cases. Fixed in redaction: redacting a
+          page that shares its content with another page changed the other
+          page too, and text after a removed part of a line could move.
+          A signature field that asks its signer to lock other fields, or
+          sets requirements for the signature, is no longer signed, since
+          tpdf does neither.
+
           **New in 26.10.13.** *Find text the pages do not show* checks a
           document for words that are in the file and not visible on its
           pages, such as words under a black box drawn in another program.

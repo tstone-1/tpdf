@@ -312,8 +312,8 @@ export interface RedactListOptions {
  * a different finding wearing the same kind. A logo on every page and a shading
  * tpdf cannot draw are both *not taken*, and only the first has a reason a
  * reader can act on --- crop the page, or redact a document that does not share
- * its header. So the repeat count joins the grouping key: `an image drawn 22
- * times` is not the same row as `an image`.
+ * its header. So the repeat count joins the grouping key: `a picture drawn 22
+ * times` is not the same row as `a picture`.
  *
  * **No kind is printed as the backend spells it.** Each has words in
  * {@link UNHANDLED_KINDS}, and one that is not there, which is a kind a later
@@ -347,8 +347,8 @@ export function warningFor(plan: RegionPlan | undefined): string {
   }
   const said = [...kinds.values()]
     .sort((a, b) => a.place - b.place || a.drawn - b.drawn)
-    // Both forms come from the table, so `an image drawn 22 times` becomes
-    // `2 images drawn 22 times` and a phrase with a verb in it agrees.
+    // Both forms come from the table, so `a picture drawn 22 times` becomes
+    // `2 pictures drawn 22 times` and a phrase with a verb in it agrees.
     .map(({ place, drawn, many }) => {
       const [, one, several] = UNHANDLED_KINDS[place] ?? UNKNOWN_KIND;
       const what = many === 1 ? one : `${many} ${several}`;
@@ -383,7 +383,7 @@ export function warningFor(plan: RegionPlan | undefined): string {
  * `unsupported` is whatever PDFium gives no type for.
  */
 export const UNHANDLED_KINDS: readonly (readonly [kind: string, one: string, several: string])[] = [
-  ["image", "an image", "images"],
+  ["image", "a picture", "pictures"],
   ["path", "a drawing", "drawings"],
   [
     "clip-path",

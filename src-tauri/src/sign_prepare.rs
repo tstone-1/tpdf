@@ -42,6 +42,10 @@
 //!   a question for a writer that can leave that string alone; this one cannot.
 //! - **A certification that permits no changes** (DocMDP `/P 1`). Any further
 //!   revision breaks it, and a second signature is a further revision.
+//! - **A field that asks something of its signer** (`/Lock`, or an `/SV` with
+//!   a constraint marked required), when the signature goes into a field the
+//!   document already has. [`asked_of_the_signer`] says what each asks and why
+//!   signing without doing it is the wrong answer.
 //! - **A placeholder that is not where it was put.** The two holes are found in
 //!   the serialised update by their bytes, and exactly one of each must be
 //!   there. A cloned page dictionary is the document's own bytes, and a string
@@ -329,6 +333,7 @@ fn empty_field(document: &Document, pages: &[ObjectId], name: &str) -> Result<Ta
     if crate::forms::integer(document, widget.object, b"Ff") & 1 != 0 {
         return Err(format!("`{name}` is read-only, so it cannot be signed"));
     }
+    asked_of_the_signer(document, (widget.widget.0, widget.widget.1), name)?;
     let page = *pages
         .get(widget.page as usize)
         .ok_or("the page the signature field is on is not in this document")?;
@@ -338,6 +343,57 @@ fn empty_field(document: &Document, pages: &[ObjectId], name: &str) -> Result<Ta
         page,
         rect: widget.rect,
     })
+}
+
+/// Refuses a field whose author asked something of its signer that this
+/// writer does not do.
+///
+/// PDF 32000-1 §12.7.4.5 gives a signature field two entries for that:
+///
+/// - `/Lock` names fields the signature is to lock. A signer honours it by
+///   writing a `/FieldMDP` transform into the signature's `/Reference` and
+///   making those fields read-only; [`build`] writes neither. Signed here, the
+///   field would read as signed while the fields its author meant to freeze
+///   stayed open, and a validator that reads the lock reports the signature
+///   as not what the form asked for.
+/// - `/SV`, the seed value, constrains the signature itself: the filter, the
+///   digest, the certificate, the reasons allowed, whether a timestamp is
+///   required. Its `/Ff` says which of them are **required**; with none set
+///   they are the author's preferences and a signer may ignore them. Nothing
+///   here checks a signing against them, so a seed value with any required is
+///   refused whole, and not read constraint by constraint.
+///
+/// Read from the widget up through `/Parent`, which covers a field written
+/// apart from its widget. Neither entry is inheritable by the specification;
+/// an ancestor carrying one is refused too, which is the direction to be
+/// wrong in. A `null` is no entry.
+fn asked_of_the_signer(document: &Document, widget: ObjectId, name: &str) -> Result<(), String> {
+    let asked = |key: &[u8]| {
+        crate::forms::inherited(document, widget, key).filter(|o| !matches!(o, Object::Null))
+    };
+    if asked(b"Lock").is_some() {
+        return Err(format!(
+            "`{name}` asks its signer to lock other fields of the form, which tpdf does not \
+             do, so it does not sign this field"
+        ));
+    }
+    if let Some(seed) = asked(b"SV") {
+        // A seed value that is not a dictionary cannot be read for what it
+        // requires, so it is taken to require something.
+        let required = seed.as_dict().map_or(true, |seed| {
+            seed.get(b"Ff")
+                .ok()
+                .map(|flags| resolve(document, flags))
+                .is_some_and(|flags| flags.as_i64().map_or(true, |flags| flags != 0))
+        });
+        if required {
+            return Err(format!(
+                "`{name}` sets requirements its signature has to meet, which tpdf does not \
+                 check, so it does not sign this field"
+            ));
+        }
+    }
+    Ok(())
 }
 
 /// A visible signature's appearance, drawn before anything is signed.
