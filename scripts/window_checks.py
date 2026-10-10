@@ -36,11 +36,14 @@ from live_output import stream_results
 
 ROOT = Path(__file__).resolve().parent.parent
 TEXT = "testdata/text-heavy.pdf"
+# Signed with a certificate its signer issued to themselves, which no computer
+# trusts: what the viewer check's validation-data phase is refused for.
+SIGNED = "testdata/incr-signed.pdf"
 
 # Name, script, fixture, further arguments. A name is what `--only` matches and
 # what the summary prints; the fixture is checked for before the script starts.
 CHECKS: list[tuple[str, str, str, list[str]]] = [
-    ("viewer", "viewer_check.py", TEXT, []),
+    ("viewer", "viewer_check.py", TEXT, ["--signed", SIGNED]),
     ("marks on links", "mark_check.py", "testdata/links.pdf", []),
     ("marks on text", "mark_check.py", TEXT, []),
     ("tabs", "tabs_check.py", TEXT, ["--phase", "tabs"]),

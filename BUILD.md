@@ -4565,6 +4565,9 @@ everything passes all five refusals:
 scripts/viewer_check.py --self-test
 ```
 
+The same command runs the cases of the look beside the scratch path that the validation-data
+phase depends on (*Adding validation data, as far as a refusal*, below).
+
 It also requires an unlocked screen, for the reason `scroll_bench.py` does: WebKit suspends
 a page whose window is not visible, so behind a lock screen the check does not fail, it
 stops. Both scripts share that guard (`scripts/webview_guard.py`).
@@ -4686,6 +4689,52 @@ a hand-run transcript as a full one.
 its own `/Text` icon and ignores the `/C` we write, so blue reads 224 degrees on screen and 60
 in the file, and red reads 0 and 60. See the trap of that name — the file is right and the
 renderer is not ours.
+
+#### Adding validation data, as far as a refusal
+
+`add_validation_data` is asked for by the running application and never for its result: four
+names, each a refusal from a different branch, because one refusal could come from a backend
+that refuses everything. A document with no signature (a worker's reading), the output named
+as the original and a timestamp authority over `ftp:` (both judged in the command, before a
+worker is asked), and a signer this computer does not trust. Each is matched by a fragment of
+the backend's sentence; nothing reads the sentences out of Rust, as nothing does for the print
+refusals beside them.
+
+**The fourth needs a signed document, and `--signed` supplies it.** `window_checks.py` passes
+`testdata/incr-signed.pdf`, whose signer issued its own certificate. `viewer_check.py` puts a
+copy beside the scratch path, and then requires that name to be recorded `OK`: without the
+flag it skips, which is what the sweep's corpora print, and with it a skip is a failure. The
+timestamp authority in every call is `http://127.0.0.1:9/`, where nobody listens. No call
+names an outside host.
+
+**Whether a refusal wrote anything is looked at from outside**, since a page cannot see a
+file. After a green run `viewer_check.py` lists what is beside the scratch path by its stem,
+not by the names the phase uses, fails on anything but the signed copy, and holds that copy
+against the fixture byte for byte. `scripts/viewer_check.py --self-test` proves that look on a
+directory of its own, the accepting cases first.
+
+**What it does not reach is the copy written.** That needs a signer the operating system
+trusts, and no check adds a root to a key store; what a worker builds and reads back is
+`commands::validation`'s tests. Nor does it reach `App.svelte`'s own call: the arguments here
+are typed against the same `ipc.ts` entry and sent by this harness.
+
+Measured 2026-10-10 on macOS arm64, a checks build on a second Mac through
+`scripts/run_on_mac.py --only viewer`, `text-heavy.pdf`: 337/337, 51 not applicable, the four
+names `OK`. Three hand mutations, each built and run the same way from a commit the working
+tree never held:
+
+| Mutation | What went red |
+|---|---|
+| `add_validation_data` left out of `generate_handler!` (the entry in `mutate_viewer.py`) | all four names, *Command add_validation_data not found*; 333/337 |
+| the output written before the worker is asked (`std::fs::write(&path, …)` after `refuse_same_file`) | no name: 337/337, and the wrapper's *refused, and left a file behind*, naming both outputs |
+| `vouched_chain` answering for any standing | the fourth name alone, 336/337 |
+
+The third is worth reading for what it printed: *the signer's certificate (tpdf spike 0.6
+test signer) does not say where its revocation data is published*. The fixture's certificate
+names no address, so a build that skipped the trust rule asks nobody either, and the closed
+port is never reached. This check therefore shows the refusal is the trust rule's and not
+that a request was withheld; the second is `longterm::existing`'s tests', whose authorities
+record what they were asked.
 
 Every run reports the same check names; what differs is how many are `[SKIP]` with a reason,
 and a name that goes missing rather than skipping is the bug this arrangement exists to catch.

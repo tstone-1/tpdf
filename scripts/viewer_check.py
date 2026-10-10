@@ -2,7 +2,7 @@
 """Runs the viewer's functional check inside a real webview.
 
 Usage:
-    scripts/viewer_check.py <app-binary> <file.pdf> [--timeout SECONDS]
+    scripts/viewer_check.py <app-binary> <file.pdf> [--timeout SECONDS] [--signed SIGNED.pdf]
 
 What it checks is in `src/lib/viewercheck.ts`. What this script adds is the one
 guard that has nothing to do with the viewer: WebKit suspends a page whose
@@ -17,19 +17,28 @@ error, and no output at all. Build with `npm run tauri build -- --bundles app`
 and point this at `target/release/bundle/macos/tpdf.app/Contents/MacOS/tpdf`.
 (The earlier wording here said only "does not require a release bundle", which
 is true and cost an afternoon.)
+
+`--signed` names a document signed with a certificate this computer does not
+trust (`testdata/incr-signed.pdf`). A copy of it is put beside the scratch path
+for the phase that asks `add_validation_data` for its refusals, and that
+phase's check of it must then have run rather than skipped. With or without
+it, a file one of those refusals left behind fails the run: see `_validation`.
 """
 
 import argparse
 import atexit
+import glob
 import json
 import os
 import re
+import shutil
 import subprocess
 import sys
 import tempfile
 import threading
 import time
 
+from harness_launch import outcome_of
 from live_output import stream_results
 from webview_guard import diagnose_silence, require_visible_session
 
@@ -163,7 +172,52 @@ def self_test() -> int:
             got = "accepted" if refusal is None else f"refused: {refusal.splitlines()[0]}"
             print(f"[FAIL] {name}: {got}")
             ok = False
-    return 0 if ok else 2
+    return 0 if ok and _validation_self_test() else 2
+
+
+def _validation_self_test() -> bool:
+    """`_validation` over a directory of its own: the one state it accepts, and
+    each way a refusal that wrote something, or a signed document that was not
+    checked, has to be refused. The accepting cases first, for the reason
+    `self_test` gives."""
+    recorded = f"[OK]   {UNTRUSTED}  the signer of Signature1 ...\n"
+    ok = True
+    with tempfile.TemporaryDirectory(prefix="tpdf-viewercheck-self-") as room:
+        fixture = os.path.join(room, "fixture.pdf")
+        with open(fixture, "wb") as file:
+            file.write(b"%PDF-1.7 signed")
+        stem = os.path.join(room, "scratch-123")
+        # (name, accepted, transcript, signed document given, files beside the stem)
+        cases = [
+            ("nothing beside the scratch path is accepted", True, GREEN, False, {}),
+            ("the signed copy, checked and unchanged, is accepted", True, recorded, True,
+             {"-signed.pdf": b"%PDF-1.7 signed"}),
+            ("an output a refusal left behind is refused", False, GREEN, False,
+             {"-validation-unsigned.pdf": b"%PDF"}),
+            ("an output under a name nobody listed is refused", False, recorded, True,
+             {"-signed.pdf": b"%PDF-1.7 signed", "-anything.pdf": b""}),
+            ("a signed document whose check skipped is refused", False,
+             recorded.replace("[OK]  ", "[SKIP]"), True, {"-signed.pdf": b"%PDF-1.7 signed"}),
+            ("a signed document whose check is not in the transcript is refused", False,
+             GREEN, True, {"-signed.pdf": b"%PDF-1.7 signed"}),
+            ("a signed copy that changed is refused", False, recorded, True,
+             {"-signed.pdf": b"%PDF-1.7 signed, and more"}),
+            ("another run's file, whose pid begins with this one's, is not this run's", True,
+             GREEN, False, {"4-validation-unsigned.pdf": b"%PDF"}),
+        ]
+        for name, accept, out, given, files in cases:
+            for path in glob.glob(glob.escape(stem) + "*"):
+                os.unlink(path)
+            for suffix, content in files.items():
+                with open(stem + suffix, "wb") as file:
+                    file.write(content)
+            refusal = _validation(out, stem, fixture if given else None)
+            if (refusal is None) == accept:
+                print(f"[OK]   {name}")
+            else:
+                print(f"[FAIL] {name}: {'accepted' if refusal is None else 'refused: ' + refusal}")
+                ok = False
+    return ok
 
 
 def main() -> int:
@@ -186,6 +240,8 @@ def main() -> int:
     # unattended run hanging forever, and belongs well clear of the slowest
     # corpus rather than next to it.
     parser.add_argument("--timeout", type=float, default=900.0)
+    parser.add_argument("--signed", metavar="PDF",
+                        help="a document whose signer this computer does not trust")
     args = parser.parse_args()
 
     if not require_visible_session():
@@ -250,6 +306,16 @@ def main() -> int:
     # each of them is a cleanup that will be missed at one. A killed run leaves
     # the file, which is why it is named after the fixture and the pid.
     atexit.register(lambda: _discard(scratch))
+
+    # And the names beside it, which the validation-data phase derives from it:
+    # a copy of the signed document for it to open, and the outputs its
+    # refusals must not write. A copy rather than the fixture, so that what the
+    # command is handed as its source is disposable and can be compared after.
+    stem = scratch[: -len(".pdf")]
+    signed = f"{stem}-signed.pdf"
+    atexit.register(lambda: [_discard(path) for path in _beside(stem)])
+    if args.signed:
+        shutil.copyfile(args.signed, signed)
 
     # Launched rather than run, so that something can look at the process *while*
     # it holds a document open. `communicate` below gives back the timeout and
@@ -347,6 +413,17 @@ def main() -> int:
     if refusal is not None:
         print(refusal, file=sys.stderr)
         return 1
+    refusal = _validation(completed.stdout or "", stem, args.signed)
+    if refusal is not None:
+        print(refusal, file=sys.stderr)
+        return 1
+    # On stderr, as every verdict of this wrapper's own is: see
+    # `_report_containment`.
+    print(
+        "[OK]   add_validation_data's refusals left no file beside the scratch path"
+        + (", and the signed copy is the fixture byte for byte" if args.signed else ""),
+        file=sys.stderr,
+    )
     return _report_containment(watcher)
 
 
@@ -415,6 +492,60 @@ def _transcript(out: str, err: str, code: int) -> str | None:
         "       predating the roll (rebuild with `npm run tauri build`), or an\n"
         "       app that never started."
     )
+
+
+#: The check of `viewercheck.ts`'s validation-data phase that needs a signed
+#: document, by the name it is recorded under. A name that drifts from the
+#: phase's own is read as a check that did not run, which fails `--signed`.
+UNTRUSTED = "nothing is fetched for a signer this computer does not trust"
+
+
+def _beside(stem: str) -> list[str]:
+    """Every file whose name the validation-data phase derives from the scratch
+    path: `<stem>-<what>.pdf`. The `-` keeps another run's files out, whose pid
+    may begin with this one's digits."""
+    return sorted(glob.glob(glob.escape(stem) + "-*"))
+
+
+def _validation(out: str, stem: str, fixture: "str | None") -> "str | None":
+    """Why a green run must not be read as one in which `add_validation_data`
+    wrote nothing, or `None` if it may.
+
+    The phase asserts on what each refusal *says*, and every one of them ends
+    in *nothing was written*. Whether that is so is not something a page can
+    see, so it is looked at here: after the run, the only file beside the
+    scratch path is the signed copy this script put there. Found by the stem
+    and not by the names the phase uses, so that a name changed on one side
+    cannot make this look in a place nothing is written to.
+
+    With `--signed`, two things more. The check that needs the signed document
+    must be recorded `OK`: a skip is what a copy the phase did not find looks
+    like, and is never an outcome of a run that was given one. And the copy
+    must still be the fixture byte for byte, because the command's promise is
+    that the original is not modified, refused or not.
+
+    The path the refusals cannot reach, a copy written, is not looked for here
+    at all: it needs a signer the operating system trusts.
+    """
+    signed = f"{stem}-signed.pdf"
+    left = [path for path in _beside(stem) if path != signed]
+    if left:
+        return ("[FAIL] add_validation_data refused, and left a file behind: "
+                + ", ".join(os.path.basename(path) for path in left))
+    if fixture is None:
+        return None
+    outcome = outcome_of(out, UNTRUSTED)
+    if outcome != "OK":
+        return (f"[FAIL] a signed document was supplied, and `{UNTRUSTED}` "
+                f"is {outcome or 'not recorded'}")
+    try:
+        with open(signed, "rb") as copy, open(fixture, "rb") as original:
+            same = copy.read() == original.read()
+    except OSError as e:
+        return f"[FAIL] the signed copy could not be compared with the fixture: {e}"
+    if not same:
+        return "[FAIL] add_validation_data refused, and the document it was handed has changed"
+    return None
 
 
 def _discard(path: str) -> None:

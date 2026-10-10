@@ -475,6 +475,18 @@ MUTATIONS = [
         runner="viewer-tagged",
     ),
     Mutation(
+        # The same list, and the command no test calls by name: the steps under
+        # it are tested with authorities of their own and the sequence above it
+        # against a fake shell, so a reader is told the command does not exist
+        # with every gate green. The check asks it for a refusal.
+        "lib: leave the validation-data command out of the handler list",
+        "src-tauri/src/lib.rs",
+        "            add_validation_data,\n",
+        "",
+        "validation data is refused for a document with no signature",
+        runner="viewer",
+    ),
+    Mutation(
         # Leave the note open behind whatever the reader pressed next. Two boxes
         # sit over the page at once, and what was typed in the first is
         # committed by nothing until something else closes it.

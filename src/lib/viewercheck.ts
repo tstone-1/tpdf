@@ -41,7 +41,7 @@ import { DEFAULT_SWATCH, PALETTE, swatch } from "./markcolors";
 import { NIBS } from "./marknibs";
 import { PAGE_SIZE_NAMES } from "./pagesizes";
 import { CommandRegistry } from "./commands";
-import type { DocumentInfo, PageSize } from "./ipc";
+import { call, type DocumentInfo, type PageSize } from "./ipc";
 import { needsWords, wordsForPage, type Comment, type Comments } from "./comments";
 import {
   sections,
@@ -690,6 +690,7 @@ async function run(path: string): Promise<void> {
   await markCommandChecks(doc);
   await cropCommandChecks(doc);
   await printChecks(path, doc);
+  await validationDataChecks(path);
   await releaseChecks(path);
 
   sidebar.destroy();
@@ -11355,4 +11356,168 @@ async function printChecks(path: string, doc: DocumentInfo): Promise<void> {
     turned.length > 0 && !turned.includes("is not in this document"),
     turned ? preview(turned) : "it accepted 4096 quarter-turns",
   );
+}
+
+/** What this phase reports, so a run that cannot start still prints the names. */
+const VALIDATION_CHECK = {
+  unsigned: "validation data is refused for a document with no signature",
+  sameFile: "validation data is refused under the original's own name",
+  address: "validation data is refused a timestamp authority that is not http",
+  // `viewer_check.py` reads this one by name: with `--signed` it must have run.
+  untrusted: "nothing is fetched for a signer this computer does not trust",
+} as const;
+
+/**
+ * A timestamp authority nobody is listening at: the discard port, on this
+ * machine. Never an outside host. Every refusal below is made before anybody
+ * is asked, so nothing is sent here either; it is what a regression that went
+ * as far as the archive timestamp would reach, and not the internet.
+ *
+ * **It is not how a skipped trust rule shows.** The signed fixture's signer
+ * names no address for revocation data, so a build that vouched for everybody
+ * stops one step later, at *does not say where its revocation data is
+ * published*, having asked nobody (measured 2026-10-10, `BUILD.md`). That no
+ * request is made for an untrusted signer whose certificate *does* name an
+ * address is `longterm::existing`'s tests', whose authorities record what
+ * they were asked.
+ */
+const NOBODY_LISTENING = "http://127.0.0.1:9/";
+
+/**
+ * Adding long-term validation data, up to but not including anybody's answer.
+ *
+ * {@link printChecks}' arrangement, for its reason. The steps are Rust's and
+ * tested there, and the sequence before the command is `validationdata.ts`'s
+ * and tested there; what neither reaches is whether `add_validation_data`
+ * exists under that name, takes these four arguments, and hands the document
+ * to a worker that answers. So these ask for what the backend must *refuse*,
+ * and assert on the reason it gives. The arguments go through `call`, which
+ * types them against the table `App.svelte`'s own call is typed against.
+ *
+ * Four refusals from four branches, because one could come from a backend that
+ * refuses everything: the worker's reading of a document with no signature,
+ * the output named as the original, an address judged in the command, and a
+ * signer the operating system does not vouch for.
+ *
+ * **The sentences are Rust's, and nothing here reads them from it**: each is
+ * matched by a fragment, as the print refusals are. `longterm::existing`'s
+ * `Refusal::sentence` has the first and the last, `commands::validation` the
+ * second and the *nothing was written* every `Stopped::Refused` ends in, and
+ * `tsa::authority` the third.
+ *
+ * **Not reached: the data gathered and the copy written.** That needs a signer
+ * the operating system trusts, and no check adds a root to a key store. What a
+ * worker builds and reads back is `commands::validation`'s own tests, over
+ * authorities of their own.
+ *
+ * Whether anything was written is not something a page can see.
+ * `viewer_check.py` looks beside the scratch path after the run, and holds the
+ * signed document's bytes against the fixture's.
+ */
+async function validationDataChecks(path: string): Promise<void> {
+  const scratch = await invoke<string | null>("viewercheck_scratch");
+  if (!scratch) {
+    for (const name of Object.values(VALIDATION_CHECK)) {
+      skip(
+        name,
+        "no scratch path was bound, so there is no name to refuse a copy at",
+      );
+    }
+    return;
+  }
+  // Names of this run's own, which `viewer_check.py` finds by the same stem.
+  const beside = (what: string): string =>
+    scratch.replace(/\.pdf$/, `-${what}.pdf`);
+
+  /** The refusal, or nothing when the data was added. */
+  const add = async (
+    doc: number,
+    source: string,
+    out: string,
+    timestamp: string,
+  ): Promise<string> => {
+    try {
+      await call("add_validation_data", { doc, source, path: out, timestamp });
+      return "";
+    } catch (e) {
+      return describeThrown(e);
+    }
+  };
+  // A refusal that is the wrong one is printed whole: which sentence came
+  // instead is the finding, and forty characters of it do not say.
+  const said = (ok: boolean, refusal: string): string =>
+    !refusal
+      ? "it added the data"
+      : ok
+        ? preview(refusal)
+        : refusal.replace(/\s+/g, " ").trim();
+  const opened = (file: string): Promise<DocumentInfo | null> =>
+    invoke<DocumentInfo>("open_document", { path: file }).catch(() => null);
+  const closed = (doc: number): Promise<void> =>
+    invoke<void>("close_document", { doc }).catch(() => {});
+
+  // Opened here rather than reusing the document under test: the command
+  // refuses a document with unsaved edits, and whether the phases above left
+  // that one with any is not something this phase should depend on.
+  const plain = await opened(path);
+  if (!plain) {
+    const why = "the document did not open a second time";
+    check(VALIDATION_CHECK.unsigned, false, why);
+    skip(VALIDATION_CHECK.sameFile, why);
+    skip(VALIDATION_CHECK.address, why);
+  } else {
+    const unsigned = await add(
+      plain.id,
+      path,
+      beside("validation-unsigned"),
+      NOBODY_LISTENING,
+    );
+    const refused =
+      unsigned.includes("this document has no signature") &&
+      unsigned.includes("nothing was written");
+    check(VALIDATION_CHECK.unsigned, refused, said(refused, unsigned));
+
+    // Refused by the command itself, before a worker is asked: with the check
+    // above, `source` and `path` were both read.
+    const same = await add(plain.id, path, path, NOBODY_LISTENING);
+    const named = same.includes("a name other than the original's");
+    check(VALIDATION_CHECK.sameFile, named, said(named, same));
+
+    // And `timestamp` is judged here, not taken from the page as it comes.
+    const address = await add(
+      plain.id,
+      path,
+      beside("validation-address"),
+      "ftp://127.0.0.1/",
+    );
+    const judged = address.includes("only http and https");
+    check(VALIDATION_CHECK.address, judged, said(judged, address));
+    await closed(plain.id);
+  }
+
+  // A document somebody signed with a certificate they issued to themselves,
+  // which `viewer_check.py --signed` copies here. The refusal is the trust
+  // rule's: reached only once a worker has read the signature and called it
+  // intact, and before any address a certificate names is asked.
+  const signedPath = beside("signed");
+  const signed = await opened(signedPath);
+  if (!signed) {
+    skip(
+      VALIDATION_CHECK.untrusted,
+      "no signed document was put beside the scratch path",
+    );
+    return;
+  }
+  const untrusted = await add(
+    signed.id,
+    signedPath,
+    beside("validation-untrusted"),
+    NOBODY_LISTENING,
+  );
+  const unvouched =
+    untrusted.includes("is not trusted by this computer") &&
+    untrusted.includes("will not fetch revocation data") &&
+    untrusted.includes("nothing was written");
+  check(VALIDATION_CHECK.untrusted, unvouched, said(unvouched, untrusted));
+  await closed(signed.id);
 }

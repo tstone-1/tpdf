@@ -6748,6 +6748,27 @@ first written and was rewritten.
 window. Windows. Acrobat or any reader other than pyHanko and tpdf itself. A document
 certified with no changes permitted, which is refused.
 
+**The command in a window, as far as a refusal, later the same day.** The viewer check asks
+the running application for `add_validation_data` four times and is refused four ways: no
+signature, the original's own name, a timestamp authority that is not http, and a signer the
+computer does not trust (`testdata/incr-signed.pdf`). 337/337 on a second Mac and on Windows
+11, with nothing left beside the scratch path on either, and on the Mac three hand
+mutations seen red; `BUILD.md`, *Adding validation data, as far as a refusal*, has the run
+and the table. Still not measured in a window: the data gathered and the copy written, which
+need a signer the operating system trusts, and the path from the menu through the dialog and
+the save panel to the call.
+
+**A document tpdf did not sign, the same day.** A German federal law gazette issue, sealed by
+its publisher under a D-TRUST certificate and timestamped: `tpdf verify` reads the seal as
+intact and the document as B-T by its parts, and `tpdf long-term` refuses it with exit 3 and
+writes nothing, on macOS and on Windows 11, because neither computer trusts that root. That is the trust refusal on a signature made elsewhere. The copy written
+has still run only against the suite's own authorities: it needs an existing signature under
+a root the operating system trusts, and `tpdf sign` refuses the one such identity at hand, a
+code-signing certificate, as not issued for signing documents. What it would ask and how it
+reads the answers are `longterm::gather` and `longterm::archived`, which signing with
+long-term data uses, measured against three public authorities on 2026-09-28
+(`docs/THREAT-MODEL.md`).
+
 **After an independent read-only review, the same day.** Its findings were checked against
 the code and the ones that held were fixed, each with a test seen red under a hand mutation:
 the survey's bounds held in the app process, no `/DSS` entry written twice and a full

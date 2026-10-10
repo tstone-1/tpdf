@@ -147,6 +147,11 @@ pub fn viewercheck_path() -> Option<String> {
 /// Deliberately a path and not a directory: a check writing wherever it liked
 /// inside the app process is a wider authority than any of these need, and one
 /// name is the smallest thing that makes the comparison possible.
+///
+/// The validation-data phase derives further names from it by its stem,
+/// `<stem>-signed.pdf` and `<stem>-validation-*.pdf`, which the command it
+/// asks for must leave unwritten. `viewer_check.py` lists what is beside the
+/// path by that stem after the run, so the names stay inside one prefix.
 #[tauri::command]
 pub fn viewercheck_scratch() -> Option<String> {
     spike_env("TPDF_VIEWERCHECK_SCRATCH")
