@@ -6684,9 +6684,14 @@ arm64 (3,040 Rust tests with ten documented ignored, 2,795 frontend tests) and
 `window_checks.py` passed 11 of 11 on Windows 11 and 11 of 11 on macOS, both on the release
 tree, and on Windows `tabs_check.py --phase fields` passed 76 of 76 with one not applicable
 and `--phase fields-turned` 10 of 10. The macOS run was made on a second Mac over ssh, as a
-one-off launchd job in the logged-in session (`launchctl bootstrap gui/<uid>`), with a
-remote-desktop session connected; whether it runs there with none connected was not
-measured. Its first attempt failed in every check with *could not load its PDF engine*: the
+one-off launchd job in the logged-in session (`launchctl bootstrap gui/<uid>`). That Mac
+has no display attached and needs none: it reports one of 1920 by 1080 either way. What it
+needs is a session that is not locked, and the screen saver locks it: with no setting of
+its own the saver starts after twenty minutes without input, and `loginwindow` then logs
+`screenSaverDidFade | about to call lockScreen`, whatever *Require password* says. With
+`defaults -currentHost write com.apple.screensaver idleTime -int 0` the session was still
+unlocked after 25 minutes without input and with nobody connected, and the eleven checks
+passed again in that state. Its first attempt failed in every check with *could not load its PDF engine*: the
 checks build was signed with the Developer ID and the hardened runtime and the vendored
 PDFium was signed ad hoc, so the library was refused. Signing the bundled
 `libpdfium.dylib` and then the app again with the same identity is what made it load.
