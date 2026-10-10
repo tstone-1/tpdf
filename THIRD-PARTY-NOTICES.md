@@ -2767,7 +2767,7 @@ SOFTWARE.
 | md-5 | 0.11.0 | MIT OR Apache-2.0 |
 | memchr | 2.8.3 | Unlicense OR MIT |
 | mime | 0.3.17 | MIT OR Apache-2.0 |
-| minisign-verify | 0.2.5 | MIT |
+| minisign-verify | 0.3.0 | MIT |
 | miniz_oxide | 0.8.9 | MIT OR Zlib OR Apache-2.0 |
 | miniz_oxide | 0.9.1 | MIT OR Zlib OR Apache-2.0 |
 | mio | 1.2.4 | MIT |
@@ -2870,7 +2870,7 @@ SOFTWARE.
 | serde_core | 1.0.229 | MIT OR Apache-2.0 |
 | serde_derive | 1.0.229 | MIT OR Apache-2.0 |
 | serde_derive_internals | 0.29.1 | MIT OR Apache-2.0 |
-| serde_json | 1.0.151 | MIT OR Apache-2.0 |
+| serde_json | 1.0.152 | MIT OR Apache-2.0 |
 | serde_repr | 0.1.21 | MIT OR Apache-2.0 |
 | serde_spanned | 1.1.2 | MIT OR Apache-2.0 |
 | serde_with | 3.24.0 | MIT OR Apache-2.0 |
@@ -2907,14 +2907,14 @@ SOFTWARE.
 | system-configuration-sys | 0.6.0 | MIT OR Apache-2.0 |
 | tao | 0.37.1 | Apache-2.0 |
 | tar | 0.4.46 | MIT OR Apache-2.0 |
-| tauri | 2.12.2 | Apache-2.0 OR MIT |
-| tauri-codegen | 2.7.1 | Apache-2.0 OR MIT |
-| tauri-macros | 2.7.1 | Apache-2.0 OR MIT |
-| tauri-plugin-dialog | 2.8.1 | Apache-2.0 OR MIT |
-| tauri-plugin-fs | 2.6.0 | Apache-2.0 OR MIT |
+| tauri | 2.12.3 | Apache-2.0 OR MIT |
+| tauri-codegen | 2.7.2 | Apache-2.0 OR MIT |
+| tauri-macros | 2.7.2 | Apache-2.0 OR MIT |
+| tauri-plugin-dialog | 2.8.2 | Apache-2.0 OR MIT |
+| tauri-plugin-fs | 2.7.0 | Apache-2.0 OR MIT |
 | tauri-plugin-process | 2.4.0 | Apache-2.0 OR MIT |
-| tauri-plugin-single-instance | 2.5.2 | Apache-2.0 OR MIT |
-| tauri-plugin-updater | 2.13.2 | Apache-2.0 OR MIT |
+| tauri-plugin-single-instance | 2.5.3 | Apache-2.0 OR MIT |
+| tauri-plugin-updater | 2.13.3 | Apache-2.0 OR MIT |
 | tauri-runtime | 2.12.1 | Apache-2.0 OR MIT |
 | tauri-runtime-wry | 2.12.1 | Apache-2.0 OR MIT |
 | tauri-utils | 2.10.1 | Apache-2.0 OR MIT |
@@ -12012,10 +12012,10 @@ Packages whose code is compiled into `dist/`. This list is read from the build's
 
 | Package | Version | Licence |
 |---|---|---|
-| @tauri-apps/api | 2.12.2 | Apache-2.0 OR MIT |
-| @tauri-apps/plugin-dialog | 2.8.1 | MIT OR Apache-2.0 |
+| @tauri-apps/api | 2.12.3 | Apache-2.0 OR MIT |
+| @tauri-apps/plugin-dialog | 2.8.2 | MIT OR Apache-2.0 |
 | @tauri-apps/plugin-process | 2.4.0 | MIT OR Apache-2.0 |
-| @tauri-apps/plugin-updater | 2.13.2 | MIT OR Apache-2.0 |
+| @tauri-apps/plugin-updater | 2.13.3 | MIT OR Apache-2.0 |
 | svelte | 5.57.2 | MIT |
 
 ### Copyright notices

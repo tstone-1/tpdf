@@ -509,6 +509,11 @@ jobs:
           workers cannot read arbitrary user files or access the network;
           Windows workers use low integrity and resource-limited jobs.
 
+          **New in 26.10.16.** The PDF engine is PDFium 8078, the branch
+          Chrome 156 ships; it was 8066. The newer branch carries what
+          Chrome merged into it since, among them a fix in the code that
+          draws shapes.
+
           **New in 26.10.15.** *Add long-term validation data...* takes a
           document that is already signed, by tpdf or by anything else, and
           writes a copy that can still be checked after the certificates

@@ -6789,6 +6789,27 @@ read through. **Not run:** the written copy of `tpdf long-term` against a public
 authority (`docs/VERIFICATION.md` has why), the new entry of `mutate_viewer.py` by the
 harness itself, `print-probe` and `redact-reach-probe`.
 
+**26.10.16 verification, 2026-10-10:** all 31 gates passed on the release tree on macOS
+arm64 (3,083 Rust tests with eleven documented ignored, 2,809 frontend tests) and
+`check_windows.py` type-checked the Windows tree. The only Rust change since 26.10.15 is a
+comment in `save.rs`, so `--near v26.10.15` selected no Rust mutation and the harness
+refused to call that a pass; `--since v26.10.15` ran every mutation in that file instead.
+The one frontend mutation near a change and all 31 rows of `mutate_python.py` were caught.
+The engine is the new pin; its probes and both platforms' runs are in the paragraph on
+`8078-tpdf.1` near the top of this file, and `window_checks.py` passed 11 of 11 again on a
+second Mac on the release tree. **The updater's own crates moved**, `tauri-plugin-updater`
+to 2.13.3 and `minisign-verify` from 0.2.5 to 0.3.0, the crate that checks an update's
+signature, and step 12 exercises the previous release's updater and not this one's. So
+this tree was built on the second Mac as version 26.10.1 and updated itself with
+`update_check_mac.py`: it was offered 26.10.15, installed it, came back as 26.10.15 and
+the bundle read as Notarized Developer ID. Two of its twelve checks failed and both were
+the test copy's doing: the tool in the bundle takes its version from `Cargo.toml`, and
+the copy could not load its engine because that build skipped signing the bundled
+library, so no document was open to come back. **Not run:** the Windows window checks on
+the release tree (they passed on the pin commit, which differs by the version, the
+dependency patch releases and the landing page), the same updater test on Windows,
+`print-probe` and `redact-reach-probe`.
+
 **26.10.15 publication, 2026-10-10:** `Audit` and CI were green on the release commit
 `2751c2c2`, both legs. The installer's hooks had changed since 26.10.14, so
 `v26.10.15-rc1` was built first (run 38070875264): both platform jobs passed at the first
@@ -9157,6 +9178,17 @@ starts at 0 and increments within the month.
     `update.test.ts` fakes the plugin, so what it covers is the state machine and not
     signature verification, TLS, or the shape of the real `latest.json`. Nothing in this
     repository has ever fetched that file.
+
+    **When a release moves the updater's own crates, test the new updater before the tag.**
+    This step proves the previous release can update; a release whose own updater is broken
+    passes it, and the damage shows one release later, in copies that can no longer update.
+    Build the release tree under a lower version and run the same script on it
+    (26.10.16's verification record has the run and the two checks that fail by construction):
+
+    ```
+    npm run tauri build -- --config '{"version":"26.10.1","bundle":{"createUpdaterArtifacts":false}}' --bundles dmg
+    python3 scripts/update_check_mac.py src-tauri/target/release/bundle/dmg/tpdf_26.10.1_aarch64.dmg testdata/text-wide.pdf
+    ```
 
     Needs two published releases, so it starts from the second one ever cut with the
     updater — first opportunity is applying `26.8.2` from an installed `26.8.2`+1.
