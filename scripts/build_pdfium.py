@@ -218,7 +218,12 @@ def build(work, output, install_sdk):
         applied[name] = digest(patch)
     if windows:
         resource = (builder / "patches/win/resources.rc").read_text(encoding="utf-8")
-        resource = resource.replace("$VERSION_CSV", "0,0,8066,1").replace("$VERSION", "0.0.8066.1")
+        # From the pin, so the library's version resource names the branch it was built
+        # from. It was the literal 8066 until 2026-10-10, which a later pin would have kept.
+        branch, _, build = pins["version"].partition("-tpdf.")
+        if not (branch.isdigit() and build.isdigit()):
+            raise SystemExit(f"[FAIL] the pinned version {pins['version']!r} is not <branch>-tpdf.<n>")
+        resource = resource.replace("$VERSION_CSV", f"0,0,{branch},{build}").replace("$VERSION", f"0.0.{branch}.{build}")
         resource = resource.replace("$YEAR", "2026").replace("compiled by github.com/bblanchon", "tpdf compatibility build")
         (source / "resources.rc").write_text(resource, encoding="utf-8")
     build_dir = source / "out/Release"
