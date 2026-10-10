@@ -899,7 +899,7 @@ jobs:
       # commit and saved, as that run printed it. Empty means no build has been
       # recorded, and the client is then built from source in every run. Keep
       # it equal in both workflows; `check_workflow_parity.py` holds them.
-      SSIGN_SHA256: ''
+      SSIGN_SHA256: '3d8bad1eaeb7a6b5707c0d5e6fd1ae24ea2093c02e9df3f95ed512c3cad80818'
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5 (v5.1.0)
         with:

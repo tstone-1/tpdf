@@ -6558,11 +6558,16 @@ deleted and the client is built from source, with a warning in the log. The key 
 commit a cache claims to hold, and anything that runs in a job on `main` can save a cache
 under any key, so the key alone does not say what the file is. The workflow check holds
 both pins equal in the two files and refuses a job that holds a secret and restores a cache
-without such a comparison. **`SSIGN_SHA256` is empty since 2026-10-09**, so every run builds
-the client until a digest is recorded: run the rehearsal on `main`, copy the digest from its
+without such a comparison. **To record a digest**, when `SSIGN_SHA256` is empty or
+the cache is gone: run the rehearsal on `main`, copy the digest from its
 line `ssign.exe built from <commit>, sha256 <digest>` into both workflows, and the run after
 that restores. If the rehearsal restored an older copy instead of building, delete that
-cache entry first (`gh cache delete <key>`). Three things follow. After changing
+cache entry first (`gh cache delete <key>`). **The digest is that of the cached copy and of
+no other build**: the client does not build reproducibly, and on 2026-10-10 three builds of
+the same commit had three digests (the cached copy, the rehearsal tag's run and the release
+run of 26.10.14). So a digest printed by a release run cannot be recorded, because that
+build was not saved. The pin was empty from 2026-10-09 until the rehearsal run 38054812147
+on 2026-10-10, whose build is the one recorded now. Three things follow. After changing
 `SSIGN_REV`, in both workflows, clear `SSIGN_SHA256`, run the rehearsal on `main` once, which
 is also the proof that the new client logs in, and record the new digest. GitHub removes a cache nobody read for 7 days, and the next
 run then builds again and is slower, not wrong. And a release that finds no cache builds
@@ -6648,7 +6653,7 @@ which follows the records of past releases and carries the reasons and the comma
 9. [Commit, push, and confirm the `Audit` run is green](#release-step-9)
 10. [Rehearse changed release mechanics, then tag](#release-step-10)
 11. [Publish the draft, and check it from outside the account](#release-step-11)
-12. [Apply the update from the previous release: `scripts/update_check.py` on Windows, by hand on macOS](#release-step-12)
+12. [Apply the update from the previous release: `scripts/update_check.py` on Windows, `scripts/update_check_mac.py` on a Mac](#release-step-12)
 
 **26.10.6 verification, macOS arm64, 2026-10-05:** all 30 gates passed on the release tree
 (2,823 Rust tests with ten documented ignored, 2,454 frontend tests). Every Rust and
@@ -7858,6 +7863,27 @@ starts at 0 and increments within the month.
    It runs the viewer check on one document. The sweep over every window corpus is
    `scripts/viewer_sweep.py` (*Checking the viewer*), a longer run with its own table.
 
+   **On a second Mac, as one command** (2026-10-10), so that the machine somebody is
+   working at keeps its screen and its keyboard:
+
+   ```
+   scripts/run_on_mac.py --host HOST --clone '~/path/to/tpdf' [--wrap 'COMMAND --']
+   ```
+
+   It sends the tree as it is here, uncommitted work included, builds the checks bundle in
+   a worktree beside the other Mac's clone, and starts `window_checks.py` in that Mac's
+   logged-in session as a one-off `launchd` job. `--rev` runs a commit and `--only` is
+   passed on. `--wrap` is a command put before the build and the signing, for a host
+   whose SSH login has neither the pinned Node nor an unlocked keychain. The other Mac
+   needs no display attached. It needs a session that is not locked, and with no setting
+   of its own the screen saver locks it after twenty minutes; the script's header has the
+   one command that turns that off, and the script refuses a locked session before it
+   builds. When the build is signed with a Developer ID the script signs the bundled
+   PDFium with the same identity, without which every check ends in *could not load its
+   PDF engine*. First run, on `923d1860`: 11 of 11. An unreachable host, a clone that is
+   not there and an `--only` that matches nothing each ended in exit 2. A run with a
+   failing check, which must end in 1, has not been seen.
+
    **It runs unmodified on Windows** against the `--no-bundle` checks build, from a session
    that is logged on (2026-10-09, Windows 11): every check passed. In that run the `sides`
    phase passed its checks and `tabs_check.py` then exited 1 with `could not verify worker
@@ -8974,7 +9000,7 @@ starts at 0 and increments within the month.
     that, run the downloaded `setup.exe /S` and read `winget list tpdf`. The installer is
     `nullsoft`, user scope.
 
-12. <a id="release-step-12"></a>**Apply the update from the previous release, by hand.** This is the only end-to-end
+12. <a id="release-step-12"></a>**Apply the update from the previous release: `scripts/update_check.py` on Windows, `scripts/update_check_mac.py` on a Mac.** This is the only end-to-end
     proof the updater works, and no gate, harness or unit test can stand in for it:
     `update.test.ts` fakes the plugin, so what it covers is the state machine and not
     signature verification, TLS, or the shape of the real `latest.json`. Nothing in this
@@ -9020,6 +9046,26 @@ starts at 0 and increments within the month.
     in the same run. So this check stays red on that line until the release after 26.10.14
     is the one on offer. The first version of the check counted the old copy's workers as
     the application started again; the control showed it, passing two checks it must fail.
+
+    **On a Mac it is one command too, since the same day**, on a Mac that is logged in and
+    not locked, with the disk image of the release before the published one:
+
+    ```
+    python3 scripts/update_check_mac.py <path>/tpdf_<previous>_aarch64.dmg testdata/text-wide.pdf
+    ```
+
+    It copies the application out of the image into a scratch folder, starts it on a copy
+    of the document under a folder with a space in its name, waits for *Install update* in
+    the application's menu to become available and chooses it, then *Restart to finish
+    update*, and waits for the application to come back from the same bundle with the tool
+    inside at the new version, the document open again, no update on offer, and a bundle
+    that Gatekeeper reads as Notarized Developer ID. The menu is chosen through System
+    Events, so whatever starts the script needs the Accessibility permission; the button
+    in the window is not used, for the reason given below. `--control no-press` chooses
+    nothing. **First run, 2026-10-10, over SSH on a Mac with no display attached, from
+    26.10.13 to the published 26.10.14:** 12 of 12, and the control failed its seven. Its
+    first attempt reported that the application did not start: the scratch folder was
+    under `/var`, and `ps` prints the same path under `/private/var`.
 
     **Carried out for the first time on 2026-08-31, and it passes.** 26.8.11 installed from
     its own `.dmg` over the 26.8.12 that was there, launched normally: the toolbar showed

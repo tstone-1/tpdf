@@ -47,7 +47,7 @@ jobs:
       SSIGN_REV: 5fd4daf22155b19b645aef3dd467f3c4c9e440b3
       # The SHA-256 of the `ssign.exe` this workflow built from that commit and
       # saved, as the run printed it. See the same line in `release.yml`.
-      SSIGN_SHA256: ''
+      SSIGN_SHA256: '3d8bad1eaeb7a6b5707c0d5e6fd1ae24ea2093c02e9df3f95ed512c3cad80818'
       SIGNER: Open Source Developer Timo Stein
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
