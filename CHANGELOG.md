@@ -17,6 +17,18 @@ as *downloadable*, while the release sat as a draft that GitHub showed to nobody
 are given now because they are different facts, and only the second one means a reader can
 have the binary.)
 
+## [26.10.15] - Unreleased
+
+### Fixed
+
+- **Windows: uninstalling tpdf after an update left `.pdf` assigned to nothing that exists.**
+  The installer remembers what opened PDF files before tpdf so that the uninstaller can
+  put it back. An update ran the installer again, and the second run remembered tpdf
+  itself. Uninstalling then assigned `.pdf`, for this user, to the file type the
+  uninstaller had just removed. The installer now keeps what it remembered the first
+  time. On a copy that was already updated the earlier program can no longer be
+  recovered, so the entry is cleared and Windows falls back to its own choice.
+
 ## [26.10.14] - 2026-10-10
 
 ### Added

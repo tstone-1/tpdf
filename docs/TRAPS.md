@@ -807,6 +807,7 @@ hop through the index.
 - A PowerShell `$env:` variable in double quotes is emptied by the remote bash, and `Test-Path` then answers False about another path
 - A process that is exiting refuses a query before its handle says it has exited
 - A module path read from another process can begin with `\\?\`, so a prefix test against a folder finds nothing
+- An installer that backs up what it replaces backs up itself the second time
 
 ## Fixtures
 - The test fixtures are generated, not committed
@@ -26331,3 +26332,24 @@ range ends where the revision that was just written ends (`sign_cms::ours`).
 The same day `App.svelte` had the mirror of it: identity guards that compared a document
 handle, which two views of one document share. To find what was just made, use something
 only it can have: where it ends, the object that was allocated, the view it was made for.
+
+### An installer that backs up what it replaces backs up itself the second time
+
+Tauri's NSIS template associates a file type with `APP_ASSOCIATE`: it reads the class the
+user's `.pdf` names, writes it into a value `PDF document_backup`, and makes the class
+tpdf's. The uninstaller writes the backup back. An update runs the installer over an
+installed copy, so the second run reads tpdf's own class and saves that as the backup.
+Uninstalling then restores a class it deletes in its next line, and what opened PDFs
+before tpdf is gone. Every release up to 26.10.14 did this to every copy that was updated
+once (found 2026-10-10 by `scripts/update_check.py`, the first run of the update that read
+the registry afterwards).
+
+`installer-hooks.nsh` now copies the backup aside before the association is written, when
+the class is already tpdf's, and puts it back after. The general form: a step that saves
+the state it is about to replace is right once. Run again over its own result it saves its
+own result, so a check of an install has to install twice before it reads what the
+uninstall leaves. `installed_check.py` does since that day.
+
+The same run showed that a check which compares a machine with itself before the run
+passes on a machine an earlier run has already marked: the application's own registry key
+"read as before" only because an earlier run had left the same folder name in it.

@@ -52,6 +52,54 @@
     DetailPrint "Removing a file named pdfium left behind by 26.8.8"
     Delete "$INSTDIR\pdfium"
   tpdf_pdfium_ready:
+  !insertmacro TPDF_KEEP_PDF_BACKUP
+!macroend
+
+; ---------------------------------------------------------------------------
+; What opened PDFs before tpdf did, kept across an update.
+; ---------------------------------------------------------------------------
+;
+; Tauri's `APP_ASSOCIATE` (FileAssociation.nsh) reads the `.pdf` class of the
+; user, writes it into the value `PDF document_backup`, and then makes the
+; class `PDF document`. The uninstaller puts the backup back. That is right
+; for a first install and wrong for every one after it: an update, or an
+; installer run over an installed copy, reads `PDF document`, which is tpdf's
+; own class, and overwrites the backup with it. Uninstalling then "restores"
+; a class the uninstaller deletes in its next line, and what the reader had
+; before tpdf is gone. Found 2026-10-10 by `scripts/update_check.py`: after
+; the update from 26.10.13 to 26.10.14 and an uninstall, `.pdf` read
+; `PDF document` with no such class left.
+;
+; So before the association is written, when the class is already tpdf's,
+; the backup is copied to a value of its own, and after the association is
+; written it is copied back. The registry holds it in between and not a
+; variable, because the hooks are macros expanded inside Tauri's sections and
+; declare nothing. A backup that already names tpdf's own class is one an
+; earlier version spoiled; what was there before cannot be recovered, so it
+; is emptied, and uninstalling leaves `.pdf` with no class of this user's and
+; not with a dead one.
+;
+; `PDF document` is `bundle.fileAssociations[0].name` in `tauri.conf.json`.
+; `scripts/installed_check.py` installs twice and reads the class back.
+
+!macro TPDF_KEEP_PDF_BACKUP
+  ReadRegStr $R0 SHCTX "Software\Classes\.pdf" ""
+  ${If} $R0 == "PDF document"
+    ReadRegStr $R1 SHCTX "Software\Classes\.pdf" "PDF document_backup"
+    ${If} $R1 == "PDF document"
+      StrCpy $R1 ""
+    ${EndIf}
+    WriteRegStr SHCTX "Software\Classes\.pdf" "tpdf_backup_kept" "$R1"
+  ${EndIf}
+!macroend
+
+!macro TPDF_RESTORE_PDF_BACKUP
+  ClearErrors
+  ReadRegStr $R1 SHCTX "Software\Classes\.pdf" "tpdf_backup_kept"
+  ${IfNot} ${Errors}
+    WriteRegStr SHCTX "Software\Classes\.pdf" "PDF document_backup" "$R1"
+    DeleteRegValue SHCTX "Software\Classes\.pdf" "tpdf_backup_kept"
+  ${EndIf}
 !macroend
 
 ; ---------------------------------------------------------------------------
@@ -75,6 +123,7 @@
 ; application does the same thing later.
 
 !macro NSIS_HOOK_POSTINSTALL
+  !insertmacro TPDF_RESTORE_PDF_BACKUP
   nsExec::ExecToLog '"$INSTDIR\tpdf-cli.exe" path --add'
   Pop $0
   DetailPrint "tpdf-cli path --add: exit $0"

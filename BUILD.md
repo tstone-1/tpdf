@@ -6648,7 +6648,7 @@ which follows the records of past releases and carries the reasons and the comma
 9. [Commit, push, and confirm the `Audit` run is green](#release-step-9)
 10. [Rehearse changed release mechanics, then tag](#release-step-10)
 11. [Publish the draft, and check it from outside the account](#release-step-11)
-12. [Apply the update from the previous release, by hand](#release-step-12)
+12. [Apply the update from the previous release: `scripts/update_check.py` on Windows, by hand on macOS](#release-step-12)
 
 **26.10.6 verification, macOS arm64, 2026-10-05:** all 30 gates passed on the release tree
 (2,823 Rust tests with ten documented ignored, 2,454 frontend tests). Every Rust and
@@ -8520,10 +8520,11 @@ starts at 0 and increments within the month.
    version, removes a word with the installed `tpdf-cli.exe` and reads the copy back, starts
    the installed application on the document, waits for its window, for a worker that maps
    the installed `pdfium.dll` and for the session file to name the document, asks the window
-   to close, uninstalls, and reads the registry and the folder afterwards. It refuses to start
+   to close, runs the installer a second time over the installed copy, as an update does,
+   uninstalls, and reads the registry and the folder afterwards. It refuses to start
    where tpdf is installed or running. A step that does not end is a failed check and the
    uninstall still runs. `--control NAME` breaks one thing on purpose (`no-install`,
-   `no-uninstall`, `engine`, `document`, `time-limit`) and exits 0 exactly when the checks
+   `one-install`, `no-uninstall`, `engine`, `document`, `time-limit`) and exits 0 exactly when the checks
    aimed at it failed and no other did; run them when the script or the installer changed. Over ssh the window needs an interactive scheduled task
    (`schtasks /Create ... /IT`, then `/Run`): started from the ssh session itself the
    application has no desktop to open a window on.
@@ -8989,6 +8990,36 @@ starts at 0 and increments within the month.
     2026-10-08 and looked right, and the same update with such a document open ended in
     *could not open*. The document has to be on screen again after the restart.
     `docs/TRAPS.md` has the three programs on that route.
+
+    **On Windows it is one command since 2026-10-10**, on a machine where tpdf is not
+    installed, in a session with a desktop, with the installer of the release before the
+    published one:
+
+    ```powershell
+    python scripts\update_check.py <path>\tpdf_<previous>_x64-setup.exe testdata\text-wide.pdf
+    ```
+
+    It reads `latest.json` for the version on offer, installs the previous release into a
+    folder of its own, starts it on a copy of the document under a folder with a space in
+    its name, finds the button `Update to <version>` through UI Automation and presses it,
+    and waits for the installer to start the application again: a window of the new
+    version from the same folder, the document open again in a worker that maps the
+    installed PDFium, the installed tool at the new version, and no second offer in the new
+    window. Then it uninstalls and reads the registry back. `--control no-press` finds the
+    button and does not press it, and exits 0 exactly when the checks of the restart failed.
+    The real session file is moved away for the run and put back. It needs the network.
+
+    **First run, 2026-10-10, Windows 11, from 26.10.13 to the published 26.10.14:** 16 of 17
+    checks passed and the control failed its seven. The one failure is a defect in every
+    release up to 26.10.14 and not in the check: after an update and an uninstall, `.pdf`
+    of the user read `PDF document`, a class the uninstaller had just deleted
+    (`docs/TRAPS.md`, *An installer that backs up what it replaces backs up itself the
+    second time*). `installer-hooks.nsh` keeps the first backup from the release after
+    26.10.14 on: its installer, run twice and uninstalled, left the class as it was (23 of
+    23 in `installed_check.py`), and the published 26.10.14 installer failed that one check
+    in the same run. So this check stays red on that line until the release after 26.10.14
+    is the one on offer. The first version of the check counted the old copy's workers as
+    the application started again; the control showed it, passing two checks it must fail.
 
     **Carried out for the first time on 2026-08-31, and it passes.** 26.8.11 installed from
     its own `.dmg` over the 26.8.12 that was there, launched normally: the toolbar showed

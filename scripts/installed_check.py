@@ -26,7 +26,9 @@ WHAT IT DOES, in order, and each line it prints is one check:
      window, for a worker that has the *installed* PDFium mapped, and for the
      session file to name the document;
   5. asks the window to close and waits for the application and its workers;
-  6. uninstalls, and reads the registry and the folder afterwards.
+  6. runs the installer a second time, over the installed copy, as an update
+     does;
+  7. uninstalls, and reads the registry and the folder afterwards.
 
 WHAT IT DOES NOT SAY. A normal build has no check harness in it, so nothing
 here reads the page the window drew, and nothing edits or saves in the window:
@@ -35,7 +37,7 @@ kind of worker. `window_checks.py` is what drives the window, on a checks
 build.
 
 IT WRITES TO THE MACHINE: an uninstall entry, the application's own key and the
-`.pdf` class of the current user. Step 6 reads all three back against what was
+`.pdf` class of the current user. Step 7 reads all three back against what was
 there before the install, and lists what the uninstaller left in the folder. It
 refuses to start when tpdf is installed or running there, so it is for a build
 machine and not for the one you read on. The session and the log go to a
@@ -97,6 +99,8 @@ CONTROLS: dict[str, tuple[str, list[str]]] = {
         "the installer ends with exit code 0", "tpdf.exe is installed",
         "tpdf-cli.exe is installed", "uninstall.exe is installed",
         "pdfium/pdfium.dll is installed", "Windows lists tpdf as installed"]),
+    "one-install": ("the installer is not run a second time, over the installed copy", [
+        "the installer run over the installed copy ends with exit code 0"]),
     "no-uninstall": ("the uninstaller is not run until the checks have been read", [
         "the application and its PDFium are removed",
         "Windows no longer lists tpdf as installed",
@@ -218,6 +222,11 @@ def registry(key: str) -> str | None:
     """What `reg query /s` prints for a key, or None when the key is not there."""
     asked = subprocess.run(["reg", "query", key, "/s"], capture_output=True, text=True, check=False)
     return asked.stdout if asked.returncode == 0 else None
+
+
+def flat(text: str | None) -> str:
+    """A registry listing on one line, for a check's detail."""
+    return "no key" if text is None else " | ".join(l.strip() for l in text.splitlines() if l.strip())
 
 
 class Checks:
@@ -415,8 +424,22 @@ def uninstall(checks: Checks, folder: Path, before: dict[str, str | None], run_i
         checks.note(not (folder / "tpdf.exe").exists() and not (folder / "pdfium" / "pdfium.dll").exists(),
                     "the application and its PDFium are removed")
         checks.note(registry(UNINSTALL_KEY) is None, "Windows no longer lists tpdf as installed")
-        for key, what in ((PDF_CLASS, "the .pdf class"), (APP_KEY, "the application's own key")):
-            checks.note(registry(key) == before[key], f"{what} reads as it did before the install")
+        now = registry(PDF_CLASS)
+        checks.note(now == before[PDF_CLASS], "the .pdf class reads as it did before the install",
+                    "" if now == before[PDF_CLASS] else f"before {flat(before[PDF_CLASS])}; now {flat(now)}")
+        # A silent uninstall keeps the application's key with the folder in
+        # it: the installer's own script deletes that key only when the reader
+        # ticks *delete application data*. So what is asked is that nothing
+        # else is in it. Until 2026-10-10 this compared the key with itself
+        # before the install, which passed only on a machine where an earlier
+        # run had left the same folder there.
+        now = registry(APP_KEY)
+        left = [line.strip() for line in (now or "").splitlines()
+                if line.startswith("    ") and "Installer Language" not in line]
+        known = now is None or now == before[APP_KEY] or (
+            len(left) == 1 and left[0].startswith("(Default)") and left[0].endswith(str(folder)))
+        checks.note(known, "the application's own key holds the install folder and nothing else",
+                    "" if known else flat(now))
         left = sorted(str(path.relative_to(folder)) for path in folder.rglob("*") if path.is_file())
         checks.note(left in ([], ["uninstall.exe"]), "the folder holds nothing but the uninstaller",
                     ", ".join(left[:12]))
@@ -498,6 +521,18 @@ def main() -> int:
             if (folder / "tpdf.exe").is_file():
                 engine_folder = scratch if control == "engine" else folder
                 check_window(checks, folder, opened, scratch, version, args.wait, engine_folder)
+            if control == "one-install":
+                checks.note(False, "the installer run over the installed copy ends with exit code 0",
+                            "not run")
+            elif control != "no-install":
+                # An update runs the installer over an installed copy. That
+                # second run is where the class kept for the uninstall was
+                # overwritten with tpdf's own (`installer-hooks.nsh`), so the
+                # `.pdf` check below is read after two installs and not one.
+                limit = 0.2 if control == "time-limit" else 300
+                code = bounded(f'"{installer}" /S /D={folder}', "the installer, run again", limit)
+                checks.note(code == 0, "the installer run over the installed copy ends with exit code 0",
+                            f"exit {code}")
         except (RanOut, RuntimeError, OSError) as e:
             checks.note(False, "every step ends, and within its time limit", str(e))
         finally:
