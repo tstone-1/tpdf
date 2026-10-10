@@ -6677,6 +6677,45 @@ now comes last there.
 `docs/THREAT-MODEL.md` already stated the three new commands (T6.35, T6.36). The release
 notes in `release.yml` were rewritten.
 
+**26.10.14 verification, 2026-10-10:** all 31 gates passed on the release tree on macOS
+arm64 (3,040 Rust tests with ten documented ignored, 2,795 frontend tests) and
+`check_windows.py` type-checked the Windows tree. Every mutation selected
+`--near v26.10.13` ran in the mutation worktree and was caught: 281 Rust and 407 frontend.
+`window_checks.py` passed 11 of 11 on Windows 11 and 11 of 11 on macOS, both on the release
+tree, and on Windows `tabs_check.py --phase fields` passed 76 of 76 with one not applicable
+and `--phase fields-turned` 10 of 10. The macOS run was made on a second Mac over ssh, as a
+one-off launchd job in the logged-in session (`launchctl bootstrap gui/<uid>`), with a
+remote-desktop session connected; whether it runs there with none connected was not
+measured. Its first attempt failed in every check with *could not load its PDF engine*: the
+checks build was signed with the Developer ID and the hardened runtime and the vendored
+PDFium was signed ad hoc, so the library was refused. Signing the bundled
+`libpdfium.dylib` and then the app again with the same identity is what made it load.
+`docs/THREAT-MODEL.md` and `README.md` were checked for what this cycle changed and not
+read through. **Not run:** the Tab check of `form-beside` with a form of two controls,
+`print-probe`, `redact-reach-probe`, `run_on_windows.py` (CI's Windows leg ran the suites
+on the release commit), and the update from 26.10.13 by hand (step 12).
+
+**26.10.14 publication, 2026-10-10:** `Audit` and CI were green on the release commit
+`2756931a`, both legs. The release workflow had changed since 26.10.13 (the signing client
+is checked against a recorded digest, and the release job restores no Rust cache), so
+`v26.10.14-rc1` was built first (run 38039198093): both platform jobs passed at the first
+attempt and the draft held 6 assets. Step 8 was done on that draft's files and not on a
+local build: `installed_check.py` passed 22 of 22 with the installer on Windows 11, and the
+`.dmg` was accepted by Gatekeeper as Notarized Developer ID, stapled, with a `tpdf-cli`
+inside that answered `--version` with 26.10.14, verified `testdata/incr-signed.pdf` and
+read a fixture's text; its window was not opened. The tag and its draft were deleted. The
+`Release` run 38044233309 for the real tag skipped its gates on CI's account and both
+platform jobs passed at the first attempt. `SSIGN_SHA256` is still empty, so the Windows
+leg built the signing client from source. The draft held 6 assets and
+`scripts/publish_release.py v26.10.14 --publish` published it. Without authentication the
+`.dmg` and the `-setup.exe` answer 200 and `latest.json` offers 26.10.14 for
+`darwin-aarch64` and `windows-x86_64`. The downloaded `.dmg` staples and Gatekeeper reads
+it as Notarized Developer ID. On a Windows 11 computer `Get-AuthenticodeSignature` reads
+the downloaded installer as `Valid` and timestamped by
+`CN=Open Source Developer Timo Stein`. The Homebrew cask went from 26.10.13 to 26.10.14;
+`brew audit --cask --online` passed and `brew livecheck` reads 26.10.14. winget was not
+updated.
+
 **26.10.13 verification, macOS arm64, 2026-10-08:** all 30 gates passed on the release tree
 (2,957 Rust tests with ten documented ignored, 2,562 frontend tests) and `check_windows.py`
 type-checked the Windows tree. Every mutation selected `--near v26.10.12` ran and was
