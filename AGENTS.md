@@ -246,7 +246,8 @@ heavy work while the webview does the UI.
 `fax`, and the four Tauri plugins — are listed with their licences and package costs in
 [`docs/DETAIL.md`](docs/DETAIL.md) *Stack*. The network authorities are two: `tauri-plugin-updater`,
 and signing, which asks a timestamp authority (`tsa.rs`) and, for long-term signing, the OCSP
-and CRL hosts the certificates name (`longterm.rs`); `docs/THREAT-MODEL.md` §T9, §T10. Check every new dependency against the
+and CRL hosts the certificates name (`longterm.rs`), as adding validation data to a signed
+document does; `docs/THREAT-MODEL.md` §T9, §T10. Check every new dependency against the
 licensing constraint with `cargo metadata` over the whole tree, never from its README.
 
 ### What each library is, and is not

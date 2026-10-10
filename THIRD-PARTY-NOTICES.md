@@ -2678,7 +2678,7 @@ SOFTWARE.
 | dyn-clone | 1.0.20 | MIT OR Apache-2.0 |
 | ecb | 0.2.1 | MIT OR Apache-2.0 |
 | ecdsa | 0.16.9 | Apache-2.0 OR MIT |
-| either | 1.18.0 | MIT OR Apache-2.0 |
+| either | 1.19.0 | MIT OR Apache-2.0 |
 | elliptic-curve | 0.13.8 | Apache-2.0 OR MIT |
 | embed_plist | 1.2.2 | MIT OR Apache-2.0 |
 | encoding_rs | 0.8.42 | (Apache-2.0 OR MIT) AND BSD-3-Clause |
@@ -2722,7 +2722,7 @@ SOFTWARE.
 | http-body-util | 0.1.5 | MIT |
 | httparse | 1.10.1 | MIT OR Apache-2.0 |
 | hybrid-array | 0.4.15 | MIT OR Apache-2.0 |
-| hyper | 1.11.1 | MIT |
+| hyper | 1.12.0 | MIT |
 | hyper-rustls | 0.27.10 | Apache-2.0 OR ISC OR MIT |
 | hyper-util | 0.1.21 | MIT |
 | iana-time-zone | 0.1.65 | MIT OR Apache-2.0 |
@@ -2746,9 +2746,9 @@ SOFTWARE.
 | ipnet | 2.12.2 | MIT OR Apache-2.0 |
 | itertools | 0.15.0 | MIT OR Apache-2.0 |
 | itoa | 1.0.18 | MIT OR Apache-2.0 |
-| jiff | 0.2.37 | Unlicense OR MIT |
+| jiff | 0.2.38 | Unlicense OR MIT |
 | jiff-core | 0.1.1 | Unlicense OR MIT |
-| jiff-tzdb | 0.1.8 | Unlicense OR MIT |
+| jiff-tzdb | 0.1.9 | Unlicense OR MIT |
 | jiff-tzdb-platform | 0.1.3 | Unlicense OR MIT |
 | json-patch | 4.2.0 | MIT/Apache-2.0 |
 | jsonptr | 0.7.1 | MIT OR Apache-2.0 |
@@ -2872,7 +2872,7 @@ SOFTWARE.
 | serde_derive_internals | 0.29.1 | MIT OR Apache-2.0 |
 | serde_json | 1.0.151 | MIT OR Apache-2.0 |
 | serde_repr | 0.1.21 | MIT OR Apache-2.0 |
-| serde_spanned | 1.1.1 | MIT OR Apache-2.0 |
+| serde_spanned | 1.1.2 | MIT OR Apache-2.0 |
 | serde_with | 3.24.0 | MIT OR Apache-2.0 |
 | serde_with_macros | 3.24.0 | MIT OR Apache-2.0 |
 | serialize-to-javascript | 0.1.2 | MIT OR Apache-2.0 |
@@ -2887,7 +2887,7 @@ SOFTWARE.
 | simdutf8 | 0.1.5 | MIT OR Apache-2.0 |
 | siphasher | 1.0.4 | MIT OR Apache-2.0 |
 | slab | 0.4.12 | MIT |
-| smallvec | 1.16.2 | MIT OR Apache-2.0 |
+| smallvec | 1.16.3 | MIT OR Apache-2.0 |
 | socket2 | 0.6.5 | MIT OR Apache-2.0 |
 | softbuffer | 0.4.8 | MIT OR Apache-2.0 |
 | spin | 0.9.9 | MIT |
@@ -2898,23 +2898,23 @@ SOFTWARE.
 | strsim | 0.11.1 | MIT |
 | subsetter | 0.2.6 | MIT OR Apache-2.0 |
 | subtle | 2.6.1 | BSD-3-Clause |
-| swift-rs | 1.0.8 | MIT OR Apache-2.0 |
+| swift-rs | 1.0.9 | MIT OR Apache-2.0 |
 | syn | 2.0.119 | MIT OR Apache-2.0 |
-| syn | 3.0.6 | MIT OR Apache-2.0 |
+| syn | 3.0.7 | MIT OR Apache-2.0 |
 | sync_wrapper | 1.0.2 | Apache-2.0 |
 | synstructure | 0.14.0 | MIT |
 | system-configuration | 0.7.0 | MIT OR Apache-2.0 |
 | system-configuration-sys | 0.6.0 | MIT OR Apache-2.0 |
 | tao | 0.37.1 | Apache-2.0 |
 | tar | 0.4.46 | MIT OR Apache-2.0 |
-| tauri | 2.12.1 | Apache-2.0 OR MIT |
+| tauri | 2.12.2 | Apache-2.0 OR MIT |
 | tauri-codegen | 2.7.1 | Apache-2.0 OR MIT |
 | tauri-macros | 2.7.1 | Apache-2.0 OR MIT |
 | tauri-plugin-dialog | 2.8.1 | Apache-2.0 OR MIT |
 | tauri-plugin-fs | 2.6.0 | Apache-2.0 OR MIT |
 | tauri-plugin-process | 2.4.0 | Apache-2.0 OR MIT |
 | tauri-plugin-single-instance | 2.5.2 | Apache-2.0 OR MIT |
-| tauri-plugin-updater | 2.13.1 | Apache-2.0 OR MIT |
+| tauri-plugin-updater | 2.13.2 | Apache-2.0 OR MIT |
 | tauri-runtime | 2.12.1 | Apache-2.0 OR MIT |
 | tauri-runtime-wry | 2.12.1 | Apache-2.0 OR MIT |
 | tauri-utils | 2.10.1 | Apache-2.0 OR MIT |
@@ -2931,11 +2931,11 @@ SOFTWARE.
 | tls_codec_derive | 0.4.2 | Apache-2.0 OR MIT |
 | tokio | 1.53.2 | MIT |
 | tokio-rustls | 0.26.6 | MIT OR Apache-2.0 |
-| tokio-util | 0.7.19 | MIT |
-| toml | 1.1.6+spec-1.1.0 | MIT OR Apache-2.0 |
-| toml_datetime | 1.1.1+spec-1.1.0 | MIT OR Apache-2.0 |
-| toml_parser | 1.1.3+spec-1.1.0 | MIT OR Apache-2.0 |
-| toml_writer | 1.1.2+spec-1.1.0 | MIT OR Apache-2.0 |
+| tokio-util | 0.7.20 | MIT |
+| toml | 1.1.8+spec-1.1.0 | MIT OR Apache-2.0 |
+| toml_datetime | 1.1.2+spec-1.1.0 | MIT OR Apache-2.0 |
+| toml_parser | 1.1.5+spec-1.1.0 | MIT OR Apache-2.0 |
+| toml_writer | 1.1.3+spec-1.1.0 | MIT OR Apache-2.0 |
 | tower | 0.5.3 | MIT |
 | tower-http | 0.6.11 | MIT |
 | tower-layer | 0.3.3 | MIT |
@@ -2958,7 +2958,7 @@ SOFTWARE.
 | urlpattern | 0.6.0 | MIT |
 | utf16string | 0.2.0 | MIT OR Apache-2.0 |
 | utf8_iter | 1.0.4 | Apache-2.0 OR MIT |
-| uuid | 1.27.0 | Apache-2.0 OR MIT |
+| uuid | 1.28.0 | Apache-2.0 OR MIT |
 | vecmath | 1.0.0 | MIT |
 | walkdir | 2.5.0 | Unlicense/MIT |
 | want | 0.3.2 | MIT |
@@ -2995,10 +2995,10 @@ SOFTWARE.
 | xattr | 1.6.1 | MIT OR Apache-2.0 |
 | yoke | 0.8.3 | Unicode-3.0 |
 | yoke-derive | 0.8.4 | Unicode-3.0 |
-| zerocopy | 0.8.60 | BSD-2-Clause OR Apache-2.0 OR MIT |
+| zerocopy | 0.8.62 | BSD-2-Clause OR Apache-2.0 OR MIT |
 | zerofrom | 0.1.8 | Unicode-3.0 |
 | zerofrom-derive | 0.1.8 | Unicode-3.0 |
-| zeroize | 1.9.0 | Apache-2.0 OR MIT |
+| zeroize | 1.9.1 | Apache-2.0 OR MIT |
 | zeroize_derive | 1.5.0 | Apache-2.0 OR MIT |
 | zerotrie | 0.2.5 | Unicode-3.0 |
 | zerovec | 0.11.8 | Unicode-3.0 |
@@ -3237,6 +3237,7 @@ MIT and the BSD family require the copyright notice itself to be reproduced, whi
 - Copyright 2024 Radzivon Bartoshyk
 - Copyright Holder(s) and the Author(s) or with their explicit written
 - Copyright Holder. This restriction only applies to the primary font name as
+- Copyright Individual contributors
 - Copyright Mozilla Foundation
 - Copyright [yyyy] [name of copyright owner]
 - Copyright notices are retained in src/* files where relevant.
@@ -12011,11 +12012,11 @@ Packages whose code is compiled into `dist/`. This list is read from the build's
 
 | Package | Version | Licence |
 |---|---|---|
-| @tauri-apps/api | 2.12.1 | Apache-2.0 OR MIT |
+| @tauri-apps/api | 2.12.2 | Apache-2.0 OR MIT |
 | @tauri-apps/plugin-dialog | 2.8.1 | MIT OR Apache-2.0 |
 | @tauri-apps/plugin-process | 2.4.0 | MIT OR Apache-2.0 |
-| @tauri-apps/plugin-updater | 2.13.1 | MIT OR Apache-2.0 |
-| svelte | 5.57.1 | MIT |
+| @tauri-apps/plugin-updater | 2.13.2 | MIT OR Apache-2.0 |
+| svelte | 5.57.2 | MIT |
 
 ### Copyright notices
 

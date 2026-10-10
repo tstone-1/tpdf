@@ -125,6 +125,29 @@ class Mutation:
 #: three tests.
 CI_BLOCK = "            brew install qpdf\n"
 
+
+def _workflow_paths() -> int:
+    """How many fixture paths the `fixtures` gate counts on this tree.
+
+    Asked of the gate and not written here: the two rows that read the count
+    said 6 and 7 until 2026-10-10, when the tree had 10, and both had been
+    reporting SURVIVED since the first step that named another fixture.
+    """
+    import re
+    import subprocess
+
+    said = subprocess.run(
+        [sys.executable, str(ROOT / "scripts" / "check_workflow_fixtures.py")],
+        capture_output=True, text=True, check=False,
+    ).stdout
+    found = re.search(r"all (\d+) workflow fixture path\(s\)", said)
+    if not found:
+        raise SystemExit("[FAIL] check_workflow_fixtures.py is not green, so its count cannot be read")
+    return int(found[1])
+
+
+WORKFLOW_PATHS = _workflow_paths()
+
 #: The table-of-contents bullet in `docs/TRAPS.md` the two `traps` rows edit.
 #: Written out here because both name it and the trailing newline is part of the
 #: anchor --- deleting the line is one of the two mutations.
@@ -160,7 +183,7 @@ MUTATIONS = [
         says="testdata/no-such-fixture.pdf",
     ),
     Mutation(
-        # Green, and the count is the point: 6 to 7 says the planted line was
+        # Green, and the count is the point: one more says the planted line was
         # *read*. Without this row the one above is satisfied by a gate that
         # rejects the whole file for some unrelated reason.
         "fixtures: a real fixture inside the block must be read, not merely tolerated",
@@ -169,7 +192,7 @@ MUTATIONS = [
         CI_BLOCK,
         CI_BLOCK + "            ./probe testdata/comments.pdf\n",
         red=False,
-        says="all 7 workflow fixture path(s)",
+        says=f"all {WORKFLOW_PATHS + 1} workflow fixture path(s)",
     ),
     Mutation(
         # The over-reach control. Eight columns is the `run:` key's own indent,
@@ -181,7 +204,7 @@ MUTATIONS = [
         CI_BLOCK,
         CI_BLOCK + "        ./dedented testdata/no-such-fixture.pdf\n",
         red=False,
-        says="all 6 workflow fixture path(s)",
+        says=f"all {WORKFLOW_PATHS} workflow fixture path(s)",
     ),
     Mutation(
         # The generated list read from the module's tables rather than from its
@@ -440,13 +463,19 @@ MUTATIONS = [
     Mutation(
         # Twelve seconds here against a control pass in the front-end harness,
         # which is the whole reason this gate exists.
-        "mutations: a test suite neither mutated nor excluded with a reason",
+        # **The list emptied, since 2026-10-10.** This row emptied `UNMUTATED`
+        # until then, which went red while `TEST_FILES` was kept by hand. Since
+        # 2026-10-04 that list is every suite on disk `UNMUTATED` does not
+        # name, so emptying the exclusions runs more and is rightly green, and
+        # the row reported SURVIVED. What the gate still refuses is a harness
+        # that runs nothing.
+        "mutations: a harness whose list of suites is empty",
         "mutations",
         "scripts/mutate_frontend.py",
-        "UNMUTATED = {",
-        "UNMUTATED = {} if True else {",
+        "TEST_FILES = sorted(",
+        "TEST_FILES = [] and sorted(",
         red=True,
-        says="UNMUTATED",
+        says="TEST_FILES is empty",
     ),
     # --- the notices file going stale ----------------------------------------
     Mutation(

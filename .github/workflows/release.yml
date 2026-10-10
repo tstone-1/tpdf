@@ -509,6 +509,19 @@ jobs:
           workers cannot read arbitrary user files or access the network;
           Windows workers use low integrity and resource-limited jobs.
 
+          **New in 26.10.15.** *Add long-term validation data...* takes a
+          document that is already signed, by tpdf or by anything else, and
+          writes a copy that can still be checked after the certificates
+          expire: it adds the revocation answers for every signature and a
+          timestamp over the whole. Every signature is covered or nothing
+          is written, and the message says which signature stopped it and
+          why. `tpdf long-term` does the same from a terminal. Fixed: a
+          certification against any change whose level was written as
+          `1.0` was read as no certification, so the document could be
+          signed. Fixed on Windows: uninstalling tpdf after an update left
+          `.pdf` assigned to nothing; the installer now keeps the program
+          it remembered at the first install.
+
           **New in 26.10.14.** Two documents are shown side by side: *Show
           side by side with...*, or drag a tab onto the left or right half
           of the pages. One document can be on both sides, the two sides

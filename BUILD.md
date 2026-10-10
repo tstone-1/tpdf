@@ -6748,6 +6748,21 @@ now comes last there.
 `docs/THREAT-MODEL.md` already stated the three new commands (T6.35, T6.36). The release
 notes in `release.yml` were rewritten.
 
+**26.10.15 verification, 2026-10-10:** all 31 gates passed on the release tree on macOS
+arm64 (3,083 Rust tests with eleven documented ignored, 2,809 frontend tests) and
+`check_windows.py` type-checked the Windows tree. Every mutation selected
+`--near v26.10.14` ran in the mutation worktree and was caught, 109 Rust and 33 frontend,
+and so was every row of `mutate_python.py` once four stale ones were corrected (step 7).
+`window_checks.py` passed 11 of 11 on Windows 11 and 11 of 11 on macOS on a second Mac,
+both on the release tree, the viewer check with its four refusals of
+`add_validation_data` among them. `scripts/run_on_windows.py` passed the command-line
+suite on Windows 11 with `qpdf` installed there, on the tree before the version bump.
+npm and cargo dependencies were updated within their ranges; no major was looked for.
+`docs/THREAT-MODEL.md` and `README.md` were checked for what this cycle changed and not
+read through. **Not run:** the written copy of `tpdf long-term` against a public
+authority (`docs/VERIFICATION.md` has why), the new entry of `mutate_viewer.py` by the
+harness itself, `print-probe` and `redact-reach-probe`.
+
 **26.10.14 verification, 2026-10-10:** all 31 gates passed on the release tree on macOS
 arm64 (3,040 Rust tests with ten documented ignored, 2,795 frontend tests) and
 `check_windows.py` type-checked the Windows tree. Every mutation selected
@@ -7995,6 +8010,14 @@ starts at 0 and increments within the month.
 7. <a id="release-step-7"></a>Run mutations for the changed behaviour, including new failure cases for a new
    capability. Start with `--near <last tag>` and add affected callers or runners
    when a shared contract changes.
+
+   **And `scripts/mutate_python.py`, whole, from 2026-10-10.** Its rows break the gate
+   scripts and it has no `--near`; it takes a few minutes. This step named only the Rust and
+   frontend tables, so nobody ran it, and when 26.10.15 did, four of its rows were not
+   caught: two expected a count of fixture paths the tree had outgrown, one tested a rule
+   removed by design on 2026-10-04, and one was right. `check_workflow_parity.py` marked a
+   drifted step and cut both lines at 100 characters, so a change further into a long step
+   printed as two identical lines; it now prints where the two part.
 
    **`--near` and not `--since`, from 2026-10-04.** `--since` reruns every mutation in a
    file one line of which changed. Three files hold hundreds each, so the 26.10.4 release

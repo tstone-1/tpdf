@@ -450,6 +450,15 @@ def main() -> int:
         marker = "  " if a == b else "->"
         print(f"{marker} {i + 1:2}. {WORKFLOWS[0]}: {a[:100]}")
         print(f"{marker}     {WORKFLOWS[1]}: {b[:100]}")
+        if a != b:
+            # Both lines above are cut at 100 characters, and two long steps
+            # that differ further in print the same there: until 2026-10-10
+            # that is what a changed `brew install` line looked like.
+            at = next((n for n, (x, y) in enumerate(zip(a, b)) if x != y), min(len(a), len(b)))
+            start = max(0, at - 40)
+            print(f"->     they part at character {at}:")
+            print(f"->       {WORKFLOWS[0]}: ...{a[start:at + 60]}")
+            print(f"->       {WORKFLOWS[1]}: ...{b[start:at + 60]}")
     return 1
 
 
