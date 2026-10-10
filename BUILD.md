@@ -6789,6 +6789,29 @@ read through. **Not run:** the written copy of `tpdf long-term` against a public
 authority (`docs/VERIFICATION.md` has why), the new entry of `mutate_viewer.py` by the
 harness itself, `print-probe` and `redact-reach-probe`.
 
+**26.10.16 publication, 2026-10-10:** `Audit` and CI were green on the release commit
+`f3e8661f`, both legs, `Audit` with its check of the PDFium pin. No release mechanics had
+changed since 26.10.15, so there was no rehearsal tag. The `Release` run 38081159571
+skipped its gates on CI's account and both platform jobs passed at the first attempt. On
+the draft's files: `installed_check.py` passed 23 of 23 with the installer on Windows 11,
+`Get-AuthenticodeSignature` read it as `Valid`, and the `.dmg` was accepted by Gatekeeper
+as Notarized Developer ID, stapled, with a `tpdf-cli` inside that answered `--version` with
+26.10.16, verified `testdata/incr-signed.pdf` and read a fixture's text. The Windows
+engine's version resource reads `0.0.8078.1`. `scripts/publish_release.py v26.10.16
+--publish` published the draft of 6 assets. Without authentication the `.dmg` and the
+`-setup.exe` answer 200 and `latest.json` offers 26.10.16 for `darwin-aarch64` and
+`windows-x86_64`. Step 12 passed on both platforms from 26.10.15, `update_check.py` 17 of
+17 and `update_check_mac.py` 12 of 12, each with its `no-press` control failing the 7
+checks it is aimed at. **Both failed at their first attempt, a few minutes after
+publication, at the offer**: the Windows window showed no update button in two runs, and
+the Mac's menu item stayed disabled in one, while `latest.json` read from the same
+address by `curl` already named 26.10.16. Run again about a quarter of an hour after
+publication, both passed. Why an installed copy was not offered what the address already
+served is not established; at 26.10.15 the first runs came later after publication and
+passed. Until it is, a missing offer in the first minutes is a reason to run the check
+again and not yet a finding about the release. The Homebrew cask went from 26.10.15 to
+26.10.16; `brew audit --cask --online` passed and `brew livecheck` reads 26.10.16.
+
 **26.10.16 verification, 2026-10-10:** all 31 gates passed on the release tree on macOS
 arm64 (3,083 Rust tests with eleven documented ignored, 2,809 frontend tests) and
 `check_windows.py` type-checked the Windows tree. The only Rust change since 26.10.15 is a
