@@ -20,9 +20,10 @@ runs a commit instead.
 
 WHERE IT RUNS. In a worktree of its own beside the clone, `<clone>-check`,
 made on the first run and kept, with its own `target` and `node_modules`. The
-clone's checkout is never moved. `vendor/pdfium` and `testdata` are copied from
-the clone, which has to have them: git carries neither. The first run is a
-cold build.
+clone's checkout is never moved. `testdata` is copied from the clone, which has
+to have it: git does not carry it. The PDF engine is the one the sent tree
+pins, installed by `scripts/fetch_pdfium.py` there. The first run is a cold
+build.
 
 THREE THINGS THE OTHER MAC HAS TO BE, each of them paid for on 2026-10-10:
 
@@ -93,10 +94,13 @@ git cat-file -e "$sha^{{commit}}" 2>/dev/null || stop "this Mac does not have co
 cd "$tree" || stop "cannot enter $tree"
 git checkout --quiet --force --detach "$sha" || stop "cannot check out $sha"
 echo "[OK] $tree is at $(git rev-parse --short HEAD)"
-for carried in vendor/pdfium testdata; do
-  [ -d "$clone/$carried" ] || stop "the clone has no $carried, and git does not carry it"
-  mkdir -p "$tree/$carried" && rsync -a "$clone/$carried/" "$tree/$carried/" || stop "cannot copy $carried"
-done
+[ -d "$clone/testdata" ] || stop "the clone has no testdata, and git does not carry it"
+mkdir -p "$tree/testdata" && rsync -a "$clone/testdata/" "$tree/testdata/" || stop "cannot copy testdata"
+# The engine the sent tree pins, and not the clone's: until 2026-10-10 this
+# copied `vendor/pdfium` from the clone, so a tree that moved the pin was
+# checked against the engine before it and nothing said so.
+PATH="/opt/homebrew/bin:$PATH" python3 scripts/fetch_pdfium.py | tail -1
+[ "${{pipestatus[1]}}" = 0 ] || stop "the pinned PDFium could not be installed"
 {wrap} sh -c 'npm ci >"$0/npm.log" 2>&1 && npm run tauri build -- --config src-tauri/tauri.checks.conf.json --bundles app >"$0/build.log" 2>&1' "$run" \
   || {{ tail -15 "$run/build.log" 2>/dev/null; stop "the checks build failed; $run/build.log has all of it"; }}
 app="$tree/{app}"

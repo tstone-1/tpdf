@@ -17,6 +17,14 @@ as *downloadable*, while the release sat as a draft that GitHub showed to nobody
 are given now because they are different facts, and only the second one means a reader can
 have the binary.)
 
+## [26.10.16] - Unreleased
+
+### Changed
+
+- **The PDF engine is PDFium 8078, the branch Chrome 156 ships.** It was 8066. The newer
+  branch carries what Chrome merged into it since, among them a fix in the code that
+  draws shapes, *Correctly initialize current cell in agg::outline_aa*.
+
 ## [26.10.15] - 2026-10-10
 
 ### Added

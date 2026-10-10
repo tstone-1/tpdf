@@ -76,3 +76,22 @@ jobs:
       # the development tree never reaches the shipped webview bundle.
       - name: npm audit
         run: npm audit --omit=dev
+
+  pdfium:
+    name: PDFium pin against Chrome stable
+    # The same kind of question as the audit above: whether the pinned engine
+    # is still the one Chrome ships changes when upstream moves, not when this
+    # repository does. `scripts/check_pdfium_age.py` has the account. A source
+    # that does not answer is a red run, because "could not ask" is not
+    # "current".
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5 (v5.1.0)
+        with:
+          persist-credentials: false
+
+      - name: The reading and the rule, offline
+        run: python3 scripts/check_pdfium_age.py --self-test
+
+      - name: The pin against Chrome stable and its own branch
+        run: python3 scripts/check_pdfium_age.py

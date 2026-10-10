@@ -19,6 +19,32 @@ The build
 gate verifies both profiles and leaves normal assets ready for packaging. Smoke-test
 the normal bundle separately before release.
 
+**PDFium 8078-tpdf.1 (2026-10-10).** The pin moved from `chromium/8066` to the head of
+`chromium/8078` (`bdbf237`), the branch Chrome 156 ships. Nobody had looked since the pin
+was set: Chrome stable had moved on, and the day before, upstream had merged *Correctly
+initialize current cell in agg::outline_aa* into 8078, a fix in the rasterizer this build
+compiles in. [Run 38073135904](https://github.com/tstone-1/tpdf/actions/runs/38073135904)
+at `b18adac` built both platforms in 17 minutes and passed 63 upstream text tests on macOS
+and 62 on Windows. The builder and depot_tools pins did not move. On the installed macOS
+engine: all 31 gates; `remove-probe c`; both search corpora, multilingual 68/68 and
+encoding 23/23; the engine scan with no V8 or XFA; `progressive-probe` identical on
+vector-heavy and the form; `backend-probe` 42/44 on `vector-heavy.pdf` with two skipped
+and 41/44 on `text-heavy.pdf` with three skipped; `worker-probe` 48/48. `window_checks.py`
+passed 11 of 11 on a second Mac and 11 of 11 on Windows 11, and on Windows 11
+`scripts/run_on_windows.py --suite all` passed 3,106 unit tests and 567 command-line
+checks, each run printing the engine it installed. `scripts/run_on_mac.py` copied
+`vendor/pdfium` from the other Mac's clone until this pin, which would have checked the
+new tree against the old engine; it installs the pinned one now.
+
+**The pin is now asked about every week.** `scripts/check_pdfium_age.py` is red when
+Chrome stable is on a later branch than the pin, and when the pinned branch has gained
+commits since the pin, which is how a fix for a shipped milestone arrives. `audit.yml`
+runs it, for the reason it runs the advisory audit and `gates.py` does not: the answer
+changes when upstream moves. Since `scripts/publish_release.py` needs a green `Audit` run
+on the tag's commit, **a release cannot be published on an engine that is behind**; build
+the newer one first (below). The check's `--self-test` runs offline, and against the
+8066 pin the live check exits 1 naming `chromium/8078`.
+
 **PDFium 8066-tpdf.1, unpatched (2026-09-25).** PDFium fixed our RTL report,
 [issue 561066233](https://issues.chromium.org/issues/561066233), by reverting the change
 that caused it: [158290](https://pdfium-review.googlesource.com/c/pdfium/+/158290) on
@@ -6762,6 +6788,33 @@ npm and cargo dependencies were updated within their ranges; no major was looked
 read through. **Not run:** the written copy of `tpdf long-term` against a public
 authority (`docs/VERIFICATION.md` has why), the new entry of `mutate_viewer.py` by the
 harness itself, `print-probe` and `redact-reach-probe`.
+
+**26.10.15 publication, 2026-10-10:** `Audit` and CI were green on the release commit
+`2751c2c2`, both legs. The installer's hooks had changed since 26.10.14, so
+`v26.10.15-rc1` was built first (run 38070875264): both platform jobs passed at the first
+attempt and the draft held 6 assets. Step 8 was done on that draft's files:
+`installed_check.py` passed 23 of 23 with the installer on Windows 11, its second install
+over the first and the `.pdf` class afterwards among them, and the `.dmg` was accepted by
+Gatekeeper as Notarized Developer ID, stapled, with a `tpdf-cli` inside that answered
+`--version` with 26.10.15, verified `testdata/incr-signed.pdf`, read a fixture's text and
+refused `long-term` for a signer the computer does not trust; its window was not opened.
+The tag and its draft were deleted. The `Release` run 38072690219 for the real tag skipped
+its gates on CI's account and both platform jobs passed at the first attempt. **The
+recorded digest of the signing client matched nothing**, in the rehearsal and in the real
+run: the cache entry it names was gone, so both built the client from the pinned commit.
+A repository's caches are limited to 10 GiB together, the Windows Rust cache alone is
+6.8 GiB, and saving a new one after this cycle's dependency update evicted the 3 MiB
+client. The draft held 6 assets and `scripts/publish_release.py v26.10.15 --publish`
+published it. Without authentication the `.dmg` and the `-setup.exe` answer 200 and
+`latest.json` offers 26.10.15 for `darwin-aarch64` and `windows-x86_64`. The downloaded
+`.dmg` staples and Gatekeeper reads it as Notarized Developer ID. Step 12 passed on both
+platforms from 26.10.14: `update_check.py` 17 of 17 on Windows 11, where 26.10.14 had
+passed 16 with the `.pdf` class after an update as the one failure, and
+`update_check_mac.py` 12 of 12 on a second Mac, each with its `no-press` control failing
+the 7 checks it is aimed at. On the Mac the script has to be started from the ssh session:
+started as a launchd job it waited 20 s for the menu and failed, because the Accessibility
+permission belongs to what starts the script. The Homebrew cask went from 26.10.14 to
+26.10.15; `brew audit --cask --online` passed and `brew livecheck` reads 26.10.15.
 
 **26.10.14 verification, 2026-10-10:** all 31 gates passed on the release tree on macOS
 arm64 (3,040 Rust tests with ten documented ignored, 2,795 frontend tests) and

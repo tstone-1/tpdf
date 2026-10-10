@@ -20,11 +20,17 @@
 //!
 //! **Three refusals, and none of them is defensive.**
 //!
-//!  - An **encrypted** document. `docs/TRAPS.md` records that `lopdf` silently
-//!    drops encryption on save, so writing one produces a file whose restrictions
-//!    are gone and whose reader has no way to know. 3 of the 39 PDFs in a real
-//!    Downloads folder carry `/Encrypt` (measured for `progressive::open_failure`),
-//!    so this is a case a reader meets, not a hypothetical.
+//!  - An encrypted document that is **still locked**: no password opened it,
+//!    so no object was parsed and there is nothing to write. One that was
+//!    opened is saved with its encryption kept, by an append or by a rewrite
+//!    that puts the source's encryption back. Until that was built every
+//!    encrypted document was refused here, because `lopdf`'s serialiser drops
+//!    encryption on save (`docs/TRAPS.md`) and the copy would have lost its
+//!    restrictions with nothing saying so. 3 of the 39 PDFs in a real
+//!    Downloads folder carry `/Encrypt` (measured for
+//!    `progressive::open_failure`), so this is a case a reader meets. A print
+//!    of part of an encrypted document and a merge of one are still refused,
+//!    each where it is decided below.
 //!  - A **page count that disagrees** with the plan's baseline. That is the
 //!    external modification §5 of `docs/PLAN.md` is about: the file changed under
 //!    the open document, and the edits the reader applied no longer name the pages
