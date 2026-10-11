@@ -4636,6 +4636,44 @@ pub fn inserted_pages_note(
     ))
 }
 
+/// How long a searched-for piece has to be before finding it means something.
+pub const SHORT_NEEDLE: usize = 2;
+
+/// Why a piece of one or two characters cannot be cleared, when one was found.
+///
+/// **The verdict is unchanged, and this says why it cannot change.** The scan
+/// reads the whole file for what a region took. A region that took a single
+/// digit or a comma gives it `4` or `,` to look for, and a page's content is
+/// full of both: its coordinates are numbers and its other sentences have
+/// commas. So the piece is always found, the copy is always *not verified*,
+/// and before this sentence a reader could not tell that from a removal that
+/// failed. It was met on 2026-10-11, when a hit on `4,250.00` was cut into
+/// three regions; that cut is repaired in `cli/regions.rs`, and a box drawn
+/// over one character, or a pattern such as `\d`, still gets here.
+///
+/// It names the pieces, so the reader can see which finding it is about, and
+/// says what would get an answer. It does not say the piece is gone: nothing
+/// established that.
+#[must_use]
+pub fn short_needle_note(report: &verify::Report) -> Option<String> {
+    let short: Vec<String> = report
+        .found
+        .iter()
+        .filter(|needle| needle.chars().count() <= SHORT_NEEDLE)
+        .map(|needle| format!("\"{needle}\""))
+        .collect();
+    if short.is_empty() {
+        return None;
+    }
+    Some(format!(
+        "{} is too short to be told apart from the rest of the file: the check reads the whole \
+         file, where one or two characters also occur in the page's own numbers and other \
+         text, so it cannot say whether the marked one was removed --- mark the whole word or \
+         number to get an answer",
+        short.join(", ")
+    ))
+}
+
 /// How to read the findings against the pages the reader actually marked.
 ///
 /// **The caller-side half of attribution, and only the caller has both facts.**
@@ -4663,6 +4701,16 @@ pub fn inserted_pages_note(
 #[must_use]
 pub fn marked_pages_note(report: &verify::Report, marked: &[u32]) -> Option<String> {
     if !report.placed() {
+        return None;
+    }
+    // Nothing to read against the pages when every finding is a piece too
+    // short to mean anything: *the removal did not take it there* would be a
+    // claim about a `4` that is on every page. [`short_needle_note`] speaks.
+    if report
+        .found
+        .iter()
+        .all(|needle| needle.chars().count() <= SHORT_NEEDLE)
+    {
         return None;
     }
     let marked: std::collections::BTreeSet<u32> = marked.iter().copied().collect();
@@ -7671,6 +7719,53 @@ mod tests {
         // And it claims nothing about the removal having worked, which the scan
         // has just said it cannot show.
         assert!(!said.contains("was removed"), "{said:?}");
+    }
+
+    /// A piece of one or two characters gets the sentence, and names itself;
+    /// a longer one does not, alone or beside a short one.
+    #[test]
+    fn a_found_piece_of_one_or_two_characters_is_explained_and_a_longer_one_is_not() {
+        let mut report = crate::verify::Report::default();
+        report.found.insert("4711-0815".to_string());
+        report.found.insert("250".to_string());
+        assert_eq!(super::short_needle_note(&report), None);
+        report.found.insert(",".to_string());
+        report.found.insert("45".to_string());
+        let said = super::short_needle_note(&report).expect("two short pieces were found");
+        assert!(said.starts_with("\",\", \"45\" is too short"), "{said:?}");
+        assert!(!said.contains("4711") && !said.contains("250"), "{said:?}");
+        // Never reassurance: nothing established that the piece is gone.
+        assert!(
+            !said.contains("was removed.") && !said.contains("clean"),
+            "{said:?}"
+        );
+        assert_eq!(
+            super::short_needle_note(&crate::verify::Report::default()),
+            None
+        );
+    }
+
+    /// A short piece found on a marked page is not called a removal that did
+    /// not take, and a long one beside it still is.
+    #[test]
+    fn only_short_pieces_on_a_marked_page_are_not_called_a_failed_removal() {
+        let place = |report: &mut crate::verify::Report, needle: &str| {
+            report.found.insert(needle.to_string());
+            report.located.insert(
+                needle.to_string(),
+                crate::verify::Located::Pages(crate::verify::Placed {
+                    pages: vec![2],
+                    more: 0,
+                }),
+            );
+        };
+        let mut report = crate::verify::Report::default();
+        place(&mut report, "4");
+        place(&mut report, ",");
+        assert_eq!(super::marked_pages_note(&report, &[2]), None);
+        place(&mut report, "4711-0815");
+        let said = super::marked_pages_note(&report, &[2]).expect("a whole word is still there");
+        assert!(said.contains("did not take"), "{said:?}");
     }
 
     /// A report whose findings the walk placed, read against the marked pages.

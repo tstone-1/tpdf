@@ -14041,6 +14041,20 @@ MUTATIONS += [
     # The short-mark rule, added 2026-10-11: a hit on `4,250.00` was three
     # regions, each verified by what it took, and no file is free of a `4`.
     Mutation(
+        'redact: explain a found piece of any length as too short',
+        'src/redact.rs',
+        '        .filter(|needle| needle.chars().count() <= SHORT_NEEDLE)',
+        '        .filter(|_| true)',
+        'a_found_piece_of_one_or_two_characters_is_explained_and_a_longer_one_is_not',
+    ),
+    Mutation(
+        'redact: call a short piece on a marked page a removal that did not take',
+        'src/redact.rs',
+        '        .all(|needle| needle.chars().count() <= SHORT_NEEDLE)',
+        '        .all(|_| false)',
+        'only_short_pieces_on_a_marked_page_are_not_called_a_failed_removal',
+    ),
+    Mutation(
         'cli: regions gives a comma a run of its own',
         'src/cli/regions.rs',
         '    if overlap > 0.0 && shorter < ha.max(hb) * SHORT_MARK {',

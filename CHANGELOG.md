@@ -17,6 +17,18 @@ as *downloadable*, while the release sat as a draft that GitHub showed to nobody
 are given now because they are different facts, and only the second one means a reader can
 have the binary.)
 
+## [26.10.18] - Unreleased
+
+### Changed
+
+- **A redaction that took only one or two characters says why it cannot be verified.**
+  The check reads the whole file for what a region took, and a single digit or a comma is
+  in every page's own numbers and sentences, so such a copy is always *not verified*. The
+  answer is the same; it now names the piece, says that it is too short to be told apart
+  from the rest of the file, and says to mark the whole word or number. When every piece
+  found is that short, the report no longer adds that *the removal did not take it there*,
+  which nothing had established.
+
 ## [26.10.17] - 2026-10-11
 
 ### Fixed

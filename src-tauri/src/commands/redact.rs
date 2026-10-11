@@ -647,6 +647,7 @@ pub async fn redact_copy_asked(
     // findings of their own --- and only when there is something to read. The
     // two are exclusive by construction: one speaks when every word was placed
     // on a page and the other when at least one was not.
+    why.extend(redact::short_needle_note(&report));
     why.extend(redact::marked_pages_note(&report, &asked.marked));
     why.extend(redact::inserted_pages_note(
         asked.inserted,
@@ -830,6 +831,7 @@ pub async fn redact_document(
     // Under them for `redact_copy`'s reason, and sharper here: this is the only
     // copy of the document left, so a reader deciding whether to act on a hit
     // has nothing else to compare it against.
+    why.extend(redact::short_needle_note(&report));
     why.extend(redact::marked_pages_note(&report, &asked.marked));
     why.extend(redact::inserted_pages_note(
         asked.inserted,

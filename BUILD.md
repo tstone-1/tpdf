@@ -42,7 +42,8 @@ commits since the pin, which is how a fix for a shipped milestone arrives. `audi
 runs it, for the reason it runs the advisory audit and `gates.py` does not: the answer
 changes when upstream moves. Since `scripts/publish_release.py` needs a green `Audit` run
 on the tag's commit, **a release cannot be published on an engine that is behind**; build
-the newer one first (below). The check's `--self-test` runs offline, and against the
+the newer one first (below). Whether that should only warn was asked on 2026-10-11 and
+decided: it stays a refusal, because a stale pin is how a merged security fix is missed. The check's `--self-test` runs offline, and against the
 8066 pin the live check exits 1 naming `chromium/8078`.
 
 **A stale pin opens an issue and starts the build (2026-10-11).** No dependency bot reads
