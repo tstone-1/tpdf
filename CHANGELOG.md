@@ -39,9 +39,6 @@ have the binary.)
 
 ### Changed
 
-- **Routine releases go out at most once a week**; a wrong redaction or verification
-  answer, lost data and a security fix do not wait (`docs/DETAIL.md`, *Versioning: how
-  often to release*).
 - **A stale PDFium pin opens an issue and starts the build of the newer engine**, and the
   Windows signing client is fetched from a release of this repository and checked by
   digest (`BUILD.md`).

@@ -313,18 +313,10 @@ on 2026-10-07**, the first release whose installer is signed. Nothing measures h
 installs the warning costs; the rule rests on Microsoft's description of the mechanism.
 Evidence: [`DEMAND.md`](DEMAND.md), *Second pass*.
 
-**Since 2026-10-11 there is again at most one routine release a week, for another reason.**
-26.10.14, 26.10.15 and 26.10.16 were published on one day, 2026-10-10. Each was sound, and
-two of the three carried a correction to redaction or to a signature verdict. A reader who
-sees three versions in a day of a program whose claim is that its answers can be relied on
-reads instability, and the release notes of that day say that a trusted answer changed
-more than once. So routine work collects under the `Unreleased` heading and is released
-together, no earlier than seven days after the release before it. Three kinds of change
-do not wait: a fix for lost data, a fix for a redaction or a verification answer that is
-wrong, and a security fix, which includes a newer PDFium when the pin is behind. Nothing
-enforces the seven days; `gh release list` shows the date of the last release, and the
-person cutting the next one reads it at step 1. The first routine release under this rule
-is no earlier than seven days after 26.10.16.
+**There is no rule about how often to release.** The maintainer decides when a release is
+cut. A weekly limit for routine work was written here on 2026-10-11, after three releases
+on 2026-10-10, and removed the same day: when to release is his decision and not the
+calendar's.
 
 ## Quality gates: the list, the Windows check, and each gate
 
