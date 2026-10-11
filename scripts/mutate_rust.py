@@ -14038,6 +14038,29 @@ MUTATIONS += [
         '    shorter > 0.0',
         'characters_on_one_line_join_one_run_and_a_new_line_starts_another',
     ),
+    # The short-mark rule, added 2026-10-11: a hit on `4,250.00` was three
+    # regions, each verified by what it took, and no file is free of a `4`.
+    Mutation(
+        'cli: regions gives a comma a run of its own',
+        'src/cli/regions.rs',
+        '    if overlap > 0.0 && shorter < ha.max(hb) * SHORT_MARK {',
+        '    if false {',
+        'a_comma_joins_the_run_it_touches_so_an_amount_is_one_run',
+    ),
+    Mutation(
+        'cli: regions joins a short box that does not touch the run',
+        'src/cli/regions.rs',
+        '    if overlap > 0.0 && shorter < ha.max(hb) * SHORT_MARK {',
+        '    if shorter < ha.max(hb) * SHORT_MARK {',
+        'a_short_box_that_does_not_touch_and_a_letter_half_off_the_line_stay_apart',
+    ),
+    Mutation(
+        'cli: regions joins any shorter box that touches the run',
+        'src/cli/regions.rs',
+        '    if overlap > 0.0 && shorter < ha.max(hb) * SHORT_MARK {',
+        '    if overlap > 0.0 && shorter < ha.max(hb) {',
+        'a_short_box_that_does_not_touch_and_a_letter_half_off_the_line_stay_apart',
+    ),
     Mutation(
         'cli: regions keeps a character with width and no height',
         'src/cli/regions.rs',

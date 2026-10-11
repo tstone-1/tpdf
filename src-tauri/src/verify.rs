@@ -1823,6 +1823,44 @@ mod tests {
         );
     }
 
+    /// An amount is verified as one passage, and one left in place is found.
+    ///
+    /// The two halves of what `cli::regions`' `on_same_line` rests on. A hit
+    /// on `4,250.00` that reaches this scan as the three needles `4`, `,` and
+    /// `250.00` cannot verify, and that is the scan being right: a page that
+    /// positions text has a `4` among its operands and a comma in its prose,
+    /// and both are still in the file with the amount gone. So the hit has to
+    /// arrive as one needle --- and the control is that the one needle is not
+    /// a way past the scan. A file whose marked page still prints the amount
+    /// is *not verified*, by name and by page.
+    #[test]
+    fn an_amount_is_one_needle_and_one_still_on_its_page_is_not_verified() {
+        const AMOUNT: &str = "4,250.00";
+        let whole = vec![AMOUNT.to_string()];
+
+        // What the page holds once the amount is out of it.
+        let removed = document(&["comes to EUR . It is paid, within 14 days"]);
+        assert_eq!(
+            super::scan(&removed, &whole, None).verdict(),
+            Verdict::Verified
+        );
+        let pieces = ["4", ",", "250.00"].map(String::from);
+        let split = super::scan(&removed, &pieces, None);
+        assert_eq!(
+            split.found.iter().map(String::as_str).collect::<Vec<_>>(),
+            vec![",", "4"],
+            "the pieces of a split hit are found in a file the amount has left"
+        );
+
+        // And the removal that did not take it.
+        let kept = document(&["comes to EUR 4,250.00. It is paid, within 14 days"]);
+        let report = super::scan(&kept, &whole, None);
+        assert_eq!(
+            reason(&report, AMOUNT),
+            format!("{AMOUNT} is still in the file, on page 1")
+        );
+    }
+
     /// A word on two pages is placed on both, each by its own carrier.
     ///
     /// Distinct from [`Located::Shared`], which is one carrier that two pages

@@ -17,6 +17,35 @@ as *downloadable*, while the release sat as a draft that GitHub showed to nobody
 are given now because they are different facts, and only the second one means a reader can
 have the binary.)
 
+## [26.10.17] - Unreleased
+
+### Fixed
+
+- **An amount with a thousands separator, redacted by search, was reported "not verified"
+  although it was gone.** A comma hangs below the baseline, so beside digits it overlaps
+  them by less than half of its height, and a hit on `4,250.00` became three regions that
+  took `4`, `,` and `250.00`. The check afterwards looked for each piece and found a comma
+  elsewhere on the page. Nothing was left in the file; the answer was wrong on the safe
+  side. A short mark now joins the run it touches, in the window and in `tpdf redact`, so
+  the amount is one region and one thing to look for. A comma after a word with a letter
+  that reaches below the line, such as *Sample Street, Example Town*, never showed it.
+  Found by redacting the sample letter of the landing page.
+
+### Added
+
+- **A sample letter to try the check for hidden text on**, linked from the landing page:
+  a made-up letter with four black boxes drawn over words that are still in the file.
+  `testdata/make_sample_pdf.py` writes it.
+
+### Changed
+
+- **Routine releases go out at most once a week**; a wrong redaction or verification
+  answer, lost data and a security fix do not wait (`docs/DETAIL.md`, *Versioning: how
+  often to release*).
+- **A stale PDFium pin opens an issue and starts the build of the newer engine**, and the
+  Windows signing client is fetched from a release of this repository and checked by
+  digest (`BUILD.md`).
+
 ## [26.10.16] - 2026-10-10
 
 ### Changed

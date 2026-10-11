@@ -78,6 +78,10 @@ For a document somebody else redacted, *Find text the pages do not show* and
 `tpdf hidden released.pdf` list the words that are still in the file under a black box,
 under an annotation, in the background's colour or outside the page.
 
+![A letter with four black boxes, and beside it the list of the words under them](docs/img/hidden.png)
+
+The letter in the picture is [a made-up sample](site/sample-redacted.pdf) for trying this.
+
 **Sign and check signatures.** Sign with a certificate from the macOS keychain or the
 Windows certificate store, with a timestamp and long-term validation data if you want
 them, or add that data later to a document somebody has already signed. For a signed document, tpdf says whether each signature is intact, whether your

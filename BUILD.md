@@ -286,9 +286,11 @@ uv run --isolated --no-project --with scratch/dist/tpdf_client-*.whl python -c "
 
 ## README screenshots
 
-The five pictures and `demo.gif` in `docs/img/` are generated, never taken by hand, and
-from one run: every state the application holds is a frame of the animation, and five of
-those frames are the stills.
+The six pictures and `demo.gif` in `docs/img/` are generated, never taken by hand, and
+from one run: every state the application holds is a frame of the animation, and six of
+those frames are the stills. One of the six, `hidden.png`, is of `site/sample-redacted.pdf`,
+the letter the landing page offers: `uv run --with reportlab testdata/make_sample_pdf.py
+site/sample-redacted.pdf` writes it, and writes the same bytes each time.
 
 ```
 npm run tauri build -- --config src-tauri/tauri.checks.conf.json --bundles app
@@ -6777,7 +6779,7 @@ signature on an uninstaller; the next release run is that.
 **The steps, one line each.** Each line links to its step in the list further down,
 which follows the records of past releases and carries the reasons and the commands.
 
-1. [Fetch, and confirm the branch is not behind](#release-step-1)
+1. [Fetch, confirm the branch is not behind, and that the release may go out now](#release-step-1)
 2. [Bump the four version files](#release-step-2)
 3. [Refresh both lockfiles with `cargo check`](#release-step-3)
 4. [Put the release date in `CHANGELOG.md`](#release-step-4)
@@ -7918,7 +7920,10 @@ starts at 0 and increments within the month.
 
 1. <a id="release-step-1"></a>`git fetch` and confirm the local branch is not behind — this repo is pushed from more
    than one machine, and a version bump on a stale clone has already cost a re-cut release
-   elsewhere in the portfolio.
+   elsewhere in the portfolio. Then `gh release list --limit 3`: a routine release goes out no
+   earlier than seven days after the one before it. A fix for lost data, for a wrong
+   redaction or verification answer, or a security fix does not wait
+   (`docs/DETAIL.md`, *Versioning: how often to release*).
 2. <a id="release-step-2"></a>Bump **all four** version files so they agree:
    - `package.json`
    - `package-lock.json` (top-level *and* the root package entry — `npm version <v> --no-git-tag-version` does both)

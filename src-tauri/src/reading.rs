@@ -36,8 +36,8 @@ use crate::text::PageText;
 const CUT_CHARS: f64 = 3.0;
 /// `MAX_DEPTH`.
 const MAX_DEPTH: usize = 12;
-/// `SHORT_MARK`.
-const SHORT_MARK: f64 = 0.5;
+/// `SHORT_MARK`. `cli::regions` joins a run by the same rule.
+pub(crate) const SHORT_MARK: f64 = 0.5;
 /// `SLIVER_PT`.
 const SLIVER_PT: f64 = 0.1;
 /// `SLIVER_OF_LINE`.

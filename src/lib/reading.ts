@@ -61,6 +61,7 @@
 
 import { quarterTurns } from "./pages";
 import {
+  SHORT_MARK_HEIGHT,
   charQuad,
   characterTurns,
   coveredIndices,
@@ -194,7 +195,7 @@ function extentsOf(box: Quad, axes: Axes): Extents {
  * puts a space on its line: a box that thin is refused before banding now, by
  * {@link sliver}. The clause here is the comma's, and only the comma's.
  */
-const SHORT_MARK = 0.5;
+const SHORT_MARK = SHORT_MARK_HEIGHT;
 
 /**
  * How tall a box has to be, in points, to be a character rather than bookkeeping.

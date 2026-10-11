@@ -302,6 +302,37 @@ fn a_hit_becomes_one_region_per_line_it_runs_on() {
     assert_eq!(marked[&0][0], [96.0, 100.0, 132.0, 110.0]);
 }
 
+/// One hit is one passage. An amount with a thousands comma was three regions
+/// --- `4`, `,` and `250.00` --- and each region is verified by what it took,
+/// so the written file was searched for a `4` and a `,` and never came back
+/// clean. The boxes are PDFium's for `site/sample-redacted.pdf`.
+#[test]
+fn an_amount_with_a_thousands_comma_is_one_region() {
+    let boxes: [[f32; 4]; 8] = [
+        [206.65, 326.12, 212.1, 334.0],
+        [213.54, 332.9, 214.7, 335.55],
+        [216.0, 326.09, 221.22, 334.0],
+        [222.26, 326.23, 227.47, 334.12],
+        [228.38, 326.09, 233.5, 334.12],
+        [235.03, 332.9, 236.13, 334.0],
+        [237.55, 326.09, 242.68, 334.12],
+        [243.67, 326.09, 248.79, 334.12],
+    ];
+    let amount = PageText {
+        codes: "4,250.00".chars().map(u32::from).collect(),
+        boxes: boxes.iter().flatten().copied().collect(),
+        width_pt: 595.0,
+        height_pt: 842.0,
+        ..PageText::default()
+    };
+    let found = walk(&[query(SearchKind::Text, "4,250.00")], &[1], &[amount]);
+    assert_eq!(found.counts, vec![1]);
+    assert_eq!(
+        match_regions(&found)[&0],
+        vec![[206.65, 326.09, 248.79, 335.55]]
+    );
+}
+
 #[test]
 fn a_hit_still_in_the_written_file_is_a_reason_naming_its_page_and_query() {
     let texts = [page(&["x"]), page(&["still Secret"])];

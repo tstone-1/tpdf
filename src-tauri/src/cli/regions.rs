@@ -33,7 +33,7 @@
 //! from the unturned text and `outOfCrop` undoes the reader's crop, and a
 //! document the tool has just opened has neither.
 
-use crate::reading::webview_number;
+use crate::reading::{webview_number, SHORT_MARK};
 use crate::search::Match;
 use crate::text::PageText;
 
@@ -118,6 +118,22 @@ fn character_turns(text: &PageText, index: usize) -> u32 {
 }
 
 /// `onSameLine`.
+///
+/// Half of the shorter box is the test for two boxes of comparable height,
+/// and it is wrong for a comma, as `reading.rs`'s `same_band` found for lines:
+/// PDFium reports `,` as a box that starts inside the line and drops below the
+/// baseline. Measured on `site/sample-redacted.pdf`, in 11 pt Helvetica: `4` at
+/// 326.12--334.00 and the comma after it at 332.90--335.55, an overlap of 42%
+/// of the comma. So the comma opened a run of its own, the `2` after it
+/// overlapped *that* run by the same 42% and opened a third, and one hit on
+/// `4,250.00` was three regions taking `4`, `,` and `250.00`. A run with a
+/// descender in it reaches far enough down to hold the comma, which is why
+/// `Sample Street, Example Town` on the same page was one region.
+///
+/// Three regions are three removals, each verified by what it took, and no
+/// file is ever free of a `4` or a `,`: the copy was reported *not verified*
+/// with the amount gone. So the rule is `same_band`'s, with its constant: a
+/// box too short to be a line of text joins the run it touches.
 fn on_same_line(a: Quad, b: Quad, sideways: bool) -> bool {
     let (a0, a1, b0, b1) = if sideways {
         (a.left, a.right, b.left, b.right)
@@ -125,7 +141,11 @@ fn on_same_line(a: Quad, b: Quad, sideways: bool) -> bool {
         (a.top, a.bottom, b.top, b.bottom)
     };
     let overlap = a1.min(b1) - a0.max(b0);
-    let shorter = (a1 - a0).min(b1 - b0);
+    let (ha, hb) = (a1 - a0, b1 - b0);
+    let shorter = ha.min(hb);
+    if overlap > 0.0 && shorter < ha.max(hb) * SHORT_MARK {
+        return true;
+    }
     shorter > 0.0 && overlap / shorter > 0.5
 }
 
@@ -359,6 +379,47 @@ mod tests {
             runs_for(&page, 0, None),
             vec![10.0, 10.0, 30.0, 21.0, 10.0, 40.0, 20.0, 50.0]
         );
+    }
+
+    /// `4,250.00` as PDFium boxes it on `site/sample-redacted.pdf`, to a
+    /// hundredth of a point: no character before the comma has a descender,
+    /// and the comma overlaps the digits by 42% of itself.
+    const AMOUNT: [[f32; 4]; 8] = [
+        [206.65, 326.12, 212.1, 334.0],
+        [213.54, 332.9, 214.7, 335.55],
+        [216.0, 326.09, 221.22, 334.0],
+        [222.26, 326.23, 227.47, 334.12],
+        [228.38, 326.09, 233.5, 334.12],
+        [235.03, 332.9, 236.13, 334.0],
+        [237.55, 326.09, 242.68, 334.12],
+        [243.67, 326.09, 248.79, 334.12],
+    ];
+
+    #[test]
+    fn a_comma_joins_the_run_it_touches_so_an_amount_is_one_run() {
+        // Three runs before the rule: the `4`, the comma, and `250.00`, which
+        // overlaps the comma's run as little as the comma overlapped the `4`.
+        assert_eq!(
+            runs_for(&text(&AMOUNT, 0, Vec::new()), 0, None),
+            vec![206.65, 326.09, 248.79, 335.55]
+        );
+        // And a hit that starts at the comma: the digit joins the mark.
+        assert_eq!(runs_for(&text(&AMOUNT, 0, Vec::new()), 1, None).len(), 4);
+    }
+
+    #[test]
+    fn a_short_box_that_does_not_touch_and_a_letter_half_off_the_line_stay_apart() {
+        // A mark a quarter of the letter's height, flush under it: touching is
+        // not overlapping, so it is the next line's and not this run's.
+        let under = [[10.0, 10.0, 20.0, 20.0], [20.0, 20.0, 22.0, 22.5]];
+        assert_eq!(runs_for(&text(&under, 0, Vec::new()), 0, None).len(), 8);
+        // A box six tenths of the letter's height is not a mark. It overlaps
+        // by under half of itself, which is the next line set tight.
+        let tight = [[10.0, 10.0, 20.0, 20.0], [20.0, 17.5, 30.0, 23.5]];
+        assert_eq!(runs_for(&text(&tight, 0, Vec::new()), 0, None).len(), 8);
+        // The control: the same small mark, moved up into the letter, joins.
+        let inside = [[10.0, 10.0, 20.0, 20.0], [20.0, 19.0, 22.0, 21.5]];
+        assert_eq!(runs_for(&text(&inside, 0, Vec::new()), 0, None).len(), 4);
     }
 
     #[test]

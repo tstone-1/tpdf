@@ -3,8 +3,8 @@
 
     uv run --with reportlab --with pillow scripts/screenshots.py <checks-binary>
 
-Five stills and `demo.gif`, from one run: every state the application holds is
-a frame of the animation, and five of those frames are also the stills.
+Six stills and `demo.gif`, from one run: every state the application holds is
+a frame of the animation, and six of those frames are also the stills.
 
 It needs a visible, unlocked desktop: it opens a tpdf window for about half a
 minute and photographs that window each time the application reports a state
@@ -22,9 +22,11 @@ in it --- which is why the size of every picture is checked against the
 window's. On Windows it has to run in the desktop session: over ssh there is no
 desktop to copy, so start it from a console there or a `/IT` scheduled task.
 
-What it shows comes from two documents, both generated: `testdata/demo.pdf`,
-written here by `testdata/make_demo_pdf.py`, and `testdata/incr-two-signers.pdf`
-for the signature cards (`testdata/make_incremental_pdf.py` writes that one).
+What it shows comes from three documents, all generated: `testdata/demo.pdf`,
+written here by `testdata/make_demo_pdf.py`; `testdata/incr-two-signers.pdf`
+for the signature cards (`testdata/make_incremental_pdf.py` writes that one);
+and `site/sample-redacted.pdf`, the letter the landing page offers, whose black
+boxes left their words in the file (`testdata/make_sample_pdf.py`).
 The states themselves are `src/lib/screenshotcheck.ts`.
 """
 
@@ -50,8 +52,11 @@ from PIL import Image  # noqa: E402
 from harness_launch import report  # noqa: E402
 from make_demo_pdf import build  # noqa: E402
 
+#: The letter the landing page offers for trying the check on.
+SAMPLE = ROOT / "site" / "sample-redacted.pdf"
+
 #: Every state `screenshotcheck.ts` announces. A run that produced fewer fails.
-SHOTS = ("reading", "palette", "annotate", "redact", "signatures")
+SHOTS = ("reading", "palette", "annotate", "redact", "hidden", "signatures")
 
 #: How wide a committed picture is. The window is 1200 points, so this is 1.33x.
 WIDTH_PX = 1600
@@ -205,11 +210,15 @@ def main() -> int:
                          "README's pictures, light and at the default size")
     if not args.signed.is_file():
         raise SystemExit(f"[FAIL] {args.signed} is missing; testdata/make_incremental_pdf.py writes it")
+    if not SAMPLE.is_file():
+        raise SystemExit(f"[FAIL] {SAMPLE} is missing; testdata/make_sample_pdf.py writes it")
     args.out.mkdir(parents=True, exist_ok=True)
 
     with tempfile.TemporaryDirectory(prefix="tpdf-shots-") as directory:
         room = Path(directory)
         demo, signed = room / "Harbour Tide Survey 2026.pdf", room / "Signed agreement.pdf"
+        sample = room / "Decision letter.pdf"
+        shutil.copyfile(SAMPLE, sample)
         regions = build(demo)
         # Kept beside the others as well, so the same document can be opened by hand.
         shutil.copyfile(demo, ROOT / "testdata" / "demo.pdf")
@@ -219,7 +228,7 @@ def main() -> int:
             swift.write_text(WINDOW_OF)
         env = dict(os.environ,
                    TPDF_OPENCHECK=f"screenshots:{demo}|{signed}|{json.dumps(regions, separators=(',', ':'))}"
-                                  + ("|more" if args.more else ""),
+                                  f"|{sample}" + ("|more" if args.more else ""),
                    **({"TPDF_WINDOW_SIZE": args.size} if args.size else {}),
                    TPDF_SESSION_FILE=str(room / "session.json"),
                    # Pinned both ways, so the README's pictures do not depend on

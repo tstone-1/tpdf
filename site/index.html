@@ -78,26 +78,28 @@
 <main>
   <section class="task">
     <div>
-      <h2>Prepare a PDF to share, without uploading it anywhere</h2>
-      <p>Four steps, all on your computer. Open the command palette and type the first
-      letters of each command.</p>
+      <h2>See what a black box left in a PDF</h2>
+      <p>The commonest wrong redaction draws a black rectangle over the words and leaves
+      them in the file, where anybody can copy them out. tpdf lists those words, and
+      removes them properly. Try it in three steps; nothing leaves your computer.</p>
       <ol>
-        <li><strong>Remove what is private.</strong> Type <em>redact</em> and drag over
-        the text or the region, or search for a name and choose <em>Redact every search
-        result</em>. A redaction in tpdf removes the words from the file. It does not
-        draw a black box over them.</li>
-        <li><strong>Check the result.</strong> <em>Redact and save as</em> reads the new
-        file back and tells you whether the removal is verified. If it cannot check, it
-        says "not verified" and never "clean".</li>
-        <li><strong>Keep only the pages you need.</strong> <em>Extract pages</em> writes
-        them to a new file.</li>
-        <li><strong>Make it small enough to send.</strong> <em>Save a smaller copy</em>
-        offers several choices and shows the size each one comes to before you save.</li>
+        <li><strong>Open a redacted PDF.</strong> Use one of your own, or
+        <a href="sample-redacted.pdf" download>this made-up letter</a> with four black
+        boxes on it.</li>
+        <li><strong>Ask what the pages do not show.</strong> Open the command palette,
+        type <em>find text</em> and choose <em>Find text the pages do not show</em>. The
+        sidebar lists every passage that is in the file and not visible on the page. For
+        the letter that is a name, an address, an account number and an amount.</li>
+        <li><strong>Remove them, and check.</strong> Type <em>redact</em>, drag over each
+        box and choose <em>Redact and save as</em>. A redaction in tpdf removes the words
+        from the file, then reads the new file back and tells you whether the removal is
+        verified. If it cannot check, it says "not verified" and never "clean".</li>
       </ol>
-      <p class="small">For a document somebody else redacted, <em>Find text the pages do
-      not show</em> lists the words that are still in the file.</p>
+      <p class="small">Before you send the result: <em>Extract pages</em> keeps only the
+      pages you need, and <em>Save a smaller copy</em> shows the size each choice comes to
+      before you save.</p>
     </div>
-    <img src="img/redact.png" alt="Two regions marked for removal and listed for review">
+    <img src="img/hidden.png" alt="A letter with four black boxes, and beside it the list of the words under them">
   </section>
 
   <section class="task">

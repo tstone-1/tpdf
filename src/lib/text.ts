@@ -973,7 +973,8 @@ const ACROSS_LINE_WEIGHT = 8;
  * A quad per character would be thousands of rectangles for a page and would
  * show the gaps between glyphs as stripes through the highlight. Characters join
  * a run while they overlap it vertically; anything else --- a new line, a
- * superscript, a rotated run --- starts a new one.
+ * superscript as tall as half the line or not touching it, a rotated run ---
+ * starts a new one.
  *
  * Runs are also unioned horizontally, so an inter-word space with no box of its
  * own does not split the highlight in two.
@@ -1048,7 +1049,25 @@ export function linesOf(text: PageText): { from: number; to: number }[] {
 }
 
 /**
+ * How much shorter than its neighbour a box has to be to count as a mark and
+ * not as a letter: a comma, a full stop, an apostrophe. `reading.ts` has the
+ * account, at `sameBand`, which is the other rule that uses it.
+ */
+export const SHORT_MARK_HEIGHT = 0.5;
+
+/**
  * Whether two boxes share most of their extent across the lines, i.e. are on one.
+ *
+ * **A short mark joins the run it touches.** A comma hangs below the baseline,
+ * so beside a run of digits it overlaps by less than half of its own height:
+ * measured on "4,250.00" in Helvetica, 1.10 of 2.65 points. Without the first
+ * rule that amount was three runs, a redaction of it three regions that took
+ * "4", "," and "250.00", and the check afterwards found a comma elsewhere on
+ * the page and answered *not verified* for a removal that was complete. A
+ * comma after a word with a descender never showed it, because the run already
+ * reached below the baseline. `sameBand` in `reading.ts` had the same defect
+ * and the same rule first; `on_same_line` in `cli/regions.rs` is this one in
+ * Rust, and `cliregions.test.ts` holds the two equal.
  *
  * `sideways` follows the character's own direction composed with the page/view.
  */
@@ -1057,7 +1076,9 @@ function onSameLine(a: Quad, b: Quad, sideways: boolean): boolean {
     ? [a.left, a.right, b.left, b.right]
     : [a.top, a.bottom, b.top, b.bottom];
   const overlap = Math.min(aEnd, bEnd) - Math.max(aStart, bStart);
-  const shorter = Math.min(aEnd - aStart, bEnd - bStart);
+  const heights = [aEnd - aStart, bEnd - bStart];
+  const shorter = Math.min(...heights);
+  if (overlap > 0 && shorter < Math.max(...heights) * SHORT_MARK_HEIGHT) return true;
   return shorter > 0 && overlap / shorter > 0.5;
 }
 

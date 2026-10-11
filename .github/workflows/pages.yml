@@ -2,7 +2,8 @@ name: Pages
 
 # Publishes the landing page in `site/` to GitHub Pages.
 #
-# WHAT IS PUBLISHED: `site/index.html`, `site/download.js` and the pictures the
+# WHAT IS PUBLISHED: `site/index.html`, `site/download.js`, the sample letter
+# `site/sample-redacted.pdf` the page offers for trying tpdf, and the pictures the
 # README already shows (`docs/img/`, as `img/`). Nothing is built; the step
 # below copies those files into one folder. The rest of `docs/` is not copied,
 # which is why Pages does not serve the `docs/` folder itself.
@@ -43,7 +44,7 @@ jobs:
       - name: Copy the page and its pictures
         run: |
           mkdir -p "$RUNNER_TEMP/page/img"
-          cp site/index.html site/download.js "$RUNNER_TEMP/page/"
+          cp site/index.html site/download.js site/sample-redacted.pdf "$RUNNER_TEMP/page/"
           cp docs/img/* "$RUNNER_TEMP/page/img/"
 
       - uses: actions/upload-pages-artifact@fc324d3547104276b827a68afc52ff2a11cc49c9 # v5.0.0
