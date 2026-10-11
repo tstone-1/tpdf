@@ -1,9 +1,11 @@
 name: Windows signing rehearsal
 
 # Signs two files that are already public with the Certum Open Source
-# certificate and reads every signature back. It publishes nothing and uploads
-# nothing: the question it answers is whether a hosted runner can sign at all,
-# before release.yml is changed to depend on it.
+# certificate and reads every signature back. It publishes nothing: the
+# question it answers is whether a hosted runner can sign at all, before
+# release.yml depends on it. A run that had to build the signing client keeps
+# the built file as an artifact of the run, which is where the build a release
+# fetches comes from.
 #
 # The key is in Certum's SimplySign service. Certum supports a login from its
 # desktop program only, so the login here is done by ssign, an unofficial
@@ -45,9 +47,11 @@ jobs:
     env:
       # ssign v0.1.7. A commit and not a tag: a tag can be moved.
       SSIGN_REV: 5fd4daf22155b19b645aef3dd467f3c4c9e440b3
-      # The SHA-256 of the `ssign.exe` this workflow built from that commit and
-      # saved, as the run printed it. See the same line in `release.yml`.
-      SSIGN_SHA256: '3d8bad1eaeb7a6b5707c0d5e6fd1ae24ea2093c02e9df3f95ed512c3cad80818'
+      # The release that holds the `ssign.exe` this workflow built from that
+      # commit, and the SHA-256 of that file. See the same lines in
+      # `release.yml`.
+      SSIGN_BUILD: ''
+      SSIGN_SHA256: ''
       SIGNER: Open Source Developer Timo Stein
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
@@ -57,38 +61,41 @@ jobs:
       # Built outside the checkout, so this repository's toolchain pin does not
       # decide which compiler builds somebody else's program.
       #
-      # The built client is kept in a cache whose key is the commit. A release
-      # runs on a tag and can read a cache saved on main only, so a run of this
-      # workflow on main is what gives the next release its copy.
-      - name: Restore ssign
+      # A run with a recorded build fetches it, as a release does, and so
+      # proves the file a release will use. A run without one builds the
+      # client, and its last step keeps the file it built.
+      - name: Fetch or build ssign
         id: ssign
-        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
-        with:
-          path: ${{ runner.temp }}\ssign-client
-          key: ssign-${{ runner.os }}-${{ runner.arch }}-${{ env.SSIGN_REV }}
-
-      - name: Build ssign from the pinned commit
         shell: pwsh
         working-directory: ${{ runner.temp }}
-        env:
-          CACHED: ${{ steps.ssign.outputs.cache-hit }}
         run: |
+          # A folder of its own, on the PATH, holding this program and the
+          # wrapper and nothing else.
           $root = Join-Path $env:RUNNER_TEMP 'ssign-client'
           $bin = Join-Path $root 'bin'
           $exe = Join-Path $bin 'ssign.exe'
-          # A restored copy is used only when it is the build whose digest is
-          # recorded above. The key says which commit a cache claims to hold,
-          # and anything that runs in a job on main can save a cache under any
-          # key, so the key alone does not say what the file is.
+          New-Item -ItemType Directory -Force $bin | Out-Null
+          # The copy this repository published is used only when it is the file
+          # whose digest is recorded above. The release name says what a file
+          # claims to be and the digest says what it is: whoever can write a
+          # release here can replace the file, and cannot make it hash the same.
           $use = $false
-          if ($env:CACHED -eq 'true' -and (Test-Path $exe)) {
-            $digest = (Get-FileHash $exe -Algorithm SHA256).Hash.ToLower()
-            if ($env:SSIGN_SHA256 -and $digest -eq $env:SSIGN_SHA256) {
-              Write-Output "ssign $env:SSIGN_REV restored from the cache, digest as recorded"
+          if ($env:SSIGN_BUILD -and $env:SSIGN_SHA256) {
+            $url = "https://github.com/$env:GITHUB_REPOSITORY/releases/download/$env:SSIGN_BUILD/ssign.exe"
+            try {
+              Invoke-WebRequest $url -OutFile $exe -MaximumRetryCount 3 -RetryIntervalSec 5
+            } catch {
+              Write-Output "::warning::$url did not arrive ($($_.Exception.Message)); building from source"
+              Remove-Item $exe -Force -ErrorAction SilentlyContinue
+            }
+            if (Test-Path $exe) {
+              $digest = (Get-FileHash $exe -Algorithm SHA256).Hash.ToLower()
+              if ($digest -ne $env:SSIGN_SHA256) {
+                Write-Output "::error::$url has digest $digest, which is not the recorded one"
+                exit 1
+              }
+              Write-Output "ssign $env:SSIGN_REV fetched from $env:SSIGN_BUILD, digest as recorded"
               $use = $true
-            } else {
-              Write-Output "::warning::the cached ssign.exe has digest $digest, which is not the recorded one; building from source"
-              Remove-Item $root -Recurse -Force
             }
           }
           if (-not $use) {
@@ -96,6 +103,7 @@ jobs:
             if ($LASTEXITCODE -ne 0) { exit 1 }
             $digest = (Get-FileHash $exe -Algorithm SHA256).Hash.ToLower()
             Write-Output "ssign.exe built from $env:SSIGN_REV, sha256 $digest"
+            Add-Content -Path $env:GITHUB_OUTPUT -Value 'built=true'
           }
           & $exe --version
           if ($LASTEXITCODE -ne 0) { Write-Output '::error::the signing client does not start'; exit 1 }
@@ -193,3 +201,14 @@ jobs:
             Select-Object -First 1
           if (-not $installed) { Write-Output '::error::the signed installer left no tpdf.exe'; exit 1 }
           Write-Output "installed: $($installed.FullName)"
+
+      # Last, so that the file kept is one that logged in, signed two files
+      # and left an installer that installs. `BUILD.md`, *Signing with the
+      # Certum certificate*, has how it becomes the recorded build.
+      - name: Keep the client this run built
+        if: steps.ssign.outputs.built == 'true'
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: ssign-${{ env.SSIGN_REV }}
+          path: ${{ runner.temp }}\ssign-client\bin\ssign.exe
+          if-no-files-found: error

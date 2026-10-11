@@ -292,8 +292,13 @@ def job_names(text: str) -> list[str]:
     return re.findall(r"(?m)^  ([A-Za-z0-9_-]+):\s*$", after[1])
 
 
-PINS = ("SSIGN_REV", "SSIGN_SHA256")
+PINS = ("SSIGN_REV", "SSIGN_BUILD", "SSIGN_SHA256")
 SIGNING = (".github/workflows/release.yml", ".github/workflows/sign-rehearsal.yml")
+# What a job that holds a secret may bring in only beside a digest comparison.
+FETCHES = (
+    ("restores a cache", r"uses:\s*actions/cache(/restore)?@"),
+    ("fetches a release file", r"releases/download/"),
+)
 
 
 def restored_caches() -> tuple[list[str], int]:
@@ -310,8 +315,10 @@ def restored_caches() -> tuple[list[str], int]:
 
     Two rules, over every workflow file. A job that names a secret other than
     `GITHUB_TOKEN`, or an `environment:`, must not use `Swatinem/rust-cache`,
-    whose contents nothing can check. And if it uses `actions/cache`, the job
-    must compare a digest of what was restored: it has to read the pin
+    whose contents nothing can check. And if it uses `actions/cache`, or
+    fetches a file of a release by its address (`releases/download/`, since
+    2026-10-11, when the signing client moved from a cache to a release), the
+    job must compare a digest of what arrived: it has to read the pin
     `SSIGN_SHA256` and call `Get-FileHash`. That is a statement about the text
     of the job and not about what the step does with the answer; the review
     of that step is the reader's.
@@ -338,10 +345,9 @@ def restored_caches() -> tuple[list[str], int]:
             looked += 1
             if "Swatinem/rust-cache" in block:
                 wrong.append(f"{name}: job '{job}' holds a secret and restores a Rust build cache")
-            if re.search(r"uses:\s*actions/cache(/restore)?@", block) and not (
-                "SSIGN_SHA256" in block and "Get-FileHash" in block
-            ):
-                wrong.append(f"{name}: job '{job}' holds a secret and restores a cache "
+            fetched = [what for what, pattern in FETCHES if re.search(pattern, block)]
+            if fetched and not ("SSIGN_SHA256" in block and "Get-FileHash" in block):
+                wrong.append(f"{name}: job '{job}' holds a secret and {' and '.join(fetched)} "
                              "without comparing a recorded digest")
     pins: dict[str, list[str]] = {}
     for workflow in SIGNING:

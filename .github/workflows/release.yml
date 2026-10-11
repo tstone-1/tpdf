@@ -908,14 +908,15 @@ jobs:
       group: certum-signing
       cancel-in-progress: false
     env:
-      # ssign v0.1.7. A commit and not a tag: a tag can be moved. It is also
-      # the key of the cache below, so a new commit is a new build.
+      # ssign v0.1.7. A commit and not a tag: a tag can be moved.
       SSIGN_REV: 5fd4daf22155b19b645aef3dd467f3c4c9e440b3
-      # The SHA-256 of the `ssign.exe` that `sign-rehearsal.yml` built from that
-      # commit and saved, as that run printed it. Empty means no build has been
-      # recorded, and the client is then built from source in every run. Keep
-      # it equal in both workflows; `check_workflow_parity.py` holds them.
-      SSIGN_SHA256: '3d8bad1eaeb7a6b5707c0d5e6fd1ae24ea2093c02e9df3f95ed512c3cad80818'
+      # The release of this repository that holds the `ssign.exe` built from
+      # that commit by `sign-rehearsal.yml`, and the SHA-256 of that file.
+      # Either one empty means no build is recorded, and the client is then
+      # built from source in every run. Keep all three equal in both
+      # workflows; `check_workflow_parity.py` holds them.
+      SSIGN_BUILD: ''
+      SSIGN_SHA256: ''
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5 (v5.1.0)
         with:
@@ -1105,48 +1106,51 @@ jobs:
       # which compiler builds somebody else's program. `sign-rehearsal.yml`
       # proves the same build and login without building tpdf.
       #
-      # The build took three and a half minutes of every release, so the built
-      # client is kept in a cache whose key is the commit. A run on a tag can
-      # read a cache saved on main and none saved on another tag, so the copy a
-      # release finds is the one `sign-rehearsal.yml` saved on main; a release
-      # that finds none builds the client as before. This is the program that
-      # reads the Certum login. A pull request from a fork cannot put a copy
-      # into that cache, but a dependency running in any job on main can, so
-      # the step after this one uses a restored copy only when its digest is
-      # the recorded one.
-      - name: Restore the Windows signing client
+      # The build took three and a half minutes of every release, and its
+      # dependencies are fetched anew by each build. So one build, made by
+      # `sign-rehearsal.yml` and shown there to log in and sign, is kept as a
+      # file of a release of this repository, and this job fetches it. This is
+      # the program that reads the Certum login, so the file is used only when
+      # its digest is the recorded one, and a file with another digest fails
+      # the job. A file that does not arrive is a warning, and the client is
+      # then built from the pinned commit as before.
+      #
+      # It was kept in an Actions cache until 2026-10-11. A cache is removed
+      # when the repository's caches pass 10 GiB, the Rust cache of the Windows
+      # gates alone is near 7, and so every release found none and built.
+      - name: Fetch the Windows signing client
         id: ssign
-        if: runner.os == 'Windows'
-        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
-        with:
-          path: ${{ runner.temp }}\ssign-client
-          key: ssign-${{ runner.os }}-${{ runner.arch }}-${{ env.SSIGN_REV }}
-
-      - name: Build the Windows signing client
         if: runner.os == 'Windows'
         shell: pwsh
         working-directory: ${{ runner.temp }}
-        env:
-          CACHED: ${{ steps.ssign.outputs.cache-hit }}
         run: |
-          # A folder of its own, so that the cache holds this program and
-          # nothing else, and the Rust cache of the build does not hold it.
+          # A folder of its own, on the PATH, holding this program and the
+          # wrapper and nothing else.
           $root = Join-Path $env:RUNNER_TEMP 'ssign-client'
           $bin = Join-Path $root 'bin'
           $exe = Join-Path $bin 'ssign.exe'
-          # A restored copy is used only when it is the build whose digest is
-          # recorded above. The key says which commit a cache claims to hold,
-          # and anything that runs in a job on main can save a cache under any
-          # key, so the key alone does not say what the file is.
+          New-Item -ItemType Directory -Force $bin | Out-Null
+          # The copy this repository published is used only when it is the file
+          # whose digest is recorded above. The release name says what a file
+          # claims to be and the digest says what it is: whoever can write a
+          # release here can replace the file, and cannot make it hash the same.
           $use = $false
-          if ($env:CACHED -eq 'true' -and (Test-Path $exe)) {
-            $digest = (Get-FileHash $exe -Algorithm SHA256).Hash.ToLower()
-            if ($env:SSIGN_SHA256 -and $digest -eq $env:SSIGN_SHA256) {
-              Write-Output "ssign $env:SSIGN_REV restored from the cache, digest as recorded"
+          if ($env:SSIGN_BUILD -and $env:SSIGN_SHA256) {
+            $url = "https://github.com/$env:GITHUB_REPOSITORY/releases/download/$env:SSIGN_BUILD/ssign.exe"
+            try {
+              Invoke-WebRequest $url -OutFile $exe -MaximumRetryCount 3 -RetryIntervalSec 5
+            } catch {
+              Write-Output "::warning::$url did not arrive ($($_.Exception.Message)); building from source"
+              Remove-Item $exe -Force -ErrorAction SilentlyContinue
+            }
+            if (Test-Path $exe) {
+              $digest = (Get-FileHash $exe -Algorithm SHA256).Hash.ToLower()
+              if ($digest -ne $env:SSIGN_SHA256) {
+                Write-Output "::error::$url has digest $digest, which is not the recorded one"
+                exit 1
+              }
+              Write-Output "ssign $env:SSIGN_REV fetched from $env:SSIGN_BUILD, digest as recorded"
               $use = $true
-            } else {
-              Write-Output "::warning::the cached ssign.exe has digest $digest, which is not the recorded one; building from source"
-              Remove-Item $root -Recurse -Force
             }
           }
           if (-not $use) {
@@ -1154,6 +1158,7 @@ jobs:
             if ($LASTEXITCODE -ne 0) { exit 1 }
             $digest = (Get-FileHash $exe -Algorithm SHA256).Hash.ToLower()
             Write-Output "ssign.exe built from $env:SSIGN_REV, sha256 $digest"
+            Add-Content -Path $env:GITHUB_OUTPUT -Value 'built=true'
           }
           & $exe --version
           if ($LASTEXITCODE -ne 0) { Write-Output '::error::the signing client does not start'; exit 1 }

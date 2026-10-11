@@ -380,6 +380,18 @@ MUTATIONS = [
         red=True,
         says="qpdf",
     ),
+    Mutation(
+        # The copy of the signing client a release fetches is the one the
+        # rehearsal built and proved, so the two workflows have to name the
+        # same commit, release and digest.
+        "workflows: the signing client pinned to another commit in release.yml",
+        "workflows",
+        ".github/workflows/release.yml",
+        "      SSIGN_REV: 5fd4daf22155b19b645aef3dd467f3c4c9e440b3\n",
+        "      SSIGN_REV: 0000000000000000000000000000000000000000\n",
+        red=True,
+        says="SSIGN_REV differs",
+    ),
     # --- an anchor aimed at nothing -------------------------------------------
     Mutation(
         # The gate that guards the other three harnesses. A drifted anchor is

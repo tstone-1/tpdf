@@ -6639,31 +6639,45 @@ and `v*` tags. After the build the leg reads the signatures back, of the install
 valid, timestamped and by that signer. `docs/THREAT-MODEL.md` §T9, residual 6, has what the
 login is worth to somebody who steals it.
 
-**The built client is cached, by its commit.** Building `ssign` took 3.5 minutes of the
-Windows leg of 26.10.12, which took 19. Both workflows now install it into
-`%RUNNER_TEMP%\ssign-client` and keep that folder in a cache with the key
-`ssign-<os>-<arch>-<commit>`; a run that finds the cache does not build. A run on a tag can
-read a cache saved on `main` and none saved on another tag, so what a release finds is
-what `sign-rehearsal.yml` saved when it ran on `main`. A restored copy is used only when
-its SHA-256 is the one recorded as `SSIGN_SHA256` in both workflows; any other copy is
-deleted and the client is built from source, with a warning in the log. The key says which
-commit a cache claims to hold, and anything that runs in a job on `main` can save a cache
-under any key, so the key alone does not say what the file is. The workflow check holds
-both pins equal in the two files and refuses a job that holds a secret and restores a cache
-without such a comparison. **To record a digest**, when `SSIGN_SHA256` is empty or
-the cache is gone: run the rehearsal on `main`, copy the digest from its
-line `ssign.exe built from <commit>, sha256 <digest>` into both workflows, and the run after
-that restores. If the rehearsal restored an older copy instead of building, delete that
-cache entry first (`gh cache delete <key>`). **The digest is that of the cached copy and of
-no other build**: the client does not build reproducibly, and on 2026-10-10 three builds of
-the same commit had three digests (the cached copy, the rehearsal tag's run and the release
-run of 26.10.14). So a digest printed by a release run cannot be recorded, because that
-build was not saved. The pin was empty from 2026-10-09 until the rehearsal run 38054812147
-on 2026-10-10, whose build is the one recorded now. Three things follow. After changing
-`SSIGN_REV`, in both workflows, clear `SSIGN_SHA256`, run the rehearsal on `main` once, which
-is also the proof that the new client logs in, and record the new digest. GitHub removes a cache nobody read for 7 days, and the next
-run then builds again and is slower, not wrong. And a release that finds no cache builds
-the client as it always did.
+**The built client is a file of a release of this repository.** Building `ssign` took 3.5
+minutes of the Windows leg of 26.10.12, which took 19, and each build fetches the client's
+dependencies anew. So one build is kept: `sign-rehearsal.yml` builds the client from
+`SSIGN_REV`, signs with it, and keeps the file as an artifact of the run; that file is
+published as `ssign.exe` in a prerelease named by `SSIGN_BUILD`, and its SHA-256 is
+`SSIGN_SHA256`. Both workflows carry the three pins and fetch
+`releases/download/<SSIGN_BUILD>/ssign.exe` without a token. The file is used only when its
+digest is the recorded one. **A file with another digest fails the job**; a file that does
+not arrive is a warning, and the client is then built from the pinned commit. The release
+name says what a file claims to be: whoever can write a release here can replace the file,
+and the digest in the workflow is what says which file is meant. The workflow check holds
+the three pins equal in the two files and refuses a job that holds a secret and fetches a
+release file, or restores a cache, without such a comparison.
+
+**To record a build**, after changing `SSIGN_REV` or when the pins are empty:
+
+1. Set `SSIGN_BUILD` and `SSIGN_SHA256` to `''` in both workflows, on `main`.
+2. `gh workflow run sign-rehearsal.yml --ref main`. It builds, logs in, signs, and keeps
+   the client as the artifact `ssign-<commit>`. This is also the proof that the new client
+   logs in.
+3. `gh run download <run> --name ssign-<commit>`, and compare the file's SHA-256 with the
+   run's line `ssign.exe built from <commit>, sha256 <digest>`.
+4. Publish it beside the client's licence, as a prerelease that is not the latest, like an
+   engine release: `gh release create ssign-<first 7 of the commit>-tpdf.<n> ssign.exe
+   LICENSE-ssign.txt --prerelease --latest=false --target <full commit id of main>`.
+5. Record the release name and the digest in both workflows, and run the rehearsal on
+   `main` again: its line `fetched from <release>, digest as recorded` is the proof that a
+   release will find the file.
+
+**The digest is that of the published file and of no other build**: the client does not
+build reproducibly, and on 2026-10-10 three builds of the same commit had three digests.
+So a digest printed by a release run that had to build cannot be recorded.
+
+Until 2026-10-11 the built client was kept in an Actions cache with the key
+`ssign-<os>-<arch>-<commit>`, checked against the same digest pin. It did not last there. A
+repository's caches are limited to 10 GiB together, the Rust cache of the Windows gates is
+near 7, and the entry was removed before each release from 26.10.14 on, so each built the
+client and the pin was compared with nothing. A run on a tag also saved its own build under
+that key, which no other tag and no run on `main` can read.
 
 `sign-rehearsal.yml` proves the build of `ssign` and the login without building tpdf: it
 signs a plain executable and the installer of a published release, reads both back and
