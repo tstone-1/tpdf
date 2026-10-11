@@ -6661,9 +6661,15 @@ release file, or restores a cache, without such a comparison.
    logs in.
 3. `gh run download <run> --name ssign-<commit>`, and compare the file's SHA-256 with the
    run's line `ssign.exe built from <commit>, sha256 <digest>`.
-4. Publish it beside the client's licence, as a prerelease that is not the latest, like an
-   engine release: `gh release create ssign-<first 7 of the commit>-tpdf.<n> ssign.exe
-   LICENSE-ssign.txt --prerelease --latest=false --target <full commit id of main>`.
+4. Publish it as a prerelease that is not the latest, like an engine release, beside the
+   two texts a published program has to carry: `gh release create
+   ssign-<first 7 of the commit>-tpdf.<n> ssign.exe LICENSE-ssign.txt
+   THIRD-PARTY-NOTICES-ssign.txt --prerelease --latest=false --target <full commit id of
+   main>`. `LICENSE-ssign.txt` is the client's `LICENSE` at that commit. The notices are
+   the licence files of every package that `cargo metadata --locked --filter-platform
+   x86_64-pc-windows-msvc` resolves in the client's source at that commit; read the
+   licences it declares first, because a copyleft one there means the file is not
+   published.
 5. Record the release name and the digest in both workflows, and run the rehearsal on
    `main` again: its line `fetched from <release>, digest as recorded` is the proof that a
    release will find the file.
@@ -6671,6 +6677,10 @@ release file, or restores a cache, without such a comparison.
 **The digest is that of the published file and of no other build**: the client does not
 build reproducibly, and on 2026-10-10 three builds of the same commit had three digests.
 So a digest printed by a release run that had to build cannot be recorded.
+
+The recorded build is `ssign-5fd4daf-tpdf.1`, digest `1ff20aab...d47d485`, built by rehearsal
+run 38120091581 on 2026-10-11, which signed a plain executable and the installer of
+26.10.9 with it and installed from that installer.
 
 Until 2026-10-11 the built client was kept in an Actions cache with the key
 `ssign-<os>-<arch>-<commit>`, checked against the same digest pin. It did not last there. A

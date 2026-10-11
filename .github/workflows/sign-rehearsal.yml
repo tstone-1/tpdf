@@ -50,8 +50,8 @@ jobs:
       # The release that holds the `ssign.exe` this workflow built from that
       # commit, and the SHA-256 of that file. See the same lines in
       # `release.yml`.
-      SSIGN_BUILD: ''
-      SSIGN_SHA256: ''
+      SSIGN_BUILD: ssign-5fd4daf-tpdf.1
+      SSIGN_SHA256: '1ff20aab681b299e24fb8b6a3208ffabbea8058639bec1b0392c67cead47d485'
       SIGNER: Open Source Developer Timo Stein
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0

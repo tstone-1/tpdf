@@ -915,8 +915,8 @@ jobs:
       # Either one empty means no build is recorded, and the client is then
       # built from source in every run. Keep all three equal in both
       # workflows; `check_workflow_parity.py` holds them.
-      SSIGN_BUILD: ''
-      SSIGN_SHA256: ''
+      SSIGN_BUILD: ssign-5fd4daf-tpdf.1
+      SSIGN_SHA256: '1ff20aab681b299e24fb8b6a3208ffabbea8058639bec1b0392c67cead47d485'
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5 (v5.1.0)
         with:
