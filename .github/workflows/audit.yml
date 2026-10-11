@@ -31,7 +31,7 @@ on:
   workflow_dispatch:
     inputs:
       rehearse:
-        description: Check a copy of the PDFium pin set back to 8066, and open an issue marked as a rehearsal
+        description: Check a copy of the PDFium pin set back to 8066, start the build and open an issue marked as a rehearsal
         type: boolean
         default: false
 
@@ -157,11 +157,10 @@ jobs:
             echo "an open issue already has the title: $title"
             exit 0
           fi
+          gh workflow run pdfium.yml --ref "$GITHUB_REF_NAME" -f version="$VERSION" -f pdfium="$PDFIUM"
+          build="The candidate build was started: [runs of the PDFium workflow]($GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/workflows/pdfium.yml). It builds this version without changing the pin of the repository."
           if [ "$REHEARSE" = true ]; then
-            build="No build was started: this run was a rehearsal against a copy of the pin set back to 8066."
-          else
-            gh workflow run pdfium.yml --ref "$GITHUB_REF_NAME" -f version="$VERSION" -f pdfium="$PDFIUM"
-            build="The candidate build was started: [runs of the PDFium workflow]($GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/workflows/pdfium.yml). It builds this version without changing the pin of the repository."
+            build="$build This run was a rehearsal against a copy of the pin set back to 8066, so the build is of a version that exists and its result is needed for nothing."
           fi
           {
             echo "The pinned PDFium is behind what Chrome stable ships. [The run that found it]($RUN_URL) has the two findings."

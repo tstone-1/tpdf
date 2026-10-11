@@ -58,9 +58,10 @@ issue with the same title starts nothing. `pdfium.yml` takes the same two values
 `gh workflow run pdfium.yml -f version=<branch>-tpdf.<n> -f pdfium=<commit>`.
 
 **To see that path work while the pin is current**, `gh workflow run audit.yml -f
-rehearse=true`: the check runs against a copy of the pin set back to 8066, and the issue
-it opens is titled as a rehearsal and starts no build. Close the issue afterwards. That run
-is red by design and is then the newest `Audit` run of its commit, so start `audit.yml`
+rehearse=true`: the check runs against a copy of the pin set back to 8066, the build of
+what it proposes is started as for a real finding, and the issue is titled as a rehearsal.
+Close the issue afterwards, and cancel the build unless a build is wanted. That run is red
+by design and is then the newest `Audit` run of its commit, so start `audit.yml`
 once more without the input before publishing from that commit.
 
 **PDFium 8066-tpdf.1, unpatched (2026-09-25).** PDFium fixed our RTL report,
