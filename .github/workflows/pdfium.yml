@@ -3,8 +3,19 @@ name: PDFium candidate
 # Explicit dependency build, independent of application releases. Untrusted
 # source builds receive a read-only token and no signing credentials. Artifacts
 # are candidates: producing one does not publish it or update the production pin.
+#
+# Started by hand, or by `audit.yml` when the pin is behind, with a version and
+# a commit: the build then uses those two in place of the ones in
+# `scripts/pdfium_build.json`, in its own checkout and nowhere else.
 on:
   workflow_dispatch:
+    inputs:
+      version:
+        description: Build this version, <branch>-tpdf.<n>, not the pinned one (with pdfium)
+        required: false
+      pdfium:
+        description: The PDFium commit of that version, 40 digits
+        required: false
   push:
     branches: [main]
     paths:
@@ -56,6 +67,15 @@ jobs:
         with:
           python-version: '3.13'
       - uses: astral-sh/setup-uv@bec219d24cd3e171d82865faccec33120bb574f4 # v10.1.0
+      # Through the environment and through the script's own patterns, so that
+      # what was typed into the form is never part of a command.
+      - name: Build another version than the pinned one
+        if: inputs.version != '' || inputs.pdfium != ''
+        shell: bash
+        env:
+          VERSION: ${{ inputs.version }}
+          PDFIUM: ${{ inputs.pdfium }}
+        run: python scripts/check_pdfium_age.py --repin "$VERSION" "$PDFIUM"
       - name: Verify build safeguards
         run: python -m unittest discover -s scripts -p test_pdfium_build.py
       - name: Select Xcode

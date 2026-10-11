@@ -45,6 +45,24 @@ on the tag's commit, **a release cannot be published on an engine that is behind
 the newer one first (below). The check's `--self-test` runs offline, and against the
 8066 pin the live check exits 1 naming `chromium/8078`.
 
+**A stale pin opens an issue and starts the build (2026-10-11).** No dependency bot reads
+this pin: PDFium is in no package registry, and a new engine is a build, not a changed
+line. So when the check finds the pin behind, on the weekly run or on a push, it also
+says what to build: the head of Chrome stable's branch as `<branch>-tpdf.1`, or the new
+head of the pinned branch as its next build. The job `pdfium-bump` of `audit.yml` then
+starts `pdfium.yml` with that version and commit and opens one issue naming both. The
+build writes the two values into its own checkout with `check_pdfium_age.py --repin` and
+produces candidate archives; the pin of the repository is unchanged, and the steps from a
+candidate to a pin are the ones below. One issue per proposal: a run that finds an open
+issue with the same title starts nothing. `pdfium.yml` takes the same two values by hand:
+`gh workflow run pdfium.yml -f version=<branch>-tpdf.<n> -f pdfium=<commit>`.
+
+**To see that path work while the pin is current**, `gh workflow run audit.yml -f
+rehearse=true`: the check runs against a copy of the pin set back to 8066, and the issue
+it opens is titled as a rehearsal and starts no build. Close the issue afterwards. That run
+is red by design and is then the newest `Audit` run of its commit, so start `audit.yml`
+once more without the input before publishing from that commit.
+
 **PDFium 8066-tpdf.1, unpatched (2026-09-25).** PDFium fixed our RTL report,
 [issue 561066233](https://issues.chromium.org/issues/561066233), by reverting the change
 that caused it: [158290](https://pdfium-review.googlesource.com/c/pdfium/+/158290) on

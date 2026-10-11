@@ -29,6 +29,11 @@ on:
     # scheduled workflow on GitHub.
     - cron: '17 6 * * 1'
   workflow_dispatch:
+    inputs:
+      rehearse:
+        description: Check a copy of the PDFium pin set back to 8066, and open an issue marked as a rehearsal
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -85,6 +90,9 @@ jobs:
     # that does not answer is a red run, because "could not ask" is not
     # "current".
     runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.age.outputs.version }}
+      pdfium: ${{ steps.age.outputs.pdfium }}
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5 (v5.1.0)
         with:
@@ -93,5 +101,78 @@ jobs:
       - name: The reading and the rule, offline
         run: python3 scripts/check_pdfium_age.py --self-test
 
+      # A rehearsal asks the same question about a copy of the pin that is
+      # known to be behind: 8066, the pin until 2026-10-10. It is how the path
+      # from a stale pin to an issue is shown to work while the real pin is
+      # current. The repository's file is not changed.
       - name: The pin against Chrome stable and its own branch
-        run: python3 scripts/check_pdfium_age.py
+        id: age
+        env:
+          REHEARSE: ${{ inputs.rehearse }}
+        run: |
+          pins=scripts/pdfium_build.json
+          if [ "$REHEARSE" = true ]; then
+            pins="$RUNNER_TEMP/pdfium_build.json"
+            cp scripts/pdfium_build.json "$pins"
+            python3 scripts/check_pdfium_age.py --pins "$pins" --repin 8066-tpdf.1 fc46361ce75055cd549cb938fae5d6a3fe3a1a05
+          fi
+          python3 scripts/check_pdfium_age.py --pins "$pins" --output "$GITHUB_OUTPUT"
+
+  # What a dependency bot does for a package, for an engine no bot knows: when
+  # the job above found the pin behind, start the build of what it proposes and
+  # open one issue for it. The job above stays red, and stays read-only; this
+  # one holds the two write permissions and runs no code from the checkout,
+  # only `gh` with a version and a commit that the script above matched against
+  # their patterns before it wrote them.
+  #
+  # One issue per proposal: the title names the version and the commit, and a
+  # run that finds an open issue with that title does nothing, so the weekly
+  # run and every push in between do not build again. A pull request never
+  # reaches here, and from a fork its token could write nothing.
+  pdfium-bump:
+    name: PDFium build and issue for a stale pin
+    needs: pdfium
+    if: always() && needs.pdfium.outputs.version != '' && github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    permissions:
+      actions: write
+      issues: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+      VERSION: ${{ needs.pdfium.outputs.version }}
+      PDFIUM: ${{ needs.pdfium.outputs.pdfium }}
+      REHEARSE: ${{ inputs.rehearse }}
+      RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+    steps:
+      - name: Start the candidate build and open the issue
+        run: |
+          set -euo pipefail
+          title="PDFium: build $VERSION at ${PDFIUM:0:12}"
+          if [ "$REHEARSE" = true ]; then title="Rehearsal, nothing to do: $title"; fi
+          # Read first and searched after: `grep -q` stops at the first match,
+          # and under pipefail a `gh` cut short would read as no match.
+          open=$(gh issue list --state open --limit 200 --json title --jq '.[].title')
+          if grep -Fxq "$title" <<< "$open"; then
+            echo "an open issue already has the title: $title"
+            exit 0
+          fi
+          if [ "$REHEARSE" = true ]; then
+            build="No build was started: this run was a rehearsal against a copy of the pin set back to 8066."
+          else
+            gh workflow run pdfium.yml --ref "$GITHUB_REF_NAME" -f version="$VERSION" -f pdfium="$PDFIUM"
+            build="The candidate build was started: [runs of the PDFium workflow]($GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/workflows/pdfium.yml). It builds this version without changing the pin of the repository."
+          fi
+          {
+            echo "The pinned PDFium is behind what Chrome stable ships. [The run that found it]($RUN_URL) has the two findings."
+            echo
+            echo "- Version to build: \`$VERSION\`"
+            echo "- Commit: [\`$PDFIUM\`](https://pdfium.googlesource.com/pdfium/+/$PDFIUM)"
+            echo
+            echo "$build"
+            echo
+            echo "What is left for a person, as \`BUILD.md\` describes it: write the two values into \`scripts/pdfium_build.json\`, publish the archives of the candidate build as the prerelease \`pdfium-$VERSION\`, pin their digests in \`scripts/fetch_pdfium.py\`, run the compatibility probes, and release."
+            echo
+            echo "The \`Audit\` workflow stays red until the pin is current, and a release is not published while it is red."
+          } > "$RUNNER_TEMP/issue.md"
+          gh issue create --title "$title" --body-file "$RUNNER_TEMP/issue.md"
