@@ -6834,6 +6834,20 @@ read through. **Not run:** the written copy of `tpdf long-term` against a public
 authority (`docs/VERIFICATION.md` has why), the new entry of `mutate_viewer.py` by the
 harness itself, `print-probe` and `redact-reach-probe`.
 
+**26.10.17 publication, 2026-10-11:** `Audit` and CI were green on the release commit
+`8fcfcce8`. `v26.10.17-rc1` was built first (run 38128819644), because the release workflow
+fetches the signing client from a release since this version: its Windows leg logged
+`fetched from ssign-5fd4daf-tpdf.1, digest as recorded`, and the tool from its notarized
+Mac bundle redacted the four passages of `site/sample-redacted.pdf` with exit 0. The
+release run 38130677995 passed at the first attempt and logged the same line, so this is
+the first release that did not build the client. `scripts/publish_release.py` published
+it; read without a token, `releases/latest` is `v26.10.17` with its six files and
+`latest.json` offers 26.10.17 for both platforms. The Homebrew cask is at 26.10.17. An
+installed 26.10.16 updated itself: `update_check.py` 17/17 on Windows with its `no-press`
+control failing where it is aimed, and `update_check_mac.py` 12/12 on a Mac, both started
+about a quarter of an hour after publication and offered the update at once. Not run:
+`installed_check.py` on Windows beyond what the update check reads.
+
 **26.10.17 verification, 2026-10-11:** all 31 gates passed on the release tree on macOS
 arm64, and `check_windows.py` type-checked the Windows tree. `scripts/run_on_windows.py
 --suite all` passed 3,110 unit tests and 567 command-line tests on the Windows build

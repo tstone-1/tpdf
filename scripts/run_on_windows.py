@@ -60,6 +60,7 @@ import re
 import subprocess
 import sys
 import tempfile
+import time
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -91,6 +92,23 @@ def wsl_path(windows: str) -> str:
     return f"/mnt/{match[1].lower()}/" + match[2].replace("\\", "/").rstrip("/")
 
 
+def tracked_tree() -> str:
+    """`git stash create`: a commit of the tracked changes, or nothing when there are none.
+
+    Tried again for a few seconds. It takes the index lock, and on 2026-10-11
+    this script and its twin for the other platform were started together
+    before a release: the second ended in `git stash create` with exit 1.
+    """
+    for attempt in range(5):
+        try:
+            return git("stash", "create")
+        except subprocess.CalledProcessError:
+            if attempt == 4:
+                raise
+            time.sleep(1)
+    return ""
+
+
 def tree_to_send(rev: str | None) -> tuple[str, str]:
     """The commit to run and how to describe it."""
     if rev:
@@ -100,7 +118,7 @@ def tree_to_send(rev: str | None) -> tuple[str, str]:
         print(f"[WARN] {len(untracked)} untracked file(s) are not sent; stage them to include them:")
         for name in untracked[:5]:
             print(f"       {name}")
-    made = git("stash", "create")
+    made = tracked_tree()
     if made:
         return made, "the working tree"
     return git("rev-parse", "HEAD"), "HEAD"

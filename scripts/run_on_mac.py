@@ -64,6 +64,7 @@ import shlex
 import subprocess
 import sys
 import tempfile
+import time
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -150,6 +151,23 @@ def git(*args: str) -> str:
                           check=True).stdout.strip()
 
 
+def tracked_tree() -> str:
+    """`git stash create`: a commit of the tracked changes, or nothing when there are none.
+
+    Tried again for a few seconds. It takes the index lock, and on 2026-10-11
+    this script and its twin for the other platform were started together
+    before a release: the second ended in `git stash create` with exit 1.
+    """
+    for attempt in range(5):
+        try:
+            return git("stash", "create")
+        except subprocess.CalledProcessError:
+            if attempt == 4:
+                raise
+            time.sleep(1)
+    return ""
+
+
 def tree_to_send(rev: str | None) -> str:
     """The commit to run: `rev`, or the tracked tree as it is here."""
     if rev:
@@ -157,7 +175,7 @@ def tree_to_send(rev: str | None) -> str:
     untracked = git("ls-files", "--others", "--exclude-standard")
     if untracked:
         print(f"[NOTE] {len(untracked.splitlines())} untracked file(s) are not sent; stage them first")
-    return git("stash", "create") or git("rev-parse", "HEAD")
+    return tracked_tree() or git("rev-parse", "HEAD")
 
 
 def remote(args: argparse.Namespace, sha: str) -> str:
