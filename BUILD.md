@@ -6834,6 +6834,20 @@ read through. **Not run:** the written copy of `tpdf long-term` against a public
 authority (`docs/VERIFICATION.md` has why), the new entry of `mutate_viewer.py` by the
 harness itself, `print-probe` and `redact-reach-probe`.
 
+**26.10.17 verification, 2026-10-11:** all 31 gates passed on the release tree on macOS
+arm64, and `check_windows.py` type-checked the Windows tree. `scripts/run_on_windows.py
+--suite all` passed 3,110 unit tests and 567 command-line tests on the Windows build
+computer, and `scripts/run_on_mac.py` passed 11/11 window checks on a second Mac. Every
+mutation selected `--near v26.10.16` was caught, 8 Rust and 7 frontend, and so were all 32
+of `mutate_python.py`. The change is the rule for one run of text, in `cli/regions.rs` and
+`text.ts`: `tpdf redact` on the four passages of `site/sample-redacted.pdf` exits 0 and
+`tpdf hidden` finds nothing in the result, where 26.10.16 answered *not verified* for the
+amount. `docs/THREAT-MODEL.md` names neither function and no claim in it changed. The
+release workflow fetches the signing client from a release since this version, so
+`v26.10.17-rc1` was built first. Not run: the window's *Redact every search result* by a
+window check (unit tests and the shared samples hold it), `print-probe`, and
+`redact-reach-probe`. `@tauri-apps/cli` went to 2.12.2, the one update `npm outdated` listed.
+
 **26.10.16 publication, 2026-10-10:** `Audit` and CI were green on the release commit
 `f3e8661f`, both legs, `Audit` with its check of the PDFium pin. No release mechanics had
 changed since 26.10.15, so there was no rehearsal tag. The `Release` run 38081159571

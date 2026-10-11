@@ -509,6 +509,13 @@ jobs:
           workers cannot read arbitrary user files or access the network;
           Windows workers use low integrity and resource-limited jobs.
 
+          **New in 26.10.17.** An amount with a thousands separator, such
+          as 4,250.00, that was redacted by search was reported "not
+          verified" although it was gone from the file. It is now removed
+          as one passage and verified. The website has a made-up letter
+          with four black boxes for trying *Find text the pages do not
+          show*.
+
           **New in 26.10.16.** The PDF engine is PDFium 8078, the branch
           Chrome 156 ships; it was 8066. The newer branch carries what
           Chrome merged into it since, among them a fix in the code that
