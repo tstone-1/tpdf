@@ -16,8 +16,8 @@ indexes here exist so that the decision to read an entry is an informed one, not
 - [`docs/TEXTEDIT.md`](docs/TEXTEDIT.md): what the text editor admits.
 - [`docs/SUBSYSTEMS.md`](docs/SUBSYSTEMS.md): signatures, forms, tabs and the worker's writers
   and readers. *Stack* indexes these two.
-- [`docs/DETAIL.md`](docs/DETAIL.md): the long-form paragraphs of *Every PDF is hostile input*,
-  *Stack*, *Quality gates* and *Known traps*.
+- [`docs/DETAIL.md`](docs/DETAIL.md): the long-form paragraphs of *Licensing*,
+  *Every PDF is hostile input*, *Stack*, *Quality gates*, *Known traps* and *Repository facts*.
 - [`docs/VERIFICATION.md`](docs/VERIFICATION.md): the per-feature verification records.
 
 Code comments and other documents say "`AGENTS.md` records ..." in about 100 places;
@@ -87,23 +87,9 @@ both installers, and the `notices` gate fails on a stale file or a forbidden lic
 edit it by hand; a hand-maintained notices file is wrong the first time a dependency changes
 and nothing says so.
 
-**The `cargo metadata` sweep this file has recommended since the beginning is real and
-structurally incomplete, and the gap is the whole product.** It sees every cargo package, and it
-is blind to the **C++ libraries compiled into libpdfium** — FreeType, ICU, libjpeg-turbo,
-libpng, libtiff, Little CMS, OpenJPEG, zlib, Abseil, AGG, fast_float, simdutf, llvm-libc,
-Dragonbox and HarfBuzz. Cargo enumerates the Rust dependency graph, leaving the engine's
-C++ dependencies outside that inventory. A sweep complete over cargo and silent about everything else passes
-exactly like one that covered everything, which is the consistency-versus-completeness trap
-arriving in the licensing constraint the entire project rests on. The gate enumerates
-`vendor/pdfium/licenses/` as a third population, so a new file appearing there is a finding.
-
-Two GPL strings live in there and both are benign; they are allowlisted **by file and by
-mechanism** in the script, never inferred, and an entry naming a file that has gone produces
-a warning rather than silently excusing nothing. `icu.txt` covers ICU4C's autotools scripts
-under the Autoconf exception; those build-time scripts are not compiled into libpdfium.
-`llvm-libc.txt` is Apache-2.0 WITH LLVM-exception, whose GPLv2 clause *waives* Apache terms
-rather than imposing GPL ones. All three of the gate's failure modes were proved by mutation
-before it was trusted.
+The `notices` gate also enumerates the C++ libraries compiled into libpdfium, which
+`cargo metadata` cannot see, and allowlists two benign GPL strings there by file and by
+mechanism: [`docs/DETAIL.md`](docs/DETAIL.md) *Licensing*.
 
 ### Redaction must be genuine
 
@@ -444,12 +430,8 @@ title, and it holds the thirteen group names above against the `## ` groups ther
   mostly-ASCII binary format to the tree, because `eol=lf` alone would not have caught it.
   Do not set `core.autocrlf` per clone: the attributes override it, so a per-machine
   setting is both unnecessary and a thing only one machine would have.
-- Public since 2026-08-02, and it needed no history scrub: all 108 commits across every
-  ref were authored and committed as `48162401+tstone-1@users.noreply.github.com`, there
-  were no tags, no `refs/pull/*`, no forks and no workflow run logs to become visible.
-  That is the cheap case, and it held only because the clone was made with a repo-local
-  identity — a fresh clone on the Windows flat layout has no `includeIf` rule and would
-  silently commit under a work address. Set `user.email` / `user.name` repo-locally there.
+- Public since 2026-08-02 without a history scrub; why that held, and the identity to set
+  repo-locally on a Windows clone: `docs/DETAIL.md` *Repository facts*.
 - **The `APPLE_*` secrets survive the flip; a workflow that reads them must not.**
   Repository secrets are not exposed by making a repository public, but fork pull requests
   now exist. `release.yml` is tag-push-only and therefore unreachable from a fork; `ci.yml`

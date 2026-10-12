@@ -5,6 +5,28 @@ and the global instruction files together were over the 140k session load budget
 keeps a pointer where each block stood. Not auto-loaded; read the section before working in its
 area. A reference elsewhere that says "`AGENTS.md` records ..." may mean a paragraph here.
 
+## Licensing: what `cargo metadata` cannot see
+
+Moved out of `AGENTS.md` on 2026-10-12. "This file" in the first sentence is `AGENTS.md`.
+
+**The `cargo metadata` sweep this file has recommended since the beginning is real and
+structurally incomplete, and the gap is the whole product.** It sees every cargo package, and it
+is blind to the **C++ libraries compiled into libpdfium** — FreeType, ICU, libjpeg-turbo,
+libpng, libtiff, Little CMS, OpenJPEG, zlib, Abseil, AGG, fast_float, simdutf, llvm-libc,
+Dragonbox and HarfBuzz. Cargo enumerates the Rust dependency graph, leaving the engine's
+C++ dependencies outside that inventory. A sweep complete over cargo and silent about everything else passes
+exactly like one that covered everything, which is the consistency-versus-completeness trap
+arriving in the licensing constraint the entire project rests on. The gate enumerates
+`vendor/pdfium/licenses/` as a third population, so a new file appearing there is a finding.
+
+Two GPL strings live in there and both are benign; they are allowlisted **by file and by
+mechanism** in the script, never inferred, and an entry naming a file that has gone produces
+a warning rather than silently excusing nothing. `icu.txt` covers ICU4C's autotools scripts
+under the Autoconf exception; those build-time scripts are not compiled into libpdfium.
+`llvm-libc.txt` is Apache-2.0 WITH LLVM-exception, whose GPLv2 clause *waives* Apache terms
+rather than imposing GPL ones. All three of the gate's failure modes were proved by mutation
+before it was trusted.
+
 ## Every PDF is hostile input: both platforms, printing, packaging
 
 **On both platforms since 2026-07-29.** macOS gets its boundary from `sandbox_init` SBPL,
@@ -586,3 +608,14 @@ places, and those references are still good** — they were written when the ent
 here, and they were left alone rather than rewritten, because a hundred-file mechanical diff
 over prose carries more risk than the one hop it saves. Read them as naming a trap entry; the
 paragraph is in `docs/TRAPS.md`, findable through the table of contents at the top of it.
+
+## Repository facts: public without a history scrub
+
+Moved out of `AGENTS.md` on 2026-10-12.
+
+- Public since 2026-08-02, and it needed no history scrub: all 108 commits across every
+  ref were authored and committed as `48162401+tstone-1@users.noreply.github.com`, there
+  were no tags, no `refs/pull/*`, no forks and no workflow run logs to become visible.
+  That is the cheap case, and it held only because the clone was made with a repo-local
+  identity — a fresh clone on the Windows flat layout has no `includeIf` rule and would
+  silently commit under a work address. Set `user.email` / `user.name` repo-locally there.
