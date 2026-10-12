@@ -2,7 +2,8 @@
 
 A fast, lightweight PDF viewer and editor for macOS and Windows.
 
-SumatraPDF's speed with Acrobat's capability, and a UI where you never hunt for a tool.
+As quick to open as SumatraPDF, with the editing an office needs: redaction that is verified,
+signatures, forms and comments, and a UI where you never hunt for a tool.
 
 ![tpdf finding a command, marking up a page, marking text for redaction and showing two signatures](docs/img/demo.gif)
 

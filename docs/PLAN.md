@@ -172,8 +172,10 @@ caches aggressively, and puts nothing between the user and the page. It cannot e
 line wrapping; Inkscape's importer converts text to uneditable paths. There is no clean
 FOSS answer that views, edits, fills forms, redacts, and runs locally.
 
-tpdf targets the gap: Sumatra's speed, Acrobat's capability, and a discovery model
-borrowed from code editors rather than from office suites.
+tpdf targets the gap: Sumatra's speed, the editing an office needs (redaction that is
+verified, signatures, forms and comments), and a discovery model borrowed from code editors
+rather than from office suites. Until 2026-10-12 this sentence said "Acrobat's capability";
+matching Acrobat's whole range was never planned and is not a goal.
 
 That is the author's own diagnosis. What users of those programs say themselves, read on
 2026-10-03 from vendor forums and 30 Reddit threads, is in [`DEMAND.md`](DEMAND.md),

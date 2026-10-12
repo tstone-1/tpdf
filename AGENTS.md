@@ -34,8 +34,9 @@ market fits: Adobe Acrobat is slow, buggy, and hides its tools behind endless me
 Foxit is the same shape with a different skin; SumatraPDF is fast and lightweight but
 cannot edit.
 
-**The thesis, in one line:** SumatraPDF's speed with Acrobat's capability, and a UI where
-you never hunt for a tool.
+**The thesis, in one line:** as quick to open as SumatraPDF, with the editing an office needs
+(redaction that is verified, signatures, forms and comments), and a UI where you never hunt
+for a tool. Matching Acrobat's whole range is not a goal.
 
 Three non-negotiable properties, in priority order:
 

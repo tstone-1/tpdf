@@ -28,6 +28,13 @@ have the binary.)
   from the rest of the file, and says to mark the whole word or number. When every piece
   found is that short, the report no longer adds that *the removal did not take it there*,
   which nothing had established.
+- **The description no longer promises Acrobat's capability.** The README said "SumatraPDF's
+  speed with Acrobat's capability". tpdf has no preflight, no conversion to PDF/A or to Word
+  and no form scripting, and none is planned. The line now names what it does: redaction that
+  is verified, signatures, forms and comments.
+- **The landing page says find, remove and verify.** The first section's heading named only
+  the finding of hidden text; removing it and checking the written file is the part other
+  checkers leave to another program.
 
 ## [26.10.17] - 2026-10-11
 
