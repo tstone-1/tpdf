@@ -604,14 +604,28 @@ fn start_watchdog() {
             // most recently changed. It is usually not: WebKit suspends a page
             // whose window is fully covered, and an occluded window is not a
             // locked screen, so `webview_guard.py` passes and nothing runs.
+            //
+            // The other cause is the reverse of "usually not". The mark is set
+            // when the page first asks for a setting, which is after the
+            // component is built, so a page that throws while it is being built
+            // leaves no mark either. On 2026-10-13 that was a guard reading a
+            // variable declared further down `App.svelte`, and four probes went
+            // into the screen of the machine before the change was suspected.
             if !marks.iter().any(|(name, _)| name == WEBVIEW_ALIVE) {
                 for line in [
-                    format!("No `{WEBVIEW_ALIVE}` mark: the page never ran a line of JavaScript,"),
-                    "so this is not a slow run. WebKit suspends a page whose window is".into(),
-                    "occluded --- covered by another window, or on another Space --- and".into(),
-                    "an unlocked screen is not a visible one.".into(),
+                    format!(
+                        "No `{WEBVIEW_ALIVE}` mark: the page never asked for its first setting,"
+                    ),
+                    "so this is not a slow run. Two causes leave exactly this.".into(),
                     String::new(),
-                    "Re-run with TPDF_RAISE=1, or with nothing covering the window.".into(),
+                    "The window is covered. WebKit suspends a page whose window is".into(),
+                    "occluded --- covered by another window, or on another Space --- and".into(),
+                    "an unlocked screen is not a visible one. Re-run with TPDF_RAISE=1,".into(),
+                    "or with nothing covering the window.".into(),
+                    String::new(),
+                    "The page threw while it was being built, which a change to".into(),
+                    "App.svelte can do with every gate green. If this tree changed it,".into(),
+                    "suspect that first: run the same check on the commit before.".into(),
                     "See BUILD.md.".into(),
                 ] {
                     eprintln!("       {line}");

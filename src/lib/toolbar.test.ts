@@ -3,6 +3,7 @@ import { registerAppCommands, type AppActions } from "./appcommands";
 import { CommandRegistry } from "./commands";
 import { HEADER_COMMANDS, POPUP_MARGIN, TOOL_ACTIONS, TOOL_GROUPS, WINDOW_MENU, popupShift, styleOptions, toolbarState, type ArmedTool } from "./toolbar";
 import { BINDINGS } from "./keys";
+import app from "../App.svelte?raw";
 import { MARK_MENU, PAGE_MENU, REDACTION_MENU, SELECTION_MENU } from "./contextmenu";
 import { cssColor, MARK_COLORS, PALETTE, swatchBackground } from "./markcolors";
 import { MENU_LAYOUT, SEPARATOR } from "./menubar";
@@ -282,5 +283,25 @@ describe("where there is no menu bar", () => {
     const listed = WINDOW_MENU.flatMap((section) => section.items);
     expect(listed.filter((id) => !snapshot[id] || snapshot[id]!.title === "Unavailable")).toEqual([]);
     expect(snapshot["app.about"]).toEqual({ enabled: true, title: "About tpdf" });
+  });
+});
+
+describe("the first snapshot of the window", () => {
+  /*
+   * `App.svelte` declares its state down six thousand lines, and a snapshot
+   * runs every listed command's guard. Taken while the component is still
+   * being built, it reads whatever a guard reads before that is declared, and
+   * the window comes up empty. No test builds the component, so the two lines
+   * that keep it from happening are held as text.
+   */
+  it("is not taken while the component is being built", () => {
+    expect(app).not.toMatch(/\$state\(\s*toolbarState\(/);
+    expect(app).toContain("let toolState = $state<ReturnType<typeof toolbarState>>({});");
+  });
+
+  it("is taken once the component is mounted", () => {
+    expect(app).toContain("onMount(() => refreshMenu());");
+    // The one place that takes it, so that there is one rule for when.
+    expect(app.split("toolbarState(commands)").length - 1).toBe(1);
   });
 });

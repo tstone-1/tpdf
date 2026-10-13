@@ -4703,7 +4703,9 @@ a page that never ran accumulates none, and a slow render accumulates seconds.
 The watchdog identifies **any** page that never executed, whatever the reason — an
 occluded window and a raw unbundled binary produce exactly the same silence. Every spike
 entry point starts by asking Rust for its path, which records a `webview alive` mark; a run
-that times out without one is told in full that the page never ran a line of JavaScript.
+that times out without one is told in full that the page never asked for its first setting, and the two causes of
+that: a covered window, and a page that threw while it was being built (2026-10-13; the
+message named only the first until then).
 Confirm independently with `TPDF_STARTUP=<file> <binary>`, which fails the same way in 30 s
 and settles "environmental or mine" in one command. Results otherwise print as they are
 produced, so a run that stops partway names the last check it completed.

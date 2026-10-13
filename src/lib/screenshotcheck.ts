@@ -120,7 +120,7 @@ export async function screenshotCheck(
     String(host.edits()!.state.redactions.length));
   await shot("redact");
 
-  if (more === "more") await moreStates(host, shot);
+  if (more === "more") await moreStates(host, shot, report);
 
   // ---- A letter somebody else redacted with black boxes: the words they left
   // in the file, listed. The page beside the list still shows only the boxes.
@@ -163,6 +163,7 @@ export async function screenshotCheck(
 async function moreStates(
   host: OpenCheckHost,
   shot: (name: string) => Promise<void>,
+  report: Report,
 ): Promise<void> {
   const button = (selector: string) => document.querySelector<HTMLButtonElement>(selector);
   const escape = () =>
@@ -212,6 +213,45 @@ async function moreStates(
     narrow.click();
   }
 
+  // The Document menu, which on Windows is the File menu, and the Draw menu.
+  for (const group of ["document", "draw"]) {
+    const opener = button(`button[data-group="${group}"]`);
+    if (!opener || opener.offsetParent === null) continue;
+    opener.click();
+    await pause(200);
+    measureControls(report, `the ${group} menu`);
+    await shot(`more-${group}`);
+    opener.click();
+  }
+
+  // A command found by a word its title does not have.
+  [...document.querySelectorAll<HTMLButtonElement>("button")]
+    .find((b) => b.textContent === "Commands")?.click();
+  await pause(300);
+  const field = document.querySelector<HTMLInputElement>(".tpdf-palette input");
+  if (field) {
+    field.value = "compress";
+    field.dispatchEvent(new InputEvent("input", { bubbles: true }));
+    await pause(200);
+    measureControls(report, "the palette");
+    await shot("more-keyword");
+    field.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true }));
+    await pause(200);
+  }
+
+  // The header's menu where there is no menu bar. Not drawn on macOS.
+  const windowMenu = [...document.querySelectorAll<HTMLElement>("header details summary")]
+    .find((summary) => summary.textContent === "Menu");
+  if (windowMenu) {
+    windowMenu.click();
+    await pause(200);
+    measureControls(report, "the window menu");
+    await shot("more-windowmenu");
+    windowMenu.click();
+  }
+
+  measureControls(report, "the window");
+
   // The text editor's chrome over the page. It refuses while redactions are
   // pending, so the two the README's states marked are undone first.
   host.run("edit.undo"); await host.idle();
@@ -230,4 +270,42 @@ async function moreStates(
   }
   await pause(400);
   await shot("more-problem");
+}
+
+/** The least a control may measure on either side, in CSS pixels: WCAG 2.2, 2.5.8. */
+const LEAST_TARGET = 24;
+
+/**
+ * Reports the controls on screen that have no name, and those too small to hit.
+ *
+ * A measurement and not a verdict: both lines pass whatever they find, and say
+ * what they found. Neither can be read from the source. Thirty-two buttons are
+ * built in script, where no lint looks for a name, and a control's size is
+ * decided by the layout it lands in.
+ */
+function measureControls(report: Report, where: string): void {
+  const controls = [...document.querySelectorAll<HTMLElement>(
+    "button, summary, input, select, textarea, [role=button], [role=tab], [role=option]",
+  )].filter((control) => control.offsetParent !== null);
+  const said = (control: HTMLElement) =>
+    (control.textContent ?? "").trim() || control.getAttribute("aria-label") ||
+    control.getAttribute("title") || control.getAttribute("placeholder") ||
+    (control.id && document.querySelector(`label[for="${control.id}"]`)?.textContent) ||
+    control.closest("label")?.textContent || "";
+  const describe = (control: HTMLElement) =>
+    `${control.tagName.toLowerCase()}${control.className ? `.${String(control.className).split(" ")[0]}` : ""}` +
+    `[${(said(control) || control.dataset.testid || "?").slice(0, 24)}]`;
+  const unnamed = controls.filter((control) => !said(control));
+  const small = controls.filter((control) => {
+    const box = control.getBoundingClientRect();
+    return box.width < LEAST_TARGET || box.height < LEAST_TARGET;
+  });
+  const sizes = small.map((control) => {
+    const box = control.getBoundingClientRect();
+    return `${describe(control)} ${Math.round(box.width)}x${Math.round(box.height)}`;
+  });
+  report.check(`measured ${controls.length} controls in ${where}: unnamed`, true,
+    `${unnamed.length} ${unnamed.map(describe).join(" ")}`.trim());
+  report.check(`measured ${controls.length} controls in ${where}: under ${LEAST_TARGET} px`, true,
+    `${small.length} ${[...new Set(sizes)].join(" ")}`.trim());
 }

@@ -1,7 +1,7 @@
 <script lang="ts">
   import { TextEditor } from "./lib/textedit";
   import { FormLayer } from "./lib/forms";
-  import { tick } from "svelte";
+  import { onMount, tick } from "svelte";
   import { message } from "./lib/i18n";
   import {
     DiskWatch,
@@ -3637,8 +3637,19 @@
 
   const commands = new CommandRegistry();
   registerAppCommands(commands, appActions);
-  let toolState = $state(toolbarState(commands));
+  /*
+   * Empty until the component is mounted, and first taken then. A snapshot
+   * runs the guard of every command a control shows, and a guard reads what it
+   * likes: taken on this line it ran `file.onDiskChange.ask`, whose guard reads
+   * `diskChangeMode`, declared four hundred lines further down. That is a
+   * ReferenceError while the component is being built, and a window with
+   * nothing in it. It happened on 2026-10-13, when the window menu put those
+   * commands on a control; every gate was green, since none of them builds
+   * this component. `toolbar.test.ts` holds this line.
+   */
+  let toolState = $state<ReturnType<typeof toolbarState>>({});
   let toolStateKey = "";
+  onMount(() => refreshMenu());
 
   function runToolbarCommand(id: string): void {
     // Focus before dispatch: a command opening a dialog must keep its focus.

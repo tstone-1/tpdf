@@ -289,6 +289,8 @@ hop through the index.
 - `RunEvent::Opened` fires before the setup hook, so managed state is not there yet
 - A raw `cargo build` binary runs no webview content at all
 - A page that never ran looks exactly like one that ran slowly
+- A guard run while the component is being built reads a variable declared further down
+- A page that threw while it was being built looks exactly like one whose window is covered
 - WKWebView presents at 59 Hz on a 120 Hz display
 - `performance.now()` is clamped to 1 ms — average, do not take a median
 - Never benchmark through `tauri dev` without `--release`
@@ -26441,3 +26443,42 @@ readings contradicted pyHanko's source: level 1 and form filling should be a vio
 the output said satisfied. Printing the level beside the verdict for each file showed the
 level was not there at all. When an instrument's answer contradicts the code it runs, print
 what the input is before reasoning about the code.
+
+### A guard run while the component is being built reads a variable declared further down
+
+`App.svelte` took its first snapshot of the toolbar where it declared it,
+`let toolState = $state(toolbarState(commands))`, some 3,600 lines into a script of 5,700. A
+snapshot runs the guard of every command a control shows. On 2026-10-13 the header's menu
+for Windows put `file.onDiskChange.ask` and `file.reopenLastTabs` on a control, and their
+guards read `diskChangeMode` and `isOpenTab`, declared 400 and 1,200 lines below that line.
+Reading a `let` or a `const` before its declaration is a `ReferenceError`, the component was
+never built, and the window came up with nothing in it, on both platforms.
+
+Every gate was green: 2,849 frontend tests, `check`, `build`, `wiring`, `views`. None of
+them builds `App.svelte`, which the *Quality gates* section of `AGENTS.md` says in its own
+words, and the commit went in without a window run. `scripts/run_on_mac.py` found it on the
+first run after.
+
+The snapshot is now empty until `onMount`, so no guard runs while the component is being
+built, and `toolbar.test.ts` holds those two lines as text. The rule that would have caught
+it earlier is older than the defect: a change to `App.svelte` is not finished until a window
+has opened on it. `scripts/run_on_mac.py --only viewer` is the cheap form of that.
+
+### A page that threw while it was being built looks exactly like one whose window is covered
+
+The watchdog in `lib.rs` prints *No `webview alive` mark* when a check times out without
+that mark, and until 2026-10-13 it went on to say that the page never ran a line of
+JavaScript and named one cause, a covered window. The mark is set by `spike_env`, when the
+page first asks for a setting, and the page asks after its component is built. So a page
+that throws while it is being built leaves no mark either, and has run a great deal of
+JavaScript.
+
+That day the cause was the entry above, and the message sent four probes at the other
+machine's screen: its lock state, its display, the windows of six other applications, a
+run with `TPDF_RAISE=1`. Each was consistent with a covered window, because none of them
+could have come out differently for a page that threw. What settled it was reading what the
+commit under test had changed, which should have been the first probe and not the fifth.
+
+The message now names both causes and says which to suspect when the tree under test
+changed `App.svelte`. The control that separates them is the same check on the commit
+before.

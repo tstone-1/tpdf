@@ -3,6 +3,7 @@
 
     scripts/run_on_mac.py --host HOST --clone '~/path/to/tpdf'
         [--wrap 'COMMAND --'] [--rev REV] [--only TEXT]... [--timeout SECONDS]
+        [--pictures FOLDER [--picture-arg ARG]...]
 
 WHY THIS EXISTS. `window_checks.py` drives a real window, takes the keyboard
 and needs a screen that is unlocked and not covered, so on the machine somebody
@@ -53,6 +54,12 @@ WHAT THE ANSWER MEANS. Exit 0 only when the run on the other Mac printed
 `window_checks.py`'s own exit code and that code is 0. A connection that
 fails, a build that does not finish, a locked session and a run that never
 prints its exit all end in 2, never in 0.
+
+PICTURES INSTEAD. `--pictures FOLDER` runs `screenshots.py --more` there in
+place of the window checks and copies what it wrote into FOLDER here, for
+looking at a menu or a colour without taking this screen. `--picture-arg` is
+passed on, once for each: `--picture-arg=--dark`, `--picture-arg=--size`
+`--picture-arg=1000x760`. The exit is then `screenshots.py`'s.
 
 NOT A GATE. It needs a second machine that is switched on.
 """
@@ -118,7 +125,7 @@ cat >"$run/job.sh" <<JOB
 #!/bin/zsh
 export PATH="$PATH"
 cd "$tree"
-python3 scripts/window_checks.py "$app/Contents/MacOS/tpdf" {only} >"$run/checks.log" 2>&1
+{job} >"$run/checks.log" 2>&1
 echo "EXIT \$?" >>"$run/checks.log"
 touch "$run/done"
 JOB
@@ -139,8 +146,7 @@ if [ ! -f "$run/done" ]; then
   tail -8 "$run/checks.log" 2>/dev/null
   stop "the window checks did not end within {limit} s"
 fi
-grep -E '^\[FAIL\]|\[NOTE\]|not made' "$run/checks.log"
-sed -n '/^=== summary/,$p' "$run/checks.log" | grep -v '^EXIT'
+{show}
 code=$(sed -n 's/^EXIT //p' "$run/checks.log" | tail -1)
 echo "{marker} ${{code:-2}}"
 """
@@ -180,8 +186,21 @@ def tree_to_send(rev: str | None) -> str:
 
 def remote(args: argparse.Namespace, sha: str) -> str:
     only = " ".join(f"--only {shlex.quote(text)}" for text in args.only)
+    if args.pictures:
+        extra = " ".join(shlex.quote(text) for text in args.picture_arg)
+        # Emptied first: a picture left by an earlier run would be copied back
+        # as this one's.
+        job = ('rm -rf "$run/pictures"; mkdir -p "$run/pictures"; '
+               'uv run --with reportlab --with pillow scripts/screenshots.py '
+               f'"$app/Contents/MacOS/tpdf" --more --out "$run/pictures" {extra}')
+        show = 'grep -v \'^EXIT\' "$run/checks.log"'
+    else:
+        job = f'python3 scripts/window_checks.py "$app/Contents/MacOS/tpdf" {only}'
+        show = ('grep -E \'^\\[FAIL\\]|\\[NOTE\\]|not made\' "$run/checks.log"\n'
+                'sed -n \'/^=== summary/,$p\' "$run/checks.log" | grep -v \'^EXIT\'')
     return REMOTE.format(clone=shlex.quote(args.clone), sha=shlex.quote(sha), marker=MARKER,
-                         ref=REF, wrap=args.wrap, app=APP, only=only, limit=int(args.timeout))
+                         ref=REF, wrap=args.wrap, app=APP, job=job, show=show,
+                         limit=int(args.timeout))
 
 
 def main() -> int:
@@ -193,6 +212,10 @@ def main() -> int:
     parser.add_argument("--only", action="append", default=[], help="passed to window_checks.py")
     parser.add_argument("--timeout", type=float, default=900,
                         help="seconds the window checks may take, after the build")
+    parser.add_argument("--pictures", type=Path,
+                        help="run screenshots.py --more there and copy its pictures into this folder")
+    parser.add_argument("--picture-arg", action="append", default=[],
+                        help="passed to screenshots.py, once for each argument")
     args = parser.parse_args()
 
     sha = tree_to_send(args.rev)
@@ -239,6 +262,15 @@ def main() -> int:
         print(ran.stderr.strip()[-600:])
         print("[FAIL] the run printed no exit of its own, so it did not finish")
         return 2
+    if args.pictures:
+        args.pictures.mkdir(parents=True, exist_ok=True)
+        folder = f"{args.clone}-check-run/pictures"
+        got = subprocess.run(["scp", "-q", "-r", *quiet, f"{args.host}:{folder}/.", str(args.pictures)],
+                             check=False)
+        if got.returncode != 0:
+            print("[FAIL] the pictures could not be copied back")
+            return 2
+        print(f"[OK] {len(list(args.pictures.glob('*.png')))} pictures in {args.pictures}")
     return 0 if code == "0" else 1 if code == "1" else 2
 
 
