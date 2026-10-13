@@ -295,11 +295,26 @@ export class Palette {
     if (this.asking?.argument) {
       const raw = this.input.value;
       const problem = this.asking.argument.problem(raw);
+      // What is being asked, and by which command, for as long as it is. The
+      // placeholder said it and was gone at the first character typed, and
+      // the command's name was nowhere: a reader who looked away came back to
+      // "Yes; No; Not yet" over "3 choices. Then drag the field onto the
+      // page." with nothing to say what the choices were for. Seen in a
+      // picture of the window, 2026-10-13.
+      const asked = document.createElement("div");
+      asked.style.cssText = "padding:0.5rem 0.9rem 0;";
+      const title = document.createElement("div");
+      title.textContent = this.asking.title.replace(/(\.{3}|\u2026)$/, "");
+      title.style.cssText = "font-weight:600;";
+      const wanted = document.createElement("div");
+      wanted.textContent = this.asking.argument.placeholder;
+      wanted.style.cssText = "opacity:0.6;";
+      asked.append(title, wanted);
       const row = document.createElement("div");
       row.setAttribute("role", "status");
       row.style.cssText = `padding:0.6rem 0.9rem;${problem ? "opacity:0.55;" : ""}`;
       row.textContent = problem ?? this.asking.argument.preview(raw);
-      this.list.appendChild(row);
+      this.list.append(asked, row);
       return;
     }
 

@@ -159,3 +159,47 @@ describe("a row found by a keyword", () => {
     expect(texts).not.toContain("compress");
   });
 });
+
+describe("a command's question", () => {
+  /** Every text on screen, in document order. */
+  function texts(): string[] {
+    const body = (globalThis as unknown as { document: { body: FakeElement } }).document.body;
+    const found: string[] = [];
+    const walk = (node: FakeElement): void => {
+      if (node.textContent) found.push(node.textContent);
+      node.children.forEach(walk);
+    };
+    walk(body);
+    return found;
+  }
+
+  it("names the command and what it wants, before anything is typed", () => {
+    asked();
+    expect(texts()).toContain("Insert pages from report.pdf");
+    expect(texts()).toContain("Pages");
+  });
+
+  it("still names them once an answer is typed, when the placeholder has gone", () => {
+    const { type } = asked();
+    type("1-3");
+    expect(texts()).toContain("Insert pages from report.pdf");
+    expect(texts()).toContain("Pages");
+  });
+
+  it("drops the dots that promised the question", () => {
+    const registry = new CommandRegistry();
+    registry.register({
+      id: "edit.addDropdown",
+      title: "Add a form field: dropdown...",
+      argument: { placeholder: "Choices", problem: () => null, preview: () => "", run: () => {} },
+    });
+    new Palette(registry).askFor("edit.addDropdown");
+    expect(texts()).toContain("Add a form field: dropdown");
+  });
+
+  it("names no command while the list of commands is shown", () => {
+    const { key } = asked();
+    key("Escape");
+    expect(texts()).not.toContain("Pages");
+  });
+});

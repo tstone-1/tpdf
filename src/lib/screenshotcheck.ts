@@ -149,6 +149,60 @@ export async function screenshotCheck(
   // And one opened, which only the animation shows.
   cards()[0]!.open = true;
   await frame(2600);
+
+  if (more === "more") {
+    // What signing asks, of a document with nothing unsaved. The properties
+    // dialog is put away first: it is a dialog too.
+    const close = [...document.querySelectorAll<HTMLButtonElement>(".tpdf-properties button")]
+      .find((b) => /^(Close|Done)$/.test((b.textContent ?? "").trim()));
+    // Escape is listened for on the dialog's own backdrop, so it is sent from inside.
+    if (close) close.click();
+    else openDialog()?.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true }));
+    const put = await settle(() => openDialog() === undefined, 3000);
+    report.check("the properties dialog was put away before signing was asked", put, "");
+    await photographDialog(host, report, shot, "file.signDocument", "sign");
+  }
+}
+
+/** The dialog on screen, if there is one. */
+function openDialog(): HTMLElement | undefined {
+  // A `<dialog>` is in the document while it is closed, and one that is open
+  // has no `offsetParent`, being in the top layer.
+  return [...document.querySelectorAll<HTMLElement>('[role="dialog"], dialog')]
+    .find((dialog) => dialog instanceof HTMLDialogElement ? dialog.open : dialog.offsetParent !== null);
+}
+
+/**
+ * Runs a command, photographs the dialog it opens, and closes it unanswered.
+ *
+ * A command that answers with a message and no dialog is recorded with what
+ * it said, and passes: which of the two it does is what is being looked at.
+ */
+async function photographDialog(
+  host: OpenCheckHost,
+  report: Report,
+  shot: (name: string) => Promise<void>,
+  id: string,
+  name: string,
+): Promise<void> {
+  host.run(id);
+  const shown = await settle(() => openDialog() !== undefined, 6000);
+  const said = document.querySelector('[data-testid="problem"] p.error, [data-testid="notice"]')?.textContent ?? "";
+  const dialog = openDialog();
+  report.check(`asked for ${id}: a dialog or a message`, true,
+    dialog ? `dialog: ${(dialog.getAttribute("aria-label") ?? dialog.textContent ?? "").trim().slice(0, 60)}`
+      : `no dialog; said: ${said.slice(0, 80)}`);
+  if (!shown || !dialog) return;
+  await pause(300);
+  measureControls(report, `the ${name} dialog`);
+  await shot(`more-${name}`);
+  const cancel = [...dialog.querySelectorAll<HTMLButtonElement>("button")]
+    .find((b) => /^(Cancel|Close)$/.test((b.textContent ?? "").trim()));
+  if (cancel) cancel.click();
+  else dialog.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true }));
+  const gone = await settle(() => openDialog() === undefined, 4000);
+  report.check(`the ${name} dialog went away unanswered`, gone, "");
+  await host.idle();
 }
 
 /**
@@ -253,31 +307,36 @@ async function moreStates(
   measureControls(report, "the window");
 
   // The dialogs a command opens in the window before any file is chosen: what
-  // a reader is asked on the way to a smaller copy, a password and a
-  // signature. Each is closed again without an answer, so nothing is written.
-  const dialogs: [string, string][] = [
-    ["file.compress", "compress"], ["file.protect", "password"], ["file.signDocument", "sign"],
-  ];
-  for (const [id, name] of dialogs) {
-    // A `<dialog>` is in the document while it is closed, and one that is
-    // open has no `offsetParent`, being in the top layer.
-    const open = () => [...document.querySelectorAll<HTMLElement>('[role="dialog"], dialog')]
-      .find((dialog) => dialog instanceof HTMLDialogElement ? dialog.open : dialog.offsetParent !== null);
-    host.run(id);
-    const shown = await settle(() => open() !== undefined, 4000);
-    const said = document.querySelector('[data-testid="problem"] p.error, [data-testid="notice"]')?.textContent ?? "";
-    report.check(`asked for ${id}: a dialog or a message`, true,
-      shown ? `dialog: ${(open()!.getAttribute("aria-label") ?? open()!.textContent ?? "").trim().slice(0, 60)}` : `no dialog; said: ${said.slice(0, 80)}`);
-    if (!shown) continue;
+  // a reader is asked on the way to a smaller copy and a password. Each is
+  // closed again without an answer, so nothing is written. Signing is asked
+  // at the end, of a document with nothing unsaved, since it refuses this one.
+  await photographDialog(host, report, shot, "file.compress", "compress");
+  await photographDialog(host, report, shot, "file.protect", "password");
+
+  // A command that asks a question in the palette before it can run.
+  // Reached as a reader reaches it: `host.run` refuses a command that wants
+  // an answer and has none.
+  [...document.querySelectorAll<HTMLButtonElement>("button")]
+    .find((b) => b.textContent === "Commands")?.click();
+  await pause(300);
+  const question = () => document.querySelector<HTMLInputElement>(".tpdf-palette input");
+  if (question()) {
+    question()!.value = "dropdown";
+    question()!.dispatchEvent(new InputEvent("input", { bubbles: true }));
+    await pause(200);
+    question()!.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true }));
     await pause(300);
-    measureControls(report, `the ${name} dialog`);
-    await shot(`more-${name}`);
-    const cancel = [...open()!.querySelectorAll<HTMLButtonElement>("button")]
-      .find((b) => /^(Cancel|Close)$/.test((b.textContent ?? "").trim()));
-    if (cancel) cancel.click(); else escape();
-    const gone = await settle(() => open() === undefined, 4000);
-    report.check(`the ${name} dialog went away unanswered`, gone, "");
-    await host.idle();
+  }
+  if (question() && question()!.offsetParent !== null) {
+    question()!.value = "Yes; No; Not yet";
+    question()!.dispatchEvent(new InputEvent("input", { bubbles: true }));
+    await pause(200);
+    measureControls(report, "the palette's question");
+    await shot("more-question");
+    for (let press = 0; press < 2 && question()?.offsetParent; press++) {
+      question()!.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true }));
+      await pause(200);
+    }
   }
 
   // The text editor's chrome over the page. It refuses while redactions are

@@ -39,6 +39,10 @@ have the binary.)
 
 ### Changed
 
+- **A command's question in the palette says what is being asked.** While a command waits for
+  a value, the palette shows the command's name and what it wants above the preview. It
+  showed only the typed value and the preview, and the hint in the field was gone at the
+  first character.
 - **The Redact menu has lines between its kinds:** marking, reviewing, and writing a file.
 
 - **The command palette finds a command by the words other programs use for it.** Typing
