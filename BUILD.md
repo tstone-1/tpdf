@@ -6867,6 +6867,28 @@ read through. **Not run:** the written copy of `tpdf long-term` against a public
 authority (`docs/VERIFICATION.md` has why), the new entry of `mutate_viewer.py` by the
 harness itself, `print-probe` and `redact-reach-probe`.
 
+**26.10.18 publication, 2026-10-13:** `Audit` and CI were green on the release commit
+`8409c945`, both legs, and the tag sits on it. No release mechanics had changed since
+26.10.17, so there was no rehearsal tag. The `Release` run 38423439098 skipped its gates on
+CI's account. The Windows job passed at the first attempt and logged
+`fetched from ssign-5fd4daf-tpdf.1, digest as recorded`. The macOS job built, signed, was
+accepted by Apple's notary and stapled, then failed in `bundle_dmg.sh` with no reason
+printed; rerun once with `gh run rerun --failed`, it passed. On the draft's files: 6
+assets, counted with GraphQL, `latest.json` named 26.10.18 for both platforms, and the
+`.dmg` was accepted by Gatekeeper as Notarized Developer ID, stapled, with a `tpdf-cli`
+inside that answered `--version` with 26.10.18, verified `testdata/incr-signed.pdf` and
+lists `--lock`. `scripts/publish_release.py v26.10.18 --publish` published it. Without
+authentication the `.dmg` and the `-setup.exe` answer 200 and `latest.json` offers
+26.10.18 for `darwin-aarch64` and `windows-x86_64`; on a Windows 11 computer
+`Get-AuthenticodeSignature` reads the downloaded installer as `Valid` and timestamped.
+The Homebrew cask went from 26.10.17 to 26.10.18; `brew audit --cask --online` printed no
+finding and `brew livecheck` reads 26.10.18. An installed 26.10.17 updated itself:
+`update_check_mac.py` 12/12 on a second Mac and `update_check.py` 17/17 on Windows, both
+started about twenty minutes after publication and offered the update at once. Not run:
+the `no-press` control of either update check, `installed_check.py`, and the `--since`
+pass of the mutation tables that step 7 leaves for after the release. winget was not
+updated.
+
 **26.10.18 verification, 2026-10-13:** all 31 gates passed on the release tree on macOS
 arm64 (3,100 Rust tests with eleven documented ignored, 2,820 frontend tests), the
 `notices` gate after `THIRD-PARTY-NOTICES.md` was regenerated for seven crates that moved
