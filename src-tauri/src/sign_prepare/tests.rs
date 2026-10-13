@@ -649,6 +649,227 @@ fn a_certification_that_permits_no_change_is_refused_and_the_others_are_not() {
     }
 }
 
+// --------------------------------------------------------------- the lock
+
+fn locking() -> Notes {
+    Notes {
+        lock: true,
+        ..Notes::default()
+    }
+}
+
+/// What `dict` says under `key`, as a name.
+fn name_in(dict: &Dictionary, key: &[u8]) -> String {
+    dict.get(key)
+        .and_then(Object::as_name)
+        .map(|name| String::from_utf8_lossy(name).into_owned())
+        .unwrap_or_default()
+}
+
+/// A locking signature says so twice: on the field, and in a `/FieldMDP`
+/// transform inside the signature dictionary, which the signature covers.
+/// Both say every field and level 1. The shape is pyHanko's, measured
+/// (`sign-probe --lock`).
+#[test]
+fn a_locking_signature_says_so_on_the_field_and_inside_the_signature() {
+    let original = two_pages(0);
+    let unsigned = prepare_noted(original.clone(), NOW, None, None, &locking()).expect("prepared");
+    assert!(unsigned.locked);
+    let after = reread(&original, &unsigned);
+    let (_, widget) = new_widget(&after, &unsigned);
+
+    let lock = widget
+        .get(b"Lock")
+        .and_then(Object::as_dict)
+        .expect("a /Lock");
+    assert_eq!(name_in(lock, b"Type"), "SigFieldLock");
+    assert_eq!(name_in(lock, b"Action"), "All");
+    assert_eq!(lock.get(b"P").and_then(Object::as_i64).ok(), Some(1));
+
+    let signature = signature_of(&after, &widget);
+    let references = signature
+        .get(b"Reference")
+        .and_then(Object::as_array)
+        .expect("a /Reference");
+    let [reference] = references.as_slice() else {
+        panic!("one transform, and {} were written", references.len());
+    };
+    let reference = reference.as_dict().expect("a dictionary");
+    assert_eq!(name_in(reference, b"Type"), "SigRef");
+    assert_eq!(name_in(reference, b"TransformMethod"), "FieldMDP");
+    assert_eq!(
+        reference.get(b"Data").and_then(Object::as_reference).ok(),
+        after
+            .trailer
+            .get(b"Root")
+            .and_then(Object::as_reference)
+            .ok(),
+        "the transform is over the catalog"
+    );
+    let params = reference
+        .get(b"TransformParams")
+        .and_then(Object::as_dict)
+        .expect("parameters");
+    assert_eq!(name_in(params, b"Type"), "TransformParams");
+    assert_eq!(name_in(params, b"Action"), "All");
+    assert_eq!(name_in(params, b"V"), "1.2");
+    assert_eq!(params.get(b"P").and_then(Object::as_i64).ok(), Some(1));
+
+    // Inside the range: the transform is not in the hole, which is the only
+    // part of the revision the signature does not cover.
+    let at = only(&unsigned.update, b"/FieldMDP").expect("written once") + original.len();
+    let [_, hole, hole_end, _] = unsigned.range.map(|n| n as usize);
+    assert!(at < hole || at >= hole_end, "{at} is in {hole}..{hole_end}");
+
+    // What tpdf's own reader makes of it, and what the plain signing says.
+    let whole = [original.as_slice(), unsigned.update.as_slice()].concat();
+    let read = crate::docinfo::scan(&whole, 2, None).expect("scanned");
+    assert_eq!(read.signatures[0].lock, 1);
+    assert_eq!(read.signatures[0].certification, 0);
+
+    let plain = prepare(original.clone(), NOW, None).expect("prepared");
+    assert!(!plain.locked);
+    let after = reread(&original, &plain);
+    let (_, widget) = new_widget(&after, &plain);
+    assert!(!widget.has(b"Lock"));
+    assert!(!signature_of(&after, &widget).has(b"Reference"));
+
+    // A visible one locks the same way.
+    let shown = visible(0, [20.0, 30.0, 170.0, 90.0], None);
+    let unsigned =
+        prepare_noted(original.clone(), NOW, None, Some(&shown), &locking()).expect("visible");
+    let after = reread(&original, &unsigned);
+    let (_, widget) = new_widget(&after, &unsigned);
+    assert!(unsigned.locked && widget.has(b"Lock") && widget.has(b"AP"));
+    assert!(signature_of(&after, &widget).has(b"Reference"));
+}
+
+/// In a field the document already has, the lock goes on that field.
+#[test]
+fn a_lock_in_a_field_the_document_has_is_written_on_that_field() {
+    let original = with_fields(0);
+    let notes = Notes {
+        lock: true,
+        ..into("Approved")
+    };
+    let unsigned = prepare_noted(original.clone(), NOW, None, None, &notes).expect("prepared");
+    let after = reread(&original, &unsigned);
+    let id = scanned(&after, "Approved").object;
+    let field = after.get_dictionary((id.0, id.1)).expect("the field");
+    assert!(field.has(b"Lock") && field.has(b"V"));
+    assert!(signature_of(&after, field).has(b"Reference"));
+    let whole = [original.as_slice(), unsigned.update.as_slice()].concat();
+    assert!(crate::docinfo::locked(
+        &Document::load_mem(&whole).expect("loads")
+    ));
+}
+
+/// The signed revision with both places a lock is written set to other
+/// levels, or left as written with `None`.
+fn relocked(original: &[u8], on_field: Option<i64>, in_signature: Option<i64>) -> Vec<u8> {
+    let unsigned = prepare_noted(original.to_vec(), NOW, None, None, &locking()).expect("prepared");
+    let mut after = reread(original, &unsigned);
+    let (id, widget) = new_widget(&after, &unsigned);
+    let signature = widget.get(b"V").and_then(Object::as_reference).expect("/V");
+    if let Some(level) = on_field {
+        after
+            .get_dictionary_mut(id)
+            .and_then(|field| field.get_mut(b"Lock"))
+            .and_then(Object::as_dict_mut)
+            .expect("the lock")
+            .set("P", level);
+    }
+    if let Some(level) = in_signature {
+        after
+            .get_dictionary_mut(signature)
+            .and_then(|sig| sig.get_mut(b"Reference"))
+            .and_then(Object::as_array_mut)
+            .expect("references")[0]
+            .as_dict_mut()
+            .and_then(|reference| reference.get_mut(b"TransformParams"))
+            .and_then(Object::as_dict_mut)
+            .expect("parameters")
+            .set("P", level);
+    }
+    let mut bytes = Vec::new();
+    after.save_to(&mut bytes).expect("saved");
+    bytes
+}
+
+/// A document a signature locked takes no further signature, with or without
+/// a lock of its own, and still takes a document timestamp, which is what
+/// keeps the locked signature verifiable. Either place saying level 1 is
+/// enough; a lock at another level is not this refusal.
+#[test]
+fn a_locked_document_takes_a_document_timestamp_and_no_further_signature() {
+    let original = two_pages(0);
+    let unsigned = prepare_noted(original.clone(), NOW, None, None, &locking()).expect("prepared");
+    let locked = [original.as_slice(), unsigned.update.as_slice()].concat();
+
+    for notes in [Notes::default(), locking()] {
+        let why = prepare_noted(locked.clone(), NOW, None, None, &notes).expect_err("refused");
+        assert!(why.contains("locked this document"), "{why}");
+    }
+    let shown = visible(0, [20.0, 30.0, 170.0, 90.0], None);
+    let why = prepare_visible(locked.clone(), NOW, None, &shown).expect_err("refused");
+    assert!(why.contains("locked this document"), "{why}");
+    prepare_document_timestamp(locked, None).expect("a document timestamp");
+
+    for (on_field, in_signature, refused) in [
+        (None, None, true),
+        (Some(2), None, true),
+        (None, Some(2), true),
+        (Some(2), Some(2), false),
+        (Some(3), Some(3), false),
+    ] {
+        let bytes = relocked(&original, on_field, in_signature);
+        let made = prepare(bytes, NOW, None);
+        assert_eq!(
+            made.as_ref()
+                .is_err_and(|why| why.contains("locked this document")),
+            refused,
+            "{on_field:?} on the field, {in_signature:?} in the signature: {:?}",
+            made.map(|u| u.field)
+        );
+    }
+}
+
+/// A certified document already says what may change, and a lock is not
+/// written beside that; the same document is still signed without one.
+#[test]
+fn a_lock_is_not_written_into_a_certified_document() {
+    let mut examined = 0;
+    for name in ["incr-certified-2.pdf", "incr-certified-3.pdf"] {
+        let Some(bytes) = fixture(name) else { continue };
+        let why = prepare_noted(bytes.clone(), NOW, None, None, &locking()).expect_err(name);
+        assert!(why.contains("sign it without locking"), "{name}: {why}");
+        prepare(bytes, NOW, None).expect(name);
+        examined += 1;
+    }
+    if fixture("incr-signed.pdf").is_some() {
+        assert_eq!(
+            examined, 2,
+            "the signed fixtures are here, and these are not"
+        );
+    }
+}
+
+/// A document timestamp locks nothing, whatever it is asked.
+#[test]
+fn a_document_timestamp_is_never_a_lock() {
+    let original = two_pages(0);
+    let details = Details {
+        document_timestamp: true,
+        lock: true,
+        ..Details::default()
+    };
+    let unsigned = build(original.clone(), NOW, None, None, &details).expect("built");
+    assert!(!unsigned.locked);
+    let after = reread(&original, &unsigned);
+    let (_, widget) = new_widget(&after, &unsigned);
+    assert!(!signature_of(&after, &widget).has(b"Reference"));
+}
+
 // ---------------------------------- earlier signatures, through the whole path
 
 #[test]
@@ -1652,6 +1873,7 @@ fn an_invisible_signature_carries_its_notes_and_a_visible_one_its_contact() {
         reason: " Approved ".into(),
         location: "東京".into(),
         contact: "jane@example.com".into(),
+        lock: false,
     };
     let unsigned = prepare_noted(original.clone(), NOW, None, None, &notes).expect("invisible");
     let after = reread(&original, &unsigned);
@@ -1711,6 +1933,7 @@ fn an_invisible_signature_carries_its_notes_and_a_visible_one_its_contact() {
             reason: reason.into(),
             location: location.into(),
             contact: contact.into(),
+            lock: false,
         };
         let refused = prepare_noted(original.clone(), NOW, None, None, &notes).expect_err(why);
         assert!(refused.contains(why), "{refused}");
@@ -1755,6 +1978,7 @@ fn a_reason_and_location_are_text_strings_inside_the_range() {
             location: Some(location.into()),
             contact: None,
             document_timestamp: false,
+            lock: false,
         };
         let unsigned = build(original.clone(), NOW, None, None, &details).expect(reason);
         let after = reread(&original, &unsigned);

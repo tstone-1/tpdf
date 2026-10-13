@@ -17938,6 +17938,63 @@ mutation that proved it:
 - **A form of exactly as many signatures as are read, with other fields after them,** is
   complete (`docinfo::signature_values`).
 
+#### A signature that locks the document, and what a signing does by default --- done 2026-10-13
+
+The owner's expectation, stated on 2026-10-13: placing a signature image is done together with
+a certificate, a timestamp authority is brought in, and the document is locked, as Acrobat and
+Nitro do it. Before that day the toolbar's *Signature image* placed a stamp annotation with no
+certificate, *Sign document…* opened on an invisible signature with no timestamp, and nothing
+could lock a document.
+
+**What a lock is in the format, and which was built.** Two statements exist. A certification
+(DocMDP `/P 1`) must be the document's first signature, so a second signer cannot use it. A
+lock on the signature's field (`/Lock`, with a `/FieldMDP` transform in the signature) works
+for any signer; with `/Action /All` and `/P 1` it forbids form changes, annotations and page
+changes alike. The second was built. Neither prevents a write: both make a validator report a
+later change.
+
+**Measured with pyHanko 0.36.2 before any of it was written.** pyHanko's own locking signature
+(`SigFieldSpec` with `FieldMDPSpec(ALL)` and `doc_mdp_update_value=NO_CHANGES`) writes
+`/Lock << /Type /SigFieldLock /Action /All /P 1 >>` on the field and one `/SigRef` with
+`/TransformMethod /FieldMDP`, `/Data` the catalog and parameters `/Action /All /V /1.2 /P 1`;
+no `/Perms`, no `/DigestMethod`. tpdf writes the same. Then, on tpdf's output
+(`sign-probe --lock`): pyHanko reads level 1; a second signature added by pyHanko's writer
+turns the locked signature `docmdp=VIOLATED` and leaves the same document signed without the
+lock `docmdp=ok`; earlier signatures in `incr-signed` and `incr-two-signers` stay `docmdp=ok`
+under a locking signature after them; a visible locking signature and one with a DigiCert
+timestamp read the same. And on a locked signature with long-term data and an archive
+timestamp after it (the `b-lt-locked.pdf` the long-term instrument writes): `LTA_UPDATES`,
+`docmdp=ok`.
+
+**Two changes that looked like the control and were not.** A page object rewritten for a new
+annotation reads as violated after any signature, locked or not. A new empty, invisible
+signature field reads as `LTA_UPDATES` and is permitted after a lock. Only a change that is
+form filling separates the two documents, and a second signature is one. `docs/TRAPS.md`.
+
+**Decisions the owner took on 2026-10-13**, each on a stated recommendation:
+
+- **The picture without a certificate stays, under a name that says what it is.** tpdf makes
+  no self-signed certificate for a reader who has none: every reader shows such a signer as
+  unknown, and it would look like more assurance than it is.
+- **A timestamp authority is preselected** for a reader who has never chosen, shown by name in
+  the chooser. This reverses *nothing preselected* of 2026-09-28. Sectigo was chosen for the
+  preselection because it is the one of the three asked over HTTPS.
+- **The lock is ticked until the reader unticks it.** A locked document takes no further
+  signature, and the checkbox says so.
+
+**Decided here and not put to the owner**, as engineering: the signature is visible by
+default in the window, since the expectation is a signature image on the page; `tpdf sign`
+locks only with `--lock`, visible only with `--visible` and stamped only with `--timestamp`,
+since a script's output must not change under it; a lock is not written into a certified
+document; a field whose author asks for a lock is still refused whole.
+
+**Not built.** Merging a picture of a signature into the page content. A certification signature. Honouring a field author's `/Lock`
+that names fields. Refusing to edit a locked document in the window: an ordinary save warns in
+its own words and proceeds on consent, as it does for a certification.
+
+**Not run.** `window_checks.py`'s signing phase, which was brought in line with the new
+defaults and needs a screen, a keychain identity and the network.
+
 ### Cross-cutting
 
 OCR (feeding search, selection and redaction verification) has interfaces defined in

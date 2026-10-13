@@ -18,9 +18,10 @@
  *    trip through a certificate chooser to be told.
  * 2. **The certificates are listed**, and none usable is a message naming the
  *    ones that were found and why each is not offered.
- * 3. **The reader chooses** a certificate and whether the signature is
- *    **invisible** (the default, and what signing did before it could be
- *    anything else) or **visible**.
+ * 3. **The reader chooses** a certificate, whether the signature is
+ *    **visible** (the default since 2026-10-13: a reader who signs expects to
+ *    see the signature on the page) or **invisible**, and whether it **locks
+ *    the document** (`signlock.ts`; ticked until unticked).
  * 4. **A visible one is configured, then placed**, before the file is named:
  *    the reader's saved visual signature is read (Phase 4's store; none is not
  *    an error), the appearance panel (`signappearance.ts`) asks what it shows
@@ -39,8 +40,8 @@
  * ## A timestamp, asked for in the chooser
  *
  * The chooser also asks whether to add an RFC 3161 timestamp, and from which
- * authority (`signtimestamp.ts`): none by default, the reader's choice
- * remembered. The request is the backend's, made after the OS has signed. When
+ * authority (`signtimestamp.ts`): one is preselected for a reader who has
+ * never chosen, shown by name, and the reader's choice is remembered. The request is the backend's, made after the OS has signed. When
  * it fails, **nothing has been written**, and the reader chooses: try again,
  * sign without a timestamp, or cancel ({@link askAfterStampFailed}). The
  * backend holds the signature it already made meanwhile, so none of the three
@@ -77,9 +78,11 @@ import {
   readStampChoice,
   stampUrl,
   writeLongTerm,
+  preselectedStamp,
   writeStampChoice,
   type StampChoice,
 } from "./signtimestamp";
+import { LOCK_LABEL, readLock, writeLock } from "./signlock";
 
 /** A certificate the chooser may offer. Mirrors `sign_cms::Choice`. */
 export interface Choice {
@@ -117,6 +120,8 @@ export interface Checked {
   revocation?: Revocation | null;
   /** The archive timestamp a long-term signing writes after the signature (PAdES B-LTA). */
   archive?: boolean;
+  /** The level its lock leaves the document at; 1 is *no changes*. Mirrors `Checked::lock`. */
+  lock?: number;
 }
 
 /** What `sign_document` answers. Mirrors `sign_cms::Signed`. */
@@ -170,10 +175,26 @@ export interface Chosen {
   timestamp: string | null;
   /** Long-term validation data as well; only ever with a timestamp. */
   longTerm?: boolean;
+  /** Whether the signature locks the document against any later change. */
+  lock?: boolean;
 }
 
 /** What the reader chose after a timestamp, or the long-term data, did not come. */
 export type AfterStamp = "retry" | "without" | null;
+
+/**
+ * What the sentence after signing adds for a signature that read back as
+ * locking the document. `words::LOCKED`, word for word.
+ */
+export const LOCKED = " The signature locks the document: no changes are permitted after it.";
+
+/**
+ * Where a reader with no certificate is sent: the picture of a signature that
+ * needs none, by the name its command has.
+ */
+export const WITHOUT_CERTIFICATE =
+  " To put a picture of your signature on a page without a certificate, use " +
+  "“Place a signature picture, without a certificate…” — it identifies nobody and locks nothing.";
 
 /** What is said when the reader cancels after a timestamp did not come. */
 export const NOT_WRITTEN = "Not signed: nothing was written.";
@@ -231,9 +252,9 @@ export function choiceLabel(choice: Choice): string {
 export function nothingToChoose(choices: Choices): string {
   const none =
     "No certificate that can sign was found in your keychain or certificate store.";
-  if (choices.skipped.length === 0) return none;
+  if (choices.skipped.length === 0) return none + WITHOUT_CERTIFICATE;
   const reasons = choices.skipped.map((s) => `${s.subject}: ${s.why}`).join("; ");
-  return `${none} Found but not offered — ${reasons}.`;
+  return `${none} Found but not offered — ${reasons}.${WITHOUT_CERTIFICATE}`;
 }
 
 /** A verdict in a few words, for a list of signatures. */
@@ -289,6 +310,9 @@ export function afterSigning(signed: Signed): string {
     ? `${name} was written. The new signature ${signed.field} was intact when tpdf checked it ` +
       `before writing; reading the file back did not check it again, because ${WHY.budget}.`
     : `Signed as ${signed.field} and saved to ${name}. Read back after writing, the signature is intact.`;
+  // The lock, as read back and only beside an intact verdict: a signature not
+  // checked again was not held to its lock either (`commands::sign::read_back`).
+  if (ours.lock === 1 && !unchecked) text += LOCKED;
   // The timestamp is said of a signature read back intact: for one not
   // checked again there is no reading of it to report. (Its revocation rows
   // need no such rule: a standing is only ever beside an intact verdict.)
@@ -356,7 +380,8 @@ export interface SigningShell {
   saveAs(suggested: string): Promise<string | null>;
   /**
    * `sign_document`, with `null` for an invisible signature and `null` for no
-   * timestamp, and whether to add long-term validation data.
+   * timestamp, whether to add long-term validation data, and whether the
+   * signature locks the document.
    */
   sign(
     identity: string,
@@ -365,6 +390,7 @@ export interface SigningShell {
     timestamp: string | null,
     longTerm: boolean,
     field: string | null,
+    lock: boolean,
   ): Promise<SignOutcome>;
   /** The question after a timestamp did not come, with the reason. */
   stampFailed(why: string): Promise<AfterStamp>;
@@ -421,6 +447,7 @@ export async function signDocument(shell: SigningShell, field: SignTarget | null
   const longTerm = chosen.longTerm === true && chosen.timestamp !== null;
   let outcome = await shell.sign(
     chosen.identity, path, placement, chosen.timestamp, longTerm, field?.name ?? null,
+    chosen.lock === true,
   );
   // A timestamp or long-term data that did not come: nothing is written until
   // the reader says what to do, and signing without either is only ever that
@@ -448,8 +475,10 @@ export async function signDocument(shell: SigningShell, field: SignTarget | null
 
 /**
  * The chooser: one radio button per certificate, the first selected; the
- * appearance, invisible selected; and the timestamp, as the reader last chose
- * it, which is none until they choose one (`signtimestamp.ts`).
+ * appearance, visible selected; the timestamp, as the reader last chose it,
+ * with one authority preselected for a reader who has never chosen
+ * (`signtimestamp.ts`); and whether the signature locks the document, ticked
+ * until the reader unticks it (`signlock.ts`).
  *
  * A modal on the same surface as the signed-save warning. Built from
  * `textContent` only, since a certificate's subject is somebody else's text.
@@ -488,8 +517,10 @@ export function askIdentity(
     list.append(label);
     return radio;
   });
-  // The appearance: invisible first and selected, because it is what signing
-  // did before there was a choice and what a reader who reads nothing gets.
+  // The appearance: visible first and selected. Until 2026-10-13 invisible
+  // was, as what signing did before there was a choice; a reader who signs
+  // expects to see the signature on the page, and one who does not is one
+  // click from the other.
   const shows = document.createElement("div");
   shows.setAttribute("role", "radiogroup");
   shows.setAttribute("aria-label", "Appearance");
@@ -505,19 +536,19 @@ export function askIdentity(
     shows.append(label);
     return radio;
   };
-  // In a signature field the field is where it shows, so visible is what a
-  // reader who pressed the field expects and nothing is dragged.
-  appearance("invisible", "Invisible — the signature is in the file, not on a page", field === null);
+  // In a signature field the field is where it shows and nothing is dragged.
   const visible = appearance(
     "visible",
     field === null
       ? "Visible — choose what it shows, with a preview, then drag a rectangle on a page"
       : `Visible — choose what it shows, with a preview; it is drawn in the field ${field}`,
-    field !== null,
+    true,
   );
-  // The timestamp: as last chosen, and none until a reader chooses one. No
-  // server is ever preselected --- choosing one is what lets tpdf ask it.
-  const remembered = readStampChoice(storage);
+  appearance("invisible", "Invisible — the signature is in the file, not on a page", false);
+  // The timestamp: as last chosen. A reader who has never chosen sees one
+  // authority selected, by name, under a note saying what is sent to it;
+  // nothing is asked of it until they press Sign.
+  const remembered = readStampChoice(storage, undefined, preselectedStamp);
   const stamps = document.createElement("div");
   stamps.setAttribute("role", "radiogroup");
   stamps.setAttribute("aria-label", "Timestamp");
@@ -573,6 +604,16 @@ export function askIdentity(
   };
   for (const radio of stampRadios) radio.addEventListener("change", syncLongTerm);
   syncLongTerm();
+  // The lock: ticked until the reader unticks it, and remembered.
+  const lock = document.createElement("input");
+  lock.type = "checkbox";
+  lock.name = "sign-lock";
+  lock.checked = readLock(storage);
+  const lockLabel = document.createElement("label");
+  lockLabel.append(lock, LOCK_LABEL);
+  const locks = document.createElement("div");
+  locks.style.cssText = "margin:12px 0";
+  locks.append(lockLabel);
   const footer = document.createElement("div");
   footer.style.cssText = "display:flex;gap:10px;justify-content:flex-end";
   const cancel = document.createElement("button");
@@ -580,7 +621,7 @@ export function askIdentity(
   const next = document.createElement("button");
   next.textContent = "Sign…";
   footer.append(cancel, next);
-  dialog.append(heading, help, list, shows, stamps, footer);
+  dialog.append(heading, help, list, shows, stamps, locks, footer);
   document.body.append(dialog);
   return new Promise((resolve) => {
     let settled = false;
@@ -611,12 +652,14 @@ export function askIdentity(
       }
       writeStampChoice(chosenStamp, storage);
       writeLongTerm(longTerm.checked, storage);
+      writeLock(lock.checked, storage);
       const timestamp = stampUrl(chosenStamp);
       finish({
         identity,
         visible: visible.checked,
         timestamp,
         longTerm: longTerm.checked && timestamp !== null,
+        lock: lock.checked,
       });
     });
     dialog.addEventListener("cancel", (event) => {

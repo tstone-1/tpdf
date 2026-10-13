@@ -549,12 +549,13 @@ class ClientTests(unittest.TestCase):
                 ['sign', '--json', '-o', 'output.pdf', '--identity', 'SYNTHETIC ID', '--', 'input.pdf'])
             self.pdf.sign('--input.pdf', '-output.pdf', identity='SYNTHETIC ID',
                 rect=[10, 20, 200, 80], page=2, no_image=True, lines=[], reason='Synthetic approval',
-                location='Synthetic location', timestamp='digicert', long_term=True, force=True)
+                location='Synthetic location', timestamp='digicert', long_term=True, lock=True,
+                force=True)
             self.assertEqual(popen.call_args.args[0][1:], [
                 'sign', '--json', '-o', '-output.pdf', '--identity', 'SYNTHETIC ID',
                 '--visible', '--rect', '10,20,200,80', '--page', '2', '--no-image', '--lines', '',
                 '--reason', 'Synthetic approval', '--location', 'Synthetic location',
-                '--timestamp', 'digicert', '--long-term', '--force', '--', '--input.pdf'])
+                '--timestamp', 'digicert', '--long-term', '--lock', '--force', '--', '--input.pdf'])
             self.pdf.sign('input.pdf', 'output.pdf', identity='SYNTHETIC ID', rect=[10, 20, 200, 80],
                 image='stamp.png', lines=[], reason='Synthetic approval', hide=['reason'])
             self.assertEqual(popen.call_args.args[0][1:], [

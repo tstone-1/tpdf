@@ -120,6 +120,11 @@ export interface Signature {
   appended_bytes: number;
   appendix: Appendix | null;
   certification: number;
+  /**
+   * The level this signature's lock leaves the document at, 1 to 3, or 0 for
+   * none: `docinfo::Signature::lock`. See {@link lockOf}.
+   */
+  lock: number;
   certificate: Certificate | null;
   timestamp: Timestamp | null;
   /** Whether it still covers what it was made over; `null` when unsigned. */
@@ -341,6 +346,26 @@ export function certificationOf(level: number): string {
       return "certified, form filling permitted";
     case 3:
       return "certified, form filling and comments permitted";
+    default:
+      return "";
+  }
+}
+
+/**
+ * What a signature's lock permits afterwards, in words, or `""` for none.
+ *
+ * A lock is an ordinary signature saying what {@link certificationOf}'s
+ * certification says, and it is described on the same terms: what the
+ * signature states, not whether anything changed since.
+ */
+export function lockOf(level: number): string {
+  switch (level) {
+    case 1:
+      return "locked by this signature, no changes permitted";
+    case 2:
+      return "locked by this signature, form filling and signing permitted";
+    case 3:
+      return "locked by this signature, form filling, signing and comments permitted";
     default:
       return "";
   }
@@ -796,6 +821,8 @@ export function signatureRows(signature: Signature, bytes: number): Row[] {
 
   const level = certificationOf(signature.certification);
   if (level) rows.push({ name: "Certification", value: level });
+  const lock = lockOf(signature.lock);
+  if (lock) rows.push({ name: "Lock", value: lock });
 
   const how = [signature.handler, signature.kind].filter(Boolean).join(" / ");
   claimed("Format", how);

@@ -119,6 +119,7 @@ pub fn signature_report(signature: &docinfo::Signature) -> report::Signature {
         covers_whole_file: signature.covers_whole_file,
         appended_bytes: signature.appended_bytes,
         appendix: signature.appendix.as_ref().map(appendix_report),
+        lock: signature.lock,
         integrity: IntegrityReport {
             verdict: integrity.verdict,
             why: integrity.why,
@@ -222,6 +223,29 @@ pub fn appendix_sentence(appendix: &docinfo::Appendix) -> String {
             "{what}, with {n} objects removed, and {}",
             appendix_pages(appendix)
         ),
+    }
+}
+
+/// The Lock row's value for the level a signature's lock leaves the document
+/// at ([`report::Signature::lock`]), or nothing when it locks nothing.
+///
+/// Level 1 is the sentence after signing (`words::LOCKED`), so a document
+/// locked by `sign --lock` reads the same here as it did when it was signed.
+/// What the signature says, and no more: nothing here says whether anything
+/// changed after it, which is the Appended row's.
+#[must_use]
+pub fn lock_sentence(level: u8) -> Option<&'static str> {
+    match level {
+        1 => Some("the signature locks the document: no changes are permitted after it"),
+        2 => Some(
+            "the signature locks the document: only form filling and signing are permitted \
+             after it",
+        ),
+        3 => Some(
+            "the signature locks the document: only form filling, signing and comments are \
+             permitted after it",
+        ),
+        _ => None,
     }
 }
 
@@ -700,6 +724,10 @@ pub(crate) fn signature_text(signature: &report::Signature) -> String {
     // says what.
     if let Some(appendix) = &signature.appendix {
         lines.push(format!("    Appended: {}", appendix.sentence));
+    }
+    // What the signature says may follow it, beside what did.
+    if let Some(lock) = lock_sentence(signature.lock) {
+        lines.push(format!("    Lock: {lock}"));
     }
     if let Some(trust) = &signature.trust {
         let name = if document {

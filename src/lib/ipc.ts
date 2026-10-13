@@ -435,6 +435,8 @@ export interface Commands {
        * field's rectangle.
        */
       field: string | null;
+      /** Whether the signature locks the document against any later change. */
+      lock: boolean;
     };
     reply: SignOutcome;
   };

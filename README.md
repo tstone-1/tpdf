@@ -41,8 +41,10 @@ tpdf contacts the network in three cases, and in no other:
 
 - **The update check**, once per launch, reads one file from this repository's releases on
   github.com. It can be switched off.
-- **A timestamp on a signature**, when you ask for one, sends a hash of the signature to
-  the timestamp authority you chose. The document is not sent.
+- **A timestamp on a signature** sends a hash of the signature to a timestamp authority
+  when you sign. The signing dialog names the authority before anything is sent (Sectigo
+  until you choose another), and with *No timestamp* nothing is sent. The document is
+  never sent.
 - **Long-term validation data**, when you ask for it while signing or for a document that
   is already signed, is fetched from the revocation hosts that the certificates themselves
   name, and sealed with a timestamp from the authority you chose.
@@ -84,8 +86,10 @@ under an annotation, in the background's colour or outside the page.
 The letter in the picture is [a made-up sample](site/sample-redacted.pdf) for trying this.
 
 **Sign and check signatures.** Sign with a certificate from the macOS keychain or the
-Windows certificate store, with a timestamp and long-term validation data if you want
-them, or add that data later to a document somebody has already signed. For a signed document, tpdf says whether each signature is intact, whether your
+Windows certificate store: your signature image is drawn on the page, a timestamp
+authority confirms the time, and the signature locks the document, so that a program
+which checks signatures reports any later change. Add long-term validation data if you
+want it, or add that data later to a document somebody has already signed. For a signed document, tpdf says whether each signature is intact, whether your
 computer trusts the signer, and what was added after signing.
 
 ![Document properties, one card for each of two signatures](docs/img/signatures.png)
@@ -301,29 +305,34 @@ measured the Windows render constants come out 1.5–1.8x worse.
   read-only fields remain unchanged. JavaScript and XFA are not supported.
   <!-- built: edit.fillForm -->
 
-- **Add a visual signature** with **Signature image** in the toolbar or
-  **Place signature image** in the command palette. Draw it or import a PNG/JPEG,
-  then drag to place it on the page.
+- **Place a picture of your signature, without a certificate** with **Place a signature
+  picture, without a certificate…** in the Edit menu or the command palette. Draw it or
+  import a PNG/JPEG, then drag to place it on the page.
   Move it, resize it with Smaller/Larger, or remove it; every edit supports undo.
-  Saving embeds its appearance as a PDF stamp, without identity or certificate verification.
+  Saving embeds its appearance as a PDF stamp. **It identifies nobody and locks nothing**:
+  anybody can move it, remove it or copy it, and the document can be changed afterwards
+  with no trace. To sign so that a change is noticed, use **Sign** below.
   Remembering it is optional and uses macOS Keychain or Windows user-scoped DPAPI.
   Imported PNG/JPEG dimensions are bounded before image decoding.
   <!-- built: edit.addSignature -->
 
-- **Sign a document with a certificate you already have** — **Sign document…** in the
-  File menu or the command palette. tpdf lists the certificates in your macOS keychain or
+- **Sign a document with a certificate you already have** — **Sign** in the toolbar, or
+  **Sign document…** in the File menu or the command palette. The dialog opens on what
+  most signings want, and each can be changed there: the signature is **visible**, drawn
+  where you drag a rectangle; a **timestamp** is asked of Sectigo; and the signature
+  **locks the document**. tpdf lists the certificates in your macOS keychain or
   Windows certificate store that can sign, you pick one and name a new file, and the
   signed copy is written beside the original, which is not changed. The private key never
   leaves the operating system: macOS or Windows makes the signature, and any PIN or access
   prompt you see is theirs. The signature is PAdES baseline B-B (a CAdES detached
   signature over SHA-256, RSA or ECDSA P-256/P-384), added as an incremental revision so
   signatures already in the document stay intact, and the written file is read back and
-  its signatures checked before you are told it worked. It can be invisible, or drawn on
+  its signatures checked before you are told it worked. It is drawn on
   the page where you place it — your saved signature image, the signer's name, the date,
-  and a reason and location if you give them. Without a timestamp its time is the one your
-  computer's clock said; **with one**, a timestamp authority you choose — DigiCert, Sectigo,
-  GlobalSign or another address — confirms when it existed (PAdES B-T). None is chosen until
-  you choose one, and tpdf then remembers it. It sends the authority a hash of the new
+  and a reason and location if you give them — or it can be invisible. Without a timestamp its time is the one your
+  computer's clock said; **with one**, a timestamp authority — Sectigo, DigiCert,
+  GlobalSign or another address — confirms when it existed (PAdES B-T). Sectigo is selected
+  until you choose another or none, and tpdf remembers your choice. It sends the authority a hash of the new
   signature and nothing of the document, checks the answer before anything is written, and
   writes nothing if no timestamp that checks out comes back: you can try again or sign
   without one, and neither asks for your key again. With a timestamp you can also tick
@@ -339,8 +348,22 @@ measured the Windows render constants come out 1.5–1.8x worse.
   timestamp alone still works. If the data cannot be had or does not check out, nothing is
   written, and you can try again or sign without it, which keeps the timestamp; a certificate
   its authority says is revoked is refused outright. A timestamp already on a signature you
-  open is checked, in the document's properties. Documents with unsaved edits, encrypted documents and
-  documents certified against any change are refused. The same signing and checking is
+  open is checked, in the document's properties.
+  **Lock the document after signing** is ticked until you untick it. The signature then
+  states that nothing may change after it: every form field is locked and no change to
+  the pages or their comments is permitted. Nothing stops another program from writing
+  to the file. What the lock does is put that statement inside the signature, where a
+  program that checks signatures reads it and reports a later change as one the signer did
+  not permit; pyHanko was measured doing so on tpdf's output. tpdf's own properties and
+  `tpdf verify` show the lock and what was appended after the signature. Long-term
+  validation data and archive timestamps can still be added, because they are not changes
+  in that sense. A locked document takes no further
+  signature, so untick it when somebody else still has to sign. The written copy is read
+  back for the lock as it is for the signature, and a copy whose lock does not read back
+  is reported as one not to rely on. A certified document is not locked: its
+  certification already says what may change.
+  Documents with unsaved edits, encrypted documents,
+  documents certified against any change and documents a signature has locked are refused. The same signing and checking is
   available from a terminal: see [Command-line tool](#command-line-tool).
   A document that has an empty signature field shows a *Sign* button over it: press it, or
   run *Sign in the signature field…*, which takes the first empty one, and the signature
@@ -1106,7 +1129,15 @@ the page as it is displayed:
   answer, or an answer does not check out, nothing is written, the exit code is 3, and the
   message says to run it again without `--long-term`; a certificate its authority says is
   revoked is exit 3 too, and no advice to sign without the data. If tpdf's own worker fails
-  while adding the data, nothing is written and the exit code is 4.
+  while adding the data, nothing is written and the exit code is 4. `--lock` writes into the
+  signature that nothing may change after it, so a reader that checks signatures reports a
+  later change as one the signer did not permit; nothing stops a program from writing to the
+  file. Validation data and document timestamps can still be added, so `--long-term` and
+  `long-term` work on a locked document; a further signature is refused with exit code 3,
+  by `sign` as by other signing tools. The summary says the document is locked, and
+  `verify` reports the signature with `lock` 1. A certified document already says which
+  changes are permitted, so `--lock` is refused on one with exit code 3: sign it without
+  `--lock`.
 - **`long-term <signed.pdf> -o <out.pdf> --timestamp <authority>`** adds long-term
   validation data, and an archive timestamp, to a document that is already signed — by
   anybody; no `--identity` and no key. It asks the certificate authorities about the
@@ -1882,6 +1913,10 @@ it with `[Console]::OutputEncoding = [Text.Encoding]::UTF8` set if a name may ca
   timestamp's) and `sentence`. This is what `--strict` reads: of the `intact` signature
   with the fewest `appended_bytes`, it fails an `appendix` that is `unread` or has more
   `pages_touched` than entries in `pages_listing`;
+  `lock`, what the signature says may change after it, as a number: 0 when it locks
+  nothing, 1 no changes (what `sign --lock` writes), 2 form filling and signing, 3 those and
+  comments. It is what the signature states and not a check: what did change after it is
+  `appendix`. A certification is another statement and is not reported here;
   `integrity` with `verdict` (`intact`, `weak`, `altered`, `broken`, `unchecked`), `why`
   (for `unchecked`, else `null`), `digest`, `method` and `sentence`; and `trust`, `null`
   unless the verdict is `intact` or `weak` (for a document timestamp it is the timestamp

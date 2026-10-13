@@ -255,7 +255,10 @@ pub fn signs_the_field(report: &mut Report) {
                     *doc,
                     now,
                     None,
-                    field.to_string(),
+                    tpdf_lib::sign_prepare::Notes {
+                        field: field.to_string(),
+                        ..Default::default()
+                    },
                     Box::new(move |made| {
                         let _ = tx.send(made);
                     }),

@@ -20,6 +20,8 @@ import {
   type SigningShell,
 } from "./signing";
 import { CHOICE_KEY, LONG_TERM_KEY } from "./signtimestamp";
+import { LOCK_KEY } from "./signlock";
+import { LOCKED, WITHOUT_CERTIFICATE } from "./signing";
 import { FakeElement, installFakeDom } from "./testdom";
 
 const choice: Choice = {
@@ -369,10 +371,14 @@ describe("the words", () => {
     );
   });
 
-  it("names what was found but not offered, and says nothing more when nothing was", () => {
+  it("names what was found but not offered, and where a picture without a certificate is", () => {
     expect(nothingToChoose({ usable: [], skipped: [] })).toBe(
-      "No certificate that can sign was found in your keychain or certificate store.",
+      "No certificate that can sign was found in your keychain or certificate store." +
+        WITHOUT_CERTIFICATE,
     );
+    // The command is named as the palette names it, so the reader can find it.
+    expect(WITHOUT_CERTIFICATE).toContain("Place a signature picture, without a certificate");
+    expect(WITHOUT_CERTIFICATE).toContain("identifies nobody and locks nothing");
     expect(
       nothingToChoose({
         usable: [],
@@ -383,7 +389,8 @@ describe("the words", () => {
       }),
     ).toBe(
       "No certificate that can sign was found in your keychain or certificate store. " +
-        "Found but not offered — Old: it has expired; Mail: it is not issued for signing.",
+        "Found but not offered — Old: it has expired; Mail: it is not issued for signing." +
+        WITHOUT_CERTIFICATE,
     );
   });
 
@@ -536,32 +543,121 @@ describe("the chooser", () => {
     const field = (label: string) =>
       all.find((node) => node.tagName === "input" && node.attributes.get("aria-label") === label)!;
     const alert = () => all.find((node) => node.attributes.get("role") === "alert")!;
-    return { answer, radio, button, field, alert, done };
+    /** A checkbox, which has a name and no value. */
+    const box = (name: string) => all.find((node) => node.tagName === "input" && node.name === name)!;
+    return { answer, radio, button, field, alert, box, done };
   }
 
+  // No storage is handed over in this block, and the fake window has none:
+  // storage that throws reads as no timestamp and as a lock.
   it("offers a visible signature first when a signature field is being signed", async () => {
     const pressed = open([choice], undefined, "Approved");
     expect(pressed.radio("sign-appearance", "visible").checked).toBe(true);
     expect(pressed.radio("sign-appearance", "invisible").checked).toBe(false);
     pressed.button("Sign…").dispatch("click", {});
-    expect(await pressed.answer).toEqual({ identity: "abc", visible: true, timestamp: null, longTerm: false });
+    expect(await pressed.answer).toEqual({
+      identity: "abc", visible: true, timestamp: null, longTerm: false, lock: true,
+    });
     pressed.done();
   });
 
-  it("answers an invisible signature unless the reader picks a visible one", async () => {
+  it("answers a visible signature unless the reader picks an invisible one", async () => {
     const first = open([choice]);
-    expect(first.radio("sign-appearance", "invisible").checked).toBe(true);
-    expect(first.radio("sign-appearance", "visible").checked).toBe(false);
+    expect(first.radio("sign-appearance", "visible").checked).toBe(true);
+    expect(first.radio("sign-appearance", "invisible").checked).toBe(false);
     first.button("Sign…").dispatch("click", {});
-    expect(await first.answer).toEqual({ identity: "abc", visible: false, timestamp: null, longTerm: false });
+    expect(await first.answer).toEqual({
+      identity: "abc", visible: true, timestamp: null, longTerm: false, lock: true,
+    });
     first.done();
 
     const second = open([choice]);
-    second.radio("sign-appearance", "invisible").checked = false;
-    second.radio("sign-appearance", "visible").checked = true;
+    second.radio("sign-appearance", "visible").checked = false;
+    second.radio("sign-appearance", "invisible").checked = true;
     second.button("Sign…").dispatch("click", {});
-    expect(await second.answer).toEqual({ identity: "abc", visible: true, timestamp: null, longTerm: false });
+    expect(await second.answer).toEqual({
+      identity: "abc", visible: false, timestamp: null, longTerm: false, lock: true,
+    });
     second.done();
+  });
+
+  it("locks the document until the reader unticks it, and remembers which", async () => {
+    const { store, storage } = memory();
+    const first = open([choice], storage);
+    const box = (c: ReturnType<typeof open>) => c.box("sign-lock");
+    expect(box(first).checked).toBe(true);
+    box(first).checked = false;
+    first.button("Sign…").dispatch("click", {});
+    expect((await first.answer)?.lock).toBe(false);
+    first.done();
+    expect(store.get(LOCK_KEY)).toBe("false");
+
+    const second = open([choice], storage);
+    expect(box(second).checked).toBe(false);
+    box(second).checked = true;
+    second.button("Sign…").dispatch("click", {});
+    expect((await second.answer)?.lock).toBe(true);
+    second.done();
+    expect(store.get(LOCK_KEY)).toBe("true");
+
+    // Anything tpdf did not write for "no" is a lock.
+    for (const kept of ["", "0", "no", "False"]) {
+      const odd = open([choice], memory({ [LOCK_KEY]: kept }).storage);
+      expect(box(odd).checked, kept).toBe(true);
+      odd.done();
+    }
+  });
+});
+
+describe("a lock", () => {
+  const back = (lock: number | undefined, verdict: "intact" | "unchecked"): Signed => ({
+    path: "/docs/report-signed.pdf",
+    field: "Signature1",
+    signatures: [
+      {
+        field: "Signature1",
+        integrity: {
+          verdict,
+          why: verdict === "unchecked" ? "budget" : null,
+          digest: "SHA-256",
+          method: "ECDSA P-256",
+        },
+        ours: true,
+        ...(lock === undefined ? {} : { lock }),
+      },
+    ],
+  });
+
+  it("is asked of the backend as the reader chose, and never by omission", async () => {
+    for (const [chosen, wanted] of [[true, true], [false, false], [undefined, false]] as const) {
+      const calls: string[] = [];
+      const { shell: s } = shell({
+        choose: async () => ({
+          identity: "abc",
+          visible: false,
+          timestamp: null,
+          ...(chosen === undefined ? {} : { lock: chosen }),
+        }),
+        sign: async (_identity, _path, _placement, _timestamp, _longTerm, _field, lock) => {
+          calls.push(`lock:${lock}`);
+          return { signed: back(1, "intact"), unstamped: null };
+        },
+      });
+      await signDocument(s);
+      expect(calls, String(chosen)).toEqual([`lock:${wanted}`]);
+    }
+  });
+
+  it("is said from what was read back, right after the verdict, and only beside an intact one", () => {
+    expect(afterSigning(back(1, "intact"))).toBe(
+      "Signed as Signature1 and saved to report-signed.pdf. Read back after writing, the " +
+        "signature is intact. The signature locks the document: no changes are permitted after it.",
+    );
+    expect(LOCKED).toBe(" The signature locks the document: no changes are permitted after it.");
+    for (const level of [0, 2, 3, undefined]) {
+      expect(afterSigning(back(level, "intact")), String(level)).not.toContain("locks the document");
+    }
+    expect(afterSigning(back(1, "unchecked"))).not.toContain("locks the document");
   });
 });
 
@@ -733,39 +829,74 @@ describe("the chooser's timestamp", () => {
     return { answer, stamps, radio, url, alert, sign, done };
   }
 
-  it("preselects no authority for a reader who has never chosen, and asks nobody", async () => {
-    const { storage } = memory();
+  it("preselects one authority, by name, for a reader who has never chosen", async () => {
+    const { store, storage } = memory();
     const c = open([choice], storage);
-    expect(c.stamps().filter((r) => r.checked).map((r) => r.value)).toEqual(["none"]);
+    expect(c.stamps().filter((r) => r.checked).map((r) => r.value)).toEqual(["sectigo"]);
     c.sign.dispatch("click", {});
-    expect(await c.answer).toEqual({ identity: "abc", visible: false, timestamp: null, longTerm: false });
+    expect(await c.answer).toEqual({
+      identity: "abc",
+      visible: true,
+      timestamp: "https://timestamp.sectigo.com",
+      longTerm: false,
+      lock: true,
+    });
     c.done();
+    expect(JSON.parse(store.get(CHOICE_KEY)!)).toEqual({ server: "sectigo", url: "" });
+  });
+
+  it("asks nobody for a reader who chose none, this time and the next", async () => {
+    const { storage } = memory();
+    const first = open([choice], storage);
+    first.radio("sectigo").checked = false;
+    first.radio("none").checked = true;
+    first.sign.dispatch("click", {});
+    expect((await first.answer)?.timestamp).toBeNull();
+    first.done();
+
+    const second = open([choice], storage);
+    expect(second.stamps().filter((r) => r.checked).map((r) => r.value)).toEqual(["none"]);
+    second.sign.dispatch("click", {});
+    expect((await second.answer)?.timestamp).toBeNull();
+    second.done();
+  });
+
+  it("preselects nothing from storage it cannot read or did not write", async () => {
+    const broken = () => {
+      throw new Error("no storage");
+    };
+    for (const storage of [broken as never, memory({ [CHOICE_KEY]: "not json" }).storage]) {
+      const c = open([choice], storage);
+      expect(c.stamps().filter((r) => r.checked).map((r) => r.value)).toEqual(["none"]);
+      c.done();
+    }
   });
 
   it("remembers the reader's choice and offers it next time", async () => {
     const { store, storage } = memory();
     const first = open([choice], storage);
-    first.radio("none").checked = false;
-    first.radio("sectigo").checked = true;
+    first.radio("sectigo").checked = false;
+    first.radio("globalsign").checked = true;
     first.sign.dispatch("click", {});
     expect(await first.answer).toEqual({
       identity: "abc",
-      visible: false,
-      timestamp: "https://timestamp.sectigo.com",
+      visible: true,
+      timestamp: "http://timestamp.globalsign.com/tsa/r6advanced1",
       longTerm: false,
+      lock: true,
     });
     first.done();
-    expect(JSON.parse(store.get(CHOICE_KEY)!)).toEqual({ server: "sectigo", url: "" });
+    expect(JSON.parse(store.get(CHOICE_KEY)!)).toEqual({ server: "globalsign", url: "" });
 
     const second = open([choice], storage);
-    expect(second.stamps().filter((r) => r.checked).map((r) => r.value)).toEqual(["sectigo"]);
+    expect(second.stamps().filter((r) => r.checked).map((r) => r.value)).toEqual(["globalsign"]);
     second.done();
   });
 
   it("holds the chooser open on another authority's address it would not ask", async () => {
     const { store, storage } = memory();
     const c = open([choice], storage);
-    c.radio("none").checked = false;
+    c.radio("sectigo").checked = false;
     c.radio("other").checked = true;
     c.url.value = "ftp://tsa.example/";
     c.sign.dispatch("click", {});
@@ -775,9 +906,10 @@ describe("the chooser's timestamp", () => {
     c.sign.dispatch("click", {});
     expect(await c.answer).toEqual({
       identity: "abc",
-      visible: false,
+      visible: true,
       timestamp: "https://tsa.example/rfc3161",
       longTerm: false,
+      lock: true,
     });
     c.done();
   });
@@ -950,8 +1082,9 @@ describe("the chooser's long-term checkbox", () => {
     return { answer, radio, box, sign, done };
   }
 
-  it("is unticked, and cannot be ticked, until an authority is chosen", async () => {
-    const { storage } = memory();
+  it("is unticked, and cannot be ticked while no authority is chosen", async () => {
+    // A reader who chose none: the preselection is for one who never chose.
+    const { storage } = memory({ [CHOICE_KEY]: JSON.stringify({ server: "none", url: "" }) });
     const c = open(storage);
     expect(c.box.checked).toBe(false);
     expect(c.box.disabled).toBe(true);
@@ -967,15 +1100,15 @@ describe("the chooser's long-term checkbox", () => {
   it("is remembered, and asked for only with a timestamp", async () => {
     const { store, storage } = memory();
     const first = open(storage);
-    first.radio("none").checked = false;
-    first.radio("sectigo").checked = true;
+    // Sectigo is what a reader who never chose finds selected.
     first.box.checked = true;
     first.sign.dispatch("click", {});
     expect(await first.answer).toEqual({
       identity: "abc",
-      visible: false,
+      visible: true,
       timestamp: "https://timestamp.sectigo.com",
       longTerm: true,
+      lock: true,
     });
     first.done();
     expect(store.get(LONG_TERM_KEY)).toBe("true");

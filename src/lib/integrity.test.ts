@@ -139,6 +139,7 @@ describe("the integrity row among the others", () => {
       appended_bytes: 24,
       appendix: null,
       certification: 0,
+      lock: 0,
       certificate: null,
       timestamp: null,
       integrity: verdict("altered"),
@@ -319,6 +320,7 @@ describe("the trust row among the others", () => {
       appended_bytes: 0,
       appendix: null,
       certification: 0,
+      lock: 0,
       certificate: {
         subject: "CN=A. Signer",
         subject_cn: "A. Signer",

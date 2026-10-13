@@ -1240,8 +1240,10 @@ export function registerAppCommands(
       run: () => actions.editText(),
     },
     {
+      // A picture and nothing more, and named so since 2026-10-13: next to
+      // "Sign document…" the old "Place signature image..." read as signing.
       id: "edit.addSignature",
-      title: "Place signature image...",
+      title: "Place a signature picture, without a certificate...",
       enabled: withDocument,
       run: () => actions.signature(),
     },

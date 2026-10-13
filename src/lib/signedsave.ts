@@ -4,6 +4,11 @@ export class SaveCancelled extends Error {}
 
 /** A permitted DocMDP operation is not proof that this writer preserves it. */
 export function signatureSaveMessage(properties: Properties | null): string | null {
+  // A signature that permits no change is said first and in its own words:
+  // after one, saving does not risk the signature, it breaks what it states.
+  if (properties?.signatures.some((signature) => signature.lock === 1 || signature.certification === 1)) {
+    return "A signature in this PDF says that nothing may change after it. A program that checks signatures will report the saved file as changed against that signature. Keep the original signed file. Continue saving?";
+  }
   if (properties?.signatures.some((signature) => signature.signed || signature.certification > 0)) {
     return "This PDF contains digital signatures. Saving can invalidate them, even when the document permits form filling. Keep the original signed file. Continue saving?";
   }

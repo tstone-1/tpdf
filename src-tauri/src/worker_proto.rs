@@ -1375,6 +1375,7 @@ mod tests {
                 range: [0, 900, 966, 12],
                 digest: vec![7; 32],
                 field: "Signature2".into(),
+                locked: true,
             }),
             Reply::SignatureImage(crate::signature::Image {
                 width: 1,

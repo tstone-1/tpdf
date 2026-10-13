@@ -810,6 +810,7 @@ fn a_signature_not_checked_again_ends_sign_with_1_and_says_which_check_happened(
         ReadBack::Signature,
         ReadBack::Timestamp,
         ReadBack::LongTerm(crate::longterm::Refusal::Written("x".into())),
+        ReadBack::Lock,
     ] {
         assert_eq!(exit_after(&failed), Exit::Internal, "{failed:?}");
     }
@@ -827,6 +828,7 @@ fn a_signature_not_checked_again_ends_sign_with_1_and_says_which_check_happened(
         words::after_signing(
             "a-signed.pdf",
             "Signature2",
+            false,
             &found(Why::Budget),
             Some(("a timestamp row.", None)),
             &[],
@@ -838,7 +840,14 @@ fn a_signature_not_checked_again_ends_sign_with_1_and_says_which_check_happened(
     );
     // Only for that reason: any other unchecked signature is a copy not to
     // rely on, as it was.
-    let other = words::after_signing("a-signed.pdf", "Signature2", &found(Why::Range), None, &[]);
+    let other = words::after_signing(
+        "a-signed.pdf",
+        "Signature2",
+        false,
+        &found(Why::Range),
+        None,
+        &[],
+    );
     assert!(
         other.starts_with("a-signed.pdf was written, but reading it back did not find")
             && other.ends_with("Do not rely on that copy."),
@@ -910,6 +919,7 @@ fn signature(verdict: Verdict, standing: Option<Standing>) -> report::Signature 
         covers_whole_file: true,
         appended_bytes: 0,
         appendix: None,
+        lock: 0,
         integrity: report::IntegrityReport {
             verdict,
             why: None,
@@ -1213,6 +1223,92 @@ fn the_text_names_what_was_appended_under_its_signature() {
     );
     let without = signature_text(&signature_report(&appended_to(None)));
     assert!(!without.contains("Appended"), "{without}");
+}
+
+/// The report carries the level a signature's lock leaves the document at as
+/// the worker read it, and `verify` without `--json` says it in a row of its
+/// own: nothing for a signature that locks nothing, and for each level what
+/// remains permitted.
+#[test]
+fn a_lock_is_reported_by_its_level_and_said_under_its_signature() {
+    use super::verify::{lock_sentence, signature_report, signature_text};
+    let locking = |lock: u8| crate::docinfo::Signature {
+        lock,
+        ..appended_to(Some(touching(0, &[])))
+    };
+    let row = |lock: u8| {
+        let report = signature_report(&locking(lock));
+        assert_eq!(report.lock, lock);
+        let text = signature_text(&report);
+        let lines: Vec<String> = text.lines().map(str::to_string).collect();
+        let at = lines.iter().position(|line| line.starts_with("    Lock: "));
+        // Under Appended: what may follow the signature, beside what did.
+        if let Some(at) = at {
+            assert!(lines[at - 1].starts_with("    Appended: "), "{text}");
+        }
+        at.map(|at| lines[at].clone())
+    };
+    assert_eq!(row(0), None);
+    assert_eq!(
+        row(1).as_deref(),
+        Some("    Lock: the signature locks the document: no changes are permitted after it")
+    );
+    assert_eq!(
+        row(2).as_deref(),
+        Some(
+            "    Lock: the signature locks the document: only form filling and signing are \
+             permitted after it"
+        )
+    );
+    assert_eq!(
+        row(3).as_deref(),
+        Some(
+            "    Lock: the signature locks the document: only form filling, signing and \
+             comments are permitted after it"
+        )
+    );
+    // Level 1 is the sentence after signing, so the two cannot drift apart.
+    let after = words::LOCKED.trim().trim_end_matches('.');
+    assert_eq!(
+        lock_sentence(1).map(str::to_lowercase),
+        Some(after.to_lowercase())
+    );
+    // A level the specification does not define is not worded.
+    assert_eq!(lock_sentence(4), None);
+}
+
+/// `--lock` is read off the line and is off without it, the help says what
+/// it does, and a lock that did not read back has a sentence of its own that
+/// does not call the copy good.
+#[test]
+fn lock_is_a_flag_of_sign_that_its_help_explains() {
+    let base = "sign in.pdf -o out.pdf --identity A";
+    assert!(!signed(base).lock);
+    assert!(signed(&format!("{base} --lock")).lock);
+    // After the separator it is a path, as every flag is.
+    assert!(!signed("sign --identity A -o out.pdf -- --lock").lock);
+
+    assert!(sign::COMMAND.usage.contains("[--lock]"));
+    let summary: String = sign::COMMAND
+        .summary
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ");
+    for said in [
+        "--lock writes into the signature that nothing may change after it.",
+        "Validation data and document timestamps can still be added",
+        "a further signature is refused",
+        "A certified document",
+    ] {
+        assert!(summary.contains(said), "`{said}` is not in: {summary}");
+    }
+
+    let said = crate::commands::sign::ReadBack::Lock.sentence("signed.pdf", "Signature1");
+    assert_eq!(
+        said.as_deref().unwrap_or_default(),
+        "signed.pdf was written, but reading it back did not find the new signature \
+         Signature1 locking the document. Do not rely on that copy."
+    );
 }
 
 /// A store holding P-256 keys made from seeds, and no saved image.
@@ -1581,6 +1677,7 @@ fn wording() -> serde_json::Value {
                 "sentence": words::after_signing(
                     &name,
                     &field,
+                    false,
                     signatures,
                     sentences.as_ref().map(|(t, a)| (t.as_str(), a.as_deref())),
                     &[],
@@ -1617,9 +1714,52 @@ fn wording() -> serde_json::Value {
             "sentence": words::after_signing(
                 "signed-archive.pdf",
                 "Signature2",
+                false,
                 &signatures,
                 None,
                 &archives,
+            ),
+        }));
+    }
+    // A signature that locks the document: alone, after an earlier one, and
+    // not checked again for want of budget, which is told nothing of a lock
+    // nobody read. Then one whose lock is at another level, which is not the
+    // lock the sentence is about.
+    let budget = Some(integrity(Verdict::Unchecked, Some(Why::Budget), "", ""));
+    for (n, (earlier, ours, lock)) in [
+        (false, Some(intact.clone()), 1_u8),
+        (true, Some(intact.clone()), 1),
+        (true, budget, 1),
+        (false, Some(intact.clone()), 2),
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let mut signatures = Vec::new();
+        if earlier {
+            signatures.push(("Signature1".to_string(), false, Some(intact.clone())));
+        }
+        let field = format!("Signature{}", signatures.len() + 1);
+        signatures.push((field.clone(), true, ours));
+        after.push(serde_json::json!({
+            "signed": {
+                "path": format!("/tmp/signed-locked-{n}.pdf"),
+                "field": field,
+                "signatures": signatures
+                    .iter()
+                    .map(|(f, ours, i)| serde_json::json!({
+                        "field": f, "ours": ours, "integrity": i, "timestamp": null,
+                        "lock": if *ours { lock } else { 0 },
+                    }))
+                    .collect::<Vec<_>>(),
+            },
+            "sentence": words::after_signing(
+                &format!("signed-locked-{n}.pdf"),
+                &field,
+                lock == 1,
+                &signatures,
+                None,
+                &[],
             ),
         }));
     }
@@ -2056,6 +2196,7 @@ fn full_signature() -> report::Signature {
             catalog_gained: vec!["DSS".into()],
             ..touching(1, &[(1, true)])
         })),
+        lock: 1,
         integrity: report::IntegrityReport {
             verdict: integrity.verdict,
             why: None,
@@ -2183,6 +2324,7 @@ fn bare_signature() -> report::Signature {
         covers_whole_file: true,
         appended_bytes: 0,
         appendix: None,
+        lock: 0,
         integrity: report::IntegrityReport {
             verdict: integrity.verdict,
             why: integrity.why,
@@ -2241,6 +2383,7 @@ fn samples() -> Vec<(&'static str, String)> {
     let summary = words::after_signing(
         "contract-signed.pdf",
         "Signature2",
+        false,
         &[
             (
                 "Signature1".into(),

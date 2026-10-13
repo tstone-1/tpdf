@@ -362,6 +362,13 @@ pub struct Signature {
     /// discriminator it looks like --- a validator rejects edits the
     /// specification permits --- so it is reported and not acted on.
     pub certification: u8,
+    /// The DocMDP level this signature's **lock** leaves the document at, 1
+    /// to 3, or zero when it locks nothing of the document: [`lock_of`].
+    ///
+    /// A statement by an ordinary signature, where [`Self::certification`] is
+    /// one by a certifying signature. Level 1 is what *lock the document
+    /// after signing* writes.
+    pub lock: u8,
     /// What the signing certificate says, when one could be read.
     ///
     /// `None` means either that the blob carried no certificate or that it
@@ -1615,6 +1622,7 @@ fn read_signature(
     let purpose = purpose_of(&out.kind);
 
     out.certification = certification_of(document, sig);
+    out.lock = lock_of(document, field, sig);
     out.certificate = read_certificate(document, sig, limits);
     // For a document timestamp this is the token's verdict: `integrity::check`
     // vouches for the range and hands the token to `integrity::token`.
@@ -2521,38 +2529,117 @@ pub(crate) fn certification_of(document: &Document, sig: &Dictionary) -> u8 {
         return 0;
     };
 
+    transform_level(document, references, "DocMDP")
+}
+
+/// The first defined `/P` among the transforms of one method in a signature's
+/// `/Reference`, or zero.
+fn transform_level(document: &Document, references: &[Object], method: &str) -> u8 {
     for entry in references {
         let Ok(reference) = resolve(document, entry).as_dict() else {
             continue;
         };
-        if name_of(document, reference, b"TransformMethod") != "DocMDP" {
+        if name_of(document, reference, b"TransformMethod") != method {
             continue;
         }
         let level = reference
             .get(b"TransformParams")
             .ok()
             .and_then(|o| resolve(document, o).as_dict().ok())
-            .and_then(|params| params.get(b"P").ok())
-            .map(|o| resolve(document, o))
-            .and_then(|o| match o {
-                Object::Integer(level) => Some(*level),
-                // A level written as a real number: readers take `1.0` for 1,
-                // and reading it as no certification would let a document
-                // certified against any change pass for one that is not.
-                // (The cast is exact: only an integral value is taken.)
-                #[allow(clippy::cast_possible_truncation)]
-                Object::Real(level) if level.fract() == 0.0 => Some(*level as i64),
-                _ => None,
-            })
-            .unwrap_or(0);
-        // §12.8.2.2 defines 1, 2 and 3. Anything else is a document saying
-        // something the specification does not define, and is not repeated.
-        if (1..=3).contains(&level) {
-            return level as u8;
+            .map_or(0, |params| level_of(document, params));
+        if level > 0 {
+            return level;
         }
     }
-
     0
+}
+
+/// A dictionary's `/P` as a DocMDP level, or zero when it is absent or not one
+/// of the three the specification defines.
+fn level_of(document: &Document, params: &Dictionary) -> u8 {
+    let level = params
+        .get(b"P")
+        .ok()
+        .map(|o| resolve(document, o))
+        .and_then(|o| match o {
+            Object::Integer(level) => Some(*level),
+            // A level written as a real number: readers take `1.0` for 1,
+            // and reading it as no certification would let a document
+            // certified against any change pass for one that is not.
+            // (The cast is exact: only an integral value is taken.)
+            #[allow(clippy::cast_possible_truncation)]
+            Object::Real(level) if level.fract() == 0.0 => Some(*level as i64),
+            _ => None,
+        })
+        .unwrap_or(0);
+    // §12.8.2.2 defines 1, 2 and 3. Anything else is a document saying
+    // something the specification does not define, and is not repeated.
+    if (1..=3).contains(&level) {
+        level as u8
+    } else {
+        0
+    }
+}
+
+/// The DocMDP level a signature's **lock** leaves the document at, or zero
+/// when it locks nothing of the document as a whole.
+///
+/// A signature that is not a certification can still say what may change
+/// after it (PDF 32000-2 §12.7.5.5, §12.8.2.4): its field's `/Lock` carries a
+/// `/P`, and so do the parameters of the `/FieldMDP` transform in its
+/// `/Reference`. Writers put it in both, and a reader that honours it reads
+/// either; so **the stricter of the two is reported**, which is the direction
+/// to be wrong in for a statement that forbids. A lock that names fields and
+/// carries no `/P` says nothing about the document, and reads as zero.
+pub(crate) fn lock_of(document: &Document, field: &Dictionary, sig: &Dictionary) -> u8 {
+    let on_field = field
+        .get(b"Lock")
+        .ok()
+        .and_then(|o| resolve(document, o).as_dict().ok())
+        .map_or(0, |lock| level_of(document, lock));
+    let in_signature = sig
+        .get(b"Reference")
+        .ok()
+        .and_then(|o| resolve(document, o).as_array().ok())
+        .map_or(0, |references| {
+            transform_level(document, references, "FieldMDP")
+        });
+    match (on_field, in_signature) {
+        (0, level) | (level, 0) => level,
+        (a, b) => a.min(b),
+    }
+}
+
+/// Whether a signature in the document locked it against any change.
+///
+/// For the writers that must not add to such a document. Walked with the
+/// bounds [`read_signatures`] reads by; a field past them is not seen, as it
+/// is not listed either.
+pub(crate) fn locked(document: &Document) -> bool {
+    let bounds = fields::Bounds {
+        nodes: MAX_FIELD_NODES,
+        depth: Some(8),
+        dedup: false,
+        names: false,
+        order: fields::Order::Document,
+    };
+    let mut locked = false;
+    fields::walk(document, &bounds, |node| {
+        let Some(field) = node.dict else {
+            return fields::Flow::Leaf;
+        };
+        if name_of(document, field, b"FT") == "Sig" {
+            if let Some(sig) = field
+                .get(b"V")
+                .ok()
+                .and_then(|o| resolve(document, o).as_dict().ok())
+            {
+                locked |= lock_of(document, field, sig) == 1;
+            }
+        }
+        fields::Flow::Descend
+    });
+    locked
 }
 
 /// What the bytes after `end` added to the document, by comparing two parses.
@@ -4439,6 +4526,131 @@ mod tests {
         );
     }
 
+    /// A lock is read from the field and from the signature's `/FieldMDP`
+    /// transform, and the stricter of the two is the one reported. A
+    /// certification is neither, and a lock that names no level locks nothing
+    /// of the document.
+    #[test]
+    fn a_lock_is_the_stricter_of_what_the_field_and_the_signature_say() {
+        let signature = |in_signature: Option<Object>| {
+            let mut sig = dictionary! { "Type" => "Sig" };
+            if let Some(level) = in_signature {
+                sig.set(
+                    "Reference",
+                    vec![Object::Dictionary(dictionary! {
+                        "Type" => "SigRef",
+                        "TransformMethod" => "FieldMDP",
+                        "TransformParams" => dictionary! { "Action" => "All", "P" => level },
+                    })],
+                );
+            }
+            sig
+        };
+        let on_field = |level: Object| dictionary! { "Action" => "All", "P" => level };
+        let none = Dictionary::new();
+        let document = Document::with_version("1.7");
+        let lock = |field: Option<Object>, in_signature: Option<Object>| {
+            let field = field.map_or_else(
+                || none.clone(),
+                |level| dictionary! { "Lock" => on_field(level) },
+            );
+            lock_of(&document, &field, &signature(in_signature))
+        };
+        let int = |level: i64| Some(Object::Integer(level));
+        for (field, in_signature, wanted) in [
+            (None, None, 0),
+            (int(1), None, 1),
+            (None, int(1), 1),
+            (int(1), int(1), 1),
+            // They disagree: the stricter, whichever holds it.
+            (int(1), int(3), 1),
+            (int(2), int(1), 1),
+            (int(3), int(2), 2),
+            // A real number, as `certification_of` reads one.
+            (Some(Object::Real(1.0)), None, 1),
+            (Some(Object::Real(1.5)), None, 0),
+            // Not one of the three levels, so not a level; the other still is.
+            (int(0), None, 0),
+            (int(4), int(2), 2),
+            (None, int(99), 0),
+        ] {
+            assert_eq!(
+                lock(field.clone(), in_signature.clone()),
+                wanted,
+                "{field:?} on the field, {in_signature:?} in the signature"
+            );
+        }
+
+        // A lock that names fields and no level says nothing of the document.
+        let fields_only = dictionary! {
+            "Lock" => dictionary! { "Action" => "Include", "Fields" => vec![Object::string_literal("Name")] },
+        };
+        assert_eq!(lock_of(&document, &fields_only, &signature(None)), 0);
+
+        // A certification is the other transform: it is no lock, and a lock
+        // is no certification.
+        let certifying = dictionary! {
+            "Type" => "Sig",
+            "Reference" => vec![Object::Dictionary(dictionary! {
+                "TransformMethod" => "DocMDP",
+                "TransformParams" => dictionary! { "P" => 1 },
+            })],
+        };
+        assert_eq!(lock_of(&document, &none, &certifying), 0);
+        assert_eq!(certification_of(&document, &signature(int(1))), 0);
+    }
+
+    /// The scan reports the lock of each signed field, and [`locked`] is true
+    /// for level 1 on a signed field and for nothing else.
+    #[test]
+    fn a_signed_field_that_locks_at_level_one_makes_the_document_locked() {
+        let locking = |level: i64| {
+            dictionary! {
+                "Type" => "Sig",
+                "Reference" => vec![Object::Dictionary(dictionary! {
+                    "TransformMethod" => "FieldMDP",
+                    "TransformParams" => dictionary! { "Action" => "All", "P" => level },
+                })],
+            }
+        };
+        for (level, wanted) in [(1, true), (2, false), (3, false)] {
+            let bytes = document_signed(locking(level));
+            let document = parse(&bytes);
+            let read = read_signatures(
+                &document,
+                340,
+                &[],
+                &mut Limits::default(),
+                &mut 0,
+                &judging(),
+            );
+            assert_eq!(i64::from(read[0].lock), level);
+            assert_eq!(read[0].certification, 0, "a lock is not a certification");
+            assert_eq!(locked(&document), wanted, "level {level}");
+        }
+        assert!(!locked(&parse(&document_signed(
+            dictionary! { "Type" => "Sig" }
+        ))));
+
+        // An empty field that asks for a lock has locked nothing yet.
+        let mut document = parse(&document_signed(locking(1)));
+        let field = document
+            .objects
+            .iter()
+            .find_map(|(id, object)| {
+                object
+                    .as_dict()
+                    .ok()
+                    .filter(|dict| dict.has(b"FT"))
+                    .map(|_| *id)
+            })
+            .expect("the field");
+        let dict = document.get_dictionary_mut(field).expect("the field");
+        dict.remove(b"V");
+        dict.set("Lock", dictionary! { "Action" => "All", "P" => 1 });
+        assert!(!locked(&document));
+    }
+
     /// A level outside 1 to 3 is not repeated back.
     #[test]
     fn a_certification_level_the_specification_does_not_define_is_not_reported() {
@@ -4661,6 +4873,9 @@ mod tests {
             // here --- see `coverageOf`, which says when and not what.
             appended_bytes: _,
             certification: _,
+            // What the signature says may change after it, as the level it
+            // wrote. Whether anything did change is not read here.
+            lock: _,
             // A struct of its own, with a guard of its own ---
             // `no_certificate_field_may_carry_a_verdict`.
             certificate: _,

@@ -43,7 +43,10 @@ token's.
 `crypto_constraints` is pyhanko's `CRYPTO_CONSTRAINTS_FAILURE` --- an algorithm
 its policy disallows, which for these fixtures is SHA-1. `reason` and `location`
 are the signature dictionary's `/Reason` and `/Location` as pyhanko decodes them
-(PDFDocEncoding or UTF-16), or null when absent, for `sign-probe --reason`. A file pyhanko cannot
+(PDFDocEncoding or UTF-16), or null when absent, for `sign-probe --reason`.
+`permits` is the DocMDP level pyhanko holds later changes to on this
+signature's account --- a certification's, or the `/P` of a lock --- as 1, 2
+or 3, or null for a signature that states none, for `sign-probe --lock`. A file pyhanko cannot
 read prints `{"unreadable": "<reason>"}` and nothing else, so the probe can say
 it has no oracle for that file rather than reading silence as agreement.
 
@@ -78,7 +81,7 @@ class Collect(logging.Handler):
 def describe(path: str) -> "list[str]":
     """Validates every signature in `path`, returning one summary line each."""
     from pyhanko.pdf_utils.reader import PdfFileReader
-    from pyhanko.sign.validation import validate_pdf_signature
+    from pyhanko.sign.validation import validate_pdf_signature, validate_pdf_timestamp
 
     with open(path, "rb") as handle:
         reader = PdfFileReader(handle, strict=False)
@@ -92,7 +95,14 @@ def describe(path: str) -> "list[str]":
             # whether a throwaway self-signed certificate chains to anything --
             # it does not, by construction -- but whether the bytes the
             # signature covers still hash to what it says they do.
-            status = validate_pdf_signature(sig)
+            #
+            # A document timestamp has its own validator, and the other one
+            # raises on it: until 2026-10-13 that ended the summary for every
+            # file with an archive timestamp, the signatures before it included.
+            if sig.sig_object_type == "/DocTimeStamp":
+                status = validate_pdf_timestamp(sig)
+            else:
+                status = validate_pdf_signature(sig)
             coverage = getattr(status.coverage, "name", str(status.coverage))
             modified = status.modification_level
             modified_name = getattr(modified, "name", str(modified))
@@ -144,6 +154,7 @@ def verdicts(path: str) -> "list[dict[str, object]]":
             reason = sig.sig_object.get("/Reason")
             location = sig.sig_object.get("/Location")
             token = getattr(status, "timestamp_validity", None)
+            level = None if document_timestamp else sig.docmdp_level
             out.append(
                 {
                     "field": sig.field_name,
@@ -156,6 +167,7 @@ def verdicts(path: str) -> "list[dict[str, object]]":
                     "reason": None if reason is None else str(reason),
                     "location": None if location is None else str(location),
                     "document_timestamp": document_timestamp,
+                    "permits": None if level is None else int(level.value),
                     "timestamp": None
                     if token is None
                     else {

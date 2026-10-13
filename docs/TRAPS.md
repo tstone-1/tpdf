@@ -590,6 +590,7 @@ hop through the index.
 - A page-text comparison that folds whitespace passes an added space
 - A box fills its rectangle whichever way it is set, so type running the wrong way passed every geometric check
 - A test that reads a component's source passes when the line is in a comment or cannot run
+- A change made after a locking signature has to be one that only the lock forbids, and two that looked right were not
 ## Harnesses: running checks and reading what they print
 - A mutation harness needs the same control as the thing it is testing
 - A timeout that discards the transcript recreates the failure it was added to diagnose
@@ -26408,3 +26409,35 @@ The general form: a fixture made with the writer under the same roof holds only 
 writer emits. For a branch about how *another* producer spells something --- a real for an
 integer, a name for a string, an indirect object for a direct one --- write the bytes, or
 check the fixture's bytes for the spelling before trusting a pass.
+
+### A change made after a locking signature has to be one that only the lock forbids, and two that looked right were not
+
+2026-10-13, `sign-probe --lock`. The claim to prove was that a signature which locks the
+document makes another reader report a later change. The obvious test appends a change to the
+locked file and expects pyHanko to say `docmdp=VIOLATED`. Two changes were tried first, and
+each would have given a check that proves nothing (pyHanko 0.36.2):
+
+- **A new annotation, written by rewriting the page object.** Violated after the locking
+  signature --- and violated the same after an ordinary one, because the difference analysis
+  rejects a rewritten page whatever the signature permits. The check would have been green
+  with the lock taken out.
+- **A new empty, invisible signature field.** Permitted after an ordinary signature --- and
+  permitted after the locking one too: pyHanko classes it `LTA_UPDATES`, the place a document
+  timestamp goes, which level 1 allows. The check would have been red with the lock working.
+
+What separates the two documents is a change classed as form filling, which an approval
+signature allows and level 1 does not. A second signature is one, so the probe has pyHanko's
+own writer add it (`testdata/sign_again.py`), and asserts both halves: violated after the
+lock, satisfied after the same document signed without it.
+
+The general form: a check that something is *forbidden* needs the same act shown *permitted*
+where the rule is absent, on otherwise the same input. Without that half, "it was rejected"
+is a statement about the act and not about the rule.
+
+The measurement itself went wrong once on the way, and the shape is worth keeping. A second
+scratch script, made from the first by `sed`, wrote its unlocked output under the first
+script's file name. The file called locked was then an unlocked one, and for one round the
+readings contradicted pyHanko's source: level 1 and form filling should be a violation, and
+the output said satisfied. Printing the level beside the verdict for each file showed the
+level was not there at all. When an instrument's answer contradicts the code it runs, print
+what the input is before reasoning about the code.

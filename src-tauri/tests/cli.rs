@@ -36,6 +36,9 @@
 //!    signature, a refusal, an answer too long, nobody listening --- exits 3
 //!    and writes nothing. Control: an address that is not `http`/`https` is
 //!    exit 2, before anything is asked.
+//!    **And a lock** (`cli/sign_lock.rs`): `sign --lock` reads back as
+//!    `lock` 1 from the built tool and a further signature is refused.
+//!    Control: the same lines without `--lock` report 0 and sign again.
 //! 3. **The tool's own process never maps PDFium, and its workers do** (macOS:
 //!    an injected dyld callback logs each image to a private per-PID file; both
 //!    platforms: this process's own module list after `cli::run` has verified a
@@ -118,6 +121,8 @@ mod sign_anchor;
 mod sign_field;
 #[path = "cli/sign_image.rs"]
 mod sign_image;
+#[path = "cli/sign_lock.rs"]
+mod sign_lock;
 #[path = "cli/sign_text.rs"]
 mod sign_text;
 #[path = "cli/verify_appendix.rs"]
@@ -147,7 +152,7 @@ fn main() {
     run_outside_cargo_deps(&argv);
     // The order is load-bearing: never_maps_pdfium asserts this process has
     // not mapped PDFium, so it must precede the in-process PDFium readers.
-    let checks: [Check; 39] = [
+    let checks: [Check; 40] = [
         ("verify agrees with the in-process reader", verify_agrees),
         (
             "verify reports what was appended after each signature",
@@ -172,6 +177,10 @@ fn main() {
         (
             "sign --field signs an empty signature field the document has",
             sign_field::signs_the_field,
+        ),
+        (
+            "sign --lock locks the document, and a further signature is refused",
+            sign_lock::locks_the_document,
         ),
         (
             "a timestamp minted by the test authority reads back through the tool",

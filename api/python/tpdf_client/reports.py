@@ -867,6 +867,10 @@ class Signature(TypedDict):
     # signature with the fewest `appended_bytes` when this is `unread` or has
     # more `pages_touched` than `pages_listing` has entries.
     appendix: AppendixReport | None
+    # What the signature says may change after it: 0 when it locks nothing,
+    # 1 no changes (what `sign --lock` writes), 2 form filling and signing,
+    # 3 those and comments. A statement, not a check.
+    lock: int
     integrity: IntegrityReport
     # None unless integrity.verdict is "intact" or "weak".
     trust: TrustReport | None

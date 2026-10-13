@@ -167,6 +167,10 @@ pub struct Checked {
     /// from the signatures before it. Since 2026-09-28.
     #[serde(default)]
     pub archive: bool,
+    /// The level its lock leaves the document at: `docinfo::Signature::lock`.
+    /// 1 for a signature made with *lock the document after signing*.
+    #[serde(default)]
+    pub lock: u8,
 }
 
 /// What signing reports: the new field, and every signature the written file
@@ -238,6 +242,7 @@ pub fn report(
         .map(|(index, (ours, signature))| Checked {
             ours,
             archive: signature.kind == "ETSI.RFC3161" && at.is_some_and(|at| index > at),
+            lock: signature.lock,
             field: signature.field,
             integrity: signature.integrity,
             timestamp: signature.timestamp,
@@ -970,6 +975,8 @@ pub struct Made {
     blob: Vec<u8>,
     /// The new signature's field.
     pub field: String,
+    /// Whether the revision locks the document: `Unsigned::locked`.
+    pub locked: bool,
 }
 
 /// Signs a prepared revision: everything [`finish`] does except writing the
@@ -1004,6 +1011,7 @@ pub fn sign(
         built_against,
         range,
         field,
+        locked,
         ..
     } = unsigned;
     Ok(Made {
@@ -1013,6 +1021,7 @@ pub fn sign(
         range,
         blob,
         field,
+        locked,
     })
 }
 

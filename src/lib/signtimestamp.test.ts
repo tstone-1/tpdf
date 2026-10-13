@@ -8,6 +8,8 @@ import {
   SERVERS,
   addressProblem,
   noStamp,
+  PRESELECTED,
+  preselectedStamp,
   readLongTerm,
   readStampChoice,
   stampUrl,
@@ -33,9 +35,22 @@ describe("the timestamp authorities", () => {
     expect(SERVERS).toEqual(wording.timestamp_servers);
   });
 
-  it("are asked only when chosen: none is what a reader who never chose gets", () => {
+  it("are asked only when chosen or preselected: a signing preselects one, nothing else does", () => {
+    // What every caller but a signing gets for a reader who never chose.
     expect(readStampChoice(holding(null))).toEqual(noStamp());
     expect(stampUrl(noStamp())).toBeNull();
+    // A signing: one of the list, asked over HTTPS, for a reader who never
+    // chose and for no other --- a remembered none stays none, and so does
+    // storage that throws or holds what tpdf did not write.
+    expect(PRESELECTED).toBe("sectigo");
+    expect(readStampChoice(holding(null), undefined, preselectedStamp)).toEqual(preselectedStamp());
+    expect(stampUrl(preselectedStamp())).toBe("https://timestamp.sectigo.com");
+    expect(stampUrl(preselectedStamp())).toBe(SERVERS.find((s) => s.name === PRESELECTED)?.url);
+    expect(
+      readStampChoice(holding(JSON.stringify(noStamp())), undefined, preselectedStamp),
+    ).toEqual(noStamp());
+    expect(readStampChoice(holding(null, true), undefined, preselectedStamp)).toEqual(noStamp());
+    expect(readStampChoice(holding("not json"), undefined, preselectedStamp)).toEqual(noStamp());
     for (const server of SERVERS) {
       expect(stampUrl({ server: server.name, url: "" })).toBe(server.url);
     }

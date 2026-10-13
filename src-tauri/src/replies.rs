@@ -265,6 +265,7 @@ fn samples() -> BTreeMap<&'static str, String> {
                     unread: false,
                 }),
                 certification: 1,
+                lock: 1,
                 certificate: Some(certificate()),
                 // Every key set, for the reason the verdict below is: a
                 // `None` writes a `null` the mirror cannot tell from a typo.
@@ -843,6 +844,7 @@ fn samples() -> BTreeMap<&'static str, String> {
                         timestamp: None,
                         revocation: None,
                         archive: false,
+                        lock: 0,
                     },
                     crate::sign_cms::Checked {
                         field: "Signature2".into(),
@@ -876,6 +878,8 @@ fn samples() -> BTreeMap<&'static str, String> {
                         }),
                         revocation: Some(revocation_sample()),
                         archive: false,
+                        // Locked, so the sample carries a level that is not zero.
+                        lock: 1,
                     },
                     // The archive timestamp a long-term signing writes after
                     // it, so the sample carries `archive` both ways.
@@ -886,6 +890,7 @@ fn samples() -> BTreeMap<&'static str, String> {
                         timestamp: None,
                         revocation: None,
                         archive: true,
+                        lock: 0,
                     },
                 ],
             }),

@@ -1309,6 +1309,38 @@ for srv in digicert sectigo globalsign; do
       testdata/text-base14.pdf "/tmp/tpdf-sign-probe/timestamp-$srv" --key rsa --timestamp "$srv"
 done
 #
+# --lock (2026-10-13): the signature locks the document (sign_prepare.rs, "The
+# lock"). Six rows more than the same run without it: tpdf reads level 1 on the
+# new signature and on no other; pyHanko reads level 1 (check_signature.py's
+# `permits`); tpdf refuses to sign the written file again and still builds a
+# document timestamp's revision on it; and then THE CHANGE --- testdata/sign_again.py
+# has pyHanko's own writer add a second signature --- must read docmdp=VIOLATED
+# for the locked signature AND docmdp=ok for the same document signed without
+# the lock, which the probe signs for this purpose. The second is the control:
+# docs/TRAPS.md has the two changes that turned neither or both.
+# macOS arm64, 2026-10-13, pyHanko 0.36.2, all green:
+#   text-base14 --key rsa --lock                       22/22
+#   incr-signed --key rsa --lock                       24/24 (the earlier signature docmdp=ok)
+#   incr-two-signers --key p256 --lock                 26/26
+#   text-base14 --key p256 --visible --lock            32/32
+#   text-base14 --key rsa --timestamp digicert --lock  28/28
+#   incr-certified-2 --key p384 --lock                 exits 2 with tpdf's refusal:
+#                                                      a certified document is not locked
+# The thirteen guards (the refusal, the two places the lock is written, the
+# stricter-of-two reading, the read-back) are rows of scripts/mutate_rust.py,
+# named "sign lock: ...", "lock read: ..." and "lock read-back: ..."; each turned
+# its named unit test red when run by hand on 2026-10-13.
+for f in text-base14:rsa incr-signed:rsa incr-two-signers:p256; do
+  cargo run --release --manifest-path src-tauri/Cargo.toml --example sign-probe -- \
+      "testdata/${f%%:*}.pdf" "/tmp/tpdf-sign-probe/lock-${f%%:*}" --key "${f##*:}" --lock
+done
+# Long-term data after a lock: the instrument below also writes b-lt-locked.pdf, a
+# locking signature with its /DSS and archive timestamp appended. pyHanko must say
+# of its Signature1: modification=LTA_UPDATES docmdp=ok (measured 2026-10-13):
+#   uv run --with pyhanko testdata/check_signature.py /tmp/tpdf-long-term/b-lt-locked.pdf
+# check_signature.py's summary could not read any file with a document timestamp
+# until that day: it handed the timestamp to the signature validator, which raises.
+#
 # REVOCATION (Phase 6 step 3, increment C1). Nothing here goes online in a gate;
 # two ignored instruments let OpenSSL and pyHanko judge what tpdf judges. First,
 # minted OCSP responses and lists, written with the answer tpdf gives each:

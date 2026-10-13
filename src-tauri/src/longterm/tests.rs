@@ -55,10 +55,24 @@ pub(super) fn sealed(pki: &Pki) -> Sealed {
 
 /// [`sealed`], timestamped by `tsa` rather than the PKI's own authority.
 pub(super) fn sealed_by(pki: &Pki, tsa: &crate::integrity::test_tsa::TestTsa) -> Sealed {
+    sealed_with(pki, tsa, false)
+}
+
+/// [`sealed`], by a signature that locks the document.
+fn sealed_locked(pki: &Pki) -> Sealed {
+    sealed_with(pki, &pki.tsa, true)
+}
+
+fn sealed_with(pki: &Pki, tsa: &crate::integrity::test_tsa::TestTsa, lock: bool) -> Sealed {
     let at = now();
     let original = plain_pdf();
     let key = Soft::p256(pki.signer.seed);
-    let unsigned = crate::sign_prepare::prepare(original.clone(), at, None).expect("prepared");
+    let notes = crate::sign_prepare::Notes {
+        lock,
+        ..Default::default()
+    };
+    let unsigned = crate::sign_prepare::prepare_noted(original.clone(), at, None, None, &notes)
+        .expect("prepared");
     let made = crate::sign_cms::sign(
         original,
         unsigned,
@@ -1197,6 +1211,30 @@ fn a_revision_built_against_other_bytes_is_refused() {
     );
 }
 
+/// A signature that locked the document still takes its long-term data: the
+/// `/DSS` and the archive timestamp are appended after it, and neither is a
+/// change the lock forbids (PDF 32000-2 §12.8.2.2.2). What pyHanko makes of
+/// the same file is the instrument below, and `BUILD.md`.
+#[test]
+fn a_locked_signature_takes_its_long_term_data() {
+    let pki = Pki::start(good());
+    let signed = sealed_locked(&pki);
+    assert_eq!(read(&signed.bytes).lock, 1, "locked before the data");
+    let bytes = extended(&signed).expect("extended");
+    assert!(bytes.len() > signed.bytes.len() && bytes.starts_with(&signed.bytes));
+    let ours = read(&bytes);
+    assert_eq!(ours.lock, 1);
+    assert_eq!(
+        ours.integrity.as_ref().map(|i| i.verdict),
+        Some(crate::integrity::Verdict::Intact)
+    );
+    super::check(Some(&ours)).expect("the long-term data reads back");
+    // And a further signature stays refused, with the data and the archive
+    // timestamp after the lock.
+    let why = crate::sign_prepare::prepare(bytes, now(), None).expect_err("refused");
+    assert!(why.contains("locked"), "{why}");
+}
+
 // ------------------------------------------------------------ an instrument
 
 /// Writes B-LT documents made here, with the roots and what each should read
@@ -1232,6 +1270,12 @@ fn write_b_lt_documents_for_other_readers() {
         let pki = Pki::start(plan);
         let bytes = extended(&sealed(&pki)).expect("extended");
         std::fs::write(dir.join(format!("b-lt-{name}.pdf")), &bytes).expect("written");
+        if name == "ocsp" {
+            // The same, by a signature that locks the document: for
+            // `check_signature.py`, which must say docmdp=ok of it.
+            let locked = extended(&sealed_locked(&pki)).expect("extended");
+            std::fs::write(dir.join("b-lt-locked.pdf"), &locked).expect("written");
+        }
         let (certs, ocsps, crls) = dss(&bytes);
         for (n, der) in certs.iter().enumerate() {
             std::fs::write(dir.join(format!("{name}-cert-{n}.der")), der).expect("written");
@@ -1704,7 +1748,7 @@ fn a_worker_that_dies_while_extending_is_tpdfs_failure() {
 fn the_command_lines_read_back_asks_what_the_check_before_writing_asks() {
     let read_back_holds = |found: &[crate::docinfo::Signature], field: &str, stamped, data| {
         let ours = found.iter().find(|s| s.signed && s.field == field);
-        crate::commands::sign::read_back(ours, stamped, data)
+        crate::commands::sign::read_back(ours, stamped, data, false)
             == crate::commands::sign::ReadBack::Holds
     };
     let pki = Pki::start(good());

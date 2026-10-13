@@ -43,6 +43,7 @@
         ],
         "sentence": "the certificates and revocation records a signature needs to be checked later, and a timestamp field was added to page 1's annotations (the page's content is unchanged)"
       },
+      "lock": 1,
       "integrity": {
         "verdict": "intact",
         "why": null,
@@ -185,6 +186,7 @@
       "covers_whole_file": true,
       "appended_bytes": 0,
       "appendix": null,
+      "lock": 0,
       "integrity": {
         "verdict": "unchecked",
         "why": "format",

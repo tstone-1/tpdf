@@ -655,7 +655,8 @@ class Tpdf:
         reason: str | None = None, location: str | None = None,
         contact: str | None = None,
         hide: Sequence[str] | None = None,
-        timestamp: str | None = None, long_term: bool = False, force: bool = False,
+        timestamp: str | None = None, long_term: bool = False, lock: bool = False,
+        force: bool = False,
     ) -> reports.SignReport:
         """Sign with an explicitly selected OS-held certificate; no key is exported.
 
@@ -690,6 +691,11 @@ class Tpdf:
         timestamp selects a CLI authority name or URL and explicitly enables its
         network request. long_term requires timestamp and asks certificate
         authorities for revocation evidence. Neither is enabled by default.
+        lock=True writes into the signature that nothing may change after it:
+        a program that checks signatures then reports a later change, a further
+        signature is refused, and validation data can still be added. A
+        certified document is refused with lock=True. The report's signature
+        carries 'lock': 1 when it read back.
         Encrypted inputs are not supported by signing. The OS may prompt for
         key access; configure the client's timeout for interactive use.
         """
@@ -743,6 +749,8 @@ class Tpdf:
                 args += [flag, value]
         if long_term:
             args.append('--long-term')
+        if lock:
+            args.append('--lock')
         if force:
             args.append('--force')
         return self.run('sign', *args, '--', source).typed

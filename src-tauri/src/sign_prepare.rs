@@ -11,7 +11,8 @@
 //! range covers. `sign_cms.rs` is the other half and recomputes that digest
 //! over the bytes it will actually write before it believes this one.
 //!
-//! The revision is an **approval signature** and nothing else:
+//! The revision is an **approval signature**, which [`Notes::lock`] makes one
+//! that locks the document (see *The lock* below), and nothing else:
 //!
 //! - a signature dictionary, `/SubFilter /ETSI.CAdES.detached`, with the
 //!   signing time in `/M` (PAdES B-B puts it there rather than in a signed
@@ -33,6 +34,29 @@
 //! for a mark, and for the same reason: an earlier signature's difference
 //! analysis reads every rewritten object as a change it must account for.
 //!
+//! ## The lock
+//!
+//! With [`Notes::lock`] the signature says that nothing may change after it.
+//! PDF 32000-2 §12.7.5.5 and §12.8.2.4 give an approval signature two places to
+//! say so, and both are written, as Acrobat's *Lock document after signing*
+//! and pyHanko's `doc_mdp_update_value` write them:
+//!
+//! - the field gains `/Lock << /Type /SigFieldLock /Action /All /P 1 >>`;
+//! - the signature dictionary gains a `/Reference` holding one `/FieldMDP`
+//!   transform over the catalog, whose parameters repeat `/Action /All` and
+//!   `/P 1`.
+//!
+//! `/Action /All` locks every form field and `/P 1` is the DocMDP level *no
+//! changes*, so annotations and page content are covered as well. **No reader
+//! is prevented from writing to the file by this**: what it does is make every
+//! validator that reads the lock report a later change as one the signer did
+//! not permit. Validation data and document timestamps are not changes in that
+//! sense (§12.8.2.2.2), so [`prepare_document_timestamp`] still builds on a
+//! locked document; a further signature is refused, here and by them.
+//!
+//! A certification is a different statement by a different signature, and a
+//! lock is not written into a certified document: see [`build`].
+//!
 //! ## Refused, each with the reason in its message
 //!
 //! - **An encrypted document.** `lopdf` encrypts every string it appends with
@@ -42,6 +66,8 @@
 //!   a question for a writer that can leave that string alone; this one cannot.
 //! - **A certification that permits no changes** (DocMDP `/P 1`). Any further
 //!   revision breaks it, and a second signature is a further revision.
+//! - **A document a signature has locked** against any change, for the same
+//!   reason.
 //! - **A field that asks something of its signer** (`/Lock`, or an `/SV` with
 //!   a constraint marked required), when the signature goes into a field the
 //!   document already has. [`asked_of_the_signer`] says what each asks and why
@@ -100,6 +126,9 @@ const RANGE_TEXT: &[u8] = b"/ByteRange[0 9999999999 9999999999 9999999999]";
 /// Signatures exist (bit 1) and the document is append-only (bit 2).
 const SIG_FLAGS: i64 = 3;
 
+/// The DocMDP level a lock leaves the document at: 1, no changes.
+const LOCKED: i64 = 1;
+
 /// The revision a signature goes into, before anybody has signed it.
 ///
 /// **Crosses the worker boundary**, and like `save::Update` it carries only
@@ -119,6 +148,9 @@ pub struct Unsigned {
     pub digest: Vec<u8>,
     /// The new field's name, for the report after signing.
     pub field: String,
+    /// Whether the revision locks the document ([`Notes::lock`]), so the
+    /// read-back of the written file knows to look for the lock.
+    pub locked: bool,
 }
 
 /// Builds the revision a signature goes into.
@@ -166,6 +198,7 @@ pub fn prepare_visible(
         contact: None,
         document_timestamp: false,
         field: None,
+        lock: false,
     };
     build(original, signed_at, password, Some(visible), &details)
 }
@@ -195,6 +228,9 @@ pub struct Notes {
     /// rectangle on the field's page, and [`Visible::page`] and
     /// [`Visible::rect`] are not read.
     pub field: String,
+    /// Whether the signature locks the document against any later change:
+    /// the module note's *The lock*.
+    pub lock: bool,
 }
 
 /// [`prepare`] or [`prepare_visible`], with what `notes` adds to the
@@ -238,6 +274,7 @@ pub fn prepare_noted(
                 contact,
                 document_timestamp: false,
                 field,
+                lock: notes.lock,
             }
         }
         None => Details {
@@ -246,6 +283,7 @@ pub fn prepare_noted(
             contact,
             document_timestamp: false,
             field,
+            lock: notes.lock,
         },
     };
     build(original, signed_at, password, visible, &details)
@@ -291,6 +329,8 @@ struct Details {
     document_timestamp: bool,
     /// [`Notes::field`], when it names one.
     field: Option<String>,
+    /// [`Notes::lock`].
+    lock: bool,
 }
 
 /// An empty signature field of the document, as [`build`] signs it.
@@ -519,6 +559,27 @@ fn build(
                 .into(),
         );
     }
+    // A signature that locked the document said what a `/P 1` certification
+    // says, and a further signature breaks it the same way. A document
+    // timestamp is not a change in that sense (PDF 32000-2 §12.8.2.2.2), and is
+    // what keeps a locked signature verifiable.
+    if !details.document_timestamp && crate::docinfo::locked(&prev) {
+        return Err(
+            "A signature locked this document with no changes permitted, so a further \
+             signature would break that lock."
+                .into(),
+        );
+    }
+    // A lock in a certified document is two signatures each stating what may
+    // change. No reader has been measured on the pair, so it is not written.
+    if details.lock && certification(&prev) > 0 {
+        return Err(
+            "This document is certified, and its certification already says which \
+             changes are permitted. tpdf does not add a second statement beside it: \
+             sign it without locking."
+                .into(),
+        );
+    }
     // A *visible* signature after any certification: measured with pyHanko,
     // whose difference analysis reads the new widget as a change the
     // certification does not permit (`allow_new_visible_after_certify` is off
@@ -608,7 +669,7 @@ fn build(
     let date = crate::save::pdf_date(at);
     let signature = incremental
         .new_document
-        .add_object(signature_dictionary(&date, details));
+        .add_object(signature_dictionary(&date, details, root));
     let drawn = placed.map(|(_, rect, turns, visible)| {
         let lines = appearance::words(&visible.name, &date, &visible.options);
         let form = appearance::stream(
@@ -634,6 +695,15 @@ fn build(
             .get_dictionary_mut(target.field)
             .map_err(|e| e.to_string())?
             .set("V", Object::Reference(signature));
+        if details.lock {
+            // On the field, which is where a reader looks for it, and not on
+            // a widget written apart from it.
+            incremental
+                .new_document
+                .get_dictionary_mut(target.field)
+                .map_err(|e| e.to_string())?
+                .set("Lock", field_lock());
+        }
         let widget = incremental
             .new_document
             .get_dictionary_mut(target.widget)
@@ -648,6 +718,9 @@ fn build(
         add_to_form(&mut incremental, root, form, None)?;
     } else {
         let mut widget = widget(&field, signature, page);
+        if details.lock {
+            widget.set("Lock", field_lock());
+        }
         if let Some((rect, form)) = drawn {
             widget.set("Rect", appearance::rect_object(rect));
             widget.set("AP", dictionary! { "N" => form });
@@ -681,6 +754,7 @@ fn build(
         range,
         digest,
         field,
+        locked: details.lock && !details.document_timestamp,
     })
 }
 
@@ -852,8 +926,38 @@ fn text_string(text: &str) -> Object {
     Object::String(bytes, StringFormat::Hexadecimal)
 }
 
-/// The signature dictionary with both holes still unfilled.
-fn signature_dictionary(date: &str, details: &Details) -> Dictionary {
+/// What a locking signature's field says: every field locked, and the
+/// document left at DocMDP level 1, *no changes* (PDF 32000-2 §12.7.5.5).
+fn field_lock() -> Dictionary {
+    dictionary! {
+        "Type" => "SigFieldLock",
+        "Action" => "All",
+        "P" => LOCKED,
+    }
+}
+
+/// The same statement inside the signature dictionary, where the signature
+/// covers it: a `/FieldMDP` transform over the catalog (§12.8.2.4).
+///
+/// No `/DigestMethod`: PDF 2.0 deprecates the transform's own digest, and
+/// pyHanko, whose output this was held against, writes none.
+fn lock_reference(root: ObjectId) -> Object {
+    Object::Array(vec![Object::Dictionary(dictionary! {
+        "Type" => "SigRef",
+        "TransformMethod" => "FieldMDP",
+        "TransformParams" => dictionary! {
+            "Type" => "TransformParams",
+            "Action" => "All",
+            "V" => "1.2",
+            "P" => LOCKED,
+        },
+        "Data" => root,
+    })])
+}
+
+/// The signature dictionary with both holes still unfilled. `root` is the
+/// catalog, which a lock's transform names as what it is about.
+fn signature_dictionary(date: &str, details: &Details, root: ObjectId) -> Dictionary {
     let mut sig = Dictionary::new();
     if details.document_timestamp {
         // No `/M`: the time is the token's, and a second, unchecked date
@@ -891,6 +995,9 @@ fn signature_dictionary(date: &str, details: &Details) -> Dictionary {
     }
     if let Some(contact) = &details.contact {
         sig.set("ContactInfo", text_string(contact));
+    }
+    if details.lock && !details.document_timestamp {
+        sig.set("Reference", lock_reference(root));
     }
     sig
 }

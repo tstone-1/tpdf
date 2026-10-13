@@ -70,6 +70,7 @@ function stamped(): Signature {
     appended_bytes: 0,
     appendix: null,
     certification: 0,
+    lock: 0,
     certificate: certificate("tpdf TEST SIGNER - not a real identity"),
     timestamp,
     integrity: intact,

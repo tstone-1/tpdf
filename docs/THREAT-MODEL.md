@@ -1890,7 +1890,9 @@ and JPEG dimension changes are refused. The decoded dimensions must match the
 header. These limits bound image dimensions, not all native decoder allocations;
 this input remains outside the PDF worker boundary described in T8.
 The dialog always states that the image supplies no identity or certificate-based
-verification, and the command is named "Place signature image".
+verification. The command is named "Place a signature picture, without a certificate…" since
+2026-10-13, and the toolbar's button for it became *Sign*, the certificate signing: beside
+*Sign document…* the old name "Place signature image" read as a way of signing.
 
 Before IPC, signatures are reduced to at most 131,072 RGBA pixels. Rust validates
 dimensions, exact byte length and nonzero opacity, and bounds retained signature
@@ -3440,9 +3442,19 @@ signature as an unsigned attribute (`tsa.rs`, `sign_cms::Made`; `docs/PLAN.md` �
 timestamp when signing*). It is the application's **second network authority** beside the
 updater (§T9), and the first that sends anything derived from a document.
 
-**When a request is made.** Only when the reader asks, for one signing: a server picked in the
-*Sign document* chooser --- none is preselected, and the reader's choice is remembered in the
-webview's `localStorage` as a per-viewer convenience --- or `tpdf sign --timestamp`. One request
+**When a request is made.** Only for a signing the reader starts, to the server the *Sign
+document* chooser shows selected when they press *Sign…*, or to the one `tpdf sign --timestamp`
+names. **Since 2026-10-13 the chooser preselects one authority, Sectigo, for a reader who has
+never chosen**; until then none was preselected, which the owner decided on 2026-09-28 and
+reversed on 2026-10-13, because a reader who signs expects the time to be confirmed by somebody
+other than their own clock. What keeps the request the reader's own: the chooser names the
+selected authority and says what is sent before anything is signed, *No timestamp* is one
+click, and the choice --- *none* included --- is remembered in the webview's `localStorage` as
+a per-viewer convenience and never replaced by the preselection. Storage that cannot be read,
+or holds what tpdf did not write, reads as *none*, so nothing unreadable becomes a request.
+Sectigo is the one of the three asked over HTTPS, which matters more for a server nobody picked
+by hand: over plain HTTP a network in between can answer in the authority's place (below).
+Adding validation data to a document already signed still preselects nothing. One request
 per attempt, made after the OS has signed and before anything is written; another only when the
 reader presses *Try again*. Nothing is asked on launch, on open, on verify, or by a worker. Every
 gate and test is offline: the tests' authority is a fake on 127.0.0.1.

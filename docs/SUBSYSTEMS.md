@@ -46,6 +46,35 @@ earlier ones, which `sign-probe` shows pyHanko agreeing with. Unsaved edits, enc
 documents and DocMDP `/P 1` are refused. `docs/PLAN.md` §9 has the decisions and the
 measurements; `BUILD.md` has `sign-probe` and the keystore tests.
 
+**A signature that locks the document (2026-10-13)** is the same approval signature with one
+statement added, written twice (`sign_prepare.rs`, *The lock*; `Notes::lock`): the field gains
+`/Lock << /Type /SigFieldLock /Action /All /P 1 >>` and the signature dictionary a `/Reference`
+holding one `/FieldMDP` transform over the catalog with `/Action /All` and `/P 1`. That is the
+shape pyHanko writes for its own lock, and `sign-probe --lock` holds tpdf's output against
+pyHanko's reading of it. `docinfo::Signature::lock` is the level a signed field's lock states,
+the stricter of the field's `/P` and the transform's (`docinfo::lock_of`), and it is a
+different field from `certification`: a lock is said by an ordinary signature.
+`docinfo::locked` is level 1 on any signed field, and `sign_prepare::build` then refuses a
+further signature and still builds a document timestamp's revision, so long-term data and the
+archive timestamp go onto a locked signature (`a_locked_signature_takes_its_long_term_data`;
+pyHanko classes that append `LTA_UPDATES`, permitted at level 1). **A lock is not written into
+a certified document**: two signatures would each state what may change, and no reader was
+measured on the pair. The worker's reply says whether the revision locks (`Unsigned::locked`),
+`sign_cms::Made` and `commands::sign::Stage::Sealed` carry it past a timestamp or long-term
+data that did not come, and `commands::sign::read_back` answers `ReadBack::Lock` for a copy
+whose new signature does not read back at level 1. The window ticks the lock until the reader
+unticks it (`signlock.ts`); `tpdf sign` locks only with `--lock`, since a script's output must
+not change under it. Nothing here stops a program from writing to the file: an ordinary save
+of a locked document shows the signed-save warning in its own words (`signedsave.ts`) and
+goes ahead if the reader says so.
+
+**The window's defaults for a signing (2026-10-13)**: visible, a timestamp from the authority
+`signtimestamp.ts` preselects for a reader who has never chosen, and the lock. The toolbar's
+*Sign* button is `file.signDocument`. `edit.addSignature`, the picture with no certificate, is
+named *Place a signature picture, without a certificate…* and is in the menu and the palette
+only; a reader with no certificate is sent to it by name (`signing.ts`,
+`WITHOUT_CERTIFICATE`).
+
 **A timestamp when signing (2026-09-28)** sits between the signature and the write:
 `sign_cms::sign` makes the signature into a `Made` without writing it, `tsa::stamp` asks the
 authority the reader chose (app process only; the worker keeps no network) and checks the token

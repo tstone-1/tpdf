@@ -3454,8 +3454,8 @@
               ? await signSaves.ask(suggested, panel)
               : await panel();
           },
-          sign: (identity, path, placement, timestamp, longTerm, into) =>
-            call("sign_document", { doc, source, identity, path, placement, timestamp, longTerm, field: into }),
+          sign: (identity, path, placement, timestamp, longTerm, into, lock) =>
+            call("sign_document", { doc, source, identity, path, placement, timestamp, longTerm, field: into, lock }),
           // A timestamp or long-term data that did not come: the question, then
           // the signature the backend is holding written or dropped. The OS is
           // not asked again.

@@ -658,6 +658,10 @@ pub fn verdict_briefly(integrity: Option<&Integrity>) -> String {
     }
 }
 
+/// What the sentence after signing adds for a signature that locked the
+/// document: `signing.ts`'s `LOCKED`.
+pub const LOCKED: &str = " The signature locks the document: no changes are permitted after it.";
+
 /// The sentence after signing: `signing.ts`'s `afterSigning(signed)`.
 ///
 /// `name` is the written file's base name; `signatures` is every signed field
@@ -671,10 +675,15 @@ pub fn verdict_briefly(integrity: Option<&Integrity>) -> String {
 /// token from another authority than the one asked can arrive and check out,
 /// and it must not read like the one the reader chose (`docs/THREAT-MODEL.md`
 /// §T10).
+///
+/// `locked` is whether the new signature read back as locking the document
+/// with no changes permitted (`docinfo::Signature::lock` of 1). Said right
+/// after the verdict and only beside an intact one, like the timestamp.
 #[must_use]
 pub fn after_signing(
     name: &str,
     field: &str,
+    locked: bool,
     signatures: &[(String, bool, Option<Integrity>)],
     timestamp: Option<(&str, Option<&str>)>,
     archives: &[(String, Option<Integrity>)],
@@ -714,6 +723,9 @@ pub fn after_signing(
              intact."
         )
     };
+    if locked && !unchecked {
+        text.push_str(LOCKED);
+    }
     // The timestamp's row is said of a signature read back intact: for one
     // not checked again there is no reading of it to report.
     if let Some((timestamp, authority)) = timestamp.filter(|_| !unchecked) {

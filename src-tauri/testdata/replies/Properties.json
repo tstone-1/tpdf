@@ -58,6 +58,7 @@
         "unread": false
       },
       "certification": 1,
+      "lock": 1,
       "certificate": {
         "subject": "CN=A. Signer,O=Example",
         "subject_cn": "A. Signer",

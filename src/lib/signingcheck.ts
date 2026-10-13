@@ -35,7 +35,8 @@ import { call } from "./ipc";
 import { basename } from "./paths";
 import { closing, keyRequests, parseSignPhase, readBack, type ShownSection } from "./signphase";
 import { CHOICE_KEY, LONG_TERM_KEY } from "./signtimestamp";
-import { NOT_WRITTEN, signedName } from "./signing";
+import { LOCKED, NOT_WRITTEN, signedName } from "./signing";
+import { LOCK_KEY } from "./signlock";
 
 /** How long the viewer may take to settle after an open. */
 const SETTLE_MS = 20_000;
@@ -57,7 +58,7 @@ export async function signingCheck(host: OpenCheckHost, expected: string, report
 
   // The remembered choices, kept and cleared, so "nothing is preselected" is
   // about a reader who has never chosen rather than about the last run.
-  const kept = [CHOICE_KEY, LONG_TERM_KEY].map((key) => [key, localStorage.getItem(key)] as const);
+  const kept = [CHOICE_KEY, LONG_TERM_KEY, LOCK_KEY].map((key) => [key, localStorage.getItem(key)] as const);
   for (const [key] of kept) localStorage.removeItem(key);
   try {
     await steps(host, report, fixture, identity, at);
@@ -129,7 +130,11 @@ async function steps(
     }
   };
 
-  /** The identity and *Invisible* in the chooser, the way a reader picks them. */
+  /**
+   * The identity and *Invisible* in the chooser, the way a reader picks them.
+   * *Visible* is what the chooser opens on since 2026-10-13; this phase signs
+   * without an appearance, so nothing has to be dragged on a page.
+   */
   const pickIdentity = (label: string) => {
     const offered = [...(chooser()?.querySelectorAll<HTMLInputElement>('input[name="sign-identity"]') ?? [])];
     const mine = offered.find((r) => r.value === identity);
@@ -137,9 +142,13 @@ async function steps(
       offered.map((r) => r.parentElement?.textContent?.trim().slice(0, 60)).join("; ") || "none offered");
     if (!mine) throw new Error(`the identity ${identity} is not in the chooser`);
     mine.click();
+    const visible = inChooser<HTMLInputElement>('input[name="sign-appearance"][value="visible"]');
     const invisible = inChooser<HTMLInputElement>('input[name="sign-appearance"][value="invisible"]');
-    report.check(`${label}: Invisible is the appearance chosen`, invisible?.checked === true, String(invisible?.checked));
+    report.check(`${label}: Visible is the appearance the chooser opens on`,
+      visible?.checked === true && invisible?.checked === false,
+      `visible=${visible?.checked} invisible=${invisible?.checked}`);
     invisible?.click();
+    report.check(`${label}: Invisible is the appearance chosen`, invisible?.checked === true, String(invisible?.checked));
   };
 
   /**
@@ -167,9 +176,11 @@ async function steps(
   await openChooser();
   pickIdentity("first signing");
 
-  // ---- 2. Nothing preselected; DigiCert; no long-term data; saved.
-  report.check("no timestamp authority is preselected",
-    JSON.stringify(checkedStamps()) === JSON.stringify(["none"]), checkedStamps().join(","));
+  // ---- 2. Sectigo preselected for a reader who never chose; no long-term
+  //         data; the lock ticked; saved.
+  report.check("Sectigo is preselected for a reader who has never chosen",
+    JSON.stringify(checkedStamps()) === JSON.stringify(["sectigo"]), checkedStamps().join(","));
+  stamp("none")?.click();
   report.check("long-term data cannot be ticked without a timestamp",
     longTerm()?.disabled === true && longTerm()?.checked === false,
     `disabled=${longTerm()?.disabled} checked=${longTerm()?.checked}`);
@@ -177,6 +188,9 @@ async function steps(
   report.check("choosing an authority enables long-term data, unticked",
     longTerm()?.disabled === false && longTerm()?.checked === false,
     `disabled=${longTerm()?.disabled} checked=${longTerm()?.checked}`);
+  const lock = inChooser<HTMLInputElement>('input[name="sign-lock"]');
+  report.check("locking the document is ticked for a reader who has never chosen",
+    lock?.checked === true, String(lock?.checked));
   const before1 = sign(at("digicert.pdf"));
   const first = await settle(() => shown() !== before1 && shown() !== "", SIGN_MS);
   await pause(200);
@@ -186,6 +200,8 @@ async function steps(
   report.check("the save panel suggests <name>-signed.pdf beside the original",
     suggested === signedName(fixture), `${suggested} for ${basename(fixture)}`);
   verdicts(closing(shown(), "digicert.pdf", "DigiCert"));
+  report.check("the closing sentence says the signature locks the document",
+    shown().includes(LOCKED.trim()), shown().slice(0, 300));
   const r1 = await record();
   verdicts([keyRequests("the first signing asks the OS for the key once", r0.key_requests, r1.key_requests, 1)]);
   report.check("nothing is held after it is written", r1.held === null, String(r1.held));
@@ -206,6 +222,9 @@ async function steps(
   const filled = await settle(() => read().some((s) => s.title.startsWith("Signature")), SIGN_MS);
   report.check("the properties dialog reads the saved copy", filled, (panel()?.textContent ?? "").slice(0, 120));
   verdicts(readBack(read(), "DigiCert"));
+  const lockRow = read().flatMap((section) => section.rows).find((row) => row.name === "Lock");
+  report.check("the properties dialog says the signature locks the document",
+    lockRow?.value === "locked by this signature, no changes permitted", lockRow?.value ?? "no Lock row");
   panel()?.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true }));
   await host.idle();
 

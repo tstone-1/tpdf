@@ -19,7 +19,34 @@ have the binary.)
 
 ## [26.10.18] - Unreleased
 
+### Added
+
+- **A signature can lock the document.** *Lock the document after signing* in the signing
+  dialog, ticked until you untick it, and `tpdf sign --lock`. The signature then states that
+  nothing may change after it: every form field is locked and no change to pages or comments
+  is permitted. Nothing stops another program from writing to the file; a program that checks
+  signatures reads the lock and reports a later change as one the signer did not permit.
+  Long-term validation data and archive timestamps can still be added. A locked document
+  takes no further signature, and tpdf refuses to add one. The written copy is read back for
+  the lock, the properties dialog and `tpdf verify` show it, and saving a locked document
+  warns in its own words. A certified document is not locked: its certification already says
+  what may change.
+
 ### Changed
+
+- **Signing opens on a visible signature, with a timestamp and the lock.** *Sign document…*
+  opened on an invisible signature with no timestamp. It now opens on a visible one, with a
+  timestamp from Sectigo selected for anybody who has never chosen an authority, and with the
+  lock ticked. Each can be changed in the dialog, and a choice of *No timestamp* is remembered.
+  **This changes what leaves the computer by default**: a signing now sends a hash of the new
+  signature to Sectigo unless you choose another authority or none. The dialog names the
+  authority before anything is sent, and the document itself is never sent. `tpdf sign` is
+  unchanged: it draws, stamps and locks only when its flags say so.
+- **The toolbar's signature button signs with a certificate.** It is called *Sign*. It used to
+  place a picture of a signature with no certificate behind it, which looked like signing and
+  protected nothing. That command is still in the Edit menu and the command palette, and is
+  now called *Place a signature picture, without a certificate…*. Somebody with no certificate
+  is told where it is.
 
 - **A redaction that took only one or two characters says why it cannot be verified.**
   The check reads the whole file for what a region took, and a single digit or a comma is

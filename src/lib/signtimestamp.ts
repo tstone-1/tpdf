@@ -7,18 +7,25 @@
  * module rather than markup in `signing.ts`'s chooser so that the rules the
  * owner decided on 2026-09-28 are here with tests:
  *
- * - **Nothing is preselected.** A reader who has never chosen gets no
- *   timestamp, and no request goes anywhere --- a signing that reaches a server
- *   the reader never picked would be the network authority used without being
- *   asked.
+ * - **A signing preselects {@link PRESELECTED}; nothing else preselects
+ *   anything.** Until 2026-10-13 nothing was preselected anywhere, so a reader
+ *   who had never chosen got no timestamp. The owner reversed that for a
+ *   signing on that day: a reader who signs expects the time to be confirmed
+ *   by somebody other than their own clock. The chooser shows the selection
+ *   with the authority's name before anything is signed, says what is sent
+ *   (a hash of the signature, nothing of the document), and *No timestamp* is
+ *   one click. Only a reader who has **never chosen** gets the preselection:
+ *   a remembered *none* stays none, and storage that throws or holds anything
+ *   tpdf did not write still reads as none, so nothing unreadable ever turns
+ *   into a request. Adding validation data to a signed document
+ *   (`validationdata.ts`) keeps the old rule and preselects nothing.
  * - **A short list plus the reader's own URL.** {@link SERVERS} is the list
  *   `tsa::SERVERS` holds, and `signtimestamp.test.ts` compares the two through
  *   `wording.json`. *Other* takes an `http` or `https` address, which Rust
  *   judges again, because the webview is not what decides what is asked.
  * - **The choice is remembered** in `localStorage` under {@link CHOICE_KEY},
  *   the per-viewer store `signappearance.ts` uses, guarded the same way: storage
- *   that throws or holds anything tpdf did not write reads as the default,
- *   which is none.
+ *   that throws or holds anything tpdf did not write reads as none.
  */
 
 /** A timestamp authority on the short list. Mirrors `tsa::Server`. */
@@ -56,9 +63,24 @@ export const CHOICE_KEY = "tpdf.signatureTimestamp";
 /** The longest address remembered or accepted, in characters. */
 export const MAX_URL_CHARS = 2048;
 
-/** No timestamp: what a reader who has never chosen gets. */
+/** No timestamp. */
 export function noStamp(): StampChoice {
   return { server: "none", url: "" };
+}
+
+/**
+ * The authority a signing preselects for a reader who has never chosen. The
+ * module note says why there is one. Sectigo, because of the three it is the
+ * one asked over HTTPS (`docs/PLAN.md` §9 measured the other two as answering
+ * over plain HTTP only): a request nobody picked by hand should be the one a
+ * network in between cannot answer in the authority's place
+ * (`docs/THREAT-MODEL.md` §T10).
+ */
+export const PRESELECTED = "sectigo";
+
+/** What a signing's chooser shows a reader who has never chosen. */
+export function preselectedStamp(): StampChoice {
+  return { server: PRESELECTED, url: "" };
 }
 
 type Store = Pick<Storage, "getItem" | "setItem">;
@@ -75,10 +97,15 @@ function known(server: string): boolean {
  * `key` is where it lives: a signing's by default, and a key of its own for
  * the one other question that names an authority (`validationdata.ts`), so
  * that answering one never changes what the other remembers.
+ *
+ * `never` is what a reader who has never chosen gets --- nothing stored under
+ * `key` at all. None by default; a signing passes {@link preselectedStamp}.
+ * It is not what unreadable storage reads as: that is always none.
  */
 export function readStampChoice(
   storage: () => Store = () => window.localStorage,
   key: string = CHOICE_KEY,
+  never: () => StampChoice = noStamp,
 ): StampChoice {
   let raw: string | null;
   try {
@@ -86,7 +113,7 @@ export function readStampChoice(
   } catch {
     return noStamp();
   }
-  if (raw === null) return noStamp();
+  if (raw === null) return never();
   let value: unknown;
   try {
     value = JSON.parse(raw);

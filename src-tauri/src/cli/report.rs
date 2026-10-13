@@ -528,6 +528,13 @@ pub struct Signature {
     /// than `pages_listing` has entries. Added to schema 1 on 2026-10-05, a
     /// new key.
     pub appendix: Option<AppendixReport>,
+    /// What the signature says may change after it, as the level its lock
+    /// leaves the document at: 0 when it locks nothing, 1 no changes, 2 form
+    /// filling and signing, 3 those and comments. 1 is what `sign --lock`
+    /// writes. What the signature states, not a check: whether anything did
+    /// change after it is `appendix`. A certification is another statement
+    /// and is not reported here. Added to schema 1 on 2026-10-13, a new key.
+    pub lock: u8,
     /// Whether the signature still covers the bytes it was made over.
     pub integrity: IntegrityReport,
     /// Whether the OS trust store vouches for the signer; `null` unless

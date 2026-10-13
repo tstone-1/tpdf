@@ -136,6 +136,8 @@ pub(crate) enum Stage {
         cms: Vec<u8>,
         field: String,
         authority: Option<url::Url>,
+        /// Whether the signature locks the document: `Unsigned::locked`.
+        locked: bool,
     },
 }
 
@@ -350,6 +352,9 @@ pub(crate) enum ReadBack {
     /// Both are intact and the long-term data does not read as it was
     /// checked before writing: what `longterm::check` says of the file.
     LongTerm(crate::longterm::Refusal),
+    /// The new signature is intact and was to lock the document, and the
+    /// file does not read as locked by it with no changes permitted.
+    Lock,
 }
 
 impl ReadBack {
@@ -357,7 +362,7 @@ impl ReadBack {
     /// read back as it should, for the two answers the window's own sentence
     /// (`signing.ts`'s `afterSigning`) does not word: it words a signature
     /// that is missing or not intact, and nothing after that.
-    fn sentence(&self, name: &str, field: &str) -> Option<String> {
+    pub(crate) fn sentence(&self, name: &str, field: &str) -> Option<String> {
         let what = match self {
             // The window words these two from what was read: `afterSigning`.
             ReadBack::Holds | ReadBack::Signature | ReadBack::Unchecked => return None,
@@ -365,6 +370,9 @@ impl ReadBack {
                 "reading it back did not find the timestamp of the new signature {field} intact"
             ),
             ReadBack::LongTerm(why) => why.sentence(),
+            ReadBack::Lock => format!(
+                "reading it back did not find the new signature {field} locking the document"
+            ),
         };
         Some(format!(
             "{name} was written, but {what}. Do not rely on that copy."
@@ -390,6 +398,7 @@ pub(crate) fn read_back(
     ours: Option<&crate::docinfo::Signature>,
     timestamp: bool,
     long_term: bool,
+    lock: bool,
 ) -> ReadBack {
     use crate::integrity::{Verdict, Why};
     let intact =
@@ -410,6 +419,11 @@ pub(crate) fn read_back(
         .is_some_and(|t| intact(t.integrity.as_ref()));
     if timestamp && !stamped {
         return ReadBack::Timestamp;
+    }
+    // Before the long-term data, which is added after the lock and is only
+    // worth having on a signature that says what was asked of it.
+    if lock && ours.lock != 1 {
+        return ReadBack::Lock;
     }
     if long_term {
         if let Err(why) = crate::longterm::check(Some(ours)) {
@@ -453,7 +467,7 @@ pub(crate) fn finish(
     asking: Asking<'_>,
     write: &dyn Fn(&[u8]) -> Result<(), String>,
 ) -> Result<Finished, Stopped> {
-    let (bytes, cms, field, stamped_by) = match stage {
+    let (bytes, cms, field, stamped_by, locked) = match stage {
         Stage::Made(made) => {
             let stamped = match crate::tsa::stamp(&made, authority, |url, value| {
                 (asking.stamp)(url, value)
@@ -467,12 +481,14 @@ pub(crate) fn finish(
                 }
             };
             let field = made.field.clone();
+            let locked = made.locked;
             let cms = stamped.clone();
             (
                 made.seal(stamped).map_err(Stopped::Refused)?,
                 cms,
                 field,
                 authority.cloned(),
+                locked,
             )
         }
         Stage::Sealed {
@@ -480,7 +496,8 @@ pub(crate) fn finish(
             cms,
             field,
             authority,
-        } => (bytes, Some(cms), field, authority),
+            locked,
+        } => (bytes, Some(cms), field, authority, locked),
     };
     let timestamped = cms.is_some();
     // Where the new signature's own revision ends: what a long-term signing
@@ -519,6 +536,7 @@ pub(crate) fn finish(
                             cms,
                             field,
                             authority: stamped_by,
+                            locked,
                         }),
                         why,
                     })
@@ -541,7 +559,12 @@ pub(crate) fn finish(
             ))
         })?;
     let ours = sign_cms::ours(&signatures, &field, (bytes.len() - sealed) as u64);
-    let read_back = read_back(ours.map(|at| &signatures[at]), timestamped, long_term);
+    let read_back = read_back(
+        ours.map(|at| &signatures[at]),
+        timestamped,
+        long_term,
+        locked,
+    );
     Ok(Finished {
         field,
         signatures,
@@ -747,6 +770,7 @@ pub async fn sign_document(
     timestamp: Option<String>,
     long_term: Option<bool>,
     field: Option<String>,
+    lock: Option<bool>,
 ) -> Result<Signing, String> {
     let authority = authority_of(timestamp.as_deref())?;
     let long_term = long_term_of(long_term.unwrap_or(false), authority.as_ref())?;
@@ -786,7 +810,12 @@ pub async fn sign_document(
     // An empty signature field the document has, when the reader chose one:
     // the worker finds it by this name and signs it, and a placement beside
     // it is drawn in the field's rectangle whatever rectangle it names.
-    service.prepare_signature(doc, at, visible, field.unwrap_or_default(), reply);
+    let notes = crate::sign_prepare::Notes {
+        field: field.unwrap_or_default(),
+        lock: lock.unwrap_or(false),
+        ..Default::default()
+    };
+    service.prepare_signature(doc, at, visible, notes, reply);
     let unsigned = await_reply("sign_document", rx).await?;
 
     let checking = outside_of(&app, service.backend());
@@ -1002,6 +1031,7 @@ mod tests {
             cms,
             field,
             authority: url::Url::parse("http://127.0.0.1:9/").ok(),
+            locked: false,
         }
     }
 
@@ -1529,6 +1559,49 @@ mod tests {
             .any(|s| s.ours && s.timestamp.is_some()));
     }
 
+    /// A signing that was to lock the document is held to the lock when the
+    /// file is read back: an intact signature that locks nothing, or at
+    /// another level, is a copy not to rely on, and says so. A signing that
+    /// asked for no lock is not held to one.
+    #[test]
+    fn a_lock_that_does_not_read_back_is_not_a_signing_that_holds() {
+        use crate::integrity::{Integrity, Verdict};
+        let reading = |lock: u8| crate::docinfo::Signature {
+            field: "Signature1".into(),
+            signed: true,
+            lock,
+            integrity: Some(Integrity {
+                verdict: Verdict::Intact,
+                ..Integrity::default()
+            }),
+            ..Default::default()
+        };
+        assert_eq!(
+            read_back(Some(&reading(1)), false, false, true),
+            ReadBack::Holds
+        );
+        for level in [0, 2, 3] {
+            assert_eq!(
+                read_back(Some(&reading(level)), false, false, true),
+                ReadBack::Lock,
+                "level {level}"
+            );
+            assert_eq!(
+                read_back(Some(&reading(level)), false, false, false),
+                ReadBack::Holds,
+                "level {level}, and no lock was asked for"
+            );
+        }
+        let said = ReadBack::Lock
+            .sentence("signed.pdf", "Signature1")
+            .expect("a sentence of its own");
+        assert!(
+            said.contains("did not find the new signature Signature1 locking the document")
+                && said.ends_with("Do not rely on that copy."),
+            "{said}"
+        );
+    }
+
     /// The rule both paths hold the written file to, and what the window is
     /// told for the two answers its own sentence does not word.
     #[test]
@@ -1553,7 +1626,7 @@ mod tests {
         };
         let read = |found: &[Signature], timestamp, long_term| {
             let ours = sign_cms::ours(found, "Signature1", 0);
-            read_back(ours.map(|at| &found[at]), timestamp, long_term)
+            read_back(ours.map(|at| &found[at]), timestamp, long_term, false)
         };
         let bare = [signature(Verdict::Intact, None)];
         let stamped = [signature(Verdict::Intact, Some(Verdict::Intact))];
@@ -1609,7 +1682,7 @@ mod tests {
         );
         // And another field is not ours, whatever it reads as.
         assert_eq!(sign_cms::ours(&stamped, "Signature9", 0), None);
-        assert_eq!(read_back(None, true, false), ReadBack::Signature);
+        assert_eq!(read_back(None, true, false, false), ReadBack::Signature);
 
         // A new signature the read-back had no hashing budget left for: its
         // own answer, which is neither of the two above. Only for that

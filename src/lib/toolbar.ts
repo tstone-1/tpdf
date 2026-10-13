@@ -27,7 +27,11 @@ export const TOOL_ACTIONS: ToolItem[] = [
   { id: "edit.addComment", label: "Comment", icon: "comment" },
   { id: "edit.addTextBox", label: "Text box", icon: "textBox" },
   { id: "edit.editText", label: "Edit text", icon: "editText" },
-  { id: "edit.addSignature", label: "Signature image", icon: "signature" },
+  // Signing with a certificate, which draws the reader's signature image,
+  // timestamps and locks. Until 2026-10-13 this button placed a picture with
+  // no certificate behind it (`edit.addSignature`, still in the menu and the
+  // palette under a name that says so).
+  { id: "file.signDocument", label: "Sign", icon: "signature" },
 ];
 
 export const TOOL_GROUPS: ToolGroup[] = [

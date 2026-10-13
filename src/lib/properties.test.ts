@@ -3,6 +3,7 @@ import { describe, expect, it, vi } from "vitest";
 import {
   certificateRows,
   certificationOf,
+  lockOf,
   conformanceRows,
   appendixRow,
   countedSignatures,
@@ -63,6 +64,7 @@ function signed(): Signature {
     appended_bytes: 0,
     appendix: null,
     certification: 0,
+    lock: 0,
     certificate: null,
     timestamp: null,
     integrity: { verdict: "intact", why: null, digest: "SHA-256", method: "RSA" },
@@ -1244,11 +1246,41 @@ describe("a certificate that could not be read", () => {
 });
 
 
+describe("a signature's lock", () => {
+  it("is worded by level, on certificationOf's terms, and is a row of its own", () => {
+    expect(lockOf(0)).toBe("");
+    expect(lockOf(1)).toBe("locked by this signature, no changes permitted");
+    expect(lockOf(2)).toBe("locked by this signature, form filling and signing permitted");
+    expect(lockOf(3)).toBe("locked by this signature, form filling, signing and comments permitted");
+    expect(lockOf(4)).toBe("");
+  });
+
+  it("is listed under the certification, and not at all for a signature that locks nothing", () => {
+    const names = (lock: number) => signatureRows({ ...signed(), lock }, 1024).map((row) => row.name);
+    expect(signatureRows({ ...signed(), lock: 1 }, 1024)).toContainEqual({
+      name: "Lock",
+      value: "locked by this signature, no changes permitted",
+    });
+    expect(names(0)).not.toContain("Lock");
+    // A lock is not a certification, and is not listed as one.
+    expect(names(1)).not.toContain("Certification");
+  });
+});
+
 import { signatureSaveMessage, confirmSignatureSave, SaveCancelled } from "./signedsave";
 describe("digital signature save consent", () => {
   it("warns for signed documents and every certification permission, including allowed form filling", () => {
-    for (const certification of [0,1,2,3]) {
+    for (const certification of [0,2,3]) {
       expect(signatureSaveMessage({...blank(),signatures:[{...signed(),certification}]})).toContain("Saving can invalidate");
+    }
+    // A signature that permits no change, by certifying or by locking, is said in its own words.
+    for (const no of [{certification:1},{lock:1}]) {
+      const said = signatureSaveMessage({...blank(),signatures:[{...signed(),...no}]});
+      expect(said).toContain("says that nothing may change after it");
+      expect(said).toContain("Keep the original signed file. Continue saving?");
+    }
+    for (const lock of [2,3]) {
+      expect(signatureSaveMessage({...blank(),signatures:[{...signed(),lock}]})).toContain("Saving can invalidate");
     }
     expect(signatureSaveMessage({...blank(),signatures:[{...signed(),signed:false,certification:2}]})).not.toBeNull();
     expect(signatureSaveMessage({...blank(),signatures:[{...signed(),signed:false}]})).toBeNull();

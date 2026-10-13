@@ -277,6 +277,7 @@ fn main() {
         visible.as_ref(),
         timestamp.as_ref(),
         long_term,
+        args.iter().any(|a| a == "--lock"),
     ) {
         Ok(true) => {}
         Ok(false) => std::process::exit(1),
@@ -1013,6 +1014,7 @@ fn probe(
     visible: Option<&Visible>,
     timestamp: Option<&url::Url>,
     long_term: bool,
+    lock: bool,
 ) -> Result<bool, String> {
     std::fs::create_dir_all(scratch).map_err(|e| e.to_string())?;
     let mut report = Report {
@@ -1032,6 +1034,16 @@ fn probe(
         .map_or(0, |d| d.as_secs());
 
     let unsigned = match visible {
+        _ if lock => sign_prepare::prepare_noted(
+            original.clone(),
+            now,
+            None,
+            visible,
+            &sign_prepare::Notes {
+                lock: true,
+                ..Default::default()
+            },
+        )?,
         None => sign_prepare::prepare(original.clone(), now, None)?,
         Some(visible) => sign_prepare::prepare_visible(original.clone(), now, None, visible)?,
     };
@@ -1369,8 +1381,114 @@ fn probe(
         }
     }
 
+    // ------------------------------------------------------------- the lock
+    if lock {
+        // The same document signed without the lock, for the control: what a
+        // later signature reads as when nothing forbids it.
+        let plain = sign_cms::finish(
+            original.clone(),
+            sign_prepare::prepare(original.clone(), now, None)?,
+            now,
+            &certificate,
+            &[],
+            &key,
+        )?;
+        let plain_path = scratch.join(format!("{stem}-unlocked.pdf"));
+        std::fs::write(&plain_path, &plain).map_err(|e| e.to_string())?;
+        if let Err(why) = lock_half(&mut report, &out, &written, &plain_path, &field, scratch) {
+            report.check("the lock's readers ran", false, &why);
+        }
+    }
+
     println!("\n{} passed, {} failed", report.passed, report.failed);
     Ok(report.failed == 0 && report.passed > 0)
+}
+
+/// `--lock`: is the document locked to a reader that did not write the lock?
+///
+/// Three readings of the written file, and one change made to it:
+///
+/// - tpdf reads the new signature as locking at level 1, and no earlier one;
+/// - pyHanko reads the same level (`check_signature.py`'s `permits`);
+/// - tpdf refuses a further signature, and still builds a document
+///   timestamp's revision, which is what long-term data needs;
+/// - **the change**: `testdata/sign_again.py` has pyHanko's own writer add a
+///   second signature. pyHanko then calls the locked signature's difference
+///   analysis violated --- and, on the same document signed without the lock,
+///   satisfied. The second half is the control: a change that reads as
+///   violated after any signature would turn the first half green by itself.
+fn lock_half(
+    report: &mut Report,
+    out: &Path,
+    written: &[u8],
+    plain: &Path,
+    field: &str,
+    scratch: &Path,
+) -> Result<(), String> {
+    let read = tpdf_lib::docinfo::scan(written, 1, None)?.signatures;
+    let levels: Vec<(&str, u8)> = read
+        .iter()
+        .filter(|s| s.signed)
+        .map(|s| (s.field.as_str(), s.lock))
+        .collect();
+    report.check(
+        "tpdf: the new signature locks the document at level 1, and only it",
+        levels
+            .iter()
+            .all(|(name, level)| *level == u8::from(*name == field))
+            && levels.iter().any(|(name, _)| *name == field),
+        &format!("{levels:?}"),
+    );
+    let theirs = pyhanko(out)?;
+    let permits = |found: &[serde_json::Value], name: &str| {
+        found
+            .iter()
+            .find(|v| v.get("field").and_then(|f| f.as_str()) == Some(name))
+            .and_then(|v| v.get("permits"))
+            .cloned()
+    };
+    report.check(
+        "pyHanko: the new signature permits no changes (level 1)",
+        permits(&theirs, field) == Some(1.into()),
+        &format!("{:?}", permits(&theirs, field)),
+    );
+    let again = sign_prepare::prepare(written.to_vec(), 0, None);
+    report.check(
+        "tpdf refuses to sign the locked document again, and says why",
+        again.as_ref().is_err_and(|why| why.contains("locked")),
+        &format!("{:?}", again.map(|u| u.field)),
+    );
+    let archive = sign_prepare::prepare_document_timestamp(written.to_vec(), None);
+    report.check(
+        "tpdf still builds a document timestamp's revision on it",
+        archive.is_ok(),
+        &format!("{:?}", archive.err()),
+    );
+
+    let script = Path::new(env!("CARGO_MANIFEST_DIR")).join("../testdata/sign_again.py");
+    let judged = |from: &Path, to: &str| -> Result<String, String> {
+        let to = scratch.join(to);
+        run(python().arg(&script).arg(from).arg(&to))?;
+        let summary = pyhanko_summary(&to);
+        summary
+            .lines()
+            .find(|l| l.starts_with(&format!("{field} ")))
+            .map(str::to_string)
+            .ok_or(format!("no line for {field} in:\n{summary}"))
+    };
+    let locked = judged(out, "locked-signed-again.pdf")?;
+    report.check(
+        "pyHanko: a second signature violates the locked one (docmdp=VIOLATED)",
+        locked.contains("intact=yes") && locked.contains("docmdp=VIOLATED"),
+        &locked,
+    );
+    let unlocked = judged(plain, "unlocked-signed-again.pdf")?;
+    report.check(
+        "control: the same second signature after an unlocked one is permitted (docmdp=ok)",
+        unlocked.contains("intact=yes") && unlocked.contains("docmdp=ok"),
+        &unlocked,
+    );
+    Ok(())
 }
 
 /// Minutes between two `YYYY-MM-DD HH:MM:SS UTC` times on the same day.

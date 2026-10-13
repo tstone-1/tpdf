@@ -1733,6 +1733,114 @@
           }
         ]
       }
+    },
+    {
+      "sentence": "Signed as Signature1 and saved to signed-locked-0.pdf. Read back after writing, the signature is intact. The signature locks the document: no changes are permitted after it.",
+      "signed": {
+        "field": "Signature1",
+        "path": "/tmp/signed-locked-0.pdf",
+        "signatures": [
+          {
+            "field": "Signature1",
+            "integrity": {
+              "digest": "SHA-256",
+              "method": "RSA",
+              "verdict": "intact",
+              "why": null
+            },
+            "lock": 1,
+            "ours": true,
+            "timestamp": null
+          }
+        ]
+      }
+    },
+    {
+      "sentence": "Signed as Signature2 and saved to signed-locked-1.pdf. Read back after writing, the signature is intact. The signature locks the document: no changes are permitted after it. Earlier signature: Signature1 intact.",
+      "signed": {
+        "field": "Signature2",
+        "path": "/tmp/signed-locked-1.pdf",
+        "signatures": [
+          {
+            "field": "Signature1",
+            "integrity": {
+              "digest": "SHA-256",
+              "method": "RSA",
+              "verdict": "intact",
+              "why": null
+            },
+            "lock": 0,
+            "ours": false,
+            "timestamp": null
+          },
+          {
+            "field": "Signature2",
+            "integrity": {
+              "digest": "SHA-256",
+              "method": "RSA",
+              "verdict": "intact",
+              "why": null
+            },
+            "lock": 1,
+            "ours": true,
+            "timestamp": null
+          }
+        ]
+      }
+    },
+    {
+      "sentence": "signed-locked-2.pdf was written. The new signature Signature2 was intact when tpdf checked it before writing; reading the file back did not check it again, because the document's signatures together cover more data than tpdf checks at once. Earlier signature: Signature1 intact.",
+      "signed": {
+        "field": "Signature2",
+        "path": "/tmp/signed-locked-2.pdf",
+        "signatures": [
+          {
+            "field": "Signature1",
+            "integrity": {
+              "digest": "SHA-256",
+              "method": "RSA",
+              "verdict": "intact",
+              "why": null
+            },
+            "lock": 0,
+            "ours": false,
+            "timestamp": null
+          },
+          {
+            "field": "Signature2",
+            "integrity": {
+              "digest": "",
+              "method": "",
+              "verdict": "unchecked",
+              "why": "budget"
+            },
+            "lock": 1,
+            "ours": true,
+            "timestamp": null
+          }
+        ]
+      }
+    },
+    {
+      "sentence": "Signed as Signature1 and saved to signed-locked-3.pdf. Read back after writing, the signature is intact.",
+      "signed": {
+        "field": "Signature1",
+        "path": "/tmp/signed-locked-3.pdf",
+        "signatures": [
+          {
+            "field": "Signature1",
+            "integrity": {
+              "digest": "SHA-256",
+              "method": "RSA",
+              "verdict": "intact",
+              "why": null
+            },
+            "lock": 2,
+            "ours": true,
+            "timestamp": null
+          }
+        ]
+      }
     }
   ],
   "appended": [

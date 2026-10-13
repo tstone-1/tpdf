@@ -14,7 +14,8 @@
         "ours": false,
         "timestamp": null,
         "revocation": null,
-        "archive": false
+        "archive": false,
+        "lock": 0
       },
       {
         "field": "Signature2",
@@ -128,7 +129,8 @@
           "moment": "2026-01-02 03:04:06 UTC",
           "after_moment": true
         },
-        "archive": false
+        "archive": false,
+        "lock": 1
       },
       {
         "field": "Signature3",
@@ -136,7 +138,8 @@
         "ours": false,
         "timestamp": null,
         "revocation": null,
-        "archive": true
+        "archive": true,
+        "lock": 0
       }
     ]
   },
