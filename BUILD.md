@@ -313,6 +313,14 @@ changed the toolbar or a menu. 2026-10-02 on Windows 11 it found what the macOS 
 could not: a scrolling menu's scrollbar takes room there, an item wrapped, and its second
 line was printed over the next item.
 
+The session has to have a screen as well as a logged-in user. A session left by Remote
+Desktop is logged in and *disconnected*, and a picture taken in it fails with *The handle is
+invalid* before the application is started. `quser` shows the state. `tscon <id>
+/dest:console`, run with administrator rights, attaches the session to the machine's own
+screen, unlocked; lock it again afterwards. 2026-10-13: 45 of 45 checks and 20 pictures that
+way, and the first of them showed the header's menu, which no Mac draws, with every item
+centred.
+
 `--dark --out <folder>` takes the same pictures with the window in its dark appearance,
 without changing the system setting: the script sets `TPDF_THEME`, which the application
 reads at start. Run it after a change to a colour, and look at the pictures; they are not

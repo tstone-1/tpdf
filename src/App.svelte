@@ -6283,7 +6283,11 @@
     border-radius: 6px;
     box-shadow: 0 5px 20px #0002;
   }
-  .zoom-options button { text-align: left; }
+  /* `justify-content`, because a button here is a flex box that centres what
+     it holds, and `text-align` moves nothing inside one. The zoom menu's six
+     short items hid that; the header's menu on Windows, seen in a picture on
+     2026-10-13, had every item in the middle of a wide panel. */
+  .zoom-options button { text-align: left; justify-content: flex-start; }
   .window-options { max-height: min(75vh, 560px); overflow-y: auto; scrollbar-width: thin; width: max-content; max-width: min(340px, calc(100vw - 24px)); }
   .window-options button { white-space: normal; }
   .menu-heading { font-size: 12px; margin: 6px 9px 3px; opacity: .7; }
