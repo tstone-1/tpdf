@@ -269,6 +269,12 @@ async function moreStates(
     // The message on screen is the point; the rejection is not.
   }
   await pause(400);
+  // Read from the window, because that is the only place it can be read. The
+  // wording was first applied where most messages are set, a text test of
+  // that line passed, and the picture still showed `(os error 2)`.
+  const problem = document.querySelector('[data-testid="problem"] p.error')?.textContent ?? "";
+  report.check("a failed open is said without the operating system's number",
+    problem.startsWith("Could not open") && !problem.includes("os error"), problem.slice(0, 80));
   await shot("more-problem");
 }
 

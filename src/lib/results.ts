@@ -271,7 +271,7 @@ export class Results {
     // harness and the fake DOM in `testdom.ts` can both see. The concatenation
     // is the snippet and nothing here computes an offset into it --- see the
     // note on `Match` in `search.rs` about why that matters.
-    text.append(span(match.before), strong(match.hit), span(match.after));
+    text.append(span(leadOf(match.before)), strong(match.hit), span(match.after));
 
     row.append(page, text);
     // `pointerdown`, not `click`: the find field usually has focus, and a click
@@ -284,6 +284,31 @@ export class Results {
     this.rows.push(row);
     return row;
   }
+}
+
+/** The most of `before` a row shows, in characters. */
+const LEAD = 20;
+
+/**
+ * The end of `before` that a row shows: a few whole words.
+ *
+ * The backend sends forty characters before a hit, which suits a wide list and
+ * the command line. The sidebar is narrower than that. Measured on 2026-10-13
+ * at its default width, a row showed "e highest water was 4.82 m at t..." and
+ * was cut off before the hit, so a list of search results showed no result.
+ * The row is cut at its end by the stylesheet, so what has to be short is its
+ * start.
+ *
+ * Whole words, because the backend's forty begin wherever they begin: "e
+ * highest" was the end of "the". A lead that fits is returned as it is, since
+ * its start is then the start of what the backend had and not a cut.
+ */
+export function leadOf(before: string): string {
+  if (before.length <= LEAD) return before;
+  const tail = before.slice(-LEAD);
+  // From after the first space. A tail with none is the end of one long word,
+  // and `search` answers -1 for it, which keeps all of it.
+  return tail.slice(tail.search(/\s/) + 1);
 }
 
 /** A plain run of snippet text. */

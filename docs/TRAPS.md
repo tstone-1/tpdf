@@ -398,6 +398,7 @@ hop through the index.
 - Break the code on purpose, or the test suite is decoration
 - There was no check on the overlay at all, and that is why a reader found the underline defect
 - A feature can be inert in the application while three layers of tests pass
+- A test that a line of `App.svelte` exists passed while the window showed the old text
 - A control that is easier than the check certifies nothing
 - A bound enforced against an upper bound on the quantity is enforced against nothing, and the shortfall reads as the engine's fault
 - A count of failures bucketed by a property is not evidence about that property, and the numerator alone reads as a finding
@@ -26482,3 +26483,23 @@ commit under test had changed, which should have been the first probe and not th
 The message now names both causes and says which to suspect when the tree under test
 changed `App.svelte`. The control that separates them is the same check on the commit
 before.
+
+### A test that a line of `App.svelte` exists passed while the window showed the old text
+
+A failure was to be shown without the operating system's number: `plainly` in `recovery.ts`,
+with unit tests, applied in `say`, which is where a message is set to be shown. A fourth
+test held that line of `App.svelte` as text. All green, and the picture taken on a second
+Mac still read `could not open "...": No such file or directory (os error 2)`. A failed open
+sets the message by another road, through the host object the open path is given, and never
+calls `say`.
+
+The text test asserted where the call was written. Nothing asserted what the window shows,
+and that was the claim. It is the same join as *A feature can be inert in the application
+while three layers of tests pass*, reached from the other side: there the module was never
+called, here it was called on one of two roads.
+
+Two things changed. The wording is applied where a message is drawn, so the road does not
+matter. And `screenshotcheck.ts` reads the message out of the window after a failed open, in
+the `--more` run, which is a check that fails when the window is wrong. A text test of
+`App.svelte` is worth having for a line that must not come back, as `toolbar.test.ts` has for
+the first snapshot. It is not evidence that a behaviour reaches the reader.

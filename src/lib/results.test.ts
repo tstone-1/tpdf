@@ -15,7 +15,7 @@ import { beforeEach, describe, expect, it } from "vitest";
 
 import { installFakeDom, type FakeDom, type FakeElement } from "./testdom";
 import { placeholder } from "./panelrow";
-import { MAX_RESULT_ROWS, Results, statusFor } from "./results";
+import { leadOf, MAX_RESULT_ROWS, Results, statusFor } from "./results";
 import type { Match } from "./search";
 
 /** A hit on `page`, spelling its own snippet so a row can be identified. */
@@ -184,6 +184,16 @@ describe("Results", () => {
     expect(row.bold).toBe("cat");
   });
 
+  it("shows a long lead-in from its last whole words, so the hit is in the row", () => {
+    // The forty characters the backend sent for the first row of the picture
+    // taken on 2026-10-13, which filled the sidebar before the hit was reached.
+    const before = "e highest water was 4.82 m at the North ";
+    expect(before.length).toBe(40);
+    panel.update([match(0, "Pier", before, ",")], -1, "pier", false);
+    expect(panel.rowText(0).whole).toBe("m at the North Pier,");
+    expect(panel.rowText(0).bold).toBe("Pier");
+  });
+
   it("reports the index of the row that was pressed", () => {
     panel.update([match(0, "cat"), match(1, "cat"), match(2, "cat")], -1, "cat", false);
     rows()[1]?.dispatch("pointerdown", {});
@@ -271,5 +281,23 @@ describe("Results", () => {
     panel.update(found, -1, "cat", true);
     expect(list?.children.length).toBe(1);
     expect(list?.children[0]?.getAttribute("role")).toBe("option");
+  });
+});
+
+describe("the words a row shows before its hit", () => {
+  it("are all of them when they are few", () => {
+    expect(leadOf("")).toBe("");
+    expect(leadOf("the ")).toBe("the ");
+    // Twenty characters exactly: nothing was cut, so nothing is a partial word.
+    expect(leadOf("was 4.82 m at North ")).toBe("was 4.82 m at North ");
+  });
+
+  it("begin at a word when there are more, and never inside one", () => {
+    expect(leadOf("e highest water was 4.82 m at the North ")).toBe("m at the North ");
+    expect(leadOf("tation Highest Lowest Mean range North ")).toBe("Mean range North ");
+  });
+
+  it("are the end of a word longer than a row has room for", () => {
+    expect(leadOf("Donaudampfschifffahrtsgesellschafts")).toBe("ffahrtsgesellschafts");
   });
 });

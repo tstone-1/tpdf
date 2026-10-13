@@ -99,6 +99,16 @@ describe("toolbar command surface", () => {
     }
   });
 
+  it("draws a line in the Redact menu before what reviews and before what writes", () => {
+    // Marking, reviewing and writing a file are three kinds, and the last of
+    // them holds the one item here that overwrites the document.
+    const group = TOOL_GROUPS.find((group) => group.id === "redact")!;
+    expect(group.items.filter((item) => item.rule).map((item) => item.id))
+      .toEqual(["view.showRedactions", "file.redactRasterCopy"]);
+    const writes = group.items.findIndex((item) => item.id.startsWith("file."));
+    expect(group.items.slice(writes).every((item) => item.id.startsWith("file."))).toBe(true);
+  });
+
   it("words a label with the words of the command's title", () => {
     // A label may be shorter than the title, since its menu says the rest. It
     // may not say something else: "Move page earlier" stood over the command

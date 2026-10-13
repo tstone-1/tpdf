@@ -25,8 +25,18 @@ have the binary.)
   which is a contrast of 3.98:1 on white where 4.5:1 is the least that text should have: the
   shortcut beside each row of the command palette, the page numbers in the four sidebar
   lists, and the two lines under the start page. They are at 0.6 now, 5.74:1.
+- **A search result shows its match.** At the sidebar's default width a row was filled by the
+  forty characters before the match and cut off before reaching it, so the list of results
+  showed none of them. A row now begins a few whole words before the match.
+- **A failure is said without the operating system's number.** A document that was no longer
+  there was reported as `could not open "...": No such file or directory (os error 2)`. The
+  number is gone and the sentence begins with a capital.
+- **The zoom control has a chevron,** as every other menu in the window has. It showed the
+  browser's own marker, a triangle pointing right, which read as a play button.
 
 ### Changed
+
+- **The Redact menu has lines between its kinds:** marking, reviewing, and writing a file.
 
 - **The command palette finds a command by the words other programs use for it.** Typing
   `compress` finds *Save a smaller copy...*, `ocr` finds *Recognise text and save as...*,

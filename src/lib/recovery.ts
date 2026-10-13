@@ -396,3 +396,26 @@ export function afterMerge(merged: {
     "so your edits were applied to the newer version."
   );
 }
+
+/** How a sentence of ours that was written to follow another begins. */
+const OURS = /^(could not|cannot|the|this|no|nothing|a|an) /;
+
+/**
+ * A failure as a reader is shown it.
+ *
+ * Most of what is shown is written for a reader already. What is not is the
+ * tail the operating system puts on a failed call, and the lower case of a
+ * sentence written to follow "error:" on a command line: a document that is
+ * no longer there was reported as `could not open "...": No such file or
+ * directory (os error 2)`. The number is for looking up, and nobody at a
+ * window will.
+ *
+ * It changes how a message looks and never what it is taken for, which is
+ * decided from the failure's flags above and not from its words. The first
+ * letter is raised only for the handful of words our own sentences begin
+ * with: a message may begin with a file's name, and `a.pdf` is not `A.pdf`.
+ */
+export function plainly(message: string): string {
+  const said = message.replace(/ \(os error \d+\)/g, "");
+  return OURS.test(said) ? said[0]!.toUpperCase() + said.slice(1) : said;
+}

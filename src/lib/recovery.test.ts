@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import app from "../App.svelte?raw";
 import { withoutComments } from "./sourcetext";
 import {
+  plainly,
   afterCopy,
   afterMerge,
   afterRedaction,
@@ -391,5 +392,35 @@ describe("reloadAsked", () => {
       dirty: () => false,
     });
     expect(prompt).not.toBeNull();
+  });
+});
+
+describe("a failure as a reader is shown it", () => {
+  it("drops the operating system's number and begins with a capital", () => {
+    expect(plainly('could not open "/a/b.pdf": No such file or directory (os error 2)'))
+      .toBe('Could not open "/a/b.pdf": No such file or directory');
+  });
+
+  it("leaves a sentence written for a reader as it is", () => {
+    const said = "Saved a.pdf. Text was added to 1 of 1 page (40 words).";
+    expect(plainly(said)).toBe(said);
+  });
+
+  it("does not raise the first letter of a file's name", () => {
+    expect(plainly("a.pdf could not be read (os error 5)")).toBe("a.pdf could not be read");
+    expect(plainly("report was not saved")).toBe("report was not saved");
+  });
+
+  it("is what the window shows, wherever the message was set", () => {
+    // Applied where a message is drawn and not where one is set. It was put
+    // in `say` first, and a picture of the window still showed `(os error 2)`:
+    // a failed open sets the message by another road. Held as text, because
+    // no test builds the component.
+    const markup = withoutComments(app);
+    expect(markup.split('<p class="error">{plainly(error)}</p>').length - 1).toBe(1);
+    // Once more as it came, under "Technical details", which is where a
+    // number to look up belongs.
+    expect(markup.split("{error}</p>").length - 1).toBe(1);
+    expect(markup).toContain('<summary>Technical details</summary><p class="error">{error}</p>');
   });
 });

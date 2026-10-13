@@ -89,6 +89,7 @@
     reloadAsked,
     beforeRedactingInPlace,
     type Offer,
+    plainly,
   } from "./lib/recovery";
   import { releaseOrphans } from "./lib/orphans";
   import type { DocumentInfo, PageSize } from "./lib/ipc";
@@ -5829,7 +5830,7 @@
           onclick={() => runToolbarCommand('nav.nextPage')}><span class="icon" use:icon={"next"}></span></button>
       </div>
       <details class="zoom-menu" bind:this={zoomMenu}>
-        <summary title={describeFit(status.fit)}>{percentOf(status.zoom)}%</summary>
+        <summary title={describeFit(status.fit)}>{percentOf(status.zoom)}%<span class="chevron" aria-hidden="true"></span></summary>
         <div class="zoom-options">
           {#each ['view.fitWidth', 'view.fitPage', 'view.actualSize', 'view.zoomIn', 'view.zoomOut', 'view.zoomTo'] as id}
             <button disabled={!toolState[id]?.enabled} onclick={(event) => {
@@ -5845,7 +5846,7 @@
     {#if !isMac()}
       <!-- Windows has no menu bar: this carries what the tool row's menus do not. -->
       <details class="zoom-menu" bind:this={windowMenu}>
-        <summary title="Documents, settings and tpdf">Menu</summary>
+        <summary title="Documents, settings and tpdf">Menu<span class="chevron" aria-hidden="true"></span></summary>
         <div class="zoom-options window-options">
           {#each WINDOW_MENU as section}
             <p class="menu-heading">{section.label}</p>
@@ -5950,7 +5951,7 @@
         <p class="error">Redaction not verified. Create an image-only copy to remove everything inside the marked regions.</p>
         <details><summary>Technical details</summary><p class="error">{error}</p></details>
       {:else}
-        <p class="error">{error}</p>
+        <p class="error">{plainly(error)}</p>
       {/if}
       <!--
         The buttons a message carries, and never more than the message earns:
@@ -6263,6 +6264,12 @@
   .navigation { display: flex; align-items: center; flex: none; }
   .zoom-menu { position: relative; flex: none; }
   summary { cursor: pointer; padding: 0.3rem 0.5rem; border-radius: 5px; }
+  /* A chevron, as the tool row's menus have. The browser's own marker for a
+     collapsible element is a triangle pointing right, which beside a number
+     read as a play button in front of the percentage. */
+  .zoom-menu > summary { list-style: none; display: inline-flex; align-items: center; gap: 4px; }
+  .zoom-menu > summary::-webkit-details-marker { display: none; }
+  .chevron { display: inline-block; width: 5px; height: 5px; border-bottom: 1px solid; border-right: 1px solid; transform: rotate(45deg); margin: 0 2px 3px 2px; }
   .zoom-options {
     position: absolute;
     right: 0;
