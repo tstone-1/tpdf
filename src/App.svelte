@@ -2,6 +2,7 @@
   import { TextEditor } from "./lib/textedit";
   import { FormLayer } from "./lib/forms";
   import { tick } from "svelte";
+  import { message } from "./lib/i18n";
   import {
     DiskWatch,
     onDiskChange,
@@ -3008,7 +3009,7 @@
         const suggested = suggestedName(source);
         const panel = () =>
           saveDialog({
-            title: "Recognise text and save as",
+            title: message("recogniseText").replace(/\.+$/, ""),
             defaultPath: suggested,
             filters: [{ name: "PDF", extensions: ["pdf"] }],
           });
@@ -5795,7 +5796,7 @@
       {#if dirty}<span class="edited">Edited</span>{/if}
       {#if degraded && status}<span class="degraded">{degraded}</span>{/if}
       {#if blockingTask}<span class="notice" data-testid="blocking-task">{blockingTask}</span>
-        {#if recognising}<button data-testid="stop-recognition" title="Stop recognising text"
+        {#if recognising}<button data-testid="stop-recognition" title={message("stopRecognising")}
           onclick={() => void call("ocr_cancel", { run: recognitionRun })}>Stop</button>{/if}
         {#if findingHidden}<button data-testid="stop-hidden-text" title="Stop comparing text with the pages"
           onclick={() => hiddenRuns.stop((run) => void call("hidden_text_cancel", { run }))}>Stop</button>{/if}

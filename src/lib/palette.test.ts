@@ -122,3 +122,40 @@ describe("leaving the palette's argument question", () => {
     expect(events).toEqual(["dismissed"]);
   });
 });
+
+describe("a row found by a keyword", () => {
+  /** Every text the palette has put on screen for `query`, in document order. */
+  function shown(query: string): string[] {
+    const registry = new CommandRegistry();
+    registry.register({
+      id: "file.compress",
+      title: "Save a smaller copy...",
+      keywords: ["compress"],
+      run: () => {},
+    });
+    const palette = new Palette(registry);
+    const body = (globalThis as unknown as { document: { body: FakeElement } }).document.body;
+    const input = body.querySelector("input")!;
+    palette.open();
+    (input as unknown as { value: string }).value = query;
+    input.dispatch("input", {});
+    const texts: string[] = [];
+    const walk = (node: FakeElement): void => {
+      if (node.textContent) texts.push(node.textContent);
+      node.children.forEach(walk);
+    };
+    walk(body);
+    return texts;
+  }
+
+  it("shows the word that found it, since the title cannot", () => {
+    expect(shown("compress")).toContain("compress");
+  });
+
+  it("shows no word when the title is what matched", () => {
+    // The control: the same row, reached by its title, has only the title on it.
+    const texts = shown("copy");
+    expect(texts).toContain("copy");
+    expect(texts).not.toContain("compress");
+  });
+});

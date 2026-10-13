@@ -28,7 +28,9 @@ import { CommandRegistry, fuzzyMatch, rank, type Command } from "./commands";
 function command(
   id: string,
   title: string,
-  extra: { keys?: string; enabled?: () => boolean; run?: () => void } = {},
+  extra: {
+    keys?: string; enabled?: () => boolean; run?: () => void; keywords?: readonly string[];
+  } = {},
 ): Command {
   return { id, title, run: () => {}, ...extra };
 }
@@ -387,3 +389,88 @@ describe("replace", () => {
   });
 });
 
+
+describe("keywords", () => {
+  /*
+   * The three titles are the real ones, and "ocr" is the query that showed the
+   * defect on 2026-10-13: it matched "Document properties" and "New document
+   * from pictures..." by scattered letters and did not match the command that
+   * recognises text at all.
+   */
+  const commands = [
+    command("file.properties", "Document properties"),
+    command("file.recogniseText", "Recognise text and save as...", {
+      keywords: ["ocr", "recognize", "text recognition"],
+    }),
+    command("file.compress", "Save a smaller copy...", { keywords: ["compress"] }),
+  ];
+
+  it("finds a command by a word its title does not have", () => {
+    expect(titles(rank("compress", commands))).toEqual(["Save a smaller copy..."]);
+  });
+
+  it("ranks a keyword above the same letters scattered through a title", () => {
+    expect(titles(rank("ocr", commands))).toEqual([
+      "Recognise text and save as...",
+      "Document properties",
+    ]);
+  });
+
+  it("matches a keyword from its first character only", () => {
+    // `ecognize` is inside the keyword, and a subsequence of it too.
+    expect(titles(rank("ecognize", commands))).toEqual([]);
+    expect(titles(rank("recogniz", commands))).toEqual(["Recognise text and save as..."]);
+  });
+
+  it("folds the query's case, as a title match does", () => {
+    expect(titles(rank("OCR", commands))[0]).toBe("Recognise text and save as...");
+  });
+
+  it("says which keyword matched, and marks nothing in the title", () => {
+    const [hit] = rank("text rec", commands);
+    expect(hit?.keyword).toBe("text recognition");
+    expect(hit?.positions).toEqual([]);
+  });
+
+  it("prefers the title when both match as well, so its letters are marked", () => {
+    // "save" starts the title and the keyword alike.
+    const both = [command("file.saveCopy", "Save a copy...", { keywords: ["save as"] })];
+    const [hit] = rank("save", both);
+    expect(hit?.keyword).toBeUndefined();
+    expect(hit?.positions).toEqual([0, 1, 2, 3]);
+  });
+
+  it("ranks a keyword typed in full above titles that only begin with it", () => {
+    // Six real titles begin "Form fields:", and "form" has to find Fill form.
+    const forms = [
+      command("edit.fieldBorderOn", "Form fields: draw a line round new text fields"),
+      command("edit.fillForm", "Fill form", { keywords: ["form"] }),
+    ];
+    expect(titles(rank("form", forms))[0]).toBe("Fill form");
+    // And not for a part of it: the titles that start with the letters lead.
+    expect(titles(rank("for", forms))[0]).toBe("Form fields: draw a line round new text fields");
+  });
+
+  it("gives a tie to the title", () => {
+    // The one shape that ties: the title's word starts one character in, which
+    // costs it what a keyword gives up. No real title starts that way.
+    const [hit] = rank("save", [command("x", "(Save)", { keywords: ["save as"] })]);
+    expect(hit?.keyword).toBeUndefined();
+  });
+
+  it("takes the keyword typed in full, wherever it stands among the others", () => {
+    // "formula" matches "form" too, and comes first.
+    const forms = [
+      command("edit.fieldBorderOn", "Form fields: draw a line round new text fields"),
+      command("edit.fillForm", "Fill form", { keywords: ["formula", "form"] }),
+    ];
+    const [hit] = rank("form", forms);
+    expect(hit?.command.title).toBe("Fill form");
+    expect(hit?.keyword).toBe("form");
+  });
+
+  it("does not offer a disabled command for its keyword either", () => {
+    const off = [command("file.compress", "Save a smaller copy...", { keywords: ["compress"], enabled: () => false })];
+    expect(rank("compress", off)).toEqual([]);
+  });
+});

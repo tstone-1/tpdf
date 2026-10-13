@@ -1286,7 +1286,7 @@ describe("the page operations", () => {
   it("recognises text through its own command, on any open document", () => {
     const { registry, fired } = harness();
     const command = registry.all().find((entry) => entry.id === "file.recogniseText");
-    expect(command?.title).toBe("Recognise text and save as...");
+    expect(command?.title).toBe("Recognize text and save as...");
     expect(registry.run("file.recogniseText")).toBe(true);
     expect(fired).toEqual(["recogniseText"]);
     const closed = harness(false);
@@ -1334,7 +1334,7 @@ describe("the page operations", () => {
       for (const open of [true, false]) {
         const { registry, fired } = harness(open);
         expect(registry.find("file.recogniseTextLanguage")?.title).toBe(
-          "Recognise text: language...",
+          "Recognize text: language...",
         );
         expect(registry.run("file.recogniseTextLanguage")).toBe(true);
         expect(fired).toEqual(["chooseRecognitionLanguage"]);
@@ -1358,7 +1358,7 @@ describe("the page operations", () => {
     it("shows the language chosen now, and what an answer will do", () => {
       const argument = choice(asking().registry)?.argument;
       expect(argument?.placeholder).toContain("now: German (Germany), de-DE");
-      expect(argument?.preview("en")).toBe("Recognise text as English (United States), en-US");
+      expect(argument?.preview("en")).toBe("Recognize text as English (United States), en-US");
       expect(argument?.preview("automatic")).toBe("Let the recogniser choose the language");
       expect(argument?.problem("en")).toBeNull();
     });

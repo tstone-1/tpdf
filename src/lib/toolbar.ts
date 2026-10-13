@@ -11,6 +11,8 @@ export interface ToolItem {
   swatch?: Swatch;
   /** Drawn beside the label in the tool row. */
   icon?: IconName;
+  /** A line above this item, where a menu's items fall into kinds. */
+  rule?: boolean;
 }
 
 export interface ToolGroup {
@@ -39,11 +41,22 @@ export const TOOL_GROUPS: ToolGroup[] = [
     id: "document",
     label: "Document",
     icon: "document",
+    // The File menu's commands that act on the open document, in its order.
+    // Windows has no menu bar, so for a reader there this is that menu, and
+    // what is not listed is reached through the palette alone. Signing has a
+    // button of its own in the row.
     items: [
-      { id: "file.properties", label: "Document properties" },
-      { id: "file.saveCopy", label: "Save a copy..." },
-      { id: "file.print", label: "Print..." },
       { id: "file.reload", label: "Reload from disk" },
+      { id: "file.saveCopy", label: "Save a copy...", rule: true },
+      { id: "file.recogniseText", label: message("recogniseText") },
+      { id: "file.compress", label: "Save a smaller copy..." },
+      { id: "file.protect", label: "Save a copy with a password..." },
+      { id: "file.unprotect", label: "Save a copy without its password..." },
+      { id: "file.signField", label: "Sign in the signature field...", rule: true },
+      { id: "file.addValidationData", label: "Add long-term validation data..." },
+      { id: "file.print", label: "Print...", rule: true },
+      { id: "file.properties", label: "Document properties", rule: true },
+      { id: "file.findHiddenText", label: "Find text the pages do not show" },
     ],
   },
   {
@@ -62,14 +75,15 @@ export const TOOL_GROUPS: ToolGroup[] = [
     label: "Draw",
     icon: "draw",
     items: [
-      { id: "edit.draw", label: "Freehand drawing" },
-      { id: "edit.drawBox", label: "Rectangle" },
+      { id: "edit.draw", label: "Draw freehand" },
+      { id: "edit.drawBox", label: "Box" },
       { id: "edit.drawEllipse", label: "Ellipse" },
       { id: "edit.stamp.approved", label: "Approved stamp" },
       { id: "edit.stamp.confidential", label: "Confidential stamp" },
       { id: "edit.stamp.draft", label: "Draft stamp" },
       { id: "edit.stamp.final", label: "Final stamp" },
-      { id: "edit.erase", label: "Erase marks" },
+      { id: "edit.addSignature", label: "Signature picture, without a certificate..." },
+      { id: "edit.erase", label: "Erase marks", rule: true },
     ],
   },
   {
@@ -101,14 +115,14 @@ export const TOOL_GROUPS: ToolGroup[] = [
     items: [
       { id: "view.showThumbnails", label: "Page thumbnails" },
       { id: "edit.rotatePageClockwise", label: "Rotate page clockwise" },
-      { id: "edit.rotatePageCounterClockwise", label: "Rotate page counterclockwise" },
+      { id: "edit.rotatePageCounterClockwise", label: message("rotatePageCounter") },
       { id: "edit.cropToDrag", label: "Crop by dragging" },
       { id: "edit.cropToContent", label: "Crop to content" },
       { id: "edit.resetCrop", label: "Reset crop" },
       { id: "edit.insertBlankPage", label: "Insert blank page" },
       { id: "edit.insertPages", label: "Insert pages from file..." },
-      { id: "edit.movePageUp", label: "Move page earlier" },
-      { id: "edit.movePageDown", label: "Move page later" },
+      { id: "edit.movePageUp", label: "Move page up" },
+      { id: "edit.movePageDown", label: "Move page down" },
       { id: "file.extractPages", label: "Extract pages..." },
       { id: "file.splitDocument", label: "Split document..." },
       { id: "file.mergeDocuments", label: "Merge documents..." },
@@ -120,10 +134,10 @@ export const TOOL_GROUPS: ToolGroup[] = [
     label: "Redact",
     icon: "redact",
     items: [
-      { id: "edit.redactRegion", label: "Mark text or regions for removal" },
-      { id: "edit.redactSelection", label: "Mark selected text for removal" },
-      { id: "edit.redactMatches", label: "Mark search matches for removal" },
-      { id: "view.showRedactions", label: "Review marked regions" },
+      { id: "edit.redactRegion", label: "Redact text or regions by dragging" },
+      { id: "edit.redactSelection", label: "Redact selection" },
+      { id: "edit.redactMatches", label: "Redact every search result" },
+      { id: "view.showRedactions", label: "Show redactions" },
       { id: "file.redactRasterCopy", label: "Redact to image-only copy..." },
       { id: "file.redactCopy", label: "Redact and save as..." },
       { id: "file.redactDocument", label: "Redact and save" },

@@ -31,6 +31,7 @@
  */
 
 import type { CommandRegistry } from "./commands";
+import { attachKeywords } from "./keywords";
 import { BINDINGS, copyInterfaceText, inTextField, label, matches, type BoundCommand } from "./keys";
 import {
   describeRange,
@@ -1141,7 +1142,7 @@ export function registerAppCommands(
     },
     {
       id: "view.rotateCounterClockwise",
-      title: "Rotate view anticlockwise",
+      title: message("rotateViewCounter", locale),
       keys: label("view.rotateCounterClockwise"),
       enabled: withDocument,
       run: () => actions.viewer()?.rotateBy(-1),
@@ -1159,7 +1160,7 @@ export function registerAppCommands(
     },
     {
       id: "edit.rotatePageCounterClockwise",
-      title: "Rotate page anticlockwise",
+      title: message("rotatePageCounter", locale),
       keys: label("edit.rotatePageCounterClockwise"),
       enabled: withDocument,
       run: () => actions.rotatePage(-1),
@@ -1420,7 +1421,7 @@ export function registerAppCommands(
       run: () => actions.duplicatePicked(),
     },
     { id: "edit.alignLeft", title: "Arrange: align left", ...arranges("left") },
-    { id: "edit.alignCenter", title: "Arrange: align centre", ...arranges("center") },
+    { id: "edit.alignCenter", title: message("alignCenter", locale), ...arranges("center") },
     { id: "edit.alignRight", title: "Arrange: align right", ...arranges("right") },
     { id: "edit.alignTop", title: "Arrange: align top", ...arranges("top") },
     { id: "edit.alignMiddle", title: "Arrange: align middle", ...arranges("middle") },
@@ -1430,8 +1431,8 @@ export function registerAppCommands(
     { id: "edit.sameWidth", title: "Arrange: same width", ...arranges("sameWidth") },
     { id: "edit.sameHeight", title: "Arrange: same height", ...arranges("sameHeight") },
     { id: "edit.sameSize", title: "Arrange: same size", ...arranges("sameSize") },
-    { id: "edit.centerOnPage", title: "Arrange: centre on the page horizontally", ...arranges("pageCenter") },
-    { id: "edit.middleOnPage", title: "Arrange: centre on the page vertically", ...arranges("pageMiddle") },
+    { id: "edit.centerOnPage", title: message("centerOnPageAcross", locale), ...arranges("pageCenter") },
+    { id: "edit.middleOnPage", title: message("centerOnPageDown", locale), ...arranges("pageMiddle") },
     {
       // Beside the box, and everything the entry above says about arming a mode
       // applies here unchanged. No chord for the same reason: a one-shot mode a
@@ -1961,7 +1962,7 @@ export function registerAppCommands(
       // already have text, which is an answer a reader looking for the command
       // would otherwise have to guess.
       id: "file.recogniseText",
-      title: "Recognise text and save as...",
+      title: message("recogniseText", locale),
       enabled: withDocument,
       run: () => actions.recogniseText(),
     },
@@ -1972,7 +1973,7 @@ export function registerAppCommands(
       // machine's and is fetched first, which is why this is a `run` and the
       // question is the command below --- `edit.insertPages`' shape.
       id: "file.recogniseTextLanguage",
-      title: "Recognise text: language...",
+      title: message("recogniseLanguage", locale),
       run: () => actions.chooseRecognitionLanguage(),
     },
     {
@@ -1981,7 +1982,7 @@ export function registerAppCommands(
       // `dismissed` drops the list: the next question fetches a fresh one, in
       // which a language installed since is present.
       id: "file.recogniseTextLanguage.choice",
-      title: "Language for recognising text",
+      title: message("recogniseLanguageChoice", locale),
       enabled: () => actions.recognitionLanguages() !== null,
       argument: {
         get placeholder() {
@@ -2388,6 +2389,7 @@ export function registerAppCommands(
       run: () => actions.toggleInvert(),
     },
   );
+  attachKeywords(registry);
 }
 
 /** The part of the palette the window shortcuts drive. */

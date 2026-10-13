@@ -180,6 +180,7 @@
 <svelte:window onpointerdown={outside} onkeydowncapture={keyboard} onfocusin={focusMoved} onresize={() => { open = null; rove(); }} />
 
 {#snippet itemButton(item: ToolItem, option = false)}
+  {#if item.rule}<hr />{/if}
   <button
     class:color-item={item.swatch !== undefined}
     aria-pressed={item.swatch ? item.swatch.id === selectedSwatch.id : undefined}
@@ -318,6 +319,7 @@
   .selection.selected { background: CanvasText; }
   .options .popup, .more { left: auto; right: 0; }
   .hint { font-size: 12px; margin: 5px 9px; opacity: .7; }
+  .popup hr { width: auto; align-self: stretch; margin: 4px 6px; border: 0; border-top: 1px solid color-mix(in srgb, CanvasText 18%, Canvas); }
   .swatches { display: flex; gap: 2px; padding: 0 4px 3px; }
   .popup .swatch-button { display: inline-flex; min-height: 28px; padding: 4px; }
   .swatch-button[aria-pressed="true"] { border-color: CanvasText; }

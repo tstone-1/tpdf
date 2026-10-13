@@ -98,7 +98,7 @@ describe("afterRecognition", () => {
       "Saved a.pdf. Text was added to 1 of 1 page (40 words). " +
         "German (Germany), de-DE is not available on this computer, " +
         'so the recogniser chose the language itself. ' +
-        'Choose another with "Recognise text: language...".',
+        'Choose another with "Recognize text: language...".',
     );
   });
 

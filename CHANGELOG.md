@@ -17,6 +17,37 @@ as *downloadable*, while the release sat as a draft that GitHub showed to nobody
 are given now because they are different facts, and only the second one means a reader can
 have the binary.)
 
+## [26.10.19] - Unreleased
+
+### Changed
+
+- **The command palette finds a command by the words other programs use for it.** Typing
+  `compress` finds *Save a smaller copy...*, `ocr` finds *Recognise text and save as...*,
+  `combine` finds *Merge documents...*, `bookmarks` finds *Show outline*, and `encrypt`,
+  `save as`, `strikethrough`, `dark mode` and about 140 more find theirs. The other
+  spelling works too: `recognize`, `colour`, `center`, `counterclockwise`. Until now the
+  palette matched a command's title only, and of 135 such words measured on 2026-10-13
+  about 70 found nothing. A row found this way shows the word beside the title.
+- **Spelling follows the system's language, and the palette finds either.** Command titles
+  with a word that American and British English spell differently are now written in the
+  reader's own: *Recognize text and save as...*, *Arrange: align center* and *Rotate page
+  counterclockwise* under American English, *Recognise*, *centre* and *anticlockwise* under
+  British. Until now only *Color* followed the language and the rest were British for
+  everyone. Typing the other spelling finds the same command. Sentences outside the command
+  titles are still British.
+- **The Document menu in the toolbar carries the File menu's commands for the open document,**
+  in the File menu's order and with lines between the kinds: *Save a smaller copy...*, *Save
+  a copy with a password...* and without one, *Recognize text and save as...*, *Sign in the
+  signature field...*, *Add long-term validation data...* and *Find text the pages do not
+  show* are new there. On Windows, which has no menu bar, these could be reached through the
+  command palette only. *Place a signature picture, without a certificate...* is in the Draw
+  menu, beside the stamps.
+- **A toolbar menu calls a command what the palette calls it.** Six items said something
+  else: *Move page earlier* and *later* are *Move page up* and *down*, and the four in the
+  Redact menu that said *mark for removal* and *review* now say *Redact text or regions by
+  dragging*, *Redact selection*, *Redact every search result* and *Show redactions*. In the
+  Draw menu *Freehand drawing* is *Draw freehand* and *Rectangle* is *Box*.
+
 ## [26.10.18] - 2026-10-13
 
 ### Added

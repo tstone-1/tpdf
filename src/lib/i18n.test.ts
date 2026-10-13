@@ -26,5 +26,22 @@ describe("UI language preferences", () => {
     expect(message("markColor", locale)).toBe(`Mark ${color.toLowerCase()}`);
     expect(registry.find("edit.color.green")?.title).toBe(`${color}: green`);
     expect(registry.find("view.invertPages")?.title).toBe(`Invert page ${color.toLowerCase()}s`);
+    // Every other title with a word the two locales spell differently.
+    const us = locale === "en-US";
+    const titles = [
+      "view.rotateCounterClockwise", "edit.rotatePageCounterClockwise", "edit.alignCenter",
+      "edit.centerOnPage", "edit.middleOnPage", "file.recogniseText",
+      "file.recogniseTextLanguage", "file.recogniseTextLanguage.choice",
+    ].map((id) => registry.find(id)?.title);
+    expect(titles).toEqual([
+      `Rotate view ${us ? "counter" : "anti"}clockwise`,
+      `Rotate page ${us ? "counter" : "anti"}clockwise`,
+      `Arrange: align ${us ? "center" : "centre"}`,
+      `Arrange: ${us ? "center" : "centre"} on the page horizontally`,
+      `Arrange: ${us ? "center" : "centre"} on the page vertically`,
+      `Recogni${us ? "z" : "s"}e text and save as...`,
+      `Recogni${us ? "z" : "s"}e text: language...`,
+      `Language for recogni${us ? "z" : "s"}ing text`,
+    ]);
   });
 });

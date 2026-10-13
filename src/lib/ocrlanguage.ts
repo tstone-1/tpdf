@@ -13,6 +13,8 @@
  * most readers cannot answer.
  */
 
+import { message } from "./i18n";
+
 /** What the machine offers. `Offered` in `commands/ocr.rs`. */
 export interface Offered {
   /** BCP-47 tags, in the engine's own spelling and order. */
@@ -25,7 +27,7 @@ export interface Offered {
 export const AUTOMATIC = "Automatic";
 
 /** Where to go after a language has gone missing. `appcommands.ts` has the title. */
-export const CHOOSE_AGAIN = 'Choose another with "Recognise text: language...".';
+export const CHOOSE_AGAIN = `Choose another with "${message("recogniseLanguage")}".`;
 
 /** Where a Windows reader adds a language. */
 export const INSTALL_MORE =
@@ -127,7 +129,7 @@ export function placeholder(current: string | null): string {
 export function preview(language: string | null): string {
   return language === null
     ? "Let the recogniser choose the language"
-    : `Recognise text as ${label(language)}`;
+    : `${message("recogniseAs")} ${label(language)}`;
 }
 
 /** What is said once the choice is made. */

@@ -15,6 +15,7 @@
 
 import type { OpenCheckHost } from "./opencheck";
 import { pause, settle, type Report } from "./checkreport";
+import { message } from "./i18n";
 import { SAVE_FIRST, suggestedName } from "./recognise";
 
 /** A word `testdata/text-base14.pdf` draws once, which the scan is made from. */
@@ -53,12 +54,12 @@ export async function recogniseCheck(host: OpenCheckHost, expected: string, repo
     if (!(await settle(() => field() !== null && field()!.offsetParent !== null, DIALOG_MS))) {
       throw new Error("the palette did not open");
     }
-    field()!.value = "Recognise text";
+    field()!.value = message("recogniseText").slice(0, 14);
     field()!.dispatchEvent(new InputEvent("input", { bubbles: true }));
     await pause(50);
     const highlighted =
       document.querySelector(".tpdf-palette [role=option][aria-selected=true]")?.textContent ?? "";
-    if (!highlighted.includes("Recognise text and save as")) {
+    if (!highlighted.includes(message("recogniseText").slice(0, 26))) {
       throw new Error(`the palette highlights "${highlighted}"`);
     }
     field()!.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true }));

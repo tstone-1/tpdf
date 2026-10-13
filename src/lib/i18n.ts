@@ -1,4 +1,6 @@
-/** UI wording only. Command ids, saved data and CLI/API reports stay locale-independent.
+/** UI wording only. A command title that is spelled differently in the two
+ * locales comes from here, and `keywords.ts` makes the palette find it under
+ * the other spelling too. Prose outside the catalog is still British. Command ids, saved data and CLI/API reports stay locale-independent.
  * Add complete translated catalogs before advertising another UI language.
  * The webview exposes the user's preferred languages in preference order.
  * Locale is selected at startup; restart after changing the system language.
@@ -10,6 +12,16 @@ const EN_US = {
   markColor: "Mark color",
   invertPageColors: "Invert page colors",
   defaultColorHint: "Default: yellow highlights and comments, red drawing marks",
+  rotateViewCounter: "Rotate view counterclockwise",
+  rotatePageCounter: "Rotate page counterclockwise",
+  alignCenter: "Arrange: align center",
+  centerOnPageAcross: "Arrange: center on the page horizontally",
+  centerOnPageDown: "Arrange: center on the page vertically",
+  recogniseText: "Recognize text and save as...",
+  recogniseLanguage: "Recognize text: language...",
+  recogniseLanguageChoice: "Language for recognizing text",
+  recogniseAs: "Recognize text as",
+  stopRecognising: "Stop recognizing text",
 } as const;
 
 type Message = keyof typeof EN_US;
@@ -20,6 +32,16 @@ const CATALOGS: Record<UiLocale, Record<Message, string>> = {
     color: "Colour",
     markColor: "Mark colour",
     invertPageColors: "Invert page colours",
+    rotateViewCounter: "Rotate view anticlockwise",
+    rotatePageCounter: "Rotate page anticlockwise",
+    alignCenter: "Arrange: align centre",
+    centerOnPageAcross: "Arrange: centre on the page horizontally",
+    centerOnPageDown: "Arrange: centre on the page vertically",
+    recogniseText: "Recognise text and save as...",
+    recogniseLanguage: "Recognise text: language...",
+    recogniseLanguageChoice: "Language for recognising text",
+    recogniseAs: "Recognise text as",
+    stopRecognising: "Stop recognising text",
   },
 };
 

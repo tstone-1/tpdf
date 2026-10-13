@@ -51,6 +51,16 @@ interface CommandBase {
    * command that is simply not offered leaves this out.
    */
   why?: () => string | null;
+  /**
+   * Other words a reader types for this, in lower case.
+   *
+   * The title says what the command does in this application's words, and a
+   * reader arrives with another program's: "compress" for "Save a smaller
+   * copy...", "ocr" for "Recognise text and save as...". Measured on
+   * 2026-10-13, about 70 of 130 such words found nothing. Kept in
+   * `keywords.ts`, in one table, and never displayed unless one matched.
+   */
+  keywords?: readonly string[];
 }
 
 /**
@@ -110,6 +120,13 @@ export interface Ranked {
   score: number;
   /** Indices into `command.title` that the query matched, ascending. */
   positions: number[];
+  /**
+   * The keyword that matched, when the title did not or matched worse.
+   *
+   * The palette shows it beside the title. A row that answers "compress" with
+   * "Save a smaller copy..." and nothing emboldened looks like a wrong answer.
+   */
+  keyword?: string;
 }
 
 /*
@@ -207,6 +224,38 @@ export function fuzzyMatch(
   return { score, positions };
 }
 
+/** What a keyword match gives up, so that a title matching as well wins. */
+const KEYWORD = 1;
+
+/**
+ * The best match of `query` against a command's keywords, or null.
+ *
+ * A keyword matches only from its first character: `comp` finds "compress" and
+ * `ors` does not. The title is matched as a subsequence because a reader
+ * abbreviates what is on the screen; a keyword is never on the screen until it
+ * has matched, so a scattered match on one would put a command in the list
+ * for a reason nobody could see.
+ *
+ * Scored as the same letters at the start of a title would be, less
+ * {@link KEYWORD}. That puts "ocr" on a keyword above "ocr" scattered through
+ * "Document properties", which is the case that has to come out right.
+ */
+function keywordMatch(
+  query: string,
+  keywords: readonly string[] | undefined,
+): { score: number; keyword: string } | null {
+  const needle = query.toLowerCase();
+  let best: { score: number; keyword: string } | null = null;
+  for (const keyword of keywords ?? []) {
+    if (!keyword.startsWith(needle)) continue;
+    const hit = fuzzyMatch(needle, keyword);
+    if (!hit) continue;
+    const score = hit.score - KEYWORD + (keyword === needle ? EXACT : 0);
+    if (!best || score > best.score) best = { score, keyword };
+  }
+  return best;
+}
+
 /**
  * The commands matching `query`, best first.
  *
@@ -237,7 +286,8 @@ export function rank(
   const matched: Ranked[] = [];
   for (const command of enabled) {
     const hit = fuzzyMatch(trimmed, command.title);
-    if (!hit) continue;
+    const word = keywordMatch(trimmed, command.keywords);
+    if (!hit && !word) continue;
     // A recent command wins ties, and only ties: the bonus is smaller than one
     // word-start match, so typing something specific always beats history.
     const recency = recents.indexOf(command.id);
@@ -247,11 +297,18 @@ export function rank(
     // be the one place typing in lower case changed the answer.
     const whole =
       command.title.toLowerCase() === trimmed.toLowerCase() ? EXACT : 0;
-    matched.push({
-      command,
-      score: hit.score + bonus + whole,
-      positions: hit.positions,
-    });
+    const byTitle = hit ? hit.score + whole : null;
+    // The title wins a tie, so its letters are emboldened whenever they can be.
+    if (word && (byTitle === null || word.score > byTitle)) {
+      matched.push({
+        command,
+        score: word.score + bonus,
+        positions: [],
+        keyword: word.keyword,
+      });
+    } else if (hit && byTitle !== null) {
+      matched.push({ command, score: byTitle + bonus, positions: hit.positions });
+    }
   }
 
   // Stable by construction: equal scores keep registration order, which is

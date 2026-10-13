@@ -31,6 +31,7 @@ function harness() {
     formEditing: () => false,
     canOrderTabs: () => false,
     fieldPicked: () => false,
+    signableFields: () => 0,
   } as AppActions;
   const registry = new CommandRegistry();
   registerAppCommands(registry, actions);
@@ -59,6 +60,39 @@ describe("toolbar command surface", () => {
     expect(commands.length).toBe(13);
     const group = TOOL_GROUPS.find((group) => group.id === "form")!;
     expect(group.items.map((item) => item.id)).toEqual(commands);
+  });
+
+  it("lists under Document commands of the File menu, in its order", () => {
+    // On Windows this menu is the File menu. Same order, so that a reader who
+    // knows one finds their way in the other, and so that where a new item
+    // goes is decided once.
+    const menu = MENU_LAYOUT.find((section) => section.title === "File")!.items;
+    const group = TOOL_GROUPS.find((group) => group.id === "document")!;
+    const places = group.items.map((item) => menu.indexOf(item.id));
+    expect(places.length).toBeGreaterThan(8);
+    expect(places.filter((place) => place < 0)).toEqual([]);
+    expect(places).toEqual([...places].sort((a, b) => a - b));
+    // The three that had no route but the palette on Windows, and no route
+    // under the word a reader types for them anywhere.
+    for (const id of ["file.compress", "file.protect", "file.recogniseText"]) {
+      expect(group.items.map((item) => item.id)).toContain(id);
+    }
+  });
+
+  it("words a label with the words of the command's title", () => {
+    // A label may be shorter than the title, since its menu says the rest. It
+    // may not say something else: "Move page earlier" stood over the command
+    // the palette calls "Move page up", and five more like it.
+    const { registry } = harness();
+    const words = (text: string) => text.toLowerCase().split(/[^a-z]+/).filter(Boolean);
+    const groups = TOOL_GROUPS.filter((group) => group.id !== "width");
+    const items = [...TOOL_ACTIONS, ...groups.flatMap((group) => group.items)];
+    expect(items.length).toBeGreaterThan(50);
+    const foreign = items.flatMap((item) => {
+      const title = words(registry.find(item.id)?.title ?? "");
+      return words(item.label).filter((word) => !title.includes(word)).map((word) => `${item.label}: ${word}`);
+    });
+    expect(foreign).toEqual([]);
   });
 
   it("resolves every visible action against the real application registry", () => {

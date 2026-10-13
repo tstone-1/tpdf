@@ -8,6 +8,7 @@ import { describe, expect, it } from "vitest";
 import app from "../App.svelte?raw";
 import { functionIn, missingFrom } from "./sourcetext";
 import commands from "./appcommands.ts?raw";
+import { message } from "./i18n";
 import {
   AUTOMATIC,
   CHOOSE_AGAIN,
@@ -124,7 +125,7 @@ describe("the sentences", () => {
   it("say what is chosen now, and what an answer will do", () => {
     expect(placeholder(null)).toContain("now: Automatic");
     expect(placeholder("de-DE")).toContain("now: German (Germany), de-DE");
-    expect(preview("de-DE")).toBe("Recognise text as German (Germany), de-DE");
+    expect(preview("de-DE")).toBe("Recognize text as German (Germany), de-DE");
     expect(preview(null)).toBe("Let the recogniser choose the language");
     expect(chosen("de-DE")).toBe("Text will be recognised as German (Germany), de-DE.");
     expect(chosen(null)).toBe("Text will be recognised in the language the recogniser chooses.");
@@ -138,9 +139,11 @@ describe("the sentences", () => {
   });
 
   it("name the command by the title it is registered under", () => {
-    const title = /id: "file\.recogniseTextLanguage",\s+title: "([^"]+)"/.exec(commands)?.[1];
-    expect(title).toBeDefined();
-    expect(CHOOSE_AGAIN).toContain(`"${title}"`);
+    // The title is spelled by locale, so both read one catalog entry: the
+    // command by its key, here, and the sentence through `message`.
+    const key = /id: "file\.recogniseTextLanguage",\s+title: message\("([^"]+)", locale\)/.exec(commands)?.[1];
+    expect(key).toBe("recogniseLanguage");
+    expect(CHOOSE_AGAIN).toContain(`"${message("recogniseLanguage")}"`);
   });
 });
 
