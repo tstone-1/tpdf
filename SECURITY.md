@@ -61,9 +61,11 @@ you do not need to have diagnosed it.
   signer. Revocation is checked offline from evidence embedded in the document;
   absent or inconclusive evidence is reported as not checked. A signature trusted
   only through Adobe's list can read as untrusted here.
-- Accepting invalid timestamps or revocation evidence, or making timestamp or
-  revocation requests without the reader's explicit signing options. Verification
-  and opening a document must not contact certificate authorities.
+- Accepting invalid timestamps or revocation evidence, or making a timestamp or
+  revocation request that the signing dialog did not name before the signing, or that
+  no flag of the command asked for. The dialog opens with a timestamp authority
+  selected and says which. Verification and opening a document must not contact
+  certificate authorities.
 - Bypassing CLI/API input preservation, output replacement consent, edit-plan
   bounds or signature-invalidation consent. A failed split can leave the parts
   already published, and a timed-out Python call does not promise rollback;

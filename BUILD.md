@@ -6867,6 +6867,31 @@ read through. **Not run:** the written copy of `tpdf long-term` against a public
 authority (`docs/VERIFICATION.md` has why), the new entry of `mutate_viewer.py` by the
 harness itself, `print-probe` and `redact-reach-probe`.
 
+**26.10.18 verification, 2026-10-13:** all 31 gates passed on the release tree on macOS
+arm64 (3,100 Rust tests with eleven documented ignored, 2,820 frontend tests), the
+`notices` gate after `THIRD-PARTY-NOTICES.md` was regenerated for seven crates that moved
+within their ranges, and `check_windows.py` type-checked the Windows tree.
+`scripts/run_on_windows.py --suite all` passed 3,123 unit tests and 576 command-line
+tests with 4 skipped on the Windows build computer, none of them for `qpdf`, and
+`scripts/run_on_mac.py` passed 11/11 window checks on a second Mac. Every mutation
+selected `--near v26.10.17` ran in the mutation worktree, 81 Rust and 76 frontend, and so
+did all 32 of `mutate_python.py`. One Rust mutation was red in another test than the one
+named for it: the rule for a piece of one or two characters answers for an empty report
+too, so the test of the empty report no longer shows `marked_pages_note` losing its first
+line. The row names the test of one finding not placed, and is red there through the
+harness. The normal bundle, with the development engine hidden: the bundled `tpdf-cli`
+answered `--version` with 26.10.18, verified `testdata/incr-signed.pdf` and read a
+fixture's text, and with `text-heavy.pdf` open in the background two workers mapped the
+bundle's `libpdfium.dylib` and the application process mapped none. The lock itself was
+measured against pyHanko 0.36.2 with `sign-probe --lock` when it was written (the results
+are beside the probe's commands near the top of this file). `SECURITY.md` said a timestamp request needs the
+reader's explicit signing options; the dialog now opens with an authority selected, and
+the sentence says so. `vitest` went to 5.0.4, the one update `npm outdated` listed.
+**Not run:** the signing phase of the window checks, which signs with a real key and is
+never started unattended, so the new dialog was used in a development window by the
+owner and driven by no harness; `menu_check.py` and `save_check.py`; `print-probe` and
+`redact-reach-probe`. Not measured: Acrobat on a locked document.
+
 **26.10.17 publication, 2026-10-11:** `Audit` and CI were green on the release commit
 `8fcfcce8`. `v26.10.17-rc1` was built first (run 38128819644), because the release workflow
 fetches the signing client from a release since this version: its Windows leg logged

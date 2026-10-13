@@ -4245,12 +4245,15 @@ MUTATIONS = [
     ),
     Mutation(
         # Compare against the marked pages without the walk having placed every
-        # finding, which is a claim about an empty or partial set.
+        # finding, which is a claim about a partial set. The test of the empty
+        # report named this until 26.10.18: the rule for pieces too short to
+        # mean anything answers for an empty report too, so only a report with
+        # one finding not placed still shows this line gone.
         "redact: compare against the marked pages without a complete walk",
         "src/redact.rs",
         "    if !report.placed() {\n        return None;\n    }",
         "    if false {\n        return None;\n    }",
-        "a_report_with_no_findings_draws_no_comparison",
+        "a_single_unplaced_finding_silences_the_comparison",
     ),
     Mutation(
         # Report a word still on the marked page as though it were somewhere

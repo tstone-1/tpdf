@@ -509,6 +509,21 @@ jobs:
           workers cannot read arbitrary user files or access the network;
           Windows workers use low integrity and resource-limited jobs.
 
+          **New in 26.10.18.** A signature can lock the document: *Lock
+          the document after signing* in the signing dialog, and `tpdf sign
+          --lock`. The signature then states that nothing may change after
+          it, and a program that checks signatures reports a later change
+          as one the signer did not permit. Long-term validation data can
+          still be added. *Sign document...* now opens on a visible
+          signature, with a timestamp from Sectigo and the lock selected;
+          each can be changed in the dialog. **This changes what leaves
+          the computer by default**: a signing sends a hash of the new
+          signature to Sectigo unless another authority or none is chosen.
+          The document is never sent. The toolbar's signature button is
+          called *Sign* and signs with a certificate; placing a picture of
+          a signature without one is still in the Edit menu, under a name
+          that says so.
+
           **New in 26.10.17.** An amount with a thousands separator, such
           as 4,250.00, that was redacted by search was reported "not
           verified" although it was gone from the file. It is now removed
