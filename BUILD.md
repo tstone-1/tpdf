@@ -6812,7 +6812,7 @@ signature on an uninstaller; the next release run is that.
 **The steps, one line each.** Each line links to its step in the list further down,
 which follows the records of past releases and carries the reasons and the commands.
 
-1. [Fetch, and confirm the branch is not behind](#release-step-1)
+1. [Fetch, confirm the branch is not behind, and take the dependency updates](#release-step-1)
 2. [Bump the four version files](#release-step-2)
 3. [Refresh both lockfiles with `cargo check`](#release-step-3)
 4. [Put the release date in `CHANGELOG.md`](#release-step-4)
@@ -8029,6 +8029,34 @@ starts at 0 and increments within the month.
 1. <a id="release-step-1"></a>`git fetch` and confirm the local branch is not behind — this repo is pushed from more
    than one machine, and a version bump on a stale clone has already cost a re-cut release
    elsewhere in the portfolio.
+
+   **Then take the dependency updates, before anything is verified** (2026-10-13). It is
+   part of this step and has no number of its own, because the steps are named by number
+   in five files and in `release.yml`. Every check after it then runs on the tree that
+   ships; done late, an update invalidates the gate run before it, and the notices file
+   is stale until it is regenerated:
+
+   ```
+   npm outdated; npm update
+   (cd src-tauri && cargo update --verbose)      # the `Unchanged` lines are what is held back
+   git diff --stat -- package-lock.json src-tauri/Cargo.lock    # cargo's own lines are no proof
+   scripts/third_party_notices.py                # when a crate or a package moved
+   ```
+
+   Updates within the ranges are taken. A `0.x` minor of a direct dependency is taken too,
+   by raising its range, and so is a major, unless something named here holds it. For each
+   crate still held back, ask `cargo tree -i <crate>@<version>` what holds it, and take it
+   when the answer has changed. Held on 2026-10-13, 26.10.18:
+
+   - **`der`, `x509-cert`, `ecdsa`, `p256`, `p384`, `sha1`, `signature`, and the second
+     `sha2`** are one set and move together. `cms` 0.2.3 and `rsa` 0.9 need the old set,
+     and the versions of both that take the new one are release candidates (`cms`
+     0.3.0-rc.0, `rsa` 0.10.0-rc.19). Take the set when both are released.
+   - **`base64` 0.23** compiles here. It is held because 0.22 comes with
+     `tauri-plugin-updater` and `wry`, and the note beside it in `Cargo.toml` chose it for
+     adding no package; 0.23 would be a second copy. Take it when Tauri does.
+   - `toml`, `toml_datetime`, `toml_edit`, `brotli-decompressor`, `generic-array` and
+     `rand_chacha` are not named in `Cargo.toml`; what names them pins them.
 2. <a id="release-step-2"></a>Bump **all four** version files so they agree:
    - `package.json`
    - `package-lock.json` (top-level *and* the root package entry — `npm version <v> --no-git-tag-version` does both)
