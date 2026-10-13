@@ -163,7 +163,62 @@ export const TOOL_GROUPS: ToolGroup[] = [
   },
 ];
 
-const HEADER_COMMANDS = [
+/** One part of {@link WINDOW_MENU}, under its own heading. */
+export interface MenuSection {
+  label: string;
+  /** Command ids. The menu shows each command's title, so it has no wording of its own. */
+  items: string[];
+}
+
+/**
+ * The header's menu where there is no menu bar, which is Windows.
+ *
+ * What the tool row's menus do not carry: commands about documents and tabs
+ * and not about the open one, the settings, and the application's own. On
+ * macOS these are in the menu bar and this menu is not drawn. Without it a
+ * reader on Windows reached them through the palette alone, and "About",
+ * "Check for updates" and every setting are things looked for in a menu.
+ *
+ * One menu and not three buttons: each part is short, and none is used often
+ * enough to earn a place in the row.
+ */
+export const WINDOW_MENU: MenuSection[] = [
+  {
+    label: "Documents",
+    items: ["file.fromPictures", "file.closeAll", "file.reopenLastTabs", "file.clearRecents"],
+  },
+  {
+    label: "Side by side",
+    items: [
+      "view.sideBySide", "view.moveToOtherSide", "view.bothSides", "view.switchSides",
+      "view.focusOtherSide", "view.syncScrolling",
+    ],
+  },
+  {
+    label: "Settings",
+    items: [
+      "file.reopenTabsAtLaunch", "file.reopenLastDocumentAtLaunch",
+      "file.onDiskChange.ask", "file.onDiskChange.reload", "file.onDiskChange.ignore",
+      "file.recogniseTextLanguage",
+      "view.tabLabelsLarger", "view.tabLabelsSmaller", "view.tabLabelsDefault",
+    ],
+  },
+  {
+    label: "tpdf",
+    items: [
+      "app.about", "app.checkForUpdates", "app.installUpdate", "app.restartForUpdate",
+      "app.disableAutomaticUpdates", "app.enableAutomaticUpdates",
+      "app.installCommandLineTool", "app.uninstallCommandLineTool", "app.makeDefaultPdfApp",
+    ],
+  },
+];
+
+/**
+ * The commands a button in the header runs. `App.svelte` draws them, and they
+ * are named here so that the snapshot below covers them and a test can count
+ * them as on screen.
+ */
+export const HEADER_COMMANDS = [
   "file.save", "file.saveCopy", "file.print", "edit.undo", "edit.redo",
   "nav.previousPage", "nav.nextPage", "nav.goToPage", "view.zoomIn",
   "view.zoomOut", "view.fitWidth", "view.fitPage", "view.actualSize", "view.zoomTo",
@@ -177,6 +232,7 @@ export function toolbarState(
     ...HEADER_COMMANDS,
     ...TOOL_ACTIONS.map((item) => item.id),
     ...TOOL_GROUPS.flatMap((group) => group.items.map((item) => item.id)),
+    ...WINDOW_MENU.flatMap((section) => section.items),
   ];
   return Object.fromEntries(ids.map((id) => {
     const command = registry.find(id);

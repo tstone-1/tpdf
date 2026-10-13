@@ -20,7 +20,7 @@
   import { sidewaysBy } from "./lib/tabwheel";
   import { readFill, writeFill, type Fill } from "./lib/redactfill";
   import Toolbar from "./Toolbar.svelte";
-  import { toolbarState } from "./lib/toolbar";
+  import { toolbarState, WINDOW_MENU } from "./lib/toolbar";
   import { icon } from "./lib/icons";
   import { listen } from "@tauri-apps/api/event";
   import { getCurrentWebview } from "@tauri-apps/api/webview";
@@ -1052,17 +1052,23 @@
   let findField = $state<HTMLInputElement | null>(null);
   let findShown = $state(false);
   let zoomMenu = $state<HTMLDetailsElement | null>(null);
+  /** The header's menu on Windows; `toolbar.ts`'s `WINDOW_MENU`. Never drawn on macOS. */
+  let windowMenu = $state<HTMLDetailsElement | null>(null);
 
   function closeZoomOutside(event: PointerEvent): void {
-    if (event.target instanceof Node && !zoomMenu?.contains(event.target)) {
-      zoomMenu?.removeAttribute("open");
+    for (const menu of [zoomMenu, windowMenu]) {
+      if (event.target instanceof Node && !menu?.contains(event.target)) {
+        menu?.removeAttribute("open");
+      }
     }
   }
 
   function closeZoomOnEscape(event: KeyboardEvent): void {
-    if (event.key !== "Escape" || !zoomMenu?.open) return;
-    zoomMenu.open = false;
-    zoomMenu.querySelector("summary")?.focus();
+    if (event.key !== "Escape") return;
+    const menu = [zoomMenu, windowMenu].find((candidate) => candidate?.open);
+    if (!menu) return;
+    menu.open = false;
+    menu.querySelector("summary")?.focus();
     event.preventDefault();
     event.stopPropagation();
   }
@@ -5825,6 +5831,23 @@
       <button aria-pressed={findShown} title="Find in document" aria-label="Find in document" onclick={focusFind}><span class="icon" use:icon={"find"}></span></button>
     {/if}
     <button title="All commands ({label('app.palette')})" onclick={openPaletteFromToolbar}>Commands</button>
+    {#if !isMac()}
+      <!-- Windows has no menu bar: this carries what the tool row's menus do not. -->
+      <details class="zoom-menu" bind:this={windowMenu}>
+        <summary title="Documents, settings and tpdf">Menu</summary>
+        <div class="zoom-options window-options">
+          {#each WINDOW_MENU as section}
+            <p class="menu-heading">{section.label}</p>
+            {#each section.items as id}
+              <button disabled={!toolState[id]?.enabled} onclick={(event) => {
+                event.currentTarget.closest('details')?.removeAttribute('open');
+                runToolbarCommand(id);
+              }}>{toolState[id]?.title}</button>
+            {/each}
+          {/each}
+        </div>
+      </details>
+    {/if}
     {#if updateLabel(updateState)}
       <button
         class="update"
@@ -6243,6 +6266,9 @@
     box-shadow: 0 5px 20px #0002;
   }
   .zoom-options button { text-align: left; }
+  .window-options { max-height: min(75vh, 560px); overflow-y: auto; scrollbar-width: thin; width: max-content; max-width: min(340px, calc(100vw - 24px)); }
+  .window-options button { white-space: normal; }
+  .menu-heading { font-size: 12px; margin: 6px 9px 3px; opacity: .7; }
   .find-panel {
     display: flex;
     align-items: center;

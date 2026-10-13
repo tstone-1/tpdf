@@ -42,6 +42,12 @@ have the binary.)
   show* are new there. On Windows, which has no menu bar, these could be reached through the
   command palette only. *Place a signature picture, without a certificate...* is in the Draw
   menu, beside the stamps.
+- **On Windows the header has a menu,** *Menu*, beside *Commands*. Windows has no menu bar,
+  and what the tool row's menus do not carry could be reached there through the command
+  palette alone: *New document from pictures...*, closing and reopening tabs, the side-by-side
+  commands, every setting, and *About tpdf*, *Check for updates* and *Make tpdf the default
+  PDF app*. They are in this one menu, under four headings. macOS has them in its menu bar
+  and does not show it.
 - **A toolbar menu calls a command what the palette calls it.** Six items said something
   else: *Move page earlier* and *later* are *Move page up* and *down*, and the four in the
   Redact menu that said *mark for removal* and *review* now say *Redact text or regions by

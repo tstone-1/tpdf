@@ -109,6 +109,7 @@ PER_WINDOW: dict[str, str] = {
     "startRows": "the blank page's rows",
     "findField": "the one find field; its text is the slot `query`",
     "zoomMenu": "the header's zoom menu",
+    "windowMenu": "the header's menu where there is no menu bar",
     "sidebarShown": "the reader's choice for the window, kept in the session",
     # Scrolling the two sides together is about the pair.
     "syncScroll": "whether the two sides scroll together",

@@ -1,7 +1,9 @@
 import { describe, expect, it } from "vitest";
 import { registerAppCommands, type AppActions } from "./appcommands";
 import { CommandRegistry } from "./commands";
-import { POPUP_MARGIN, TOOL_ACTIONS, TOOL_GROUPS, popupShift, styleOptions, toolbarState, type ArmedTool } from "./toolbar";
+import { HEADER_COMMANDS, POPUP_MARGIN, TOOL_ACTIONS, TOOL_GROUPS, WINDOW_MENU, popupShift, styleOptions, toolbarState, type ArmedTool } from "./toolbar";
+import { BINDINGS } from "./keys";
+import { MARK_MENU, PAGE_MENU, REDACTION_MENU, SELECTION_MENU } from "./contextmenu";
 import { cssColor, MARK_COLORS, PALETTE, swatchBackground } from "./markcolors";
 import { MENU_LAYOUT, SEPARATOR } from "./menubar";
 
@@ -12,7 +14,10 @@ import { MENU_LAYOUT, SEPARATOR } from "./menubar";
  * a document, so one of its two commands is live in an empty window too.
  */
 function live(snapshot: ReturnType<typeof toolbarState>): string[] {
-  return Object.keys(snapshot).filter((id) => snapshot[id]!.enabled);
+  // The tool row's. The window menu's commands are about the application and
+  // its settings, and most of them are live with nothing open.
+  const elsewhere = new Set(WINDOW_MENU.flatMap((section) => section.items));
+  return Object.keys(snapshot).filter((id) => snapshot[id]!.enabled && !elsewhere.has(id));
 }
 
 function harness() {
@@ -20,7 +25,8 @@ function harness() {
   // Only guards are called here. Missing action methods must fail if the
   // snapshot starts executing commands instead of describing them.
   const actions = {
-    viewer: () => state.open ? {} : null,
+    // Not a viewer: the guards ask only whether there is one.
+    viewer: () => state.open ? ({} as never) : null,
     hasSelection: () => state.selected,
     isDirty: () => state.dirty,
     canUndo: () => state.undo,
@@ -32,7 +38,20 @@ function harness() {
     canOrderTabs: () => false,
     fieldPicked: () => false,
     signableFields: () => 0,
-  } as AppActions;
+    // What the window menu's guards read, in the state a first launch is in.
+    commandLineToolOffered: () => false,
+    automaticUpdates: () => true,
+    updateReady: () => false,
+    updateAvailable: () => false,
+    diskChangeMode: () => "ask" as const,
+    restoreTabs: () => false,
+    syncScrolling: () => false,
+    tabLabels: () => ({ canGrow: true, canShrink: true, isDefault: true }),
+    documentCount: () => 1,
+    sides: () => ({ split: false, focused: "left" as const, others: [] }),
+    recentDocuments: () => 0,
+    tabsToReopen: () => 0,
+  } satisfies Partial<AppActions> as unknown as AppActions;
   const registry = new CommandRegistry();
   registerAppCommands(registry, actions);
   return { state, registry };
@@ -194,5 +213,74 @@ describe("keeping an open menu inside the window", () => {
 
   it("starts a menu wider than the window at the left margin, not the right", () => {
     expect(popupShift(100, 500, 300)).toBe(POPUP_MARGIN - 100);
+  });
+});
+
+describe("where there is no menu bar", () => {
+  /*
+   * On Windows the window is all there is: no menu bar lists the commands, so
+   * one that is on no button, in no menu here and under no key is reached by
+   * typing its name into the palette and by nothing else. Measured on
+   * 2026-10-13, that was 61 commands, "About tpdf" and "Save a smaller
+   * copy..." among them. `menubar.test.ts` asks the same of the macOS menu bar.
+   */
+  const NOT_ON_SCREEN: { prefix: string; reason: string }[] = [
+    { prefix: "edit.align", reason: "a button on the arrange bar, shown while marks are picked" },
+    { prefix: "edit.distribute", reason: "a button on the arrange bar, shown while marks are picked" },
+    { prefix: "edit.same", reason: "a button on the arrange bar, shown while marks are picked" },
+    { prefix: "edit.centerOnPage", reason: "a button on the arrange bar, shown while a mark is picked" },
+    { prefix: "edit.middleOnPage", reason: "a button on the arrange bar, shown while a mark is picked" },
+    { prefix: "edit.editForeignMark", reason: "a button in the popup of the comment it edits" },
+    { prefix: "edit.deleteComment", reason: "a button in the popup of the comment it deletes" },
+    { prefix: "edit.replyToComment", reason: "a button in the popup of the comment it answers" },
+    { prefix: "edit.insertPage.", reason: "Insert blank page is in the Pages menu; these choose a paper size for it" },
+    { prefix: "edit.insertPages.range", reason: "the question Insert pages from file... asks, while a file waits" },
+    { prefix: "file.recogniseTextLanguage.choice", reason: "the question Recognise text: language... asks" },
+    { prefix: "view.showOutline", reason: "a tab at the head of the sidebar, which has a button in the header" },
+    { prefix: "view.showMarks", reason: "a tab at the head of the sidebar, which has a button in the header" },
+  ];
+
+  it("gives every command a control, a key, or a written reason", () => {
+    const { registry } = harness();
+    const shown = new Set<string>([
+      ...HEADER_COMMANDS,
+      ...TOOL_ACTIONS.map((item) => item.id),
+      ...TOOL_GROUPS.flatMap((group) => group.items.map((item) => item.id)),
+      ...WINDOW_MENU.flatMap((section) => section.items),
+      ...[PAGE_MENU, MARK_MENU, REDACTION_MENU, SELECTION_MENU].flat(),
+      ...Object.keys(BINDINGS),
+    ]);
+    const all = registry.all().map((command) => command.id);
+    expect(all.length).toBeGreaterThan(100);
+    const nowhere = all
+      .filter((id) => !shown.has(id))
+      .filter((id) => !NOT_ON_SCREEN.some((rule) => id.startsWith(rule.prefix)));
+    expect(nowhere).toEqual([]);
+  });
+
+  it("excuses only commands that exist and are not shown", () => {
+    // A reason outlives its command, and then excuses whatever takes the id.
+    const { registry } = harness();
+    const all = registry.all().map((command) => command.id);
+    const idle = NOT_ON_SCREEN.filter((rule) => !all.some((id) => id.startsWith(rule.prefix)));
+    expect(idle).toEqual([]);
+    const listed = WINDOW_MENU.flatMap((section) => section.items);
+    expect(listed.filter((id) => NOT_ON_SCREEN.some((rule) => id.startsWith(rule.prefix)))).toEqual([]);
+  });
+
+  it("lists each command of the window menu once, and none the row's menus have", () => {
+    const listed = WINDOW_MENU.flatMap((section) => section.items);
+    expect(listed.length).toBeGreaterThan(20);
+    expect(new Set(listed).size).toBe(listed.length);
+    const row = new Set([...TOOL_ACTIONS, ...TOOL_GROUPS.flatMap((group) => group.items)].map((item) => item.id));
+    expect(listed.filter((id) => row.has(id))).toEqual([]);
+  });
+
+  it("has a title and a state for each of them, which is all its buttons show", () => {
+    const { registry } = harness();
+    const snapshot = toolbarState(registry);
+    const listed = WINDOW_MENU.flatMap((section) => section.items);
+    expect(listed.filter((id) => !snapshot[id] || snapshot[id]!.title === "Unavailable")).toEqual([]);
+    expect(snapshot["app.about"]).toEqual({ enabled: true, title: "About tpdf" });
   });
 });
