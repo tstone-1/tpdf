@@ -172,10 +172,26 @@ caches aggressively, and puts nothing between the user and the page. It cannot e
 line wrapping; Inkscape's importer converts text to uneditable paths. There is no clean
 FOSS answer that views, edits, fills forms, redacts, and runs locally.
 
+**PdfCraft** (`storytold/pdfcraft`, MIT or Apache-2.0, first release 2026-10-02) is the
+open-source attempt at that answer, and its README states the aim as "parity with Acrobat
+Pro". Read on 2026-10-13 at v0.7.1, from its product page and README, not from a run: it is
+alpha, pages are drawn by the `hayro` crate while its own renderer is written, and the README
+says that fuzzing still finds crashes and hangs on hostile files and that quality has not
+been compared with Acrobat. Its range overlaps tpdf's wherever any PDF editor's does. Its
+licence fits the constraint in `AGENTS.md`, so it can serve as one more reader to open tpdf's
+output in.
+
 tpdf targets the gap: Sumatra's speed, the editing an office needs (redaction that is
 verified, signatures, forms and comments), and a discovery model borrowed from code editors
 rather than from office suites. Until 2026-10-12 this sentence said "Acrobat's capability";
 matching Acrobat's whole range was never planned and is not a goal.
+
+Rebuilding PdfCraft is not a goal either, for the same reason. What is on its roadmap and
+stays off tpdf's: Office-to-PDF conversion and Word export; Preflight, PDF/X and PDF/UA;
+accessibility tagging and an accessibility checker; JavaScript in forms, which tpdf leaves
+disabled because every PDF is hostile input; XFA; an MCP server and an embeddable automation
+API; Linux, FreeBSD and a browser build; a renderer of its own. A request for one of these is
+a scope decision to raise, not a gap to close.
 
 That is the author's own diagnosis. What users of those programs say themselves, read on
 2026-10-03 from vendor forums and 30 Reddit threads, is in [`DEMAND.md`](DEMAND.md),
