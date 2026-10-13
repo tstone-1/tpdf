@@ -266,3 +266,24 @@ describe("CompressDialog", () => {
     await expect(second).resolves.toBeNull();
   });
 });
+
+describe("the row for a reader's own numbers", () => {
+  /** Every element under `root`, itself included. */
+  function all(root: FakeElement): FakeElement[] {
+    return [root, ...root.children.flatMap(all)];
+  }
+
+  it("puts its fields under its title, in the title's column", () => {
+    // A row is a grid of radio, title and outcome. The fields are a fourth
+    // child, and without a column of their own they took the radio's and
+    // pushed the title across the dialog.
+    open();
+    const rows = all(dom.root).filter((element) => element.tagName === "label" &&
+      (element.style.cssText ?? "").includes("grid-template-columns"));
+    const own = rows.find((row) => row.children.some((child) => child.textContent === "Your own numbers"));
+    expect(own).toBeDefined();
+    const fields = own!.children[own!.children.length - 1]!;
+    expect(fields.children.length).toBe(3);
+    expect(fields.style.cssText).toContain("grid-column:2 / span 2;");
+  });
+});

@@ -117,7 +117,12 @@ export class CompressDialog {
     this.jpeg.checked = CUSTOM_START.jpeg;
     this.jpeg.setAttribute("aria-label", "Store photographs as JPEG");
     const fields = document.createElement("span");
-    fields.style.cssText = "display:inline-flex;gap:0.6rem;align-items:center;flex-wrap:wrap;";
+    // Under the title, where a row's note goes. As a fourth child with no
+    // column of its own it landed in the radio's column and widened it by the
+    // width of three fields, which put "Your own numbers" two thirds of the
+    // way across the dialog from its radio. Seen in a picture, 2026-10-13.
+    fields.style.cssText =
+      "grid-column:2 / span 2;display:inline-flex;gap:0.6rem;align-items:center;flex-wrap:wrap;";
     fields.append(
       this.labelled("Pixels an inch", this.dpi),
       this.labelled("JPEG quality", this.quality),

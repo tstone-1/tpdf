@@ -252,6 +252,34 @@ async function moreStates(
 
   measureControls(report, "the window");
 
+  // The dialogs a command opens in the window before any file is chosen: what
+  // a reader is asked on the way to a smaller copy, a password and a
+  // signature. Each is closed again without an answer, so nothing is written.
+  const dialogs: [string, string][] = [
+    ["file.compress", "compress"], ["file.protect", "password"], ["file.signDocument", "sign"],
+  ];
+  for (const [id, name] of dialogs) {
+    // A `<dialog>` is in the document while it is closed, and one that is
+    // open has no `offsetParent`, being in the top layer.
+    const open = () => [...document.querySelectorAll<HTMLElement>('[role="dialog"], dialog')]
+      .find((dialog) => dialog instanceof HTMLDialogElement ? dialog.open : dialog.offsetParent !== null);
+    host.run(id);
+    const shown = await settle(() => open() !== undefined, 4000);
+    const said = document.querySelector('[data-testid="problem"] p.error, [data-testid="notice"]')?.textContent ?? "";
+    report.check(`asked for ${id}: a dialog or a message`, true,
+      shown ? `dialog: ${(open()!.getAttribute("aria-label") ?? open()!.textContent ?? "").trim().slice(0, 60)}` : `no dialog; said: ${said.slice(0, 80)}`);
+    if (!shown) continue;
+    await pause(300);
+    measureControls(report, `the ${name} dialog`);
+    await shot(`more-${name}`);
+    const cancel = [...open()!.querySelectorAll<HTMLButtonElement>("button")]
+      .find((b) => /^(Cancel|Close)$/.test((b.textContent ?? "").trim()));
+    if (cancel) cancel.click(); else escape();
+    const gone = await settle(() => open() === undefined, 4000);
+    report.check(`the ${name} dialog went away unanswered`, gone, "");
+    await host.idle();
+  }
+
   // The text editor's chrome over the page. It refuses while redactions are
   // pending, so the two the README's states marked are undone first.
   host.run("edit.undo"); await host.idle();
@@ -303,7 +331,8 @@ function measureControls(report: Report, where: string): void {
     `[${(said(control) || control.dataset.testid || "?").slice(0, 24)}]`;
   const unnamed = controls.filter((control) => !said(control));
   const small = controls.filter((control) => {
-    const box = control.getBoundingClientRect();
+    // A radio or a checkbox inside its label is pressed by pressing the label.
+    const box = (control.closest("label") ?? control).getBoundingClientRect();
     return box.width < LEAST_TARGET || box.height < LEAST_TARGET;
   });
   const sizes = small.map((control) => {

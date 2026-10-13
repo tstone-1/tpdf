@@ -31,6 +31,9 @@ have the binary.)
 - **A failure is said without the operating system's number.** A document that was no longer
   there was reported as `could not open "...": No such file or directory (os error 2)`. The
   number is gone and the sentence begins with a capital.
+- **In the dialog for a smaller copy, *Your own numbers* stands beside its radio button.** It
+  stood two thirds of the way across the dialog, pushed there by the three fields of its own
+  row. The fields are under it now.
 - **The zoom control has a chevron,** as every other menu in the window has. It showed the
   browser's own marker, a triangle pointing right, which read as a play button.
 
