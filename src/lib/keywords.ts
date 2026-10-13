@@ -46,6 +46,7 @@ const NAMED: Record<string, readonly string[]> = {
   "edit.addTextBox": ["type", "typewriter", "write", "add text"],
   "edit.editText": ["change text", "modify text", "correct"],
   "edit.fillForm": ["form"],
+  "edit.addTextField": ["field"],
   "edit.addCheckbox": ["check box", "tick box"],
   "edit.addDropdown": ["combo box", "list"],
   "edit.addRadio": ["option buttons"],

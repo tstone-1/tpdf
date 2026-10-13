@@ -331,14 +331,14 @@ export class Palette {
         // The word that found this row, since nothing in the title shows it.
         const word = document.createElement("span");
         word.textContent = result.keyword;
-        word.style.cssText = "opacity:0.5;font-style:italic;";
+        word.style.cssText = "opacity:0.6;font-style:italic;";
         row.appendChild(word);
       }
 
       if (result.command.keys) {
         const keys = document.createElement("span");
         keys.textContent = result.command.keys;
-        keys.style.cssText = "opacity:0.5;font-variant-numeric:tabular-nums;";
+        keys.style.cssText = "opacity:0.6;font-variant-numeric:tabular-nums;";
         row.appendChild(keys);
       }
 

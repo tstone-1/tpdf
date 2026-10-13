@@ -19,6 +19,13 @@ have the binary.)
 
 ## [26.10.19] - Unreleased
 
+### Fixed
+
+- **Dimmed text is readable on a light background.** Seven texts were drawn at half opacity,
+  which is a contrast of 3.98:1 on white where 4.5:1 is the least that text should have: the
+  shortcut beside each row of the command palette, the page numbers in the four sidebar
+  lists, and the two lines under the start page. They are at 0.6 now, 5.74:1.
+
 ### Changed
 
 - **The command palette finds a command by the words other programs use for it.** Typing
@@ -48,6 +55,10 @@ have the binary.)
   commands, every setting, and *About tpdf*, *Check for updates* and *Make tpdf the default
   PDF app*. They are in this one menu, under four headings. macOS has them in its menu bar
   and does not show it.
+- **The palette matches a word where it stands in a title.** It took each typed letter at the
+  first place it fitted, so `text` matched *Edit existing text...* through the t of *Edit* and
+  three letters of *existing*, emboldened those, and ranked the command lower than a title
+  with the word in it deserves.
 - **A toolbar menu calls a command what the palette calls it.** Six items said something
   else: *Move page earlier* and *later* are *Move page up* and *down*, and the four in the
   Redact menu that said *mark for removal* and *review* now say *Redact text or regions by

@@ -87,6 +87,44 @@ describe("fuzzyMatch", () => {
     expect(consecutive).toBeGreaterThan(scattered);
   });
 
+  it("matches a word where it stands, not at the first letters that fit", () => {
+    // Greedy alone took the S of Save and then "maller".
+    expect(fuzzyMatch("smaller", "Save a smaller copy...")?.positions).toEqual([7, 8, 9, 10, 11, 12, 13]);
+    // And the t of Edit, the e and x of existing, and the t after them.
+    expect(fuzzyMatch("text", "Edit existing text...")?.positions).toEqual([14, 15, 16, 17]);
+  });
+
+  it("takes the occurrence that starts a word over one inside a word", () => {
+    expect(fuzzyMatch("age", "Manage pages agent")?.positions).toEqual([13, 14, 15]);
+  });
+
+  it("scores a word found whole above the same letters scattered", () => {
+    const whole = fuzzyMatch("text", "Edit existing text...");
+    const scattered = fuzzyMatch("text", "Edit existing xt");
+    expect(whole!.score).toBeGreaterThan(scattered!.score);
+  });
+
+  it("still matches an abbreviation, which stands nowhere as written", () => {
+    expect(fuzzyMatch("fw", "Fit width")?.positions).toEqual([0, 4]);
+  });
+
+  it("keeps the first letters that fit when they score better than the word", () => {
+    // "ab" stands whole inside "cab", and the reader who typed the starts of
+    // two words meant those.
+    expect(fuzzyMatch("ab", "Add big cab")?.positions).toEqual([0, 4]);
+  });
+
+  it("takes the first occurrence when none starts a word", () => {
+    expect(fuzzyMatch("age", "Manage pagers")?.positions).toEqual([3, 4, 5]);
+  });
+
+  it("gives a tie to the word as written", () => {
+    // Both readings score the same here: three word starts, or one word start
+    // and a run of three less the four characters skipped. The run is what
+    // the reader typed, so it is the one emboldened.
+    expect(fuzzyMatch("abb", "a b abb")?.positions).toEqual([4, 5, 6]);
+  });
+
   it("treats an empty query as a match on everything", () => {
     const hit = fuzzyMatch("", "Zoom in");
     expect(hit).toEqual({ score: 0, positions: [] });

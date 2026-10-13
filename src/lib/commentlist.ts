@@ -327,7 +327,7 @@ export class CommentList {
     const page = document.createElement("span");
     page.textContent = String(comment.page + 1);
     page.style.cssText =
-      "flex:none;min-width:3ch;text-align:right;opacity:0.5;" +
+      "flex:none;min-width:3ch;text-align:right;opacity:0.6;" +
       "font-variant-numeric:tabular-nums;";
 
     const text = document.createElement("div");

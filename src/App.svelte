@@ -6467,7 +6467,7 @@
     width: min(520px, calc(100% - 2rem));
     flex: none;
   }
-  .invite, .version { margin: 0; opacity: 0.5; }
+  .invite, .version { margin: 0; opacity: 0.6; }
   .version { margin-top: auto; padding: 1.2rem 0 0.9rem; flex: none; }
   .start-open {
     margin-top: 0.9rem;

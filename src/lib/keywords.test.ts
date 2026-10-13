@@ -66,6 +66,7 @@ const TYPED: [string, string][] = [
   // Forms.
   ["fill", "edit.fillForm"], ["form", "edit.fillForm"], ["checkbox", "edit.addCheckbox"],
   ["dropdown", "edit.addDropdown"], ["radio", "edit.addRadio"],
+  ["field", "edit.addTextField"], ["text", "edit.addTextBox"],
   // Comments and marks.
   ["comment", "edit.addComment"], ["note", "edit.addComment"], ["sticky", "edit.addComment"],
   ["annotate", "edit.addComment"], ["highlight", "edit.highlightSelection"],
@@ -163,7 +164,8 @@ describe("the keyword table", () => {
     // One does something: six titles begin "Form fields:", so "form" found
     // Fill form in twelfth place by its title, and finds it first by a keyword
     // typed in full.
-    const earned = new Set(["edit.fillForm: form"]);
+    // "field" is the same case: it found Add a form field: text... sixth.
+    const earned = new Set(["edit.fillForm: form", "edit.addTextField: field"]);
     const repeats = commands.flatMap((command) =>
       (command.keywords ?? [])
         .filter((word) => command.title.toLowerCase().split(/[^a-z0-9]+/).includes(word))

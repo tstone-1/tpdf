@@ -676,7 +676,7 @@ export class RedactList {
     // that looks like next to a column of numbers.
     page.textContent = row.page === null ? "—" : String(row.page + 1);
     page.style.cssText =
-      "flex:none;min-width:3ch;text-align:right;opacity:0.5;" +
+      "flex:none;min-width:3ch;text-align:right;opacity:0.6;" +
       "font-variant-numeric:tabular-nums;";
 
     // A column rather than a line, because a row can have two things to say.

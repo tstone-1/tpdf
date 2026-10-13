@@ -185,14 +185,50 @@ function startsWord(title: string, index: number): boolean {
   // `queue.rs`'s zero guard were before it.
 }
 
+/** What a match at these positions of `title` scores. */
+function scoreOf(title: string, positions: readonly number[]): number {
+  let score = 0;
+  positions.forEach((found, index) => {
+    score += BASE;
+    if (startsWord(title, found)) score += WORD_START;
+    if (index > 0 && found === positions[index - 1]! + 1) score += CONSECUTIVE;
+    if (index === 0) score -= found * LEADING_SKIP;
+  });
+  return score;
+}
+
 /**
- * Matches `query` against `title` as a subsequence, greedily left to right.
+ * Where `needle` stands in `hay` as written, letter after letter, or null.
  *
- * Greedy rather than optimal: finding the best-scoring set of positions is a
- * search, and for titles of a few words the greedy pass differs only on inputs
- * nobody types. What it must not do is *miss* a match that exists, and it does
- * not --- greedy subsequence matching is complete, only its scoring is
- * approximate.
+ * The occurrence that starts a word if there is one, and the first otherwise.
+ */
+function runIn(needle: string, hay: string, title: string): number[] | null {
+  let first = -1;
+  for (let at = hay.indexOf(needle); at >= 0; at = hay.indexOf(needle, at + 1)) {
+    if (first < 0) first = at;
+    if (startsWord(title, at)) {
+      first = at;
+      break;
+    }
+  }
+  return first < 0 ? null : Array.from(needle, (_, index) => first + index);
+}
+
+/**
+ * Matches `query` against `title` as a subsequence.
+ *
+ * Two readings, and the better-scoring one is the answer. The greedy one takes
+ * each character at the first place it fits, which is complete: it never misses
+ * a match that exists. It is also the one that reads `text` in "Edit existing
+ * text..." as the t of Edit, the e and x of existing and the t after them, and
+ * `smaller` in "Save a smaller copy..." as the S of Save and then "maller". So
+ * the query is also looked for as written, and a title that has it whole is
+ * matched there. Found on 2026-10-13 by the wrong letters being emboldened;
+ * the score was wrong with them, which is the part that changed an order.
+ *
+ * Finding the best-scoring set of positions in general is a search, and for
+ * titles of a few words these two readings differ from it only on inputs
+ * nobody types.
  */
 export function fuzzyMatch(
   query: string,
@@ -202,26 +238,20 @@ export function fuzzyMatch(
   const hay = title.toLowerCase();
   if (needle.length === 0) return { score: 0, positions: [] };
 
-  const positions: number[] = [];
-  let score = 0;
+  const greedy: number[] = [];
   let at = 0;
-
   for (const wanted of needle) {
     const found = hay.indexOf(wanted, at);
     if (found < 0) return null;
-
-    score += BASE;
-    if (startsWord(title, found)) score += WORD_START;
-    if (positions.length > 0 && found === positions[positions.length - 1]! + 1) {
-      score += CONSECUTIVE;
-    }
-    if (positions.length === 0) score -= found * LEADING_SKIP;
-
-    positions.push(found);
+    greedy.push(found);
     at = found + 1;
   }
 
-  return { score, positions };
+  const run = runIn(needle, hay, title);
+  const scored = { score: scoreOf(title, greedy), positions: greedy };
+  if (run === null) return scored;
+  const whole = scoreOf(title, run);
+  return whole >= scored.score ? { score: whole, positions: run } : scored;
 }
 
 /** What a keyword match gives up, so that a title matching as well wins. */
