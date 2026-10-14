@@ -210,6 +210,8 @@ this order (decided 2026-10-14):
    RUSTSEC-2023-0071 is accepted only because tpdf performs no RSA private-key operation, so
    RSA keys from a file wait for a signer without that weakness.
 4. Printing and the desktop integration (both done 2026-10-14); then packages and window checks.
+   The deb and the AppImage build and work as installed (2026-10-14); they are not yet
+   built by `release.yml` or published.
 
 Ubuntu joined `ci.yml`'s matrix on 2026-10-14, once the command-line suite and all 31 gates
 were green there; a leg that is red or allowed to fail would have said nothing. A worker refuses to start where its sandbox cannot be

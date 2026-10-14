@@ -1703,6 +1703,17 @@ mod tests {
             .expect("an Exec line");
         assert!(exec.ends_with(" %F"), "{exec}");
         assert!(template.contains("MimeType={{mime_type}};"), "{template}");
+        // What tpdf opens at run time, which the deb's own Depends cannot see:
+        // Tesseract in the OCR worker, p11-kit's proxy for smart cards.
+        let depends = &config["bundle"]["linux"]["deb"]["depends"];
+        for package in ["libtesseract5", "p11-kit-modules"] {
+            assert!(
+                depends
+                    .as_array()
+                    .is_some_and(|all| all.iter().any(|d| d == package)),
+                "the deb does not depend on {package}: {depends}"
+            );
+        }
     }
 
     /// The Windows installer is told to clear the way for that directory.

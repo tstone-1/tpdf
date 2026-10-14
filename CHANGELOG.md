@@ -56,6 +56,10 @@ have the binary.)
   while tpdf is running goes to the running window. Opened documents appear in the desktop's
   recent files, web links open in the default browser, and *Make tpdf the default PDF app*
   works through GIO for the installed package.
+- **The Linux packages work as installed.** The deb's `tpdf-cli` looked for the PDF engine
+  beside itself in `/usr/bin` and could read no document; it now finds it in
+  `/usr/lib/tpdf`, where the window finds it. The deb also depends on `libtesseract5` and
+  `p11-kit-modules`, which tpdf opens at run time for OCR and smart cards.
 - **A document named with a relative path in a second launch opens.** `tpdf report.pdf` typed
   in a terminal while tpdf was running looked for `report.pdf` in the running copy's folder;
   it is now resolved in the folder the command was typed in, on Windows as on Linux.

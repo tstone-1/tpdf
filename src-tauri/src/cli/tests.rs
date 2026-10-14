@@ -4431,3 +4431,27 @@ fn every_shell_completes_every_command_and_every_option_its_usage_names() {
         assert!(why.contains(expected), "`{line}` gave `{why}`");
     }
 }
+
+/// The deb's layout, `/usr/bin` beside `/usr/lib/tpdf`, and a checks build's,
+/// a folder with nothing beside it.
+#[test]
+fn the_linux_resources_are_beside_the_bin_folder_when_there_are_any() {
+    static NEXT: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
+    let root = std::env::temp_dir().join(format!(
+        "tpdf-resources-{}-{}",
+        std::process::id(),
+        NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+    ));
+    let bin = root.join("usr/bin");
+    let lib = root.join("usr/lib/tpdf");
+    std::fs::create_dir_all(&bin).expect("bin");
+    std::fs::create_dir_all(&lib).expect("lib");
+    let installed = super::linux_resources(&bin);
+    let alone = root.join("target/release");
+    std::fs::create_dir_all(&alone).expect("release");
+    let built = super::linux_resources(&alone);
+    let lib = lib.canonicalize().expect("canonical");
+    let _ = std::fs::remove_dir_all(&root);
+    assert_eq!(installed, lib);
+    assert_eq!(built, alone);
+}

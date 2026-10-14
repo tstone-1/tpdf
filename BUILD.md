@@ -267,8 +267,10 @@ On 2026-10-02 the decision was not to publish, for three reasons. They still hol
 and the decision of 2026-10-08 to publish accepts them:
 
 - The client only starts the `tpdf` command-line tool, which comes with the desktop
-  application, so `pip install tpdf-client` alone installs something that cannot run. It
-  does nothing on Linux, where there is no tool. The package's description has to say both.
+  application, so `pip install tpdf-client` alone installs something that cannot run. The
+  package's description has to say so. (It also said the client did nothing on Linux, where
+  there was no tool; since 2026-10-14 the Linux packages install `tpdf-cli`, which the client
+  looks for first.)
 - It is a second release to keep in step with the tool's JSON reports. The client refuses
   a report whose `schema` is not 1 with `ProtocolError`, so a tool that has moved on is
   noticed and not misread.
@@ -4594,6 +4596,35 @@ and prints a `[SKIP]`: it needs per-page *text* to say which pages survived, and
 `Windows.Data.Pdf` has no text API at all. `a_third_parser_checks_a_job_built_from_a_document_we_-`
 `did_not_write` covers that property on both platforms instead, using per-page rotation —
 `rotated.pdf` carries 0/90/180/270, so keeping the wrong two pages is a different rotation pair.
+
+### Linux packages: the deb and the AppImage
+
+```
+npx tauri build --bundles deb,appimage
+```
+
+`APPIMAGE_EXTRACT_AND_RUN=1` in the environment where FUSE is missing, as under WSL. Both
+packages put the two binaries in `usr/bin` (`tpdf`, the window, and `tpdf-cli`, the tool) and
+the resources in `usr/lib/tpdf`: `pdfium/libpdfium.so`, `tessdata/` and the notices. That is
+Tauri's Linux resource folder, `../lib/tpdf` from the executable, and `cli::linux_resources`
+applies the same rule for the tool; before 2026-10-14 the installed `tpdf-cli` looked in
+`/usr/bin` and could read no document. The desktop entry is `src-tauri/linux/tpdf.desktop`.
+
+The deb depends on `libtesseract5` and `p11-kit-modules` as well as WebKitGTK and GTK, because
+tpdf opens both at run time, where `dpkg-shlibdeps` cannot see them. **The AppImage carries
+no Tesseract**, for the same reason: on a system without `libtesseract5` its OCR refuses with
+a sentence. Everything else in it is self-contained.
+
+Checked on 2026-10-14 under WSL (Ubuntu 24.04), with `vendor/` out of the way of both:
+the installed `tpdf-cli` answered `info` and `text`, and `render`, `images --paper a4` and
+`ocr` turned the text page into a scan and back into 31 recognised words, through the deb and
+through the AppImage's own `tpdf-cli`. Each window, started on a document under Xvfb, ran its
+render workers with `Seccomp: 2` and `libpdfium` mapped, and the application process with
+neither. The first GTK application in a fresh WSL session waited 25 s in
+`g_application_register` while D-Bus started `xdg-desktop-portal`; the next started in
+0.12 s. That is the session, not tpdf, and a desktop session has the portal running.
+
+Neither package is published: `release.yml` builds macOS and Windows only.
 
 ### Printing on Linux, and how to check it without paper
 

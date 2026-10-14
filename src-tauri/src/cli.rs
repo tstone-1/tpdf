@@ -244,19 +244,38 @@ pub struct Env<'a> {
 /// Where the application's resources are, from where this executable sits.
 ///
 /// The bundle's layout, not a search: `tpdf.app/Contents/MacOS/tpdf-cli` beside
-/// `Contents/Resources` on macOS, and the install directory itself on Windows,
-/// which is where Tauri's resource directory is there. The executable path is
-/// canonicalised first, because on macOS the tool is reached through the link
-/// in `/usr/local/bin` and `current_exe` answers with the path it was run by.
+/// `Contents/Resources` on macOS, the install directory itself on Windows, and
+/// on Linux [`linux_resources`], which is where Tauri's resource directory is
+/// on each. The executable path is canonicalised first, because on macOS the
+/// tool is reached through the link in `/usr/local/bin` and `current_exe`
+/// answers with the path it was run by.
 #[must_use]
 pub fn resource_dir() -> Option<PathBuf> {
     let exe = std::env::current_exe().ok()?.canonicalize().ok()?;
     let dir = exe.parent()?;
     if cfg!(target_os = "macos") {
         Some(dir.parent()?.join("Resources"))
+    } else if cfg!(target_os = "linux") {
+        Some(linux_resources(dir))
     } else {
         Some(dir.to_path_buf())
     }
+}
+
+/// Tauri's Linux resource directory for an executable in `exe_dir`:
+/// `../lib/tpdf` when it exists, which is where the deb (`/usr/bin` and
+/// `/usr/lib/tpdf`) and the AppImage (`$APPDIR/usr/...`) put the resources,
+/// and otherwise the folder itself, as for a checks build in `target/release`.
+///
+/// Until 2026-10-14 the folder itself was all there was, and the deb's
+/// `/usr/bin/tpdf-cli` looked for `/usr/bin/libpdfium.so`, so the installed
+/// tool could read no document.
+#[must_use]
+pub fn linux_resources(exe_dir: &Path) -> PathBuf {
+    let bundled = exe_dir.join("../lib/tpdf");
+    bundled
+        .canonicalize()
+        .unwrap_or_else(|_| exe_dir.to_path_buf())
 }
 
 /// The command-line tool's `main`. Returns the process exit code.

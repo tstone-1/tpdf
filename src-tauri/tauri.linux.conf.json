@@ -9,7 +9,11 @@
     },
     "linux": {
       "deb": {
-        "desktopTemplate": "linux/tpdf.desktop"
+        "desktopTemplate": "linux/tpdf.desktop",
+        "depends": [
+          "libtesseract5",
+          "p11-kit-modules"
+        ]
       },
       "rpm": {
         "desktopTemplate": "linux/tpdf.desktop"
