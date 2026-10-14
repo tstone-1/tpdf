@@ -81,11 +81,14 @@ TAG = "pdfium-8078-tpdf.1"
 
 # asset name -> sha256 of the archive as published under TAG.
 #
-# Verified artifacts from PDFium candidate run 38073135904, commit b18adac.
-# Only the architectures shipped by tpdf are built and published.
+# Verified artifacts from PDFium candidate run 38073135904, commit b18adac; the
+# linux-x64 one from run 38535603856, commit cac70258, added to the same release
+# on 2026-10-14 with its own evidence zip.
+# Only tpdf's architectures are built and published.
 PINS = {
     "mac-arm64": "4b9828b3e1039d7ea9a5b6e2b9a8339bd49a195139eb979506a4d8b0bf77d475",
     "win-x64": "0b155dcb3a1f0fe749e8513b1b4cb9290e0814c99da8aa9bb1e9d4c6fa3b5a48",
+    "linux-x64": "d9663567f3aecbb36aafa87d11ccf9a1b4eb86df314bef3aca0820a0f7e6e9f8",
 }
 
 RELEASE_URL = "https://github.com/tstone-1/tpdf/releases/download"

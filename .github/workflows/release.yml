@@ -175,6 +175,14 @@ jobs:
           # archiving the duplicate Windows gates cache cost over five minutes.
           save-if: ${{ github.ref == 'refs/heads/main' }}
 
+      # What Tauri links on Linux: WebKitGTK and the libraries beside it. The
+      # macOS and Windows images carry their webviews; Ubuntu's does not.
+      - name: Install the Linux build packages
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq libwebkit2gtk-4.1-dev libgtk-3-dev libayatana-appindicator3-dev librsvg2-dev libxdo-dev libssl-dev
+
       - name: Install JS deps
         run: npm ci
 
@@ -244,6 +252,9 @@ jobs:
             # interpreter is the one `setup-python` pinned above.
             python -c "import sys, zipfile; zipfile.ZipFile(sys.argv[2]).extractall(sys.argv[1])" "$RUNNER_TEMP" "$RUNNER_TEMP/qpdf.zip"
             echo "$RUNNER_TEMP/qpdf-12.4.1-msvc64/bin" >> "$GITHUB_PATH"
+          elif [ "$RUNNER_OS" = "Linux" ]; then
+            sudo apt-get update -qq
+            sudo apt-get install -y -qq qpdf
           else
             brew install qpdf
           fi
