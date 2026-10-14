@@ -155,6 +155,19 @@ export const BINDINGS = {
   // menu bar highlights.
   "view.toggleSidebar": { keys: ["\\"], code: "Backslash", accel: true },
   "view.invertPages": { keys: ["i", "I"], accel: true, shift: true },
+  // The frequent edits, on bare letters as the page keys below are, since
+  // 2026-10-14. Taken by the window and not by the surface, so they work
+  // wherever the keyboard is except a text field; and no menu accelerator,
+  // which `accelerator` refuses for a key without the modifier, since a menu
+  // cannot see focus and would take the letter from every field. A tool armed
+  // by a stray press is named in the toolbar's row with a button to leave it,
+  // and Esc leaves it too. Redaction has no letter: it is the one workflow
+  // that removes content, and a stray `r` before a drag would mark text where
+  // the reader meant to select it.
+  "edit.highlightSelection": { keys: ["h"] },
+  "edit.addComment": { keys: ["c"] },
+  "edit.addTextBox": { keys: ["t"] },
+  "edit.editText": { keys: ["e"] },
   "nav.nextPage": { keys: ["n"] },
   "nav.previousPage": { keys: ["p"] },
   "nav.firstPage": { keys: ["Home"] },

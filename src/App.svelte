@@ -406,7 +406,9 @@
   let armedOptions: string[] = [];
   /** Whether a text field placed from now on gets a line round it. */
   let fieldBorder = readFieldBorder();
-  let textEditor: TextEditor | null = null;
+  // State so the toolbar can say text is being edited and offer Done. A class
+  // instance is not made into a proxy: only the assignments are watched.
+  let textEditor = $state<TextEditor | null>(null);
   let textEditorGeneration = 0;
 
   function commitPopups(): void {
@@ -3665,6 +3667,9 @@
   }
 
   function cancelToolbarTool(): void {
+    // Done, or Select, while text is being edited: the editor applies its
+    // draft, closes and gives the PDF the keyboard itself.
+    if (textEditor) { textEditor.finish(); return; }
     viewer?.cancelDraw();
     viewer?.focus();
   }
@@ -5875,7 +5880,7 @@
   {#if title}
     <Toolbar state={toolState}
       active={status?.armed ? armedLabel(status.armed) : null} armed={status?.armed ?? null}
-      drawing={status?.drawing ?? null} erasing={status?.erasing != null}
+      drawing={status?.drawing ?? null} erasing={status?.erasing != null} editing={textEditor !== null}
       colorId={markColor.id} widthLabel={markNib.name}
       selected={status?.selected ?? 0} run={runToolbarCommand}
       finish={finishToolbarDrawing} cancel={cancelToolbarTool} />

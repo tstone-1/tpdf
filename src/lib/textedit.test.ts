@@ -160,11 +160,10 @@ describe("existing text editing", () => {
       let refuse!: (error: Error) => void;
       const write = vi.fn(() => new Promise<EditState>((resolve, reject) => { finish = resolve; refuse = reject; }));
       const { editor, root, field, close } = mount(write);
-      const done = root.children.flatMap((node) => node.children).find((node) => node.getAttribute("aria-label") === "Done")!;
       field.value = "ACME edit";
       const focus = vi.spyOn(FakeElement.prototype, "focus");
       close.mockImplementation(() => editor.destroy());
-      done.dispatch("click", {});
+      editor.finish();
       expect(write).toHaveBeenCalledExactlyOnceWith(change);
       expect(close).not.toHaveBeenCalled();
       expect(focus).not.toHaveBeenCalled();
@@ -209,12 +208,11 @@ describe("existing text editing", () => {
       editor.destroy(); focus.mockRestore();
     }
   });
-  it("returns focus to Done when the selected text has scrolled out of view", async () => {
+  it("returns focus to the PDF when the selected text has scrolled out of view", async () => {
     for (const escape of [true, false]) {
       let offset = 0;
       const write = vi.fn(async () => state);
-      const { editor, root, form, field, hit } = mount(write, runs, () => ({ left: 40, top: 48 + offset, right: 120, bottom: 63 + offset, clip: "inset(0px)" }));
-      const done = root.children.flatMap((node) => node.children).find((node) => node.getAttribute("aria-label") === "Done")!;
+      const { editor, form, field, hit } = mount(write, runs, () => ({ left: 40, top: 48 + offset, right: 120, bottom: 63 + offset, clip: "inset(0px)" }));
       field.value = "discard this draft";
       offset = 700; editor.layout();
       expect(hit).toHaveProperty("hidden", true);
@@ -224,7 +222,7 @@ describe("existing text editing", () => {
       await editor.settle();
       expect(form).toHaveProperty("hidden", true);
       expect(focus).toHaveBeenCalledExactlyOnceWith({ preventScroll: true });
-      expect(focus.mock.contexts).toEqual([done]);
+      expect(focus.mock.contexts).toEqual([dom.root]);
       expect(write).not.toHaveBeenCalled();
       offset = 0; editor.layout(); hit.dispatch("click", {});
       expect(field.value).toBe(change.original);
@@ -248,7 +246,7 @@ describe("existing text editing", () => {
     }
     editor.destroy();
   });
-  it("starts keyboard navigation at the first visible target or Done", () => {
+  it("starts keyboard navigation at the first visible target or the PDF", () => {
     for (const visible of [true, false]) {
       const focus = vi.spyOn(FakeElement.prototype, "focus");
       const second = { ...runs.runs[0]!, operator: 9, text: "SECOND" };
@@ -256,8 +254,7 @@ describe("existing text editing", () => {
         left: 40, right: 120, top: visible && run.operator === 9 ? 48 : 700,
         bottom: visible && run.operator === 9 ? 63 : 720, clip: "inset(0px)",
       }));
-      const done = root.children.flatMap((node) => node.children).find((node) => node.getAttribute("aria-label") === "Done")!;
-      expect(focus.mock.contexts[0]).toBe(visible ? root.children[1] : done);
+      expect(focus.mock.contexts[0]).toBe(visible ? root.children[1] : dom.root);
       expect(focus.mock.calls[0]).toEqual([{ preventScroll: true }]);
       editor.destroy(); focus.mockRestore();
     }

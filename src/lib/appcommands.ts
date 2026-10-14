@@ -1166,14 +1166,6 @@ export function registerAppCommands(
       run: () => actions.rotatePage(-1),
     },
     {
-      // **No keyboard binding, deliberately, and for the opposite reason to
-      // the deletion below.** ⌘H is the macOS shortcut for hiding the
-      // application and cannot be taken; ⌘⇧H is Acrobat's and is free, but a
-      // chord for a command that only ever applies to a selection teaches
-      // itself badly --- a reader who presses it with nothing selected gets
-      // nothing and no explanation. It is offered in the palette, in the Edit
-      // menu, and in the right-click menu over a selection, which is where a
-      // reader who has just dragged across a line is already looking.
       // **The only mark command with no `hasSelection` guard**, because a
       // comment is not made *of* a selection --- it is dropped on the page. It
       // is offered on any open document, which is also what makes it reachable
@@ -1211,9 +1203,11 @@ export function registerAppCommands(
       // there is no pointer at all --- arming from there is exactly as useful,
       // since the gesture comes afterwards either way.
       //
-      // No chord. A one-shot mode a reader can enter by accident and then not
-      // recognise is worse than one they have to ask for, and every letter that
-      // would suit is taken by navigation.
+      // No key. A one-shot mode a reader can enter by accident and then not
+      // recognise is worse than one they have to ask for. Comment, text box
+      // and text editing have bare letters since 2026-10-14 (see `BINDINGS`):
+      // they are the frequent ones, and every armed tool is now named in the
+      // toolbar's row with a button to leave it.
       id: "edit.drawBox",
       title: "Draw a box...",
       enabled: withDocument,
@@ -1474,6 +1468,12 @@ export function registerAppCommands(
       run: () => actions.erase(),
     },
     {
+      // **`h`, since 2026-10-14**, a bare letter as the page keys are (see
+      // `BINDINGS`). The note that stood here said a chord for a command that
+      // needs a selection "teaches itself badly", because a press with nothing
+      // selected does nothing. ⌘C does nothing then too; and select, then `h`,
+      // is the shortest way to the most frequent mark. ⌘H stays the system's
+      // hide-application chord.
       id: "edit.highlightSelection",
       title: "Highlight selection",
       enabled: () => withDocument() && actions.hasSelection(),
@@ -2603,6 +2603,24 @@ export function handleWindowKey(
     // copy that silently failed.
     event.preventDefault();
     void actions.viewer()?.copySelection();
+  } else if (title && !inTextField(event) && !event.defaultPrevented && matches("edit.highlightSelection", event)) {
+    // The bare letters for the frequent edits; see `BINDINGS`. Guarded on the
+    // field for every one of them, where ⌘Z is the only chord above that needs
+    // it: a letter is what a reader types into the find bar. With nothing
+    // selected `h` is left alone, as ⌘C is.
+    if (actions.hasSelection()) {
+      event.preventDefault();
+      actions.markSelection("highlight");
+    }
+  } else if (title && !inTextField(event) && !event.defaultPrevented && matches("edit.addComment", event)) {
+    event.preventDefault();
+    actions.addComment(null);
+  } else if (title && !inTextField(event) && !event.defaultPrevented && matches("edit.addTextBox", event)) {
+    event.preventDefault();
+    actions.drawTextBox();
+  } else if (title && !inTextField(event) && !event.defaultPrevented && matches("edit.editText", event)) {
+    event.preventDefault();
+    actions.editText();
   } else if (matches("edit.undo", event) && title && !inTextField(event)) {
     // The `inTextField` guard is on these two and on nothing else here, and the
     // asymmetry is deliberate rather than an oversight. Every other binding

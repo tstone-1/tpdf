@@ -11,6 +11,7 @@
     armed = null,
     drawing = null,
     erasing = false,
+    editing = false,
     selected = 0,
     colorId = "default",
     widthLabel = "",
@@ -23,6 +24,8 @@
     armed?: ArmedTool;
     drawing: number | null;
     erasing: boolean;
+    /** Existing text is being edited: the row says so and offers Done. */
+    editing?: boolean;
     selected: number;
     colorId?: string;
     widthLabel?: string;
@@ -48,13 +51,14 @@
   const colors = TOOL_GROUPS.find((group) => group.id === "color")!;
   let selectedSwatch = $derived(swatch(colorId) ?? DEFAULT_SWATCH);
   let unfinished = $derived((drawing ?? 0) > 0);
-  let inTool = $derived(active !== null || drawing !== null || erasing);
+  let inTool = $derived(active !== null || drawing !== null || erasing || editing);
   let offered = $derived(styleOptions({ armed, drawing: drawing !== null, erasing }));
 
   function toolPressed(id: string): boolean {
     if (id === "draw") return drawing !== null || erasing || /^(Box|Ellipse|Stamp)/.test(active ?? "");
     if (id === "edit.addComment") return active?.startsWith("Comment") ?? false;
     if (id === "edit.addTextBox") return active?.startsWith("Text box") ?? false;
+    if (id === "edit.editText") return editing;
     if (id === "pages") return active?.startsWith("Crop") ?? false;
     if (id === "redact") return active?.startsWith("Redact") ?? false;
     return false;
@@ -82,7 +86,7 @@
 
   $effect(() => {
     // Enablement and tool completion can remove the current toolbar tab stop.
-    void commandState; void drawing; void active; void erasing; void open; void host; void offered;
+    void commandState; void drawing; void active; void erasing; void editing; void open; void host; void offered;
     void tick().then(() => rove());
   });
 
@@ -279,11 +283,16 @@
   </div>
   {#if inTool}
     <div class="tool-state" role="status">
-      <span data-testid={drawing !== null ? "drawing" : erasing ? "erasing" : "armed"}>{drawing !== null ? `Drawing${drawing > 0 ? `: ${drawing} stroke${drawing === 1 ? "" : "s"}` : " - press and drag"}` : erasing ? "Erasing marks" : active}</span>
-      {#if drawing !== null}
+      {#if editing}
+        <!-- Done and not Cancel: an unapplied draft is applied, not thrown away. -->
+        <span data-testid="editing">Edit existing text — choose an outlined line</span>
+        <button onclick={cancel}>Done</button>
+      {:else if drawing !== null}
+        <span data-testid="drawing">{`Drawing${drawing > 0 ? `: ${drawing} stroke${drawing === 1 ? "" : "s"}` : " - press and drag"}`}</span>
         <button class="finish" disabled={drawing === 0} onclick={finish}>Finish</button>
         <button onclick={cancel}>{drawing > 0 ? "Discard" : "Cancel"}</button>
       {:else}
+        <span data-testid={erasing ? "erasing" : "armed"}>{erasing ? "Erasing marks" : active}</span>
         <button onclick={cancel}>{erasing ? "Stop" : "Cancel"}</button>
       {/if}
       <!-- What the armed tool draws with, in the row that names it; see `styleOptions`. -->

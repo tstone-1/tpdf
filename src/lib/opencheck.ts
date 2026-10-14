@@ -62,6 +62,18 @@ const VERDICT_MS = 150_000;
 const ARRIVAL_MS = 30_000;
 
 /**
+ * The toolbar's Done while existing text is being edited, or `null`.
+ *
+ * In the row that names an armed tool, since 2026-10-14; it was a box over
+ * the page before, inside the editor's own overlay.
+ */
+function textEditDone(): HTMLButtonElement | null {
+  if (!document.querySelector('[data-testid="editing"]')) return null;
+  return [...document.querySelectorAll<HTMLButtonElement>(".tool-state button")]
+    .find((button) => button.textContent?.trim() === "Done") ?? null;
+}
+
+/**
  * How long to watch for a document that should *not* appear.
  *
  * Long enough that a slow open would have landed. A control that gives up too
@@ -452,7 +464,7 @@ async function run(host: OpenCheckHost, phase: string, expected: string): Promis
       report.check("the replacement is journalled against the file the page came from",
         journalled?.source === source.source && journalled?.replacement === typed,
         JSON.stringify(journalled && { source: journalled.source, page: journalled.page }));
-      document.querySelector<HTMLButtonElement>('.text-editor button[aria-label="Done"]')!.click();
+      textEditDone()!.click();
       if (!await settle(() => !document.querySelector(".text-editor"), SETTLE_MS))
         throw new Error("Done did not close text editing on the inserted page");
       if (!await settle(() => (host.viewer()!.textOn(1) ?? null) !== null &&
@@ -970,10 +982,22 @@ async function run(host: OpenCheckHost, phase: string, expected: string): Promis
       cancel.click();
       target()!.click();
       check("Cancel button discards the keyboard draft", field()!.value === original + (wrapped ? " " : "") && !host.edits()!.dirty);
-      const done = document.querySelector<HTMLButtonElement>('.text-editor button[aria-label="Done"]')!;
-      done.focus({ preventScroll: true }); done.click();
+      const done = textEditDone();
+      check("the toolbar says text is being edited and offers Done", done !== null &&
+        document.querySelector('[data-testid="editing"]')?.textContent?.startsWith("Edit existing text") === true &&
+        !document.querySelector(".text-editor")!.textContent?.includes("Edit existing text"));
+      done!.focus({ preventScroll: true }); done!.click();
       if (!await settle(() => !document.querySelector(".text-editor"), SETTLE_MS)) throw new Error("Done did not close text editing");
       check("Done returns keyboard control to the PDF", document.activeElement === document.querySelector(".surface"));
+      check("the toolbar no longer says text is being edited", await settle(() => textEditDone() === null, 1000));
+      // A tool's bare letter, pressed on the page: the window's handler takes
+      // it from there (see `BINDINGS`). The unit tests call that handler
+      // directly; this is the page reaching it.
+      document.querySelector(".surface")!.dispatchEvent(new KeyboardEvent("keydown", { key: "c", bubbles: true, cancelable: true }));
+      const armed = () => document.querySelector('[data-testid="armed"]')?.textContent ?? "";
+      check("c on the page arms the comment tool", await settle(() => armed().startsWith("Comment"), 1000));
+      [...document.querySelectorAll<HTMLButtonElement>(".tool-state button")].find((button) => button.textContent?.trim() === "Cancel")?.click();
+      if (!await settle(() => !document.querySelector('[data-testid="armed"]'), 1000)) throw new Error("Cancel did not put the comment tool away");
       if (passport) {
         const before = JSON.stringify(host.viewer()!.position);
         document.activeElement!.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowUp", bubbles: true, cancelable: true }));
@@ -1006,7 +1030,7 @@ async function run(host: OpenCheckHost, phase: string, expected: string): Promis
         check("offscreen text targets leave keyboard navigation", target()!.hidden === true);
         const position = host.viewer()!.position;
         document.querySelector<HTMLElement>(".text-edit-popup")!.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true }));
-        check("cancelling offscreen text focuses Done", document.activeElement === document.querySelector('.text-editor button[aria-label="Done"]'));
+        check("cancelling offscreen text focuses the PDF", document.activeElement === document.querySelector(".surface"));
         check("offscreen cancellation keeps the reading position", JSON.stringify(host.viewer()!.position) === JSON.stringify(position));
         host.viewer()!.goToPage(page);
         if (!await settle(() => host.viewer()?.idle === true && target()?.hidden === false, SETTLE_MS))

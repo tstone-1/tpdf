@@ -289,7 +289,8 @@ project conventions.
   colour and width controls. Every command is also reachable from the command palette,
   which renders each shortcut from the
   same table the key handler matches against, so a label cannot advertise a chord that
-  does nothing.
+  does nothing. The frequent edits have a letter of their own: `h` highlights the
+  selection, `c` adds a comment, `t` a text box, and `e` edits existing text.
 
 All of that has run on macOS arm64 and on Windows. Every *measurement* quoted in this
 repository is macOS arm64 unless it says otherwise: the two platforms differ enough that

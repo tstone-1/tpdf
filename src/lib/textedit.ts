@@ -87,7 +87,6 @@ type Anchor = { left: number; top: number; right: number; bottom: number; clip: 
 /** Hit targets use viewer geometry; the worker renders the accepted replacement. */
 export class TextEditor {
   private readonly root = document.createElement("div");
-  private readonly toolbar = document.createElement("div");
   private readonly popup = document.createElement("div");
   private readonly input = document.createElement("textarea");
   private readonly controls: TextLayoutControls;
@@ -103,7 +102,6 @@ export class TextEditor {
   private readonly message = document.createElement("p");
   private readonly apply = document.createElement("button");
   private readonly buttons: HTMLButtonElement[] = [];
-  private readonly done: HTMLButtonElement;
   private active: TextRun | null = null;
   private changes: readonly TextChange[] = [];
   private accepted = "";
@@ -120,7 +118,7 @@ export class TextEditor {
    * wrapped down its paragraph where it now is. Without it the outlines stay
    * where the source drew its text, which after a wrap is a line too high.
    */
-  constructor(host: HTMLElement, private readonly pageId: number, private readonly source: TextRuns,
+  constructor(private readonly host: HTMLElement, private readonly pageId: number, private readonly source: TextRuns,
     private readonly anchor: (run: TextRun) => Anchor | null,
     private readonly write: (change: TextChange) => Promise<EditState>,
     private readonly close: () => void,
@@ -130,17 +128,6 @@ export class TextEditor {
     this.root.className = "text-editor";
     for (const event of ["pointerdown", "click", "dblclick"]) this.root.addEventListener(event, (e) => e.stopPropagation());
     this.root.style.cssText = "position:absolute;inset:0;pointer-events:none;z-index:12;overflow:hidden";
-    this.toolbar.style.cssText = "position:absolute;top:8px;left:50%;transform:translateX(-50%);padding:8px;display:flex;align-items:center;gap:12px;background:Canvas;color:CanvasText;border:1px solid #888;border-radius:6px;pointer-events:auto;z-index:2";
-    const title = document.createElement("span"); title.textContent = "Edit existing text: choose an outlined line";
-    this.done = this.button("Done", () => {
-      this.commit(); void this.settle().then(() => {
-        // A tab transition may have removed this editor while its draft saved.
-        if (this.disposed) return;
-        this.close();
-        host.focus({ preventScroll: true });
-      }).catch(() => {});
-    });
-    this.toolbar.append(title, this.done);
     this.popup.className = "text-edit-popup";
     this.popup.setAttribute("role", "group");
     this.popup.setAttribute("aria-label", "Replace existing text");
@@ -175,8 +162,27 @@ export class TextEditor {
     }
     this.outline.style.cssText = "position:absolute;border:2px dashed #2874d0;box-sizing:border-box;pointer-events:none";
     this.outline.hidden = true;
-    this.root.append(this.outline, this.toolbar, this.popup); host.append(this.root); this.layout();
-    (this.buttons.find((button) => !button.hidden) ?? this.done).focus({ preventScroll: true });
+    this.root.append(this.outline, this.popup); host.append(this.root); this.layout();
+    (this.buttons.find((button) => !button.hidden) ?? host).focus({ preventScroll: true });
+  }
+
+  /**
+   * What the toolbar's Done does: applies the open draft, then closes and
+   * gives the keyboard back to the PDF.
+   *
+   * Done and not Cancel, because a draft typed and not yet applied is applied
+   * here; the popup's own Cancel is the one that discards. The words and the
+   * button are in the toolbar's row for an armed tool, where every other tool
+   * says what it does. Until 2026-10-14 they were a box over the top of the
+   * page, which covered the first outlined line.
+   */
+  finish(): void {
+    this.commit(); void this.settle().then(() => {
+      // A tab transition may have removed this editor while its draft saved.
+      if (this.disposed) return;
+      this.close();
+      this.host.focus({ preventScroll: true });
+    }).catch(() => {});
   }
 
   private button(title: string, action: () => void): HTMLButtonElement {
@@ -214,7 +220,7 @@ export class TextEditor {
   private cancel(): void {
     if (this.saving) return;
     const selected = this.active ? this.buttons[this.source.runs.indexOf(this.active)] : null;
-    const target = selected?.hidden ? this.done : selected;
+    const target = selected?.hidden ? this.host : selected;
     this.active = null; this.failure = null; this.popup.hidden = true;
     this.clearPreview();
     // A hidden input cannot retain keyboard navigation; keep the PDF in place.
@@ -334,7 +340,7 @@ export class TextEditor {
       if (area) Object.assign(this.outline.style, { left: `${area.left}px`, top: `${area.top}px`, width: `${area.right-area.left}px`, height: `${area.bottom-area.top}px`, clipPath: area.clip });
       const box = this.anchor(this.active);
       this.popup.style.left = `${Math.max(8, Math.min(box?.left ?? 8, width - 456))}px`;
-      this.popup.style.top = `${Math.max(48, Math.min((box?.bottom ?? 48) + 8, height - this.popup.offsetHeight - 8))}px`;
+      this.popup.style.top = `${Math.max(8, Math.min((box?.bottom ?? 8) + 8, height - this.popup.offsetHeight - 8))}px`;
     }
   }
   destroy(): void { this.disposed = true; this.clearPreview(); this.root.remove(); }

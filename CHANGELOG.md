@@ -48,6 +48,14 @@ have the binary.)
   showed only the typed value and the preview, and the hint in the field was gone at the
   first character.
 - **The Redact menu has lines between its kinds:** marking, reviewing, and writing a file.
+- **The frequent edits have a letter each:** `h` highlights the selection, `c` adds a
+  comment, `t` a text box, and `e` edits existing text. They work anywhere but in a text
+  field, and the toolbar's row names the tool a letter armed. Redaction has none: it is the
+  one workflow that removes content, and a stray key before a drag would mark text for
+  removal.
+- **Editing existing text says so in the toolbar's row,** with *Done*, as every other tool
+  does, and *Edit text* shows as pressed. It said so in a box over the top of the page,
+  which covered the first lines a reader might want to edit, while *Select* stayed pressed.
 - **`scripts/run_on_windows.py --pictures FOLDER` takes the Windows pictures from a Mac,** as
   `run_on_mac.py --pictures` does: it sends the tree, builds the checks binary, attaches a
   disconnected or locked session to the screen and locks it again afterwards, and copies the

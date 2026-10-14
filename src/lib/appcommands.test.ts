@@ -1805,17 +1805,18 @@ describe("opening the palette", () => {
 describe("the window shortcuts for editing", () => {
   function press(
     key: string,
-    modifiers: { shift?: boolean; alt?: boolean; handled?: boolean; picked?: number } = {},
+    modifiers: { shift?: boolean; alt?: boolean; handled?: boolean; picked?: number; bare?: boolean; selected?: boolean; noDocument?: boolean } = {},
     target: { tagName?: string; isContentEditable?: boolean; ownerDocument?: { getSelection(): { type: string } | null } } | null = null,
     journal: { undo?: boolean; redo?: boolean } = { undo: true, redo: true },
     dirty = true,
   ) {
     const { fired, actions } = keyHarness(journal, dirty);
     actions.pickedMarks = () => modifiers.picked ?? 0;
+    actions.hasSelection = () => modifiers.selected ?? false;
     let prevented = 0;
     const event = {
       key,
-      metaKey: true,
+      metaKey: !modifiers.bare,
       ctrlKey: false,
       shiftKey: modifiers.shift ?? false,
       altKey: modifiers.alt ?? false,
@@ -1832,7 +1833,7 @@ describe("the window shortcuts for editing", () => {
     handleWindowKey(event, {
       actions,
       palette: () => null,
-      hasDocument: () => true,
+      hasDocument: () => !modifiers.noDocument,
       refreshRecents: () => {},
     });
     return { fired, prevented };
@@ -2112,6 +2113,51 @@ describe("the window shortcuts for editing", () => {
     const { fired, prevented } = press("z", {}, { tagName: "DIV" });
     expect(fired).toEqual(["undoEdit"]);
     expect(prevented).toBe(1);
+  });
+
+  const TOOL_KEYS = [["c", "addComment:here"], ["t", "drawTextBox"], ["e", "editText"]] as const;
+
+  it("arms a tool on its bare letter outside a text field", () => {
+    for (const [key, action] of TOOL_KEYS) {
+      const { fired, prevented } = press(key, { bare: true }, { tagName: "DIV" });
+      expect(fired, key).toEqual([action]);
+      expect(prevented, key).toBe(1);
+    }
+    const highlight = press("h", { bare: true, selected: true }, { tagName: "DIV" });
+    expect(highlight.fired).toEqual(["markSelection:highlight"]);
+    expect(highlight.prevented).toBe(1);
+  });
+
+  it("leaves a tool's letter to a text field, which is where a reader types it", () => {
+    for (const [key] of [...TOOL_KEYS, ["h"]] as const) {
+      for (const target of [{ tagName: "INPUT" }, { tagName: "TEXTAREA" }, { tagName: "DIV", isContentEditable: true }]) {
+        const { fired, prevented } = press(key, { bare: true, selected: true }, target);
+        expect(fired, `${key} in ${JSON.stringify(target)}`).toEqual([]);
+        expect(prevented, `${key} in ${JSON.stringify(target)}`).toBe(0);
+      }
+    }
+  });
+
+  it("leaves h alone with nothing selected, as Cmd-C does", () => {
+    const { fired, prevented } = press("h", { bare: true, selected: false }, { tagName: "DIV" });
+    expect(fired).toEqual([]);
+    expect(prevented).toBe(0);
+  });
+
+  it("does not arm a tool when the letter comes with Cmd, Shift or Option, or without a document", () => {
+    // Cmd-C is copy and Cmd-E, Cmd-T are the system's; a capital is Shift.
+    for (const [key] of [...TOOL_KEYS, ["h"]] as const) {
+      expect(press(key, { selected: true }, { tagName: "DIV" }).fired, `Cmd-${key}`).not.toContainEqual(expect.stringMatching(/addComment|drawTextBox|editText|markSelection/));
+      expect(press(key, { bare: true, shift: true, selected: true }, { tagName: "DIV" }).fired, `Shift-${key}`).toEqual([]);
+      expect(press(key, { bare: true, alt: true, selected: true }, { tagName: "DIV" }).fired, `Option-${key}`).toEqual([]);
+      expect(press(key, { bare: true, selected: true, noDocument: true }, { tagName: "DIV" }).fired, `${key} with no document`).toEqual([]);
+    }
+  });
+
+  it("leaves a tool's letter the surface has already taken", () => {
+    for (const [key] of [...TOOL_KEYS, ["h"]] as const) {
+      expect(press(key, { bare: true, selected: true, handled: true }, { tagName: "DIV" }).fired, key).toEqual([]);
+    }
   });
 
   it("still takes Shift-Cmd-R from inside a text field", () => {

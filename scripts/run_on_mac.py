@@ -3,7 +3,7 @@
 
     scripts/run_on_mac.py --host HOST --clone '~/path/to/tpdf'
         [--wrap 'COMMAND --'] [--rev REV] [--only TEXT]... [--timeout SECONDS]
-        [--pictures FOLDER [--picture-arg ARG]...]
+        [--pictures FOLDER [--picture-arg ARG]... | --phase PHASE FIXTURE]
 
 WHY THIS EXISTS. `window_checks.py` drives a real window, takes the keyboard
 and needs a screen that is unlocked and not covered, so on the machine somebody
@@ -60,6 +60,11 @@ place of the window checks and copies what it wrote into FOLDER here, for
 looking at a menu or a colour without taking this screen. `--picture-arg` is
 passed on, once for each: `--picture-arg=--dark`, `--picture-arg=--size`
 `--picture-arg=1000x760`. The exit is then `screenshots.py`'s.
+
+ONE PHASE INSTEAD. `--phase PHASE FIXTURE` runs `tabs_check.py FIXTURE --phase
+PHASE` there, for the window phases `window_checks.py` does not carry, such as
+`--phase textedit testdata/textedit-embedded.pdf`. The fixture is a path in the
+clone's `testdata`. The exit is then `tabs_check.py`'s.
 
 NOT A GATE. It needs a second machine that is switched on.
 """
@@ -194,6 +199,12 @@ def remote(args: argparse.Namespace, sha: str) -> str:
                'uv run --with reportlab --with pillow scripts/screenshots.py '
                f'"$app/Contents/MacOS/tpdf" --more --out "$run/pictures" {extra}')
         show = 'grep -v \'^EXIT\' "$run/checks.log"'
+    elif args.phase:
+        phase, fixture = args.phase
+        job = (f'uv run scripts/tabs_check.py "$app/Contents/MacOS/tpdf" {shlex.quote(fixture)} '
+               f'--phase {shlex.quote(phase)}')
+        show = ('grep -E \'\\[FAIL\\]|\\[NOTE\\]|checks passed|Error\' "$run/checks.log" '
+                '| grep -v \'^EXIT\'')
     else:
         job = f'python3 scripts/window_checks.py "$app/Contents/MacOS/tpdf" {only}'
         show = ('grep -E \'^\\[FAIL\\]|\\[NOTE\\]|not made\' "$run/checks.log"\n'
@@ -216,7 +227,11 @@ def main() -> int:
                         help="run screenshots.py --more there and copy its pictures into this folder")
     parser.add_argument("--picture-arg", action="append", default=[],
                         help="passed to screenshots.py, once for each argument")
+    parser.add_argument("--phase", nargs=2, metavar=("PHASE", "FIXTURE"),
+                        help="run tabs_check.py FIXTURE --phase PHASE there instead")
     args = parser.parse_args()
+    if args.phase and args.pictures:
+        parser.error("--phase and --pictures are two different runs; pass one")
 
     sha = tree_to_send(args.rev)
     print(f"--- sending {sha[:10]} to {args.host} ---", flush=True)
