@@ -530,6 +530,17 @@ jobs:
           workers run under Landlock and seccomp. The Linux packages (deb
           and AppImage) do not update themselves: install the new one.
 
+          **New in 26.10.19.** tpdf runs on Linux. Releases carry a deb
+          and an AppImage for x86-64. A document prints through GTK's
+          dialog and is handed to CUPS as a PDF; a PDF opened from a file
+          manager reaches the running window; text is recognised with
+          Tesseract (English and German ship with the deb); and a document
+          is signed with a smart card or token through PKCS#11, or with a
+          certificate file, where tpdf asks for the PIN or password in a
+          window of its own. On every platform: dimmed text in the palette
+          and the sidebar is easier to read, a search result shows its
+          match, and a failure is said without the system's error number.
+
           **New in 26.10.18.** A signature can lock the document: *Lock
           the document after signing* in the signing dialog, and `tpdf sign
           --lock`. The signature then states that nothing may change after

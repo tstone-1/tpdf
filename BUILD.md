@@ -6979,6 +6979,27 @@ read through. **Not run:** the written copy of `tpdf long-term` against a public
 authority (`docs/VERIFICATION.md` has why), the new entry of `mutate_viewer.py` by the
 harness itself, `print-probe` and `redact-reach-probe`.
 
+**26.10.19 verification, 2026-10-14:** the first release with Linux packages. All 31
+gates passed on the release tree on macOS arm64 (3,104 Rust tests with eleven documented
+ignored) and on Ubuntu 24.04 under WSL on the tree before the version bump, and
+`check_windows.py` type-checked the Windows tree. `scripts/run_on_windows.py --suite all`
+passed 3,127 unit tests and 576 command-line tests with 4 skipped on the Windows build
+computer. `scripts/run_on_mac.py` passed 11/11 window checks on a second Mac after one fix:
+the viewer check's list of commands a document does not earn lacked *Add a certificate file
+for signing...*, which exists only on Linux and is withheld everywhere else. Every mutation
+selected `--near v26.10.18` was caught, 22 Rust and 85 frontend, and so were all 32 of
+`mutate_python.py`; the Linux-only modules cannot be mutated on a Mac and were mutated by hand
+under WSL as each landed (their commits say which). The normal bundle, with the development
+engine hidden: the bundled `tpdf-cli` answered `--version` with 26.10.19, verified
+`testdata/incr-signed.pdf` and read a fixture's text, and with `text-heavy.pdf` open two
+workers mapped the bundle's `libpdfium.dylib` and the application process mapped none. On
+Linux the print dialog, a file manager's double-click and the PIN dialog were driven by hand
+the day before the tag (*Printing on Linux* above, and the commit that fixed what they
+found); `v26.10.19-rc2` built and attached the deb and the AppImage, and `latest.json` named
+only macOS and Windows. `tauri-plugin-updater` 2.14.0 was held at 2.13.3 (step 1). **Not
+run:** `print-probe` and `redact-reach-probe` on Windows, `menu_check.py` and `save_check.py`,
+and the signing phase of the window checks.
+
 **26.10.18 publication, 2026-10-13:** `Audit` and CI were green on the release commit
 `8409c945`, both legs, and the tag sits on it. No release mechanics had changed since
 26.10.17, so there was no rehearsal tag. The `Release` run 38423439098 skipped its gates on
@@ -8169,6 +8190,10 @@ starts at 0 and increments within the month.
      adding no package; 0.23 would be a second copy. Take it when Tauri does.
    - `toml`, `toml_datetime`, `toml_edit`, `brotli-decompressor`, `generic-array` and
      `rand_chacha` are not named in `Cargo.toml`; what names them pins them.
+   - **`tauri-plugin-updater` 2.14.0** and its npm half were held at 2.13.3 for 26.10.19
+     (2026-10-14): step 12 asks for the new updater to be tested before the tag when its
+     own crates move, which needs a Mac screen, and that release had the Linux packages to
+     land. Take it in a release that runs that test.
 2. <a id="release-step-2"></a>Bump **all four** version files so they agree:
    - `package.json`
    - `package-lock.json` (top-level *and* the root package entry — `npm version <v> --no-git-tag-version` does both)

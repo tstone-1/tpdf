@@ -4754,6 +4754,10 @@ async function appCommandChecks(
     // promises; `file.saveCopy` is deliberately not here, because a copy of an
     // unedited document is a file a reader wants.
     "file.save",
+    // Linux only (certificate files are added to tpdf there), so withheld
+    // everywhere else, document or not; on Linux it needs none and is in
+    // NEEDS_NO_DOCUMENT instead.
+    ...(isLinux() ? [] : ["file.addCertificateFile"]),
     // Guarded on the list of languages `file.recogniseTextLanguage` fetches.
     // Declared with the command, one place too early: the
     // registry lists it after `file.save`, and this list is compared in order.

@@ -2711,7 +2711,7 @@ SOFTWARE.
 | endi | 1.1.1 | MIT |
 | enumflags2 | 0.7.12 | MIT OR Apache-2.0 |
 | enumflags2_derive | 0.7.12 | MIT OR Apache-2.0 |
-| equivalent | 1.0.2 | Apache-2.0 OR MIT |
+| equivalent | 1.0.3 | Apache-2.0 OR MIT |
 | erased-serde | 0.4.10 | MIT OR Apache-2.0 |
 | errno | 0.3.14 | MIT OR Apache-2.0 |
 | event-listener | 5.4.2 | Apache-2.0 OR MIT |
@@ -2793,7 +2793,7 @@ SOFTWARE.
 | indexmap | 2.14.2 | Apache-2.0 OR MIT |
 | infer | 0.22.0 | MIT |
 | inout | 0.1.4 | MIT OR Apache-2.0 |
-| inout | 0.2.2 | MIT OR Apache-2.0 |
+| inout | 0.2.3 | MIT OR Apache-2.0 |
 | ipnet | 2.12.2 | MIT OR Apache-2.0 |
 | itertools | 0.15.0 | MIT OR Apache-2.0 |
 | itoa | 1.0.18 | MIT OR Apache-2.0 |
@@ -2927,7 +2927,7 @@ SOFTWARE.
 | rsa | 0.9.10 | MIT OR Apache-2.0 |
 | rustc-hash | 2.1.3 | Apache-2.0 OR MIT |
 | rustix | 1.1.5 | Apache-2.0 WITH LLVM-exception OR Apache-2.0 OR MIT |
-| rustls | 0.23.45 | Apache-2.0 OR ISC OR MIT |
+| rustls | 0.23.46 | Apache-2.0 OR ISC OR MIT |
 | rustls-native-certs | 0.8.5 | Apache-2.0 OR ISC OR MIT |
 | rustls-pki-types | 1.15.1 | MIT OR Apache-2.0 |
 | rustls-platform-verifier | 0.7.1 | MIT OR Apache-2.0 |
@@ -2994,17 +2994,17 @@ SOFTWARE.
 | system-configuration-sys | 0.6.0 | MIT OR Apache-2.0 |
 | tao | 0.37.1 | Apache-2.0 |
 | tar | 0.4.46 | MIT OR Apache-2.0 |
-| tauri | 2.12.3 | Apache-2.0 OR MIT |
-| tauri-codegen | 2.7.2 | Apache-2.0 OR MIT |
-| tauri-macros | 2.7.2 | Apache-2.0 OR MIT |
-| tauri-plugin-dialog | 2.8.2 | Apache-2.0 OR MIT |
-| tauri-plugin-fs | 2.7.0 | Apache-2.0 OR MIT |
+| tauri | 2.12.4 | Apache-2.0 OR MIT |
+| tauri-codegen | 2.7.3 | Apache-2.0 OR MIT |
+| tauri-macros | 2.7.3 | Apache-2.0 OR MIT |
+| tauri-plugin-dialog | 2.8.3 | Apache-2.0 OR MIT |
+| tauri-plugin-fs | 2.7.1 | Apache-2.0 OR MIT |
 | tauri-plugin-process | 2.4.0 | Apache-2.0 OR MIT |
-| tauri-plugin-single-instance | 2.5.3 | Apache-2.0 OR MIT |
+| tauri-plugin-single-instance | 2.5.4 | Apache-2.0 OR MIT |
 | tauri-plugin-updater | 2.13.3 | Apache-2.0 OR MIT |
-| tauri-runtime | 2.12.1 | Apache-2.0 OR MIT |
-| tauri-runtime-wry | 2.12.1 | Apache-2.0 OR MIT |
-| tauri-utils | 2.10.1 | Apache-2.0 OR MIT |
+| tauri-runtime | 2.12.2 | Apache-2.0 OR MIT |
+| tauri-runtime-wry | 2.12.2 | Apache-2.0 OR MIT |
+| tauri-utils | 2.10.2 | Apache-2.0 OR MIT |
 | tempfile | 3.27.0 | MIT OR Apache-2.0 |
 | tendril | 0.5.1 | MIT OR Apache-2.0 |
 | thiserror | 1.0.69 | MIT OR Apache-2.0 |
@@ -3018,7 +3018,7 @@ SOFTWARE.
 | tinyvec | 1.13.3 | Zlib OR Apache-2.0 OR MIT |
 | tls_codec | 0.4.2 | Apache-2.0 OR MIT |
 | tls_codec_derive | 0.4.2 | Apache-2.0 OR MIT |
-| tokio | 1.53.2 | MIT |
+| tokio | 1.53.3 | MIT |
 | tokio-rustls | 0.26.6 | MIT OR Apache-2.0 |
 | tokio-util | 0.7.20 | MIT |
 | toml | 1.1.8+spec-1.1.0 | MIT OR Apache-2.0 |
@@ -3097,7 +3097,7 @@ SOFTWARE.
 | zbus_macros | 5.19.0 | MIT |
 | zbus_names | 4.3.4 | MIT |
 | zcheapstr | 1.1.0 | MIT |
-| zerocopy | 0.8.62 | BSD-2-Clause OR Apache-2.0 OR MIT |
+| zerocopy | 0.8.63 | BSD-2-Clause OR Apache-2.0 OR MIT |
 | zerofrom | 0.1.8 | Unicode-3.0 |
 | zerofrom-derive | 0.1.8 | Unicode-3.0 |
 | zeroize | 1.9.1 | Apache-2.0 OR MIT |
@@ -12624,8 +12624,8 @@ Packages whose code is compiled into `dist/`. This list is read from the build's
 
 | Package | Version | Licence |
 |---|---|---|
-| @tauri-apps/api | 2.12.3 | Apache-2.0 OR MIT |
-| @tauri-apps/plugin-dialog | 2.8.2 | MIT OR Apache-2.0 |
+| @tauri-apps/api | 2.12.4 | Apache-2.0 OR MIT |
+| @tauri-apps/plugin-dialog | 2.8.3 | MIT OR Apache-2.0 |
 | @tauri-apps/plugin-process | 2.4.0 | MIT OR Apache-2.0 |
 | @tauri-apps/plugin-updater | 2.13.3 | MIT OR Apache-2.0 |
 | svelte | 5.57.2 | MIT |
