@@ -235,6 +235,16 @@ Three things bound how much that is worth:
   coordinator parses no PDF syntax" holds on the *viewing* path on both platforms and has never
   held on the printing path on either.
 
+**Linux parses nothing in the coordinator to print, since 2026-10-14.** The dialog is GTK's
+`GtkPrintUnixDialog` and the job a `GtkPrintJob` whose source is a file: GTK copies the job's
+bytes to CUPS and does not parse them, and CUPS's own filters, outside tpdf, do any conversion
+a printer needs (`print_linux.rs`). The read-back that PDFKit and `Windows.Data.Pdf` make on
+the other two platforms is PDFium in a worker spawned over the job
+(`save::InWorker::printed_pages`), because Linux has no system PDF parser that fits the
+licensing rule. The job waits in a file only its user can read, in `$XDG_RUNTIME_DIR`, until
+GTK has sent it. `print-probe` drives that path to a cups-pdf queue and reads what CUPS
+produced.
+
 The one thing that does **not** carry over is `print_macos::read_with_text`. `Windows.Data.Pdf`
 has no text API at all, so the Windows readback pins page count and rotation only; the check in
 `print.rs` that used text to say *which* pages survived skips out loud there rather than
@@ -4456,7 +4466,8 @@ red.
     have not. A parser bug reached this way lands in the process holding the user's
     filesystem authority, which is asset 1 in §1. Recursion in the two graph walks is
     bounded at `sweep::MAX_NESTING`; nothing else about this is mitigated, and it is reached
-    by ⌘P on any open document.
+    by ⌘P on any open document. Linux is the exception: there the read-back is a worker and
+    GTK only copies the job to CUPS (§3).
 
 12. **A request that hangs costs a deadline and a worker, and its work is lost.** The
     per-request bound is a kill (§T3), so a page that never finishes parsing holds one of

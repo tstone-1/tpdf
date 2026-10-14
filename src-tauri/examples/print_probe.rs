@@ -39,10 +39,258 @@
 // `NSPrintOperation`, which paginates PDF bytes itself and has no DC, no DIB and no
 // spooler file to inspect. A probe that could only report their absence should say
 // so rather than print a table.
-#[cfg(not(windows))]
+#[cfg(not(any(windows, target_os = "linux")))]
 fn main() {
-    eprintln!("print-probe drives a Win32 printer DC; Windows only");
+    eprintln!("print-probe drives a Win32 printer DC or a CUPS queue; Windows and Linux only");
     std::process::exit(2);
+}
+
+#[cfg(target_os = "linux")]
+fn main() {
+    // The read-back worker is this executable started again.
+    let args: Vec<String> = std::env::args().collect();
+    if args.iter().any(|arg| arg == tpdf_lib::worker::WORKER_ARGV) {
+        tpdf_lib::worker_child::main(&args);
+    }
+    linux::main();
+}
+
+/// The Linux half: everything after GTK's print dialog, to a real CUPS queue.
+///
+/// `print_linux.rs` hands the job's PDF to CUPS through a `GtkPrintJob`. The
+/// queue used is cups-pdf's (the package `printer-driver-cups-pdf`, installed
+/// on the test machine only), which writes what it is sent to a PDF in
+/// `~/PDF`, so what came out of CUPS can be read again. The dialog is skipped
+/// with `print_linux::print_to`, which reaches the same `submit` as the
+/// dialog's Print button.
+///
+/// The same order of checks as on Windows: the job, the read-back the
+/// application makes before the dialog, a control that the pages sent have
+/// ink, then the pages that came out of CUPS counted and their ink measured.
+/// Needs a display for GTK; under WSL, `xvfb-run`.
+///
+/// ```text
+/// xvfb-run cargo run --release --example print-probe
+/// xvfb-run cargo run --release --example print-probe -- testdata/vector-multi.pdf PDF
+/// ```
+#[cfg(target_os = "linux")]
+mod linux {
+    use std::path::{Path, PathBuf};
+    use std::time::{Duration, Instant, SystemTime};
+
+    use tpdf_lib::document::OpenDocument;
+    use tpdf_lib::print::{self, Job, PagePlan, Pages};
+    use tpdf_lib::progressive::{self, Bindings, CancelToken, TileSpec};
+    use tpdf_lib::{print_linux, save};
+
+    /// cups-pdf's queue, as Ubuntu's package names it.
+    const DEFAULT_PRINTER: &str = "PDF";
+
+    /// Device pixels per point for the ink count; a thumbnail settles it.
+    const CHECK_SCALE: f32 = 0.5;
+
+    struct Report {
+        passed: usize,
+        failed: usize,
+    }
+
+    impl Report {
+        fn check(&mut self, name: &str, ok: bool, detail: &str) {
+            if ok {
+                self.passed += 1;
+                println!("[OK]   {name:<56} {detail}");
+            } else {
+                self.failed += 1;
+                println!("[FAIL] {name:<56} {detail}");
+            }
+        }
+    }
+
+    pub fn main() {
+        let mut argv = std::env::args().skip(1);
+        let source = argv
+            .next()
+            .map_or_else(|| PathBuf::from("testdata/vector-multi.pdf"), PathBuf::from);
+        let printer = argv.next().unwrap_or_else(|| DEFAULT_PRINTER.to_owned());
+        println!("print-probe");
+        println!("  document : {}", source.display());
+        println!("  printer  : {printer}");
+        println!();
+        let mut report = Report {
+            passed: 0,
+            failed: 0,
+        };
+        if let Err(e) = run(&source, &printer, &mut report) {
+            println!("[FAIL] {e}");
+            report.failed += 1;
+        }
+        println!();
+        println!("{} passed, {} failed", report.passed, report.failed);
+        if report.failed > 0 {
+            std::process::exit(1);
+        }
+    }
+
+    fn run(source: &Path, printer: &str, report: &mut Report) -> Result<(), String> {
+        gtk::init().map_err(|e| format!("GTK could not start, so there is no display: {e}"))?;
+        let root = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .parent()
+            .ok_or("repo root")?;
+        let library = root
+            .join("vendor")
+            .join("pdfium")
+            .join(tpdf_lib::PDFIUM_SUBDIR);
+        let bindings = progressive::bindings_of(progressive::bind(&library)?);
+
+        let original = std::fs::read(source).map_err(|e| format!("reading {source:?}: {e}"))?;
+        let available = open(bindings, original.clone())?.page_count();
+        let wanted: Vec<u32> = (1..=available.min(2)).collect();
+        let expected = wanted.len();
+        // A subset and a quarter turn, so the job is a rewrite and not the file.
+        let job = Job {
+            pages: Pages::Only(
+                wanted
+                    .iter()
+                    .map(|&number| PagePlan { number, turns: 0 })
+                    .collect(),
+            ),
+            turns: 1,
+        };
+        let bytes =
+            print::build_update(&original, &job).map_err(|e| format!("building the job: {e}"))?;
+        println!("  pages    : {available} in the source, printing {wanted:?} with a quarter turn");
+        println!();
+
+        // The application's own read-back, as `present_job` makes it.
+        let (staged, file) = print_linux::stage(&bytes)?;
+        let read_back = save::InWorker::at(library.clone()).printed_pages(&file, bytes.len());
+        drop(file);
+        report.check(
+            "the read-back worker finds the pages of the job",
+            read_back.as_ref().is_ok_and(|n| *n == expected),
+            &format!("{read_back:?}, {expected} expected"),
+        );
+
+        let sent = inks(bindings, bytes)?;
+        report.check(
+            "control: the pages we sent have ink on them",
+            !sent.is_empty() && sent.iter().all(|n| *n > 0),
+            &format!("non-white pixels per page: {sent:?}"),
+        );
+
+        let out = std::env::var_os("TPDF_PRINT_OUT")
+            .map(PathBuf::from)
+            .or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join("PDF")))
+            .ok_or("no folder for cups-pdf's output")?;
+        let started = SystemTime::now();
+        let printed = print_linux::print_to(
+            printer,
+            &staged,
+            "tpdf print probe",
+            Duration::from_secs(30),
+        );
+        report.check(
+            "GTK sent the job to the CUPS queue",
+            printed.is_ok(),
+            &format!("{printed:?}"),
+        );
+        report.check(
+            "the job's file is gone once the job let go of it",
+            !staged.exists(),
+            &staged.display().to_string(),
+        );
+        printed?;
+
+        let produced = wait_for_output(&out, started, Duration::from_secs(60))?;
+        let after = std::fs::read(&produced).map_err(|e| e.to_string())?;
+        let _ = std::fs::remove_file(&produced);
+        let pages = inks(bindings, after)?;
+        report.check(
+            "what came out of CUPS has the pages that were sent",
+            pages.len() == expected,
+            &format!("{} pages at {}", pages.len(), produced.display()),
+        );
+        report.check(
+            "every page that came out has ink, so none is blank",
+            !pages.is_empty() && pages.iter().all(|n| *n > 0),
+            &format!("non-white pixels per page: {pages:?}"),
+        );
+        Ok(())
+    }
+
+    fn open(bindings: Bindings, bytes: Vec<u8>) -> Result<OpenDocument, String> {
+        // Leaked: a probe opens a handful of documents and then exits.
+        let bytes: &'static [u8] = Box::leak(bytes.into_boxed_slice());
+        OpenDocument::open_bytes(bindings, bytes, None).map_err(|e| e.reason)
+    }
+
+    /// Non-white pixels on each page, at [`CHECK_SCALE`].
+    fn inks(bindings: Bindings, bytes: Vec<u8>) -> Result<Vec<usize>, String> {
+        let document = open(bindings, bytes)?;
+        let mut inks = Vec::new();
+        for index in 0..document.page_count() {
+            let page = document.page(index)?;
+            let width = (page.width_pt() * CHECK_SCALE).ceil().clamp(1.0, 4000.0);
+            let height = (page.height_pt() * CHECK_SCALE).ceil().clamp(1.0, 4000.0);
+            #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+            let spec = TileSpec {
+                scale: CHECK_SCALE,
+                turns: 0,
+                x: 0,
+                y: 0,
+                width: width as u16,
+                height: height as u16,
+            };
+            let (pixels, done) =
+                progressive::render_tile(bindings, &page, spec, None, &CancelToken::new())?;
+            if !done.outcome.is_done() {
+                return Err(format!("page {} did not finish rendering", index + 1));
+            }
+            inks.push(
+                pixels
+                    .chunks_exact(4)
+                    .filter(|p| p[..3].iter().any(|c| *c < 200))
+                    .count(),
+            );
+        }
+        Ok(inks)
+    }
+
+    /// The newest PDF in `folder` written after `since`, once its size has
+    /// stopped changing: cups-pdf writes it after the job has left GTK.
+    fn wait_for_output(
+        folder: &Path,
+        since: SystemTime,
+        within: Duration,
+    ) -> Result<PathBuf, String> {
+        let until = Instant::now() + within;
+        let mut last: Option<(PathBuf, u64)> = None;
+        while Instant::now() < until {
+            let newest = std::fs::read_dir(folder)
+                .into_iter()
+                .flatten()
+                .flatten()
+                .filter(|e| e.path().extension().is_some_and(|x| x == "pdf"))
+                .filter_map(|e| {
+                    let meta = e.metadata().ok()?;
+                    let when = meta.modified().ok()?;
+                    (when >= since).then(|| (when, e.path(), meta.len()))
+                })
+                .max_by_key(|(when, _, _)| *when);
+            if let Some((_, path, len)) = newest {
+                if len > 0 && last.as_ref() == Some(&(path.clone(), len)) {
+                    return Ok(path);
+                }
+                last = Some((path, len));
+            }
+            std::thread::sleep(Duration::from_millis(500));
+        }
+        Err(format!(
+            "nothing new appeared in {} within {} s; is cups-pdf's queue there and enabled?",
+            folder.display(),
+            within.as_secs()
+        ))
+    }
 }
 
 #[cfg(windows)]

@@ -2,14 +2,15 @@
 //!
 //! The readback is the point of the shape here. `print_job` builds bytes and
 //! `present_job` refuses to show a panel for bytes the platform's own PDF stack
-//! cannot read --- PDFKit on macOS, `Windows.Data.Pdf` on Windows --- which is
+//! cannot read --- PDFKit on macOS, `Windows.Data.Pdf` on Windows, PDFium in a
+//! worker on Linux, which has no system parser that fits the licensing rule --- which is
 //! the same standard `docs/PLAN.md` 6 sets for a redaction, and the reason the
 //! two halves are separate functions rather than one command body.
 
 use std::path::{Path, PathBuf};
 
 use super::{outside_of, password_for};
-#[cfg(any(target_os = "macos", windows))]
+#[cfg(any(target_os = "macos", windows, target_os = "linux"))]
 use crate::diag;
 use crate::render::RenderService;
 use crate::{edits, print, save};
@@ -133,7 +134,13 @@ pub async fn print_document(
     let bytes = tauri::async_runtime::spawn_blocking(build)
         .await
         .map_err(|e| save::Refusal::from(format!("the print job could not be built: {e}")))??;
-    present_job(&app, bytes, title, expected).map_err(save::Refusal::from)
+    // On the blocking pool too: every platform reads the job back before the
+    // panel, and on Linux that read waits on a worker.
+    let presenting = app.clone();
+    tauri::async_runtime::spawn_blocking(move || present_job(&presenting, bytes, title, expected))
+        .await
+        .map_err(|e| save::Refusal::from(format!("the print panel could not be shown: {e}")))?
+        .map_err(save::Refusal::from)
 }
 
 /// The bytes of a print job, whichever route the reader's document takes.
@@ -275,17 +282,63 @@ fn present_job(
     Ok(())
 }
 
+/// Hands built bytes to GTK's print dialog on Linux, having first read them back.
+///
+/// The same order as the two arms above: the job is read back by a parser that
+/// did not write it and its pages counted before any dialog opens. The reader
+/// is PDFium in a worker (`save::InWorker::printed_pages`), since Linux has no
+/// system PDF parser that fits the licensing rule, and the job is written to a
+/// private file first because a `GtkPrintJob` sends a file
+/// (`print_linux.rs`). The dialog runs on GTK's thread, as the PIN dialog does.
+#[cfg(target_os = "linux")]
+fn present_job(
+    app: &tauri::AppHandle,
+    bytes: Vec<u8>,
+    title: String,
+    expected: Option<usize>,
+) -> Result<(), String> {
+    let (path, file) = crate::print_linux::stage(&bytes)?;
+    let checked = save::InWorker::at(crate::pdfium_library_dir(app))
+        .printed_pages(&file, bytes.len())
+        .map_err(|e| {
+            format!("the print job could not be read back, so it will not be printed: {e}")
+        })
+        .and_then(|pages| print::expect_pages(pages, expected));
+    drop(file);
+    if let Err(why) = checked {
+        let _ = std::fs::remove_file(&path);
+        return Err(why);
+    }
+    let shown = app.clone();
+    let staged = path.clone();
+    app.run_on_main_thread(move || {
+        use tauri::Manager as _;
+        let parent = shown
+            .get_webview_window("main")
+            .and_then(|window| window.gtk_window().ok());
+        let parent = parent
+            .as_ref()
+            .map(gtk::prelude::Cast::upcast_ref::<gtk::Window>);
+        if let Err(e) = crate::print_linux::present(staged, &title, parent) {
+            diag::note(&format!("[print] {e}"));
+        }
+    })
+    .map_err(|e| {
+        let _ = std::fs::remove_file(&path);
+        format!("the print panel could not be shown on the main thread: {e}")
+    })
+}
+
 /// The remaining platforms, where nothing is written.
 ///
 /// An error rather than a no-op: a print command that quietly does nothing is the
-/// worse of the two failures. Both shipping targets have an implementation above,
-/// so this arm exists for a Linux build that does not yet exist.
-#[cfg(not(any(target_os = "macos", windows)))]
+/// worse of the two failures.
+#[cfg(not(any(target_os = "macos", windows, target_os = "linux")))]
 fn present_job(
     _app: &tauri::AppHandle,
     _bytes: Vec<u8>,
     _title: String,
     _expected: Option<usize>,
 ) -> Result<(), String> {
-    Err("printing is implemented on macOS and Windows only".into())
+    Err("printing is implemented on macOS, Windows and Linux only".into())
 }

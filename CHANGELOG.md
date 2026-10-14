@@ -47,7 +47,10 @@ have the binary.)
   window opens on WebKitGTK and passes all eleven window checks under Xvfb on Ubuntu 24.04,
   with documents parsed in sandboxed workers as on macOS and Windows. The tests that read a
   print job back with the system's own PDF parser say `[SKIP]` on Linux, which has none
-  that fits the licence rule; printing is still to come.
+  that fits the licence rule.
+- **On Linux a document prints through GTK's print dialog.** The job is the PDF itself,
+  handed to CUPS unchanged, as on macOS; it is read back by PDFium in a sandboxed worker
+  before the dialog opens, so the application process parses no document to print.
 - **On Linux a document is signed with a smart card or token, through PKCS#11.** tpdf
   loads p11-kit's proxy module, which brings every module the system has registered, such as
   OpenSC for smart cards; the card signs and its key never leaves it. Linux has no system

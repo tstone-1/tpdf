@@ -4593,6 +4593,29 @@ and prints a `[SKIP]`: it needs per-page *text* to say which pages survived, and
 `did_not_write` covers that property on both platforms instead, using per-page rotation —
 `rotated.pdf` carries 0/90/180/270, so keeping the wrong two pages is a different rotation pair.
 
+### Printing on Linux, and how to check it without paper
+
+`print_linux.rs` shows GTK's print dialog and sends the job's PDF to CUPS through a
+`GtkPrintJob`, unchanged; CUPS converts it for the printer. Before the dialog the job is
+read back by PDFium in a worker (`save::InWorker::printed_pages`) and its pages counted. The
+dialog is not driven by anything here; `print_linux::print_to` reaches the same `submit` as
+its Print button, and `print-probe` uses it with cups-pdf, a CUPS queue that writes what it
+is sent to `~/PDF`. On the test machine only (cups-pdf is GPL and is not part of tpdf):
+
+```
+sudo apt-get install cups printer-driver-cups-pdf
+xvfb-run -a cargo run --release --example print-probe
+xvfb-run -a cargo run --release --example print-probe -- testdata/rotated.pdf PDF
+```
+
+Run it from the repository root, where `testdata/` is. Six checks: the read-back worker's
+page count, a control that the pages sent have ink, GTK sending the job, the job's file
+removed once GTK let go of it, and the pages that came out of CUPS counted and their ink
+measured. On 2026-10-14 under WSL (Ubuntu 24.04): 6 of 6 on `vector-multi.pdf` and
+`rotated.pdf`, and each of four mutations turned its own check red (a read-back one page
+high, the file kept, `gtk_printer_accepts_pdf` inverted, `/dev/null` sent in place of the
+job). Not checked: the dialog itself, its page range, and paper.
+
 ### The "reopen its windows" dialog
 
 A development build is killed constantly — harness timeouts, the deliberate crash probes,

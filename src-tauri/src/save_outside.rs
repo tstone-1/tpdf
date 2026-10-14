@@ -624,6 +624,47 @@ mod tile_tests {
 }
 
 impl InWorker {
+    /// How many pages PDFium finds in a print job, in a worker started over it.
+    ///
+    /// The Linux print path's read-back (`print_linux.rs`), where PDFKit reads
+    /// the job on macOS and `Windows.Data.Pdf` on Windows. Linux has no system
+    /// PDF parser that fits the licensing rule, so the reader is PDFium: not the
+    /// `lopdf` that wrote the job, and lenient the way a printer's own filter
+    /// is, which is the question here. [`Reread::pages`] asks the opposite one,
+    /// strictly, for a save. In a worker because the app process parses no
+    /// document.
+    ///
+    /// # Errors
+    ///
+    /// The file could not be mapped, the worker could not be started, PDFium
+    /// refused the job, or no answer came within [`DEFAULT_DEADLINE`].
+    pub fn printed_pages(&self, file: &std::fs::File, len: usize) -> Result<usize, String> {
+        let mapped = Shm::map_open_file(file, len)?;
+        let worker = Worker::spawn_shared(std::sync::Arc::new(mapped), &self.library_dir)?;
+        let pid = worker.pid();
+        let rx = asked_on_a_thread(worker, |worker| {
+            match Self::asked(
+                worker,
+                &Request::Open {
+                    lazy_geometry: true,
+                },
+            ) {
+                Ok(Reply::Open { page_count, .. }) => Ok(page_count),
+                Ok(other) => Err(format!(
+                    "the worker answered the print job's read-back with {}",
+                    other.described()
+                )),
+                Err(why) => Err(why.message().to_string()),
+            }
+        });
+        awaited(&rx, DEFAULT_DEADLINE, pid).map_err(|_| {
+            format!(
+                "the worker reading the print job back did not answer within {} s",
+                DEFAULT_DEADLINE.as_secs()
+            )
+        })?
+    }
+
     /// Everything a worker holding `file` reports about it: `Request::Properties`.
     ///
     /// The whole reply rather than [`Verifier::signatures`]'s list, because the

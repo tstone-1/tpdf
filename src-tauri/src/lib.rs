@@ -88,6 +88,8 @@ pub mod pades;
 pub mod pagetree;
 pub mod pathcut;
 pub mod print;
+#[cfg(target_os = "linux")]
+pub mod print_linux;
 #[cfg(target_os = "macos")]
 pub mod print_macos;
 #[cfg(all(test, not(any(target_os = "macos", windows))))]
