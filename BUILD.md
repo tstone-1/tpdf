@@ -321,6 +321,16 @@ screen, unlocked; lock it again afterwards. 2026-10-13: 45 of 45 checks and 20 p
 way, and the first of them showed the header's menu, which no Mac draws, with every item
 centred.
 
+From a Mac all of that is one command, which sends this tree, builds the checks binary there,
+attaches and locks the session as needed, and copies the pictures back:
+
+```
+scripts/run_on_windows.py --host HOST --clone 'C:\path\to\tpdf' --pictures <folder>
+```
+
+It needs a PowerShell login shell and an administrator account, and it stops when nobody is
+logged in. `--picture-arg` passes arguments on to `screenshots.py`.
+
 `--dark --out <folder>` takes the same pictures with the window in its dark appearance,
 without changing the system setting: the script sets `TPDF_THEME`, which the application
 reads at start. Run it after a change to a colour, and look at the pictures; they are not

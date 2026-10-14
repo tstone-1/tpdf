@@ -151,12 +151,19 @@ def windows_window_of(pid: int, deadline: float) -> int:
     raise SystemExit("[FAIL] the application opened no window")
 
 
-def photograph(window: int, picture: Path) -> None:
-    """Writes a picture of the window, and of nothing else."""
+def photograph(window: int, picture: Path) -> str | None:
+    """Writes a picture of the window, and of nothing else.
+
+    Returns why the picture cannot be the whole window, or `None`. On Windows
+    it is a copy of the screen, and the part of the window past the screen's
+    edge comes out black. 2026-10-14: a session without a monitor had a
+    640 x 480 screen after a reboot, all 19 pictures of a 1016 x 739 window
+    were 59% black, and every check passed.
+    """
     if sys.platform != "win32":
         # -o: no drop shadow, so the picture is the window. -x: no sound.
         subprocess.run(["screencapture", "-x", "-o", f"-l{window}", str(picture)], check=True)
-        return
+        return None
     import ctypes
     from ctypes import wintypes
 
@@ -174,6 +181,16 @@ def photograph(window: int, picture: Path) -> None:
     box = wintypes.RECT()
     user32.GetWindowRect(window, ctypes.byref(box))
     ImageGrab.grab(bbox=(box.left, box.top, box.right, box.bottom), all_screens=True).save(picture)
+    # The virtual screen: all monitors together, in the same pixels as the
+    # rectangle, since the process is per-monitor DPI aware.
+    left, top = user32.GetSystemMetrics(76), user32.GetSystemMetrics(77)
+    right, bottom = left + user32.GetSystemMetrics(78), top + user32.GetSystemMetrics(79)
+    if box.left < left or box.top < top or box.right > right or box.bottom > bottom:
+        return (f"the window, {box.right - box.left} x {box.bottom - box.top} at "
+                f"({box.left}, {box.top}), reaches past the screen, {right - left} x "
+                f"{bottom - top}, so part of each picture is black; give the session a larger "
+                "screen, or pass a smaller --size")
+    return None
 
 
 def png_size(path: Path) -> tuple[int, int]:
@@ -237,6 +254,7 @@ def main() -> int:
         log = room / "transcript.log"
         taken: list[str] = []
         frames: list[tuple[Path, int]] = []
+        off_screen: str | None = None
         (room / "frames").mkdir()
         with log.open("wb") as output:
             process = subprocess.Popen([str(args.binary.resolve())], env=env, stdout=output,
@@ -252,7 +270,7 @@ def main() -> int:
                         if not line.startswith("FRAME ") or int(parts[1]) < len(frames):
                             continue
                         picture = room / "frames" / f"{int(parts[1]):03}.png"
-                        photograph(window, picture)
+                        off_screen = photograph(window, picture) or off_screen
                         frames.append((picture, int(parts[2])))
                         if len(parts) > 3:
                             # Two thirds of a Retina capture: five pictures at
@@ -287,6 +305,9 @@ def main() -> int:
             print(f"[FAIL] only {len(frames)} frames, so no animation was written")
             passed = False
 
+    if off_screen:
+        print(f"[FAIL] {off_screen}")
+        passed = False
     sizes = {name: png_size(args.out / f"{name}.png") for name in taken}
     for name in SHOTS:
         if name not in sizes:

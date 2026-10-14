@@ -36,6 +36,10 @@ have the binary.)
   row. The fields are under it now.
 - **The zoom control has a chevron,** as every other menu in the window has. It showed the
   browser's own marker, a triangle pointing right, which read as a play button.
+- **On Windows, `scripts/screenshots.py` fails when the window reaches past the screen.** A
+  picture there is a copy of the screen, and on a machine with no monitor the screen was
+  640 x 480 after a restart: all 19 pictures of a 1016 x 739 window were more than half
+  black, and every check passed.
 
 ### Changed
 
@@ -44,6 +48,10 @@ have the binary.)
   showed only the typed value and the preview, and the hint in the field was gone at the
   first character.
 - **The Redact menu has lines between its kinds:** marking, reviewing, and writing a file.
+- **`scripts/run_on_windows.py --pictures FOLDER` takes the Windows pictures from a Mac,** as
+  `run_on_mac.py --pictures` does: it sends the tree, builds the checks binary, attaches a
+  disconnected or locked session to the screen and locks it again afterwards, and copies the
+  pictures back. It took four scripts written by hand before.
 
 - **The command palette finds a command by the words other programs use for it.** Typing
   `compress` finds *Save a smaller copy...*, `ocr` finds *Recognise text and save as...*,

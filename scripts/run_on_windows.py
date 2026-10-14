@@ -3,6 +3,7 @@
 
     scripts/run_on_windows.py --host HOST --clone 'C:\\Users\\me\\tpdf'
         [--suite cli|lib|all] [--rev REV] [--timeout SECONDS]
+        [--pictures FOLDER [--picture-arg ARG]...]
 
 WHY THIS EXISTS. `check_windows.py` type-checks the Windows tree from a Mac and
 runs nothing, so behaviour that exists only on Windows is first exercised by
@@ -46,6 +47,28 @@ WHAT THE ANSWER MEANS. Exit 0 only when the remote run printed its own exit
 marker and that marker is 0. A connection that fails, a build that does not
 finish and a run that prints no marker all exit 2, never 0: a check whose
 failure looks like silence is one that cannot fail.
+
+PICTURES INSTEAD. `--pictures FOLDER` builds the checks binary there, runs
+`screenshots.py --more` against it and copies the pictures back into FOLDER,
+as `run_on_mac.py --pictures` does. It needs a PowerShell login shell and an
+account with administrator rights, because a window can only be photographed
+in the desktop session, and the run has to get one:
+
+- Somebody must be logged in. Nothing here can log in, so the run stops and
+  says so.
+- A session left by Remote Desktop is *disconnected* and has no screen: a
+  picture taken in it fails with "The handle is invalid". A locked session
+  shows only the lock screen. Either way the run attaches the session to the
+  machine's own screen with `tscon <id> /dest:console`, which leaves it
+  unlocked (a locked one is disconnected first with `tsdiscon`), and locks it
+  again when the pictures are taken. A session somebody is using is left as
+  it is.
+- `screenshots.py` runs in that session through a one-shot scheduled task
+  with `/IT`; an SSH session has no desktop.
+
+`--picture-arg` is passed on, once for each, after `--size 1000x700 --timeout
+240`, so a later `--size` wins; the defaults suit a 1024 x 768 screen and a
+first start that is slower than a Mac's. The exit is `screenshots.py`'s.
 
 NOT A GATE. It needs a second machine that is switched on, so `gates.py` does
 not run it, for the reason it does not run `check_windows.py`.
@@ -139,15 +162,10 @@ def bundle_of(sha: str) -> bytes | None:
         git("update-ref", "-d", REF)
 
 
-def powershell(clone: str, sha: str, suite: str) -> str:
+def checkout(clone: str, sha: str) -> str:
+    """The start of every remote run: the commit in the check worktree, with its packages."""
     tree = clone.rstrip("\\/") + "-check"
     run = clone.rstrip("\\/") + "-check-run"
-    tests = "\n".join(
-        f'{command} 2>&1 | Tee-Object -Append "$run\\cargo.txt" | '
-        f'Select-String -CaseSensitive -Pattern \'{SHOWN}\' | ForEach-Object {{ $_.Line.Substring(0, [Math]::Min(600, $_.Line.Length)) }}\n'
-        f"if ($LASTEXITCODE -ne 0) {{ $failed = 1 }}"
-        for command in SUITES[suite]
-    )
     return f"""$ErrorActionPreference = "Continue"
 $clone = '{clone}'; $tree = '{tree}'; $run = '{run}'; $sha = '{sha}'
 function Stop-Run($why, $code) {{ "[FAIL] $why"; "{MARKER} $code"; exit }}
@@ -168,7 +186,17 @@ if (-not (Test-Path node_modules) -or -not (Test-Path "$run\\lock.txt") -or ((Ge
   if ($LASTEXITCODE) {{ Stop-Run "npm ci failed" 2 }}
   Set-Content "$run\\lock.txt" $lock
 }}
-npm run build 2>&1 | Out-Null
+"""
+
+
+def powershell(clone: str, sha: str, suite: str) -> str:
+    tests = "\n".join(
+        f'{command} 2>&1 | Tee-Object -Append "$run\\cargo.txt" | '
+        f'Select-String -CaseSensitive -Pattern \'{SHOWN}\' | ForEach-Object {{ $_.Line.Substring(0, [Math]::Min(600, $_.Line.Length)) }}\n'
+        f"if ($LASTEXITCODE -ne 0) {{ $failed = 1 }}"
+        for command in SUITES[suite]
+    )
+    return checkout(clone, sha) + f"""npm run build 2>&1 | Out-Null
 if ($LASTEXITCODE) {{ Stop-Run "the frontend did not build" 2 }}
 python scripts\\fetch_pdfium.py 2>&1 | Select-Object -Last 1
 if ($LASTEXITCODE) {{ Stop-Run "PDFium could not be fetched" 2 }}
@@ -191,6 +219,167 @@ $failed = 0
 {tests}
 "{MARKER} $failed"
 """
+
+
+# Before the caller's own `--picture-arg`s, so a later one wins.
+PICTURE_DEFAULTS = ["--size", "1000x700", "--timeout", "240"]
+
+# How long the scheduled task may take. 45 checks and 20 pictures took 65 s
+# on 2026-10-13; the rest is room for a first start.
+PICTURE_LIMIT = 900
+
+
+def pictures_task(clone: str, extra: list[str]) -> str:
+    """The script the scheduled task runs in the desktop session.
+
+    The folder is emptied first: a picture left by an earlier run would be
+    copied back as this one's.
+    """
+    tree = clone.rstrip("\\/") + "-check"
+    run = clone.rstrip("\\/") + "-check-run"
+    passed = " ".join("'" + text.replace("'", "''") + "'" for text in [*PICTURE_DEFAULTS, *extra])
+    return f"""$run = '{run}'
+Remove-Item "$run\\pictures" -Recurse -Force -ErrorAction SilentlyContinue
+New-Item -ItemType Directory "$run\\pictures" | Out-Null
+Set-Location '{tree}'
+$env:PYTHONIOENCODING = "utf-8"
+uv run --with reportlab --with pillow scripts\\screenshots.py src-tauri\\target\\release\\tpdf.exe --more --out "$run\\pictures" {passed} *> "$run\\pictures.txt"
+"exit $LASTEXITCODE" | Add-Content "$run\\pictures.txt"
+'done' | Set-Content "$run\\pictures.done"
+"""
+
+
+LOCK_TASK = """rundll32.exe user32.dll,LockWorkStation
+'done' | Set-Content "$PSScriptRoot\\lock.done"
+"""
+
+
+def powershell_pictures(clone: str, sha: str) -> str:
+    """Builds the checks binary, gets a screen, runs `pictures.ps1` there, locks again."""
+    return checkout(clone, sha) + f"""python scripts\\fetch_pdfium.py 2>&1 | Select-Object -Last 1
+if ($LASTEXITCODE) {{ Stop-Run "PDFium could not be fetched" 2 }}
+$env:CARGO_BUILD_JOBS = "2"
+npm run tauri build -- --config src-tauri/tauri.checks.conf.json --no-bundle *> "$run\\build.txt"
+if ($LASTEXITCODE) {{ Get-Content "$run\\build.txt" -Tail 12; Stop-Run "the checks build failed" 2 }}
+"[OK] built tpdf.exe " + (Get-Item src-tauri\\target\\release\\tpdf.exe).LastWriteTime
+
+# Runs a script in the desktop session and waits for its marker file. The
+# marker is removed first: one left by an earlier run ends the wait at once
+# and reads as this run's.
+function Invoke-InSession($name, $script, $done, $limit) {{
+  Remove-Item $done -ErrorAction SilentlyContinue
+  schtasks /Delete /TN $name /F 2>$null | Out-Null
+  schtasks /Create /TN $name /TR "powershell.exe -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File $script" /SC ONCE /ST 23:59 /IT /F 2>&1 | Out-Null
+  if ($LASTEXITCODE) {{ return $false }}
+  schtasks /Run /TN $name 2>&1 | Out-Null
+  $waited = 0
+  while (-not (Test-Path $done) -and $waited -lt $limit) {{ Start-Sleep 1; $waited++ }}
+  schtasks /Delete /TN $name /F 2>&1 | Out-Null
+  return (Test-Path $done)
+}}
+function Get-Locked($id) {{
+  @(Get-Process LogonUI -ErrorAction SilentlyContinue | Where-Object {{ $_.SessionId -eq $id }}).Count -gt 0
+}}
+
+# `quser` names the session as `console`, `rdp-tcp#N` or nothing when it is
+# disconnected, so the name is optional and the id is the first number.
+$found = $null
+foreach ($line in @(quser 2>$null)) {{
+  if ($line -match "^\\s*>?$([regex]::Escape($env:USERNAME))\\s+(?:\\S+\\s+)?(\\d+)\\s+(Active|Disc)") {{ $found = $Matches }}
+}}
+if (-not $found) {{ Stop-Run "nobody is logged in as $env:USERNAME, and a window can only be photographed in a desktop session; log in once, by Remote Desktop or at the machine" 2 }}
+$session = [int]$found[1]; $state = $found[2]
+$attached = $false
+if ($state -eq "Disc" -or (Get-Locked $session)) {{
+  if ($state -ne "Disc") {{ tsdiscon $session 2>&1 | Out-Null; Start-Sleep 2 }}
+  tscon $session /dest:console 2>&1 | Out-Null
+  if ($LASTEXITCODE) {{ Stop-Run "tscon could not attach session $session to the screen; it needs administrator rights" 2 }}
+  $attached = $true
+  Start-Sleep 4
+  "[OK] session $session was $(if ($state -eq 'Disc') {{ 'disconnected' }} else {{ 'locked' }}); attached to the screen"
+}} else {{
+  "[OK] session $session is in use; left as it is"
+}}
+
+$code = 2
+if (Get-Locked $session) {{
+  "[FAIL] session $session still shows the lock screen"
+}} elseif (-not (Invoke-InSession "tpdf-pictures" "$run\\pictures.ps1" "$run\\pictures.done" {PICTURE_LIMIT})) {{
+  "[FAIL] the pictures did not finish within {PICTURE_LIMIT} s in session $session"
+  if (Test-Path "$run\\pictures.txt") {{ Get-Content "$run\\pictures.txt" -Tail 12 }}
+}} else {{
+  $lines = @(Get-Content "$run\\pictures.txt")
+  $lines | Where-Object {{ $_ -notmatch "^exit " }}
+  $last = $lines | Where-Object {{ $_ -match "^exit (\\d+)$" }} | Select-Object -Last 1
+  if ($last -match "^exit (\\d+)$") {{ $code = [Math]::Min([int]$Matches[1], 2) }}
+}}
+
+# Locked again only when this run unlocked it.
+if ($attached) {{
+  $ran = Invoke-InSession "tpdf-lock" "$run\\lock.ps1" "$run\\lock.done" 30
+  Start-Sleep 2
+  if ($ran -and (Get-Locked $session)) {{
+    "[OK] session $session is locked again"
+  }} else {{
+    "[FAIL] session $session could not be locked again; lock it by hand"
+    $code = 2
+  }}
+}}
+"{MARKER} $code"
+"""
+
+
+def run_pictures(host: str, clone: str, sha: str, bundle: bytes | None, extra: list[str],
+                 timeout: float) -> subprocess.CompletedProcess[str] | str:
+    """`run_under_powershell` for the picture run: three scripts, one command."""
+    if "'" in clone or " " in clone:
+        raise SystemExit("[FAIL] --clone with a quote or a space in it cannot be passed to schtasks")
+    run = clone.rstrip("\\/") + "-check-run"
+    made = ssh_command(
+        host,
+        f"New-Item -ItemType Directory -Force '{run}' | Out-Null; "
+        f"Remove-Item '{run}\\result.txt','{run}\\tree.bundle' -ErrorAction SilentlyContinue; exit 0",
+        120,
+    )
+    if made.returncode != 0:
+        return made
+    with tempfile.TemporaryDirectory() as scratch:
+        scripts = {
+            "run.ps1": powershell_pictures(clone, sha),
+            "pictures.ps1": pictures_task(clone, extra),
+            "lock.ps1": LOCK_TASK,
+        }
+        files = []
+        for name, text in scripts.items():
+            files.append(Path(scratch) / name)
+            files[-1].write_text(text, encoding="ascii", newline="\r\n")
+        if bundle is not None:
+            files.append(Path(scratch) / "tree.bundle")
+            files[-1].write_bytes(bundle)
+        copied = subprocess.run(
+            ["scp", "-q", *SSH_OPTIONS, *map(str, files), f"{host}:{run.replace(chr(92), '/')}/"],
+            stdin=subprocess.DEVNULL, capture_output=True, text=True, timeout=600,
+        )
+    if copied.returncode != 0:
+        return copied
+    ran = ssh_command(
+        host,
+        f"powershell -NoProfile -ExecutionPolicy Bypass -File '{run}\\run.ps1' "
+        f"*> '{run}\\result.txt'; exit 0",
+        timeout,
+    )
+    if ran.returncode != 0:
+        return ran
+    return ssh_command(host, f"Get-Content '{run}\\result.txt'", 120).stdout
+
+
+def copy_pictures(host: str, clone: str, folder: Path) -> bool:
+    """The pictures into `folder`. The remote folder was emptied before the run."""
+    folder.mkdir(parents=True, exist_ok=True)
+    source = (clone.rstrip("\\/") + "-check-run/pictures").replace("\\", "/")
+    got = subprocess.run(["scp", "-q", "-r", *SSH_OPTIONS, f"{host}:{source}/.", str(folder)],
+                         stdin=subprocess.DEVNULL, capture_output=True, text=True, timeout=600)
+    return got.returncode == 0
 
 
 def bash(clone: str, sha: str, suite: str, bundle: bytes | None) -> str:
@@ -320,6 +509,11 @@ def main() -> int:
     parser.add_argument("--suite", choices=sorted(SUITES), default="cli")
     parser.add_argument("--rev", help="run this commit, not the working tree")
     parser.add_argument("--timeout", type=float, default=5400.0)
+    parser.add_argument("--pictures", type=Path,
+                        help="build the checks binary, run screenshots.py --more there and copy "
+                             "its pictures into this folder, instead of the tests")
+    parser.add_argument("--picture-arg", action="append", default=[],
+                        help="passed to screenshots.py, once for each argument")
     args = parser.parse_args()
     if not args.host or not args.clone:
         print("[FAIL] name the machine: --host HOST --clone 'C:\\Users\\me\\tpdf', "
@@ -329,7 +523,8 @@ def main() -> int:
     sha, what = tree_to_send(args.rev)
     bundle = bundle_of(sha)
     sent = "already on origin/main" if bundle is None else f"{len(bundle):,} bytes of commits sent"
-    print(f"[..] {what} ({sha[:9]}, {sent}) on {args.host}: suite {args.suite}")
+    doing = "pictures" if args.pictures else f"suite {args.suite}"
+    print(f"[..] {what} ({sha[:9]}, {sent}) on {args.host}: {doing}")
     try:
         asked = ssh(args.host, SHELL_PROBE, 60)
         shell = shell_named(asked.stdout)
@@ -337,8 +532,15 @@ def main() -> int:
             print(f"[FAIL] {args.host} did not say whether its login shell is bash or PowerShell, "
                   f"so nothing was sent: {(asked.stderr or asked.stdout).strip()[-400:]}")
             return 2
-        run = run_under_bash if shell == "bash" else run_under_powershell
-        read = run(args.host, args.clone, sha, args.suite, bundle, args.timeout)
+        if args.pictures and shell != "powershell":
+            print(f"[FAIL] --pictures needs a PowerShell login shell, and {args.host}'s is bash: "
+                  "the scheduled task that reaches the desktop is started from PowerShell")
+            return 2
+        if args.pictures:
+            read = run_pictures(args.host, args.clone, sha, bundle, args.picture_arg, args.timeout)
+        else:
+            run = run_under_bash if shell == "bash" else run_under_powershell
+            read = run(args.host, args.clone, sha, args.suite, bundle, args.timeout)
         if not isinstance(read, str):
             print(f"[FAIL] the connection to {args.host} ended with {read.returncode}: "
                   f"{(read.stderr or read.stdout).strip()[-400:]}")
@@ -351,6 +553,17 @@ def main() -> int:
         if not line.startswith(MARKER):
             print(f"     {line}")
     code = verdict(output)
+    if args.pictures:
+        if code == 2:
+            print(f"[FAIL] the run on {args.host} did not take the pictures, so none were copied back")
+            return 2
+        if not copy_pictures(args.host, args.clone, args.pictures):
+            print("[FAIL] the pictures could not be copied back")
+            return 2
+        count = len(list(args.pictures.glob("*.png")))
+        print(f"[{'OK' if code == 0 else 'FAIL'}] {count} pictures in {args.pictures}; "
+              f"screenshots.py exited {code} on {args.host}")
+        return code
     if code == 0:
         print(f"[OK] the {args.suite} suite passes on {args.host}")
     elif code == 1:
