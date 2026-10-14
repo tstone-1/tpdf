@@ -1387,7 +1387,11 @@ jobs:
           for package in libtesseract5 p11-kit-modules; do
             echo "$DEPENDS" | grep -q "$package" || { echo "::error::the deb does not depend on $package"; exit 1; }
           done
-          dpkg-deb --fsys-tarfile "$DEB" | tar -xO ./usr/share/applications/tpdf.desktop | grep -qx 'Exec=tpdf %F' \
+          # Extracted rather than read with `tar -xO <member>`: Tauri names the
+          # members `usr/...` with no leading `./`, so a named member misses.
+          ROOT=$(mktemp -d)
+          dpkg-deb -x "$DEB" "$ROOT"
+          grep -qx 'Exec=tpdf %F' "$ROOT/usr/share/applications/tpdf.desktop" \
             || { echo "::error::the deb's desktop entry does not pass the document"; exit 1; }
 
       # Tauri notarizes and staples the .app, then builds the DMG and only
