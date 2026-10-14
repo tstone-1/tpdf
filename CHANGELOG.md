@@ -51,6 +51,14 @@ have the binary.)
 - **On Linux a document prints through GTK's print dialog.** The job is the PDF itself,
   handed to CUPS unchanged, as on macOS; it is read back by PDFium in a sandboxed worker
   before the dialog opens, so the application process parses no document to print.
+- **On Linux tpdf joins the desktop.** A PDF opened from a file manager reaches tpdf (the
+  package's desktop entry now passes the file, which Tauri's own entry did not), and one opened
+  while tpdf is running goes to the running window. Opened documents appear in the desktop's
+  recent files, web links open in the default browser, and *Make tpdf the default PDF app*
+  works through GIO for the installed package.
+- **A document named with a relative path in a second launch opens.** `tpdf report.pdf` typed
+  in a terminal while tpdf was running looked for `report.pdf` in the running copy's folder;
+  it is now resolved in the folder the command was typed in, on Windows as on Linux.
 - **On Linux a document is signed with a smart card or token, through PKCS#11.** tpdf
   loads p11-kit's proxy module, which brings every module the system has registered, such as
   OpenSC for smart cards; the card signs and its key never leaves it. Linux has no system

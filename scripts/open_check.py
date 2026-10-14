@@ -10,7 +10,8 @@ cold-double-click phase goes through Launch Services and there is nothing else t
 bundle identity.
 
 **Five of the six phases run on both platforms.** Only the cold double-click is macOS-only,
-and for a reason that is not a gap: an Explorer double-click hands the path over in `argv`,
+and for a reason that is not a gap: an Explorer or Linux file-manager double-click hands the
+path over in `argv`,
 which the `argv` phase already covers, so there is no second mechanism there to test. The
 handover to a *running* app used to skip on Windows too and no longer does --- see
 `HANDS_OVER_TO_RUNNING`. A phase with no route prints `[SKIP]` with its reason rather than
@@ -275,7 +276,7 @@ def main() -> int:
         else:
             ok &= skip(
                 COLD_CLICK,
-                "no such route here --- an Explorer double-click hands the path over in argv, "
+                "no such route here --- an Explorer or file-manager double-click hands the path over in argv, "
                 "which the phase above already covers, so there is no second mechanism to test",
             )
 
@@ -301,6 +302,23 @@ def main() -> int:
     print()
     print("[OK] file associations verified" if ok else "[FAIL] file associations are not verified")
     return 0 if ok else 1
+
+
+RUNNING_CONTROL = "nothing is open before one is handed over"
+"""The control `src/lib/opencheck.ts` prints in `arrives` mode before it waits."""
+
+
+def wait_for_control(log: Path, app: subprocess.Popen, timeout: float) -> None:
+    """Waits until the app has printed [`RUNNING_CONTROL`], has exited, or `timeout` passes.
+
+    Returns either way: a control that never printed is reported by the phase
+    itself, as a missing summary or as the control's own failure.
+    """
+    until = time.monotonic() + timeout
+    while time.monotonic() < until and app.poll() is None:
+        if RUNNING_CONTROL in log.read_text(encoding="utf-8", errors="replace"):
+            return
+        time.sleep(0.2)
 
 
 def running_phase(binary: Path, bundle: Path, pdf: str, room: Path, timeout: float) -> bool:
@@ -336,9 +354,13 @@ def running_phase(binary: Path, bundle: Path, pdf: str, room: Path, timeout: flo
     handle = log.open("w", encoding="utf-8", errors="replace")
     app = subprocess.Popen([str(binary)], env=env, stdout=handle, stderr=subprocess.STDOUT)
     try:
-        # Long enough to be past the check's own quiet window, so the document
-        # genuinely arrives at a running app rather than racing the boot.
-        time.sleep(6)
+        # Until the app has printed its control, so the document genuinely
+        # arrives at a running app rather than racing the boot. This was a
+        # fixed six seconds, and on Linux under Xvfb, where WebKitGTK renders
+        # in software, the boot plus the check's quiet window took longer: the
+        # handover landed first and the control read "already showing" the
+        # very document being handed over (2026-10-14).
+        wait_for_control(log, app, timeout)
         # The second launch, spelled the way each platform spells it. `open -a` asks
         # Launch Services to route to the running app; on Windows the plain
         # executable *is* the route --- the single-instance plugin makes the second

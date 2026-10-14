@@ -141,6 +141,29 @@ where
     paths_from_args(args)
 }
 
+/// [`paths_from_launch`] for a second launch's command line, which the
+/// single-instance plugin hands over with the second process's working folder.
+///
+/// A path typed in a terminal (`tpdf report.pdf`) is relative to the folder
+/// the second process started in, not to this one's, so each candidate is
+/// tested and returned joined to `cwd`. A file manager and Explorer pass
+/// absolute paths, which `join` leaves as they are.
+pub fn paths_from_second_launch<I, S>(
+    args: I,
+    cwd: &str,
+    is_file: impl Fn(&std::path::Path) -> bool,
+) -> Vec<PathBuf>
+where
+    I: IntoIterator<Item = S>,
+    S: AsRef<str>,
+{
+    let cwd = std::path::Path::new(cwd);
+    paths_from_launch(args, |path| is_file(&cwd.join(path)))
+        .into_iter()
+        .map(|path| cwd.join(path))
+        .collect()
+}
+
 /// Turns a `file://` URL from an Apple Event into a path.
 ///
 /// `Url::to_file_path` rather than `Url::path`, because the URL is
@@ -163,7 +186,10 @@ pub fn path_from_url(url: &tauri::Url) -> Option<PathBuf> {
 
 #[cfg(test)]
 mod tests {
-    use super::{path_from_url, paths_from_args, paths_from_launch, Delivery, Launch};
+    use super::{
+        path_from_url, paths_from_args, paths_from_launch, paths_from_second_launch, Delivery,
+        Launch,
+    };
     use std::path::{Path, PathBuf};
 
     #[test]
@@ -279,6 +305,35 @@ mod tests {
 
         let url = tauri::Url::parse(text).expect("url");
         assert_eq!(path_from_url(&url), Some(PathBuf::from(want)));
+    }
+
+    #[test]
+    fn a_second_launch_resolves_its_paths_in_its_own_folder() {
+        #[cfg(windows)]
+        let (cwd, absolute) = (r"C:\work", r"D:\docs\b.pdf");
+        #[cfg(not(windows))]
+        let (cwd, absolute) = ("/work", "/docs/b.pdf");
+        let here = std::path::Path::new(cwd).join("a.pdf");
+        let spaced = std::path::Path::new(cwd).join("my report.pdf");
+        let exists = |path: &std::path::Path| {
+            path == here || path == spaced || path == std::path::Path::new(absolute)
+        };
+        // A relative name is the second process's file, not this one's.
+        assert_eq!(
+            paths_from_second_launch(["tpdf", "a.pdf"], cwd, exists),
+            vec![here.clone()]
+        );
+        // An absolute path is left as it is.
+        assert_eq!(
+            paths_from_second_launch(["tpdf", absolute], cwd, exists),
+            vec![PathBuf::from(absolute)]
+        );
+        // A name split at its space is put back together by testing it in the
+        // second process's folder, where it is.
+        assert_eq!(
+            paths_from_second_launch(["tpdf", "my", "report.pdf"], cwd, exists),
+            vec![spaced.clone()]
+        );
     }
 
     #[test]

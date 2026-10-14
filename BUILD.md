@@ -14,7 +14,9 @@ build script refuses to build while one is missing. OCR also needs the system's 
 (`libtesseract5` on Ubuntu), which tpdf opens at run time in the OCR worker only.
 The window checks need no monitor there: `xvfb-run -a -s "-screen 0 1280x800x24" scripts/window_checks.py src-tauri/target/release/tpdf`
 passed 11 of 11 on Ubuntu 24.04 under WSL on 2026-10-14, with `WAYLAND_DISPLAY` unset and
-`GDK_BACKEND=x11` so WebKitGTK draws into Xvfb rather than into WSLg. Add `--debug` for a
+`GDK_BACKEND=x11` so WebKitGTK draws into Xvfb rather than into WSLg. `open_check.py` runs the
+same way and passed every phase there, the running handover included; the cold double-click
+skips, as on Windows. Add `--debug` for a
 development build in `src-tauri/target/debug/`. It has a separate application identifier;
 normal `npm run tauri build` excludes the frontend harness. Existing probe commands
 below refer to this checks executable when they drive the UI. Run
@@ -3439,8 +3441,8 @@ since its target page is 7 and `goToPage` clamps; on a shorter one it now says s
 rather than reporting a wrong page, which is what it used to do. `incr-scan-20p.pdf` is the quick
 fixture for it; `text-base14.pdf` (1 page) and `rotated.pdf` (4) are not long enough.
 
-Both now call `clear_strays` before their first launch. That is not tidiness: on Windows a
-leftover instance **silently absorbs** every later launch through the single-instance plugin, so
+Both now call `clear_strays` before their first launch. That is not tidiness: on Windows and
+Linux a leftover instance **silently absorbs** every later launch through the single-instance plugin, so
 the next phase reports `run timed out` with no output — which reads as the app hanging. It prints
 a `[WARN]` naming the pids when it finds any, because a run that needed it is a run whose earlier
 phases are suspect.

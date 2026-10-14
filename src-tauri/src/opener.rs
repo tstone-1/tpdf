@@ -3,9 +3,10 @@
 //! ## The whole point is that no string is ever interpolated into a command line
 //!
 //! `docs/PLAN.md` §11 states it as a constraint rather than a preference: the
-//! URL is handed to the OS opener **as a URL**. Both platforms have an API that
+//! URL is handed to the OS opener **as a URL**. Each platform has an API that
 //! takes one as a value --- `NSWorkspace openURL:` takes an `NSURL` object,
-//! `ShellExecuteW` takes a wide string in its own parameter --- so there is no
+//! `ShellExecuteW` takes a wide string in its own parameter, GIO's
+//! `launch_default_for_uri` takes a string argument --- so there is no
 //! shell, no argument vector and no quoting anywhere in this file. That closes
 //! the second injection surface, after the display one that [`crate::weburl`]
 //! closes.
@@ -113,13 +114,18 @@ fn open_url(url: &str) -> Result<(), String> {
     }
 }
 
-#[cfg(not(any(windows, target_os = "macos")))]
+/// GIO's `g_app_info_launch_default_for_uri`, which takes the URL as a value,
+/// as the other two platforms' calls do, and starts whatever the reader's
+/// desktop names for `https`. GIO builds that browser's command line itself
+/// from its `.desktop` entry; no string of ours is part of one.
+#[cfg(target_os = "linux")]
+fn open_url(url: &str) -> Result<(), String> {
+    gtk::gio::AppInfo::launch_default_for_uri(url, None::<&gtk::gio::AppLaunchContext>)
+        .map_err(|e| format!("the system could not open this link: {e}"))
+}
+
+#[cfg(not(any(windows, target_os = "macos", target_os = "linux")))]
 fn open_url(_url: &str) -> Result<(), String> {
-    // Neither shipped platform, so this is the arm a `cargo test` on a Linux CI
-    // box would take. A refusal rather than a `Command::new("xdg-open")` that
-    // nobody has run: `AGENTS.md` records that a guard degrading to a no-op off
-    // its platform stops being a guard, and an untested opener is worse than an
-    // honest absence.
     Err("opening web links is not supported on this platform".into())
 }
 

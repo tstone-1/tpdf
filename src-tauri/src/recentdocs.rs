@@ -102,7 +102,7 @@
 //! them goes through a dialog. Doing it once at the point where a document has
 //! genuinely opened covers all of them, and covers them identically.
 
-#[cfg(any(windows, target_os = "macos"))]
+#[cfg(any(windows, target_os = "macos", target_os = "linux"))]
 use std::path::{Path, PathBuf};
 
 /// The absolute, existing file both platforms have to be given, or `None`.
@@ -119,7 +119,7 @@ use std::path::{Path, PathBuf};
 /// there, and filing an unresolvable path puts an entry in the reader's list
 /// that opens nothing when clicked --- worse than the absence this module fixes,
 /// because it looks like the feature working.
-#[cfg(any(windows, target_os = "macos"))]
+#[cfg(any(windows, target_os = "macos", target_os = "linux"))]
 fn resolved(path: &Path) -> Option<PathBuf> {
     std::fs::canonicalize(path).ok()
 }
@@ -293,9 +293,57 @@ fn document_url(text: &str) -> objc2::rc::Retained<objc2_foundation::NSURL> {
     objc2_foundation::NSURL::fileURLWithPath(&objc2_foundation::NSString::from_str(text))
 }
 
-/// Does nothing on a platform with neither list.
-#[cfg(not(any(windows, target_os = "macos")))]
+/// Files `path` with GTK as a document this application just opened.
+///
+/// Linux's list is `~/.local/share/recently-used.xbel`, which file managers and
+/// GNOME's Recent show, and GTK's `RecentManager` is what writes it. Best-effort
+/// for the reason the other two arms give. GTK is used only on its own thread,
+/// so the call hops there as the macOS one does, carrying a `String`.
+#[cfg(target_os = "linux")]
+pub fn note_opened(app: &tauri::AppHandle, path: &Path) {
+    let Some(uri) = file_uri(path) else {
+        return;
+    };
+    if let Err(e) = app.run_on_main_thread(move || {
+        use gtk::prelude::RecentManagerExt;
+        if let Some(manager) = gtk::RecentManager::default() {
+            manager.add_item(&uri);
+        }
+    }) {
+        crate::diag::note(&format!("[recent] not filed: {e}"));
+    }
+}
+
+/// The `file://` URI GTK files a recent document under, or `None` when the
+/// file cannot be resolved. Separate so a test can read it.
+#[cfg(target_os = "linux")]
+fn file_uri(path: &Path) -> Option<String> {
+    tauri::Url::from_file_path(resolved(path)?)
+        .ok()
+        .map(String::from)
+}
+
+/// Does nothing on a platform with no list.
+#[cfg(not(any(windows, target_os = "macos", target_os = "linux")))]
 pub fn note_opened(_app: &tauri::AppHandle, _path: &std::path::Path) {}
+
+#[cfg(all(test, target_os = "linux"))]
+mod linux_tests {
+    #[test]
+    fn a_recent_document_is_filed_as_an_absolute_encoded_uri() {
+        let dir = std::env::temp_dir().join(format!("tpdf recent {}", std::process::id()));
+        std::fs::create_dir_all(&dir).expect("folder");
+        let file = dir.join("my report.pdf");
+        std::fs::write(&file, b"%PDF-1.4\n").expect("file");
+        let uri = super::file_uri(&file).expect("resolved");
+        let _ = std::fs::remove_dir_all(&dir);
+        assert!(uri.starts_with("file:///"), "{uri}");
+        assert!(uri.ends_with("/my%20report.pdf"), "{uri}");
+        assert!(!uri.contains(' '), "{uri}");
+        // A file that is not there is not filed.
+        assert_eq!(super::file_uri(&dir.join("gone.pdf")), None);
+    }
+}
 
 #[cfg(all(test, windows))]
 mod tests {

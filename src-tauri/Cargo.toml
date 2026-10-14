@@ -409,13 +409,19 @@ windows = { version = "0.62", features = [
     # A feature on a crate already here; no package.
     "Win32_Graphics_DirectWrite",
 ] }
-# Windows only. Apache-2.0 OR MIT. What gives this platform the document
+
+[target.'cfg(any(windows, target_os = "linux"))'.dependencies]
+# Windows and Linux. Apache-2.0 OR MIT. What gives these platforms the document
 # handover macOS gets from `RunEvent::Opened`: a second launch forwards its
-# argv to the first process and exits, so opening a file from Explorer while
-# tpdf is running reaches the running window instead of starting a second app
-# with a second worker pool. The callback feeds the same `Launch` queue and
-# emits the same `OPEN_EVENT` as every other route in, so there is one path for
-# "open this document" rather than two that can drift.
+# argv to the first process and exits, so opening a file from Explorer or a
+# Linux file manager while tpdf is running reaches the running window instead
+# of starting a second app with a second worker pool. The callback feeds the
+# same `Launch` queue and emits the same `OPEN_EVENT` as every other route in,
+# so there is one path for "open this document" rather than two that can drift.
+# On Linux it speaks D-Bus through zbus (MIT). That was already in
+# `Cargo.lock` for this plugin's Linux target, but enabling it there links 30
+# more crates into the Linux binary (zbus, zvariant, the smol async stack), all
+# MIT or Apache-2.0; THIRD-PARTY-NOTICES.md lists them.
 tauri-plugin-single-instance = "2.4.4"
 
 # Test-only software keys for `sign_cms.rs` and `sign_prepare.rs`, so every gate

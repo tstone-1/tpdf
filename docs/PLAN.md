@@ -198,7 +198,7 @@ tool alone; until then it stood in the list above. Built so far: the tree compil
 clippy on Linux, the signer's certificate is checked against the system's CA bundle, workers run
 under Landlock and seccomp, PDFium is built and published for linux-x64, the window passes the
 window checks, OCR runs on Tesseract, smart cards and ECDSA certificate files sign, and documents
-print through GTK's dialog to CUPS. Still to come, in
+print through GTK's dialog to CUPS, and the desktop hands documents to it. Still to come, in
 this order (decided 2026-10-14):
 
 1. The application window on WebKitGTK (done 2026-10-14).
@@ -209,7 +209,7 @@ this order (decided 2026-10-14):
    with a password prompt (both done 2026-10-14). Files sign with ECDSA keys only: `rsa`'s
    RUSTSEC-2023-0071 is accepted only because tpdf performs no RSA private-key operation, so
    RSA keys from a file wait for a signer without that weakness.
-4. Printing (done 2026-10-14) and the desktop integration; then packages and window checks.
+4. Printing and the desktop integration (both done 2026-10-14); then packages and window checks.
 
 Ubuntu joined `ci.yml`'s matrix on 2026-10-14, once the command-line suite and all 31 gates
 were green there; a leg that is red or allowed to fail would have said nothing. A worker refuses to start where its sandbox cannot be

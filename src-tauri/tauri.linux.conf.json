@@ -6,6 +6,14 @@
       "../vendor/tessdata/eng.traineddata": "tessdata/eng.traineddata",
       "../vendor/tessdata/deu.traineddata": "tessdata/deu.traineddata",
       "../THIRD-PARTY-NOTICES.md": "THIRD-PARTY-NOTICES.md"
+    },
+    "linux": {
+      "deb": {
+        "desktopTemplate": "linux/tpdf.desktop"
+      },
+      "rpm": {
+        "desktopTemplate": "linux/tpdf.desktop"
+      }
     }
   }
 }

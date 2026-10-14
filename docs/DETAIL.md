@@ -269,9 +269,10 @@ Four plugins are linked. `tauri-plugin-dialog` (Apache-2.0 OR MIT) for the file-
 file-save dialogs, which pulls `tauri-plugin-fs` (Apache-2.0 OR MIT) and `rfd` (MIT) — the
 capability list in `src-tauri/capabilities/default.json` names `dialog:allow-open` and, since
 2026-08-16, `dialog:allow-save`; that second one opens a panel and writes nothing, and what
-actually writes is `save_copy` and, since 2026-08-19, `save_document`, whose authority `docs/THREAT-MODEL.md` §T6.1 states; on Windows only,
-`tauri-plugin-single-instance` (Apache-2.0 OR MIT), which is what gives that platform the
-document handover macOS gets from `RunEvent::Opened`; and `tauri-plugin-updater` (MIT OR
+actually writes is `save_copy` and, since 2026-08-19, `save_document`, whose authority `docs/THREAT-MODEL.md` §T6.1 states; on Windows and, since 2026-10-14, Linux,
+`tauri-plugin-single-instance` (Apache-2.0 OR MIT), which is what gives those platforms the
+document handover macOS gets from `RunEvent::Opened` (on Linux over the session D-Bus, through
+`zbus`, MIT, which adds 30 crates to the Linux binary); and `tauri-plugin-updater` (MIT OR
 Apache-2.0), which is the largest single addition the tree has taken — **48 crates,
 325 to 373**, because it brings a TLS stack (`rustls`) and archive extraction (`zip`, `tar`).
 And, since 2026-09-21, `tauri-plugin-process` (Apache-2.0 OR MIT), which is the opposite

@@ -10,7 +10,17 @@
 //! On macOS that is `NSWorkspace`, which shows the system's own confirmation.
 //! Windows does not let an application make itself the default --- the choice
 //! is protected by a per-user hash only Settings writes --- so there the
-//! command opens Settings at Default apps and says what to choose.
+//! command opens Settings at Default apps and says what to choose. On Linux it
+//! is GIO, which writes the reader's own `mimeapps.list`, the file every
+//! freedesktop desktop reads; no system file changes.
+
+/// How to undo it, in the words of this platform's desktop.
+#[cfg(not(target_os = "linux"))]
+const CHANGE_BACK: &str = "To change that, select a PDF in Finder, choose Get Info, and pick \
+                           another application under \"Open with\".";
+#[cfg(target_os = "linux")]
+const CHANGE_BACK: &str = "To change that, open a PDF's properties in your file manager and \
+                           choose another application under \"Open With\".";
 
 /// What to tell the reader, from which application the system names for PDFs
 /// after the change and which one this is. Both are paths to an application.
@@ -26,11 +36,9 @@ pub fn said(handler: Option<&str>, ours: &str, already: bool) -> Result<String, 
     };
     match handler {
         Some(handler) if same(handler) && already => Ok("tpdf already opens PDF documents.".into()),
-        Some(handler) if same(handler) => Ok(
-            "tpdf now opens PDF documents. To change that, select a PDF in Finder, choose \
-             Get Info, and pick another application under \"Open with\"."
-                .into(),
-        ),
+        Some(handler) if same(handler) => {
+            Ok(format!("tpdf now opens PDF documents. {CHANGE_BACK}"))
+        }
         Some(handler) => Err(format!(
             "tpdf is not the default: PDF documents still open with {handler}"
         )),
@@ -139,14 +147,50 @@ pub fn apply(_identifier: &str) -> Result<String, String> {
     )
 }
 
+/// The desktop entry the Linux package installs, and the id GIO knows tpdf by.
+#[cfg(target_os = "linux")]
+const DESKTOP_ID: &str = "tpdf.desktop";
+
+/// Makes tpdf the default application for PDF documents, through GIO.
+///
+/// `set_as_default_for_type` writes `~/.config/mimeapps.list`; the answer is
+/// what GIO names for `application/pdf` afterwards, read back as on macOS.
+/// tpdf must be installed, so that its desktop entry exists: a copy run from a
+/// build folder has none, and GIO would remember an id that opens nothing.
+///
+/// # Errors
+///
+/// No installed desktop entry, GIO refusing, or another application named
+/// afterwards.
+#[cfg(target_os = "linux")]
+pub fn apply(_identifier: &str) -> Result<String, String> {
+    use gtk::gio::prelude::AppInfoExt;
+
+    let current = || {
+        gtk::gio::AppInfo::default_for_type("application/pdf", false)
+            .and_then(|app| app.id())
+            .map(|id| id.to_string())
+    };
+    if let Ok(done) = said(current().as_deref(), DESKTOP_ID, true) {
+        return Ok(done);
+    }
+    let ours = gtk::gio::DesktopAppInfo::new(DESKTOP_ID).ok_or(
+        "this copy of tpdf is not installed, so there is no tpdf.desktop to name: install \
+         the tpdf package and run it from the applications menu",
+    )?;
+    ours.set_as_default_for_type("application/pdf")
+        .map_err(|e| format!("tpdf is not the default: {e}"))?;
+    said(current().as_deref(), DESKTOP_ID, false)
+}
+
 /// No default-application setting this build knows how to reach.
 ///
 /// # Errors
 ///
 /// Always.
-#[cfg(not(any(target_os = "macos", windows)))]
+#[cfg(not(any(target_os = "macos", windows, target_os = "linux")))]
 pub fn apply(_identifier: &str) -> Result<String, String> {
-    Err("making tpdf the default is available on macOS and Windows".into())
+    Err("making tpdf the default is available on macOS, Windows and Linux".into())
 }
 
 #[cfg(test)]
@@ -171,6 +215,9 @@ mod tests {
         assert!(said(None, ours, false).is_err());
         // A path that only starts the same is another application.
         assert!(said(Some("/Applications/tpdf.app.old/x.app"), ours, false).is_err());
+        // GIO answers with a desktop id, compared the same way.
+        assert!(said(Some("tpdf.desktop"), "tpdf.desktop", false).is_ok());
+        assert!(said(Some("org.gnome.Evince.desktop"), "tpdf.desktop", false).is_err());
     }
 
     #[cfg(target_os = "macos")]
@@ -198,6 +245,20 @@ mod tests {
         // `TPDF_DEFAULT_APP` names another application, to exercise the change itself.
         let bundle = std::env::var("TPDF_DEFAULT_APP").unwrap_or("/Applications/tpdf.app".into());
         println!("{:?}", super::apply_for(&bundle));
+    }
+
+    /// Asks GIO, as the installed package. Writes the running user's
+    /// `~/.config/mimeapps.list`, so run it on a test machine with the deb
+    /// installed: `cargo test --lib defaultapp -- --ignored --nocapture`.
+    #[cfg(target_os = "linux")]
+    #[test]
+    #[ignore = "makes tpdf the user's default PDF application"]
+    fn gio_answers_for_the_installed_package() {
+        let first = super::apply("");
+        println!("{first:?}");
+        assert!(first.expect("set").starts_with("tpdf now opens"));
+        let again = super::apply("");
+        assert_eq!(again.as_deref(), Ok("tpdf already opens PDF documents."));
     }
 
     /// Opens Settings on the desktop of whoever is at the machine. Run by hand,

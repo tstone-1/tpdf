@@ -781,8 +781,8 @@ pub fn run() {
             .on_menu_event(|app, event| menu::forward(app, event.id().as_ref()));
     }
 
-    // The Windows counterpart of the `RunEvent::Opened` arm at the bottom of this
-    // file, and the reason it exists is parity rather than tidiness: without it a
+    // The Windows and Linux counterpart of the `RunEvent::Opened` arm at the
+    // bottom of this file, and the reason it exists is parity rather than tidiness: without it a
     // second launch is a **second process**, with its own window and its own worker
     // pool, where macOS hands the document to the app already running. That was
     // measured by `open_check.py` before it was fixed --- two phases skipped there
@@ -797,9 +797,9 @@ pub fn run() {
     // `OPEN_EVENT` as every other route into the app. A second mechanism for "open
     // this document" is a second place for the queue-versus-emit decision to drift,
     // and `docs/TRAPS.md` records what two copies of one distinction cost.
-    #[cfg(windows)]
+    #[cfg(any(windows, target_os = "linux"))]
     {
-        builder = builder.plugin(tauri_plugin_single_instance::init(|app, argv, _cwd| {
+        builder = builder.plugin(tauri_plugin_single_instance::init(|app, argv, cwd| {
             use tauri::{Emitter, Manager};
             // `try_state`, for the same reason the macOS arm gives: a panic inside a
             // plugin callback is invisible, and the degradation is one document not
@@ -815,7 +815,7 @@ pub fn run() {
                 let _ = window.unminimize();
                 let _ = window.set_focus();
             }
-            for path in launch::paths_from_launch(argv, |path| path.is_file()) {
+            for path in launch::paths_from_second_launch(argv, &cwd, |path| path.is_file()) {
                 if let launch::Delivery::Emit(path) = launch.deliver(path) {
                     let _ = app.emit(launch::OPEN_EVENT, path.to_string_lossy().into_owned());
                 }
@@ -1678,6 +1678,31 @@ mod tests {
                 "{label}: {from} must land in the pdfium/ directory the app searches, named as it looks"
             );
         }
+    }
+
+    /// The Linux packages' desktop entry passes the document to tpdf.
+    ///
+    /// Tauri's own entry says `Exec=tpdf`, measured from the 26.10.18 deb on
+    /// 2026-10-14. With no field code a file manager starts tpdf without the
+    /// file, so "Open With tpdf" opened an empty window. The template tauri
+    /// uses instead is `linux/tpdf.desktop`, and both package formats name it.
+    #[test]
+    fn the_linux_desktop_entry_passes_the_document() {
+        let config: serde_json::Value =
+            serde_json::from_str(include_str!("../tauri.linux.conf.json")).expect("JSON");
+        for format in ["deb", "rpm"] {
+            assert_eq!(
+                config["bundle"]["linux"][format]["desktopTemplate"], "linux/tpdf.desktop",
+                "{format} does not use the template"
+            );
+        }
+        let template = include_str!("../linux/tpdf.desktop");
+        let exec = template
+            .lines()
+            .find(|line| line.starts_with("Exec="))
+            .expect("an Exec line");
+        assert!(exec.ends_with(" %F"), "{exec}");
+        assert!(template.contains("MimeType={{mime_type}};"), "{template}");
     }
 
     /// The Windows installer is told to clear the way for that directory.

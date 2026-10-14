@@ -2585,7 +2585,7 @@ SOFTWARE.
 
 ## Rust crates
 
-494 crates are linked into the application binary. Build- and dev-dependencies are excluded: they run at compile time and are not distributed.
+524 crates are linked into the application binary. Build- and dev-dependencies are excluded: they run at compile time and are not distributed.
 
 | Crate | Version | Licence |
 |---|---|---|
@@ -2598,6 +2598,16 @@ SOFTWARE.
 | alloc-stdlib | 0.2.4 | BSD-3-Clause |
 | alloc-stdlib | 0.3.0 | BSD-3-Clause |
 | anyhow | 1.0.104 | MIT OR Apache-2.0 |
+| async-broadcast | 0.7.2 | MIT OR Apache-2.0 |
+| async-channel | 2.5.0 | Apache-2.0 OR MIT |
+| async-executor | 1.14.0 | Apache-2.0 OR MIT |
+| async-io | 2.6.0 | Apache-2.0 OR MIT |
+| async-lock | 3.4.2 | Apache-2.0 OR MIT |
+| async-process | 2.5.0 | Apache-2.0 OR MIT |
+| async-recursion | 1.2.0 | MIT OR Apache-2.0 |
+| async-signal | 0.2.14 | Apache-2.0 OR MIT |
+| async-task | 4.7.1 | Apache-2.0 OR MIT |
+| async-trait | 0.1.92 | MIT OR Apache-2.0 |
 | atk | 0.18.2 | MIT |
 | atk-sys | 0.18.2 | MIT |
 | atomic-waker | 1.1.2 | Apache-2.0 OR MIT |
@@ -2615,6 +2625,7 @@ SOFTWARE.
 | block-padding | 0.3.3 | MIT OR Apache-2.0 |
 | block-padding | 0.4.2 | MIT OR Apache-2.0 |
 | block2 | 0.6.2 | MIT |
+| blocking | 1.7.0 | Apache-2.0 OR MIT |
 | brotli | 9.0.0 | BSD-3-Clause AND MIT |
 | brotli-decompressor | 5.0.3 | BSD-3-Clause/MIT |
 | brotli-decompressor | 6.0.1 | BSD-3-Clause/MIT |
@@ -2638,6 +2649,7 @@ SOFTWARE.
 | cipher | 0.4.4 | MIT OR Apache-2.0 |
 | cipher | 0.5.2 | MIT OR Apache-2.0 |
 | cms | 0.2.3 | Apache-2.0 OR MIT |
+| concurrent-queue | 2.5.0 | Apache-2.0 OR MIT |
 | const-oid | 0.10.2 | Apache-2.0 OR MIT |
 | const-oid | 0.9.6 | Apache-2.0 OR MIT |
 | cookie | 0.18.2 | MIT OR Apache-2.0 |
@@ -2696,11 +2708,14 @@ SOFTWARE.
 | elliptic-curve | 0.13.8 | Apache-2.0 OR MIT |
 | embed_plist | 1.2.2 | MIT OR Apache-2.0 |
 | encoding_rs | 0.8.42 | (Apache-2.0 OR MIT) AND BSD-3-Clause |
+| endi | 1.1.1 | MIT |
 | enumflags2 | 0.7.12 | MIT OR Apache-2.0 |
 | enumflags2_derive | 0.7.12 | MIT OR Apache-2.0 |
 | equivalent | 1.0.2 | Apache-2.0 OR MIT |
 | erased-serde | 0.4.10 | MIT OR Apache-2.0 |
 | errno | 0.3.14 | MIT OR Apache-2.0 |
+| event-listener | 5.4.2 | Apache-2.0 OR MIT |
+| event-listener-strategy | 0.5.4 | Apache-2.0 OR MIT |
 | fastrand | 2.5.0 | Apache-2.0 OR MIT |
 | fax | 0.3.0 | MIT |
 | fdeflate | 0.3.7 | MIT OR Apache-2.0 |
@@ -2719,6 +2734,7 @@ SOFTWARE.
 | futures-core | 0.3.34 | MIT OR Apache-2.0 |
 | futures-executor | 0.3.34 | MIT OR Apache-2.0 |
 | futures-io | 0.3.34 | MIT OR Apache-2.0 |
+| futures-lite | 2.6.1 | Apache-2.0 OR MIT |
 | futures-macro | 0.3.34 | MIT OR Apache-2.0 |
 | futures-sink | 0.3.34 | MIT OR Apache-2.0 |
 | futures-task | 0.3.34 | MIT OR Apache-2.0 |
@@ -2847,11 +2863,13 @@ SOFTWARE.
 | once_cell | 1.21.4 | MIT OR Apache-2.0 |
 | openssl-probe | 0.2.1 | MIT OR Apache-2.0 |
 | option-ext | 0.2.0 | MPL-2.0 |
+| ordered-stream | 0.2.0 | MIT OR Apache-2.0 |
 | osakit | 0.3.1 | MIT OR Apache-2.0 |
 | p256 | 0.13.2 | Apache-2.0 OR MIT |
 | p384 | 0.13.1 | Apache-2.0 OR MIT |
 | pango | 0.18.3 | MIT |
 | pango-sys | 0.18.0 | MIT |
+| parking | 2.2.1 | Apache-2.0 OR MIT |
 | parking_lot | 0.12.5 | MIT OR Apache-2.0 |
 | parking_lot_core | 0.9.12 | MIT OR Apache-2.0 |
 | pbkdf2 | 0.12.2 | MIT OR Apache-2.0 |
@@ -2863,6 +2881,7 @@ SOFTWARE.
 | phf_macros | 0.13.1 | MIT |
 | phf_shared | 0.13.1 | MIT |
 | pin-project-lite | 0.2.17 | Apache-2.0 OR MIT |
+| piper | 0.2.5 | MIT OR Apache-2.0 |
 | piston-float | 1.0.1 | MIT |
 | pkcs1 | 0.7.5 | Apache-2.0 OR MIT |
 | pkcs12 | 0.1.0 | Apache-2.0 OR MIT |
@@ -2871,6 +2890,7 @@ SOFTWARE.
 | plist | 1.10.1 | MIT |
 | png | 0.17.16 | MIT OR Apache-2.0 |
 | png | 0.18.1 | MIT OR Apache-2.0 |
+| polling | 3.11.0 | Apache-2.0 OR MIT |
 | potential_utf | 0.1.6 | Unicode-3.0 |
 | powerfmt | 0.2.1 | MIT OR Apache-2.0 |
 | ppv-lite86 | 0.2.21 | MIT OR Apache-2.0 |
@@ -2878,6 +2898,7 @@ SOFTWARE.
 | primeorder | 0.13.6 | Apache-2.0 OR MIT |
 | proc-macro-crate | 1.3.1 | MIT OR Apache-2.0 |
 | proc-macro-crate | 2.0.2 | MIT OR Apache-2.0 |
+| proc-macro-crate | 3.5.0 | MIT OR Apache-2.0 |
 | proc-macro-error | 1.0.4 | MIT OR Apache-2.0 |
 | proc-macro-error-attr | 1.0.4 | MIT OR Apache-2.0 |
 | proc-macro2 | 1.0.107 | MIT OR Apache-2.0 |
@@ -2944,6 +2965,7 @@ SOFTWARE.
 | sha2 | 0.10.9 | MIT OR Apache-2.0 |
 | sha2 | 0.11.1 | MIT OR Apache-2.0 |
 | sha3 | 0.10.9 | MIT OR Apache-2.0 |
+| signal-hook-registry | 1.4.8 | MIT OR Apache-2.0 |
 | signature | 2.2.0 | Apache-2.0 OR MIT |
 | simd-adler32 | 0.3.10 | MIT |
 | simdutf8 | 0.1.5 | MIT OR Apache-2.0 |
@@ -3004,6 +3026,7 @@ SOFTWARE.
 | toml_datetime | 1.1.2+spec-1.1.0 | MIT OR Apache-2.0 |
 | toml_edit | 0.19.15 | MIT OR Apache-2.0 |
 | toml_edit | 0.20.2 | MIT OR Apache-2.0 |
+| toml_edit | 0.25.17+spec-1.1.0 | MIT OR Apache-2.0 |
 | toml_parser | 1.1.5+spec-1.1.0 | MIT OR Apache-2.0 |
 | toml_writer | 1.1.3+spec-1.1.0 | MIT OR Apache-2.0 |
 | tower | 0.5.3 | MIT |
@@ -3070,6 +3093,10 @@ SOFTWARE.
 | xattr | 1.6.1 | MIT OR Apache-2.0 |
 | yoke | 0.8.3 | Unicode-3.0 |
 | yoke-derive | 0.8.4 | Unicode-3.0 |
+| zbus | 5.19.0 | MIT |
+| zbus_macros | 5.19.0 | MIT |
+| zbus_names | 4.3.4 | MIT |
+| zcheapstr | 1.1.0 | MIT |
 | zerocopy | 0.8.62 | BSD-2-Clause OR Apache-2.0 OR MIT |
 | zerofrom | 0.1.8 | Unicode-3.0 |
 | zerofrom-derive | 0.1.8 | Unicode-3.0 |
@@ -3083,6 +3110,9 @@ SOFTWARE.
 | zmij | 1.0.23 | MIT |
 | zune-core | 0.5.3 | MIT OR Apache-2.0 OR Zlib |
 | zune-jpeg | 0.5.15 | MIT OR Apache-2.0 OR Zlib |
+| zvariant | 5.15.0 | MIT |
+| zvariant_derive | 5.15.0 | MIT |
+| zvariant_utils | 4.2.0 | MIT |
 
 ### Copyright notices
 
@@ -3188,6 +3218,7 @@ MIT and the BSD family require the copyright notice itself to be reproduced, whi
 - Copyright (c) 2017 The rust-stringprep Developers
 - Copyright (c) 2017 http-rs authors
 - Copyright (c) 2017 quininer kel
+- Copyright (c) 2017 tokio-jsonrpc developers
 - Copyright (c) 2017-2020 The Rust Project Developers
 - Copyright (c) 2017-2021 qDot
 - Copyright (c) 2017-2021, The Gtk-rs Project Developers.
@@ -3241,6 +3272,7 @@ MIT and the BSD family require the copyright notice itself to be reproduced, whi
 - Copyright (c) 2020 Nikolai Vazquez
 - Copyright (c) 2020 Osspial
 - Copyright (c) 2020 The RustCrypto Project Developers
+- Copyright (c) 2020 Yoshua Wuyts
 - Copyright (c) 2020-2021 RustCrypto Developers
 - Copyright (c) 2020-2022 RustCrypto Developers
 - Copyright (c) 2020-2022 Tauri Programme within The Commons Conservancy
@@ -3282,8 +3314,10 @@ MIT and the BSD family require the copyright notice itself to be reproduced, whi
 - Copyright (c) 2024 Marat Dulin
 - Copyright (c) 2024 Mullvad VPN AB
 - Copyright (c) 2024 Orson Peters
+- Copyright (c) 2024 Zeeshan Ali Khan & zbus contributors
 - Copyright (c) 2025 Alice Maz, Marshall Pierce
 - Copyright (c) 2026 RustCrypto Developers
+- Copyright (c) 2026 Zeeshan Ali Khan & zcheapstr contributors
 - Copyright (c) Ferrous Systems
 - Copyright (c) HeroicKatora 2020
 - Copyright (c) Individual contributors
@@ -3303,6 +3337,7 @@ MIT and the BSD family require the copyright notice itself to be reproduced, whi
 - Copyright 2014 Alex Chricton
 - Copyright 2014 Paho Lurie-Gregg
 - Copyright 2014-2018 David Henningsson <diwic@ubuntu.com> and other contributors
+- Copyright 2014-2020 The Rust Project Developers
 - Copyright 2015 Brian Smith.
 - Copyright 2015 The Chromium Authors. All rights reserved.
 - Copyright 2015-2016 Brian Smith.
@@ -3327,6 +3362,7 @@ MIT and the BSD family require the copyright notice itself to be reproduced, whi
 - Copyright 2019-2022 Jeff Parsons, and [contributors](https://github.com/jeffparsons/rangemap/contributors)
 - Copyright 2020 Andrew Straw
 - Copyright 2020 Mickaël Salaün
+- Copyright 2020 Yoshua Wuyts
 - Copyright 2021 Amazon.com, Inc. or its affiliates. All Rights Reserved.
 - Copyright 2022 Kirill Chibisov
 - Copyright 2023 Dirkjan Ochtman
