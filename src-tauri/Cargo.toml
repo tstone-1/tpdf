@@ -441,6 +441,13 @@ flagset = "0.4"
 rustls-webpki = { version = "0.103", default-features = false, features = ["std", "ring"] }
 rustls-native-certs = "0.8"
 rustls-pki-types = "1"
+# The worker sandbox on Linux (`sandbox_linux.rs`), the counterpart of macOS's
+# `sandbox_init` and Windows' low-integrity token: Landlock for the file system,
+# network and scopes, seccomp for sockets and process introspection. New
+# packages, both permissive: landlock MIT OR Apache-2.0, seccompiler Apache-2.0
+# OR BSD-3-Clause.
+landlock = "0.4"
+seccompiler = "0.5"
 
 [target.'cfg(target_os = "macos")'.dev-dependencies]
 security-framework-sys = "2"

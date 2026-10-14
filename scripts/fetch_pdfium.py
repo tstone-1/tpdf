@@ -100,6 +100,8 @@ def host_platform() -> str:
         return "mac-arm64"
     if sys.platform in ("win32", "cygwin") and machine in ("amd64", "x86_64"):
         return "win-x64"
+    if sys.platform.startswith("linux") and machine in ("amd64", "x86_64"):
+        return "linux-x64"
 
     sys.exit(
         f"[FAIL] no PDFium archive for {sys.platform}/{machine}; "
@@ -118,7 +120,9 @@ def library_path(key: str) -> str:
     `pdfium_library_dir()` in `src-tauri/src/lib.rs` does today -- finds nothing
     loadable on Windows.
     """
-    return "bin/pdfium.dll" if key.startswith("win") else "lib/libpdfium.dylib"
+    if key.startswith("win"):
+        return "bin/pdfium.dll"
+    return "lib/libpdfium.so" if key.startswith("linux") else "lib/libpdfium.dylib"
 
 
 def file_digest(path: Path) -> str:

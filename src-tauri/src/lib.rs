@@ -103,6 +103,8 @@ mod replies;
 /// Whether a certificate was revoked, from the revocation data a document
 /// carries --- never fetched (`docs/PLAN.md` §9, Phase 6).
 pub mod revocation;
+#[cfg(target_os = "linux")]
+pub mod sandbox_linux;
 /// Windows containment, which is what `worker_child`'s `sandbox_init` is on the
 /// other platform. Gated because job objects, integrity levels and attribute
 /// lists are all Win32 with no portable counterpart.

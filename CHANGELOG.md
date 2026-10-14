@@ -50,6 +50,12 @@ have the binary.)
 - **On Linux the signer's certificate is checked against the system's CA bundle,** offline
   and without revocation, as on macOS and Windows. `--json` reports name that store
   `linux`, and the sentence says "this computer".
+- **A Linux worker drops its authority as a macOS one does:** Landlock lets it read only the
+  system's font folders and nothing else, start no program and, where the kernel has it,
+  reach no network and no abstract Unix socket; seccomp refuses it any socket at all. A
+  kernel without Landlock gets a refusal, not an open worker.
+- **The PDFium build script builds for Linux x64** against Chromium's Debian system root;
+  its 63 upstream text tests pass there.
 - **A command's question in the palette says what is being asked.** While a command waits for
   a value, the palette shows the command's name and what it wants above the preview. It
   showed only the typed value and the preview, and the hint in the field was gone at the

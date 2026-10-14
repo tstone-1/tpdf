@@ -374,8 +374,9 @@ fn adopt_document(args: &[String], doc_len: usize) -> Result<Shm, String> {
 ///
 /// # Errors
 ///
-/// macOS: a profile the kernel refuses. Windows: not being contained.
-/// Elsewhere: always, because neither exists.
+/// macOS: a profile the kernel refuses. Windows: not being contained. Linux: a
+/// kernel without Landlock, or more than one thread (`sandbox_linux.rs`).
+/// Elsewhere: always, because none exists.
 fn establish_boundary() -> Result<(), String> {
     #[cfg(target_os = "macos")]
     {
@@ -385,7 +386,11 @@ fn establish_boundary() -> Result<(), String> {
     {
         crate::sandbox_win::assert_contained()
     }
-    #[cfg(not(any(target_os = "macos", windows)))]
+    #[cfg(target_os = "linux")]
+    {
+        crate::sandbox_linux::apply()
+    }
+    #[cfg(not(any(target_os = "macos", windows, target_os = "linux")))]
     {
         Err("no process boundary is implemented on this platform".into())
     }
@@ -1279,11 +1284,93 @@ mod tests {
     ///
     /// So this covers exactly the platform whose guard is new. macOS's is the
     /// pre-existing one, exercised end to end by `examples/fdpass_probe.rs` in a child
-    /// process, which is where a call with this blast radius belongs.
-    #[cfg(not(target_os = "macos"))]
+    /// process, which is where a call with this blast radius belongs. Linux
+    /// applies its boundary as macOS does, so it is tested in a forked child below.
+    #[cfg(not(any(target_os = "macos", target_os = "linux")))]
     #[test]
     fn a_worker_that_is_not_contained_refuses_to_serve() {
         let err = super::establish_boundary().expect_err("a test runner is not contained");
         assert!(!err.is_empty(), "a refusal has to say why");
+    }
+
+    /// What a contained worker can still do on Linux, tried in a forked child,
+    /// because applying the boundary here would confine the test runner.
+    ///
+    /// Each probe is one bit of the child's exit code: set when the forbidden
+    /// thing worked, or when the one allowed thing, reading a font folder,
+    /// failed. The parent runs the same probes uncontained first, as the
+    /// control: a probe that cannot see its own success would pass either way.
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn a_contained_worker_reads_fonts_and_nothing_else() {
+        let fonts = crate::sandbox_linux::FONT_DIRS
+            .into_iter()
+            .find(|dir| std::path::Path::new(dir).is_dir());
+        let uncontained = probe(fonts);
+        // Everything forbidden works outside the boundary; the font bit is
+        // clear because reading one works too.
+        assert_eq!(
+            uncontained, 0b1_1111,
+            "the probes cannot see what they look for"
+        );
+        // SAFETY: the child calls only what it needs and leaves with `_exit`.
+        let pid = unsafe { libc::fork() };
+        assert!(pid >= 0, "fork failed");
+        if pid == 0 {
+            let code = match super::establish_boundary() {
+                Err(_) => 0x80,
+                Ok(()) => probe(fonts),
+            };
+            // SAFETY: ends the child without running the parent's destructors.
+            unsafe { libc::_exit(code) };
+        }
+        let mut status = 0;
+        // SAFETY: our own child, waited for once.
+        assert_eq!(unsafe { libc::waitpid(pid, &raw mut status, 0) }, pid);
+        assert!(
+            libc::WIFEXITED(status),
+            "the child did not exit: {status:#x}"
+        );
+        let code = libc::WEXITSTATUS(status);
+        assert_ne!(code, 0x80, "the boundary could not be established");
+        // Nothing forbidden worked, and the font folder, if there is one, read.
+        assert_eq!(
+            code, 0,
+            "a contained worker did what it must not, bits {code:#08b}"
+        );
+    }
+
+    /// The probes, as bits: 1 read /etc/passwd, 2 created a file, 4 opened an
+    /// internet socket, 8 opened a Unix socket, 16 started a program; and with
+    /// `fonts`, 32 when that folder could NOT be listed.
+    #[cfg(target_os = "linux")]
+    fn probe(fonts: Option<&str>) -> i32 {
+        let mut bits = 0;
+        if std::fs::File::open("/etc/passwd").is_ok() {
+            bits |= 1;
+        }
+        let scratch = std::env::temp_dir().join(format!("tpdf-boundary-{}", std::process::id()));
+        if std::fs::File::create(&scratch).is_ok() {
+            bits |= 2;
+            let _ = std::fs::remove_file(&scratch);
+        }
+        for (family, bit) in [(libc::AF_INET, 4), (libc::AF_UNIX, 8)] {
+            // SAFETY: a plain socket call; a descriptor it returns is closed.
+            let fd = unsafe { libc::socket(family, libc::SOCK_STREAM, 0) };
+            if fd >= 0 {
+                bits |= bit;
+                // SAFETY: the descriptor just opened.
+                unsafe { libc::close(fd) };
+            }
+        }
+        if std::process::Command::new("/bin/true").status().is_ok() {
+            bits |= 16;
+        }
+        if let Some(dir) = fonts {
+            if std::fs::read_dir(dir).is_err() {
+                bits |= 32;
+            }
+        }
+        bits
     }
 }

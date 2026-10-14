@@ -4,10 +4,13 @@
 uv run --with-requirements scripts/pdfium-fixture-tools.txt scripts/build_pdfium.py \
     --work /path/to/empty/build --output /path/to/artifacts
 
-Only native mac-arm64 and win-x64 are supported: those are tpdf's shipped
+Only native mac-arm64, win-x64 and linux-x64 are supported: those are tpdf's
 architectures. Requires full Xcode on macOS, or VS 2022 with the C++ workload
 on Windows. --install-windows-sdk installs Microsoft's digest-checked SDK
 installer on a disposable CI runner; it is never implicit on a user's machine.
+On Linux the library is built against Chromium's Debian system root, so it
+needs no newer glibc than that root's; --install-linux-deps runs Chromium's
+install-build-deps.sh, which uses sudo, and is likewise for a disposable runner.
 
 Source, build patches and depot_tools are pinned; Clang/GN/Ninja follow DEPS.
 The host Xcode/Windows SDK and MSVC CRT are recorded, not hermetically bundled.
@@ -129,6 +132,11 @@ def complete_licenses(source, stage, log):
 
 def check_upstream_report(path, expected):
     report = json.loads(path.read_text(encoding="utf-8"))
+    if expected is None:
+        # A platform's count is pinned from its first build, so the first build
+        # says what it ran instead of guessing; the pin is then checked.
+        raise ValueError(f"No upstream text test count is pinned for this platform; this build "
+                         f"ran {report.get('tests')} with {report.get('failures')} failures")
     if (report.get("tests") != expected or report.get("failures") != 0
             or report.get("disabled") != 0 or report.get("errors", 0) != 0):
         raise ValueError("Unexpected upstream text test count or failures")
@@ -147,18 +155,19 @@ def windows_bash(git):
     raise ValueError("Git Bash is absent from the Git for Windows installation")
 
 
-def build(work, output, install_sdk):
+def build(work, output, install_sdk, install_linux_deps=False):
     pins = json.loads(CONFIG.read_text(encoding="utf-8"))
-    key = {("darwin", "arm64"): "mac-arm64", ("win32", "amd64"): "win-x64"}.get(
-        (sys.platform, platform.machine().lower()))
+    key = {("darwin", "arm64"): "mac-arm64", ("win32", "amd64"): "win-x64",
+           ("linux", "x86_64"): "linux-x64"}.get((sys.platform, platform.machine().lower()))
     if key is None:
-        raise ValueError("Build on a native mac-arm64 or win-x64 host")
+        raise ValueError("Build on a native mac-arm64, win-x64 or linux-x64 host")
     if work.exists() and any(work.iterdir()):
         raise ValueError("Build directory must be empty; no existing work is reset")
     if output.exists() and any(output.iterdir()):
         raise ValueError("Artifact directory must be empty; stale artifacts are not reusable")
     work.mkdir(parents=True, exist_ok=True)
     windows = key == "win-x64"
+    linux = key == "linux-x64"
     target_os, target_cpu = key.split("-")
     env = dict(os.environ, DEPOT_TOOLS_UPDATE="0", DEPOT_TOOLS_WIN_TOOLCHAIN="0",
                VPYTHON_BYPASS="", GCLIENT_PY3="1")
@@ -197,7 +206,7 @@ def build(work, output, install_sdk):
         # not @. Keep echo suppression on its own line (Windows experiment).
         (shim / "git.bat").write_text('@echo off\n"' + git + '" %*\n', encoding="utf-8")
         env["PATH"] = str(shim) + os.pathsep + env["PATH"]
-    else:
+    elif not linux:
         sdk["xcode"] = run(["xcodebuild", "-version"], work, env, capture=True).strip()
         sdk["macos_sdk"] = run(["xcrun", "--sdk", "macosx", "--show-sdk-version"], work, env, capture=True).strip()
     client = depot / ("gclient.bat" if windows else "gclient")
@@ -208,8 +217,20 @@ def build(work, output, install_sdk):
     if run(["git", "rev-parse", "HEAD"], source, env, capture=True).strip() != pins["pdfium"]:
         raise ValueError("PDFium checkout differs from source pin")
     run([client, "revinfo", "--actual", "--output-json", work / "dependencies.json"], work, env)
+    if linux:
+        # The builder's Linux recipe (steps/04-install-extras.sh): the host's
+        # build packages, then the system root the library links against.
+        if install_linux_deps:
+            run(["bash", "build/install-build-deps.sh", "--no-prompt"], source, env)
+        run([sys.executable, "build/linux/sysroot_scripts/install-sysroot.py", f"--arch={target_cpu}"], source, env)
+        sdk["glibc_host"] = run(["ldd", "--version"], work, env, capture=True).splitlines()[0]
+        sdk["sysroot"] = sorted(p.name for p in (source / "build/linux").glob("*-sysroot"))
     patches = [("shared_library.patch", source), ("public_headers.patch", source),
-               ("clang_rt.patch", source / "build"), (f"{target_os}/build.patch", source / "build")]
+               ("clang_rt.patch", source / "build")]
+    # The builder has no Linux build patch: its Linux recipe patches only V8,
+    # which this build leaves out.
+    if not linux:
+        patches.append((f"{target_os}/build.patch", source / "build"))
     applied = {}
     for name, directory in patches:
         patch = builder / "patches" / name
@@ -235,7 +256,7 @@ def build(work, output, install_sdk):
         f'target_os = "{target_os}"', 'treat_warnings_as_errors = false',
     ]) + '\n'
     (build_dir / "args.gn").write_text(gn_args, encoding="utf-8")
-    gn = source / ("buildtools/win/gn.exe" if windows else "buildtools/mac/gn")
+    gn = source / ("buildtools/win/gn.exe" if windows else "buildtools/linux64/gn" if linux else "buildtools/mac/gn")
     ninja = source / ("third_party/ninja/ninja.exe" if windows else "third_party/ninja/ninja")
     run([gn, "gen", "out/Release"], source, env)
     deps = run([gn, "desc", "out/Release", "//:pdfium", "deps", "--all"], source, env, capture=True)
@@ -243,7 +264,7 @@ def build(work, output, install_sdk):
         raise ValueError("PDFium dependencies empty or contain V8/XFA")
     (work / "pdfium-deps.txt").write_text(deps, encoding="utf-8")
     fixtures(work, pins, env)
-    filename = "pdfium.dll" if windows else "libpdfium.dylib"
+    filename = "pdfium.dll" if windows else "libpdfium.so" if linux else "libpdfium.dylib"
     run([ninja, "-C", "out/Release", "-j", "4", "pdfium", "pdfium_embeddertests"], source, env)
     library_dir = work / "built"
     library_dir.mkdir()
@@ -255,7 +276,7 @@ def build(work, output, install_sdk):
         test_filter += "-FPDFTextEmbedderTest.DISABLED_TextSearchLatinExtended"
     run([build_dir / ("pdfium_embeddertests.exe" if windows else "pdfium_embeddertests"),
          f"--gtest_filter={test_filter}", f"--gtest_output=json:{test_report}"], source, env)
-    check_upstream_report(test_report, pins["upstream_text_tests"][key])
+    check_upstream_report(test_report, pins["upstream_text_tests"].get(key))
     record = work / "observed.json"
     probe = subprocess.run([sys.executable, str(ROOT / "scripts/pdfium_rtl_check.py"),
                             "--lib", str(library_dir / filename), "--fixtures", str(work / "fixtures"),
@@ -330,8 +351,9 @@ def main():
     parser.add_argument("--work", type=Path, required=True)
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--install-windows-sdk", action="store_true")
+    parser.add_argument("--install-linux-deps", action="store_true")
     args = parser.parse_args()
-    build(args.work.resolve(), args.output.resolve(), args.install_windows_sdk)
+    build(args.work.resolve(), args.output.resolve(), args.install_windows_sdk, args.install_linux_deps)
 
 
 if __name__ == "__main__":
