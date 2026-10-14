@@ -16,7 +16,7 @@
 //! descriptor numbers between `fork` and `exec`, and the two are right together
 //! or wrong together.
 
-#[cfg(target_os = "macos")]
+#[cfg(any(target_os = "macos", target_os = "linux"))]
 use std::os::fd::{FromRawFd, OwnedFd};
 
 /// Installs up to four inherited descriptors without allocating between fork and exec.
@@ -30,7 +30,7 @@ use std::os::fd::{FromRawFd, OwnedFd};
 ///
 /// Call only in a forked child before exec, with owned source descriptors and
 /// distinct nonnegative targets. The child must exit if any operation fails.
-#[cfg(target_os = "macos")]
+#[cfg(any(target_os = "macos", target_os = "linux"))]
 pub(crate) unsafe fn remap_fds(mappings: &[(i32, i32)]) -> std::io::Result<()> {
     let mut copies = [-1; 4];
     if mappings.len() > copies.len() {
@@ -70,7 +70,7 @@ pub(crate) unsafe fn remap_fds(mappings: &[(i32, i32)]) -> std::io::Result<()> {
 }
 
 /// A connected pair, one half of which is handed to a pre-spawned worker.
-#[cfg(target_os = "macos")]
+#[cfg(any(target_os = "macos", target_os = "linux"))]
 pub(crate) fn socket_pair() -> Result<(OwnedFd, OwnedFd), String> {
     let mut fds = [0i32; 2];
     // SAFETY: writes exactly two descriptors into a two-element array.
@@ -124,7 +124,7 @@ pub(crate) fn socket_pair() -> Result<(OwnedFd, OwnedFd), String> {
 /// A byte of payload is required, not incidental: a `sendmsg` carrying only
 /// ancillary data may transfer nothing at all, and the receiver then blocks
 /// forever on a message that was never framed.
-#[cfg(target_os = "macos")]
+#[cfg(any(target_os = "macos", target_os = "linux"))]
 pub(crate) fn send_document(socket: i32, fd: i32, len: usize) -> Result<(), String> {
     let mut payload = (len as u64).to_le_bytes();
     let mut iov = libc::iovec {
@@ -139,7 +139,7 @@ pub(crate) fn send_document(socket: i32, fd: i32, len: usize) -> Result<(), Stri
         msg.msg_iov = &raw mut iov;
         msg.msg_iovlen = 1;
         msg.msg_control = space.as_mut_ptr().cast();
-        msg.msg_controllen = libc::CMSG_SPACE(std::mem::size_of::<i32>() as u32);
+        msg.msg_controllen = libc::CMSG_SPACE(std::mem::size_of::<i32>() as u32) as _;
 
         let cmsg = libc::CMSG_FIRSTHDR(&msg);
         if cmsg.is_null() {
@@ -147,7 +147,7 @@ pub(crate) fn send_document(socket: i32, fd: i32, len: usize) -> Result<(), Stri
         }
         (*cmsg).cmsg_level = libc::SOL_SOCKET;
         (*cmsg).cmsg_type = libc::SCM_RIGHTS;
-        (*cmsg).cmsg_len = libc::CMSG_LEN(std::mem::size_of::<i32>() as u32);
+        (*cmsg).cmsg_len = libc::CMSG_LEN(std::mem::size_of::<i32>() as u32) as _;
         std::ptr::copy_nonoverlapping(&raw const fd, libc::CMSG_DATA(cmsg).cast::<i32>(), 1);
 
         if libc::sendmsg(socket, &raw const msg, 0) < 0 {
@@ -169,7 +169,7 @@ pub(crate) fn send_document(socket: i32, fd: i32, len: usize) -> Result<(), Stri
 /// # Safety
 ///
 /// The caller must own `socket` and must not be reading it concurrently.
-#[cfg(target_os = "macos")]
+#[cfg(any(target_os = "macos", target_os = "linux"))]
 pub unsafe fn recv_document(socket: i32) -> Result<Option<(OwnedFd, usize)>, String> {
     let mut payload = [0u8; 8];
     let mut iov = libc::iovec {
@@ -184,7 +184,7 @@ pub unsafe fn recv_document(socket: i32) -> Result<Option<(OwnedFd, usize)>, Str
         msg.msg_iov = &raw mut iov;
         msg.msg_iovlen = 1;
         msg.msg_control = space.as_mut_ptr().cast();
-        msg.msg_controllen = libc::CMSG_SPACE(std::mem::size_of::<i32>() as u32);
+        msg.msg_controllen = libc::CMSG_SPACE(std::mem::size_of::<i32>() as u32) as _;
 
         let read = libc::recvmsg(socket, &raw mut msg, 0);
         if read < 0 {

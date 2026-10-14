@@ -941,6 +941,12 @@ pub(crate) mod platform {
 ///   offered and the roots, because `rustls-webpki` reports no partial path; it
 ///   is only read to tell "incomplete" from "ends at a root nobody trusts", by
 ///   the same [`incomplete`] the other two use.
+/// - **The bundle is read once per process and kept.** A worker reads it before
+///   its boundary goes up ([`platform::preload`]), as it maps PDFium then: the
+///   sandbox lets it read nothing but fonts, and the check runs in the worker
+///   because the certificates are the document's (`docs/THREAT-MODEL.md` §T6.22).
+///   On macOS the worker reaches `trustd` instead, which parses them outside the
+///   sandbox; here the parse is `rustls-webpki`'s, inside it.
 #[cfg(target_os = "linux")]
 pub(crate) mod platform {
     use super::{incomplete, self_issued, Anchors, Doubt, Evaluation, Store};
@@ -968,24 +974,38 @@ pub(crate) mod platform {
         }
     }
 
+    /// The system's bundle, read once per process.
+    static SYSTEM_ROOTS: std::sync::OnceLock<Result<Vec<Vec<u8>>, String>> =
+        std::sync::OnceLock::new();
+
+    /// Reads the system's bundle now, while this process may still read it. A
+    /// worker calls it before its boundary; everyone else reads it on first use.
+    pub fn preload() {
+        let _ = system_roots();
+    }
+
+    fn system_roots() -> &'static Result<Vec<Vec<u8>>, String> {
+        SYSTEM_ROOTS.get_or_init(|| {
+            let found = rustls_native_certs::load_native_certs();
+            if found.certs.is_empty() {
+                return Err(format!(
+                    "no system certificates were found{}",
+                    found
+                        .errors
+                        .first()
+                        .map(|e| format!(": {e}"))
+                        .unwrap_or_default()
+                ));
+            }
+            Ok(found.certs.into_iter().map(|der| der.to_vec()).collect())
+        })
+    }
+
     /// The roots: the given ones under `Only`, else the system's bundle.
     fn roots(anchors: Anchors<'_>) -> Result<Vec<Vec<u8>>, String> {
         match anchors {
             Anchors::Only(roots) => Ok(roots.to_vec()),
-            Anchors::System => {
-                let found = rustls_native_certs::load_native_certs();
-                if found.certs.is_empty() {
-                    return Err(format!(
-                        "no system certificates were found{}",
-                        found
-                            .errors
-                            .first()
-                            .map(|e| format!(": {e}"))
-                            .unwrap_or_default()
-                    ));
-                }
-                Ok(found.certs.into_iter().map(|der| der.to_vec()).collect())
-            }
+            Anchors::System => system_roots().clone(),
         }
     }
 

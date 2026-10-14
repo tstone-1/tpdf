@@ -66,12 +66,12 @@
 //! the running program.
 
 use std::io::{BufReader, Write};
-#[cfg(target_os = "macos")]
+#[cfg(any(target_os = "macos", target_os = "linux"))]
 use std::os::fd::{AsRawFd, OwnedFd};
 use std::path::Path;
 #[cfg(not(windows))]
 use std::process::{Child, ChildStdin, ChildStdout};
-#[cfg(target_os = "macos")]
+#[cfg(any(target_os = "macos", target_os = "linux"))]
 use std::process::{Command, Stdio};
 use std::sync::{Arc, Mutex};
 
@@ -79,7 +79,7 @@ use serde::Serialize;
 
 #[cfg(windows)]
 use crate::worker_argv::command_line;
-#[cfg(target_os = "macos")]
+#[cfg(any(target_os = "macos", target_os = "linux"))]
 use crate::worker_handover::{remap_fds, send_document, socket_pair};
 use crate::worker_proto::{read_reply_line, ReplyError};
 #[cfg(windows)]
@@ -92,7 +92,7 @@ use crate::worker_shm::duplicate_into;
 #[cfg(windows)]
 pub use crate::worker_argv::{doc_handle_arg, in_handle_arg, out_handle_arg, tile_handle_arg};
 pub use crate::worker_argv::{doc_len_arg, in_len_arg, library_dir_arg};
-#[cfg(target_os = "macos")]
+#[cfg(any(target_os = "macos", target_os = "linux"))]
 pub use crate::worker_handover::recv_document;
 #[cfg(windows)]
 pub use crate::worker_proto::Handover;
@@ -114,8 +114,8 @@ pub const WORKER_ARGV: &str = "--render-worker";
 /// things to drift. Not a silent fallback to running unsandboxed: every claim in
 /// `docs/THREAT-MODEL.md` is `sandbox_init` SBPL, so a worker without it is a
 /// different thing wearing the same name.
-#[cfg(not(any(target_os = "macos", windows)))]
-pub const NO_WORKERS: &str = "render workers are implemented on macOS and Windows only";
+#[cfg(not(any(target_os = "macos", target_os = "linux", windows)))]
+pub const NO_WORKERS: &str = "render workers are implemented on macOS, Windows and Linux only";
 
 /// Descriptor the document mapping is handed over on.
 ///
@@ -238,7 +238,7 @@ pub const PRESPAWN_ARGV: &str = "--prespawn";
 ///
 /// Kept beside [`Worker::prespawn`] and sharing its `cfg` exactly, so the
 /// constant and the refusal cannot say different things.
-pub const PRESPAWNS: bool = cfg!(any(target_os = "macos", windows));
+pub const PRESPAWNS: bool = cfg!(any(target_os = "macos", target_os = "linux", windows));
 
 /// Bytes reserved for one tile payload.
 ///
@@ -472,7 +472,7 @@ pub struct PreWorker {
     /// child followed by a line down the request pipe, and both of those are
     /// reachable from `worker` above. Carrying an unused descriptor elsewhere
     /// would be a resource that exists only to be warned about.
-    #[cfg(target_os = "macos")]
+    #[cfg(any(target_os = "macos", target_os = "linux"))]
     socket: OwnedFd,
 }
 
@@ -564,7 +564,7 @@ impl WarmWorker {
     /// The send failing, or the worker having died while it waited --- reported
     /// with its epitaph, because "the pipe is closed" and "killed by signal 11"
     /// are different diagnoses.
-    #[cfg(target_os = "macos")]
+    #[cfg(any(target_os = "macos", target_os = "linux"))]
     pub fn adopt(mut self, doc: Arc<Shm>) -> Result<Worker, String> {
         send_document(self.pre.socket.as_raw_fd(), doc.raw_fd(), doc.len()).map_err(|e| {
             format!(
@@ -637,7 +637,7 @@ impl WarmWorker {
     /// # Errors
     ///
     /// Always.
-    #[cfg(not(any(target_os = "macos", windows)))]
+    #[cfg(not(any(target_os = "macos", target_os = "linux", windows)))]
     pub fn adopt(self, _doc: Arc<Shm>) -> Result<Worker, String> {
         Err(NO_WORKERS.into())
     }
@@ -666,7 +666,7 @@ impl Worker {
     ///
     /// Creating the tile buffer, the socket pair, or spawning; and on any
     /// platform but macOS and Windows, always --- see the module note.
-    #[cfg(not(any(target_os = "macos", windows)))]
+    #[cfg(not(any(target_os = "macos", target_os = "linux", windows)))]
     pub fn prespawn(_library_dir: &Path) -> Result<PreWorker, String> {
         Err(NO_WORKERS.into())
     }
@@ -717,7 +717,7 @@ impl Worker {
     /// # Errors
     ///
     /// Creating the tile buffer, the socket pair, or spawning.
-    #[cfg(target_os = "macos")]
+    #[cfg(any(target_os = "macos", target_os = "linux"))]
     pub fn prespawn(library_dir: &Path) -> Result<PreWorker, String> {
         use std::os::unix::process::CommandExt;
 
@@ -835,7 +835,7 @@ impl Worker {
     /// # Errors
     ///
     /// As [`Worker::spawn`].
-    #[cfg(not(any(target_os = "macos", windows)))]
+    #[cfg(not(any(target_os = "macos", target_os = "linux", windows)))]
     pub fn spawn_mapped(
         _doc: Arc<Shm>,
         _tile: Shm,
@@ -1018,7 +1018,7 @@ impl Worker {
     /// # Errors
     ///
     /// As [`Worker::spawn`].
-    #[cfg(target_os = "macos")]
+    #[cfg(any(target_os = "macos", target_os = "linux"))]
     pub fn spawn_mapped(
         doc: Arc<Shm>,
         tile: Shm,

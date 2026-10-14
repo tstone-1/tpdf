@@ -44,14 +44,16 @@ use std::sync::mpsc::{channel, Sender};
 use crate::progressive::{self, CancelToken};
 use crate::queue::{Claim, SharedQueue};
 use crate::render::{self, PageSize, TileFormat, TileRequest};
+#[cfg(target_os = "macos")]
+use crate::worker::SANDBOX_PROFILE;
 #[cfg(windows)]
 use crate::worker::{doc_handle_arg, in_handle_arg, out_handle_arg, tile_handle_arg, Handover};
 use crate::worker::{
     doc_len_arg, in_len_arg, library_dir_arg, Reply, Request, Response, Shm, PRESPAWN_ARGV,
     TILE_CAPACITY,
 };
-#[cfg(target_os = "macos")]
-use crate::worker::{recv_document, SANDBOX_PROFILE, SOCK_FD};
+#[cfg(any(target_os = "macos", target_os = "linux"))]
+use crate::worker::{recv_document, SOCK_FD};
 #[cfg(unix)]
 use crate::worker::{DOC_FD, IN_FD, OUT_ARGV, OUT_FD, TILE_FD};
 
@@ -166,6 +168,10 @@ fn serve(args: &[String]) -> Result<(), String> {
         }
     };
     let bindings = progressive::bindings_of(pdfium);
+    // The system's CA bundle, for the signer's trust check, read while this
+    // process still may; on Linux the boundary lets it read only fonts.
+    #[cfg(target_os = "linux")]
+    crate::trust::platform::preload();
 
     establish_boundary()?;
 
@@ -1105,7 +1111,7 @@ fn reply(out: &mut impl Write, response: &Response) -> Result<(), String> {
 /// A malformed handover. The socket closing is `Ok(None)` --- which is how a
 /// pre-spawned worker that is never given a file learns to exit rather than
 /// waiting forever.
-#[cfg(target_os = "macos")]
+#[cfg(any(target_os = "macos", target_os = "linux"))]
 fn wait_for_document() -> Result<Option<Shm>, String> {
     use std::os::fd::IntoRawFd;
 
@@ -1160,7 +1166,7 @@ fn wait_for_document() -> Result<Option<Shm>, String> {
 }
 
 /// Not reachable: a worker refuses to start at all on this platform.
-#[cfg(not(any(target_os = "macos", windows)))]
+#[cfg(not(any(target_os = "macos", target_os = "linux", windows)))]
 fn wait_for_document() -> Result<Option<Shm>, String> {
     Err("pre-spawned workers are implemented on macOS and Windows only".into())
 }
