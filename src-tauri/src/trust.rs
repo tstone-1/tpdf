@@ -576,6 +576,7 @@ fn serves(certificate: &Certificate, purpose: Purpose) -> Option<bool> {
 pub const TIMESTAMPING: &str = "1.3.6.1.5.5.7.3.8";
 
 /// Whether a certificate's subject and issuer are the same name.
+#[cfg(any(target_os = "macos", windows))]
 fn self_issued(der: &[u8]) -> bool {
     Certificate::from_der(der).is_ok_and(|certificate| {
         let tbs = &certificate.tbs_certificate;
@@ -587,6 +588,7 @@ fn self_issued(der: &[u8]) -> bool {
 /// any root: its issuer was nowhere to be found. That is a different sentence
 /// from "ends at a root nobody trusts", and one both platforms can tell apart
 /// by the chain's shape rather than by their own error vocabularies.
+#[cfg(any(target_os = "macos", windows))]
 fn incomplete(chain: &[Vec<u8>]) -> bool {
     chain.last().is_some_and(|last| !self_issued(last))
 }

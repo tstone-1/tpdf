@@ -210,7 +210,22 @@ fn keeping(baseline: u32, kept: &[(u32, u8)]) -> Plan {
 
 #[cfg(target_os = "macos")]
 use crate::print_macos as os_pdf;
-#[cfg(not(target_os = "macos"))]
+#[cfg(not(any(target_os = "macos", windows)))]
+use crate::print_other as os_pdf;
+
+/// Whether this platform has a PDF parser of its own to read our output back
+/// with. Where it has none (`print_other.rs`) the test says `[SKIP]` and stops,
+/// instead of skipping every fixture and then failing for having checked none.
+fn os_parser() -> bool {
+    #[cfg(any(target_os = "macos", windows))]
+    return true;
+    #[cfg(not(any(target_os = "macos", windows)))]
+    {
+        println!("{}", os_pdf::SKIP);
+        false
+    }
+}
+#[cfg(windows)]
 use crate::print_win as os_pdf;
 
 /// Every staging file left beside `out`, whatever its counter.
@@ -750,6 +765,9 @@ fn a_rewrite_without_the_password_is_refused_and_says_so() {
 /// each fixture was, for the reason `print.rs` says it.
 #[test]
 fn a_third_parser_sees_the_turn_on_the_page_it_was_applied_to() {
+    if !os_parser() {
+        return;
+    }
     let scratch = Scratch::new("third-parser");
     let mut examined = 0;
     for name in ["rotated.pdf", "text-heavy.pdf", "mixed.pdf", "links.pdf"] {
@@ -821,6 +839,9 @@ fn a_third_parser_sees_the_turn_on_the_page_it_was_applied_to() {
 /// wrong in the count and in nothing else a smaller check would see.
 #[test]
 fn a_merge_holds_every_page_of_every_document() {
+    if !os_parser() {
+        return;
+    }
     let (Some(source), Some(other)) = (fixture("rotated.pdf"), fixture("links.pdf")) else {
         println!("[SKIP] a_merge_holds_every_page: generate testdata/ (BUILD.md)");
         return;
@@ -855,7 +876,13 @@ fn a_merge_holds_every_page_of_every_document() {
     // waved through: a merge the platform cannot open at all is the failure
     // this is here for.
     let written = std::fs::read(&out).expect("read the merge back");
+    #[cfg(any(target_os = "macos", windows))]
     let read = os_pdf::read(&written).expect("the OS parser reads the merged document");
+    #[cfg(not(any(target_os = "macos", windows)))]
+    let Some(read) = os_pdf::read(&written) else {
+        println!("{}", os_pdf::SKIP);
+        return;
+    };
     assert_eq!(
         read.pages.len(),
         mine + theirs,
@@ -1627,6 +1654,9 @@ fn a_page_reached_twice_is_saved_normally_when_nothing_conflicts() {
 /// that wrote it.
 #[test]
 fn a_third_parser_sees_the_pages_that_were_kept_and_not_the_one_that_was_not() {
+    if !os_parser() {
+        return;
+    }
     let Some(path) = fixture("rotated.pdf") else {
         println!("[SKIP] rotated.pdf not generated");
         return;
@@ -2265,6 +2295,9 @@ fn shared_page_and_a_spare() -> Vec<u8> {
 /// rotations can tell the two apart.
 #[test]
 fn a_plan_whose_pages_have_moved_comes_out_in_the_order_the_reader_put_them() {
+    if !os_parser() {
+        return;
+    }
     let Some(path) = fixture("rotated.pdf") else {
         println!("[SKIP] rotated.pdf not generated");
         return;
@@ -2379,6 +2412,9 @@ fn a_page_that_moved_carries_its_turn_to_where_it_landed() {
 /// upright, in a file that opens and looks plausible.
 #[test]
 fn a_third_parser_sees_an_inherited_rotation_survive_a_move() {
+    if !os_parser() {
+        return;
+    }
     let scratch = Scratch::new("inherit-move");
     let source = scratch.join("nested.pdf");
     std::fs::write(&source, nested_document()).expect("write fixture");
@@ -7287,6 +7323,9 @@ fn an_append_is_refused_when_the_file_changed_since_it_was_opened() {
 
 #[test]
 fn a_third_parser_reads_an_appended_document() {
+    if !os_parser() {
+        return;
+    }
     // **The append's own third parser.** `lopdf` wrote the update and
     // `lopdf` verifies it inside `append_in_place`, which is a writer
     // agreeing with its own reader --- enough to catch a mis-chained

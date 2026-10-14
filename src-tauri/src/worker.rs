@@ -66,7 +66,7 @@
 //! the running program.
 
 use std::io::{BufReader, Write};
-#[cfg(unix)]
+#[cfg(target_os = "macos")]
 use std::os::fd::{AsRawFd, OwnedFd};
 use std::path::Path;
 #[cfg(not(windows))]

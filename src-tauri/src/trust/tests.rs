@@ -30,6 +30,7 @@ fn issued_by(issuer: &Authority, seed: u8, name: &'static str, authority: bool) 
 
 /// The standing of `leaf`, with `others` offered as issuers and `roots` the
 /// only roots --- the test seam, so no test reads or writes the reader's store.
+#[cfg(any(target_os = "macos", windows))]
 fn standing(leaf: &[u8], others: &[Vec<u8>], roots: &[Vec<u8>], now: u64) -> Trust {
     let parsed = Certificate::from_der(leaf).expect("a certificate");
     judge(&parsed, now, |at| {

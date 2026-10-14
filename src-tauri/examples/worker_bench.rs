@@ -766,8 +766,15 @@ mod imp {
         Err("no seatbelt on this platform; Linux would use seccomp-bpf + namespaces".into())
     }
 
+    /// What `setrlimit` calls a resource: glibc declares its own unsigned type,
+    /// where macOS and musl take an `int`.
+    #[cfg(all(target_os = "linux", target_env = "gnu"))]
+    type Resource = libc::__rlimit_resource_t;
+    #[cfg(not(all(target_os = "linux", target_env = "gnu")))]
+    type Resource = libc::c_int;
+
     /// Sets one limit and says what the kernel made of it.
-    fn set_one_rlimit(resource: libc::c_int, label: &str, value: u64) -> String {
+    fn set_one_rlimit(resource: Resource, label: &str, value: u64) -> String {
         let limit = libc::rlimit {
             rlim_cur: value as libc::rlim_t,
             rlim_max: value as libc::rlim_t,

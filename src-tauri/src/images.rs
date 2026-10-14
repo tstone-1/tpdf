@@ -66,6 +66,33 @@ pub fn mapped() -> Vec<String> {
     found
 }
 
+/// Every file this process has mapped, by path: the kernel's own list in
+/// `/proc/self/maps`, the Linux counterpart of the two tables beside it.
+///
+/// Files rather than only libraries, as the kernel lists them; a caller asking
+/// whether the parser is in this process looks for its name either way. Each
+/// path once, in the order the kernel first lists it.
+#[cfg(target_os = "linux")]
+pub fn mapped() -> Vec<String> {
+    let Ok(maps) = std::fs::read_to_string("/proc/self/maps") else {
+        return Vec::new();
+    };
+    let mut found: Vec<String> = Vec::new();
+    for line in maps.lines() {
+        // address perms offset dev inode, then the path, which may hold spaces.
+        let mut rest = line;
+        for _ in 0..5 {
+            rest = rest.trim_start();
+            rest = rest.find(char::is_whitespace).map_or("", |at| &rest[at..]);
+        }
+        let path = rest.trim();
+        if path.starts_with('/') && !found.iter().any(|seen| seen == path) {
+            found.push(path.to_owned());
+        }
+    }
+    found
+}
+
 /// Every dynamic library this process has mapped, by path.
 ///
 /// The dynamic linker's own table, rather than a mark of our own: a milestone

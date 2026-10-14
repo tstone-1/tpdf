@@ -680,6 +680,9 @@ mod tests {
 
     #[test]
     fn a_third_parser_sees_the_view_rotation_on_a_job_built_from_the_working_document() {
+        if !os_parser() {
+            return;
+        }
         // **Written because a mutation survived.** Sending the working document
         // through the save writer moved the view rotation onto a code path that
         // nothing exercised: `the_view_rotation_alone_is_enough_to_need_building`
@@ -942,6 +945,21 @@ mod tests {
     /// the platform where nothing checked that its jobs were readable at all.
     #[cfg(target_os = "macos")]
     use crate::print_macos as os_pdf;
+    #[cfg(not(any(target_os = "macos", windows)))]
+    use crate::print_other as os_pdf;
+
+    /// Whether this platform has a PDF parser of its own to read our output back
+    /// with. Where it has none (`print_other.rs`) the test says `[SKIP]` and stops,
+    /// instead of skipping every fixture and then failing for having checked none.
+    fn os_parser() -> bool {
+        #[cfg(any(target_os = "macos", windows))]
+        return true;
+        #[cfg(not(any(target_os = "macos", windows)))]
+        {
+            println!("{}", os_pdf::SKIP);
+            false
+        }
+    }
     #[cfg(windows)]
     use crate::print_win as os_pdf;
 
@@ -1674,20 +1692,36 @@ mod tests {
     /// agree about this" --- and it is the second that a printer does not care
     /// about. Neither platform's choice is a neutral third party either, which is
     /// the point: each is the parser that platform's own print path uses.
-    fn read_back(bytes: &[u8]) -> os_pdf::Reading {
+    ///
+    /// `None` only where there is no such parser (`print_other.rs`), after saying
+    /// `[SKIP]`; a refusal on macOS or Windows still fails the test.
+    fn read_back(bytes: &[u8]) -> Option<os_pdf::Reading> {
         // macOS asks for text as well, because the checks below assert *which*
         // pages survived and PDFKit can say. The print path deliberately does not
         // pay for that (see `print_macos::read`), and Windows cannot supply it at
         // any price.
         #[cfg(target_os = "macos")]
-        return crate::print_macos::read_with_text(bytes)
-            .expect("the OS parser could not read the print job");
+        return Some(
+            crate::print_macos::read_with_text(bytes)
+                .expect("the OS parser could not read the print job"),
+        );
         #[cfg(windows)]
-        return crate::print_win::read(bytes).expect("the OS parser could not read the print job");
+        return Some(
+            crate::print_win::read(bytes).expect("the OS parser could not read the print job"),
+        );
+        #[cfg(not(any(target_os = "macos", windows)))]
+        {
+            let _ = bytes;
+            println!("{}", os_pdf::SKIP);
+            None
+        }
     }
 
     #[test]
     fn a_third_parser_reads_back_exactly_the_pages_that_were_kept() {
+        if !os_parser() {
+            return;
+        }
         let dir = TempDir::new("pdfkit-range");
         let path = dir.join("in.pdf");
         fixture(&path, 5, 0);
@@ -1701,7 +1735,9 @@ mod tests {
         )
         .expect("build");
 
-        let reading = read_back(&out);
+        let Some(reading) = read_back(&out) else {
+            return;
+        };
         // The portable half: *how many* pages a parser that did not write them can
         // find. Asserted on both platforms.
         assert_eq!(reading.pages.len(), 2, "{reading:?}");
@@ -1740,6 +1776,9 @@ mod tests {
 
     #[test]
     fn a_third_parser_sees_the_rotation_the_page_inherited_and_the_one_we_added() {
+        if !os_parser() {
+            return;
+        }
         // The pair is the point. `effective_rotation` returning 0 instead of
         // reading the tree writes 90 here where 180 is correct, and only the
         // second case can tell --- the first is 90 either way.
@@ -1757,7 +1796,9 @@ mod tests {
             )
             .expect("build");
 
-            let reading = read_back(&out);
+            let Some(reading) = read_back(&out) else {
+                return;
+            };
             for page in &reading.pages {
                 assert_eq!(
                     page.rotation, expected,
@@ -1769,6 +1810,9 @@ mod tests {
 
     #[test]
     fn a_third_parser_accepts_the_handed_over_file_tail_and_all() {
+        if !os_parser() {
+            return;
+        }
         // The passthrough fixture carries bytes past `%%EOF` so a rewrite is
         // distinguishable from a copy. That trick is only legitimate because
         // readers tolerate the tail --- asserted here rather than assumed, by a
@@ -1787,7 +1831,9 @@ mod tests {
         .expect("build");
 
         assert_eq!(out, std::fs::read(&path).expect("source"));
-        assert_eq!(read_back(&out).pages.len(), 3);
+        if let Some(reading) = read_back(&out) {
+            assert_eq!(reading.pages.len(), 3);
+        }
     }
 
     /// A job prints its pages in the order it lists them.
@@ -1800,6 +1846,9 @@ mod tests {
     /// wrong order has the right pages and the right count.
     #[test]
     fn a_job_prints_its_pages_in_the_order_it_lists_them() {
+        if !os_parser() {
+            return;
+        }
         let path = Path::new("../testdata/rotated.pdf");
         if !path.exists() {
             println!("[SKIP] rotated.pdf not generated");
@@ -1893,6 +1942,9 @@ mod tests {
     /// rather than leaving that to be assumed.
     #[test]
     fn a_third_parser_checks_a_job_built_from_a_document_we_did_not_write() {
+        if !os_parser() {
+            return;
+        }
         let mut examined = 0;
         for name in [
             "rotated.pdf",

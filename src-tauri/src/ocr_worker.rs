@@ -35,8 +35,11 @@
 // `BufRead`, `BufReader`, `Command` and `Stdio` are used only by the macOS arms
 // below, and importing them here made three compile gates red on Windows and
 // green on a Mac --- `docs/TRAPS.md` records that an unused-import warning on one
-// platform is not an unused import. They are imported where they are used.
-use std::io::{BufRead, BufReader, Read, Write};
+// platform is not an unused import. They are imported where they are used. The
+// first three serve the two platforms with a recogniser, which Linux is not yet.
+use std::io::Write;
+#[cfg(any(target_os = "macos", windows))]
+use std::io::{BufRead, BufReader, Read};
 // Not on Windows, where `OcrProcess` and `OcrStdin` are a `Contained` and a
 // `File`: `spawn_contained` builds the child suspended with a token and a job
 // rather than through `Command`, so there is no `Child` to take a stdin from.
@@ -256,6 +259,7 @@ type OcrStdin = std::fs::File;
 /// Generic over the reader because the two platforms hand over different types
 /// for the same pipe: a `ChildStdout` where there is a `Child`, a `File` where
 /// the handle came from `CreatePipe`.
+#[cfg(any(target_os = "macos", windows))]
 fn reply_thread<R: Read + Send + 'static>(stdout: R) -> Receiver<std::io::Result<String>> {
     let (tx, replies) = std::sync::mpsc::channel();
     std::thread::spawn(move || {
@@ -797,6 +801,7 @@ fn serve() -> Result<(), String> {
 /// does not parse and the flush after every reply are properties of `Ask` and
 /// `Said`, not of an operating system --- and `docs/TRAPS.md` records what a
 /// second copy of a distinction costs: a mutation of one survives.
+#[cfg(any(target_os = "macos", windows))]
 fn serve_loop<E: crate::ocr::Recogniser>(engine: &E, pixels: &Shm) -> Result<(), String> {
     let id = engine.id();
     let named = Named {
@@ -833,6 +838,9 @@ fn serve_loop<E: crate::ocr::Recogniser>(engine: &E, pixels: &Shm) -> Result<(),
 ///
 /// Generic over the engine rather than naming one, which is what lets both
 /// platforms share it. It named `ocr_vision::Vision` while there was only one.
+// Called by `serve_loop` on the two platforms with a recogniser, and by the
+// tests on every platform; Linux has no recogniser yet.
+#[cfg_attr(not(any(target_os = "macos", windows)), allow(dead_code))]
 fn answer<E: crate::ocr::Recogniser>(engine: &E, named: &Named, pixels: &Shm, ask: &Ask) -> Said {
     let rgba = match frame_of(pixels.as_slice(), ask) {
         Ok(rgba) => rgba,

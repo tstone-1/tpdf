@@ -190,8 +190,15 @@ Rebuilding PdfCraft is not a goal either, for the same reason. What is on its ro
 stays off tpdf's: Office-to-PDF conversion and Word export; Preflight, PDF/X and PDF/UA;
 accessibility tagging and an accessibility checker; JavaScript in forms, which tpdf leaves
 disabled because every PDF is hostile input; XFA; an MCP server and an embeddable automation
-API; Linux, FreeBSD and a browser build; a renderer of its own. A request for one of these is
+API; FreeBSD and a browser build; a renderer of its own. A request for one of these is
 a scope decision to raise, not a gap to close.
+
+**Linux is on the roadmap since 2026-10-14,** the whole application and not the command-line
+tool alone; until then it stood in the list above. Nothing has been built for it yet. The
+order of the work: compile and prove it in CI with the workers still refusing; then the
+worker sandbox (seccomp and Landlock), without which no document opens; then printing, OCR,
+signing and the desktop integration; then packages and window checks. On Linux a worker
+refuses to start until its sandbox exists, as on the other two when containment fails.
 
 That is the author's own diagnosis. What users of those programs say themselves, read on
 2026-10-03 from vendor forums and 30 Reddit threads, is in [`DEMAND.md`](DEMAND.md),

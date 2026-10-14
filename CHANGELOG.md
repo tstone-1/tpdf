@@ -43,6 +43,10 @@ have the binary.)
 
 ### Changed
 
+- **Linux is on the roadmap, and the Rust code compiles there.** Nothing runs yet: a worker
+  refuses to start until its sandbox exists, so no document opens. The tests that read a
+  print job back with the system's own PDF parser say `[SKIP]` on Linux, which has none
+  that fits the licence rule.
 - **A command's question in the palette says what is being asked.** While a command waits for
   a value, the palette shows the command's name and what it wants above the preview. It
   showed only the typed value and the preview, and the hint in the field was gone at the

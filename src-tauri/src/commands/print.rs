@@ -9,8 +9,10 @@
 use std::path::{Path, PathBuf};
 
 use super::{outside_of, password_for};
+#[cfg(any(target_os = "macos", windows))]
+use crate::diag;
 use crate::render::RenderService;
-use crate::{diag, edits, print, save};
+use crate::{edits, print, save};
 
 #[cfg(target_os = "macos")]
 use crate::print_macos;
