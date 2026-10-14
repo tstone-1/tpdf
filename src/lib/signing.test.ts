@@ -9,6 +9,7 @@ import {
   afterSigning,
   askIdentity,
   choiceLabel,
+  chooserHelp,
   nothingToChoose,
   signDocument,
   signedName,
@@ -392,6 +393,14 @@ describe("the words", () => {
         "Found but not offered — Old: it has expired; Mail: it is not issued for signing." +
         WITHOUT_CERTIFICATE,
     );
+  });
+
+  it("says who asks for the PIN: the system on macOS and Windows, tpdf on Linux", () => {
+    expect(chooserHelp(false)).toContain("Your operating system may ask for access to the key or for a PIN — tpdf never sees it.");
+    // On Linux tpdf shows the prompt itself (pin_prompt.rs), so "never sees it" would be false.
+    expect(chooserHelp(true)).not.toContain("never sees it");
+    expect(chooserHelp(true)).toContain("in a window of its own");
+    for (const linux of [false, true]) expect(chooserHelp(linux)).toMatch(/^Choose the certificate to sign with\. /);
   });
 
   it("lists every earlier signature after the new one", () => {

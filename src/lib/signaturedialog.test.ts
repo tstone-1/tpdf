@@ -27,6 +27,7 @@ vi.mock("./signature", async (actual) => ({
 }));
 
 const { APPEARANCE_WORDS, SignatureDialog } = await import("./signaturedialog");
+const { setLinux } = await import("./keys");
 
 function deferred<T>(): { promise: Promise<T>; resolve(value: T): void; reject(error: unknown): void } {
   let resolve!: (value: T) => void;
@@ -101,6 +102,36 @@ function mount() {
   const ask = () => { void dialog.ask().then((image) => answers.push(image)); };
   return { dialog, button, file, remember, message, main, draw, answers, ask };
 }
+
+describe("signature dialog: what it offers to keep", () => {
+  const offered = () => {
+    const nodes = all(dom.root) as Node[];
+    return {
+      buttons: nodes.filter((n) => n.tagName === "button").map((n) => n.textContent),
+      checkboxes: nodes.filter((n) => n.tagName === "input" && n.type === "checkbox").length,
+    };
+  };
+  afterEach(() => setLinux());
+
+  it("offers to use, forget and remember a saved signature where the system keeps one", () => {
+    setLinux(false);
+    new SignatureDialog(dom.root as unknown as HTMLElement);
+    const { buttons, checkboxes } = offered();
+    expect(buttons).toEqual(expect.arrayContaining(["Use saved signature", "Forget saved signature"]));
+    expect(checkboxes).toBe(2);
+  });
+
+  it("offers none of it on Linux, where nothing is kept", () => {
+    setLinux(true);
+    new SignatureDialog(dom.root as unknown as HTMLElement);
+    const { buttons, checkboxes } = offered();
+    expect(buttons).not.toContain("Use saved signature");
+    expect(buttons).not.toContain("Forget saved signature");
+    expect(buttons).toEqual(expect.arrayContaining(["Import image...", "Clear"]));
+    // Only "Remove white background" is left.
+    expect(checkboxes).toBe(1);
+  });
+});
 
 describe("signature dialog: an answer that arrives after the reader moved on", () => {
   it("places the signature once the remember finishes, when nothing changed meanwhile", async () => {

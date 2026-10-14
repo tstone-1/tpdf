@@ -262,6 +262,23 @@ export function nothingToChoose(choices: Choices, linux = isLinux()): string {
   return `${none} Found but not offered — ${reasons}.${WITHOUT_CERTIFICATE}`;
 }
 
+/**
+ * The chooser's first paragraph. Who asks for the PIN differs: on macOS and
+ * Windows the system does and tpdf never sees it; on Linux there is no such
+ * service, so tpdf asks in a window of its own and hands the answer to the card
+ * or the certificate file (`pin_prompt.rs`).
+ */
+export function chooserHelp(linux = isLinux()): string {
+  const saved =
+    "Choose the certificate to sign with. The signed document is saved as a new file; " +
+    "the original is not changed. ";
+  return linux
+    ? saved +
+        "tpdf asks for a smart card's PIN or a certificate file's password in a window of its own, " +
+        "passes it to the card or the file, and keeps no copy."
+    : saved + "Your operating system may ask for access to the key or for a PIN — tpdf never sees it.";
+}
+
 /** A verdict in a few words, for a list of signatures. */
 function verdict(integrity: Integrity | null): string {
   if (!integrity) return "not checked";
@@ -504,10 +521,7 @@ export function askIdentity(
   const heading = document.createElement("h2");
   heading.textContent = "Sign document";
   const help = document.createElement("p");
-  help.textContent =
-    "Choose the certificate to sign with. The signed document is saved as a new file; " +
-    "the original is not changed. Your operating system may ask for access to the key " +
-    "or for a PIN — tpdf never sees it.";
+  help.textContent = chooserHelp();
   const list = document.createElement("div");
   list.setAttribute("role", "radiogroup");
   list.style.cssText = "display:flex;flex-direction:column;gap:6px;margin:12px 0";

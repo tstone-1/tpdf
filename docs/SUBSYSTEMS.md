@@ -13,7 +13,8 @@ per image and 4 MiB across retained marks. The worker writes a PDF Stamp appeara
 with an RGB image and alpha soft mask. Placement stores inverse-rotated pixels in
 the mark's original display space, so later page turns rotate the image with it.
 `SignatureDialog` remembers pixels only on explicit opt-in, in macOS Keychain or
-user-scoped Windows DPAPI storage. `signaturestore.ts` migrates the legacy
+user-scoped Windows DPAPI storage; on Linux it offers no remembering, and the store
+answers a load with nothing saved. `signaturestore.ts` migrates the legacy
 localStorage entry only after protected readback matches. PNG/JPEG headers are
 validated before decoding: at most 10 MiB compressed, 8 megapixels and 8192 pixels
 per dimension; animations and changing dimensions are refused.

@@ -321,6 +321,9 @@ fn present_job(
             .map(gtk::prelude::Cast::upcast_ref::<gtk::Window>);
         if let Err(e) = crate::print_linux::present(staged, &title, parent) {
             diag::note(&format!("[print] {e}"));
+            // Said in the window too: this is after the dialog closed, so the
+            // reader pressed Print and nothing else would tell them it did not.
+            crate::print_linux::tell(parent, &e);
         }
     })
     .map_err(|e| {

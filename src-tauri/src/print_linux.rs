@@ -17,8 +17,15 @@
 //! own (`gtk+-unix-print-3.0`), which `gtk-sys` does not bind, so the few
 //! functions used are declared here.
 //!
-//! The dialog's page range applies to the job, as the range in the macOS panel
-//! does: the job already holds only the pages the reader asked tpdf for.
+//! **The dialog's page range is CUPS's to apply**, and tpdf has to hand it
+//! over. For a source file, GTK's CUPS backend passes copies, collation,
+//! reverse order, odd or even pages, the paper and pages per sheet to CUPS as
+//! options, but keeps the page range on the job, where only
+//! `GtkPrintOperation`'s drawing reads it: a job sent as a file printed every
+//! page whatever the dialog said (found by hand, 2026-10-14, "2-3" giving 12
+//! pages). [`submit`] puts it into CUPS's `page-ranges` option. A printer that
+//! is not a CUPS queue ("Print to File") copies the file and applies nothing,
+//! so a range or an odd/even choice is refused there rather than ignored.
 
 use std::ffi::{c_char, c_uint, c_void, CStr, CString};
 use std::path::{Path, PathBuf};
@@ -35,6 +42,7 @@ extern "C" {
     fn gtk_print_unix_dialog_get_page_setup(dialog: *mut GtkWidget) -> *mut GtkPageSetup;
     fn gtk_printer_accepts_pdf(printer: *mut c_void) -> gboolean;
     fn gtk_printer_get_name(printer: *mut c_void) -> *const c_char;
+    fn gtk_printer_get_backend(printer: *mut c_void) -> *mut c_void;
     fn gtk_print_job_new(
         title: *const c_char,
         printer: *mut c_void,
@@ -155,6 +163,24 @@ pub fn present(path: PathBuf, title: &str, parent: Option<&gtk::Window>) -> Resu
     }
 }
 
+/// Tells the reader why a print they asked for did not happen, in a modal
+/// message over `parent`. On GTK's thread, after [`present`].
+pub fn tell(parent: Option<&gtk::Window>, why: &str) {
+    use gtk::prelude::*;
+
+    let message = gtk::MessageDialog::new(
+        parent,
+        gtk::DialogFlags::MODAL | gtk::DialogFlags::DESTROY_WITH_PARENT,
+        gtk::MessageType::Error,
+        gtk::ButtonsType::Close,
+        "The document was not printed.",
+    );
+    message.set_secondary_text(Some(why));
+    message.run();
+    // SAFETY: the dialog is ours and not used after this.
+    unsafe { message.destroy() };
+}
+
 /// What the job's completion needs: the file to remove, the job to let go,
 /// and, for [`print_to`], where to say how it went.
 struct Sending {
@@ -202,6 +228,8 @@ fn submit(
             name.to_string_lossy()
         ));
     }
+    // SAFETY: `printer` and `settings` are live for the call.
+    unsafe { hand_over_pages(printer, settings) }?;
     let title = CString::new(title.replace('\0', "")).unwrap_or_default();
     // SAFETY: every argument is live; the job takes its own references.
     let job = unsafe { gtk_print_job_new(title.as_ptr(), printer, settings, setup) };
@@ -233,6 +261,106 @@ fn submit(
     Ok(())
 }
 
+/// Puts the dialog's choice of pages where the print system applies it: the
+/// range into CUPS's `page-ranges` option, before the job is made from
+/// `settings` (the module comment says why). GTK's CUPS backend already
+/// passes the odd/even choice on. A printer that is not a CUPS queue applies
+/// neither, so either is refused there.
+///
+/// # Safety
+///
+/// `printer` is a live `GtkPrinter`; `settings` is null or a live
+/// `GtkPrintSettings`.
+unsafe fn hand_over_pages(
+    printer: *mut c_void,
+    settings: *mut GtkPrintSettings,
+) -> Result<(), String> {
+    use gtk::prelude::*;
+
+    if settings.is_null() {
+        return Ok(());
+    }
+    // SAFETY: live per the contract; a reference of our own while used.
+    let settings: gtk::PrintSettings = unsafe { gtk::glib::translate::from_glib_none(settings) };
+    let ranges = if settings.print_pages() == gtk::PrintPages::Ranges {
+        let ranges: Vec<(i32, i32)> = settings
+            .page_ranges()
+            .iter()
+            .map(|r| (r.start(), r.end()))
+            .collect();
+        cups_page_ranges(&ranges)
+    } else {
+        None
+    };
+    let some_pages = ranges.is_some() || settings.page_set() != gtk::PageSet::All;
+    if !some_pages {
+        return Ok(());
+    }
+    // SAFETY: `printer` is live; GTK owns the backend.
+    let backend = unsafe { gtk_printer_get_backend(printer) };
+    let is_cups = !backend.is_null() && {
+        // SAFETY: a live GObject; its type name is static.
+        let object: gtk::glib::Object = unsafe {
+            gtk::glib::translate::from_glib_none(backend.cast::<gtk::glib::gobject_ffi::GObject>())
+        };
+        object.type_().name() == "GtkPrintBackendCups"
+    };
+    if !is_cups {
+        // SAFETY: as above; GTK owns the name.
+        let name = unsafe { CStr::from_ptr(gtk_printer_get_name(printer)) };
+        return Err(format!(
+            "{:?} prints every page of the document, so it cannot print only the pages chosen; \
+             choose All Pages, or a printer",
+            name.to_string_lossy()
+        ));
+    }
+    if let Some(ranges) = ranges {
+        settings.set("cups-page-ranges", Some(&ranges));
+    }
+    Ok(())
+}
+
+/// The dialog's page ranges as CUPS's `page-ranges` value, or `None` for
+/// none: numbered from 1, in ascending order with overlaps joined, because
+/// the CUPS scheduler refuses a job whose ranges go backwards or overlap. So
+/// "3,1" prints page 1 and then page 3. GTK numbers from 0 and keeps an open
+/// end ("5-" in the dialog) as an end before the start, which stays open here.
+pub(crate) fn cups_page_ranges(ranges: &[(i32, i32)]) -> Option<String> {
+    const OPEN: i64 = i64::MAX;
+    let mut spans: Vec<(i64, i64)> = ranges
+        .iter()
+        .map(|&(start, end)| {
+            let low = i64::from(start.max(0)) + 1;
+            let high = if end < start {
+                OPEN
+            } else {
+                i64::from(end) + 1
+            };
+            (low, high)
+        })
+        .collect();
+    spans.sort_unstable();
+    let mut joined: Vec<(i64, i64)> = Vec::new();
+    for (low, high) in spans {
+        match joined.last_mut() {
+            Some(last) if low <= last.1.saturating_add(1) => last.1 = last.1.max(high),
+            _ => joined.push((low, high)),
+        }
+    }
+    if joined.is_empty() {
+        return None;
+    }
+    let parts: Vec<String> = joined
+        .iter()
+        .map(|&(low, high)| match high {
+            OPEN => format!("{low}-"),
+            _ if high == low => low.to_string(),
+            _ => format!("{low}-{high}"),
+        })
+        .collect();
+    Some(parts.join(","))
+}
+
 /// GTK's answer when the job has gone to the print system, or failed to.
 unsafe extern "C" fn sent(_job: *mut c_void, state: gpointer, error: *const GError) {
     let answer = if error.is_null() {
@@ -259,8 +387,9 @@ unsafe extern "C" fn released(state: gpointer) {
 }
 
 /// Sends the file at `path` to the printer named `printer`, with its default
-/// settings, without the dialog, and waits up to `within` for GTK to say the
-/// job reached the print system. The file is removed either way.
+/// settings and the dialog's page range `pages` (first and last, from 1) when
+/// given, without the dialog, and waits up to `within` for GTK to say the job
+/// reached the print system. The file is removed either way.
 ///
 /// **For `print-probe`, not the application**, which always asks the reader
 /// through [`present`]. It drives everything after the dialog, the way the
@@ -276,6 +405,7 @@ pub fn print_to(
     printer: &str,
     path: &Path,
     title: &str,
+    pages: Option<(u32, u32)>,
     within: std::time::Duration,
 ) -> Result<(), String> {
     use gtk::glib::translate::ToGlibPtr;
@@ -283,6 +413,12 @@ pub fn print_to(
     let answer = (|| {
         let found = find_printer(printer)?;
         let settings = gtk::PrintSettings::new();
+        if let Some((first, last)) = pages {
+            // As the dialog leaves them for a range typed into it.
+            let index = |n: u32| i32::try_from(n.saturating_sub(1)).unwrap_or(i32::MAX);
+            settings.set_print_pages(gtk::PrintPages::Ranges);
+            settings.set_page_ranges(&[gtk::PageRange::new(index(first), index(last))]);
+        }
         let setup = gtk::PageSetup::new();
         let (tx, rx) = std::sync::mpsc::channel();
         let submitted = submit(
@@ -380,4 +516,29 @@ fn gerror_message(error: *const GError) -> String {
     unsafe { CStr::from_ptr((*error).message) }
         .to_string_lossy()
         .into_owned()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::cups_page_ranges;
+
+    #[test]
+    fn the_dialogs_ranges_become_cups_page_ranges() {
+        // GTK's ranges are numbered from 0; CUPS's from 1.
+        assert_eq!(cups_page_ranges(&[(1, 2)]).as_deref(), Some("2-3"));
+        assert_eq!(cups_page_ranges(&[(4, 4)]).as_deref(), Some("5"));
+        // "5-" in the dialog: GTK keeps the end before the start.
+        assert_eq!(cups_page_ranges(&[(4, -1)]).as_deref(), Some("5-"));
+        // Ascending and joined, as the scheduler requires.
+        assert_eq!(cups_page_ranges(&[(2, 2), (0, 0)]).as_deref(), Some("1,3"));
+        assert_eq!(
+            cups_page_ranges(&[(0, 3), (2, 6), (7, 7)]).as_deref(),
+            Some("1-8")
+        );
+        assert_eq!(
+            cups_page_ranges(&[(0, 0), (5, -1), (8, 9)]).as_deref(),
+            Some("1,6-")
+        );
+        assert_eq!(cups_page_ranges(&[]), None);
+    }
 }

@@ -1,5 +1,10 @@
 //! Remembered signature pixels protected by the current OS user account.
 //! macOS uses Keychain; Windows stores only DPAPI ciphertext in app-local data.
+//! Linux keeps none yet: nothing is saved there, so a load finds nothing and a
+//! forget has nothing to do, and the dialog does not offer to save one. The
+//! system's counterpart, the Secret Service, is not always running, and a
+//! visible signature has to work without it (found 2026-10-14: every visible
+//! signing on Linux ended at the load, which this platform refused).
 
 use crate::signature::Image;
 use std::path::Path;
@@ -203,7 +208,21 @@ mod platform {
     }
 }
 
-#[cfg(not(any(target_os = "macos", windows)))]
+#[cfg(target_os = "linux")]
+mod platform {
+    use super::*;
+    pub fn load(_: &str, _: &Path) -> Result<Option<Vec<u8>>, String> {
+        Ok(None)
+    }
+    pub fn save(_: &str, _: &Path, _: &[u8]) -> Result<(), String> {
+        Err("tpdf does not keep a signature on Linux yet; draw it or import it each time".into())
+    }
+    pub fn forget(_: &str, _: &Path) -> Result<(), String> {
+        Ok(())
+    }
+}
+
+#[cfg(not(any(target_os = "macos", windows, target_os = "linux")))]
 mod platform {
     use super::*;
     pub fn load(_: &str, _: &Path) -> Result<Option<Vec<u8>>, String> {
@@ -220,6 +239,26 @@ mod platform {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A visible signature loads the saved one first, so a refused load is a
+    /// refused signing; on Linux the store answers that nothing is saved.
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn linux_keeps_no_signature_and_says_so_only_when_asked_to_save() {
+        let path = Path::new("/nonexistent/tpdf-signature");
+        assert_eq!(perform("tpdf", path, Action::Load), Ok(None));
+        assert_eq!(perform("tpdf", path, Action::Forget), Ok(None));
+        let image = Image {
+            width: 1,
+            height: 1,
+            rgba: vec![0, 20, 30, 255],
+        };
+        let refused = perform("tpdf", path, Action::Save { image }).unwrap_err();
+        assert!(
+            refused.contains("does not keep a signature on Linux"),
+            "{refused}"
+        );
+    }
     #[test]
     fn stored_signature_codec_is_bounded_and_requires_visible_pixels() {
         let image = Image {

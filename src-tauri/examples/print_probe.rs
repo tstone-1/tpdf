@@ -75,6 +75,7 @@ fn main() {
 /// ```
 #[cfg(target_os = "linux")]
 mod linux {
+    use std::collections::HashSet;
     use std::path::{Path, PathBuf};
     use std::time::{Duration, Instant, SystemTime};
 
@@ -171,6 +172,7 @@ mod linux {
             &format!("{read_back:?}, {expected} expected"),
         );
 
+        let bytes_for_range = bytes.clone();
         let sent = inks(bindings, bytes)?;
         report.check(
             "control: the pages we sent have ink on them",
@@ -187,6 +189,7 @@ mod linux {
             printer,
             &staged,
             "tpdf print probe",
+            None,
             Duration::from_secs(30),
         );
         report.check(
@@ -215,7 +218,102 @@ mod linux {
             !pages.is_empty() && pages.iter().all(|n| *n > 0),
             &format!("non-white pixels per page: {pages:?}"),
         );
+        range(bindings, &bytes_for_range, printer, &out, expected, report)
+    }
+
+    /// The dialog's page range, through the same `submit` with the settings
+    /// the dialog leaves for a range typed into it.
+    ///
+    /// **This exists because the range was ignored on Linux and the probe could
+    /// not see it**: GTK keeps a range on the job, where nothing reads it for a
+    /// job sent as a file, so "2-3" printed every page until `print_linux`
+    /// handed it to CUPS. **The last page, not the first**, as on Windows: a
+    /// range that is ignored prints from the beginning. Which page came out is
+    /// read from its text, since CUPS scales the page to the paper and ink
+    /// counts change with it; a fixture whose two pages read alike is skipped,
+    /// so run it on `testdata/links.pdf` too.
+    fn range(
+        bindings: Bindings,
+        bytes: &[u8],
+        printer: &str,
+        out: &Path,
+        expected: usize,
+        report: &mut Report,
+    ) -> Result<(), String> {
+        const COUNT: &str = "a page range prints only the page it names";
+        const WHICH: &str = "a page range prints the page it named, not the first one";
+        if expected < 2 {
+            println!("[SKIP] {COUNT}: a one-page job has no range to take a subset of");
+            return Ok(());
+        }
+        let last = u32::try_from(expected).map_err(|e| e.to_string())?;
+        let (staged, file) = print_linux::stage(bytes)?;
+        drop(file);
+        let started = SystemTime::now();
+        print_linux::print_to(
+            printer,
+            &staged,
+            "tpdf print probe (range)",
+            Some((last, last)),
+            Duration::from_secs(30),
+        )?;
+        let produced = wait_for_output(out, started, Duration::from_secs(60))?;
+        let after = std::fs::read(&produced).map_err(|e| e.to_string())?;
+        let _ = std::fs::remove_file(&produced);
+        let printed = open(bindings, after)?;
+        report.check(
+            COUNT,
+            printed.page_count() == 1,
+            &format!(
+                "asked for page {last} of {expected}, {} came out",
+                printed.page_count()
+            ),
+        );
+        let sent = open(bindings, bytes.to_vec())?;
+        let (first, wanted) = (text(&sent, 0)?, text(&sent, last - 1)?);
+        if printed.page_count() != 1 {
+            println!("[SKIP] {WHICH}: the ranged job did not come out as one page");
+        } else if first.trim().is_empty() || first == wanted {
+            println!("[SKIP] {WHICH}: the first and last pages of this fixture read alike");
+        } else {
+            // By words rather than by the whole text: the rewrite and CUPS may
+            // read a page out in another order. Words only page `last` has must
+            // be there, and words only page 1 has must not.
+            let got = text(&printed, 0)?;
+            let words = |t: &str| t.split(' ').map(str::to_owned).collect::<HashSet<_>>();
+            let (got, first_words, wanted_words) = (words(&got), words(&first), words(&wanted));
+            let only_wanted: Vec<_> = wanted_words.difference(&first_words).collect();
+            let only_first: Vec<_> = first_words.difference(&wanted_words).collect();
+            if only_wanted.is_empty() || only_first.is_empty() {
+                // Pages with the same words in another order: no reading of
+                // the words tells them apart, and a check here could not fail.
+                println!(
+                    "[SKIP] {WHICH}: the first and last pages of this fixture have the same words"
+                );
+                return Ok(());
+            }
+            let has_wanted = only_wanted.iter().filter(|w| got.contains(**w)).count();
+            let has_first = only_first.iter().filter(|w| got.contains(**w)).count();
+            report.check(
+                WHICH,
+                has_wanted == only_wanted.len() && has_first == 0,
+                &format!(
+                    "of the words only page {last} has, {has_wanted}/{} printed; \
+                     of those only page 1 has, {has_first}/{}",
+                    only_wanted.len(),
+                    only_first.len()
+                ),
+            );
+        }
         Ok(())
+    }
+
+    /// A page's text, with the whitespace between words made single spaces,
+    /// since a rewrite may lay the same words out with other gaps.
+    fn text(document: &OpenDocument, index: u32) -> Result<String, String> {
+        let codes = document.page_codes(index, None)?;
+        let words: String = codes.iter().filter_map(|&c| char::from_u32(c)).collect();
+        Ok(words.split_whitespace().collect::<Vec<_>>().join(" "))
     }
 
     fn open(bindings: Bindings, bytes: Vec<u8>) -> Result<OpenDocument, String> {

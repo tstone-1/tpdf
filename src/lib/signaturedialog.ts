@@ -1,5 +1,6 @@
 import { decodeSignature, signatureCanvas, trimSignature, type SignatureImage } from "./signature";
 
+import { isLinux } from "./keys";
 import { prepareSignatureStorage, loadSignature, rememberSignature, forgetSignature } from "./signaturestore";
 
 /** What the dialog is called and what its accepting button says, for one use of it. */
@@ -48,9 +49,11 @@ export class SignatureDialog {
     const file = document.createElement("input"); file.type = "file"; file.accept = "image/png,image/jpeg"; file.hidden = true;
     const load = this.button("Import image...", () => { file.value = ""; file.click(); });
     file.addEventListener("change", () => { const chosen = file.files?.[0]; if (chosen) void this.importFile(chosen); });
-    tools.append(
-      load,
-      this.button("Clear", () => this.clear()),
+    // Linux keeps no saved signature yet (`signature_store.rs`), so nothing
+    // offers to save one, use it or forget it there.
+    const keeps = !isLinux();
+    tools.append(load, this.button("Clear", () => this.clear()));
+    if (keeps) tools.append(
       this.button("Use saved signature", () => void this.loadSaved()),
       this.button("Forget saved signature", () => void this.forgetSaved()),
     );
@@ -61,7 +64,8 @@ export class SignatureDialog {
       node.append(input, ` ${text}`);
       return node;
     };
-    options.append(label(this.white, "Remove white background"), label(this.remember, "Remember on this device"));
+    options.append(label(this.white, "Remove white background"));
+    if (keeps) options.append(label(this.remember, "Remember on this device"));
     this.white.checked = true;
     this.white.addEventListener("change", () => { if (this.source) this.render(); });
     this.message.setAttribute("role", "status"); this.message.style.cssText = "min-height:1.5em;font-size:13px";

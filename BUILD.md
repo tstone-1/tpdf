@@ -4647,13 +4647,28 @@ xvfb-run -a cargo run --release --example print-probe
 xvfb-run -a cargo run --release --example print-probe -- testdata/rotated.pdf PDF
 ```
 
-Run it from the repository root, where `testdata/` is. Six checks: the read-back worker's
+Run it from the repository root, where `testdata/` is. Eight checks: the read-back worker's
 page count, a control that the pages sent have ink, GTK sending the job, the job's file
-removed once GTK let go of it, and the pages that came out of CUPS counted and their ink
-measured. On 2026-10-14 under WSL (Ubuntu 24.04): 6 of 6 on `vector-multi.pdf` and
-`rotated.pdf`, and each of four mutations turned its own check red (a read-back one page
-high, the file kept, `gtk_printer_accepts_pdf` inverted, `/dev/null` sent in place of the
-job). Not checked: the dialog itself, its page range, and paper.
+removed once GTK let go of it, the pages that came out of CUPS counted and their ink
+measured, and a second job with the dialog's range set to the last page, which must come out
+as one page with that page's words and none of page 1's. The last check needs pages whose
+words differ and is skipped otherwise, so run it on `testdata/links.pdf` as well:
+
+```
+xvfb-run -a cargo run --release --example print-probe -- testdata/links.pdf PDF
+```
+
+On 2026-10-14 under WSL (Ubuntu 24.04): 7 of 7 with the last skipped on `vector-multi.pdf`,
+8 of 8 on `links.pdf` and `rotated.pdf`, and each of six mutations turned its own check red
+(a read-back one page high, the file kept, `gtk_printer_accepts_pdf` inverted, `/dev/null`
+sent in place of the job, the range not handed to CUPS, a one-page range sent as page 1).
+
+The dialog itself was driven by hand the same day, under Xvfb with `xdotool`, from the
+installed deb: Ctrl+P opens it over the window with cups-pdf's queue listed; *Pages* `2-3`
+printed 2 of 12 pages and `2-` printed 11, on A4 as the queue's default; *Print to File* with
+a range was refused in a message. That run found the range ignored: GTK keeps a range on the
+job, where only `GtkPrintOperation`'s drawing reads it, so before the fix `2-3` printed all 12
+(`print_linux.rs`). Not checked: paper.
 
 ### The "reopen its windows" dialog
 

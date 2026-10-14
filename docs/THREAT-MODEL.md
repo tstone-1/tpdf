@@ -1912,7 +1912,8 @@ Pixel comparisons through PDFium and PDFKit cover saved stamps on rotated and
 cropped pages, with unedited inputs as controls.
 
 Remembering a signature is explicit opt-in. macOS uses Keychain; Windows writes
-only user-scoped DPAPI ciphertext to application-local storage. The IPC cannot
+only user-scoped DPAPI ciphertext to application-local storage; Linux keeps nothing
+and does not offer to (since 2026-10-14), so there is no stored copy to protect. The IPC cannot
 choose the storage path or service. The legacy localStorage value is removed only
 after an identical protected copy has been read back; failures retain it and
 report the problem. "Forget saved signature" removes protected and legacy values,

@@ -143,7 +143,7 @@ fn a_token_lists_its_certificates_and_signs_after_its_pin() {
     let before = asked();
     let wrong = sign(&context, signer, KeyKind::P256, &digest);
     assert!(
-        matches!(&wrong, Err(why) if why.contains("did not accept the PIN")),
+        matches!(&wrong, Err(why) if why.contains("the PIN for the token \"tpdf test\" is not correct")),
         "{wrong:?}"
     );
     assert_eq!(asked(), before + 1, "asked once");
@@ -211,4 +211,25 @@ fn a_token_lists_its_certificates_and_signs_after_its_pin() {
     verifying
         .verify_prehash(&rsa_digest, &parsed)
         .expect("PKCS#1 v1.5 over a SHA-256 DigestInfo");
+}
+
+#[test]
+fn a_refused_login_is_said_in_words_a_reader_can_act_on() {
+    use cryptoki::context::Function;
+    use cryptoki::error::{Error, RvError};
+    let said = |rv| super::login_refused("card", &Error::Pkcs11(rv, Function::Login));
+    let wrong = said(RvError::PinIncorrect);
+    assert!(
+        wrong.starts_with("the PIN for the token \"card\" is not correct"),
+        "{wrong}"
+    );
+    assert!(!wrong.contains("More generally"), "{wrong}");
+    assert!(said(RvError::PinLocked).contains("is locked after too many wrong PINs"));
+    assert!(said(RvError::PinLenRange).contains("wrong number of characters"));
+    // Anything else keeps the library's words, which name the failure.
+    let other = said(RvError::DeviceRemoved);
+    assert!(
+        other.starts_with("the token \"card\" did not accept the PIN: "),
+        "{other}"
+    );
 }

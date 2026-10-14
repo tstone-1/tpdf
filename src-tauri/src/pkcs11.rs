@@ -56,6 +56,27 @@ const SHA256_DIGEST_INFO: [u8; 19] = [
     0x00, 0x04, 0x20,
 ];
 
+/// Why the token refused the login, in the reader's words where the reader can
+/// act on it. The library's own text for a wrong PIN is two sentences about
+/// "authentication ... other than a PIN", which said nothing a reader needs.
+fn login_refused(token: &str, error: &cryptoki::error::Error) -> String {
+    use cryptoki::error::{Error, RvError};
+    match error {
+        Error::Pkcs11(RvError::PinIncorrect, _) => format!(
+            "the PIN for the token {token:?} is not correct, and nothing was signed. \
+             A token locks itself after a few wrong PINs."
+        ),
+        Error::Pkcs11(RvError::PinLocked, _) => format!(
+            "the token {token:?} is locked after too many wrong PINs, and nothing was signed. \
+             Its unblocking code (PUK) or its issuer can unlock it."
+        ),
+        Error::Pkcs11(RvError::PinLenRange, _) => format!(
+            "the PIN has the wrong number of characters for the token {token:?}, and nothing was signed"
+        ),
+        other => format!("the token {token:?} did not accept the PIN: {other}"),
+    }
+}
+
 /// What the reader is asked for.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Asked<'a> {
@@ -250,7 +271,7 @@ pub fn sign(
         };
         session
             .login(UserType::User, pin.as_ref())
-            .map_err(|e| format!("the token {:?} did not accept the PIN: {e}", found.token))?;
+            .map_err(|e| login_refused(&found.token, &e))?;
     }
     let keys = session
         .find_objects(&[

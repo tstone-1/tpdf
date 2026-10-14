@@ -50,7 +50,11 @@ have the binary.)
   that fits the licence rule.
 - **On Linux a document prints through GTK's print dialog.** The job is the PDF itself,
   handed to CUPS unchanged, as on macOS; it is read back by PDFium in a sandboxed worker
-  before the dialog opens, so the application process parses no document to print.
+  before the dialog opens, so the application process parses no document to print. The
+  dialog's page range goes to CUPS as its `page-ranges` option, since GTK applies a range only
+  to pages it draws itself; *Print to File*, which copies the file and applies none, refuses a
+  range or odd/even pages, and a print that fails after the dialog closes says why in a
+  message.
 - **On Linux tpdf joins the desktop.** A PDF opened from a file manager reaches tpdf (the
   package's desktop entry now passes the file, which Tauri's own entry did not), and one opened
   while tpdf is running goes to the running window. Opened documents appear in the desktop's
@@ -70,7 +74,10 @@ have the binary.)
   loads p11-kit's proxy module, which brings every module the system has registered, such as
   OpenSC for smart cards; the card signs and its key never leaves it. Linux has no system
   prompt for the PIN, so tpdf asks in a dialog of its own that the page's scripts cannot
-  reach, and the command-line tool asks on the terminal.
+  reach, and the command-line tool asks on the terminal; the chooser says so, where macOS and
+  Windows say the system asks; a wrong PIN or a locked token is said in those words rather
+  than in the library's. Linux keeps no saved signature picture yet, so a visible
+  signature is drawn or imported each time and the picture dialog offers no *Remember*.
 - **On Linux a certificate file (`.p12`, `.pfx`) with an ECDSA key signs too.** *Add a
   certificate file for signing…* asks the file's password once and remembers the file, not
   the password or the key; each signature asks the password again. `tpdf identities --add`
