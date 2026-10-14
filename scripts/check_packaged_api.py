@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """Exercise an installed wheel against the CLI extracted from release packages.
 
-Requires uv, plus hdiutil on macOS or 7z on Windows. No installer is
+Requires uv, plus hdiutil on macOS, 7z on Windows, or dpkg-deb on Linux, where
+the deb and the AppImage are both checked. No installer is
 registered and no existing installation is changed. Run after Tauri bundling:
   python scripts/check_packaged_api.py --bundle-dir src-tauri/target/release/bundle
 The release workflow also passes --updater to require the macOS updater archive.
@@ -63,6 +64,19 @@ def unpack(artifact: Path, destination: Path):
     elif artifact.name.endswith('-setup.exe'):
         run(['7z', 'x', '-y', f'-o{destination}', artifact], cwd=destination)
         yield destination
+    elif artifact.suffix == '.deb':
+        run(['dpkg-deb', '-x', artifact, destination], cwd=destination)
+        yield destination
+    elif artifact.suffix == '.AppImage':
+        # Extracts into `squashfs-root` under the working folder, with no FUSE
+        # and nothing mounted. A copy with the execute bit, because the
+        # artifact itself is left as the bundler wrote it.
+        runnable = destination / artifact.name
+        shutil.copy2(artifact, runnable)
+        runnable.chmod(0o755)
+        run([runnable, '--appimage-extract'], cwd=destination, timeout=300)
+        runnable.unlink()
+        yield destination
     elif artifact.name.endswith('.app.tar.gz'):
         with tarfile.open(artifact) as archive:
             archive.extractall(destination, filter='data')
@@ -97,11 +111,16 @@ def check_package(artifact: Path, work: Path, python: Path, tests: Path,
                   expected_version: str) -> dict:
     with unpack(artifact, work / 'payload') as payload:
         windows = sys.platform == 'win32'
-        cli = one(payload.rglob('tpdf-cli.exe' if windows else 'tpdf-cli'), 'packaged CLI')
-        app = one(payload.rglob('tpdf.exe' if windows else 'tpdf'), 'packaged application')
+        # Files only: a Linux package also has a folder named `tpdf`, the
+        # resources in `usr/lib/tpdf`.
+        def files(name: str):
+            return (path for path in payload.rglob(name) if path.is_file())
+        cli = one(files('tpdf-cli.exe' if windows else 'tpdf-cli'), 'packaged CLI')
+        app = one(files('tpdf.exe' if windows else 'tpdf'), 'packaged application')
         if cli.parent != app.parent:
             raise RuntimeError('packaged CLI is not beside the application')
-        engine = one(payload.rglob('pdfium.dll' if windows else 'libpdfium.dylib'), 'PDFium library')
+        engine_name = {'win32': 'pdfium.dll', 'darwin': 'libpdfium.dylib'}.get(sys.platform, 'libpdfium.so')
+        engine = one(files(engine_name), 'PDFium library')
         env = {k: v for k, v in os.environ.items() if not k.startswith(
             ('PYTHON', 'TPDF_', 'DYLD_', 'LD_LIBRARY_PATH'))}
         env['TPDF_TEST_CLI'] = str(cli)
@@ -147,8 +166,13 @@ def main() -> int:
             artifacts.append(one((bundle / 'macos').glob('*.app.tar.gz'), 'updater archive'))
     elif sys.platform == 'win32':
         artifacts = [one((bundle / 'nsis').glob('*-setup.exe'), 'NSIS setup')]
+    elif sys.platform == 'linux':
+        # No updater archive on Linux: `release.yml` leaves Linux out of
+        # `latest.json`, so `--updater` has nothing to require here.
+        artifacts = [one((bundle / 'deb').glob('*.deb'), 'deb'),
+                     one((bundle / 'appimage').glob('*.AppImage'), 'AppImage')]
     else:
-        raise RuntimeError('packaged API checks require macOS or Windows')
+        raise RuntimeError('packaged API checks require macOS, Windows or Linux')
     version = json.loads((ROOT / 'package.json').read_text(encoding='utf-8'))['version']
     with tempfile.TemporaryDirectory(prefix='tpdf-packaged-api-') as temporary:
         work = Path(temporary).resolve()

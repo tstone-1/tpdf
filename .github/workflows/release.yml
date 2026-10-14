@@ -135,7 +135,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        platform: [macos-latest, windows-2025]
+        platform: [macos-latest, windows-2025, ubuntu-24.04]
     runs-on: ${{ matrix.platform }}
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5 (v5.1.0)
@@ -526,7 +526,9 @@ jobs:
           selection, an outline, thumbnails, session restore and printing.
           PDFium parsing and rendering run in worker processes. On macOS,
           workers cannot read arbitrary user files or access the network;
-          Windows workers use low integrity and resource-limited jobs.
+          Windows workers use low integrity and resource-limited jobs; Linux
+          workers run under Landlock and seccomp. The Linux packages (deb
+          and AppImage) do not update themselves: install the new one.
 
           **New in 26.10.18.** A signature can lock the document: *Lock
           the document after signing* in the signing dialog, and `tpdf sign
@@ -935,6 +937,14 @@ jobs:
             label: Windows (x64)
             bundle-dir: src-tauri/target/release/bundle
             signs-windows: true
+          # The deb and the AppImage, attached to the release and left out of
+          # `latest.json` (decided 2026-10-14): no updater overlay, so no
+          # update signature, and `includeUpdaterJson` off for this leg. An
+          # installed Linux copy does not check (`update.ts`, `inApp`).
+          - platform: ubuntu-24.04
+            label: Linux (x64)
+            bundle-dir: src-tauri/target/release/bundle
+            signs-windows: false
 
     runs-on: ${{ matrix.platform }}
     # The Certum login is in this environment and in no other place, and the
@@ -997,11 +1007,24 @@ jobs:
       # build that holds the signing secrets, and anything that runs in a job
       # on main can save one. `gates` above keeps its cache; it holds no secret.
 
+      # What Tauri links on Linux, as in the gates job, and libtesseract5 for
+      # the packaged-API check below; no token library, since nothing here signs.
+      - name: Install the Linux build packages
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq libwebkit2gtk-4.1-dev libgtk-3-dev libayatana-appindicator3-dev librsvg2-dev libxdo-dev libssl-dev libtesseract5
+
       - name: Install JS deps
         run: npm ci
 
       - name: Install the pinned PDFium
         run: python scripts/fetch_pdfium.py
+
+      # The Linux bundle names the language data as resources.
+      - name: Install the pinned Tesseract language data
+        if: runner.os == 'Linux'
+        run: python scripts/fetch_tessdata.py
 
       # The vars go through $GITHUB_ENV rather than the build step's `env:`
       # block, and that is load-bearing rather than stylistic. With `env:`, a
@@ -1225,8 +1248,11 @@ jobs:
           # installed tpdf will accept, and GitHub secrets cannot be read back
           # out -- if both of these are ever lost, no installed copy can be
           # updated again. `docs/THREAT-MODEL.md` §T9 carries what that means.
-          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
-          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ runner.os != 'Linux' && secrets.TAURI_SIGNING_PRIVATE_KEY || '' }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ runner.os != 'Linux' && secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD || '' }}
+          # The AppImage tool is itself an AppImage, and the runner has no FUSE
+          # to mount it; this makes it unpack itself instead.
+          APPIMAGE_EXTRACT_AND_RUN: ${{ runner.os == 'Linux' && '1' || '' }}
         with:
           # `createUpdaterArtifacts` lives in an overlay config rather than in
           # `tauri.conf.json`, and the reason is not tidiness. With it in the
@@ -1253,7 +1279,10 @@ jobs:
           # development machine ask for a signing login. Its path is put
           # together here and not in the matrix, where `github.workspace` is
           # empty: `v26.10.11-rc1` asked for `/src-tauri/tauri.signing.conf.json`.
-          args: --config ${{ github.workspace }}/src-tauri/tauri.updater.conf.json ${{ matrix.signs-windows && format('--config {0}/src-tauri/tauri.signing.conf.json', github.workspace) || '' }}
+          #
+          # The Linux leg takes neither overlay and names its two formats, since
+          # `bundle.targets` lists the macOS and Windows ones.
+          args: ${{ runner.os == 'Linux' && '--bundles deb,appimage' || format('--config {0}/src-tauri/tauri.updater.conf.json', github.workspace) }} ${{ matrix.signs-windows && format('--config {0}/src-tauri/tauri.signing.conf.json', github.workspace) || '' }}
           # The draft is created once, by the `draft` job, and both legs upload
           # into it by id. `tagName` is deliberately absent: the action's create
           # path is guarded by `if (tagName && !releaseId)`, so passing both
@@ -1281,7 +1310,9 @@ jobs:
           # the action's source, and visible in `26.8.2`, whose single 4,172-byte
           # manifest names both platforms. It only holds while both legs upload to
           # ONE release, which is what the `draft` job now guarantees.
-          includeUpdaterJson: true
+          #
+          # Off on the Linux leg, which has no update payload to list.
+          includeUpdaterJson: ${{ runner.os != 'Linux' }}
           # `releaseName`, `releaseBody`, `releaseDraft` and `prerelease` used to
           # live here and are gone rather than merely inert. The action ignores
           # them once `releaseId` is set, so keeping them would leave the release
@@ -1340,6 +1371,24 @@ jobs:
           $uninstaller = Join-Path $env:LOCALAPPDATA 'tpdf\uninstall.exe'
           if (-not (Test-Path $uninstaller)) { Write-Output "::error::the installer left no $uninstaller"; exit 1 }
           scripts/verify_signature.ps1 -Signer 'Open Source Developer Timo Stein' -Path $uninstaller
+
+      # What the Linux packages need and the bundler does not see: the desktop
+      # entry passing the document (`%F`), and the libraries tpdf opens at run
+      # time in the deb's Depends. The packaged-API check below runs the tool
+      # out of both packages.
+      - name: Verify the Linux packages
+        if: runner.os == 'Linux'
+        run: |
+          set -euo pipefail
+          DEB=$(ls ${{ matrix.bundle-dir }}/deb/*.deb)
+          ls ${{ matrix.bundle-dir }}/appimage/*.AppImage
+          DEPENDS=$(dpkg-deb -f "$DEB" Depends)
+          echo "Depends: $DEPENDS"
+          for package in libtesseract5 p11-kit-modules; do
+            echo "$DEPENDS" | grep -q "$package" || { echo "::error::the deb does not depend on $package"; exit 1; }
+          done
+          dpkg-deb --fsys-tarfile "$DEB" | tar -xO ./usr/share/applications/tpdf.desktop | grep -qx 'Exec=tpdf %F' \
+            || { echo "::error::the deb's desktop entry does not pass the document"; exit 1; }
 
       # Tauri notarizes and staples the .app, then builds the DMG and only
       # SIGNS it. The DMG is left unnotarized and `spctl -a -t open` rejects it

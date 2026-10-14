@@ -56,6 +56,9 @@ have the binary.)
   while tpdf is running goes to the running window. Opened documents appear in the desktop's
   recent files, web links open in the default browser, and *Make tpdf the default PDF app*
   works through GIO for the installed package.
+- **Releases carry Linux packages**, a deb and an AppImage, beside the macOS and Windows
+  ones. They do not update themselves: install the new package. An installed Linux copy
+  does not check for updates.
 - **The Linux packages work as installed.** The deb's `tpdf-cli` looked for the PDF engine
   beside itself in `/usr/bin` and could read no document; it now finds it in
   `/usr/lib/tpdf`, where the window finds it. The deb also depends on `libtesseract5` and

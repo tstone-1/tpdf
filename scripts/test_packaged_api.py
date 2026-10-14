@@ -92,7 +92,12 @@ class PackageGateTests(unittest.TestCase):
         for jobs in [[], run['jobs'][:1], [run['jobs'][0]] * 2]:
             with self.assertRaises(RuntimeError):
                 require_passed({**run, 'jobs': jobs}, 'v26.9.22', 'abc')
-        for index in range(2):
+        # A run from before Linux shipped, macOS and Windows only, is not enough.
+        two = [job for job in run['jobs'] if job['name'] != 'Linux (x64)']
+        self.assertEqual(len(two), 2)
+        with self.assertRaises(RuntimeError):
+            require_passed({**run, 'jobs': two}, 'v26.9.22', 'abc')
+        for index in range(len(PLATFORMS)):
             for state in ['skipped', 'failure', 'cancelled']:
                 wrong = deepcopy(run)
                 wrong['jobs'][index]['steps'][0]['conclusion'] = state

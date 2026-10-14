@@ -3296,6 +3296,12 @@ It also changes a property that held until 26.8.2: **tpdf made no network reques
 That was worth something and it is now spent. It is spent narrowly, and the narrowness is
 the mitigation rather than a footnote — see below.
 
+**Linux has no updater, since its packages were first attached to a release (2026-10-14).**
+The deb and the AppImage are not in `latest.json` and carry no update signature, and an
+installed Linux copy never checks: `Updates` is built with `inApp` false there, so neither
+the launch check nor *Check for updates* reaches the network (`update.ts`). A Linux user
+updates by installing the new package, so this section's threats do not arise there.
+
 **Web links, from 2026-09-07, are a second thing that causes traffic, and they are not a
 second network authority — the distinction is worth stating rather than blurring.** tpdf
 opens no socket for them: `opener.rs` hands the address to `NSWorkspace openURL:` or

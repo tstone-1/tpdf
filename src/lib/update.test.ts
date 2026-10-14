@@ -36,6 +36,7 @@ import {
   type FinishPrompt,
   type UpdateHandle,
   type UpdaterApi,
+  MANUAL_UPDATES,
 } from "./update";
 
 /** An update the fake updater will offer. */
@@ -595,5 +596,31 @@ describe("finishing an update", () => {
     const { log, effects: e } = effects({ fail: "no such binary" });
     expect(await finishUpdate("restart", ready, true, e)).toBe("failed");
     expect(log).toEqual(["unsaved", "act", "say:Error: no such binary"]);
+  });
+});
+
+describe("a platform that does not update in place", () => {
+  it("never asks the network, at launch or when asked, and says where updates are", async () => {
+    let asked = 0;
+    const check = async () => { asked += 1; return null; };
+    const storage = { getItem: () => null, setItem: () => {} };
+    const updates = new Updates({ check }, undefined, () => storage, false);
+    expect(updates.automatic).toBe(true);
+    await updates.checkOnLaunch();
+    expect(updates.state.kind).toBe("idle");
+    const said = await updates.check();
+    expect(said).toEqual({ kind: "failed", message: MANUAL_UPDATES });
+    expect(asked).toBe(0);
+    // The same updater in place does ask, so the zero above is about the flag.
+    await new Updates({ check }, undefined, () => storage).check();
+    expect(asked).toBe(1);
+  });
+
+  it("is what the application builds on Linux", () => {
+    const source = withoutComments(app);
+    const start = source.indexOf("new Updates(");
+    const construction = source.slice(start, source.indexOf("\n  );", start));
+    expect(start).toBeGreaterThan(-1);
+    expect(construction).toContain("!isLinux(),");
   });
 });

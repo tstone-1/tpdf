@@ -98,7 +98,7 @@
   import * as validationData from "./lib/validationdata";
   import { emptySignatureFields, signTarget, type SignTarget } from "./lib/signfield";
   import { openWithPassword } from "./lib/unlock";
-  import { isMac, label, setPrintedKeys } from "./lib/keys";
+  import { isLinux, isMac, label, setPrintedKeys } from "./lib/keys";
   import { buildMenu, menuEnablement, runMenuCommand } from "./lib/menubar";
   import { namePages } from "./lib/pageranges";
   import { Palette } from "./lib/palette";
@@ -3646,6 +3646,10 @@
       // see `update.ts` on why nothing here swaps the binary under an open
       // document.
     },
+    undefined,
+    // Linux packages are not in `latest.json`, so there is nothing to check
+    // against there; see `Updates`' `inApp`.
+    !isLinux(),
   );
 
   // Which of the command-line tool's two commands has something to do. The

@@ -20,7 +20,7 @@ import subprocess
 ROOT = Path(__file__).resolve().parents[1]
 REPO = 'tstone-1/tpdf'
 PACKAGE_STEP = 'Test packaged CLI and installed Python API'
-PLATFORMS = {'macOS (Apple Silicon)', 'Windows (x64)'}
+PLATFORMS = {'macOS (Apple Silicon)', 'Windows (x64)', 'Linux (x64)'}
 
 
 def gh(*args):
@@ -45,8 +45,8 @@ def require_passed(run, tag, sha):
             run['status'] != 'completed' or run['conclusion'] != 'success'):
         raise RuntimeError('the latest Release run for this tag/commit has not passed')
     jobs = [job for job in run['jobs'] if job['name'] in PLATFORMS]
-    if len(jobs) != 2 or {job['name'] for job in jobs} != PLATFORMS:
-        raise RuntimeError('Release run does not contain both platform jobs')
+    if len(jobs) != len(PLATFORMS) or {job['name'] for job in jobs} != PLATFORMS:
+        raise RuntimeError('Release run does not contain every platform job')
     for job in jobs:
         checks = [step for step in job['steps'] if step['name'] == PACKAGE_STEP]
         if (job['conclusion'] != 'success' or len(checks) != 1 or

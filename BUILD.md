@@ -4624,7 +4624,13 @@ neither. The first GTK application in a fresh WSL session waited 25 s in
 `g_application_register` while D-Bus started `xdg-desktop-portal`; the next started in
 0.12 s. That is the session, not tpdf, and a desktop session has the portal running.
 
-Neither package is published: `release.yml` builds macOS and Windows only.
+`release.yml` builds both on a third leg, `Linux (x64)`, and attaches them to the draft
+(decided 2026-10-14), so a draft now holds 8 assets where it held 6. They stay out of
+`latest.json`: that leg takes no updater overlay and has `includeUpdaterJson` off, and an
+installed Linux copy does not check for updates (`update.ts`, `inApp`). The leg checks the
+deb's Depends and its `Exec=tpdf %F`, and `check_packaged_api.py` runs the Python client's
+suite against the tool extracted from each package, with the missing-engine control.
+`publish_release.py` refuses a draft unless all three legs passed that check.
 
 ### Printing on Linux, and how to check it without paper
 

@@ -23,6 +23,11 @@
  * of them is a way this turns into either a busy loop or a lie in the header.
  */
 
+/** What a check says where tpdf does not update in place (Linux). */
+export const MANUAL_UPDATES =
+  "on Linux tpdf is updated by installing the new package from " +
+  "https://github.com/tstone-1/tpdf/releases";
+
 /** What the updater is doing, as the header shows it. */
 export type UpdateState =
   | { kind: "idle" }
@@ -86,10 +91,17 @@ export class Updates {
   #automatic = false;
   #launchChecked = false;
 
+  /**
+   * @param inApp Whether this platform updates in place. Linux does not: its
+   *   packages are not in `latest.json` (`release.yml`), so a check there could
+   *   only fail, on every launch. With `false` nothing here touches the network;
+   *   the launch check does nothing and a manual one says where updates are.
+   */
   constructor(
     private api: UpdaterApi,
     onChange: (s: UpdateState) => void = () => {},
     private storage: () => Pick<Storage, "getItem" | "setItem"> = () => window.localStorage,
+    private inApp = true,
   ) {
     this.#onChange = onChange;
     try {
@@ -112,7 +124,7 @@ export class Updates {
   async checkOnLaunch(): Promise<UpdateState> {
     if (this.#launchChecked) return this.#state;
     this.#launchChecked = true;
-    return this.#automatic ? this.check() : this.#state;
+    return this.#automatic && this.inApp ? this.check() : this.#state;
   }
 
   get state(): UpdateState {
@@ -139,6 +151,10 @@ export class Updates {
    */
   async check(): Promise<UpdateState> {
     if (this.#busy) return this.#state;
+    if (!this.inApp) {
+      this.#set({ kind: "failed", message: MANUAL_UPDATES });
+      return this.#state;
+    }
     this.#busy = true;
     this.#set({ kind: "checking" });
     try {
