@@ -661,7 +661,7 @@ pub struct TrustReport {
     pub standing: Standing,
     /// Why not trusted, for `untrusted` and `unchecked`; `null` otherwise.
     pub why: Option<Doubt>,
-    /// `mac` or `windows`: whose store answered; `null` when none did.
+    /// `mac`, `windows` or `linux`: whose store answered; `null` when none did.
     pub store: Option<Store>,
     /// The moment the chain was judged at, `YYYY-MM-DD HH:MM:SS UTC`, when it
     /// was the time a trusted timestamp attests; empty when it was judged

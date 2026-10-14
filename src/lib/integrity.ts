@@ -134,7 +134,7 @@ export type Doubt =
   | "not_in_force";
 
 /** The store that answered. Mirrors `trust::Store`. */
-export type Store = "mac" | "windows";
+export type Store = "mac" | "windows" | "linux";
 
 /**
  * What the operating system's trust store says about the signer's certificate.
@@ -152,6 +152,7 @@ export interface Trust {
 export const COMPUTER: Record<Store, string> = {
   mac: "this Mac",
   windows: "this PC",
+  linux: "this computer",
 };
 
 /**

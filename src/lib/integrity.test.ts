@@ -170,7 +170,7 @@ const EVERY_DOUBT = Object.keys(DOUBT) as Doubt[];
 
 /** Every trust row this module can render, on both stores. */
 function everyTrustRow() {
-  const rows = (["mac", "windows"] as const).flatMap((store) => [
+  const rows = (["mac", "windows", "linux"] as const).flatMap((store) => [
     trustRow(standing("trusted", null, store)),
     trustRow(standing("trusted_at_timestamp", null, store, "2026-08-21 12:00:00 UTC")),
     trustRow(standing("expired", null, store), "2020-01-01", "2021-01-01"),
@@ -203,7 +203,7 @@ describe("trustRow", () => {
   it("names the store that answered", () => {
     // Trust is relative to a store, and a reader whose colleague sees
     // "trusted" in Acrobat has to be able to tell why this one says otherwise.
-    for (const store of ["mac", "windows"] as const) {
+    for (const store of ["mac", "windows", "linux"] as const) {
       for (const s of ["trusted", "expired", "not_yet_valid"] as const) {
         expect(trustRow(standing(s, null, store))?.value).toContain(
           `a root ${COMPUTER[store]} trusts`,

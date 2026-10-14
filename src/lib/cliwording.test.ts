@@ -43,17 +43,17 @@ import { afterSigning, type Signed } from "./signing";
 describe("the command-line tool's wording", () => {
   it("covers every verdict, standing and closing sentence", () => {
     // 5 verdicts x 3 shapes, the unchecked one with 8 reasons more, each with
-    // and without an append and a trust row; 6 standings x 3 stores x 10
-    // reasons x 2 date pairs x judged now or at an attested moment; the
-    // signing reports below.
+    // and without an append and a trust row; 6 standings x 4 stores (macOS,
+    // Windows, Linux, none) x 10 reasons x 2 date pairs x judged now or at an
+    // attested moment; the signing reports below.
     expect(wording.integrity.length).toBe((5 * 3 + 8) * 2 * 2);
-    expect(wording.trust.length).toBe(6 * 3 * 10 * 2 * 2);
+    expect(wording.trust.length).toBe(6 * 4 * 10 * 2 * 2);
     expect(wording.trust.some((c) => c.trust.attested_at !== "")).toBe(true);
     // A timestamp: no verdict, or 5 verdicts x 2 shapes and the unchecked one
     // with 8 reasons, each named and unnamed, on a signature and a document;
-    // its authority as the trust rows are.
+    // its authority as the trust rows are, on the same 4 stores.
     expect(wording.timestamp.length).toBe((1 + 5 * 2 + 8) * 2 * 2);
-    expect(wording.authority.length).toBe(6 * 3 * 10 * 2 * 2);
+    expect(wording.authority.length).toBe(6 * 4 * 10 * 2 * 2);
     // A revocation row, for 4 bases: none, unchecked with no reason and 11,
     // and for each of 2 sources good and unknown with and without a next
     // update and revoked with 11 reasons before and after the moment; each

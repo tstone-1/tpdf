@@ -30,7 +30,7 @@ fn issued_by(issuer: &Authority, seed: u8, name: &'static str, authority: bool) 
 
 /// The standing of `leaf`, with `others` offered as issuers and `roots` the
 /// only roots --- the test seam, so no test reads or writes the reader's store.
-#[cfg(any(target_os = "macos", windows))]
+#[cfg(any(target_os = "macos", windows, target_os = "linux"))]
 fn standing(leaf: &[u8], others: &[Vec<u8>], roots: &[Vec<u8>], now: u64) -> Trust {
     let parsed = Certificate::from_der(leaf).expect("a certificate");
     judge(&parsed, now, |at| {
@@ -58,11 +58,12 @@ fn untrusted(why: Doubt) -> Trust {
 
 // ------------------------------------------------------------- the platform
 //
-// Every test below this line asks the operating system. The first `SecTrust`
+// Every test below this line asks the operating system, or on Linux the
+// system's CA bundle through `rustls-webpki`. The first `SecTrust`
 // evaluation in a process has been measured at seconds (`keystore/tests.rs`),
 // so these share that cost rather than each paying it.
 
-#[cfg(any(target_os = "macos", windows))]
+#[cfg(any(target_os = "macos", windows, target_os = "linux"))]
 mod platform_tests {
     use super::*;
 
@@ -276,6 +277,38 @@ mod platform_tests {
     }
 
     #[test]
+    fn an_intermediate_outside_its_dates_is_named_as_such() {
+        // A signer in force under an intermediate whose dates have passed: not
+        // the signer's own expiry, which reads as expired, but a certificate
+        // above it, which the store refuses. Against the real store on every
+        // platform; until 2026-10-14 only a scripted stand-in said `Dates`.
+        let ca = root(61, "tpdf test root");
+        let key = Soft::p256(91);
+        let mut spec = Spec::new("tpdf test expired intermediate");
+        spec.issuer = Some((&ca.key, ca.name));
+        spec.authority = Some(true);
+        spec.serial = 91;
+        spec.not_before = NOW - 400 * DAY;
+        spec.not_after = NOW - 30 * DAY;
+        let der = certificate(&key, &spec);
+        let middle = Authority {
+            key,
+            der,
+            name: "tpdf test expired intermediate",
+        };
+        let leaf = issued_by(&middle, 92, "Signer", false);
+        assert_eq!(
+            standing(
+                &leaf.der,
+                std::slice::from_ref(&middle.der),
+                std::slice::from_ref(&ca.der),
+                NOW
+            ),
+            untrusted(Doubt::Dates)
+        );
+    }
+
+    #[test]
     fn a_missing_intermediate_is_a_missing_link_not_an_untrusted_root() {
         let ca = root(61, "tpdf test root");
         let middle = issued_by(&ca, 64, "tpdf test intermediate", true);
@@ -475,7 +508,7 @@ mod platform_tests {
 
 // ---------------------------------------------- timestamp tokens' authorities
 
-#[cfg(any(target_os = "macos", windows))]
+#[cfg(any(target_os = "macos", windows, target_os = "linux"))]
 mod authority_tests {
     use super::*;
     use crate::integrity::test_tsa::{mint, Imprint, TestTsa, EMAIL_PROTECTION};

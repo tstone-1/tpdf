@@ -140,7 +140,7 @@ TrustStanding = Literal[
     "trusted_at_timestamp",
 ]
 
-TrustStore = Literal["mac", "windows"]
+TrustStore = Literal["mac", "windows", "linux"]
 
 TrustDoubt = Literal[
     "incomplete",

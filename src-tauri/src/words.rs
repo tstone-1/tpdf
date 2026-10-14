@@ -58,6 +58,7 @@ pub fn computer(store: Option<Store>) -> &'static str {
     match store {
         Some(Store::Mac) => "this Mac",
         Some(Store::Windows) => "this PC",
+        Some(Store::Linux) => "this computer",
         None => "this computer",
     }
 }

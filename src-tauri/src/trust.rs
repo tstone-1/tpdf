@@ -155,6 +155,9 @@ pub enum Store {
     Mac,
     /// The Windows certificate stores, through CryptoAPI.
     Windows,
+    /// The system's CA bundle on Linux, checked by `rustls-webpki`. Since
+    /// 2026-10-14.
+    Linux,
 }
 
 /// Why the store does not vouch, or was not asked.
@@ -576,7 +579,6 @@ fn serves(certificate: &Certificate, purpose: Purpose) -> Option<bool> {
 pub const TIMESTAMPING: &str = "1.3.6.1.5.5.7.3.8";
 
 /// Whether a certificate's subject and issuer are the same name.
-#[cfg(any(target_os = "macos", windows))]
 fn self_issued(der: &[u8]) -> bool {
     Certificate::from_der(der).is_ok_and(|certificate| {
         let tbs = &certificate.tbs_certificate;
@@ -588,7 +590,6 @@ fn self_issued(der: &[u8]) -> bool {
 /// any root: its issuer was nowhere to be found. That is a different sentence
 /// from "ends at a root nobody trusts", and one both platforms can tell apart
 /// by the chain's shape rather than by their own error vocabularies.
-#[cfg(any(target_os = "macos", windows))]
 fn incomplete(chain: &[Vec<u8>]) -> bool {
     chain.last().is_some_and(|last| !self_issued(last))
 }
@@ -926,7 +927,191 @@ pub(crate) mod platform {
     }
 }
 
-#[cfg(not(any(target_os = "macos", windows)))]
+/// Linux has no trust API to ask, so the chain is built and checked here:
+/// `rustls-webpki` over the system's CA bundle, offline and with no revocation
+/// check, which is what the macOS and Windows checks do too. What the other two
+/// get from the OS, this one states:
+///
+/// - **No purpose is checked here.** The callers check it (`judge_for`), as on
+///   the other two, where the basic X.509 policy checks none. `rustls-webpki`
+///   insists on a validator, so [`AnyPurpose`] reads every purpose and accepts.
+/// - **The chain on success** is the signer, the path's intermediates and the
+///   root, in that order, as the other two report it.
+/// - **The chain on a refusal** is assembled by issuer name from what was
+///   offered and the roots, because `rustls-webpki` reports no partial path; it
+///   is only read to tell "incomplete" from "ends at a root nobody trusts", by
+///   the same [`incomplete`] the other two use.
+#[cfg(target_os = "linux")]
+pub(crate) mod platform {
+    use super::{incomplete, self_issued, Anchors, Doubt, Evaluation, Store};
+    use der::{Decode, Encode};
+    use rustls_pki_types::{CertificateDer, TrustAnchor, UnixTime};
+    use std::time::Duration;
+    use webpki::{EndEntityCert, Error, ExtendedKeyUsageValidator, KeyPurposeIdIter};
+    use x509_cert::Certificate;
+
+    pub const STORE: Option<Store> = Some(Store::Linux);
+
+    /// The deepest chain the refusal walk follows, against a loop of names.
+    const DEPTH: usize = 16;
+
+    /// Accepts any purpose, after reading each one: a malformed extension is
+    /// still an error.
+    struct AnyPurpose;
+
+    impl ExtendedKeyUsageValidator for AnyPurpose {
+        fn validate(&self, iter: KeyPurposeIdIter<'_, '_>) -> Result<(), Error> {
+            for purpose in iter {
+                purpose?;
+            }
+            Ok(())
+        }
+    }
+
+    /// The roots: the given ones under `Only`, else the system's bundle.
+    fn roots(anchors: Anchors<'_>) -> Result<Vec<Vec<u8>>, String> {
+        match anchors {
+            Anchors::Only(roots) => Ok(roots.to_vec()),
+            Anchors::System => {
+                let found = rustls_native_certs::load_native_certs();
+                if found.certs.is_empty() {
+                    return Err(format!(
+                        "no system certificates were found{}",
+                        found
+                            .errors
+                            .first()
+                            .map(|e| format!(": {e}"))
+                            .unwrap_or_default()
+                    ));
+                }
+                Ok(found.certs.into_iter().map(|der| der.to_vec()).collect())
+            }
+        }
+    }
+
+    /// The names a certificate is issued by and to, DER, or `None`.
+    fn names(der: &[u8]) -> Option<(Vec<u8>, Vec<u8>)> {
+        let tbs = Certificate::from_der(der).ok()?.tbs_certificate;
+        Some((tbs.subject.to_der().ok()?, tbs.issuer.to_der().ok()?))
+    }
+
+    /// The chain from `leaf` upwards by issuer name, through `pool`, stopping
+    /// at a self-issued certificate or where no issuer is found.
+    fn by_name(leaf: &[u8], pool: &[&[u8]]) -> Vec<Vec<u8>> {
+        let mut chain = vec![leaf.to_vec()];
+        while chain.len() < DEPTH {
+            let current = chain.last().expect("the chain starts with the leaf");
+            if self_issued(current) {
+                break;
+            }
+            let Some((_, issuer)) = names(current) else {
+                break;
+            };
+            let next = pool.iter().find(|candidate| {
+                names(candidate).is_some_and(|(subject, _)| subject == issuer)
+                    && !chain.iter().any(|seen| seen.as_slice() == **candidate)
+            });
+            match next {
+                Some(found) => chain.push(found.to_vec()),
+                None => break,
+            }
+        }
+        chain
+    }
+
+    pub fn evaluate(
+        leaf: &[u8],
+        others: &[Vec<u8>],
+        anchors: Anchors<'_>,
+        at: u64,
+    ) -> Result<Evaluation, String> {
+        let roots = roots(anchors)?;
+        // A root the checker will not read is left out, as an offered issuer is
+        // on the other two: a chain that needed it ends at no trusted root.
+        let trusted: Vec<(TrustAnchor<'static>, &Vec<u8>)> = roots
+            .iter()
+            .filter_map(|der| {
+                webpki::anchor_from_trusted_cert(&CertificateDer::from(der.as_slice()))
+                    .ok()
+                    .map(|anchor| (anchor.to_owned(), der))
+            })
+            .collect();
+        let anchor_list: Vec<TrustAnchor<'static>> =
+            trusted.iter().map(|(anchor, _)| anchor.clone()).collect();
+        let leaf_der = CertificateDer::from(leaf);
+        let end = EndEntityCert::try_from(&leaf_der)
+            .map_err(|e| format!("the signer's certificate could not be read: {e}"))?;
+        let offered: Vec<CertificateDer<'_>> = others
+            .iter()
+            .map(|der| CertificateDer::from(der.as_slice()))
+            .collect();
+        let time = UnixTime::since_unix_epoch(Duration::from_secs(at));
+        match end.verify_for_usage(
+            webpki::ALL_VERIFICATION_ALGS,
+            &anchor_list,
+            &offered,
+            time,
+            AnyPurpose,
+            None,
+            None,
+        ) {
+            Ok(path) => {
+                let mut chain = vec![leaf.to_vec()];
+                chain.extend(
+                    path.intermediate_certificates()
+                        .map(|cert| cert.der().to_vec()),
+                );
+                let anchor = path.anchor();
+                if let Some((_, der)) = trusted.iter().find(|(candidate, _)| {
+                    candidate.subject == anchor.subject
+                        && candidate.subject_public_key_info == anchor.subject_public_key_info
+                }) {
+                    chain.push((*der).clone());
+                }
+                Ok(Evaluation {
+                    passed: true,
+                    failure: Doubt::Rejected,
+                    chain,
+                })
+            }
+            Err(error) => {
+                let pool: Vec<&[u8]> = others
+                    .iter()
+                    .chain(roots.iter())
+                    .map(Vec::as_slice)
+                    .collect();
+                let chain = by_name(leaf, &pool);
+                // Read from the chain's shape before the library's error, as
+                // `incomplete` is: a self-signed certificate nobody anchored is
+                // reported by `rustls-webpki` as something other than an
+                // unknown issuer, and it is a root this computer does not
+                // trust, which is what the other two say of it.
+                let untrusted_root = chain
+                    .last()
+                    .is_some_and(|last| !roots.iter().any(|root| root == last));
+                let failure = if incomplete(&chain) {
+                    Doubt::Incomplete
+                } else if matches!(
+                    error,
+                    Error::CertExpired { .. } | Error::CertNotValidYet { .. }
+                ) {
+                    Doubt::Dates
+                } else if untrusted_root || matches!(error, Error::UnknownIssuer) {
+                    Doubt::Root
+                } else {
+                    Doubt::Rejected
+                };
+                Ok(Evaluation {
+                    passed: false,
+                    failure,
+                    chain,
+                })
+            }
+        }
+    }
+}
+
+#[cfg(not(any(target_os = "macos", windows, target_os = "linux")))]
 pub(crate) mod platform {
     use super::{Anchors, Evaluation, Store};
 

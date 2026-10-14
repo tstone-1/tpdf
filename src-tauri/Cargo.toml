@@ -432,6 +432,16 @@ flagset = "0.4"
 # with `SecKeyCreateWithData`, which `security-framework` does not wrap. Already
 # in the tree beneath it; MIT OR Apache-2.0. (`core-foundation`, which that test
 # uses too, is a normal dependency since `trust.rs`.)
+# The certificate trust check on Linux (`trust.rs`), where there is no trust
+# API to ask: `rustls-webpki` builds and checks the chain, offline and with no
+# revocation, as the macOS and Windows checks do, against the system's CA bundle
+# that `rustls-native-certs` reads. All three are already in the tree beneath
+# `reqwest`'s TLS, so no package is added; ISC, and Apache-2.0 OR MIT OR ISC.
+[target.'cfg(target_os = "linux")'.dependencies]
+rustls-webpki = { version = "0.103", default-features = false, features = ["std", "ring"] }
+rustls-native-certs = "0.8"
+rustls-pki-types = "1"
+
 [target.'cfg(target_os = "macos")'.dev-dependencies]
 security-framework-sys = "2"
 

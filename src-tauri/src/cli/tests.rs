@@ -1522,7 +1522,12 @@ fn wording() -> serde_json::Value {
         Standing::Untrusted,
         Standing::Unchecked,
     ] {
-        for store in [Some(TrustStore::Mac), Some(TrustStore::Windows), None] {
+        for store in [
+            Some(TrustStore::Mac),
+            Some(TrustStore::Windows),
+            Some(TrustStore::Linux),
+            None,
+        ] {
             for why in doubts {
                 for ((from, until), attested_at) in [
                     ("", ""),
@@ -1936,7 +1941,12 @@ fn wording() -> serde_json::Value {
         Standing::Untrusted,
         Standing::Unchecked,
     ] {
-        for store in [Some(TrustStore::Mac), Some(TrustStore::Windows), None] {
+        for store in [
+            Some(TrustStore::Mac),
+            Some(TrustStore::Windows),
+            Some(TrustStore::Linux),
+            None,
+        ] {
             for why in doubts {
                 for ((from, until), attested_at) in [
                     ("", ""),

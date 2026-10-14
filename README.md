@@ -1925,7 +1925,7 @@ it with `[Console]::OutputEncoding = [Text.Encoding]::UTF8` set if a name may ca
   `trusted_at_timestamp` — judged at the time an intact timestamp from an authority this
   computer trusts attests — `expired`, `not_yet_valid`, `untrusted`, `unchecked`), `why`
   (`not_in_force` among them: the certificate was not in force at that attested time),
-  `store` (`mac`, `windows`, or `null`), `attested_at` (that attested time, empty when the
+  `store` (`mac`, `windows`, `linux`, or `null`), `attested_at` (that attested time, empty when the
   certificate was judged now) and `sentence`; `revocation`, `null` exactly when `trust` is,
   what the revocation data the document carries says about the signer's certificate (for a
   document timestamp, its authority's): `standing` (`good`, `revoked`, `unknown`, `none` —

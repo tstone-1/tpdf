@@ -47,6 +47,9 @@ have the binary.)
   refuses to start until its sandbox exists, so no document opens. The tests that read a
   print job back with the system's own PDF parser say `[SKIP]` on Linux, which has none
   that fits the licence rule.
+- **On Linux the signer's certificate is checked against the system's CA bundle,** offline
+  and without revocation, as on macOS and Windows. `--json` reports name that store
+  `linux`, and the sentence says "this computer".
 - **A command's question in the palette says what is being asked.** While a command waits for
   a value, the palette shows the command's name and what it wants above the preview. It
   showed only the typed value and the preview, and the hint in the field was gone at the
