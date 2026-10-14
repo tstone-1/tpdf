@@ -302,6 +302,9 @@ pub fn main() -> i32 {
         );
         return Exit::Internal.code();
     };
+    // Linux signs through PKCS#11, where tpdf asks for a token's PIN itself.
+    #[cfg(target_os = "linux")]
+    crate::pin_prompt::install_terminal();
     let env = Env {
         store: &OsStore,
         library_dir: crate::library_dir_among(Some(resources)),

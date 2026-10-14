@@ -65,6 +65,10 @@ pub mod ocr_vision;
 #[cfg(windows)]
 pub mod ocr_windows;
 pub mod ocr_worker;
+#[cfg(target_os = "linux")]
+pub mod pin_prompt;
+#[cfg(target_os = "linux")]
+pub mod pkcs11;
 pub mod taborder;
 pub mod textedit;
 pub mod textview;
@@ -845,6 +849,10 @@ pub fn run() {
                 app.manage(pending);
             }
             app.manage(service);
+            // Linux signs through PKCS#11, where tpdf asks for a token's PIN
+            // itself; a native dialog, so the PIN never reaches the webview.
+            #[cfg(target_os = "linux")]
+            pin_prompt::install_dialog(app.handle().clone());
 
             // A frame-rate measurement in an unfocused window measures the
             // throttle, not the platform. The app is launched from a script, so

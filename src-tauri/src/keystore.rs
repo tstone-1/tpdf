@@ -2,8 +2,13 @@
 //!
 //! ## The key never leaves the OS, and that is the whole design
 //!
-//! tpdf holds no private key and could not hold one: nothing here reads a key,
-//! exports one, or asks for a PIN. What this module does is find the
+//! **On macOS and Windows.** Linux has no system service that signs on an
+//! application's behalf, so there tpdf asks for a smart card's PIN itself and
+//! the card signs (`pkcs11.rs`, `pin_prompt.rs`); the key still never leaves
+//! the card.
+//!
+//! On the other two, tpdf holds no private key and could not hold one: nothing
+//! here reads a key, exports one, or asks for a PIN. What this module does is find the
 //! certificates the OS says have a key behind them, and ask the OS to sign one
 //! SHA-256 digest with that key --- `SecKeyCreateSignature` on macOS,
 //! `NCryptSignHash` on Windows. A smart card, a token or a key the OS has
@@ -416,7 +421,37 @@ mod platform {
     }
 }
 
-#[cfg(not(any(target_os = "macos", windows)))]
+/// Linux: smart cards and tokens through PKCS#11 (`pkcs11.rs`).
+///
+/// **The one platform where tpdf asks for the PIN**, because no system service
+/// signs on its behalf; the module header says what that changes. The chain is
+/// empty: there is no system chain API to ask, and a verifier that needs the
+/// intermediates finds them through the signer's own certificate or not at all.
+#[cfg(target_os = "linux")]
+mod platform {
+    use super::{Identity, KeyKind};
+    use crate::pkcs11;
+
+    pub struct Handle(pkcs11::Found);
+
+    pub fn identities() -> Result<Vec<Identity>, String> {
+        let context = pkcs11::proxy()?;
+        Ok(pkcs11::certificates(context)?
+            .into_iter()
+            .map(|found| Identity {
+                certificate: found.certificate.clone(),
+                chain: Vec::new(),
+                handle: Handle(found),
+            })
+            .collect())
+    }
+
+    pub fn sign(handle: &Handle, kind: KeyKind, digest: &[u8; 32]) -> Result<Vec<u8>, String> {
+        pkcs11::sign(pkcs11::proxy()?, &handle.0, kind, digest)
+    }
+}
+
+#[cfg(not(any(target_os = "macos", windows, target_os = "linux")))]
 mod platform {
     use super::{Identity, KeyKind};
 

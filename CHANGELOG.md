@@ -47,7 +47,13 @@ have the binary.)
   window opens on WebKitGTK and passes all eleven window checks under Xvfb on Ubuntu 24.04,
   with documents parsed in sandboxed workers as on macOS and Windows. The tests that read a
   print job back with the system's own PDF parser say `[SKIP]` on Linux, which has none
-  that fits the licence rule; printing and signing are still to come.
+  that fits the licence rule; printing is still to come.
+- **On Linux a document is signed with a smart card or token, through PKCS#11.** tpdf
+  loads p11-kit's proxy module, which brings every module the system has registered, such as
+  OpenSC for smart cards; the card signs and its key never leaves it. Linux has no system
+  prompt for the PIN, so tpdf asks in a dialog of its own that the page's scripts cannot
+  reach, and the command-line tool asks on the terminal. Certificate files (PKCS#12) are
+  still to come.
 - **On Linux text is recognised with Tesseract**, for redaction verification and for a text
   layer over a scanned page. tpdf opens the system's `libtesseract` in the OCR worker only,
   under the Linux sandbox, and ships the English and German language data

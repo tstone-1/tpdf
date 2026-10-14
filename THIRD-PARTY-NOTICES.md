@@ -2585,7 +2585,7 @@ SOFTWARE.
 
 ## Rust crates
 
-483 crates are linked into the application binary. Build- and dev-dependencies are excluded: they run at compile time and are not distributed.
+487 crates are linked into the application binary. Build- and dev-dependencies are excluded: they run at compile time and are not distributed.
 
 | Crate | Version | Licence |
 |---|---|---|
@@ -2658,6 +2658,8 @@ SOFTWARE.
 | crypto-bigint | 0.5.5 | Apache-2.0 OR MIT |
 | crypto-common | 0.1.7 | MIT OR Apache-2.0 |
 | crypto-common | 0.2.2 | MIT OR Apache-2.0 |
+| cryptoki | 0.12.1 | Apache-2.0 |
+| cryptoki-sys | 0.5.0 | Apache-2.0 |
 | cssparser | 0.37.0 | MPL-2.0 |
 | cssparser-macros | 0.7.1 | MPL-2.0 |
 | ctor | 1.0.13 | Apache-2.0 OR MIT |
@@ -2795,6 +2797,7 @@ SOFTWARE.
 | libc | 0.2.190 | MIT OR Apache-2.0 |
 | libdbus-sys | 0.2.7 | Apache-2.0/MIT |
 | libloading | 0.7.4 | ISC |
+| libloading | 0.8.9 | ISC |
 | libloading | 0.9.0 | ISC |
 | libm | 0.2.16 | MIT |
 | linux-raw-sys | 0.12.1 | Apache-2.0 WITH LLVM-exception OR Apache-2.0 OR MIT |
@@ -2911,6 +2914,7 @@ SOFTWARE.
 | scopeguard | 1.2.0 | MIT OR Apache-2.0 |
 | sec1 | 0.7.3 | Apache-2.0 OR MIT |
 | seccompiler | 0.5.0 | Apache-2.0 OR BSD-3-Clause |
+| secrecy | 0.10.3 | Apache-2.0 OR MIT |
 | security-framework | 3.7.0 | MIT OR Apache-2.0 |
 | security-framework-sys | 2.17.0 | MIT OR Apache-2.0 |
 | selectors | 0.38.0 | MPL-2.0 |
@@ -3215,6 +3219,7 @@ MIT and the BSD family require the copyright notice itself to be reproduced, whi
 - Copyright (c) 2019 Tower Contributors
 - Copyright (c) 2019-2020 CreepySkeleton
 - Copyright (c) 2019-2021 Tower Contributors
+- Copyright (c) 2019-2024 iqlusion
 - Copyright (c) 2019-2025 Frank Denis
 - Copyright (c) 2019-2026 Sean McArthur & Hyper Contributors
 - Copyright (c) 2019-2026 The RustCrypto Project Developers

@@ -4294,6 +4294,21 @@ after Landlock has taken. Removing the boundary turned that row red (`Seccomp: w
 Leaving out the data folder made Tesseract unable to start ("could not start with eng+deu"),
 which is evidence that Landlock confines this process's reads, not only that a call returned.
 
+**Signing changes one property, by design.** On macOS and Windows the system signs and asks
+for the PIN, and tpdf never sees it (§T6.21). Linux has no such service, so `pkcs11.rs` talks
+to the token through p11-kit's proxy module, in the app process as `keystore.rs` does on the
+other two, and **tpdf asks for the PIN and passes it to `C_Login`**. The key stays on the
+token, which signs one digest. What is kept: the application asks in a native GTK dialog
+(`pin_prompt.rs`), so the PIN never reaches the webview; the command-line tool reads it from
+`/dev/tty` with echo off, never from an argument; it is held in a `SecretString`, zeroed on
+drop; and a token with a PIN pad is logged in with no PIN. What is new: the PIN passes
+through tpdf's memory, and every PKCS#11 module p11-kit has registered is loaded into the app
+process, vendor code included, as a Windows smart-card minidriver is. Measured with SoftHSM
+2.6.1 (`pkcs11::tests`): listing, a wrong PIN refused, a cancelled prompt, a P-256 signature
+that verifies, no PIN asked while another session keeps the token logged in, a certificate
+with no key refused, and RSA over a SHA-256 `DigestInfo`; five mutations each turned it red.
+**The GTK dialog itself is untested**: no automated check opens it.
+
 **What Linux does not have that the other two do:**
 
 - No memory or CPU limit on either worker beyond the parent's per-request deadline. Windows has

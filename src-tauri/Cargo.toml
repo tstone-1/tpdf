@@ -452,6 +452,13 @@ seccompiler = "0.5"
 # application never maps it. Already in the tree through `pdfium-render`, so no
 # new package; ISC.
 libloading = "0.9"
+# Smart cards and tokens through PKCS#11 (`pkcs11.rs`), the Linux signing
+# backend. New packages: cryptoki and cryptoki-sys (Apache-2.0), secrecy
+# (Apache-2.0 OR MIT) and libloading 0.8 (ISC), a second version beside 0.9.
+cryptoki = "0.12"
+# The PIN dialog (`pin_prompt.rs`). Already in the tree through Tauri, so no new
+# package.
+gtk = "0.18"
 
 [target.'cfg(target_os = "macos")'.dev-dependencies]
 security-framework-sys = "2"

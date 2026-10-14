@@ -104,12 +104,13 @@ jobs:
 
       # What Tauri links on Linux: WebKitGTK and the libraries beside it. The
       # macOS and Windows images carry their webviews; Ubuntu's does not.
-      # libtesseract5 is what the OCR worker opens (`ocr_tesseract.rs`).
+      # libtesseract5 is what the OCR worker opens (`ocr_tesseract.rs`);
+      # softhsm2 is the token the signing tests use (`pkcs11.rs`).
       - name: Install the Linux build packages
         if: runner.os == 'Linux'
         run: |
           sudo apt-get update -qq
-          sudo apt-get install -y -qq libwebkit2gtk-4.1-dev libgtk-3-dev libayatana-appindicator3-dev librsvg2-dev libxdo-dev libssl-dev libtesseract5
+          sudo apt-get install -y -qq libwebkit2gtk-4.1-dev libgtk-3-dev libayatana-appindicator3-dev librsvg2-dev libxdo-dev libssl-dev libtesseract5 softhsm2
 
       - name: Install JS deps
         run: npm ci
