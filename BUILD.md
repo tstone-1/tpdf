@@ -8172,7 +8172,8 @@ starts at 0 and increments within the month.
    ```
    npm outdated; npm update
    (cd src-tauri && cargo update --verbose)      # the `Unchanged` lines are what is held back
-   git diff --stat -- package-lock.json src-tauri/Cargo.lock    # cargo's own lines are no proof
+   (cd src-tauri/fuzz && cargo update)           # its own lockfile, audited on its own
+   git diff --stat -- package-lock.json src-tauri/Cargo.lock src-tauri/fuzz/Cargo.lock    # cargo's own lines are no proof
    scripts/third_party_notices.py                # when a crate or a package moved
    ```
 
@@ -8188,6 +8189,9 @@ starts at 0 and increments within the month.
    - **`base64` 0.23** compiles here. It is held because 0.22 comes with
      `tauri-plugin-updater` and `wry`, and the note beside it in `Cargo.toml` chose it for
      adding no package; 0.23 would be a second copy. Take it when Tauri does.
+   The fuzz package has a lockfile of its own, and `Audit` reads both. 26.10.19 updated only
+   the application's: rustls moved to 0.23.46 there and stayed at 0.23.45 in the fuzz one,
+   and four advisories published that week failed `Audit` on the release commit.
    - `toml`, `toml_datetime`, `toml_edit`, `brotli-decompressor`, `generic-array` and
      `rand_chacha` are not named in `Cargo.toml`; what names them pins them.
    - **`tauri-plugin-updater` 2.14.0** and its npm half were held at 2.13.3 for 26.10.19
