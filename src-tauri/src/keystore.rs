@@ -421,33 +421,84 @@ mod platform {
     }
 }
 
-/// Linux: smart cards and tokens through PKCS#11 (`pkcs11.rs`).
+/// Linux: smart cards and tokens through PKCS#11 (`pkcs11.rs`), and the
+/// certificate files the reader has added (`certfiles.rs`, `pkcs12.rs`).
 ///
-/// **The one platform where tpdf asks for the PIN**, because no system service
-/// signs on its behalf; the module header says what that changes. The chain is
-/// empty: there is no system chain API to ask, and a verifier that needs the
-/// intermediates finds them through the signer's own certificate or not at all.
+/// **The one platform where tpdf asks for the PIN or password**, because no
+/// system service signs on its behalf; the module header says what that
+/// changes. A token's chain is empty: there is no system chain API to ask. A
+/// file's chain is the file's other certificates.
 #[cfg(target_os = "linux")]
 mod platform {
     use super::{Identity, KeyKind};
-    use crate::pkcs11;
+    use crate::{certfiles, pkcs11};
 
-    pub struct Handle(pkcs11::Found);
+    pub enum Handle {
+        Token(pkcs11::Found),
+        File(certfiles::Remembered),
+    }
 
+    /// The tokens' certificates and the added files'. p11-kit missing is an
+    /// error only when there are no files either: a machine with no smart-card
+    /// support can still sign from a file.
     pub fn identities() -> Result<Vec<Identity>, String> {
-        let context = pkcs11::proxy()?;
-        Ok(pkcs11::certificates(context)?
+        let tokens = pkcs11::proxy().and_then(pkcs11::certificates);
+        let files: Vec<Identity> = certfiles::store()
+            .map(|store| certfiles::read(&store))
+            .unwrap_or_default()
+            .into_iter()
+            .filter(|entry| entry.path.is_file())
+            .map(|entry| Identity {
+                certificate: entry.certificate(),
+                chain: entry.chain(),
+                handle: Handle::File(entry),
+            })
+            .collect();
+        let tokens = match tokens {
+            Ok(found) => found,
+            Err(why) if files.is_empty() => return Err(why),
+            Err(_) => Vec::new(),
+        };
+        Ok(tokens
             .into_iter()
             .map(|found| Identity {
                 certificate: found.certificate.clone(),
                 chain: Vec::new(),
-                handle: Handle(found),
+                handle: Handle::Token(found),
             })
+            .chain(files)
             .collect())
     }
 
     pub fn sign(handle: &Handle, kind: KeyKind, digest: &[u8; 32]) -> Result<Vec<u8>, String> {
-        pkcs11::sign(pkcs11::proxy()?, &handle.0, kind, digest)
+        match handle {
+            Handle::Token(found) => pkcs11::sign(pkcs11::proxy()?, found, kind, digest),
+            Handle::File(entry) => sign_file(entry, kind, digest),
+        }
+    }
+
+    /// Asks the file's password, opens it, signs one digest, drops the key.
+    fn sign_file(
+        entry: &certfiles::Remembered,
+        kind: KeyKind,
+        digest: &[u8; 32],
+    ) -> Result<Vec<u8>, String> {
+        use secrecy::ExposeSecret as _;
+        let name = entry.path.file_name().map_or_else(
+            || entry.path.display().to_string(),
+            |n| n.to_string_lossy().into_owned(),
+        );
+        let password = pkcs11::ask(pkcs11::Asked::Password(&name))?
+            .ok_or_else(|| "signing was cancelled".to_string())?;
+        let opened = certfiles::reopen(entry, password.expose_secret())?;
+        if opened.kind() != kind {
+            return Err(format!(
+                "the certificate file holds a {} key, and the signature asked for {}",
+                opened.kind().name(),
+                kind.name()
+            ));
+        }
+        opened.sign(digest)
     }
 }
 

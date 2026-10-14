@@ -51,6 +51,7 @@ import {
 import type { Link, Links } from "./links";
 import { allRows, isNavigable, type Outline, type Row, type WebTarget } from "./outline";
 import { Palette } from "./palette";
+import { isLinux } from "./keys";
 import { MAX_RESULT_ROWS } from "./results";
 import { PLAIN_SEARCH } from "./search";
 import {
@@ -3301,6 +3302,7 @@ async function appCommandChecks(
     mergeDocuments: () => fired.push("mergeDocuments"),
     fromPictures: () => fired.push("fromPictures"),
     signDocument: () => fired.push("signDocument"),
+    addCertificateFile: () => fired.push("addCertificateFile"),
     addValidationData: () => fired.push("addValidationData"),
     signableFields: () => 1,
     signField: () => fired.push("signField"),
@@ -4334,6 +4336,14 @@ async function appCommandChecks(
       read: () => fired.join(","),
     },
     {
+      // Reaching the action is what is covered, as for signing; no file dialog
+      // opens. Linux only, where the command is enabled.
+      id: "file.addCertificateFile",
+      ...shell("addCertificateFile"),
+      read: () => fired.join(","),
+      unless: () => (isLinux() ? null : "certificate files are added to tpdf on Linux only"),
+    },
+    {
       // Driven for `file.signDocument`'s reason: the action is a recorder, so
       // no dialog opens, nobody is asked for anything and nothing is written.
       // What this covers is the palette reaching the action; the sequence
@@ -4801,6 +4811,10 @@ async function appCommandChecks(
     "app.uninstallCommandLineTool",
     "app.makeDefaultPdfApp",
     "edit.fieldBorderOff",
+    // Linux only, and a document is not involved: the file is remembered for
+    // every signing after. Missing here from the day it was registered until
+    // the first Linux run of this check, 2026-10-14.
+    ...(isLinux() ? ["file.addCertificateFile"] : []),
     // A preference, set before or after the first scan is opened. Missing here
     // from 2026-10-05, when it was registered, until this check next ran.
     "file.recogniseTextLanguage",

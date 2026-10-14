@@ -706,11 +706,15 @@ fn no_private_key_type_is_named_outside_the_tests() {
             || name == "test_tsa.rs"
             || name.ends_with("_tests.rs")
     };
+    // One shipped exception, by name and for one type: `pkcs12.rs` signs
+    // with an ECDSA key from a certificate file on Linux (decided 2026-10-14).
+    // An RSA private key stays forbidden everywhere, which is what the audit
+    // acceptance rests on.
+    let excepted =
+        |path: &std::path::Path| path.file_name().and_then(|n| n.to_str()) == Some("pkcs12.rs");
     let naming = |path: &std::path::Path| {
         let text = std::fs::read_to_string(path).expect("source");
-        ["RsaPrivateKey", "SigningKey"]
-            .iter()
-            .any(|needle| text.contains(needle))
+        text.contains("RsaPrivateKey") || (!excepted(path) && text.contains("SigningKey"))
     };
     // The emptiness control: the scan reaches the files that do name them.
     let seen: Vec<_> = files.iter().filter(|p| test_only(p) && naming(p)).collect();

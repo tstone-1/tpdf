@@ -62,6 +62,7 @@
  * revoked is not offered that choice: the backend refuses outright.
  */
 
+import { isLinux } from "./keys";
 import { basename } from "./paths";
 import type { Integrity } from "./integrity";
 import { WHY, authorityRow, revocationRow, timestampRow } from "./integrity";
@@ -249,9 +250,13 @@ export function choiceLabel(choice: Choice): string {
  * expired certificate is otherwise told they have none, and goes looking for
  * the wrong problem.
  */
-export function nothingToChoose(choices: Choices): string {
-  const none =
-    "No certificate that can sign was found in your keychain or certificate store.";
+export function nothingToChoose(choices: Choices, linux = isLinux()): string {
+  // Linux has no keychain or certificate store: a smart card is read through
+  // PKCS#11 and a certificate file is added to tpdf (`certfiles.rs`).
+  const none = linux
+    ? "No certificate that can sign was found on a smart card or token, or in a certificate file " +
+      "you added. Add a certificate file for signing\u2026 adds one."
+    : "No certificate that can sign was found in your keychain or certificate store.";
   if (choices.skipped.length === 0) return none + WITHOUT_CERTIFICATE;
   const reasons = choices.skipped.map((s) => `${s.subject}: ${s.why}`).join("; ");
   return `${none} Found but not offered — ${reasons}.${WITHOUT_CERTIFICATE}`;

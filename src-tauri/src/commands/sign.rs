@@ -739,6 +739,50 @@ pub async fn sign_identities() -> Result<sign_cms::Choices, String> {
     .map_err(|e| format!("the certificate search did not run: {e}"))?
 }
 
+/// Linux: remembers the certificate file at `path` for signing (`certfiles.rs`),
+/// once its password, asked in the native dialog (`pin_prompt.rs`) so it never
+/// reaches the webview, opens it and it holds an ECDSA key. `None` when the
+/// reader cancelled the password. Off Linux, a refusal that says where such a
+/// file goes instead.
+#[tauri::command]
+pub async fn sign_add_certificate_file(path: String) -> Result<Option<String>, String> {
+    #[cfg(target_os = "linux")]
+    {
+        tauri::async_runtime::spawn_blocking(move || {
+            use secrecy::ExposeSecret as _;
+            let path = std::path::PathBuf::from(path);
+            let store = crate::certfiles::store().ok_or(
+                "There is no home folder to keep the list of certificate files in.".to_string(),
+            )?;
+            let name = path.file_name().map_or_else(
+                || path.display().to_string(),
+                |n| n.to_string_lossy().into_owned(),
+            );
+            let Some(password) = crate::pkcs11::ask(crate::pkcs11::Asked::Password(&name))? else {
+                return Ok(None);
+            };
+            let entry = crate::certfiles::add(&store, &path, password.expose_secret())?;
+            let certificate = entry.certificate();
+            let subject = sign_cms::usable(&certificate, now())
+                .map_or_else(|_| sign_cms::named(&certificate), |offer| offer.subject);
+            Ok(Some(format!(
+                "{subject} can sign now: choose it when you sign a document."
+            )))
+        })
+        .await
+        .map_err(|e| format!("adding the certificate file did not run: {e}"))?
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        let _ = path;
+        Err(
+            "Certificate files are added to tpdf on Linux; on macOS and Windows, import the \
+             file into your keychain or certificate store, and tpdf finds it there."
+                .into(),
+        )
+    }
+}
+
 /// Signs the open document with `identity` and writes the result to `path`.
 ///
 /// **The original file is not modified**: `path` is a new file, and naming the

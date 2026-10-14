@@ -24,6 +24,7 @@ import {
   type AppActions,
 } from "./appcommands";
 import { CommandRegistry } from "./commands";
+import { setLinux } from "./keys";
 import { DISK_CHANGE_MODES, type DiskChangeMode } from "./diskwatch";
 import { PALETTE } from "./markcolors";
 import { menuEnablement } from "./menubar";
@@ -252,6 +253,7 @@ function harness(
     mergeDocuments: () => fired.push("mergeDocuments"),
     fromPictures: () => fired.push("fromPictures"),
     signDocument: () => fired.push("signDocument"),
+    addCertificateFile: () => fired.push("addCertificateFile"),
     addValidationData: () => fired.push("addValidationData"),
     showProperties: () => fired.push("showProperties"),
   };
@@ -961,6 +963,9 @@ describe("every registered command", () => {
       formEditing: true, fieldPicked: true, savedFields: 2, canOrderTabs: true,
     });
     const states = [found, applied];
+    // `file.addCertificateFile` is offered on Linux alone; its other half is
+    // the test after this one.
+    setLinux(true);
     const shell = found.registry
       .all()
       .filter(
@@ -974,6 +979,7 @@ describe("every registered command", () => {
       });
       expect(reached, `${command.id} fired nothing in either update state`).toBe(true);
     }
+    setLinux();
     expect(shell.length).toBeGreaterThan(3);
     // The control for the arrangement above: without it, a second state that
     // happened to offer nothing new would still let the sweep pass, and the
@@ -1987,6 +1993,7 @@ describe("the window shortcuts for editing", () => {
     mergeDocuments: () => fired.push("mergeDocuments"),
     fromPictures: () => fired.push("fromPictures"),
     signDocument: () => fired.push("signDocument"),
+    addCertificateFile: () => fired.push("addCertificateFile"),
     addValidationData: () => fired.push("addValidationData"),
     showProperties: () => fired.push("showProperties"),
     };
@@ -2362,5 +2369,22 @@ describe("two documents side by side", () => {
       .toBe("Scroll both sides together");
     expect(harness(true, { sides: beside, syncScrolling: true }).registry.find("view.syncScrolling")?.title)
       .toBe("Scroll the two sides separately");
+  });
+});
+
+describe("adding a certificate file", () => {
+  it("is offered on Linux, with no document open, and withheld elsewhere", () => {
+    try {
+      setLinux(true);
+      const linux = harness(false);
+      expect(linux.registry.run("file.addCertificateFile")).toBe(true);
+      expect(linux.fired).toEqual(["addCertificateFile"]);
+      setLinux(false);
+      const other = harness(false);
+      expect(other.registry.run("file.addCertificateFile")).toBe(false);
+      expect(other.fired).toEqual([]);
+    } finally {
+      setLinux();
+    }
   });
 });

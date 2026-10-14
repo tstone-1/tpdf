@@ -331,6 +331,31 @@ export function isMac(): boolean {
 }
 
 /**
+ * Whether the web view runs on Linux, where a certificate file is added to
+ * tpdf itself rather than to a store the system keeps (`certfiles.rs`).
+ * WebKitGTK names the platform in its user agent.
+ */
+export function isLinux(): boolean {
+  return LINUX;
+}
+
+let LINUX = detectLinux();
+
+function detectLinux(): boolean {
+  const agent = globalThis.navigator?.userAgent ?? "";
+  return agent.includes("Linux") && !agent.includes("Android");
+}
+
+/**
+ * Forces {@link isLinux}, or with no argument puts back what the web view
+ * says: {@link setMacSpelling}'s reason, so both halves of a Linux-only
+ * command are testable from any machine.
+ */
+export function setLinux(linux?: boolean): void {
+  LINUX = linux ?? detectLinux();
+}
+
+/**
  * What the reader's keyboard prints, by `KeyboardEvent.code`.
  *
  * Empty until {@link setPrintedKeys} is told otherwise, which is deliberate: a

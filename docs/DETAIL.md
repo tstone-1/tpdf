@@ -307,7 +307,10 @@ tree, not a glance at the crate's own README.
 against the system's CA bundle (`trust.rs`). `libloading` (ISC) opens Tesseract in the OCR
 worker; it was already in the tree through `pdfium-render`. Tesseract itself (Apache-2.0) is not
 a crate and not shipped: tpdf opens the system's `libtesseract.so.5` at run time and ships only
-the English and German language data (`scripts/fetch_tessdata.py`). The notices generator asks
+the English and German language data (`scripts/fetch_tessdata.py`). `cryptoki`
+(Apache-2.0) talks to smart cards (`pkcs11.rs`) and brings `cryptoki-sys`, `secrecy` and a
+second `libloading`; `pkcs12` and `pkcs5` read certificate files (`pkcs12.rs`) and bring
+`pbkdf2`, `scrypt`, `salsa20`, `des` and `rc2`, all Apache-2.0 OR MIT. The notices generator asks
 `cargo metadata` about `x86_64-unknown-linux-gnu` since the same day; before that the Linux-only
 crates were in neither the notices nor its licence scan.
 

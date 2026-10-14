@@ -52,8 +52,12 @@ have the binary.)
   loads p11-kit's proxy module, which brings every module the system has registered, such as
   OpenSC for smart cards; the card signs and its key never leaves it. Linux has no system
   prompt for the PIN, so tpdf asks in a dialog of its own that the page's scripts cannot
-  reach, and the command-line tool asks on the terminal. Certificate files (PKCS#12) are
-  still to come.
+  reach, and the command-line tool asks on the terminal.
+- **On Linux a certificate file (`.p12`, `.pfx`) with an ECDSA key signs too.** *Add a
+  certificate file for signing…* asks the file's password once and remembers the file, not
+  the password or the key; each signature asks the password again. `tpdf identities --add`
+  does the same from a terminal. A file with an RSA key is refused and pointed at a smart
+  card, because tpdf performs no RSA private-key operation of its own.
 - **On Linux text is recognised with Tesseract**, for redaction verification and for a text
   layer over a scanned page. tpdf opens the system's `libtesseract` in the OCR worker only,
   under the Linux sandbox, and ships the English and German language data

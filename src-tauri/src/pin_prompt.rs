@@ -1,4 +1,5 @@
-//! How a Linux process asks the reader for a token's PIN (`pkcs11.rs`).
+//! How a Linux process asks the reader for a token's PIN (`pkcs11.rs`) or a
+//! certificate file's password (`pkcs12.rs`).
 //!
 //! macOS and Windows show their own prompt and tpdf never sees what is typed.
 //! Linux has no such prompt, so tpdf shows one, and keeps the same two
@@ -9,18 +10,36 @@
 
 use cryptoki::types::AuthPin;
 
-/// The words of both prompts.
-fn question(token: &str) -> String {
-    format!("Enter the PIN of the smart card or token \u{201c}{token}\u{201d} to sign.")
+use crate::pkcs11::Asked;
+
+/// The sentence of both prompts.
+fn question(asked: Asked<'_>) -> String {
+    match asked {
+        Asked::Pin(token) => {
+            format!("Enter the PIN of the smart card or token \u{201c}{token}\u{201d} to sign.")
+        }
+        Asked::Password(file) => {
+            format!("Enter the password of the certificate file \u{201c}{file}\u{201d}.")
+        }
+    }
+}
+
+/// The dialog's title and the terminal prompt's label.
+fn names(asked: Asked<'_>) -> (&'static str, &'static str) {
+    match asked {
+        Asked::Pin(_) => ("Sign with a smart card", "PIN"),
+        Asked::Password(_) => ("Certificate file", "Password"),
+    }
 }
 
 /// Installs the application's prompt: a modal GTK dialog over the main window.
 pub fn install_dialog(app: tauri::AppHandle) {
-    crate::pkcs11::set_pin_asker(Box::new(move |token| dialog(&app, token)));
+    crate::pkcs11::set_pin_asker(Box::new(move |asked| dialog(&app, asked)));
 }
 
-fn dialog(app: &tauri::AppHandle, token: &str) -> Result<Option<AuthPin>, String> {
-    let question = question(token);
+fn dialog(app: &tauri::AppHandle, asked: Asked<'_>) -> Result<Option<AuthPin>, String> {
+    let question = question(asked);
+    let (title, _) = names(asked);
     let app_for_dialog = app.clone();
     let ask = move || -> Option<String> {
         use gtk::prelude::*;
@@ -32,7 +51,7 @@ fn dialog(app: &tauri::AppHandle, token: &str) -> Result<Option<AuthPin>, String
             .next()
             .and_then(|window| window.gtk_window().ok());
         let dialog = gtk::Dialog::with_buttons(
-            Some("Sign with a smart card"),
+            Some(title),
             parent.as_ref(),
             gtk::DialogFlags::MODAL | gtk::DialogFlags::DESTROY_WITH_PARENT,
             &[
@@ -81,7 +100,7 @@ fn dialog(app: &tauri::AppHandle, token: &str) -> Result<Option<AuthPin>, String
 
 /// Installs the command-line tool's prompt, on the controlling terminal.
 pub fn install_terminal() {
-    crate::pkcs11::set_pin_asker(Box::new(|token| terminal(token).map(Some)));
+    crate::pkcs11::set_pin_asker(Box::new(|asked| terminal(asked).map(Some)));
 }
 
 /// Reads one line from `/dev/tty` with echo off.
@@ -89,7 +108,7 @@ pub fn install_terminal() {
 /// `/dev/tty` rather than standard input, which may be a document or a pipe;
 /// a run with no terminal is refused rather than reading a PIN from somewhere
 /// the reader did not type it.
-fn terminal(token: &str) -> Result<AuthPin, String> {
+fn terminal(asked: Asked<'_>) -> Result<AuthPin, String> {
     use std::io::{BufRead, Write};
     use std::os::fd::AsRawFd;
 
@@ -97,9 +116,7 @@ fn terminal(token: &str) -> Result<AuthPin, String> {
         .read(true)
         .write(true)
         .open("/dev/tty")
-        .map_err(|e| {
-            format!("the token {token:?} needs its PIN, and there is no terminal to ask on ({e})")
-        })?;
+        .map_err(|e| format!("{} There is no terminal to ask on ({e}).", question(asked)))?;
     let fd = tty.as_raw_fd();
     // SAFETY: `termios` is plain data, filled by `tcgetattr` before it is read.
     let mut saved: libc::termios = unsafe { std::mem::zeroed() };
@@ -121,7 +138,7 @@ fn terminal(token: &str) -> Result<AuthPin, String> {
         ));
     }
     let mut writer = &tty;
-    let _ = write!(writer, "{} PIN: ", question(token));
+    let _ = write!(writer, "{} {}: ", question(asked), names(asked).1);
     let _ = writer.flush();
     let mut line = String::new();
     let read = std::io::BufReader::new(&tty).read_line(&mut line);

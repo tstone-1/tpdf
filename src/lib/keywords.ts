@@ -29,6 +29,7 @@ const NAMED: Record<string, readonly string[]> = {
   "file.protect": ["encrypt", "protect", "lock", "secure", "security"],
   "file.unprotect": ["decrypt", "unlock", "unprotect", "remove password"],
   "file.signDocument": ["signature", "certificate", "digital signature", "esign", "e-sign", "timestamp"],
+  "file.addCertificateFile": ["p12", "pfx", "pkcs12", "import", "signing key", "digital id"],
   "file.addValidationData": ["ltv", "revocation"],
   "file.findHiddenText": ["hidden", "invisible"],
   "file.fromPictures": ["image", "jpg", "jpeg", "png", "photo", "scan", "convert"],

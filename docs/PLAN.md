@@ -197,17 +197,17 @@ a scope decision to raise, not a gap to close.
 tool alone; until then it stood in the list above. Built so far: the tree compiles and passes
 clippy on Linux, the signer's certificate is checked against the system's CA bundle, workers run
 under Landlock and seccomp, PDFium is built and published for linux-x64, the window passes the
-window checks, OCR runs on Tesseract, and smart cards sign through PKCS#11. Still to come, in
+window checks, OCR runs on Tesseract, and smart cards and ECDSA certificate files sign. Still to come, in
 this order (decided 2026-10-14):
 
 1. The application window on WebKitGTK (done 2026-10-14).
 2. OCR for redaction verification, with Tesseract (Apache-2.0), shipping the English and
    German language data rather than relying on what the system has installed (done
    2026-10-14).
-3. Certificate signing, through PKCS#11 for smart cards and tokens (done 2026-10-14) and
-   from PKCS#12 files with a password prompt. The second decrypts a key inside tpdf, which
-   nothing else does: `rsa`'s RUSTSEC-2023-0071 is accepted only because tpdf performs no
-   private-key operation, so RSA keys from a file need another signer first.
+3. Certificate signing, through PKCS#11 for smart cards and tokens and from PKCS#12 files
+   with a password prompt (both done 2026-10-14). Files sign with ECDSA keys only: `rsa`'s
+   RUSTSEC-2023-0071 is accepted only because tpdf performs no RSA private-key operation, so
+   RSA keys from a file wait for a signer without that weakness.
 4. Printing and the desktop integration; then packages and window checks.
 
 Ubuntu joins the CI matrix once the command-line suite is green there, since a leg that is

@@ -397,6 +397,7 @@ export interface Commands {
   };
   /** The reader's certificates with a key, sorted into offered and not. */
   sign_identities: { args: NoArgs; reply: Choices };
+  sign_add_certificate_file: { args: { path: string }; reply: string | null };
   /**
    * Draws a visible signature's appearance for a `size` (points) rectangle, by
    * the worker's signing code, before anything is signed. See `signappearance.ts`.

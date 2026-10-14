@@ -459,6 +459,20 @@ cryptoki = "0.12"
 # The PIN dialog (`pin_prompt.rs`). Already in the tree through Tauri, so no new
 # package.
 gtk = "0.18"
+# Certificate files (`pkcs12.rs`), ECDSA keys only. On the RustCrypto
+# generation of `cms`/`der`/`spki` above. New packages: pkcs12, pkcs5, pbkdf2,
+# scrypt and salsa20 (which `pkcs5`'s PBES2 brings), des and rc2; aes, cbc and
+# hmac were in the tree. All Apache-2.0 OR MIT.
+pkcs12 = { version = "0.1", features = ["kdf"] }
+pkcs5 = { version = "0.7", features = ["pbes2", "alloc"] }
+des = "0.8"
+rc2 = "0.8"
+cbc = "0.1"
+hmac = "0.12"
+zeroize = "1"
+# Reads a PIN or password out of `cryptoki`'s `SecretString`; already in the
+# tree through `cryptoki`.
+secrecy = "0.10"
 
 [target.'cfg(target_os = "macos")'.dev-dependencies]
 security-framework-sys = "2"

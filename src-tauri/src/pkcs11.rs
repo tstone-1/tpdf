@@ -56,9 +56,18 @@ const SHA256_DIGEST_INFO: [u8; 19] = [
     0x00, 0x04, 0x20,
 ];
 
-/// Asks the reader for a token's PIN. Given the token's label; answers
-/// `Ok(None)` when the reader cancelled.
-pub type PinAsker = dyn Fn(&str) -> Result<Option<AuthPin>, String> + Send + Sync;
+/// What the reader is asked for.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Asked<'a> {
+    /// A token's PIN, given the token's label.
+    Pin(&'a str),
+    /// A certificate file's password, given the file's name (`pkcs12.rs`).
+    Password(&'a str),
+}
+
+/// Asks the reader for a PIN or a password; answers `Ok(None)` when the
+/// reader cancelled.
+pub type PinAsker = dyn Fn(Asked<'_>) -> Result<Option<AuthPin>, String> + Send + Sync;
 
 static ASKER: OnceLock<Box<PinAsker>> = OnceLock::new();
 
@@ -67,6 +76,25 @@ static ASKER: OnceLock<Box<PinAsker>> = OnceLock::new();
 /// terminal prompt. A second call is ignored.
 pub fn set_pin_asker(asker: Box<PinAsker>) {
     let _ = ASKER.set(asker);
+}
+
+/// Asks through the installed asker.
+///
+/// # Errors
+///
+/// No asker installed, or the asker's own failure.
+pub fn ask(question: Asked<'_>) -> Result<Option<AuthPin>, String> {
+    let asker = ASKER.get().ok_or_else(|| match question {
+        Asked::Pin(token) => {
+            format!("the token {token:?} needs its PIN, and nothing here can ask for it")
+        }
+        Asked::Password(file) => {
+            format!(
+                "the certificate file {file:?} needs its password, and nothing here can ask for it"
+            )
+        }
+    })?;
+    asker(question)
 }
 
 /// A certificate on a token, and where its key is.
@@ -215,13 +243,10 @@ pub fn sign(
         let pin = if info.protected_authentication_path() {
             None
         } else {
-            let asker = ASKER.get().ok_or_else(|| {
-                format!(
-                    "the token {:?} needs its PIN, and nothing here can ask for it",
-                    found.token
-                )
-            })?;
-            Some(asker(&found.token)?.ok_or_else(|| "signing was cancelled".to_string())?)
+            Some(
+                ask(Asked::Pin(&found.token))?
+                    .ok_or_else(|| "signing was cancelled".to_string())?,
+            )
         };
         session
             .login(UserType::User, pin.as_ref())

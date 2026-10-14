@@ -455,6 +455,13 @@ export const MENU_LAYOUT: LayoutSection[] = [
  */
 export const NOT_IN_MENU: { prefix: string; reason: string }[] = [
   {
+    prefix: "file.addCertificateFile",
+    reason:
+      "offered on Linux only, and the menu is built once for every platform: " +
+      "on macOS and Windows the item would sit greyed, pointing at the system's " +
+      "own store; the palette offers it where it works",
+  },
+  {
     prefix: "recent.",
     reason:
       "the recent-document list is rebuilt whenever a file is opened, and a " +

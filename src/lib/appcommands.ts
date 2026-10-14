@@ -32,7 +32,7 @@
 
 import type { CommandRegistry } from "./commands";
 import { attachKeywords } from "./keywords";
-import { BINDINGS, copyInterfaceText, inTextField, label, matches, type BoundCommand } from "./keys";
+import { BINDINGS, copyInterfaceText, inTextField, isLinux, label, matches, type BoundCommand } from "./keys";
 import {
   describeRange,
   describeSplit,
@@ -621,6 +621,8 @@ export interface AppActions {
    * written.
    */
   signDocument(): void;
+  /** Linux: choose a certificate file, have its password asked, and remember it for signing. */
+  addCertificateFile(): void;
   /**
    * Add long-term validation data, and an archive timestamp, for the
    * signatures the open document already has, into a new file.
@@ -1941,6 +1943,15 @@ export function registerAppCommands(
       title: "Sign in the signature field\u2026",
       enabled: () => withDocument() && actions.signableFields() >= 1,
       run: () => actions.signField(),
+    },
+    {
+      // Linux only: macOS and Windows sign from the system's store, where a
+      // certificate file is imported with the system's own tools. Needs no
+      // open document; the file is remembered for every signing after.
+      id: "file.addCertificateFile",
+      title: "Add a certificate file for signing\u2026",
+      enabled: () => isLinux(),
+      run: () => actions.addCertificateFile(),
     },
     {
       // For a document somebody has already signed: no key is used and no

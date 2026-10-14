@@ -372,7 +372,13 @@ measured the Windows render constants come out 1.5–1.8x worse.
   nothing is dragged. *Add a form field: signature* makes such a field. A field that asks
   its signer to lock other fields of the form, or that sets requirements its signature has
   to meet, is not signed: tpdf does neither, and says so.
-  <!-- built: file.signDocument file.signField -->
+  On Linux the certificates are those on a smart card or token, read through p11-kit, and
+  those in certificate files you added with *Add a certificate file for signing…*, which
+  asks the file's password once and remembers the file but not the password or the key.
+  A certificate file signs only with an ECDSA key (P-256 or P-384); one with an RSA key is
+  refused. tpdf asks a smart card's PIN or a file's password in a dialog of its own, which
+  the document view cannot reach. `tpdf identities --add` adds a file from a terminal.
+  <!-- built: file.signDocument file.signField file.addCertificateFile -->
 
 - **Long-term validation data for a document that is already signed.** *Add long-term
   validation data…* takes a document somebody has signed — with tpdf or anything else — and

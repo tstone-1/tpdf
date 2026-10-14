@@ -1605,6 +1605,7 @@
     mergeDocuments: () => void mergeDocuments(),
     fromPictures: () => void fromPictures(),
     signDocument: () => void signDocument(),
+    addCertificateFile: () => void addCertificateFile(),
     addValidationData: () => void addValidationData(),
     signableFields: () => emptySignatureFields(scannedForm).length,
     signField: () => {
@@ -3332,6 +3333,25 @@
    * platform and on what was chosen, so all three are handled rather than the
    * one this machine happens to give.
    */
+  async function addCertificateFile(): Promise<void> {
+    try {
+      const picked = await openDialog({
+        multiple: false,
+        directory: false,
+        title: "Choose a certificate file",
+        filters: [{ name: "Certificate file", extensions: ["p12", "pfx"] }],
+      });
+      const path = typeof picked === "string" ? picked : null;
+      if (!path) return;
+      // The password is asked by the backend in a native dialog, so it never
+      // reaches this page; `null` is the reader cancelling it.
+      const said = await call("sign_add_certificate_file", { path });
+      if (said) say(said);
+    } catch (e) {
+      say(String(e));
+    }
+  }
+
   async function mergeDocuments(): Promise<void> {
     if (opening) return;
     return documentTasks.run(async () => {

@@ -249,6 +249,11 @@ describe("where there is no menu bar", () => {
     { prefix: "file.recogniseTextLanguage.choice", reason: "the question Recognise text: language... asks" },
     { prefix: "view.showOutline", reason: "a tab at the head of the sidebar, which has a button in the header" },
     { prefix: "view.showMarks", reason: "a tab at the head of the sidebar, which has a button in the header" },
+    {
+      prefix: "file.addCertificateFile",
+      reason:
+        "Linux only: the palette offers it, and the sentence a reader is shown when no certificate can sign names it",
+    },
   ];
 
   it("gives every command a control, a key, or a written reason", () => {

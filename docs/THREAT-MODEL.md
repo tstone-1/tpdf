@@ -4309,6 +4309,24 @@ that verifies, no PIN asked while another session keeps the token logged in, a c
 with no key refused, and RSA over a SHA-256 `DigestInfo`; five mutations each turned it red.
 **The GTK dialog itself is untested**: no automated check opens it.
 
+**A certificate file is the one place tpdf holds a private key** (`pkcs12.rs`, added
+2026-10-14). The reader adds a PKCS#12 file once (*Add a certificate file for signing…*, or
+`tpdf identities --add`); tpdf keeps its path, certificate and chain in
+`~/.config/com.timostein.tpdf/certificate-files.json` and never the password or the key. Each
+signature asks the password again, decrypts the key, checks the file still holds the
+certificate that was added, signs one digest and drops the key; every decrypted buffer is
+`Zeroizing` and the `SigningKey` zeroes itself. **ECDSA only (P-256, P-384)**: an RSA key is
+refused, because `rsa`'s RUSTSEC-2023-0071 is accepted in `.cargo/audit.toml` only while tpdf
+performs no RSA private-key operation, and `sign_cms::tests::no_private_key_type_is_named_outside_the_tests`
+still refuses `RsaPrivateKey` in every shipped file and allows `SigningKey` in `pkcs12.rs`
+alone. The file is parsed in the app process, not a worker: it is the reader's own file,
+chosen in a dialog, not a document. The MAC is checked before anything is decrypted. Measured
+against files the system's OpenSSL 3.0 writes (`pkcs12::tests`): modern (PBES2, AES, SHA-256
+MAC), legacy (RC2-40, triple DES, SHA-1 MAC), certificates in the clear, P-384, a chain with
+the root first, RSA refused, a wrong password, a damaged MAC with the right password, a key
+with no certificate, and a remembered file replaced by another; six mutations each turned it
+red.
+
 **What Linux does not have that the other two do:**
 
 - No memory or CPU limit on either worker beyond the parent's per-request deadline. Windows has

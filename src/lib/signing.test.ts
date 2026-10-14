@@ -1123,3 +1123,13 @@ describe("the chooser's long-term checkbox", () => {
     second.done();
   });
 });
+
+describe("nothing to choose on Linux", () => {
+  it("names smart cards and the command that adds a certificate file, not a keychain", () => {
+    const said = nothingToChoose({ usable: [], skipped: [] }, true);
+    expect(said).toContain("smart card");
+    expect(said).toContain("Add a certificate file for signing…");
+    expect(said).not.toContain("keychain");
+    expect(nothingToChoose({ usable: [], skipped: [] }, false)).toContain("keychain");
+  });
+});

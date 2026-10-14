@@ -4376,7 +4376,7 @@ fn every_shell_completes_every_command_and_every_option_its_usage_names() {
     );
     assert!(of("text").contains(&"-o".to_string()));
     assert!(of("sign").contains(&"--long-term".to_string()));
-    assert_eq!(of("identities"), ["--help", "--json"]);
+    assert_eq!(of("identities"), ["--add", "--help", "--json"]);
     // `text-runs` is a command and `--page` its option; `-runs` is nothing.
     assert_eq!(
         of("text-runs"),

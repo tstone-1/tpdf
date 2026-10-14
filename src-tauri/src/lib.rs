@@ -10,6 +10,8 @@
 
 pub mod annots;
 pub mod ber;
+#[cfg(target_os = "linux")]
+pub mod certfiles;
 pub mod certificate;
 /// `tpdf sign`, `tpdf verify` and `tpdf identities`: the command-line tool,
 /// whose `main` is `src/bin/tpdf-cli.rs`. The application's own signing and
@@ -69,6 +71,8 @@ pub mod ocr_worker;
 pub mod pin_prompt;
 #[cfg(target_os = "linux")]
 pub mod pkcs11;
+#[cfg(target_os = "linux")]
+pub mod pkcs12;
 pub mod taborder;
 pub mod textedit;
 pub mod textview;
@@ -985,6 +989,7 @@ pub fn run() {
             merge_documents,
             images_to_pdf,
             sign_identities,
+            sign_add_certificate_file,
             sign_preview,
             sign_document,
             sign_resume,

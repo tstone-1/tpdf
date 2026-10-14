@@ -2585,7 +2585,7 @@ SOFTWARE.
 
 ## Rust crates
 
-487 crates are linked into the application binary. Build- and dev-dependencies are excluded: they run at compile time and are not distributed.
+494 crates are linked into the application binary. Build- and dev-dependencies are excluded: they run at compile time and are not distributed.
 
 | Crate | Version | Licence |
 |---|---|---|
@@ -2675,6 +2675,7 @@ SOFTWARE.
 | deranged | 0.5.9 | MIT OR Apache-2.0 |
 | derive_more | 2.1.1 | MIT |
 | derive_more-impl | 2.1.1 | MIT |
+| des | 0.8.1 | MIT OR Apache-2.0 |
 | digest | 0.10.7 | MIT OR Apache-2.0 |
 | digest | 0.11.3 | MIT OR Apache-2.0 |
 | dirs | 7.0.0 | MIT OR Apache-2.0 |
@@ -2853,6 +2854,7 @@ SOFTWARE.
 | pango-sys | 0.18.0 | MIT |
 | parking_lot | 0.12.5 | MIT OR Apache-2.0 |
 | parking_lot_core | 0.9.12 | MIT OR Apache-2.0 |
+| pbkdf2 | 0.12.2 | MIT OR Apache-2.0 |
 | pdfium-render | 0.9.4 | MIT OR Apache-2.0 |
 | pem-rfc7468 | 0.7.0 | Apache-2.0 OR MIT |
 | percent-encoding | 2.3.2 | MIT OR Apache-2.0 |
@@ -2863,6 +2865,8 @@ SOFTWARE.
 | pin-project-lite | 0.2.17 | Apache-2.0 OR MIT |
 | piston-float | 1.0.1 | MIT |
 | pkcs1 | 0.7.5 | Apache-2.0 OR MIT |
+| pkcs12 | 0.1.0 | Apache-2.0 OR MIT |
+| pkcs5 | 0.7.1 | Apache-2.0 OR MIT |
 | pkcs8 | 0.10.2 | Apache-2.0 OR MIT |
 | plist | 1.10.1 | MIT |
 | png | 0.17.16 | MIT OR Apache-2.0 |
@@ -2889,6 +2893,7 @@ SOFTWARE.
 | raw-window-handle | 0.6.2 | MIT OR Apache-2.0 OR Zlib |
 | rayon | 1.12.0 | MIT OR Apache-2.0 |
 | rayon-core | 1.13.0 | MIT OR Apache-2.0 |
+| rc2 | 0.8.1 | MIT OR Apache-2.0 |
 | ref-cast | 1.0.27 | MIT OR Apache-2.0 |
 | ref-cast-impl | 1.0.27 | MIT OR Apache-2.0 |
 | regex | 1.13.1 | MIT OR Apache-2.0 |
@@ -2906,12 +2911,14 @@ SOFTWARE.
 | rustls-pki-types | 1.15.1 | MIT OR Apache-2.0 |
 | rustls-platform-verifier | 0.7.1 | MIT OR Apache-2.0 |
 | rustls-webpki | 0.103.15 | ISC |
+| salsa20 | 0.10.2 | MIT OR Apache-2.0 |
 | same-file | 1.0.6 | Unlicense/MIT |
 | schemars | 0.8.22 | MIT |
 | schemars | 0.9.0 | MIT |
 | schemars | 1.2.3 | MIT |
 | schemars_derive | 0.8.22 | MIT |
 | scopeguard | 1.2.0 | MIT OR Apache-2.0 |
+| scrypt | 0.11.0 | MIT OR Apache-2.0 |
 | sec1 | 0.7.3 | Apache-2.0 OR MIT |
 | seccompiler | 0.5.0 | Apache-2.0 OR BSD-3-Clause |
 | secrecy | 0.10.3 | Apache-2.0 OR MIT |
@@ -3161,9 +3168,11 @@ MIT and the BSD family require the copyright notice itself to be reproduced, whi
 - Copyright (c) 2017 Andrew Gallant
 - Copyright (c) 2017 Artyom Pavlov
 - Copyright (c) 2017 Contributors
+- Copyright (c) 2017 Damian Czaja
 - Copyright (c) 2017 Emilio Cobos Álvarez
 - Copyright (c) 2017 Frommi
 - Copyright (c) 2017 Gilad Naaman
+- Copyright (c) 2017 Gulshan Singh, Antoni Boucher, Artyom Pavlov
 - Copyright (c) 2017 Ivan Dubrov
 - Copyright (c) 2017 Just van Rossum
 - Copyright (c) 2017 Maik Klein
@@ -3200,6 +3209,7 @@ MIT and the BSD family require the copyright notice itself to be reproduced, whi
 - Copyright (c) 2018-2022 RustCrypto Developers
 - Copyright (c) 2018-2023 RustCrypto Developers
 - Copyright (c) 2018-2023 Sean McArthur
+- Copyright (c) 2018-2023 The RustCrypto Project Developers
 - Copyright (c) 2018-2024 The RustCrypto Project Developers
 - Copyright (c) 2018-2024 The rust-random Project Developers
 - Copyright (c) 2018-2025 The RustCrypto Project Developers
@@ -3210,6 +3220,7 @@ MIT and the BSD family require the copyright notice itself to be reproduced, whi
 - Copyright (c) 2019 Bojan
 - Copyright (c) 2019 Carl Lerche
 - Copyright (c) 2019 Daniel "Lokathor" Gee.
+- Copyright (c) 2019 Eric McCorkle
 - Copyright (c) 2019 Graham Esau
 - Copyright (c) 2019 Manish Goregaokar
 - Copyright (c) 2019 Osspial
@@ -3300,6 +3311,8 @@ MIT and the BSD family require the copyright notice itself to be reproduced, whi
 - Copyright 2016 Philipp Korber
 - Copyright 2016 Sean McArthur
 - Copyright 2016-2026 Frank Denis.
+- Copyright 2017 Damian Czaja
+- Copyright 2017 Gulshan Singh
 - Copyright 2017 Juniper Networks, Inc.
 - Copyright 2017 Sergio Benitez
 - Copyright 2017 http-rs authors

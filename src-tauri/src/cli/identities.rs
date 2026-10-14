@@ -4,7 +4,7 @@
 
 use std::io::Write;
 
-use super::args::unknown;
+use super::args::{unknown, value};
 use super::report::{self, SCHEMA};
 use super::{json, say, Env, Exit, Failure, Held, Registered, Subcommand};
 use crate::sign_cms::{self, Offer};
@@ -12,8 +12,8 @@ use crate::sign_cms::{self, Offer};
 /// `identities`, registered.
 pub const COMMAND: Registered = Registered {
     name: "identities",
-    usage: "identities [--json]",
-    summary: "Lists the certificates that can sign, and the ones that cannot\n            with the reason.",
+    usage: "identities [--json] | identities --add <file.p12>",
+    summary: "Lists the certificates that can sign, and the ones that cannot\n            with the reason. On Linux, --add adds a certificate file\n            with an ECDSA key, asking its password.",
     parse: boxed,
 };
 
@@ -22,6 +22,8 @@ pub const COMMAND: Registered = Registered {
 pub struct Identities {
     /// `--json`.
     pub json: bool,
+    /// `--add`: a certificate file to remember for signing (Linux).
+    pub add: Option<String>,
 }
 
 fn boxed(args: &[String]) -> Result<Box<dyn Subcommand>, String> {
@@ -35,13 +37,19 @@ fn boxed(args: &[String]) -> Result<Box<dyn Subcommand>, String> {
 /// The sentence for exit code 2.
 pub fn parse(args: &[String]) -> Result<Identities, String> {
     let mut json = false;
-    for arg in args {
+    let mut add = None;
+    let mut rest = args.iter();
+    while let Some(arg) = rest.next() {
         match arg.as_str() {
             "--json" => json = true,
+            "--add" => add = Some(value(arg, &mut rest)?.clone()),
             other => return Err(unknown("identities", other)),
         }
     }
-    Ok(Identities { json })
+    if json && add.is_some() {
+        return Err("`identities --add` does not take `--json`".into());
+    }
+    Ok(Identities { json, add })
 }
 
 impl Subcommand for Identities {
@@ -51,8 +59,52 @@ impl Subcommand for Identities {
         out: &mut dyn Write,
         _err: &mut dyn Write,
     ) -> Result<Exit, Failure> {
-        identities(env, self.json, out)
+        match &self.add {
+            Some(file) => add_file(std::path::Path::new(file), env, out),
+            None => identities(env, self.json, out),
+        }
     }
+}
+
+/// `identities --add`: asks the file's password on the terminal, and adds the
+/// file to the list the application's chooser reads too (`certfiles.rs`).
+#[cfg(target_os = "linux")]
+fn add_file(file: &std::path::Path, env: &Env<'_>, out: &mut dyn Write) -> Result<Exit, Failure> {
+    use secrecy::ExposeSecret as _;
+    let refused = |why: String| Failure::new(Exit::Refused, why);
+    let store = crate::certfiles::store().ok_or_else(|| {
+        refused("There is no home folder to keep the list of certificate files in.".to_string())
+    })?;
+    let name = file.file_name().map_or_else(
+        || file.display().to_string(),
+        |n| n.to_string_lossy().into_owned(),
+    );
+    let password = crate::pkcs11::ask(crate::pkcs11::Asked::Password(&name))
+        .map_err(refused)?
+        .ok_or_else(|| refused("Nothing was added.".to_string()))?;
+    let entry = crate::certfiles::add(&store, file, password.expose_secret()).map_err(refused)?;
+    let certificate = entry.certificate();
+    let subject = sign_cms::usable(&certificate, env.now)
+        .map_or_else(|_| sign_cms::named(&certificate), |offer| offer.subject);
+    say(
+        out,
+        &format!(
+            "Added {subject}. Sign with it as --identity {}",
+            crate::keystore::id_of(&certificate)
+        ),
+    );
+    Ok(Exit::Ok)
+}
+
+/// `identities --add` off Linux, where certificate files go into the system's
+/// own store instead.
+#[cfg(not(target_os = "linux"))]
+fn add_file(_: &std::path::Path, _: &Env<'_>, _: &mut dyn Write) -> Result<Exit, Failure> {
+    Err(Failure::new(
+        Exit::Usage,
+        "`identities --add` is for Linux; on macOS and Windows, import the certificate file \
+         into your keychain or certificate store, and tpdf finds it there",
+    ))
 }
 
 /// One certificate in the store, judged.
