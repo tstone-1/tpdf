@@ -3,6 +3,8 @@
   "bundle": {
     "resources": {
       "../vendor/pdfium/lib/libpdfium.so": "pdfium/libpdfium.so",
+      "../vendor/tessdata/eng.traineddata": "tessdata/eng.traineddata",
+      "../vendor/tessdata/deu.traineddata": "tessdata/deu.traineddata",
       "../THIRD-PARTY-NOTICES.md": "THIRD-PARTY-NOTICES.md"
     }
   }

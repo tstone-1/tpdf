@@ -4257,6 +4257,56 @@ recur here, as `win_sandbox_probe` predicted. `backend-probe` passes 38–40/42 
 corpora with byte-identical name sets. And the module check in §3 is external to the process,
 which is what makes it evidence rather than a milestone.
 
+## 6a. Linux — Landlock and seccomp, added 2026-10-14
+
+Linux is on the roadmap but not shipped (`docs/PLAN.md` §1). This section exists because the
+introduction's rule binds the commit that wires a control, and the parser worker's Linux
+boundary landed on 2026-10-14 without a line here; this is that line, written the same day
+the OCR worker got its own.
+
+**The mechanism is macOS's shape, not Windows'.** The child applies the boundary *to itself*
+after `exec`, so there is a "before" in which to open PDFium (`worker_child.rs`) or Tesseract
+(`ocr_worker.rs`). `sandbox_linux::apply` does it in two halves:
+
+| Half | What it denies | Required? |
+|---|---|---|
+| Landlock, file system | every file right the kernel knows, including executing a file; grants only reading beneath PDFium's font folders (`FONT_DIRS`) | **required**: no Landlock, or a ruleset the kernel did not enforce, is a refusal |
+| Landlock, network (ABI 4+) and scopes (ABI 6+) | TCP bind and connect; abstract Unix sockets made outside the sandbox (X11, D-Bus); signals outside it | taken where the kernel has them |
+| seccomp | `socket`, `socketpair`, `ptrace`, `process_vm_readv`, `process_vm_writev`, with `EPERM` | **required** |
+
+A process with more than one thread is refused at the boundary, because Landlock confines
+only the thread that asks.
+
+**Measured, parser worker.** `worker_child::tests::a_contained_worker_reads_fonts_and_nothing_else`
+forks a child that applies the boundary and tries to read `/etc/passwd`, create a file, open
+an internet and a Unix socket and start a program, and must manage none of them while still
+listing a font folder; the parent runs the same probes uncontained as the control. Removing
+Landlock, seccomp or the font rules each turned it red with exactly the expected bits
+(Ubuntu 24.04 under WSL, kernel 6.18, Landlock ABI 7). `Backend::default_here` returns the
+worker on Linux since the same day; before that the viewer parsed in the app process, which
+the first run of the window checks showed as the uncontained warning.
+
+**Measured, OCR worker.** The parent starts it with `OMP_THREAD_LIMIT=1`. It opens
+`libtesseract.so.5` before the boundary, then calls `apply_reading` with the language-data
+folder added to the font folders. `ocr-worker-probe` reads `Seccomp: 2` in the worker's
+`/proc/<pid>/status` and `0` in its own (the control), and the seccomp filter goes on only
+after Landlock has taken. Removing the boundary turned that row red (`Seccomp: worker 0`).
+Leaving out the data folder made Tesseract unable to start ("could not start with eng+deu"),
+which is evidence that Landlock confines this process's reads, not only that a call returned.
+
+**What Linux does not have that the other two do:**
+
+- No memory or CPU limit on either worker beyond the parent's per-request deadline. Windows has
+  a job-object memory cap (§6); Linux would use `RLIMIT_AS` or a cgroup, and neither is
+  wired. **Untested, and a residual.**
+- Tesseract links Leptonica's PNG, JPEG, TIFF, GIF, WebP and JPEG 2000 decoders and curl. The
+  worker hands it a grey buffer through `TessBaseAPISetImage`, so no decoder parses
+  document-supplied bytes, and seccomp refuses the sockets curl would need. That the decoders
+  are never called is a claim about tpdf's call path, not something the boundary enforces.
+- The library is the system's, so its version moves with the distribution. The engine's
+  identity carries `TessVersion()` and the data release, which is what the redaction gate's
+  verdict names.
+
 ## 7. Residual risk, in one place
 
 1. **Redaction verification refuses too much** — the "cannot decode" rule has not been

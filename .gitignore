@@ -10,6 +10,8 @@ src-tauri/gen/
 
 # PDFium binaries (downloaded at build time, not vendored)
 vendor/pdfium/
+# Tesseract language data for Linux (scripts/fetch_tessdata.py)
+vendor/tessdata/
 
 # Local agent overrides (per shared-memory policy)
 AGENTS.local.md

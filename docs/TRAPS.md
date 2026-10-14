@@ -20313,7 +20313,8 @@ half-blind since the day it was written and every run of it was green.
 `ocr-worker-probe` reads the loader's image table, asserts the table was read, and then
 asserts that nothing in it is named `tesseract` — the second row being the interesting one,
 and the first existing so that "no image is named tesseract" means an absence rather than a
-scan that matched nothing. The control was `images.len() > 100`.
+scan that matched nothing. The control was `images.len() > 100`. (Since 2026-10-14 the name is
+`easyocr`: Linux reads with Tesseract, and the probe's in-process baseline opens it.)
 
 That number is macOS. A macOS process maps 600-odd dylibs, so the check passed by a factor of
 six and looked like a healthy margin. A Windows debug binary maps **37**, so widening this

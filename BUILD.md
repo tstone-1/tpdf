@@ -7,7 +7,11 @@ Native UI probes now require a checks build:
 (Windows; the executable is in `src-tauri/target/release/`). On Linux the same
 `--no-bundle` build copies no resources, so put the library where a bundle would before
 running a check:
-`mkdir -p src-tauri/target/release/pdfium && cp vendor/pdfium/lib/libpdfium.so src-tauri/target/release/pdfium/`.
+`mkdir -p src-tauri/target/release/pdfium && cp vendor/pdfium/lib/libpdfium.so src-tauri/target/release/pdfium/`,
+and `cp -r vendor/tessdata src-tauri/target/release/` for OCR. A Linux build of any kind needs
+`scripts/fetch_tessdata.py` first: the bundle names the language data as resources, and Tauri's
+build script refuses to build while one is missing. OCR also needs the system's Tesseract
+(`libtesseract5` on Ubuntu), which tpdf opens at run time in the OCR worker only.
 The window checks need no monitor there: `xvfb-run -a -s "-screen 0 1280x800x24" scripts/window_checks.py src-tauri/target/release/tpdf`
 passed 11 of 11 on Ubuntu 24.04 under WSL on 2026-10-14, with `WAYLAND_DISPLAY` unset and
 `GDK_BACKEND=x11` so WebKitGTK draws into Xvfb rather than into WSLg. Add `--debug` for a
@@ -3849,6 +3853,11 @@ rung is the control for all three columns — a machine where nothing works repo
 perfectly contained ladder.
 
 ### `ocr-worker-probe`: does the engine work from a process of its own
+
+**Linux since 2026-10-14**, with Tesseract: 12/12 with one skip on `text-base14`, `rotated` and
+`links` on Ubuntu 24.04 under WSL, in a debug build (a release build finds no language data
+unless `tessdata/` is beside it). Linux adds one row: `Seccomp: 2` in the worker's
+`/proc/<pid>/status` against `0` in the probe's own, which went red with the boundary removed.
 
 **Both platforms since 2026-08-29**, and the binary is **its own worker**: `OcrWorker::spawn`
 re-execs `current_exe`, so what is under test is the shipped child rather than a copy of it.

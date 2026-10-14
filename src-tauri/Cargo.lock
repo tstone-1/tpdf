@@ -5295,6 +5295,7 @@ dependencies = [
  "image",
  "landlock",
  "libc",
+ "libloading 0.9.0",
  "lopdf",
  "objc2",
  "objc2-app-kit",

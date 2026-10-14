@@ -301,6 +301,16 @@ licensing constraint above rather than assumed, because one copyleft crate anywh
 removes the option of making this repository public. The check is `cargo metadata` over the whole
 tree, not a glance at the crate's own README.
 
+**Linux-only crates, added 2026-10-14.** `landlock` (MIT OR Apache-2.0) and `seccompiler`
+(Apache-2.0 OR BSD-3-Clause) are the worker sandbox (`sandbox_linux.rs`), both new packages.
+`rustls-webpki`, `rustls-native-certs` and `rustls-pki-types` check a signer's certificate
+against the system's CA bundle (`trust.rs`). `libloading` (ISC) opens Tesseract in the OCR
+worker; it was already in the tree through `pdfium-render`. Tesseract itself (Apache-2.0) is not
+a crate and not shipped: tpdf opens the system's `libtesseract.so.5` at run time and ships only
+the English and German language data (`scripts/fetch_tessdata.py`). The notices generator asks
+`cargo metadata` about `x86_64-unknown-linux-gnu` since the same day; before that the Linux-only
+crates were in neither the notices nor its licence scan.
+
 **The raw PDFium bindings.** `pdfium-render` 0.9.4 hides its bindings accessor. `progressive::bind` and
 `bind_library` retain both a safe wrapper and a second public raw binding table
 for the same library; only the safe wrapper initializes PDFium. Raw-interface

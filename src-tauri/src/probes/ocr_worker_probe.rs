@@ -209,6 +209,31 @@ fn run(file: &Path, library: &Path) -> Result<(), String> {
         "the engine ran in another process",
         format!("worker {pid}, us {}", std::process::id()),
     );
+    // Linux only: the kernel says from outside whether a process has a seccomp
+    // filter (`Seccomp: 2` in its status), and the worker installs its filter
+    // only after Landlock has taken (`sandbox_linux::apply_reading`), so a 2 is
+    // both halves. This process has none, which is the control: a reader that
+    // always said 2 would fail it.
+    #[cfg(target_os = "linux")]
+    {
+        let mode = |pid: u32| {
+            std::fs::read_to_string(format!("/proc/{pid}/status"))
+                .ok()
+                .and_then(|status| {
+                    status
+                        .lines()
+                        .find_map(|line| line.strip_prefix("Seccomp:"))
+                        .map(|value| value.trim().to_string())
+                })
+                .unwrap_or_else(|| "unreadable".into())
+        };
+        let (worker_mode, own_mode) = (mode(pid), mode(std::process::id()));
+        r.check(
+            worker_mode == "2" && own_mode == "0",
+            "the worker is under its sandbox, and this process is not",
+            format!("Seccomp: worker {worker_mode}, us {own_mode}"),
+        );
+    }
 
     // ------------------------------------------- what the loader can and cannot say
     // **`backend-probe`'s kind of evidence is not available here, and finding
@@ -274,13 +299,15 @@ fn run(file: &Path, library: &Path) -> Result<(), String> {
     }
     // The emptiness control. Without it, a filter that matches nothing reports a
     // clean process exactly as a clean process does --- and the row above would
-    // be the only thing standing between this probe and that mistake.
+    // be the only thing standing between this probe and that mistake. The name
+    // was "tesseract" until Linux got that engine, whose in-process baseline
+    // above opens it; it must be one no platform loads.
     r.check(
         !images
             .iter()
-            .any(|image| image.to_lowercase().contains("tesseract")),
+            .any(|image| image.to_lowercase().contains("easyocr")),
         "the scan can report an absence",
-        "no image here is named tesseract",
+        "no image here is named easyocr",
     );
 
     // The differential. Same engine, same pixels, one process apart -- so the
@@ -655,7 +682,14 @@ fn engine_here() -> Result<Box<dyn Recogniser>, String> {
         .map_err(|e| e.to_string())
 }
 
-#[cfg(not(any(target_os = "macos", windows)))]
+#[cfg(target_os = "linux")]
+fn engine_here() -> Result<Box<dyn Recogniser>, String> {
+    tpdf_lib::ocr_tesseract::Tesseract::load()
+        .map(|e| Box::new(e) as Box<dyn Recogniser>)
+        .map_err(|e| e.to_string())
+}
+
+#[cfg(not(any(target_os = "macos", windows, target_os = "linux")))]
 fn engine_here() -> Result<Box<dyn Recogniser>, String> {
     Err(tpdf_lib::ocr_worker::NO_ENGINE.to_string())
 }

@@ -43,10 +43,17 @@ have the binary.)
 
 ### Changed
 
-- **Linux is on the roadmap, and the Rust code compiles there.** Nothing runs yet: a worker
-  refuses to start until its sandbox exists, so no document opens. The tests that read a
+- **Linux is on the roadmap, and the application runs there.** It is not packaged yet. The
+  window opens on WebKitGTK and passes all eleven window checks under Xvfb on Ubuntu 24.04,
+  with documents parsed in sandboxed workers as on macOS and Windows. The tests that read a
   print job back with the system's own PDF parser say `[SKIP]` on Linux, which has none
-  that fits the licence rule.
+  that fits the licence rule; printing and signing are still to come.
+- **On Linux text is recognised with Tesseract**, for redaction verification and for a text
+  layer over a scanned page. tpdf opens the system's `libtesseract` in the OCR worker only,
+  under the Linux sandbox, and ships the English and German language data
+  (tessdata_fast 4.1.0). Tesseract reads in its sparse-text mode, which found every word of
+  the test pages where its automatic mode missed a line under a rule; a multi-column scan
+  therefore copies out with its columns interleaved.
 - **On Linux the signer's certificate is checked against the system's CA bundle,** offline
   and without revocation, as on macOS and Windows. `--json` reports name that store
   `linux`, and the sentence says "this computer".

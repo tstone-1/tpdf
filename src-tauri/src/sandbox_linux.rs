@@ -56,13 +56,27 @@ const ABI_KNOWN: ABI = ABI::V6;
 /// More than one thread, a kernel without Landlock or one that did not enforce
 /// the file-system ruleset, or a seccomp filter the kernel refused.
 pub fn apply() -> Result<(), String> {
+    apply_reading(&[])
+}
+
+/// [`apply`], with read access beneath `extra` as well as [`FONT_DIRS`].
+///
+/// For the OCR worker, whose engine reads its language data after the boundary
+/// (`ocr_tesseract.rs`). The parser worker passes nothing.
+///
+/// # Errors
+///
+/// As [`apply`], and a folder in `extra` that cannot be opened: a folder the
+/// caller named and the kernel cannot find is a mistake, where a missing font
+/// folder is only a machine without those fonts.
+pub fn apply_reading(extra: &[&std::path::Path]) -> Result<(), String> {
     let threads = thread_count()?;
     if threads != 1 {
         return Err(format!(
             "{threads} threads at the boundary; Landlock would confine only this one"
         ));
     }
-    landlock()?;
+    landlock(extra)?;
     seccomp()
 }
 
@@ -77,7 +91,7 @@ fn thread_count() -> Result<usize, String> {
         .ok_or_else(|| "/proc/self/status names no thread count".into())
 }
 
-fn landlock() -> Result<(), String> {
+fn landlock(extra: &[&std::path::Path]) -> Result<(), String> {
     let failed = |e: landlock::RulesetError| format!("Landlock: {e}");
     let ruleset = Ruleset::default()
         // The first version's file-system rights are required; a kernel that
@@ -98,6 +112,12 @@ fn landlock() -> Result<(), String> {
         // A folder this machine does not have is not an error: there is
         // nothing beneath it to read.
         let Ok(fd) = PathFd::new(dir) else { continue };
+        created = created
+            .add_rule(PathBeneath::new(fd, AccessFs::from_read(ABI_KNOWN)))
+            .map_err(failed)?;
+    }
+    for dir in extra {
+        let fd = PathFd::new(dir).map_err(|e| format!("Landlock: {}: {e}", dir.display()))?;
         created = created
             .add_rule(PathBeneath::new(fd, AccessFs::from_read(ABI_KNOWN)))
             .map_err(failed)?;

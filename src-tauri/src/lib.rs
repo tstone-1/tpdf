@@ -58,6 +58,8 @@ pub mod ocr;
 pub mod ocr_gate;
 /// Which pages get a text layer, and a recognition as one.
 pub mod ocr_layer;
+#[cfg(target_os = "linux")]
+pub mod ocr_tesseract;
 #[cfg(target_os = "macos")]
 pub mod ocr_vision;
 #[cfg(windows)]

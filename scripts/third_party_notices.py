@@ -78,6 +78,10 @@ TARGETS = [
     "aarch64-apple-darwin",
     "x86_64-apple-darwin",
     "x86_64-pc-windows-msvc",
+    # Linux since 2026-10-14. Without it the crates linked only there (the
+    # Landlock and seccomp sandbox, the certificate check) were in neither the
+    # notices nor the licence scan below.
+    "x86_64-unknown-linux-gnu",
 ]
 
 # Licence families that end the build. MPL-2.0 is deliberately absent: it is
@@ -492,6 +496,20 @@ def render(
     add("```")
     add("\n".join(line.rstrip() for line in (icon_root / icon_manifest["license_file"]).read_text(encoding="utf-8").strip().splitlines()))
     add("```")
+    add("")
+
+    # Shipped in the Linux bundle only (`tauri.linux.conf.json`), fetched by
+    # digest from a release that carries no NOTICE file, so Apache-2.0 asks for
+    # the licence text alone; the crate section below reproduces it.
+    add("## Text-recognition language data (Linux)")
+    add("")
+    add(
+        "The Linux build ships `eng.traineddata` and `deu.traineddata` from "
+        "tessdata_fast 4.1.0 (https://github.com/tesseract-ocr/tessdata_fast), the "
+        "Tesseract project's trained models, distributed under the Apache License 2.0, "
+        "whose text is reproduced under *Licence texts* below. Tesseract itself is not "
+        "shipped: the Linux build uses the system's `libtesseract`."
+    )
     add("")
 
     add("## PDFium, and the libraries compiled into it")
