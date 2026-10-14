@@ -265,9 +265,10 @@ impl Backend {
 
     /// The default where no one has asked for anything.
     ///
-    /// **Worker on both platforms that have a boundary**, which since 2026-07-29
-    /// is macOS and Windows: `sandbox_init` SBPL there, a low-integrity token
-    /// inside a job object here. Anywhere else `Worker::spawn` refuses, and
+    /// **Worker on every platform that has a boundary**: macOS since 2026-07-28
+    /// (`sandbox_init` SBPL), Windows since 2026-07-29 (a low-integrity token
+    /// inside a job object) and Linux since 2026-10-14 (Landlock and seccomp,
+    /// `sandbox_linux.rs`). Anywhere else `Worker::spawn` refuses, and
     /// defaulting to something that cannot start is worse than defaulting to the
     /// control.
     ///
@@ -291,7 +292,7 @@ impl Backend {
     /// than uncontained, and that is a product decision rather than a defect to
     /// fix in passing.
     fn default_here() -> Self {
-        if cfg!(any(target_os = "macos", windows)) {
+        if cfg!(any(target_os = "macos", windows, target_os = "linux")) {
             Self::Worker
         } else {
             Self::InProcess
@@ -3224,7 +3225,7 @@ mod tests {
     /// because they still said macOS was the only platform with a boundary.
     #[test]
     fn an_unset_backend_is_the_platform_default() {
-        let expected = if cfg!(target_os = "macos") || cfg!(windows) {
+        let expected = if cfg!(target_os = "macos") || cfg!(windows) || cfg!(target_os = "linux") {
             Backend::Worker
         } else {
             Backend::InProcess

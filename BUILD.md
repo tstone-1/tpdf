@@ -4,7 +4,13 @@ Native UI probes now require a checks build:
 `npm run tauri build -- --config src-tauri/tauri.checks.conf.json --bundles app`
 (macOS), or
 `npm run tauri build -- --config src-tauri/tauri.checks.conf.json --no-bundle`
-(Windows; the executable is in `src-tauri/target/release/`). Add `--debug` for a
+(Windows; the executable is in `src-tauri/target/release/`). On Linux the same
+`--no-bundle` build copies no resources, so put the library where a bundle would before
+running a check:
+`mkdir -p src-tauri/target/release/pdfium && cp vendor/pdfium/lib/libpdfium.so src-tauri/target/release/pdfium/`.
+The window checks need no monitor there: `xvfb-run -a -s "-screen 0 1280x800x24" scripts/window_checks.py src-tauri/target/release/tpdf`
+passed 11 of 11 on Ubuntu 24.04 under WSL on 2026-10-14, with `WAYLAND_DISPLAY` unset and
+`GDK_BACKEND=x11` so WebKitGTK draws into Xvfb rather than into WSLg. Add `--debug` for a
 development build in `src-tauri/target/debug/`. It has a separate application identifier;
 normal `npm run tauri build` excludes the frontend harness. Existing probe commands
 below refer to this checks executable when they drive the UI. Run

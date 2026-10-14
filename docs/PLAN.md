@@ -194,11 +194,21 @@ API; FreeBSD and a browser build; a renderer of its own. A request for one of th
 a scope decision to raise, not a gap to close.
 
 **Linux is on the roadmap since 2026-10-14,** the whole application and not the command-line
-tool alone; until then it stood in the list above. Nothing has been built for it yet. The
-order of the work: compile and prove it in CI with the workers still refusing; then the
-worker sandbox (seccomp and Landlock), without which no document opens; then printing, OCR,
-signing and the desktop integration; then packages and window checks. On Linux a worker
-refuses to start until its sandbox exists, as on the other two when containment fails.
+tool alone; until then it stood in the list above. Built so far: the tree compiles and passes
+clippy on Linux, the signer's certificate is checked against the system's CA bundle, workers run
+under Landlock and seccomp, and PDFium is built and published for linux-x64. Still to come, in
+this order (decided 2026-10-14):
+
+1. The application window on WebKitGTK, which nothing has exercised yet.
+2. OCR for redaction verification, with Tesseract (Apache-2.0), shipping the English and
+   German language data rather than relying on what the system has installed.
+3. Certificate signing, through PKCS#11 for smart cards and tokens and from PKCS#12 files
+   with a password prompt.
+4. Printing and the desktop integration; then packages and window checks.
+
+Ubuntu joins the CI matrix once the command-line suite is green there, since a leg that is
+red or allowed to fail says nothing. A worker refuses to start where its sandbox cannot be
+applied, as on the other two platforms when containment fails.
 
 That is the author's own diagnosis. What users of those programs say themselves, read on
 2026-10-03 from vendor forums and 30 Reddit threads, is in [`DEMAND.md`](DEMAND.md),

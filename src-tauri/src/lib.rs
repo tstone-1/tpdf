@@ -1608,7 +1608,7 @@ mod tests {
     /// a release binary carries the runner's path, which exists on no machine
     /// that installs it.
     ///
-    /// Both configs are checked from whichever host runs, through `include_str!`.
+    /// All three configs are checked from whichever host runs, through `include_str!`.
     /// That is the whole point: a Mac never parses the Windows config, which is
     /// how one half of a twin kept a bug the other half had already fixed.
     #[test]
@@ -1623,6 +1623,11 @@ mod tests {
                 "tauri.macos.conf.json",
                 include_str!("../tauri.macos.conf.json"),
                 "libpdfium.dylib",
+            ),
+            (
+                "tauri.linux.conf.json",
+                include_str!("../tauri.linux.conf.json"),
+                "libpdfium.so",
             ),
         ] {
             let parsed: serde_json::Value =
