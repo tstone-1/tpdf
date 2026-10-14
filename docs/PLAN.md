@@ -210,8 +210,8 @@ this order (decided 2026-10-14):
    RSA keys from a file wait for a signer without that weakness.
 4. Printing and the desktop integration; then packages and window checks.
 
-Ubuntu joins the CI matrix once the command-line suite is green there, since a leg that is
-red or allowed to fail says nothing. A worker refuses to start where its sandbox cannot be
+Ubuntu joined `ci.yml`'s matrix on 2026-10-14, once the command-line suite and all 31 gates
+were green there; a leg that is red or allowed to fail would have said nothing. A worker refuses to start where its sandbox cannot be
 applied, as on the other two platforms when containment fails.
 
 That is the author's own diagnosis. What users of those programs say themselves, read on

@@ -350,7 +350,7 @@ run it triggers finishes, so it is authoritative about the code and structurally
 build; and on a two-platform repository the machine that files it is the one that cannot compile
 half of what it moved. Establishing green first costs one command, and it converts every later
 failure into a statement about your own change. Select the workflow rather than taking the newest
-run, and read the job count beside the conclusion — two jobs, not one.
+run, and read the job count beside the conclusion — three jobs (macOS, Windows, Ubuntu), not one.
 
 What CI structurally cannot cover, and the reason `BUILD.md` still schedules them by hand:
 `window_checks.py` and `mutate_viewer.py` drive a real window and need an unlocked,
