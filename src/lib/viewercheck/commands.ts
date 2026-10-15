@@ -408,6 +408,8 @@ export async function appCommandChecks(
     erase: () => fired.push("erase"),
     showTab: (tab) => fired.push(`showTab:${tab}`),
     toggleInvert: () => fired.push("toggleInvert"),
+    toggleFullScreen: () => fired.push("toggleFullScreen"),
+    togglePresentation: () => fired.push("togglePresentation"),
     // Recorded like the rest, though neither command is driven here --- both are
     // in `undriven` above. A recorder rather than a throw, so that the day one
     // of them *is* driven the failure is a missing entry in `fired` rather than
@@ -839,6 +841,18 @@ export async function appCommandChecks(
     {
       id: "view.invertPages",
       ...shell("toggleInvert"),
+      read: () => fired.join(","),
+    },
+    // Through the recorder: going full screen for real would take the screen
+    // of whoever runs this, and `fullscreen.test.ts` owns what the two do.
+    {
+      id: "view.fullScreen",
+      ...shell("toggleFullScreen"),
+      read: () => fired.join(","),
+    },
+    {
+      id: "view.presentation",
+      ...shell("togglePresentation"),
       read: () => fired.join(","),
     },
     {

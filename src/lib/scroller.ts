@@ -498,6 +498,11 @@ export class Scroller {
 
   private readonly scheme = window.matchMedia("(prefers-color-scheme: dark)");
 
+  /** Reads the surround again, for a change the colour scheme did not make. */
+  rereadSurround(): void {
+    this.onScheme();
+  }
+
   /** Tier 2, LRU by insertion order: re-inserting on use moves an entry last. */
   private readonly tiles = new Map<string, TileEntry>();
   /** Tier 1, permanent for the session, keyed by page index. */

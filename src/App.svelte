@@ -165,6 +165,7 @@
     type Session,
   } from "./lib/session";
   import { placeOfSpread, spreadOfPlace } from "./lib/spreads";
+  import { ScreenMode, type Screen } from "./lib/fullscreen";
   import {
     canOrderTabs, placing, readFieldBorder, writeFieldBorder,
   } from "./lib/fieldnames";
@@ -1467,6 +1468,8 @@
     toggleSidebar: () => toggleSidebar(),
     showTab: (tab) => showTab(tab),
     toggleInvert: () => toggleInvert(),
+    toggleFullScreen: () => void toggleFullScreen(),
+    togglePresentation: () => void togglePresentation(),
     about: () => {
       notice = `tpdf ${appVersion}`;
     },
@@ -3874,6 +3877,54 @@
     });
   }
 
+  /** Full screen and presentation; `fullscreen.ts` holds what each changes. */
+  const screen = new ScreenMode();
+  let screenMode = $state<Screen>("window");
+  /** Whether the window has said it is full screen since tpdf asked it to be. */
+  let windowWasFull = false;
+  /** The colour a presentation is blanked to, or none. See `ScreenMode.blank`. */
+  let screenBlank = $state<"black" | "white" | null>(null);
+
+  // The viewer is taken at entry: what a change of screen puts back belongs to
+  // the document that was in front when it was asked for.
+  async function toggleFullScreen() {
+    const shown = viewer;
+    if (screen.mode === "window") await screen.full(getCurrentWindow());
+    else await screen.leave(shown, getCurrentWindow());
+    showScreen();
+  }
+
+  async function togglePresentation() {
+    const shown = viewer;
+    if (screen.mode === "presenting") await screen.leave(shown, getCurrentWindow());
+    else if (shown) await screen.present(shown, getCurrentWindow());
+    showScreen();
+  }
+
+  /**
+   * Draws what `screen` says: the chrome hidden in full screen, and the pages
+   * on black, turned by a press, while presenting.
+   */
+  function showScreen() {
+    screenMode = screen.mode;
+    screenBlank = screen.blank;
+    const presenting = screen.mode === "presenting";
+    document.documentElement.classList.toggle("presenting", presenting);
+    viewer?.setPresenting(presenting);
+    viewer?.rereadSurround();
+  }
+
+  /**
+   * Esc leaves full screen and presentation, when nothing on the page took it
+   * first: the viewer lets it through with nothing to dismiss.
+   */
+  function leaveScreenOnEscape(event: KeyboardEvent): boolean {
+    if (event.key !== "Escape" || event.defaultPrevented || screen.mode === "window") return false;
+    event.preventDefault();
+    void screen.leave(viewer, getCurrentWindow()).then(showScreen);
+    return true;
+  }
+
   function toggleInvert() {
     if (!viewer) return;
     invertPages = !viewer.inverted;
@@ -4405,6 +4456,12 @@
     // The first Down on a blank page enters its list. Only with nothing
     // focused: a key pressed inside the page is the page's own handler's, and
     // one pressed in the palette or a dialog is not this page's at all.
+    if (leaveScreenOnEscape(event)) return;
+    if (screen.presentingKey(event.key)) {
+      event.preventDefault();
+      screenBlank = screen.blank;
+      return;
+    }
     const focused = document.activeElement;
     if (!title && (focused === null || focused === document.body) && startPageKey(event, -1)) return;
     handleWindowKey(event, {
@@ -4585,6 +4642,27 @@
       }
 
       await installMenu();
+      // The window can leave full screen without tpdf: the green button on
+      // macOS, the platform's own key. The chrome and the viewer follow it.
+      //
+      // Only after the window has been seen in full screen: going there is an
+      // animation on macOS, and the resizes during it come before the window
+      // says it is full screen. Taking one of those for a way out would undo
+      // the change that caused it.
+      await getCurrentWindow().onResized(async () => {
+        if (screen.mode === "window") {
+          windowWasFull = false;
+          return;
+        }
+        if (await getCurrentWindow().isFullscreen()) {
+          windowWasFull = true;
+          return;
+        }
+        if (!windowWasFull) return;
+        windowWasFull = false;
+        screen.left(viewer);
+        showScreen();
+      });
       await getCurrentWindow().onCloseRequested(async (event) => {
         event.preventDefault();
         await documentTasks.idle();
@@ -5455,6 +5533,8 @@
     shown.setRedactions(model.state.redactions);
     panel.thumbnails?.setPages(model.state.pages.length);
     if (resume) shown.restore({ ...resume, spread: spreadOfPlace(resume) });
+    // A tab opened or brought forward while presenting is presented too.
+    shown.setPresenting(screen.mode === "presenting");
     // Only for a tab being returned to. A document opened for the first time
     // has no search to put back and opens on the tab the sidebar starts on.
     if (kept) restore(kept, "mounted", restoring);
@@ -5815,7 +5895,7 @@
 
 <svelte:window onkeydown={onWindowKey} onkeydowncapture={closeZoomOnEscape} onpointerdown={closeZoomOutside} />
 
-<main>
+<main class:full-screen={screenMode !== "window"}>
   <header>
     <button title="Open a PDF" aria-label="Open a PDF" onclick={pickAndOpen} disabled={opening || copyTaskBusy || documentBusy}><span class="icon" use:icon={"open"}></span></button>
     {#if title}
@@ -6155,6 +6235,11 @@
       {#if appVersion}<p class="version" data-testid="version">tpdf {appVersion}</p>{/if}
     </div>
   {/if}
+  {#if screenBlank}
+    <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions -->
+    <div class="blank-screen" style:background={screenBlank} data-testid="blank-screen"
+      onclick={() => { screen.blank = null; screenBlank = null; }}></div>
+  {/if}
 </main>
 
 <style>
@@ -6195,6 +6280,22 @@
       --tpdf-surround: #2b2b2b;
       --tpdf-problem: #ff8a7a;
     }
+  }
+  /* Presenting shows the pages on black, whatever the theme. */
+  :global(:root.presenting) {
+    --tpdf-surround: #000;
+  }
+  /* Full screen and presenting: the document and nothing else. The problem
+     bar stays, because a failure still has to be said. */
+  .blank-screen {
+    position: fixed;
+    inset: 0;
+    z-index: 100;
+  }
+  main.full-screen header,
+  main.full-screen .document-tabs,
+  main.full-screen .panel {
+    display: none;
   }
   main {
     display: flex;

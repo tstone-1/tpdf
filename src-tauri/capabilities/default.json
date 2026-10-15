@@ -8,6 +8,7 @@
   "permissions": [
     "core:default",
     "core:window:allow-destroy",
+    "core:window:allow-set-fullscreen",
     "dialog:allow-open",
     "dialog:allow-save",
     "dialog:allow-message",

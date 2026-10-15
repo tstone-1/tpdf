@@ -234,6 +234,11 @@ project conventions.
   page, or one pair, and nothing else: the wheel, Space and the arrows scroll inside it and
   go on to the next at its end. *Pages: scroll continuously* goes back.
   <!-- built: view.singlePage view.facing view.book view.rightToLeft view.continuous view.pageAtATime -->
+- **Full screen and presentation.** *Full screen* (F11) shows the document and nothing else.
+  *Present one page at a time* shows one page at a time on black, fitted to the screen; a
+  click, Space or an arrow goes on, and `b` or `w` blacks or whites out the screen until the
+  next key. Esc leaves either, and a presentation puts back the layout and zoom you had.
+  <!-- built: view.fullScreen view.presentation -->
 - Text selection and copy; find-in-document, with case, whole-word, regular-expression and
   within-the-selection options; a sidebar carrying the outline, a page-thumbnail strip and
   your own marks; and a text layer for screen readers.

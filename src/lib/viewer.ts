@@ -1181,6 +1181,8 @@ export class Viewer {
    */
   private overscroll = 0;
   private lastRowChange = -Infinity;
+  /** See {@link setPresenting}. */
+  private presenting = false;
   private zoom = 1;
   /** Quarter-turns clockwise the view is rotated by, 0 to 3. */
   private turns = 0;
@@ -2860,6 +2862,23 @@ export class Viewer {
     this.wake();
   }
 
+  /**
+   * Whether the document is being presented: a press turns the page. Set by
+   * the window with the rest of presentation (`fullscreen.ts`).
+   */
+  setPresenting(presenting: boolean): void {
+    this.presenting = presenting;
+  }
+
+  /**
+   * Reads the colour around the pages again, after the window changed it ---
+   * presentation shows the pages on black.
+   */
+  rereadSurround(): void {
+    this.scroller.rereadSurround();
+    this.wake();
+  }
+
   /** How pages sit beside each other. */
   get spread(): Spread {
     return this.scroller.spread;
@@ -3510,7 +3529,10 @@ export class Viewer {
       }
       else if (this.popup.openId !== null) this.closeComment();
       else if (this.focusedLink) this.clearLinkFocus();
-      else this.clearSelection();
+      else if (this.selection) this.clearSelection();
+      // With nothing to dismiss the key is the window's, which leaves full
+      // screen and presentation with it.
+      else return;
     } else if (matches("nav.nextPage", event)) {
       this.nextPage();
     } else if (matches("nav.previousPage", event)) {
@@ -5963,6 +5985,14 @@ export class Viewer {
     // prevents the press's default, which is what would have collapsed it, and
     // a range left standing is what the copy chord reads first (`nativeCopy`).
     this.root.ownerDocument?.getSelection()?.removeAllRanges();
+
+    // Presenting, a press is the next page, as in every presentation program:
+    // there is nothing to select or edit on a slide being shown.
+    if (this.presenting) {
+      event.preventDefault();
+      this.nextPage();
+      return;
+    }
 
     // **Before every hit test below**, and that ordering is the mode. A press
     // with a tool armed means "start here" whatever is under it --- a reader

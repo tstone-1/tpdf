@@ -298,3 +298,42 @@ describe("One page at a time in the viewer", () => {
     expect(viewer.position.page).toBeGreaterThan(2);
   });
 });
+
+describe("Presenting in the viewer", () => {
+  it("turns the page on a press, and selects nothing", () => {
+    const viewer = build();
+    viewer.setSpread({ columns: 1, coverAlone: false, rightToLeft: false, continuous: false });
+    viewer.setPresenting(true);
+    dom.root.dispatch("pointerdown", { button: 0, pointerId: 1, target: dom.root, clientX: 400, clientY: 300, preventDefault: () => {} });
+    dom.root.dispatch("pointerup", { pointerId: 1, clientX: 400, clientY: 300 });
+    expect(viewer.position.page).toBe(1);
+    // The control: not presenting, the same press stays on the page.
+    viewer.setPresenting(false);
+    dom.root.dispatch("pointerdown", { button: 0, pointerId: 1, target: dom.root, clientX: 400, clientY: 300, preventDefault: () => {} });
+    dom.root.dispatch("pointerup", { pointerId: 1, clientX: 400, clientY: 300 });
+    expect(viewer.position.page).toBe(1);
+  });
+
+  it("lets Esc through to the window when there is nothing to dismiss", () => {
+    build();
+    let prevented = false;
+    dom.root.dispatch("keydown", {
+      key: "Escape", code: "Escape", shiftKey: false, ctrlKey: false, metaKey: false, altKey: false,
+      target: dom.root, preventDefault: () => { prevented = true; },
+    });
+    expect(prevented).toBe(false);
+  });
+
+  it("still takes Esc to put away an armed tool", () => {
+    const viewer = build();
+    viewer.armDraw("square");
+    expect(viewer.cursorName).toBe("crosshair");
+    let prevented = false;
+    dom.root.dispatch("keydown", {
+      key: "Escape", code: "Escape", shiftKey: false, ctrlKey: false, metaKey: false, altKey: false,
+      target: dom.root, preventDefault: () => { prevented = true; },
+    });
+    expect(prevented).toBe(true);
+    expect(viewer.cursorName).not.toBe("crosshair");
+  });
+});

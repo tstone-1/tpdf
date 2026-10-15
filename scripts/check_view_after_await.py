@@ -141,6 +141,9 @@ PER_WINDOW: dict[str, str] = {
     "markNib": "the nib the reader picked, set on every mounted viewer",
     "redactionFill": "a preference, kept between sessions",
     "invertPages": "a preference, kept in the session and set on every mounted viewer",
+    "screenMode": "whether the window is full screen or presenting, drawn from fullscreen.ts",
+    "windowWasFull": "whether the window has reported being full screen",
+    "screenBlank": "the colour a presentation is blanked to, over the whole window",
     "diskChangeMode": "a preference, kept between sessions",
     "restoreTabs": "a preference, kept in the session",
     # Built once at launch, on `document.body`.

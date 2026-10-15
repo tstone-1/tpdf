@@ -183,6 +183,10 @@ export interface AppActions {
   showTab(tab: Tab): void;
   /** Invert the page colours, and remember it. */
   toggleInvert(): void;
+  /** Fill the screen with the document, or go back to the window. */
+  toggleFullScreen(): void;
+  /** Present one page at a time on black, or stop presenting. */
+  togglePresentation(): void;
   /** Say which version this is, without asking the network anything. */
   about(): void;
   /** Ask the update endpoint whether there is a newer tpdf. */
@@ -1169,6 +1173,21 @@ export function registerAppCommands(
     { id: "view.singlePage", title: SPREAD_TITLES.single, ...layoutCommand("single") },
     { id: "view.facing", title: SPREAD_TITLES.facing, ...layoutCommand("facing") },
     { id: "view.book", title: SPREAD_TITLES.book, ...layoutCommand("book") },
+    {
+      // Full screen leaves the layout as it is; presenting is full screen with
+      // one page at a time at fit page on black. Esc leaves either.
+      id: "view.fullScreen",
+      title: "Full screen, or back to the window",
+      keys: label("view.fullScreen"),
+      enabled: withDocument,
+      run: () => actions.toggleFullScreen(),
+    },
+    {
+      id: "view.presentation",
+      title: "Present one page at a time, or stop presenting",
+      enabled: withDocument,
+      run: () => actions.togglePresentation(),
+    },
     // Continuous, or one page (or pair) at a time: SumatraPDF's continuous
     // switch, as a pair of choices so that each says what it does.
     {
@@ -2596,6 +2615,9 @@ export function handleWindowKey(
   } else if (matches("view.invertPages", event) && title) {
     event.preventDefault();
     actions.toggleInvert();
+  } else if (matches("view.fullScreen", event) && title) {
+    event.preventDefault();
+    actions.toggleFullScreen();
   } else if (matches("find.matchCase", event) && title) {
     event.preventDefault();
     actions.toggleSearchOption("matchCase");

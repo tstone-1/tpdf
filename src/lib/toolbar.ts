@@ -191,7 +191,7 @@ export const WINDOW_MENU: MenuSection[] = [
     label: "Pages",
     items: [
       "view.singlePage", "view.facing", "view.book", "view.rightToLeft",
-      "view.continuous", "view.pageAtATime",
+      "view.continuous", "view.pageAtATime", "view.fullScreen", "view.presentation",
     ],
   },
   {

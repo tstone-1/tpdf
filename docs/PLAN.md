@@ -18134,21 +18134,35 @@ the reader's page. Remembered with the place as `continuous`.
 `textedit` already computes for text; for a page of pictures it is the rendered ink bounds,
 measured on the tier-1 placeholder.
 
-#### 7.3 Full screen and presentation
+#### 7.3 Full screen and presentation --- built 2026-10-15, not yet run in a window
 
-Depends on 7.2's non-continuous layout.
+**Built.** `fullscreen.ts` holds the three states (window, full screen, presenting) and
+what each changes; `App.svelte` draws them.
 
-- Full screen: the window fills the screen and the toolbar, tabs and sidebar hide; moving
-  the pointer to the top edge shows the toolbar. The platform's own chord (F11 on Windows
-  and Linux, Ctrl+Cmd+F on macOS) and Escape to leave. Needs the window capability
-  `core:window:allow-set-fullscreen`. macOS full screen is a separate Space; measure that the
-  sandboxed workers and the side-by-side split are unaffected.
-- Presentation: full screen, one page at a time at fit page on black, the pointer hidden
-  after a pause; click, Space and the arrow keys advance. `b` and `w` black and white out
-  the screen. A laser pointer is left out until somebody asks.
-- Commands: `view.fullScreen`, `view.presentation`.
-- Exit: a window check on the Mac mini and on TEENYWEENY enters and leaves each mode and
-  reads the window size and the visible chrome; Linux under Xvfb in CI.
+- Full screen (`view.fullScreen`, F11): the window fills the screen and the toolbar, the
+  tabs and the sidebar hide; the layout is left alone. Esc or F11 leaves. F11 on every
+  platform: macOS gives F11 to the desktop, and there the menu and the window's green
+  button do it. Needs `core:window:allow-set-fullscreen`, now in the capability.
+- Presentation (`view.presentation`): full screen, one page (or pair) at a time, fit page,
+  on black (`--tpdf-surround` under `:root.presenting`, read again by the viewer). A press,
+  Space and the arrows go on; `b` and `w` black and white out the screen and any key or
+  press brings the page back. Leaving puts back the reader's layout, fit and zoom.
+- Esc reaches the window only when the viewer has nothing to dismiss: the viewer's Esc
+  ladder used to end by clearing the selection unconditionally and consumed the key; it now
+  lets it through when there is no selection.
+- When the platform takes the window out of full screen by its own control, the chrome and
+  the viewer follow. Only after the window has been seen in full screen: on macOS going
+  there is an animation, and the resizes during it come before the window says so.
+- A tab opened or brought forward while presenting is presented too.
+
+**Not built:** showing the toolbar when the pointer reaches the top edge in full screen;
+hiding the pointer after a pause while presenting; a laser pointer.
+
+**Not run in a window yet**, and each needs one: entering and leaving each mode on macOS
+(a separate Space), Windows and Linux; whether WebView2 lets F11 through to the page;
+that the sandboxed workers and the side-by-side split are unaffected. The window check's
+command probes run the two commands through its recorder, deliberately, because going full
+screen for real would take the screen of whoever runs it.
 
 #### 7.4 Navigation and tabs
 

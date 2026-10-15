@@ -155,6 +155,10 @@ export const BINDINGS = {
   // menu bar highlights.
   "view.toggleSidebar": { keys: ["\\"], code: "Backslash", accel: true },
   "view.invertPages": { keys: ["i", "I"], accel: true, shift: true },
+  // F11 on every platform. Windows and Linux use it for full screen; macOS
+  // gives it to the desktop, and there the menu and the window's own green
+  // button do it.
+  "view.fullScreen": { keys: ["F11"] },
   // The frequent edits, on bare letters as the page keys below are, since
   // 2026-10-14. Taken by the window and not by the surface, so they work
   // wherever the keyboard is except a text field; and no menu accelerator,

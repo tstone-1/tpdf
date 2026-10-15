@@ -32,6 +32,9 @@ have the binary.)
 - **One page or pair at a time.** *Pages: one page or pair at a time* shows only the page (or
   pair) you are on; the wheel, Space and the arrows scroll inside it and go on to the next at
   its end. *Pages: scroll continuously* goes back.
+- **Full screen and presentation.** *Full screen* (F11) hides everything but the document.
+  *Present one page at a time* shows one page at a time on black; a click, Space or an arrow
+  goes on, and `b` or `w` blanks the screen. Esc leaves either.
 
 ## [26.10.20] - 2026-10-15
 

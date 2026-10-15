@@ -72,6 +72,8 @@ const NAMED: Record<string, readonly string[]> = {
   "view.book": ["book view", "two pages", "spread"],
   "view.rightToLeft": ["manga", "rtl", "right to left"],
   "view.pageAtATime": ["single page", "non-continuous", "page by page"],
+  "view.fullScreen": ["fullscreen", "maximise", "maximize"],
+  "view.presentation": ["slideshow", "slides", "presentation mode"],
   "view.showOutline": ["bookmarks", "contents", "table of contents", "toc"],
   "view.showThumbnails": ["pages panel"],
   "view.sideBySide": ["compare", "split view"],

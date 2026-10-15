@@ -78,8 +78,8 @@ const PLANNED = [
   "file.saveAttachment", "file.saveRegionAsPicture",
   "nav.addFavourite", "nav.nextFavourite", "nav.previousFavourite",
   "view.fitContent", "view.fitHeight",
-  "view.fullScreen", "view.outlineCollapseAll", "view.outlineExpandAll",
-  "view.outlineToCurrent", "view.presentation",
+  "view.outlineCollapseAll", "view.outlineExpandAll",
+  "view.outlineToCurrent",
 ];
 
 /**
