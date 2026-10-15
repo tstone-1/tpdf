@@ -6979,6 +6979,38 @@ read through. **Not run:** the written copy of `tpdf long-term` against a public
 authority (`docs/VERIFICATION.md` has why), the new entry of `mutate_viewer.py` by the
 harness itself, `print-probe` and `redact-reach-probe`.
 
+**26.10.19 publication, 2026-10-15:** two rehearsal tags came first, because the Linux leg
+was new: rc1 failed in that leg's own check of the `.deb` (its members are named `usr/...`
+with no `./`, so `tar -xO ./usr/...` found nothing; it extracts with `dpkg-deb -x` now), and
+rc2 passed every job; both tags and drafts were deleted. On the release commit `455b2ed1`
+`Audit` failed on the fuzz lockfile, which still held rustls 0.23.45, and CI's macOS job
+timed out once in `tests/cli/redact.rs` waiting for the render service; `9bf7db13` updated
+the fuzz lockfile, both workflows were green on it, and the tag sits on it. The `Release`
+run 38643094196 passed every job at the first attempt, the Linux one included. On the
+draft's files: 8 assets, counted with GraphQL (the `.dmg`, the `.app.tar.gz` and the
+`-setup.exe` with their signatures, the `.deb`, the `.AppImage` and `latest.json`), and
+`latest.json` named 26.10.19 for `darwin-aarch64`, `darwin-aarch64-app`, `windows-x86_64`
+and `windows-x86_64-nsis` and for no Linux platform. The `.dmg` was accepted by Gatekeeper
+as Notarized Developer ID, stapled, with a `tpdf-cli` inside that answered `--version` with
+26.10.19 and verified `testdata/incr-signed.pdf`. `scripts/publish_release.py v26.10.19
+--publish` published it. Without authentication `releases/latest` is v26.10.19, the six
+file names answer a range request through `releases/latest/download/`, and `latest.json`
+offers 26.10.19; on a Windows 11 computer `Get-AuthenticodeSignature` reads the downloaded
+installer as `Valid`, timestamped, signed by `CN=Open Source Developer Timo Stein`. The
+Homebrew cask went from 26.10.18 to 26.10.19; `brew audit --cask --online` printed no
+finding and `brew livecheck` reads 26.10.19. An installed 26.10.18 updated itself:
+`update_check_mac.py` 12/12 over SSH on a second Mac and `update_check.py` 17/17 on
+Windows 11, and each `--control no-press` failed its seven checks and nothing else. In WSL
+the published `.deb` reads as `tpdf 26.10.19 amd64` with `Exec=tpdf %F` and
+`MimeType=application/pdf;` in its desktop entry, and the `tpdf-cli` extracted from the
+`.deb` and from the `.AppImage` each answered `--version` with 26.10.19 and verified
+`testdata/incr-signed.pdf`. Not run: `installed_check.py`, and the published Linux packages
+installed and driven as a window; the window checks of 2026-10-14 drove a `.deb` built in
+WSL from the tree. winget was not updated. Step 7's pass after the release, `--since
+v26.10.18 --resume` on `9bf7db13`, found no survivor: 126 of 128 Rust mutations caught and
+2 skipped as Windows-only, 457 of 457 frontend, and 32 of 32 in `mutate_python.py`. The
+22 Rust verdicts of the release run were discarded by `--resume`, since the tree had moved.
+
 **26.10.19 verification, 2026-10-14:** the first release with Linux packages. All 31
 gates passed on the release tree on macOS arm64 (3,104 Rust tests with eleven documented
 ignored) and on Ubuntu 24.04 under WSL on the tree before the version bump, and
