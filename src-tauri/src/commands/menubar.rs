@@ -47,6 +47,51 @@ pub async fn keyboard_positions() -> Result<std::collections::HashMap<String, St
     Ok(std::collections::HashMap::new())
 }
 
+/// Pastes as a Paste menu item would: AppKit's `paste:` action, sent to the
+/// web view that asked.
+///
+/// **Why this exists.** A WKWebView pastes only when that action reaches it,
+/// and the action is what a menu item bound to ⌘V sends. This application's
+/// menu has no such item, so ⌘V reached the page as a key and pasted nothing,
+/// not even text into the find field (measured 2026-10-15 in a bare WKWebView
+/// in an application with no Edit menu). The window's key handler sends ⌘V here
+/// instead, and so does *Paste picture*.
+///
+/// What the action does is WebKit's: in a text field it pastes text; anywhere
+/// else it fires a `paste` event at the page, whose data holds a picture as an
+/// `image/png` file, converted by WebKit from the TIFF a pasteboard often holds.
+///
+/// Answers whether a paste was sent: `false` on Windows and Linux, whose web
+/// views paste on Ctrl+V themselves and take no action from outside.
+#[cfg(target_os = "macos")]
+#[tauri::command]
+pub async fn paste(webview: tauri::Webview) -> Result<bool, String> {
+    // To the web view itself, not down the responder chain: a nil target
+    // reaches the key window's first responder only, and a window that is not
+    // key (as in the window checks, which do not bring it to the front) then
+    // pastes nothing, with no error.
+    webview
+        .with_webview(|platform| {
+            let view = platform.inner().cast::<objc2::runtime::AnyObject>();
+            // SAFETY: on macOS `inner` is the WKWebView, alive for this
+            // closure, which Tauri runs on the main thread. `paste:` takes one
+            // argument, the sender, which may be nil.
+            unsafe {
+                let _: () =
+                    objc2::msg_send![view, paste: Option::<&objc2::runtime::AnyObject>::None];
+            }
+        })
+        .map_err(|e| format!("could not reach the web view to paste: {e}"))?;
+    Ok(true)
+}
+
+/// The Windows and Linux answer: nothing to send. See the macOS arm.
+#[cfg(any(windows, target_os = "linux"))]
+#[tauri::command]
+pub async fn paste() -> Result<bool, String> {
+    Ok(false)
+}
+
 /// Installs the native menu bar from the layout the frontend holds.
 ///
 /// Returns the event name a chosen item will arrive on, or `None` where there is

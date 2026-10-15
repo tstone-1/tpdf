@@ -51,6 +51,7 @@ import { call } from "./ipc";
 import { pause, Report, settle as settleFor } from "./checkreport";
 import type { MarkView, PageView } from "./pages";
 import type { Viewer } from "./viewer";
+import { isMac } from "./keys";
 
 /** How long any single wait may take before the check gives up. */
 const TIMEOUT_MS = 30_000;
@@ -107,6 +108,8 @@ export interface MarkCheckHost {
   picturePixels: (id: number) => Promise<Uint8Array>;
   /** The kinds the mark clipboard holds, so a paste waits for its copy. */
   held: () => readonly string[];
+  /** The message the window shows, if any: what a refused paste said. */
+  said: () => string | null;
 }
 
 /**
@@ -568,6 +571,57 @@ async function run(host: MarkCheckHost): Promise<void> {
       );
     } else {
       report.skip("a copied picture pastes as the same picture", "no picture was placed");
+    }
+
+    // --- A picture from the clipboard --------------------------------------
+    //
+    // `mark_check.py` puts the same icon on the clipboard before the launch.
+    // The command and ⌘V both send AppKit's `paste:` (`paste` in
+    // `commands/menubar.rs`), WebKit fires a paste event holding a PNG, and a
+    // worker decodes it. WebKit writes the PNG itself, so the pixels are held
+    // to the size and not to the file's bytes. Windows and Linux paste on the
+    // key in the web view, which nothing here drives.
+    if (!isMac()) {
+      report.skip("the paste-picture command takes the picture on the clipboard", "macOS only: elsewhere the web view pastes on Ctrl+V");
+      report.skip("and so does Cmd-V on the page", "macOS only");
+    } else {
+      const fromClipboard = async (how: string, arm: () => boolean) => {
+        const armed = arm() && (await settle(() => viewer.drawArmed === "picture"));
+        let placed: MarkView | null = null;
+        if (armed) {
+          before = new Set(host.marks().map((mark) => mark.id));
+          const at = { x: low.x + 220, y: low.y - 260 };
+          drag(root, at, { x: at.x + 80, y: at.y + 40 });
+          await settle(() => added(before, host.marks()) !== null);
+          placed = added(before, host.marks());
+        }
+        const got = placed ? await host.picturePixels(placed.id).catch(() => new Uint8Array()) : new Uint8Array();
+        check(
+          how,
+          placed?.kind === "picture" && placed.picture?.width === 128 && placed.picture.height === 128
+            && got.length === 128 * 128 * 4 && got.some((value, at) => at % 4 === 3 && value > 0),
+          placed ? `a ${placed.kind} of ${JSON.stringify(placed.picture)}, ${got.length} bytes`
+            : `armed: ${viewer.drawArmed}; said: ${host.said()}`,
+        );
+      };
+      await fromClipboard("the paste-picture command takes the picture on the clipboard",
+        () => host.run("edit.pastePicture"));
+      await fromClipboard("and so does Cmd-V on the page", () => {
+        root.focus();
+        window.dispatchEvent(new KeyboardEvent("keydown", { key: "v", code: "KeyV", metaKey: true, bubbles: true, cancelable: true }));
+        return true;
+      });
+      // The same ⌘V in a text field pastes text: before it was sent, ⌘V
+      // pasted nothing in one, as a web view does in an application whose menu
+      // has no Paste item. `mark_check.py` put the text beside the picture. A
+      // field of the check's own, so the find bar's state is not touched.
+      const field = document.createElement("input");
+      document.body.append(field);
+      field.focus();
+      field.dispatchEvent(new KeyboardEvent("keydown", { key: "v", code: "KeyV", metaKey: true, bubbles: true, cancelable: true }));
+      const pasted = await settle(() => field.value === "pasted by Cmd-V");
+      check("and Cmd-V in a text field pastes text", pasted, `the field holds ${JSON.stringify(field.value)}`);
+      field.remove();
     }
   }
 }

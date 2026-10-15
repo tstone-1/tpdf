@@ -3289,8 +3289,8 @@ gone; none was met and nothing looks for one.
 
 #### T6.41 — A picture placed on a page, added 2026-10-15
 
-*Add a picture from a file* puts a PNG or JPEG on a page as a `/Stamp` whose appearance is
-the picture, through three commands.
+*Add a picture from a file* and *Paste a picture from the clipboard* put a PNG or JPEG on a
+page as a `/Stamp` whose appearance is the picture, through five commands.
 
 - **`picture_open` takes a path, reads the file, and decodes it in a worker.** The app
   process reads at most 50 MiB of the file and parses nothing. The bytes go to a worker
@@ -3306,6 +3306,18 @@ the picture, through three commands.
   it: a webview that could call this could read a picture file it could not otherwise see,
   and receive the pixels. It cannot learn any other file's bytes, since a file that is not
   a picture is refused in the decoder's words.
+- **`picture_decode` takes a pasted picture's bytes and decodes them in the same worker.**
+  The webview reads them from a `paste` event, where WebKit has already written the
+  clipboard's picture as PNG in its own content process; the app process refuses a body over
+  50 MiB and parses nothing, and the worker reads it as it reads a file. The bytes are the
+  webview's to send, so this gives it nothing it could not do by decoding them itself; what it
+  adds is that the decoder runs in the sandbox and not in the webview.
+- **`paste` sends AppKit's `paste:` action to the web view that called it** (macOS; elsewhere
+  it does nothing and answers false). It is what a Paste menu item sends: WebKit pastes the
+  clipboard into the focused field or hands it to the page as a `paste` event. A page that
+  can call it can read the clipboard, as a page could whenever the reader pressed ⌘V under a
+  Paste menu item; the page is tpdf's own interface, which already reads every document the
+  reader opens.
 - **`annot_picture` places one**: a raw body of a JSON header and the pixels
   (`picture.rs`). The parse refuses a body whose parts do not add up, a kind that is not a
   picture, and pixels sent twice; the model then refuses a picture past its limits, as it

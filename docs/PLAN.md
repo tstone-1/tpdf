@@ -18285,8 +18285,23 @@ page, appended and rewritten. Not measured: rendering in Acrobat or Preview, and
 picture read back as a picture rather than as a stamp, which tpdf does not do for signature
 pictures either.
 
-**Still to build in 7.5:** pasting a picture from the clipboard (`edit.pastePicture`). Whether
-each webview hands a page a picture from the system clipboard is not measured.
+**Done 2026-10-15: a picture from the clipboard** (`edit.pastePicture`, and ⌘V on the page).
+On macOS a web view pastes only when AppKit's `paste:` action reaches it, which is what a Paste
+menu item sends, and tpdf's menu has none: ⌘V pasted nothing, not even text into a field
+(measured in a bare WKWebView in an application with no Edit menu). So ⌘V, in a text field or
+out of one, and the command send `paste:` to the web view (`paste` in `commands/menubar.rs`):
+in a field WebKit pastes text, anywhere else it fires a `paste` event whose data holds the
+picture as an `image/png` file, written by WebKit from a TIFF pasteboard too. The page sends
+that file's bytes to a worker (`picture_decode`), which decodes it as it decodes a picture file,
+and the placement is armed as *Add a picture from a file* arms it. `navigator.clipboard.read()`
+was measured and rejected: without a click it never answers. Evidence: `mark_check.py` puts
+the app's icon and a line of text on the clipboard, and on both fixtures the command and a ⌘V
+each place a 128 by 128 picture whose pixels come back whole, and a ⌘V in a text field pastes
+the text; with the send removed all three fail, and with the paste handler's text-field guard
+removed only the text one does. Sent down the responder chain (`sendAction:to:nil`) rather than
+to the web view, the paste did nothing in the check's window; that the window is not key there
+is the likely reason and was not proved. Not measured: Windows and Linux, whose
+web views paste on Ctrl+V themselves and where the command says to press it.
 
 SumatraPDF makes these and tpdf does not:
 

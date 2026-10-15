@@ -31,6 +31,7 @@ a suspended WebKit page does not run the check slowly, it does not run it at all
 
 import argparse
 import os
+import subprocess
 import sys
 from pathlib import Path
 
@@ -65,6 +66,33 @@ def launch(binary: str, pdf: str, timeout: float) -> tuple[int, str]:
     env = dict(os.environ, TPDF_MARKCHECK="1")
     done = run_app([binary, pdf], env=env, timeout=timeout)
     return done.code, done.out
+
+
+#: The picture the clipboard stage pastes: the one the file stage places.
+ICON = Path(__file__).resolve().parent.parent / "src-tauri" / "icons" / "128x128.png"
+
+
+#: The text beside it, which a paste into a text field takes. Also in `markcheck.ts`.
+PASTED_TEXT = "pasted by Cmd-V"
+
+
+def seed_clipboard() -> bool:
+    """Puts the icon as PNG and a line of text on the clipboard, for
+    `markcheck.ts`'s paste stage: the page takes the picture, a field the text.
+
+    macOS only, where that stage runs; it replaces whatever the clipboard held.
+    """
+    if sys.platform != "darwin":
+        return True
+    script = (
+        f'set the clipboard to {{«class PNGf»:(read (POSIX file "{ICON}") as «class PNGf»), '
+        f'«class utf8»:"{PASTED_TEXT}"}}'
+    )
+    done = subprocess.run(["osascript", "-e", script], capture_output=True, text=True)
+    if done.returncode != 0:
+        print(f"[FAIL] could not put {ICON.name} on the clipboard: {done.stderr.strip()}")
+        return False
+    return True
 
 
 def named_checks(out: str) -> "str | None":
@@ -229,6 +257,8 @@ def main() -> int:
     clear_strays(Path(args.binary))
 
     pdf = str(Path(args.pdf).resolve())
+    if not seed_clipboard():
+        return 1
     code, out = launch(args.binary, pdf, args.timeout)
     return 0 if report(code, out) else 1
 

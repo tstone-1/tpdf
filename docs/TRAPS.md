@@ -326,6 +326,7 @@ hop through the index.
 - The restart after an update hands one quoted path over without its quotes, so a path with spaces arrives in pieces
 - A viewer built in a page area that is still hidden restores its place against nothing
 - A helper that reads the focused document by default is the same read as naming the variable
+- On macOS a web view pastes only on a Paste menu item's action, so ⌘V pasted nothing
 
 ## Rust and macOS
 - A locked macOS session cannot be unlocked from a script, so it must be prevented
@@ -26544,3 +26545,29 @@ in WSL passed because none of them is a command-line run. The Linux CLI suite fo
 thread backtraces (`gdb -p <pid> -batch -ex 'thread apply all bt'`) named it in one look:
 `note_boundary_once` inside `Stderr::lock`. `strace` had already said no worker was ever
 spawned, which ruled out the sandbox. Stderr is now unlocked, taken per write.
+
+### On macOS a web view pastes only on a Paste menu item's action, so ⌘V pasted nothing
+
+A WKWebView pastes when AppKit's `paste:` action reaches it, and that action is what a menu
+item bound to ⌘V sends. tpdf builds its own menu bar and it has no Paste item, so ⌘V reached
+the page as a keydown and nothing pasted: no text into a field and no `paste` event on the
+page. Measured on 2026-10-15 in a bare WKWebView inside an application with no Edit menu,
+with a ⌘V key event posted to it; `copyInterfaceText` in `keys.ts` exists for the same
+reason on the copy side.
+
+Three more things the same probe measured, each of which looks like a route and is not or is:
+
+- `navigator.clipboard.read()` without a click **never answers**, and the page's script went
+  quiet behind it. It does not reject; a caller waiting on it waits for ever.
+- `paste:` sent with `sendAction:to:nil` reaches the key window's first responder. In the
+  probe the window was key and it worked; in `mark_check.py`'s window, which the harness does
+  not bring to the front, the same call pasted nothing and reported nothing. Sent to the web
+  view itself (`with_webview`), it works in both. That the window not being key is the cause
+  is inferred, not proved.
+- With only TIFF on the pasteboard, the page still gets an `image/png` file: WebKit writes
+  it. So the page never needs a TIFF decoder.
+
+`paste` in `commands/menubar.rs` sends the action, and ⌘V and *Paste a picture from the
+clipboard* call it. A synthetic keydown from a check reaches the same send, which is why
+`markcheck.ts` can drive ⌘V without the screen; it cannot show that a real key did nothing
+before, which is what the probe was for.

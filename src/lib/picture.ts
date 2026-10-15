@@ -79,6 +79,26 @@ export function rotatePixels(pixels: PicturePixels, turns: number): PicturePixel
   return result;
 }
 
+/** The kinds of pasted file a worker decodes: `decode_picture`'s two. */
+const PASTED_TYPES = new Set(["image/png", "image/jpeg"]);
+
+/**
+ * The picture in a paste event's data, or null when it holds none.
+ *
+ * WebKit hands a pasted picture to the page as an `image/png` file, whatever
+ * the pasteboard held (measured with TIFF alone); the file's bytes go to a
+ * worker as a picture file's do, never to a decoder in the webview. The first
+ * picture is taken when there are several, and any other kind of file is not
+ * one.
+ */
+export function pastedPicture(data: { files: ArrayLike<File> } | null): File | null {
+  if (!data) return null;
+  for (const file of Array.from(data.files)) {
+    if (PASTED_TYPES.has(file.type)) return file;
+  }
+  return null;
+}
+
 /** Whether any pixel can be seen: a picture with none would place nothing. */
 export function visible(pixels: PicturePixels): boolean {
   for (let i = 3; i < pixels.rgba.length; i += 4) if (pixels.rgba[i] !== 0) return true;

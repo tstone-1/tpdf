@@ -359,6 +359,8 @@ export interface Commands {
   annot_picture_pixels: { args: { doc: DocHandle; mark: number }; reply: ArrayBuffer };
   /** A picture file decoded in a worker: `readPicture`'s layout. */
   picture_open: { args: { path: string }; reply: ArrayBuffer };
+  /** A pasted picture file's bytes, decoded in a worker: `readPicture`'s layout. */
+  picture_decode: { args: Uint8Array; reply: ArrayBuffer };
   signature_store: { args: { action: { kind: "load" } | { kind: "save"; image: import("./signature").SignatureImage } | { kind: "forget" } }; reply: import("./signature").SignatureImage | null };
   edit_undo: { args: { doc: DocHandle }; reply: EditState };
   edit_redo: { args: { doc: DocHandle }; reply: EditState };
@@ -471,6 +473,8 @@ export interface Commands {
     reply: string;
   };
   keyboard_positions: { args: NoArgs; reply: Record<string, string> };
+  /** AppKit's `paste:` sent to the web view; false where the platform has none. */
+  paste: { args: NoArgs; reply: boolean };
   /** The reply is the event name the menu emits on, or null when none was built. */
   set_menu: { args: { sections: SectionSpec[] }; reply: string | null };
   set_menu_enabled: {

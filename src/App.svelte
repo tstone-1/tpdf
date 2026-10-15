@@ -99,7 +99,7 @@
   import * as validationData from "./lib/validationdata";
   import { emptySignatureFields, signTarget, type SignTarget } from "./lib/signfield";
   import { openWithPassword } from "./lib/unlock";
-  import { isLinux, isMac, label, revealTitle, setPrintedKeys } from "./lib/keys";
+  import { inTextField, isLinux, isMac, label, revealTitle, setPrintedKeys } from "./lib/keys";
   import { buildMenu, menuEnablement, runMenuCommand } from "./lib/menubar";
   import { namePages } from "./lib/pageranges";
   import { Palette } from "./lib/palette";
@@ -116,7 +116,7 @@
   import { duplicate, type DuplicateDeps } from "./lib/duplicate";
   import { MarkClipboard, notCopied, shapeOf } from "./lib/markclipboard";
   import { EXTENSIONS as PICTURE_EXTENSIONS, afterPictures, suggestedName as pictureName } from "./lib/pictures";
-  import { readPicture, type PicturePixels } from "./lib/picture";
+  import { pastedPicture, readPicture, type PicturePixels } from "./lib/picture";
   import { afterProtect, suggestedName as protectedName } from "./lib/protect";
   import { afterCompress, suggestedName as smallerName } from "./lib/compress";
   import { CompressDialog } from "./lib/compressdialog";
@@ -1719,6 +1719,12 @@
     },
     signature: () => void addSignature(),
     picture: () => void addPicture(),
+    pastePicture: () => void pastePicture(),
+    pasteKey: () => {
+      if (!isMac()) return false;
+      call("paste").catch((e: unknown) => say(String(e)));
+      return true;
+    },
     editText: () => void editExistingText(),
     draw: () => viewer?.armDraw("ink"),
     erase: () => viewer?.armErase(),
@@ -2025,6 +2031,51 @@
     } catch (e) {
       say(String(e));
     }
+  }
+
+  /**
+   * *Paste picture*: sends the paste a Paste menu item would, and
+   * {@link onPaste} takes the picture from the event it fires. Focus leaves
+   * any text field first, or the palette's field the command was chosen in
+   * would take the paste as text. Windows and Linux have nothing to send: their
+   * web views paste on Ctrl+V, so the reader is told to press it.
+   */
+  async function pastePicture(): Promise<void> {
+    if (!viewer || openDoc < 0) return;
+    const focused = document.activeElement;
+    if (focused instanceof HTMLElement && focused !== document.body) focused.blur();
+    try {
+      if (!(await call("paste"))) say("Press Ctrl+V on the page to paste the picture on the clipboard.");
+    } catch (e) {
+      say(String(e));
+    }
+  }
+
+  /**
+   * A paste outside a text field: the picture in it goes to a worker, as a
+   * picture file does, and its placement is armed. A text field's paste is the
+   * field's. A paste with no picture in it says so, since on the page there is
+   * nothing else a paste could mean.
+   */
+  function onPaste(event: ClipboardEvent): void {
+    if (inTextField(event)) return;
+    const view = openView, model = edits, into = viewer;
+    if (!into || openDoc < 0 || documentBusy || opening || copyTaskBusy) return;
+    event.preventDefault();
+    const file = pastedPicture(event.clipboardData);
+    if (!file) {
+      say("The clipboard holds no picture to paste.");
+      return;
+    }
+    void (async () => {
+      try {
+        const bytes = new Uint8Array(await file.arrayBuffer());
+        const pixels = readPicture(await call("picture_decode", bytes));
+        if (stillIn(view, model, into)) into.armPicture(pixels);
+      } catch (e) {
+        say(String(e));
+      }
+    })();
   }
 
   async function drawn(
@@ -5100,6 +5151,7 @@
           answerPictures: (paths) => { queuedPictures = paths; },
           picturePixels: (id) => edits ? edits.picturePixels(id) : Promise.reject(new Error("no document")),
           held: () => markClipboard.marks.map((mark) => mark.kind),
+          said: () => error,
         })
       )
         return;
@@ -6163,7 +6215,7 @@
    */
 </script>
 
-<svelte:window onkeydown={onWindowKey} onkeydowncapture={closeZoomOnEscape} onpointerdown={closeZoomOutside} />
+<svelte:window onkeydown={onWindowKey} onpaste={onPaste} onkeydowncapture={closeZoomOnEscape} onpointerdown={closeZoomOutside} />
 
 <main class:full-screen={screenMode !== "window"}>
   <header>

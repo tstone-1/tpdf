@@ -219,6 +219,7 @@ export const MENU_LAYOUT: LayoutSection[] = [
       "edit.drawPolyline",
       "edit.addLink",
       "edit.addPicture",
+      "edit.pastePicture",
       // After the two shapes, because it is the third thing a drag can place and
       // a reader choosing between them is choosing what appears.
       "edit.addTextBox",
@@ -538,6 +539,7 @@ export const NO_ACCELERATOR: Record<string, string> = {
   "edit.redo": "⇧⌘Z, the same guard as undo",
   "edit.copy": "⌘C copies the find field's text when the field has focus",
   "edit.selectAll": "⌘A selects the find field's text when the field has focus",
+  "edit.pastePicture": "⌘V pastes text into the find field; handleWindowKey sends it",
   "edit.clearSelection":
     "Esc closes the find bar, and a menu accelerator on it would fire first",
 };

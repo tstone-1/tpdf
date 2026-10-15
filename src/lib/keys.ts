@@ -234,6 +234,8 @@ export const BINDINGS = {
   // ⌘D, the chord a drawing or presentation program duplicates on.
   "edit.duplicate": { keys: ["d"], accel: true },
   "edit.copy": { keys: ["c"], accel: true },
+  // ⌘V and Ctrl+V. Text in a text field; a picture on the page.
+  "edit.pastePicture": { keys: ["v"], accel: true },
   "edit.clearSelection": { keys: ["Escape"], shown: "Esc" },
 } as const satisfies Record<string, Binding>;
 
@@ -524,7 +526,7 @@ export function matches(id: BoundCommand, event: KeyboardEvent): boolean {
  * only way to test the guard would be to stand up a DOM for it. Duck-typing
  * costs three field reads and needs neither.
  */
-export function inTextField(event: KeyboardEvent): boolean {
+export function inTextField(event: Pick<Event, "target">): boolean {
   const target = event.target as {
     tagName?: string;
     isContentEditable?: boolean;

@@ -1022,3 +1022,21 @@ ROWS += [
         "",
         "is a signature's with the pixels its view carries"),
 ]
+
+# --- a picture from the clipboard, 2026-10-15 -----------------------------------------
+# The window half (the paste sent to the web view, the listener's text-field
+# guard) is proved by `mark_check.py` on a Mac, which no row here can run.
+ROWS += [
+    Mutation("pasted picture: any file is a picture", "src/lib/picture.ts",
+        "    if (PASTED_TYPES.has(file.type)) return file;",
+        "    return file;",
+        "takes the first PNG or JPEG and nothing else"),
+    Mutation("Cmd-V: the key kept from a web view that pastes it itself", "src/lib/appcommands.ts",
+        "    if (actions.pasteKey()) event.preventDefault();",
+        "    actions.pasteKey();\n    event.preventDefault();",
+        "leaves Cmd-V to the web view where the platform pastes on the key itself"),
+    Mutation("Cmd-V: not sent from a text field", "src/lib/appcommands.ts",
+        '  } else if (matches("edit.pastePicture", event)) {',
+        '  } else if (matches("edit.pastePicture", event) && !inTextField(event)) {',
+        "sends the paste on Cmd-V in a text field and out of one, with or without a document"),
+]

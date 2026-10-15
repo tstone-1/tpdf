@@ -4,7 +4,7 @@
 
 import { describe, expect, it } from "vitest";
 
-import { PICTURE_PIXELS, PICTURE_SIDE, PictureCache, pictureBody, readPicture, rotatePixels, visible, type PicturePixels } from "./picture";
+import { PICTURE_PIXELS, PICTURE_SIDE, PictureCache, pastedPicture, pictureBody, readPicture, rotatePixels, visible, type PicturePixels } from "./picture";
 
 /** A reply as `picture_reply` in `commands/edit.rs` lays it out. */
 function reply(width: number, height: number, rgba: number[]): ArrayBuffer {
@@ -83,6 +83,18 @@ describe("rotatePixels", () => {
     backing.set([0, 1, 0, 0, 255, 2, 0, 0, 255]);
     const pixels = { width: 2, height: 1, rgba: backing.subarray(1) };
     expect(reds(rotatePixels(pixels, 1))).toEqual([1, 2]);
+  });
+});
+
+describe("pastedPicture", () => {
+  const file = (type: string, name = "f") => new File([new Uint8Array([1])], name, { type });
+
+  it("takes the first PNG or JPEG and nothing else", () => {
+    expect(pastedPicture(null)).toBeNull();
+    expect(pastedPicture({ files: [] })).toBeNull();
+    expect(pastedPicture({ files: [file("text/plain"), file("image/tiff"), file("image/gif")] })).toBeNull();
+    expect(pastedPicture({ files: [file("text/plain"), file("image/jpeg", "a"), file("image/png", "b")] })?.name).toBe("a");
+    expect(pastedPicture({ files: [file("image/png", "b")] })?.name).toBe("b");
   });
 });
 

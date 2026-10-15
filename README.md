@@ -530,9 +530,10 @@ measured the Windows render constants come out 1.5–1.8x worse.
   page in front, in this document or another tab. *Add a link* is dragged like a box, and
   where it goes is typed in the box that opens on it: a page number or a web address.
   *Add a picture from a file* takes a PNG or JPEG, turns a photograph upright, and places it
-  by a drag at its own proportions; it can be moved, resized and copied like a mark. The words of a text box
+  by a drag at its own proportions; it can be moved, resized and copied like a mark. *Paste a
+  picture from the clipboard*, or ⌘V on the page, does the same with the picture there. The words of a text box
   are typed in the box beside it and appear on the page as you type them.
-  <!-- built: edit.draw edit.drawBox edit.drawEllipse edit.drawLine edit.drawArrow edit.drawPolygon edit.drawPolyline edit.addLink edit.addPicture edit.addTextBox edit.addComment edit.copyMark edit.cutMark edit.pasteMark -->
+  <!-- built: edit.draw edit.drawBox edit.drawEllipse edit.drawLine edit.drawArrow edit.drawPolygon edit.drawPolyline edit.addLink edit.addPicture edit.pastePicture edit.addTextBox edit.addComment edit.copyMark edit.cutMark edit.pasteMark -->
 - **Everything about a form is in the *Form* menu**, and under the *Form* button in the
   tool row: filling one in, adding fields, changing the fields a document already has,
   their properties and their tab order. The command palette has the same commands.

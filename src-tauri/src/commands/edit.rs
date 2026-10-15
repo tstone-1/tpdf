@@ -405,19 +405,43 @@ pub async fn picture_open(
         std::fs::File::open(&path)
             .and_then(|file| file.take(limit + 1).read_to_end(&mut bytes))
             .map_err(|e| format!("the picture could not be read: {e}"))?;
-        if bytes.len() as u64 > limit {
-            return Err(format!(
-                "the picture was not used: {}",
-                crate::signature_import::PICTURE.invalid
-            ));
-        }
         decoded(&*outside, &bytes)
     })
     .await
     .map_err(|e| format!("the picture was not read: {e}"))?
 }
 
+/// Decodes a pasted picture in a worker: [`picture_open`] for bytes the
+/// webview took from a paste event rather than for a file.
+///
+/// The body is the picture file's bytes, raw, as the web view handed them to
+/// the page; WebKit gives a pasted picture to a page as PNG whatever the
+/// pasteboard held. The same 50 MiB as a file, the same worker and decoders.
+#[tauri::command]
+pub async fn picture_decode(
+    app: tauri::AppHandle,
+    service: tauri::State<'_, crate::render::RenderService>,
+    request: tauri::ipc::Request<'_>,
+) -> Result<tauri::ipc::Response, String> {
+    let tauri::ipc::InvokeBody::Raw(body) = request.body() else {
+        return Err("a picture is sent as bytes".into());
+    };
+    let bytes = body.clone();
+    let outside = super::outside_of(&app, service.backend());
+    tauri::async_runtime::spawn_blocking(move || decoded(&*outside, &bytes))
+        .await
+        .map_err(|e| format!("the picture was not read: {e}"))?
+}
+
+/// A picture file's bytes decoded in a worker, refused unread past a picture
+/// file's 50 MiB: a file is read one byte past it to tell, a paste arrives whole.
 fn decoded(outside: &dyn save::Outside, bytes: &[u8]) -> Result<tauri::ipc::Response, String> {
+    if bytes.len() as u64 > crate::signature_import::PICTURE.bytes {
+        return Err(format!(
+            "the picture was not used: {}",
+            crate::signature_import::PICTURE.invalid
+        ));
+    }
     let image = outside
         .picture(bytes)
         .map_err(|why| format!("the picture was not used: {}", why.message))?;

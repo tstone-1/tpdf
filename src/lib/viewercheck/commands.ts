@@ -352,6 +352,8 @@ export async function appCommandChecks(
     editText: () => { fired.push("editText"); },
     signature: () => { fired.push("signature"); },
     picture: () => { fired.push("picture"); },
+    pastePicture: () => { fired.push("pastePicture"); },
+    pasteKey: () => false,
     fillForm: () => {},
     viewer: () => viewer,
     pageCount: () => doc.page_count,
@@ -1380,6 +1382,7 @@ export async function appCommandChecks(
     { id: "edit.drawPolyline", ...shell("drawShape:polyline"), read: () => fired.join(",") },
     { id: "edit.addLink", ...shell("drawShape:link"), read: () => fired.join(",") },
     { id: "edit.addPicture", ...shell("picture"), read: () => fired.join(",") },
+    { id: "edit.pastePicture", ...shell("pastePicture"), read: () => fired.join(",") },
     {
       // The third drag tool, aimed separately for the reason the two above it
       // are: three commands now arm the same primitive with three different

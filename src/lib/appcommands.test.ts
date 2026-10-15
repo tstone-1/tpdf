@@ -95,7 +95,7 @@ function harness(
   let formEditing = update.formEditing ?? false;
   let diskMode: DiskChangeMode = update.disk ?? "ask";
   const actions: AppActions = {
-    editText: () => { fired.push("editText"); }, signature: () => { fired.push("signature"); }, picture: () => { fired.push("picture"); },
+    editText: () => { fired.push("editText"); }, signature: () => { fired.push("signature"); }, picture: () => { fired.push("picture"); }, pastePicture: () => { fired.push("pastePicture"); }, pasteKey: () => { fired.push("pasteKey"); return true; },
     fillForm: () => { fired.push("fillForm"); },
     // Not a real viewer: the guards ask whether it is null and, since
     // 2026-08-23, whether the history has anywhere to go. A cast is honest
@@ -1836,7 +1836,7 @@ describe("opening the palette", () => {
 describe("the window shortcuts for editing", () => {
   function press(
     key: string,
-    modifiers: { shift?: boolean; alt?: boolean; handled?: boolean; picked?: number; bare?: boolean; selected?: boolean; noDocument?: boolean; repeat?: boolean } = {},
+    modifiers: { shift?: boolean; alt?: boolean; handled?: boolean; picked?: number; bare?: boolean; selected?: boolean; noDocument?: boolean; repeat?: boolean; pastes?: boolean } = {},
     target: { tagName?: string; isContentEditable?: boolean; ownerDocument?: { getSelection(): { type: string } | null } } | null = null,
     journal: { undo?: boolean; redo?: boolean } = { undo: true, redo: true },
     dirty = true,
@@ -1844,6 +1844,10 @@ describe("the window shortcuts for editing", () => {
     const { fired, actions } = keyHarness(journal, dirty);
     actions.pickedMarks = () => modifiers.picked ?? 0;
     actions.hasSelection = () => modifiers.selected ?? false;
+    actions.pasteKey = () => {
+      fired.push("pasteKey");
+      return modifiers.pastes ?? true;
+    };
     let prevented = 0;
     const event = {
       key,
@@ -1882,7 +1886,7 @@ describe("the window shortcuts for editing", () => {
     // and the point of this block is the one the palette does not cover.
     const fired: string[] = [];
     const actions: AppActions = {
-    editText: () => { fired.push("editText"); }, signature: () => { fired.push("signature"); }, picture: () => { fired.push("picture"); },
+    editText: () => { fired.push("editText"); }, signature: () => { fired.push("signature"); }, picture: () => { fired.push("picture"); }, pastePicture: () => { fired.push("pastePicture"); }, pasteKey: () => { fired.push("pasteKey"); return true; },
     fillForm: () => { fired.push("fillForm"); },
       // Two real methods rather than `{}`, because ⌘A and ⌘C are the only
       // window chords that reach *through* `viewer()` instead of an action of
@@ -2096,6 +2100,28 @@ describe("the window shortcuts for editing", () => {
     // text at all.
     expect(press("a", {}, field).prevented).toBe(0);
     expect(press("c", {}, field).prevented).toBe(0);
+  });
+
+  it("sends the paste on Cmd-V in a text field and out of one, with or without a document", () => {
+    // On macOS nothing else pastes: the menu has no Paste item, so without this
+    // a find field took no text and the page no picture.
+    for (const target of [null, { tagName: "INPUT" }]) {
+      for (const noDocument of [false, true]) {
+        const pressed = press("v", { noDocument }, target);
+        expect(pressed.fired).toEqual(["pasteKey"]);
+        expect(pressed.prevented).toBe(1);
+      }
+    }
+  });
+
+  it("leaves Cmd-V to the web view where the platform pastes on the key itself", () => {
+    const pressed = press("v", { pastes: false });
+    expect(pressed.fired).toEqual(["pasteKey"]);
+    expect(pressed.prevented).toBe(0);
+    // Not Shift-Cmd-V, Option-Cmd-V or a bare v, which are other chords.
+    expect(press("V", { shift: true }).fired).toEqual([]);
+    expect(press("v", { alt: true }).fired).toEqual([]);
+    expect(press("v", { bare: true }).fired).toEqual([]);
   });
 
   it("turns the page on Shift-Cmd-R and the other way on Shift-Cmd-L", () => {

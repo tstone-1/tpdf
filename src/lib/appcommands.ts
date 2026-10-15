@@ -492,6 +492,15 @@ export interface AppActions {
   signature(): void;
   /** Choose a picture file, then place the picture on a page by a drag. */
   picture(): void;
+  /** Take the picture on the clipboard, then place it on a page by a drag. */
+  pastePicture(): void;
+  /**
+   * Sends the platform's paste for ⌘V, where the web view needs it sent:
+   * macOS, whose web view pastes only on a Paste menu item's action
+   * (`paste` in `commands/menubar.rs`). Answers whether it did; elsewhere the
+   * web view pastes on the key itself and this answers false.
+   */
+  pasteKey(): boolean;
   editText(): void;
   /**
    * Arms the freehand tool for one drawing.
@@ -1492,6 +1501,16 @@ export function registerAppCommands(
       title: "Add a picture from a file...",
       enabled: withDocument,
       run: () => actions.picture(),
+    },
+    {
+      // The picture on the clipboard, decoded in a worker as a file's is and
+      // placed by a drag the same way. ⌘V does it on the page; in a text field
+      // ⌘V pastes text.
+      id: "edit.pastePicture",
+      title: "Paste a picture from the clipboard",
+      keys: label("edit.pastePicture"),
+      enabled: withDocument,
+      run: () => actions.pastePicture(),
     },
     {
       id: "edit.editText",
@@ -2891,6 +2910,12 @@ export function handleWindowKey(
     // would stop a reader replacing a query they had half typed.
     event.preventDefault();
     actions.viewer()?.selectPage();
+  } else if (matches("edit.pastePicture", event)) {
+    // In a text field too, and with no document: on macOS nothing else pastes,
+    // not even text into the find field or the palette, because the menu has
+    // no Paste item for the web view to answer. What the paste does is the web
+    // view's: text in a field, a `paste` event anywhere else.
+    if (actions.pasteKey()) event.preventDefault();
   } else if (
     matches("edit.copy", event) &&
     title &&

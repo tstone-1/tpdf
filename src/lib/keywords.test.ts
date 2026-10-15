@@ -102,7 +102,8 @@ const TYPED: [string, string][] = [
   ["duplicate", "edit.duplicate"], ["align", "edit.alignLeft"],
   // Files and the application.
   ["image", "file.fromPictures"], ["jpg", "file.fromPictures"], ["photo", "file.fromPictures"],
-  ["picture", "file.fromPictures"], ["properties", "file.properties"],
+  ["pictures", "file.fromPictures"], ["picture", "edit.addPicture"],
+  ["screenshot", "edit.pastePicture"], ["properties", "file.properties"],
   ["metadata", "file.properties"], ["info", "file.properties"], ["save as", "file.saveCopy"],
   ["save", "file.save"], ["open", "file.open"], ["close", "file.close"],
   ["print", "file.print"], ["undo", "edit.undo"], ["reload", "file.reload"],

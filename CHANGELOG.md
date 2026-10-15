@@ -42,7 +42,12 @@ have the binary.)
   its own proportions; a photograph stored on its side is turned upright. It is saved as a
   stamp whose appearance is the picture, and can be moved, made larger or smaller, removed
   and copied. The file is decoded in a sandboxed worker, and a
-  picture larger than 4 megapixels is scaled down to that.
+  picture larger than 4 megapixels is scaled down to that. *Paste a picture from the
+  clipboard*, or ⌘V on the page, does the same with the picture on the clipboard, decoded in
+  the same worker.
+- **⌘V pastes text in the find field, the palette and every other text field on
+  macOS.** It pasted nothing there, because a web view pastes only when a Paste menu item's
+  action reaches it and tpdf's menu has no such item; ⌘V now sends that action itself.
 - **Links.** *Add a link* is dragged out like a box, and where it goes is typed in the box
   that opens on it: a page number, or a web address starting with `http://`, `https://`,
   `mailto:` or `www.`. It is saved as a `/Link` with no border, and a save with a link that
