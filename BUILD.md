@@ -6933,7 +6933,7 @@ which follows the records of past releases and carries the reasons and the comma
 1. [Fetch, confirm the branch is not behind, and take the dependency updates](#release-step-1)
 2. [Bump the four version files](#release-step-2)
 3. [Refresh both lockfiles with `cargo check`](#release-step-3)
-4. [Put the release date in `CHANGELOG.md`](#release-step-4)
+4. [Put the release date in `CHANGELOG.md` and the release notes in `release.yml`](#release-step-4)
 5. [Run `scripts/gates.py`, then `scripts/window_checks.py` on a screen](#release-step-5)
 6. [Re-check `docs/THREAT-MODEL.md` against the code](#release-step-6)
 7. [Run the mutations for the changed behaviour](#release-step-7)
@@ -7007,7 +7007,10 @@ Without authentication `releases/latest` is v26.10.20, the `.dmg`, the `-setup.e
 printed no finding and `brew livecheck` reads 26.10.20. An installed 26.10.19 updated
 itself: `update_check_mac.py` 12/12 over SSH on a second Mac and `update_check.py` 17/17 on
 the Windows build computer, and each `--control no-press` failed its seven checks and
-nothing else. winget was not updated. Step 7's pass after the release, `--since v26.10.19
+nothing else. The winget pull request (445804, still a new package awaiting a moderator)
+moved to 26.10.20 and passed `winget validate`; the published installer had the manifest's
+SHA-256, a valid timestamped signature, installed with `/S` and showed in `winget list` as
+`tpdf 26.10.20`, and uninstalled with `/S`. Step 7's pass after the release, `--since v26.10.19
 --resume` on `543008f4`, found no survivor: 498 of 498 Rust mutations caught and 30 skipped
 as Linux- or Windows-only, 594 of 594 frontend, and 38 of 38 in `mutate_python.py`.
 
@@ -8301,6 +8304,12 @@ starts at 0 and increments within the month.
    the separate fuzz lockfile records the application version too, and the
    locked fuzz gate otherwise rejects a version bump.
 4. <a id="release-step-4"></a>In `CHANGELOG.md`, replace `Unreleased` with the release date.
+   **And add the release's *New in* paragraph to the notes in `release.yml`** (the heredoc
+   that writes `release-notes.md`), above the previous release's, in the commit that is
+   tagged. The body is a literal there and the draft is made from it, so a paragraph added
+   after the tag reaches the release only through a `PATCH` of the draft, which is the
+   path step 11 warns about: on 26.10.20 the paragraph was missing until step 11's reading
+   found it, and the draft was corrected by a `PATCH` that had to carry `tag_name`.
 5. <a id="release-step-5"></a>`scripts/gates.py` — all gates pass.
 
    **Once, on the final tree.** If only version files, lockfiles and prose change after that
