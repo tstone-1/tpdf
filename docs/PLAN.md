@@ -18038,6 +18038,202 @@ its own words and proceeds on consent, as it does for a certification.
 **Not run.** `window_checks.py`'s signing phase, which was brought in line with the new
 defaults and needs a screen, a keychain identity and the network.
 
+### Phase 7 — Reading parity with SumatraPDF
+
+Planned 2026-10-15, from SumatraPDF's own command list (the docs page, which covers 3.6
+stable and the 3.7 pre-release) held against the commands tpdf registers and a search of its
+source. The thesis promises SumatraPDF's speed; this phase is about its *reading*: the
+layouts, keys and navigation a person who reads in SumatraPDF all day uses without thinking.
+Matching its 330 commands is not the goal, and what is left out is listed at the end with
+the reason.
+
+**Order: 7.1 to 7.8, as numbered.** 7.1 is small and used constantly. 7.2 is the largest
+change and 7.3 depends on it. 7.4 to 7.7 are independent of each other and of 7.2.
+7.8 is Windows only and opt-in.
+
+Each step registers its commands, so `readme.test.ts` refuses the step until the README
+names them; the command ids below are the planned ones.
+
+#### 7.1 Reading keys
+
+Today: `n`/`p`, Home/End, and the go-to-page chord. Missing: Space and Shift+Space for a
+screen down and up, `j`/`k` for a line, and half a screen. Whether the webview's native
+scrolling already answers Space and PageDown in every pane is **not measured**; measure it
+first, on all three platforms, with the find field, a form field and a text box focused,
+because a bare key must do nothing there (the rule `h`, `c`, `t` and `e` already follow).
+
+- Commands: `nav.screenDown`, `nav.screenUp`, `nav.lineDown`, `nav.lineUp`.
+- `keys.ts`; the collision test in `keys.test.ts` covers the new bare letters.
+- Side by side: the keys move the focused side; with *Scroll both sides together* on, both.
+- Exit: a viewer check presses each key with and without a focused field and reads the
+  scroll offset.
+
+#### 7.2 Page layouts
+
+Today every page sits alone in one column, continuously. SumatraPDF has single page (one
+page or spread at a time, no continuous scroll), facing pages, book view (page 1 alone, then
+pairs), each continuous or not, plus fit height, fit content, and right-to-left spreads
+(its manga mode).
+
+**Where the change goes.** `scroller.ts` lays out one `PageBox` per page with a `top`, and
+its horizontal position comes from `pageLeftCss`, which centres each page in the viewport on
+its own. A spread needs a `left` per box, kept in the box and read by `pageLeftCss`, and
+`top` becomes the top of the row, so two pages share one. `pagesIn` and the page lookup
+by offset are binary searches over `top`, which stays non-decreasing, so they keep working;
+every other reader of a page's position goes through `pageOrigin`, `pageTop` and
+`pageLeftCss` (16 calls outside the scroller, all in `viewer.ts`). The audit before writing
+code is: every place that turns a page index into a position without those accessors.
+Selection, marks, links, the drag tools, the text layer and middle-button panning all ride
+on them.
+
+- Layout is a value, `{ columns: 1 | 2, coverAlone: boolean, continuous: boolean,
+  rightToLeft: boolean }`, kept per tab and restored with the session.
+- A row of two pages of different sizes: centred on each other vertically, as SumatraPDF
+  does. `testdata/make_mixed_pdf.py` is the fixture that can tell this apart; it needs a
+  spread case with a landscape page beside a portrait one.
+- Non-continuous: the scroll range is one row; `n`/`p`, Space and the wheel at the end of
+  the row move to the next row. Find, links, Back/Forward and *Go to page* change the row.
+- *Scroll both sides together* counts pages, not rows, so one side in facing and the other
+  in single still stay the same number of pages apart.
+- Fit height and fit content join the zoom commands. Fit content needs each page's
+  content bounds, which `textedit` already computes for text; for a page of pictures it is
+  the rendered ink bounds, measured on the tier-1 placeholder.
+- Grayscale joins *Invert page colours* as a second view filter, the same CSS path.
+- Commands: `view.singlePage`, `view.facing`, `view.book`, `view.continuous`,
+  `view.rightToLeft`, `view.fitHeight`, `view.fitContent`, `view.grayscale`.
+- Exit: the window checks open the mixed fixture in each layout and assert each page's box
+  against the expected position; a mutation that drops `left` or the cover rule is caught;
+  section 4's scroll criterion (no dropped frames, 95 % sharp) holds in facing at fit page.
+
+#### 7.3 Full screen and presentation
+
+Depends on 7.2's non-continuous layout.
+
+- Full screen: the window fills the screen and the toolbar, tabs and sidebar hide; moving
+  the pointer to the top edge shows the toolbar. The platform's own chord (F11 on Windows
+  and Linux, Ctrl+Cmd+F on macOS) and Escape to leave. Needs the window capability
+  `core:window:allow-set-fullscreen`. macOS full screen is a separate Space; measure that the
+  sandboxed workers and the side-by-side split are unaffected.
+- Presentation: full screen, one page at a time at fit page on black, the pointer hidden
+  after a pause; click, Space and the arrow keys advance. `b` and `w` black and white out
+  the screen. A laser pointer is left out until somebody asks.
+- Commands: `view.fullScreen`, `view.presentation`.
+- Exit: a window check on the Mac mini and on TEENYWEENY enters and leaves each mode and
+  reads the window size and the visible chrome; Linux under Xvfb in CI.
+
+#### 7.4 Navigation and tabs
+
+- Outline: expand all, collapse all, expand to the current page.
+- Tabs: reopen the last closed tab (path, page, zoom; unsaved edits are gone and the command
+  says so); close the other tabs, the tabs to the left, the tabs to the right, each asking
+  once about unsaved changes as *Close all* does.
+- Next and previous file in the folder: the app process lists the folder (names only, no
+  parsing), sorted the way the platform's file manager sorts, PDFs only.
+- Favourites: a named place (document path, page, optional name) kept in the settings, listed
+  in the sidebar beside the outline and in the palette; next and previous favourite.
+- A link's target on hover: the page number for an internal link, the host (punycode, as the
+  confirmation shows it) for a web link.
+- Commands: `view.outlineExpandAll`, `view.outlineCollapseAll`, `view.outlineToCurrent`,
+  `file.reopenClosedTab`, `file.closeOtherTabs`, `file.closeTabsLeft`, `file.closeTabsRight`,
+  `file.nextInFolder`, `file.previousInFolder`, `nav.addFavourite`, `nav.nextFavourite`,
+  `nav.previousFavourite`.
+- Exit: unit tests in the new `src/lib` modules (the tab history and the favourites store are
+  state, so they start outside `App.svelte`); a window check per command.
+
+#### 7.5 Annotation parity
+
+SumatraPDF makes these and tpdf does not:
+
+- A line and an arrow (`/Line` with `/LE`), and an open or closed polygon (`/PolyLine`,
+  `/Polygon`), drawn with the existing nib and colour controls, through the same write path
+  as the box and the ellipse.
+- A picture on a page from a file or the clipboard. The signature-image import already decodes
+  pictures in a worker (`imagepages.rs`); the general case reuses it and places the picture as
+  an annotation appearance, not page content, so it can be moved and removed like a stamp.
+- Copy, cut and paste of marks, within a document and between tabs: a mark is copied as its
+  description, never as PDF objects, and pasted through the ordinary add path.
+- A link: drag a rectangle, choose a page in this document or type a web address. Following a
+  created web link asks about the host like any other.
+- Commands: `edit.drawLine`, `edit.drawArrow`, `edit.drawPolygon`, `edit.drawPolyline`,
+  `edit.addPicture`, `edit.pastePicture`, `edit.cutMark`, `edit.copyMark`, `edit.pasteMark`,
+  `edit.addLink`.
+- Exit: each new kind is saved, reopened in a fresh worker and found again with the same
+  geometry, as the existing marks are, and a redaction region over one removes or reports it.
+
+#### 7.6 Getting content out
+
+- Copy a region as a picture, and save it as PNG: the region is rendered by a worker at the
+  zoom on screen or a resolution you choose, and handed to the clipboard as `image/png`.
+  Whether every webview writes `ClipboardItem` with a PNG is **not measured**; measure that
+  before choosing between it and a new clipboard dependency.
+- Embedded files: list them in Properties (the count is there today) and save one to a place
+  you choose. tpdf never opens an embedded file; it saves the bytes and says what kind of
+  file the name claims to be. The worker extracts the bytes, bounded like every stream.
+- Commands: `edit.copyRegionAsPicture`, `file.saveRegionAsPicture`, `file.saveAttachment`.
+
+#### 7.7 Launching and integration
+
+- Launch options for the window: open at a page and a zoom (`tpdf-app file.pdf --page 12
+  --zoom fit-width`), through `launch.rs` and the single-instance handover, so a second
+  launch moves the running window to that page.
+- Printing from the command line: `tpdf print file.pdf --printer NAME --pages 1-3`, without
+  a dialog, through the same job and read-back as the window.
+- LaTeX forward search (SyncTeX): an editor runs `tpdf-app file.pdf --forward-search
+  file.tex:LINE`, and tpdf puts the page on screen and marks the box. The `.synctex.gz` file
+  is input from outside like the PDF: a parser of its own, bounded, in Rust, with no copyleft
+  code. Inverse search is left out; see *Not planned*.
+- Commands: the launch and CLI options only.
+
+#### 7.8 Windows Explorer: thumbnails, preview and search, opt-in
+
+Decided 2026-10-15: built, and **off until the reader turns it on**.
+
+SumatraPDF registers a thumbnail provider, a preview handler and a search filter, so Explorer
+shows the first page and Windows Search finds a PDF by its text. All three are COM servers
+that Explorer, `prevhost.exe` or the search indexer load **into their own process**, which
+would put a PDF parser exactly where *Every PDF is hostile input* says it must not be. So the
+COM server is thin: it starts a tpdf worker, sandboxed as today, and receives only pixels
+(thumbnail, preview) or text (search) back. It parses nothing itself.
+
+- Opt-in: the installer registers nothing. *Show PDFs in Explorer with tpdf* registers the
+  three servers for the current user (`HKCU\Software\Classes`, no administrator rights);
+  *Stop showing PDFs in Explorer with tpdf* removes them. The choice survives an update, and
+  uninstalling removes the registration whatever the setting.
+- If another program already owns the `.pdf` thumbnail or preview handler, the command says
+  which one and replaces it only after you confirm; turning tpdf's off puts the previous one
+  back.
+- Each request has a time limit and a size limit. A worker that fails or runs over returns
+  nothing, so Explorer shows its generic icon. A hostile PDF in a folder must not make
+  Explorer hang.
+- Commands: `app.enableExplorerIntegration`, `app.disableExplorerIntegration`.
+- `docs/THREAT-MODEL.md` gets the entry before the code: tpdf code running inside Explorer's
+  process, and documents tpdf reads without the reader having opened them.
+- Exit: on TEENYWEENY, with the integration turned on, a folder of the hostile corpus shows
+  thumbnails or generic icons and Explorer stays responsive; `scripts/win_modules.py`, run
+  against `explorer.exe` and `prevhost.exe`, finds no `pdfium.dll` loaded there; turning the
+  integration off leaves no tpdf key in the registry.
+
+#### Not planned, and why
+
+- LaTeX inverse search (double-click a place, and tpdf opens the editor at the source line),
+  left out 2026-10-15. It would give tpdf the authority to **start a program**, which it has
+  never had: the command is one the reader configures, and the file name and line inside it
+  come from the `.synctex.gz` file, which is outside input like the PDF. If it is taken up
+  later, three conditions apply: the threat-model entry is written first, the program is
+  started with an argument list and never through a shell, and a file name that is not a
+  source file beside the PDF is refused. Forward search (7.7) needs none of this, because
+  in that direction the editor starts tpdf.
+- Other formats (ePub, MOBI, FB2, CBZ/CBR, DjVu, XPS, CHM). tpdf is a PDF editor, and
+  SumatraPDF has them through MuPDF, which is the dependency the licensing section rejects.
+- Read aloud, translating or searching the selection on the web, AI chat, and *Open with*
+  other PDF programs: each is a feature of the operating system or of another program, one
+  copy away.
+- Interface languages: the cross-cutting localisation item below, when it becomes binding.
+- A portable build and a restricted mode for managed machines: wait for somebody who
+  manages machines to ask.
+- Page grid, page boxes, caret and file-attachment annotations, auto-scroll, tab colours and
+  tab groups: used rarely enough that each waits for a request.
+
 ### Cross-cutting
 
 OCR (feeding search, selection and redaction verification) has interfaces defined in

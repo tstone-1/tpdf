@@ -140,7 +140,7 @@ Checked on 2026-10-07 against each project's own pages. Prices are the vendors' 
 | Source code | MIT | GPL-3.0 | Closed | Not published | MIT core with proprietary parts |
 | macOS | Apple silicon | No | Yes | Yes | Yes |
 | Windows | Yes | Yes | Yes | Yes | Yes |
-| Edits documents | Yes | No, a reader with highlighting | In the paid versions | Yes | Yes |
+| Edits documents | Yes | Annotations only: highlights, notes, ink, shapes and stamps | In the paid versions | Yes | Yes |
 
 Acrobat sells redaction, text recognition and document comparison only in Pro. tpdf has the
 first two and no comparison yet. SumatraPDF's installer is 10.6 MB and tpdf's Windows
