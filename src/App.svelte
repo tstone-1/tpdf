@@ -114,6 +114,7 @@
   import { NewPasswordDialog } from "./lib/newpassworddialog";
   import { FieldPropertiesDialog, changeProperties, pickedField, type PropertiesDeps } from "./lib/fieldprops";
   import { duplicate, type DuplicateDeps } from "./lib/duplicate";
+  import { MarkClipboard, notCopied, shapeOf } from "./lib/markclipboard";
   import { EXTENSIONS as PICTURE_EXTENSIONS, afterPictures, suggestedName as pictureName } from "./lib/pictures";
   import { afterProtect, suggestedName as protectedName } from "./lib/protect";
   import { afterCompress, suggestedName as smallerName } from "./lib/compress";
@@ -1722,6 +1723,9 @@
     hasSelection: () => (status?.selected ?? 0) > 0,
     removeMark: () => removeMark(),
     hasOpenMark: () => viewer?.canRemoveMark ?? false,
+    copyMarks: (cut) => copyMarks(cut),
+    pasteMarks: () => void pasteMarks(),
+    canPasteMarks: () => markClipboard.marks.length > 0,
     removeRedaction: () => removeRedaction(),
     hasPickedRedaction: () => (viewer?.redactionPicked ?? -1) >= 0,
     canEditComment: () => viewer?.commentEditable ?? false,
@@ -2054,6 +2058,64 @@
    */
   function removeMark(): void {
     viewer?.removeMarks();
+  }
+
+  /** The marks last copied, for every tab: `markclipboard.ts`. */
+  const markClipboard = new MarkClipboard();
+
+  /**
+   * Copies the marks the viewer names, or cuts them. A cut refuses when any
+   * of them cannot be copied, so that nothing is removed that is not held.
+   */
+  function copyMarks(cut: boolean): void {
+    const state = edits?.state;
+    if (!viewer || !edits || !state) return;
+    const named = viewer.namedMarks();
+    const marks = state.marks.filter((mark) => named.includes(mark.id));
+    const page = marks[0]?.page;
+    if (page === undefined) return;
+    const refused = marks.flatMap((mark) => notCopied(mark.kind) ?? []);
+    if (cut && refused.length > 0) {
+      say(refused[0] ?? null);
+      return;
+    }
+    const { copied } = markClipboard.copy(marks, { doc: edits.doc, page });
+    if (copied === 0) {
+      say(refused[0] ?? "Nothing was copied");
+      return;
+    }
+    if (cut) viewer.removeMarks();
+    const kept = `${copied} mark${copied === 1 ? "" : "s"} ${cut ? "cut" : "copied"}`;
+    notice = refused.length > 0 ? `${kept}; ${refused.length} not copied: ${refused[0]}` : kept;
+    refreshMenu();
+  }
+
+  /**
+   * Makes the copied marks on the page in front, as one step of undo, and
+   * picks the ones that can be picked. On the page they came from they are set
+   * a step down and to the right, as a duplicate is.
+   */
+  async function pasteMarks(): Promise<void> {
+    const held = markClipboard.marks;
+    const view = openView, model = edits, mounted = viewer;
+    if (!mounted || !model || held.length === 0) return;
+    const front = mounted.placePasted(held, false);
+    if (!front) return;
+    const landed = markClipboard.onItsOwnPage(model.doc, front.page) ? mounted.placePasted(held, true) : front;
+    if (!landed) return;
+    const before = new Set(model.state.marks.map((mark) => mark.id));
+    // In the document it was asked for, whichever side the reader is in by
+    // the time each mark is made.
+    for (const [at, mark] of held.entries()) {
+      const placed = landed.placed[at];
+      if (!placed) continue;
+      const shape = shapeOf({ ...mark, quads: placed.quads, strokes: placed.strokes });
+      await applyEdit((e) =>
+        e.mark(mark.kind, landed.page, shape.quads, shape.strokes, mark.note, mark.color, mark.stamp, null,
+          mark.width, undefined, undefined, landed.sweep), view);
+    }
+    asDocument(view, () =>
+      viewer?.pick((edits?.state.marks ?? []).filter((mark) => !before.has(mark.id)).map((mark) => mark.id)));
   }
 
   /**

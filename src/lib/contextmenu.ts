@@ -74,7 +74,7 @@ export const PAGE_MENU: Entry[] = [
  * left-press it, wait for its note box, and choose Remove mark from a menu the
  * reader had to know was elsewhere. Reported from use.
  *
- * **One entry, and the other two things a mark can be asked are not missing.**
+ * **Remove, copy and cut, and the other two things a mark can be asked are not missing.**
  * The kind cannot be changed --- there is no command for it. The note and the
  * colour are both edited in the box that opens *with* this menu: the swatch row
  * is the first thing in it, so listing the seven `edit.color.*` commands here
@@ -92,7 +92,7 @@ export const PAGE_MENU: Entry[] = [
  * it is the reason there is still no second way to name a mark, which
  * `edit.removeMark`'s own note in `appcommands.ts` argues against at length.
  */
-export const MARK_MENU: Entry[] = ["edit.removeMark"];
+export const MARK_MENU: Entry[] = ["edit.removeMark", "edit.copyMark", "edit.cutMark"];
 
 /**
  * What a right-click on a region marked for removal offers.
@@ -162,6 +162,9 @@ export const SELECTION_MENU: Entry[] = [
   // and since the nib takes any mark rather than only a drawing's strokes, the
   // pointer is already on the thing the next sweep will take.
   "edit.erase",
+  // Paste where the pointer is not: onto the page in front, where the marks
+  // were on theirs. Left out until a mark has been copied.
+  "edit.pasteMark",
   "edit.copy",
   "edit.highlightSelection",
   "edit.underlineSelection",

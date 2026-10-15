@@ -1804,3 +1804,20 @@ describe("drawing a polygon or connected lines", () => {
     viewer.destroy();
   });
 });
+
+describe("where pasted marks land", () => {
+  it("is where they were, a step down and to the right on their own page, and inside the page", async () => {
+    const viewer = build();
+    await settle();
+    const shapes = [{ quads: [10, 20, 110, 70], strokes: [[12, 22, 108, 68]] }];
+    expect(viewer.placePasted(shapes, false)?.placed).toEqual([{ quads: [10, 20, 110, 70], strokes: [[12, 22, 108, 68]] }]);
+    const stepped = viewer.placePasted(shapes, true);
+    expect(stepped?.page).toBe(pageId(1));
+    expect(stepped?.placed).toEqual([{ quads: [22, 32, 122, 82], strokes: [[24, 34, 120, 80]] }]);
+    // At the page's lower right corner the step would leave the page, so the
+    // marks stay where they are.
+    const corner = viewer.placePasted([{ quads: [500, 700, 600, 800], strokes: [] }], true);
+    expect(corner?.placed[0]?.quads).toEqual([500, 700, 600, 800]);
+    viewer.destroy();
+  });
+});

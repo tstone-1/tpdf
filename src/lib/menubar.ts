@@ -241,6 +241,9 @@ export const MENU_LAYOUT: LayoutSection[] = [
       // make a mark stay together above it.
       "edit.erase",
       "edit.removeMark",
+      "edit.copyMark",
+      "edit.cutMark",
+      "edit.pasteMark",
       // After the reader's own marks, because its subject is somebody else's
       // annotation and grouping it with them would read as a fifth way to
       // change your own. Nothing arms it and nothing about it is destructive:

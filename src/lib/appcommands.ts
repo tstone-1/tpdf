@@ -520,6 +520,12 @@ export interface AppActions {
   removeMark(): void;
   /** Whether a mark's note is open, which is what names the mark to remove. */
   hasOpenMark(): boolean;
+  /** Copies the named marks to the window's own clipboard, or cuts them. See `markclipboard.ts`. */
+  copyMarks(cut: boolean): void;
+  /** Pastes the copied marks onto the page in front. */
+  pasteMarks(): void;
+  /** Whether any marks have been copied. */
+  canPasteMarks(): boolean;
   /**
    * Takes the picked region out of the list of what is to be removed.
    *
@@ -1864,6 +1870,26 @@ export function registerAppCommands(
       title: "Remove mark",
       enabled: () => withDocument() && actions.hasOpenMark(),
       run: () => actions.removeMark(),
+    },
+    // Marks, copied as their description and pasted through the ordinary add
+    // path, in this tab or another. No keys: ⌘C and ⌘V copy and paste text.
+    {
+      id: "edit.copyMark",
+      title: "Copy mark",
+      enabled: () => withDocument() && actions.hasOpenMark(),
+      run: () => actions.copyMarks(false),
+    },
+    {
+      id: "edit.cutMark",
+      title: "Cut mark",
+      enabled: () => withDocument() && actions.hasOpenMark(),
+      run: () => actions.copyMarks(true),
+    },
+    {
+      id: "edit.pasteMark",
+      title: "Paste mark",
+      enabled: () => withDocument() && actions.canPasteMarks(),
+      run: () => actions.pasteMarks(),
     },
     {
       // **Mark a region for removal.** The first half of `docs/PLAN.md` §6:

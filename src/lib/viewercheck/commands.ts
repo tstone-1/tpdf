@@ -490,6 +490,9 @@ export async function appCommandChecks(
     setNib: (id: string) => fired.push(`setNib:${id}`),
     markColor: () => "default",
     hasOpenMark: () => viewer.markOpen >= 0,
+    copyMarks: (cut) => fired.push(cut ? "cutMarks" : "copyMarks"),
+    pasteMarks: () => fired.push("pasteMarks"),
+    canPasteMarks: () => true,
     hasPickedRedaction: () => viewer.redactionPicked >= 0,
     canEditComment: () => viewer.commentEditable,
     editComment: () => {
@@ -772,6 +775,13 @@ export async function appCommandChecks(
   });
 
   const last = doc.page_count - 1;
+  /** A mark on the first page, with its note open: what names a mark to copy or cut. */
+  const openAMark = (id: number) => {
+    viewer.goToPage(0);
+    const mark = syntheticMark(viewer, id, "");
+    viewer.setMarks([mark]);
+    viewer.showMark(mark.id);
+  };
   /** The page a Back/Forward probe jumped to, recorded by its own `from`. */
   let wentTo = -1;
   const probes: Probe[] = [
@@ -1490,6 +1500,11 @@ export async function appCommandChecks(
         viewer.showMark(mark.id);
       },
     },
+    // Copy and cut are guarded as the removal is, so their `from` makes the
+    // same state: a mark with its note open.
+    { id: "edit.copyMark", ...shell("copyMarks"), read: () => fired.join(","), from: () => openAMark(4244) },
+    { id: "edit.cutMark", ...shell("cutMarks"), read: () => fired.join(","), from: () => openAMark(4245) },
+    { id: "edit.pasteMark", ...shell("pasteMarks"), read: () => fired.join(",") },
     {
       // The third viewer-guarded command, and its `from` makes its own state
       // for `edit.removeMark`'s reason exactly: a region, and that region
@@ -2091,6 +2106,10 @@ export async function appCommandChecks(
     // check was red on a clean tree, and stayed red unread because the harness
     // that runs this baseline prints only its first three failures.
     "edit.removeMark",
+    // Guarded as the removal is, on a mark being named, and declared with the
+    // commands. Paste is not here: it is guarded on marks having been copied.
+    "edit.copyMark",
+    "edit.cutMark",
     // Joined on 2026-08-27 with the command itself, rather than after the
     // harness went red for it. Nothing runs this harness automatically -- it
     // needs a real window, so it is not a gate -- and the note above records

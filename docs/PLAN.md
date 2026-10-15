@@ -18239,7 +18239,19 @@ points above the cropped page's top and the reader clips to it; `mark_check.py` 
 arrow and a polygon through their commands into the model and onto the overlay. Not
 measured: rendering in Acrobat or Preview, and a polygon drawn on a page turned by an edit.
 
-**Still to build in 7.5:** pictures, copying and pasting marks, and links.
+**Done 2026-10-15: copying, cutting and pasting marks** (`edit.copyMark`, `edit.cutMark`,
+`edit.pasteMark`). `markclipboard.ts` holds each mark's description, and a paste makes new
+marks through `Edits.mark`, so the model checks a pasted mark as it checks a drawn one. The
+marks a copy means are `Viewer.namedMarks`, the same as a removal's: the open note, or the
+picked ones. A paste goes to the page in front at the place the marks had on theirs, a step
+down and to the right on their own page, and is kept inside the page as a duplicate is
+(`Viewer.placePasted`). Not copied: the four marks made over words, which would mark nothing
+on another page; form fields, which *Duplicate* handles; and signature pictures, until a
+paste can carry their pixels. Held in the window, not on the system clipboard. Evidence:
+`mark_check.py` copies an arrow and pastes it 12 points down and right, and cuts a polygon
+and pastes it back, through the commands.
+
+**Still to build in 7.5:** pictures and links.
 
 SumatraPDF makes these and tpdf does not:
 

@@ -38,6 +38,11 @@ have the binary.)
 - **Close other tabs, Close tabs to the left and right, and Reopen closed tab.** From the tab
   in front or from a tab's right-click menu; unsaved changes are asked about once. *Reopen
   closed tab* (Ctrl+Shift+T, ⌘⇧T on macOS) opens the document closed last, where you left it.
+- **Copy, cut and paste marks.** *Copy mark* and *Cut mark*, also on a mark's right-click
+  menu, copy the mark whose note is open or the picked ones; *Paste mark* puts them on the
+  page in front, in this document or another tab, a step down and to the right when they
+  land on their own page. Highlights and the other marks made over words, form fields and
+  signature pictures are not copied, and a cut that includes one does nothing.
 - **Lines, arrows, polygons and connected lines.** *Add a line* and *Add an arrow* draw one
   by a drag from end to end; *Add a polygon* and *Add connected lines* take a corner per
   click, and Enter or a second click on the last corner finishes. They take the chosen

@@ -4633,6 +4633,48 @@ export class Viewer {
   }
 
   /**
+   * Where pasted marks land: on the page in front, at the place they had on
+   * their own page, moved a step down and to the right when `step` is set, and
+   * kept inside the page all together, as {@link copiesOfPicked} keeps a
+   * duplicate. Rectangles and points are in the file's space for their page and
+   * come back in it for this one. `null` with no page in front.
+   */
+  placePasted(
+    shapes: readonly { quads: readonly number[]; strokes: readonly (readonly number[])[] }[],
+    step: boolean,
+  ): { page: PageId; sweep: number; placed: { quads: number[]; strokes: number[][] }[] } | null {
+    const slot = this.currentPage();
+    const page = this.pages.idOf(slot);
+    if (page === undefined) return null;
+    const rects = (flat: readonly number[]) => {
+      const out: [number, number, number, number][] = [];
+      for (let at = 0; at + 3 < flat.length; at += 4) {
+        out.push([flat[at] ?? 0, flat[at + 1] ?? 0, flat[at + 2] ?? 0, flat[at + 3] ?? 0]);
+      }
+      return out;
+    };
+    const laid = shapes.map((shape) => rects(shape.quads).map((rect) => this.viewRectOn(slot, rect)));
+    const by = together(laid.flat(), step ? { dx: COPY_STEP, dy: COPY_STEP } : { dx: 0, dy: 0 }, this.laidSize(slot));
+    const moved = (quad: Quad) => this.fileRectOn(slot, {
+      left: quad.left + by.dx, top: quad.top + by.dy, right: quad.right + by.dx, bottom: quad.bottom + by.dy,
+    });
+    const placed = shapes.map((shape, at) => ({
+      quads: (laid[at] ?? []).flatMap(moved),
+      strokes: shape.strokes.map((stroke) => {
+        const points: number[] = [];
+        for (let one = 0; one + 1 < stroke.length; one += 2) {
+          const x = stroke[one] ?? 0;
+          const y = stroke[one + 1] ?? 0;
+          const back = moved(this.viewRectOn(slot, [x, y, x, y]));
+          points.push(back[0], back[1]);
+        }
+        return points;
+      }),
+    }));
+    return { page, sweep: shapes.length > 1 ? ++this.sweeps : 0, placed };
+  }
+
+  /**
    * Arranges the picked marks and reports where each one that moved now is.
    *
    * Worked out in the page's laid-out space, which is where a reader's left
@@ -5949,6 +5991,15 @@ export class Viewer {
   /** Whether there is a mark to remove: one whose note is open, or one that is picked. */
   get canRemoveMark(): boolean {
     return this.markNote.openId !== null || this.arranging.count > 0;
+  }
+
+  /**
+   * The marks a removal, a copy or a cut means: the one whose note is open,
+   * or with none open the picked ones. {@link removeMarks}'s choice, so a cut
+   * removes what it copied.
+   */
+  namedMarks(): readonly number[] {
+    return this.markNote.openId !== null ? [this.markNote.openId] : this.arranging.list();
   }
 
   /**
