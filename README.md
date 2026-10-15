@@ -179,8 +179,8 @@ Python client.
 
 **Status: released for macOS, Windows and Linux, with annotations, page editing, redaction, form filling, visual and certificate signatures, bounded text editing and a command-line tool.**
 The feasibility spikes are done and every load-bearing assumption has a measured verdict;
-on top of that evidence there is a viewer you can read a PDF in, on macOS arm64 and on
-Windows, including documents behind a password. **It edits**: pages can be turned, moved,
+on top of that evidence there is a viewer you can read a PDF in, on macOS arm64, Windows
+and Linux, including documents behind a password. **It edits**: pages can be turned, moved,
 deleted, cropped and extracted, a blank one inserted at the size you name, and the pages of another file inserted; text can be highlighted, underlined, struck out or
 squiggled; and you can draw on a page, put a box, an ellipse, a text box, a stamp or a
 comment on it, move what you put there, erase any of it, rewrite, answer or delete a comment
@@ -194,7 +194,8 @@ Make a form: place text fields, checkboxes, dropdowns and radio buttons, set the
 properties, arrange them, and change the fields a document already has.
 Fill text fields, checkboxes, radio groups,
 dropdowns and lists, or draw and import a visual signature to place on a page. Sign a
-document with a certificate from your macOS keychain or Windows certificate store, see
+document with a certificate from your macOS keychain or Windows certificate store, or on
+Linux from a smart card or a certificate file, see
 whether each signature in a document is intact and whether your computer trusts its signer,
 and sign, verify, extract, fill and redact from scripts with the `tpdf` command-line tool.
 Installers are on the [Releases](https://github.com/tstone-1/tpdf/releases) page:

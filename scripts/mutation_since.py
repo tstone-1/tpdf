@@ -329,7 +329,11 @@ def apply_near(mutations, ref: str, prefix: str = "") -> "tuple[list, int]":
 
     def read(path: str) -> "str | None":
         try:
-            return (ROOT / path).read_text(encoding="utf-8", newline="")
+            # `open`, not `Path.read_text(newline=...)`: that keyword is
+            # Python 3.13's, and Ubuntu 24.04 has 3.12, where `--near` died
+            # with a TypeError before selecting anything (2026-10-15).
+            with open(ROOT / path, encoding="utf-8", newline="") as f:
+                return f.read()
         except (OSError, UnicodeDecodeError):
             return None
 

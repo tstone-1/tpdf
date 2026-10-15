@@ -4341,8 +4341,11 @@ worker on Linux since the same day; before that the viewer parsed in the app pro
 the first run of the window checks showed as the uncontained warning.
 
 **Measured, OCR worker.** The parent starts it with `OMP_THREAD_LIMIT=1`. It opens
-`libtesseract.so.5` (or a `5.x` name, `ocr_tesseract::LIBRARIES`) before the boundary, then calls `apply_reading` with the language-data
-folder added to the font folders. `ocr-worker-probe` reads `Seccomp: 2` in the worker's
+`libtesseract.so.5` (or a `5.x` name, `ocr_tesseract::LIBRARIES`) before the boundary, then
+calls `apply_reading` with the language-data folder added to the font folders. When the
+library cannot be opened, it calls `apply_reading` with no folder added and then answers every
+request with the reason, so a worker without an engine is contained before it reads a
+request, as one with an engine is (`ocr_worker::Unopened`, 2026-10-15). `ocr-worker-probe` reads `Seccomp: 2` in the worker's
 `/proc/<pid>/status` and `0` in its own (the control), and the seccomp filter goes on only
 after Landlock has taken. Removing the boundary turned that row red (`Seccomp: worker 0`).
 Leaving out the data folder made Tesseract unable to start ("could not start with eng+deu"),

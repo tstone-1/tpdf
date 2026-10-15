@@ -839,9 +839,6 @@ fn a_third_parser_sees_the_turn_on_the_page_it_was_applied_to() {
 /// wrong in the count and in nothing else a smaller check would see.
 #[test]
 fn a_merge_holds_every_page_of_every_document() {
-    if !os_parser() {
-        return;
-    }
     let (Some(source), Some(other)) = (fixture("rotated.pdf"), fixture("links.pdf")) else {
         println!("[SKIP] a_merge_holds_every_page: generate testdata/ (BUILD.md)");
         return;
@@ -875,19 +872,29 @@ fn a_merge_holds_every_page_of_every_document() {
     // *readable* rather than well formed. A refusal is reported rather than
     // waved through: a merge the platform cannot open at all is the failure
     // this is here for.
+    //
+    // Linux has no such parser, and only that line is skipped there: the test
+    // returned before every count until 2026-10-15, so on Linux nothing named
+    // here checked the count the merge reports, and a mutation of it went red
+    // only in two tests about other things.
     let written = std::fs::read(&out).expect("read the merge back");
     #[cfg(any(target_os = "macos", windows))]
-    let read = os_pdf::read(&written).expect("the OS parser reads the merged document");
-    #[cfg(target_os = "linux")]
-    let Some(read) = os_pdf::read(&written) else {
-        println!("{}", os_pdf::SKIP);
-        return;
-    };
-    assert_eq!(
-        read.pages.len(),
-        mine + theirs,
-        "the OS parser counts every page of both documents"
+    let os_pages = Some(
+        os_pdf::read(&written)
+            .expect("the OS parser reads the merged document")
+            .pages
+            .len(),
     );
+    #[cfg(target_os = "linux")]
+    let os_pages = os_pdf::read(&written).map(|read| read.pages.len());
+    match os_pages {
+        Some(counted) => assert_eq!(
+            counted,
+            mine + theirs,
+            "the OS parser counts every page of both documents"
+        ),
+        None => println!("[SKIP] no OS parser here; the other two counts still run"),
+    }
     assert_eq!(
         page_count(&out),
         mine + theirs,
@@ -896,9 +903,8 @@ fn a_merge_holds_every_page_of_every_document() {
     assert_eq!(merged.pages as usize, mine + theirs, "and it says so");
     assert_eq!(merged.files, 1);
     println!(
-        "[OK] merged {mine} pages with {theirs} --- {} in all, {} to the OS parser",
+        "[OK] merged {mine} pages with {theirs} --- {} in all, {os_pages:?} to the OS parser",
         merged.pages,
-        read.pages.len()
     );
 }
 

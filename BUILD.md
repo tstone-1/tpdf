@@ -6985,6 +6985,31 @@ read through. **Not run:** the written copy of `tpdf long-term` against a public
 authority (`docs/VERIFICATION.md` has why), the new entry of `mutate_viewer.py` by the
 harness itself, `print-probe` and `redact-reach-probe`.
 
+**26.10.20 verification, 2026-10-15:** a release of fixes from the codebase review of that
+day, cut the day after 26.10.19. All 32 gates passed on macOS arm64 on the release tree and
+on Ubuntu 24.04 under WSL on the code before the version bump, with Cargo bounded to 3 jobs
+there by the gate runner's new Linux rule; `check_windows.py` type-checked the Windows tree,
+and `scripts/run_on_windows.py --suite all` passed 3,134 unit tests and 586 command-line
+tests with 4 skipped on the Windows build computer, which has had a display plug since that
+morning. `scripts/run_on_mac.py` passed 11/11 window checks on a second Mac, and
+`screenshots.py` on the Windows computer passed 45/45 checks with complete pictures at
+1920 x 1080. Every mutation selected `--near v26.10.19` on macOS was caught, 107 Rust (23
+skipped as Linux- or Windows-only) and 106 frontend, and all 38 of `mutate_python.py`. The same
+Rust selection on Linux under WSL first died in `mutation_since.py`, which used Python 3.13's
+`Path.read_text(newline=...)` on Ubuntu's 3.12; with that fixed, 123 of 124 were caught and
+the last went red only in two other tests: `a_merge_holds_every_page_of_every_document`
+returned before any of its counts on Linux, where there is no OS parser. It now skips only
+that parser's count, and the row is caught by its own test on both platforms. Fedora 44 and
+Ubuntu 22.04 were checked under WSL: on 22.04 the binaries refuse to start (GLIBC_2.39),
+which the README now states and `check_glibc_floor.py` holds; on Fedora `tpdf-cli` read,
+redacted with verification and recognised text once Tesseract was opened by its 5.x name.
+The normal bundle, with the development engine hidden: the bundled `tpdf-cli` answered
+`--version` with 26.10.20, verified `testdata/incr-signed.pdf`, read a fixture's text and
+redacted with verification. `tauri-plugin-updater` stayed at 2.13.3 (step 1). **Not run:**
+the bundle opened as a window on this Mac with its workers' libraries read, `menu_check.py`,
+`save_check.py`, `print-probe` and `redact-reach-probe`, and the signing phase of the window
+checks.
+
 **26.10.19 publication, 2026-10-15:** two rehearsal tags came first, because the Linux leg
 was new: rc1 failed in that leg's own check of the `.deb` (its members are named `usr/...`
 with no `./`, so `tar -xO ./usr/...` found nothing; it extracts with `dpkg-deb -x` now), and
@@ -8223,7 +8248,10 @@ starts at 0 and increments within the month.
    - **`der`, `x509-cert`, `ecdsa`, `p256`, `p384`, `sha1`, `signature`, and the second
      `sha2`** are one set and move together. `cms` 0.2.3 and `rsa` 0.9 need the old set,
      and the versions of both that take the new one are release candidates (`cms`
-     0.3.0-rc.0, `rsa` 0.10.0-rc.19). Take the set when both are released.
+     0.3.0-rc.0, `rsa` 0.10.0-rc.19). Take the set when both are released. The Linux
+     certificate-file reader's `pkcs5`, `des`, `rc2`, `cbc` and `hmac` belong to the same
+     generation (`Cargo.toml` says so beside `pkcs12`) and move with it (26.10.20).
+   - **`gtk` 0.19** is held by Tauri: `muda` and `tao` name 0.18. Take it when they do.
    - **`base64` 0.23** compiles here. It is held because 0.22 comes with
      `tauri-plugin-updater` and `wry`, and the note beside it in `Cargo.toml` chose it for
      adding no package; 0.23 would be a second copy. Take it when Tauri does.
@@ -8235,7 +8263,8 @@ starts at 0 and increments within the month.
    - **`tauri-plugin-updater` 2.14.0** and its npm half were held at 2.13.3 for 26.10.19
      (2026-10-14): step 12 asks for the new updater to be tested before the tag when its
      own crates move, which needs a Mac screen, and that release had the Linux packages to
-     land. Take it in a release that runs that test.
+     land. Take it in a release that runs that test. Held again for 26.10.20, a release of
+     fixes cut the day after.
 2. <a id="release-step-2"></a>Bump **all four** version files so they agree:
    - `package.json`
    - `package-lock.json` (top-level *and* the root package entry — `npm version <v> --no-git-tag-version` does both)
