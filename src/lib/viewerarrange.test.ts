@@ -469,8 +469,14 @@ describe("the arrow keys with marks picked", () => {
   it("are left to the page with nothing picked, and with a modifier held", async () => {
     const viewer = build();
     await settle();
-    // Not taken: with nothing picked an arrow is the page's, to scroll with.
-    expect(key("ArrowRight")).not.toHaveBeenCalled();
+    // With nothing picked an arrow is the page's, to scroll with. Read off the
+    // scroll offset since 2026-10-15: the page now takes the left and right
+    // arrows too, to pan, so whether the key was taken no longer says who took
+    // it. Zoomed so that there is room to scroll.
+    viewer.setZoomFixed(2);
+    const top = viewer.offset;
+    key("ArrowDown");
+    expect(viewer.offset).toBeGreaterThan(top);
     viewer.pick([1]);
     key("ArrowRight", false, { metaKey: true });
     key("ArrowRight", false, { ctrlKey: true });

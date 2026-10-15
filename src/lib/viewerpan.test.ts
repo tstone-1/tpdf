@@ -122,6 +122,135 @@ function drag(
   });
 }
 
+/** Sends one wheel event; the fields a test leaves out are a plain wheel's. */
+function wheel(fields: { deltaX?: number; deltaY?: number; deltaMode?: number; shiftKey?: boolean }): void {
+  dom.root.dispatch("wheel", {
+    deltaX: 0,
+    deltaY: 0,
+    deltaMode: 0,
+    shiftKey: false,
+    ctrlKey: false,
+    metaKey: false,
+    target: dom.root,
+    preventDefault: () => {},
+    ...fields,
+  });
+}
+
+/** Presses a key on the page; `fields` adds a code or a modifier. */
+function press(key: string, fields: Record<string, unknown> = {}): void {
+  dom.root.dispatch("keydown", {
+    key,
+    code: "",
+    shiftKey: false,
+    ctrlKey: false,
+    metaKey: false,
+    altKey: false,
+    target: dom.root,
+    preventDefault: () => {},
+    ...fields,
+  });
+}
+
+/** How far the mark moved between two readings, as `[across, down]`. */
+function moved(before: Anchor, after: Anchor): [number, number] {
+  return [after.left - before.left, after.top - before.top];
+}
+
+describe("Sideways scrolling from the wheel and the keyboard", () => {
+  it("pans with a sideways swipe, and scrolls with a vertical one as before", () => {
+    const viewer = build();
+    let before = anchor(viewer);
+    wheel({ deltaX: 50 });
+    expect(moved(before, anchor(viewer))).toEqual([-50, 0]);
+
+    // The control on the other axis, through the same handler: a handler that
+    // treated every wheel event as sideways would pass the line above.
+    before = anchor(viewer);
+    wheel({ deltaY: 30 });
+    expect(moved(before, anchor(viewer))).toEqual([0, -30]);
+  });
+
+  it("takes both axes of a diagonal swipe", () => {
+    const viewer = build();
+    const before = anchor(viewer);
+    wheel({ deltaX: 20, deltaY: 30 });
+    expect(moved(before, anchor(viewer))).toEqual([-20, -30]);
+  });
+
+  it("turns a Shift wheel sideways where the platform has not", () => {
+    const viewer = build();
+    const before = anchor(viewer);
+    wheel({ deltaY: 40, shiftKey: true });
+    // Sideways only: the page must not also go down.
+    expect(moved(before, anchor(viewer))).toEqual([-40, 0]);
+  });
+
+  it("takes a Shift wheel the platform turned round once, not twice", () => {
+    // macOS and Chromium on Windows deliver Shift with the wheel as `deltaX`
+    // with Shift still held. Turning it again would read the zero `deltaY`.
+    const viewer = build();
+    const before = anchor(viewer);
+    wheel({ deltaX: 40, shiftKey: true });
+    expect(moved(before, anchor(viewer))).toEqual([-40, 0]);
+  });
+
+  it("counts a line-mode sideways notch in lines", () => {
+    const viewer = build();
+    const before = anchor(viewer);
+    wheel({ deltaX: 1, deltaMode: 1 });
+    expect(moved(before, anchor(viewer))).toEqual([-40, 0]);
+  });
+
+  it("pans with the left and right arrows", () => {
+    const viewer = build();
+    let before = anchor(viewer);
+    press("ArrowRight");
+    expect(moved(before, anchor(viewer))).toEqual([-60, 0]);
+    before = anchor(viewer);
+    press("ArrowLeft");
+    expect(moved(before, anchor(viewer))).toEqual([60, 0]);
+  });
+
+  it("has nothing to pan at a zoom where the page fits", () => {
+    // `maxPan` is zero here, so nothing above could have passed on a document
+    // like this one: the tests zoom in for that reason.
+    const viewer = build(1);
+    const before = anchor(viewer);
+    wheel({ deltaX: 50 });
+    press("ArrowRight");
+    expect(moved(before, anchor(viewer))).toEqual([0, 0]);
+  });
+
+  it("scrolls a line with j and k, as the down and up arrows do", () => {
+    const viewer = build();
+    let before = anchor(viewer);
+    press("j");
+    expect(moved(before, anchor(viewer))).toEqual([0, -60]);
+    before = anchor(viewer);
+    press("k");
+    expect(moved(before, anchor(viewer))).toEqual([0, 60]);
+  });
+
+  it("takes j by its position, with Caps Lock on or another layout", () => {
+    const viewer = build();
+    for (const key of ["J", "о"]) {
+      const before = anchor(viewer);
+      press(key, { code: "KeyJ" });
+      expect(moved(before, anchor(viewer)), key).toEqual([0, -60]);
+    }
+  });
+
+  it("leaves j alone with a modifier held", () => {
+    const viewer = build();
+    for (const modifier of ["metaKey", "ctrlKey", "altKey", "shiftKey"]) {
+      const before = anchor(viewer);
+      press("j", { code: "KeyJ", [modifier]: true });
+      expect(moved(before, anchor(viewer)), modifier).toEqual([0, 0]);
+    }
+  });
+});
+
 describe("Middle-button panning", () => {
   it("moves the view with the pointer, on both axes", () => {
     const viewer = build();

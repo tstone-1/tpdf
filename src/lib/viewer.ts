@@ -706,6 +706,14 @@ const LINE_HEIGHT = 40;
 
 /** CSS pixels an arrow key scrolls. */
 const ARROW_STEP = 60;
+/**
+ * A letter pressed with no modifier, by character or by position: with Caps
+ * Lock on `j` arrives as `J` with no Shift, and on a Cyrillic layout as `о`.
+ */
+function bareLetter(event: KeyboardEvent, letter: string): boolean {
+  if (event.metaKey || event.ctrlKey || event.altKey || event.shiftKey) return false;
+  return event.key === letter || event.code === `Key${letter.toUpperCase()}`;
+}
 /** Which way each arrow key moves picked rectangles, as `[across, down]`. */
 const NUDGES = { ArrowLeft: [-1, 0], ArrowRight: [1, 0], ArrowUp: [0, -1], ArrowDown: [0, 1] } as const;
 /** How soon a second press on a rectangle must follow the first to open its box, in milliseconds. */
@@ -3181,14 +3189,25 @@ export class Viewer {
       return;
     }
 
-    const scale =
-      event.deltaMode === 1
-        ? LINE_HEIGHT
-        : event.deltaMode === 2
-          ? this.viewportSize().height
-          : 1;
-    this.scrollBy(event.deltaY * scale);
+    const unit = (page: number): number =>
+      event.deltaMode === 1 ? LINE_HEIGHT : event.deltaMode === 2 ? page : 1;
+    const { width, height } = this.viewportSize();
+    // Sideways: a trackpad swipe and a tilt wheel arrive as `deltaX`, and so
+    // does Shift with an ordinary wheel wherever the platform turns it round
+    // (macOS, and Chromium on Windows). Where it does not, Shift arrives with a
+    // `deltaY` alone and is turned round here, which is what a reader holding
+    // Shift is asking for. Until 2026-10-15 `deltaX` was dropped, so past
+    // fit-width only the middle button reached the right-hand side of a page.
+    const turned = event.shiftKey && event.deltaX === 0;
+    const across = turned ? event.deltaY : event.deltaX;
+    if (across !== 0) this.panBy(across * unit(width));
+    if (!turned) this.scrollBy(event.deltaY * unit(height));
   };
+
+  /** Moves the view sideways over the pages; nothing happens at fit width. */
+  private panBy(delta: number): void {
+    if (this.scroller.setPan(this.scroller.pan + delta)) this.wake();
+  }
 
   /**
    * The surface's key handling.
@@ -3368,10 +3387,16 @@ export class Viewer {
       const [x, y] = NUDGES[event.key as keyof typeof NUDGES];
       const step = event.shiftKey ? NUDGE_FAR : 1;
       this.nudgePicked(x * step, y * step);
-    } else if (event.key === "ArrowDown") {
+    } else if (event.key === "ArrowDown" || bareLetter(event, "j")) {
+      // `j` and `k` are SumatraPDF's and vi's line keys, by position as well
+      // as by character, for the two keyboards `Binding.code` names.
       this.scrollBy(ARROW_STEP);
-    } else if (event.key === "ArrowUp") {
+    } else if (event.key === "ArrowUp" || bareLetter(event, "k")) {
       this.scrollBy(-ARROW_STEP);
+    } else if (event.key === "ArrowRight") {
+      this.panBy(ARROW_STEP);
+    } else if (event.key === "ArrowLeft") {
+      this.panBy(-ARROW_STEP);
     } else if (event.key === "PageDown" || event.key === " ") {
       this.scrollBy(event.shiftKey ? -screen : screen);
     } else if (event.key === "PageUp") {
@@ -7612,8 +7637,9 @@ export class Viewer {
    *
    * It moves both axes, and the horizontal one only does anything past the
    * width of the window: `Scroller.maxPan` is zero at every fit zoom, so on an
-   * ordinary document this is a vertical drag until the reader zooms in, and
-   * from then on it is the only way to reach the right-hand side of the page.
+   * ordinary document this is a vertical drag until the reader zooms in. It is
+   * one of four ways across, with a sideways wheel, Shift with the wheel, and
+   * the left and right arrows ({@link onWheel}, {@link onKeyDown}).
    */
   private readonly onPanStart = (event: PointerEvent): void => {
     if (event.button !== MIDDLE_BUTTON) return;

@@ -511,3 +511,48 @@ ROWS += [
     # Linux was offered the Windows name for showing a file until 2026-10-15.
     Mutation("reveal: offer Linux the Windows name for showing a file", "src/lib/keys.ts", '  if (isLinux()) return "Show in Folder";\n', "", "names each platform's file manager, and none on Linux"),
 ]
+
+# --- sideways scrolling and the line keys, 2026-10-15 ------------------------
+# `viewer.ts`'s wheel handler dropped `deltaX` until then, and the left and
+# right arrows did nothing, so past fit-width only the middle button panned.
+ROWS += [
+    Mutation("reading keys: drop a sideways swipe", "src/lib/viewer.ts",
+        "    const across = turned ? event.deltaY : event.deltaX;",
+        "    const across = turned ? event.deltaY : 0;",
+        "pans with a sideways swipe, and scrolls with a vertical one as before"),
+    Mutation("reading keys: never turn a Shift wheel", "src/lib/viewer.ts",
+        "    const turned = event.shiftKey && event.deltaX === 0;",
+        "    const turned = false;",
+        "turns a Shift wheel sideways where the platform has not"),
+    Mutation("reading keys: turn a Shift wheel the platform already turned", "src/lib/viewer.ts",
+        "    const turned = event.shiftKey && event.deltaX === 0;",
+        "    const turned = event.shiftKey;",
+        "takes a Shift wheel the platform turned round once, not twice"),
+    Mutation("reading keys: scroll down as well as across for a turned wheel", "src/lib/viewer.ts",
+        "    if (!turned) this.scrollBy(event.deltaY * unit(height));",
+        "    this.scrollBy(event.deltaY * unit(height));",
+        "turns a Shift wheel sideways where the platform has not"),
+    Mutation("reading keys: count a sideways notch in pixels", "src/lib/viewer.ts",
+        "    if (across !== 0) this.panBy(across * unit(width));",
+        "    if (across !== 0) this.panBy(across);",
+        "counts a line-mode sideways notch in lines"),
+    Mutation("reading keys: pan left for the right arrow", "src/lib/viewer.ts",
+        "      this.panBy(ARROW_STEP);",
+        "      this.panBy(-ARROW_STEP);",
+        "pans with the left and right arrows"),
+    Mutation("reading keys: no j", "src/lib/viewer.ts",
+        '    } else if (event.key === "ArrowDown" || bareLetter(event, "j")) {',
+        '    } else if (event.key === "ArrowDown") {',
+        "scrolls a line with j and k, as the down and up arrows do"),
+    Mutation("reading keys: no k", "src/lib/viewer.ts",
+        '    } else if (event.key === "ArrowUp" || bareLetter(event, "k")) {',
+        '    } else if (event.key === "ArrowUp") {',
+        "scrolls a line with j and k, as the down and up arrows do"),
+    Mutation("reading keys: a line letter by its character alone", "src/lib/viewer.ts",
+        "  return event.key === letter || event.code === `Key${letter.toUpperCase()}`;",
+        "  return event.key === letter;",
+        "takes j by its position, with Caps Lock on or another layout"),
+    Mutation("reading keys: a line letter with a modifier held", "src/lib/viewer.ts",
+        "  if (event.metaKey || event.ctrlKey || event.altKey || event.shiftKey) return false;\n", "",
+        "leaves j alone with a modifier held"),
+]

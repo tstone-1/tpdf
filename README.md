@@ -222,8 +222,9 @@ project conventions.
 - Tiled rendering behind a virtual scroller; zoom — in, out, actual size, fit-width,
   fit-page, or a figure you type; view rotation; and page inversion for reading on a dark
   screen. **Hold the middle mouse button and the pages follow the pointer**, sideways as
-  well as down — which past fit-width is the only way to reach the right-hand side of a
-  page.
+  well as down. Past fit-width, a sideways swipe on a trackpad, Shift with the wheel, and
+  the left and right arrows also reach the right-hand side of a page. Space, the arrows,
+  Page Up and Page Down, Home and End scroll, and so do `j` and `k`, a line at a time.
   <!-- built: view.zoomIn view.zoomOut view.zoomTo view.actualSize view.fitWidth view.fitPage view.rotateClockwise view.rotateCounterClockwise view.invertPages -->
 - Text selection and copy; find-in-document, with case, whole-word, regular-expression and
   within-the-selection options; a sidebar carrying the outline, a page-thumbnail strip and

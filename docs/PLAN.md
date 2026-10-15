@@ -18054,19 +18054,31 @@ change and 7.3 depends on it. 7.4 to 7.7 are independent of each other and of 7.
 Each step registers its commands, so `readme.test.ts` refuses the step until the README
 names them; the command ids below are the planned ones.
 
-#### 7.1 Reading keys
+#### 7.1 Reading keys --- done 2026-10-15
 
-Today: `n`/`p`, Home/End, and the go-to-page chord. Missing: Space and Shift+Space for a
-screen down and up, `j`/`k` for a line, and half a screen. Whether the webview's native
-scrolling already answers Space and PageDown in every pane is **not measured**; measure it
-first, on all three platforms, with the find field, a form field and a text box focused,
-because a bare key must do nothing there (the rule `h`, `c`, `t` and `e` already follow).
+The plan said Space and Shift+Space were missing. They were not: the viewer's own key
+handler (`onKeyDown` in `viewer.ts`) already took Space, Shift+Space, PageUp, PageDown, the
+up and down arrows, Home, End, `n` and `p`, and returned early when a text field had the
+keyboard. Reading that handler was the measurement. What it showed missing was sideways
+movement: the wheel handler read `deltaY` only, so a trackpad's sideways swipe, a tilt wheel
+and Shift with a wheel did nothing, and the left and right arrows did nothing either. Past
+fit-width the middle button was the only way to reach the right-hand side of a page.
 
-- Commands: `nav.screenDown`, `nav.screenUp`, `nav.lineDown`, `nav.lineUp`.
-- `keys.ts`; the collision test in `keys.test.ts` covers the new bare letters.
-- Side by side: the keys move the focused side; with *Scroll both sides together* on, both.
-- Exit: a viewer check presses each key with and without a focused field and reads the
-  scroll offset.
+Done:
+
+- The wheel handler pans by `deltaX`. Shift with a wheel that arrives as `deltaY` alone is
+  turned sideways; where the platform has already turned it (macOS, Chromium on Windows) it
+  is taken once.
+- The left and right arrows pan, 60 px a press, as the up and down arrows scroll. With marks
+  picked they still move the marks.
+- `j` and `k` scroll a line, as SumatraPDF and vi do; by position as well as character, and
+  not with a modifier held.
+- No commands: the scroll keys are not in the palette, as Space and the arrows never were.
+- Tests: `viewerpan.test.ts`, *Sideways scrolling from the wheel and the keyboard*; the
+  mutations are the `reading keys:` rows in `scripts/mutation_rows/frontend/f05_latest.py`.
+
+Not done: half a screen. Its usual chord, vi's Ctrl+D, is *Duplicate* on Windows and Linux,
+where the accelerator is Ctrl, and Space already moves most of a screen.
 
 #### 7.2 Page layouts
 

@@ -64,6 +64,25 @@ import { CommandRegistry } from "./commands";
 const ID_SHAPED = /\b(?:app|edit|file|find|nav|view)\.[a-zA-Z][a-zA-Z0-9.]*/g;
 
 /**
+ * The ids Phase 7 plans, and no other. A plan names ids before they exist, and
+ * that is not a stale claim; but an id stays in this list only until it ships,
+ * which the last test below holds, so the exclusion cannot outlive the plan.
+ */
+const PLANNED = [
+  "app.disableExplorerIntegration", "app.enableExplorerIntegration",
+  "edit.addLink", "edit.addPicture", "edit.copyMark", "edit.copyRegionAsPicture",
+  "edit.cutMark", "edit.drawArrow", "edit.drawLine", "edit.drawPolygon",
+  "edit.drawPolyline", "edit.pasteMark", "edit.pastePicture",
+  "file.closeOtherTabs", "file.closeTabsLeft", "file.closeTabsRight",
+  "file.nextInFolder", "file.previousInFolder", "file.reopenClosedTab",
+  "file.saveAttachment", "file.saveRegionAsPicture",
+  "nav.addFavourite", "nav.nextFavourite", "nav.previousFavourite",
+  "view.book", "view.continuous", "view.facing", "view.fitContent", "view.fitHeight",
+  "view.fullScreen", "view.grayscale", "view.outlineCollapseAll", "view.outlineExpandAll",
+  "view.outlineToCurrent", "view.presentation", "view.rightToLeft", "view.singlePage",
+];
+
+/**
  * Id-shaped strings in the plan that are not claims about a registered command.
  *
  * A reason each, and an entry naming a string that no longer appears in the
@@ -89,6 +108,11 @@ const NOT_COMMANDS: Record<string, string> = {
   // tell a filename from an id without knowing every id, which is the thing it
   // is checking.
   "file.pdf": "a placeholder filename in two shell command lines, not an id",
+  // `--forward-search file.tex:LINE` in Phase 7's launch options.
+  "file.tex": "a placeholder source filename in a launch option, not an id",
+  ...Object.fromEntries(
+    PLANNED.map((id) => [id, "planned in Phase 7; the prose says the ids there are planned ones"]),
+  ),
 };
 
 /**
@@ -181,6 +205,15 @@ describe("PLAN.md against the command registry", () => {
       orphans,
       "NOT_COMMANDS entries naming strings absent from PLAN.md. An exclusion " +
         "that outlives its subject is a blanket permission nobody reads.",
+    ).toEqual([]);
+  });
+
+  it("keeps no planned id that has shipped", () => {
+    const shipped = PLANNED.filter((id) => registered.has(id));
+    expect(
+      shipped,
+      "Planned ids that are now registered. Take them out of PLANNED and say in " +
+        "PLAN.md that the step is done.",
     ).toEqual([]);
   });
 });

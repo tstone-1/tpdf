@@ -17,6 +17,14 @@ as *downloadable*, while the release sat as a draft that GitHub showed to nobody
 are given now because they are different facts, and only the second one means a reader can
 have the binary.)
 
+## [26.10.21] - Unreleased
+
+### Added
+
+- **Sideways scrolling.** A trackpad's sideways swipe, a tilt wheel, Shift with a wheel, and
+  the left and right arrows now move the view across a page wider than the window. Until now
+  only dragging with the middle button did. `j` and `k` scroll a line, as in SumatraPDF.
+
 ## [26.10.20] - 2026-10-15
 
 ### Changed
