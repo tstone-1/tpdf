@@ -29,7 +29,8 @@ const SHARED = [
   "is 276 ms, measured warm on an Apple silicon Mac",
   "brew install --cask tstone-1/tpdf/tpdf",
   "Open Source Developer Timo Stein",
-  "There is no build for Intel Macs, Windows on ARM or Linux",
+  "There is no build for Intel Macs, Windows on ARM or ARM Linux",
+  "sudo apt install ./tpdf",
 ];
 
 const FIGURE = /\d[\d.,]*\s?(?:ms|MB|GB)\b/g;

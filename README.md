@@ -1,6 +1,6 @@
 # tpdf
 
-A fast, lightweight PDF viewer and editor for macOS and Windows.
+A fast, lightweight PDF viewer and editor for macOS, Windows and Linux.
 
 As quick to open as SumatraPDF, with the editing an office needs: redaction that is verified,
 signatures, forms and comments, and a UI where you never hunt for a tool.
@@ -18,9 +18,27 @@ Take the file for your computer from the
 |---|---|---|
 | Mac with Apple silicon | `tpdf_<version>_aarch64.dmg` | Signed and notarized. Or `brew install --cask tstone-1/tpdf/tpdf` |
 | Windows, 64-bit | `tpdf_<version>_x64-setup.exe` | Installs for your user account, no administrator rights. Code-signed, see below |
+| Linux, x86-64: Debian, Ubuntu and their relatives | `tpdf_<version>_amd64.deb` | `sudo apt install ./tpdf_<version>_amd64.deb`; brings Tesseract for text recognition |
+| Linux, x86-64: any other distribution | `tpdf_<version>_amd64.AppImage` | `chmod +x` it and run it; nothing is installed |
 
 The `.sig`, `.tar.gz` and `latest.json` files beside them belong to the built-in updater;
-you do not need them. There is no build for Intel Macs, Windows on ARM or Linux.
+you do not need them. There is no build for Intel Macs, Windows on ARM or ARM Linux.
+
+**On Linux, four things differ from the other two.**
+
+- **No updates of its own.** tpdf on Linux never checks for a new version: install the new
+  package over the old one when a release comes out.
+- **Text recognition needs the system's Tesseract.** The `.deb` installs `libtesseract5` and
+  carries the English and German language data. The AppImage does not carry Tesseract: install
+  your distribution's `libtesseract5` (or equivalent) for text recognition and for checking a
+  redaction of a scanned page.
+- **Signing** uses a smart card or token through PKCS#11 (p11-kit), where the key stays on the
+  card, or a certificate file with an ECDSA key, which tpdf decrypts with the password you give
+  it for each signature. A certificate file with an RSA key is refused.
+- **A drawn signature is not kept** between sessions; draw or import it each time.
+
+The Linux packages are tested on Ubuntu 24.04. Other distributions and desktops have not been
+tried; a report of what works or does not is welcome as an issue.
 
 **The Windows installer is code-signed since 26.10.11**: the publisher reads *Open Source
 Developer Timo Stein*. The certificate is new, so Windows can still show "Windows protected
@@ -153,7 +171,7 @@ Python client.
 
 ## Status
 
-**Status: released for macOS and Windows, with annotations, page editing, redaction, form filling, visual and certificate signatures, bounded text editing and a command-line tool.**
+**Status: released for macOS, Windows and Linux, with annotations, page editing, redaction, form filling, visual and certificate signatures, bounded text editing and a command-line tool.**
 The feasibility spikes are done and every load-bearing assumption has a measured verdict;
 on top of that evidence there is a viewer you can read a PDF in, on macOS arm64 and on
 Windows, including documents behind a password. **It edits**: pages can be turned, moved,
@@ -1375,8 +1393,8 @@ Text editing is not redaction; use `redact` for confidential content.
 pip install tpdf-client
 ```
 
-It starts the command-line tool, so the application has to be installed as well, and it
-does nothing on Linux, where there is no tool. `uv pip install ./api/python` installs it
+It starts the command-line tool, so the application has to be installed as well; on Linux
+that is the `.deb`, which puts `tpdf-cli` on the `PATH` (the AppImage does not). `uv pip install ./api/python` installs it
 from a checkout.
 The client has no runtime dependencies and requires Python 3.10 or newer.
 
@@ -1552,7 +1570,8 @@ font fallback and rasterization can differ across OS or PDFium versions.
 **Text recognition.** `tpdf ocr scan.pdf -o searchable.pdf` writes a copy of a scanned
 document that can be searched, selected and copied from. Each page that has no text is
 rendered by the sandboxed worker and read by the operating system's own text recogniser,
-Vision on macOS and Windows OCR on Windows, in a separate process with no network access.
+Vision on macOS, Windows OCR on Windows and Tesseract on Linux, in a separate process with no
+network access.
 The words go into the copy as an invisible layer over the picture, one box per word, so
 the page looks exactly as it did. Nothing is uploaded and no recogniser is bundled.
 

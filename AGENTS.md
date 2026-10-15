@@ -29,7 +29,7 @@ a count in prose has none: three copies of that number once said 275 and 282 at 
 
 ## What tpdf is
 
-A desktop PDF viewer and editor for macOS and Windows. Built because nothing on the
+A desktop PDF viewer and editor for macOS, Windows and Linux. Built because nothing on the
 market fits: Adobe Acrobat is slow, buggy, and hides its tools behind endless menus;
 Foxit is the same shape with a different skin; SumatraPDF is fast and lightweight but
 cannot edit.
@@ -203,7 +203,7 @@ each provisional choice and the verdict is recorded per row (see `docs/PLAN.md` 
 | Shell | Tauri 2 | Settled |
 | Frontend | Svelte 5 (runes), TypeScript `strict: true`, Vite | Settled |
 | Backend | Rust | Settled |
-| Platforms | macOS + Windows; Linux planned since 2026-10-14 (`docs/PLAN.md` §1) | Settled for the two; Linux not built yet |
+| Platforms | macOS + Windows; Linux since 26.10.19 (deb and AppImage, no updater) | Settled; Linux tested on Ubuntu 24.04 only |
 | Rendering + text extraction | PDFium via [`pdfium-render`](https://docs.rs/pdfium-render) (BSD-3-Clause) | **Settled** — renders, extracts and sandboxes correctly; not usable for redaction (spikes 0.1, 0.3, 0.5) |
 | Object graph + content streams | [`lopdf`](https://docs.rs/lopdf) (MIT) | **Settled** — surgical rewriting and sanitation both work, with our own mark-and-sweep and an encryption guard (spikes 0.3, 0.4, 0.6) |
 | Hardened structural rewrite | [QPDF](https://qpdf.readthedocs.io/) (Apache-2.0) | Candidate — not required for the rewrite, and **no longer wanted for encryption either**: `lopdf`'s own `Document::encrypt` preserves it, measured against `qpdf` field for field (2026-08-28). Object streams remain |

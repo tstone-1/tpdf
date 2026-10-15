@@ -5,9 +5,10 @@ edit, fill, redact, sign and verify PDF documents from a script.
 
 **This package alone does not read a PDF.** The client starts the `tpdf` command-line tool
 and returns its JSON reports as dictionaries. The tool comes with the tpdf application for
-macOS and Windows, which has to be installed separately; see the
-[installation notes](https://github.com/tstone-1/tpdf#command-line-tool). There is no tool
-for Linux, so the client finds nothing to start there. It has no dependencies of its own.
+macOS, Windows and Linux, which has to be installed separately; see the
+[installation notes](https://github.com/tstone-1/tpdf#command-line-tool). On Linux that is
+the `.deb`, which puts `tpdf-cli` on the `PATH`; the AppImage does not, so the client finds
+nothing to start beside it. It has no dependencies of its own.
 
 ```
 pip install tpdf-client

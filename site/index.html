@@ -3,8 +3,8 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>tpdf: a fast PDF viewer and editor for macOS and Windows</title>
-<meta name="description" content="Free, open-source PDF viewer and editor for macOS and Windows. Redact, sign, annotate and fill forms on your own computer; no account, no telemetry.">
+<title>tpdf: a fast PDF viewer and editor for macOS, Windows and Linux</title>
+<meta name="description" content="Free, open-source PDF viewer and editor for macOS, Windows and Linux. Redact, sign, annotate and fill forms on your own computer; no account, no telemetry.">
 <style>
   :root {
     --page: #ffffff; --text: #1b1f24; --quiet: #57606a; --line: #d8dee4;
@@ -53,7 +53,7 @@
 <body>
 
 <header>
-  <h1>A fast PDF viewer and editor for macOS and Windows</h1>
+  <h1>A fast PDF viewer and editor for macOS, Windows and Linux</h1>
   <p class="lead">Free and open source. No account, no telemetry, and your documents
   stay on your computer.</p>
 
@@ -62,10 +62,17 @@
       Download for Mac<span>Apple silicon, signed and notarized</span></a>
     <a class="download" id="download-windows" href="https://github.com/tstone-1/tpdf/releases/latest">
       Download for Windows<span>64-bit, no administrator rights needed</span></a>
+    <a class="download" id="download-linux" href="https://github.com/tstone-1/tpdf/releases/latest">
+      Download for Linux<span>x86-64, .deb or AppImage</span></a>
   </div>
   <p class="small"><span id="version"></span>On a Mac you can also run
   <code>brew install --cask tstone-1/tpdf/tpdf</code>. There is no build for Intel Macs,
-  Windows on ARM or Linux.</p>
+  Windows on ARM or ARM Linux.</p>
+  <p class="small">On Linux, take the <code>.deb</code> on Debian or Ubuntu
+  (<code>sudo apt install ./tpdf_&lt;version&gt;_amd64.deb</code>) and the AppImage elsewhere.
+  tpdf on Linux does not update itself: install the new package when a release comes out.
+  Text recognition needs the system's Tesseract, which the <code>.deb</code> installs and the
+  AppImage does not. Tested on Ubuntu 24.04.</p>
   <p class="small">The Windows installer is code-signed; the publisher reads
   <em>Open Source Developer Timo Stein</em>. The certificate is new, so Windows can show
   "Windows protected your PC" the first time: choose <strong>More info</strong>, check

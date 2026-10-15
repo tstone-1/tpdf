@@ -1,5 +1,7 @@
-// Points the page's two download buttons at the installers of the latest
-// release.
+// Points the page's Mac and Windows download buttons at the installers of the
+// latest release. The Linux button keeps its link to the release page: there
+// are two Linux files, the `.deb` and the AppImage, and the note under the
+// buttons says which to take, so there is no one file to point at.
 //
 // WHY THE PAGE ASKS AT ALL. An installer's file name carries its version
 // (`tpdf_26.10.13_aarch64.dmg`), so no fixed link reaches it, and the release
@@ -64,8 +66,16 @@ async function fill() {
 
 if (typeof document !== "undefined") {
   // The reader's own platform first. An Intel Mac cannot be told from an Apple
-  // silicon one here, so the button says which Macs it is for.
-  const here = /Win/.test(navigator.userAgent) ? "windows" : /Mac/.test(navigator.userAgent) ? "mac" : null;
+  // silicon one here, so the button says which Macs it is for. Android says
+  // `Linux` too, and has no build.
+  const agent = navigator.userAgent;
+  const here = /Win/.test(agent)
+    ? "windows"
+    : /Mac/.test(agent)
+      ? "mac"
+      : /Linux/.test(agent) && !/Android/.test(agent)
+        ? "linux"
+        : null;
   if (here) document.getElementById(`download-${here}`)?.classList.add("here");
   fill().catch(() => {});
 }

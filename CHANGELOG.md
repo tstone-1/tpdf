@@ -21,6 +21,11 @@ have the binary.)
 
 ### Changed
 
+- **The README and the download page offer the Linux packages.** Both still said there was
+  no Linux build after 26.10.19 shipped one. They now list the `.deb` and the AppImage, how to
+  install each, and what differs on Linux: no built-in updates, Tesseract from the system for
+  the AppImage, the signing that works, and no kept drawn signature. `SECURITY.md`, the
+  package description and the Python client's notes say Linux too.
 - **Signing asks whether anyone else still needs to sign, instead of locking by default.**
   The signing dialog had *Lock the document after signing* ticked until you unticked it, so
   a colleague who received the copy could find it would take no further signature. The

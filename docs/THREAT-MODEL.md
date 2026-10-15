@@ -4276,7 +4276,7 @@ which is what makes it evidence rather than a milestone.
 
 ## 6a. Linux — Landlock and seccomp, added 2026-10-14
 
-Linux is on the roadmap but not shipped (`docs/PLAN.md` §1). This section exists because the
+Linux shipped in 26.10.19, released 2026-10-14; it was on the roadmap when this was written. This section exists because the
 introduction's rule binds the commit that wires a control, and the parser worker's Linux
 boundary landed on 2026-10-14 without a line here; this is that line, written the same day
 the OCR worker got its own.
