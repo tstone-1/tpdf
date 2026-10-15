@@ -163,6 +163,7 @@ import {
 } from "./text";
 import { ClickCounter } from "./clicks";
 import { leastSide } from "./fieldnames";
+import { inkBounds, rowContent, type InkBox, type RowContent } from "./inkbounds";
 import {
   clampZoom,
   fitZoom,
@@ -1211,6 +1212,12 @@ export class Viewer {
    * viewer has to remember *which* one, not merely that it is fitting.
    */
   private fit: FitMode = "width";
+  /** Content boxes per placeholder bitmap; see {@link inkOf}. */
+  private readonly inkCache = new WeakMap<ImageBitmap, InkBox | null>();
+  /** Pages of the last content fit that had no placeholder to measure yet. */
+  private contentWaiting: number[] = [];
+  /** Whether the content fit waiting on them came from the command, which lands on the content. */
+  private contentLanding = false;
 
   private frameHandle = 0;
   private running = false;
@@ -1671,6 +1678,7 @@ export class Viewer {
       // painted is worth keeping --- so the only correct action is at the level
       // that owns the window and can tell the reader.
       onGone: (message) => this.opts.onGone?.(message),
+      onPlaceholder: (page) => this.placeholderArrived(page),
     });
 
     this.sizeOverlay();
@@ -2560,6 +2568,7 @@ export class Viewer {
 
   /** The zoom `mode` asks for, against the viewport and page as they are now. */
   private zoomFor(mode: Fitted, page?: number): number {
+    if (mode === "content") return this.contentZoom(page ?? this.currentPage());
     const viewport = this.viewportSize();
     if (this.scroller.spread.columns === 1) {
       return fitZoom(mode, viewport, this.displayedPage(page));
@@ -2577,6 +2586,95 @@ export class Viewer {
         height_pt: Math.max(first.height_pt, second?.height_pt ?? 0),
       },
     );
+  }
+
+  /**
+   * A page's content box, measured on its tier-1 placeholder.
+   *
+   * `undefined` while the page has no placeholder yet, `null` for a blank page.
+   * Kept per bitmap, so a new placeholder (after a rotation, an edit or a
+   * change to inverting) is measured again and the old answer goes with it.
+   */
+  private inkOf(page: number): InkBox | null | undefined {
+    const bitmap = this.scroller.placeholderFor(page);
+    if (!bitmap) return undefined;
+    if (this.inkCache.has(bitmap)) return this.inkCache.get(bitmap) ?? null;
+    let ink: InkBox | null = null;
+    const canvas = document.createElement("canvas");
+    canvas.width = bitmap.width;
+    canvas.height = bitmap.height;
+    const context = canvas.getContext("2d", { willReadFrequently: true });
+    if (context) {
+      context.drawImage(bitmap, 0, 0);
+      ink = inkBounds(context.getImageData(0, 0, bitmap.width, bitmap.height).data, bitmap.width, bitmap.height);
+    }
+    this.inkCache.set(bitmap, ink);
+    return ink;
+  }
+
+  /**
+   * The content of `page`'s row, its pages in the order they sit on screen.
+   *
+   * A page with no placeholder yet counts as printed edge to edge, so the fit
+   * is no larger than fit-page until it is measured; its page is remembered,
+   * and {@link placeholderArrived} fits again when the bitmap lands.
+   */
+  private rowContentOf(page: number): { pages: number[]; content: RowContent | null } {
+    const pages = this.scroller.rowOf(page)
+      .sort((a, b) => this.scroller.pageOrigin(a).left - this.scroller.pageOrigin(b).left);
+    const waiting: number[] = [];
+    const content = rowContent(pages.map((one) => {
+      const ink = this.inkOf(one);
+      if (ink === undefined) waiting.push(one);
+      return { ...this.displayedPage(one), ink: ink === undefined ? { left: 0, top: 0, right: 1, bottom: 1 } : ink };
+    }));
+    this.contentWaiting = waiting;
+    return { pages, content };
+  }
+
+  /** The zoom at which the content of `page`'s row fits the window. */
+  private contentZoom(page: number): number {
+    const { content } = this.rowContentOf(page);
+    // Blank pages have no content to fit; the page is the nearest thing.
+    if (!content) return this.zoomFor("page", page);
+    const viewport = this.viewportSize();
+    return fitZoom(
+      "content",
+      { width: viewport.width - PAGE_GAP * content.gaps, height: viewport.height },
+      content,
+    );
+  }
+
+  /**
+   * Puts the content of the reader's row in the middle of the window.
+   *
+   * After the zoom: the fit makes the content as large as the window allows,
+   * and this moves the view sideways and down so that the margins it left out
+   * are off screen. The pan cannot move a row narrower than the window, which
+   * is then wholly in view already.
+   */
+  private landOnContent(page = this.currentPage()): void {
+    const { pages, content } = this.rowContentOf(page);
+    const start = content === null ? undefined : pages[content.first];
+    if (content === null || start === undefined) return;
+    const viewport = this.viewportSize();
+    const origin = this.scroller.pageOrigin(start);
+    const wide = content.width_pt * this.zoom + PAGE_GAP * content.gaps;
+    this.scroller.setPan(this.scroller.pan + origin.left + content.left_pt * this.zoom - (viewport.width - wide) / 2);
+    const tall = content.height_pt * this.zoom;
+    this.scrollTo(origin.top + content.top_pt * this.zoom - (viewport.height - tall) / 2);
+    this.wake();
+  }
+
+  /** Fits the content again when a page it was waiting to measure arrives. */
+  private placeholderArrived(page: number): void {
+    if (this.fit !== "content" || !this.contentWaiting.includes(page)) return;
+    const land = this.contentLanding;
+    const reading = this.currentPage();
+    this.applyFit(false, reading);
+    if (land) this.landOnContent(reading);
+    this.contentLanding = this.contentWaiting.length > 0 && land;
+    this.wake();
   }
 
   /**
@@ -2732,6 +2830,12 @@ export class Viewer {
   setFit(mode: Fitted): void {
     this.fit = mode;
     this.applyFit();
+    // Fit content also moves the view onto the content, now and again once
+    // every page of the row has been measured.
+    if (mode === "content") {
+      this.landOnContent();
+      this.contentLanding = this.contentWaiting.length > 0;
+    }
     this.wake();
   }
 

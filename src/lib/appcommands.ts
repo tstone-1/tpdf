@@ -1179,6 +1179,20 @@ export function registerAppCommands(
       run: () => actions.viewer()?.setFit("page"),
     },
     {
+      id: "view.fitHeight",
+      title: "Fit height",
+      enabled: withDocument,
+      run: () => actions.viewer()?.setFit("height"),
+    },
+    {
+      // SumatraPDF's Fit Content: the page's content without its blank
+      // margins, measured on the rendered page (`inkbounds.ts`).
+      id: "view.fitContent",
+      title: "Fit content",
+      enabled: withDocument,
+      run: () => actions.viewer()?.setFit("content"),
+    },
+    {
       // 100% means one CSS pixel per PDF point, which is not the same as one
       // inch on the desk --- that would need the display's physical size, which
       // no browser reports honestly. Every other reader calls this number

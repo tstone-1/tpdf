@@ -61,6 +61,10 @@ pub enum Fit {
     Width,
     /// The whole page is visible at once.
     Page,
+    /// The page fills the window's height.
+    Height,
+    /// The page's content, without its blank margins, is visible at once.
+    Content,
 }
 
 /// Where one document was left.
@@ -957,7 +961,7 @@ mod tests {
     fn a_fit_is_written_with_the_spelling_the_frontend_reads() {
         // The one field here whose two ends are in different languages, so
         // nothing but this asserts they agree: `FitMode` in `src/lib/zoom.ts` is
-        // a union of these three strings, and a `rename_all` that produced
+        // a union of these strings, and a `rename_all` that produced
         // `"Width"` would deserialize on this side and be an unknown mode on
         // that one --- where TypeScript cannot see it either, since a value off
         // the IPC is whatever the annotation claims.
@@ -965,6 +969,8 @@ mod tests {
             (Fit::None, "none"),
             (Fit::Width, "width"),
             (Fit::Page, "page"),
+            (Fit::Height, "height"),
+            (Fit::Content, "content"),
         ] {
             let json = serde_json::to_string(&fit).expect("serialize");
             assert_eq!(json, format!("\"{spelling}\""));

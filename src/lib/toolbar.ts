@@ -240,7 +240,8 @@ export const WINDOW_MENU: MenuSection[] = [
 export const HEADER_COMMANDS = [
   "file.save", "file.saveCopy", "file.print", "edit.undo", "edit.redo",
   "nav.previousPage", "nav.nextPage", "nav.goToPage", "view.zoomIn",
-  "view.zoomOut", "view.fitWidth", "view.fitPage", "view.actualSize", "view.zoomTo",
+  "view.zoomOut", "view.fitWidth", "view.fitPage", "view.fitHeight",
+  "view.fitContent", "view.actualSize", "view.zoomTo",
 ];
 
 /** Refresh from the shell's status/edit notifications; guards are not reactive. */

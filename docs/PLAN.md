@@ -18080,7 +18080,7 @@ Done:
 Not done: half a screen. Its usual chord, vi's Ctrl+D, is *Duplicate* on Windows and Linux,
 where the accelerator is Ctrl, and Space already moves most of a screen.
 
-#### 7.2 Page layouts --- facing, book view and one page at a time done 2026-10-15
+#### 7.2 Page layouts --- facing, book view, one page at a time and the fits done 2026-10-15
 
 SumatraPDF has single page, facing pages and book view (page 1 alone, then pairs), each
 continuous or one row at a time, plus fit height, fit content, and right-to-left rows (its
@@ -18129,10 +18129,19 @@ turns several pages for one swipe. Going back lands at the end of the row before
 keeps its centre within the row (the slots do not scale with the zoom), and a resize keeps
 the reader's page. Remembered with the place as `continuous`.
 
-**Still to build in 7.2:** fit height and fit content join the zoom commands
-(`view.fitHeight`, `view.fitContent`). Fit content needs each page's content bounds, which
-`textedit` already computes for text; for a page of pictures it is the rendered ink bounds,
-measured on the tier-1 placeholder.
+**Done: fit height and fit content** (`view.fitHeight`, `view.fitContent`), two more values
+of `FitMode`, kept through a resize and a restart like the others. Fit content follows
+SumatraPDF's source: the content box fits on both axes, and facing pages fit as one box with
+the inner margins kept. The box is the ink on the tier-1 placeholder for every kind of page,
+not `textedit`'s text bounds: one measurement covers scans and drawings too, and the 150 px
+bitmap is precise to about 4 points on A4, inside the 12 px margin the fit leaves
+(`inkbounds.ts`). The paper is the placeholder's corner colour, so an inverted page measures
+the same. A fit asked for before the placeholder exists counts the page as printed to its
+edges and fits again when it lands. The command then moves the view so the content is in the
+middle of the window. Run in a window: `tabs_check.py --phase fit` on `comments.pdf`, 5 of 5
+on macOS; removing the landing or the content zoom each turns a check red. Not measured: the
+sideways landing, because no fixture page is wider than the check's window at fit content,
+and the refit when a placeholder arrives late, which the check cannot provoke.
 
 #### 7.3 Full screen and presentation --- built 2026-10-15, run in a window on macOS
 

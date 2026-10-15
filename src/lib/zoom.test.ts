@@ -15,6 +15,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   clampZoom,
+  CONTENT_MARGIN,
   describeFit,
   FIT_MARGIN,
   fitZoom,
@@ -24,6 +25,7 @@ import {
   parseZoomPercent,
   percentOf,
   ZOOM_STEPS,
+  type FitMode,
 } from "./zoom";
 
 /** A4 in points, which is what most of these are fitted against. */
@@ -108,7 +110,24 @@ describe("fitZoom", () => {
     expect(fitZoom("width", { width: 1, height: 1 }, A4)).toBe(MIN_ZOOM);
     expect(fitZoom("page", { width: 1, height: 1 }, A4)).toBe(MIN_ZOOM);
   });
+
+  it("fits the height alone, whatever the width", () => {
+    // A page wider than the window at this zoom runs off the sides; that is
+    // what separates fit-height from fit-page.
+    expect(fitZoom("height", { width: 300, height: 900 }, A4)).toBe(900 / A4.height_pt);
+  });
+
+  it("fits a content box on both axes, inside a margin on all four sides", () => {
+    // A column of text 300 x 600 points: the height binds in a wide window and
+    // the width in a narrow one, each less the margin on both of its sides.
+    const column = { width_pt: 300, height_pt: 600 };
+    expect(fitZoom("content", { width: 2000, height: 800 }, column))
+      .toBe((800 - CONTENT_MARGIN * 2) / 600);
+    expect(fitZoom("content", { width: 500, height: 2000 }, column))
+      .toBe((500 - CONTENT_MARGIN * 2) / 300);
+  });
 });
+
 
 describe("nextStop", () => {
   it("steps to the neighbouring stop in each direction", () => {
@@ -180,10 +199,8 @@ describe("parseZoomPercent", () => {
 
 describe("describeFit", () => {
   it("gives each mode its own words", () => {
-    const said = ["none", "width", "page"].map((mode) =>
-      describeFit(mode as "none" | "width" | "page"),
-    );
-    expect(new Set(said).size).toBe(3);
+    const modes: FitMode[] = ["none", "width", "page", "height", "content"];
+    expect(new Set(modes.map(describeFit)).size).toBe(modes.length);
     expect(describeFit("page")).toBe("Fit page");
   });
 });

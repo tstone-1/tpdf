@@ -398,6 +398,8 @@ export const MENU_LAYOUT: LayoutSection[] = [
       SEPARATOR,
       "view.fitWidth",
       "view.fitPage",
+      "view.fitHeight",
+      "view.fitContent",
       "view.actualSize",
       SEPARATOR,
       "view.rotateClockwise",

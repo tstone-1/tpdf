@@ -6080,7 +6080,7 @@
       <details class="zoom-menu" bind:this={zoomMenu}>
         <summary title={describeFit(status.fit)}>{percentOf(status.zoom)}%<span class="chevron" aria-hidden="true"></span></summary>
         <div class="zoom-options">
-          {#each ['view.fitWidth', 'view.fitPage', 'view.actualSize', 'view.zoomIn', 'view.zoomOut', 'view.zoomTo'] as id}
+          {#each ['view.fitWidth', 'view.fitPage', 'view.fitHeight', 'view.fitContent', 'view.actualSize', 'view.zoomIn', 'view.zoomOut', 'view.zoomTo'] as id}
             <button disabled={!toolState[id]?.enabled} onclick={(event) => {
               event.currentTarget.closest('details')?.removeAttribute('open');
               runToolbarCommand(id);

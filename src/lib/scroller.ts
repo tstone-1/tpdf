@@ -185,6 +185,12 @@ export interface ScrollerOptions {
    * report into, do not each need a stub.
    */
   onGone?: (message: string) => void;
+  /**
+   * Called after a page's tier-1 placeholder arrives, outside the frame that
+   * adopted it. Fit content measures a page's content on that bitmap, and a fit
+   * asked for before it existed is redone when it lands.
+   */
+  onPlaceholder?: (page: number) => void;
 }
 
 /** What one frame of scrolling cost and how much of it was covered. */
@@ -1584,6 +1590,10 @@ export class Scroller {
       }
       this.placeholders.set(page, bitmap);
       if (this.opts.layout === "tiles") this.mountPlaceholder(page, bitmap);
+      const told = this.opts.onPlaceholder;
+      // A microtask, so a listener that changes the zoom does not do it in the
+      // middle of the frame that is adopting arrivals.
+      if (told) queueMicrotask(() => told(page));
     }
   }
 

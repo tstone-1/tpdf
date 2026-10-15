@@ -29,7 +29,7 @@
  */
 
 /** What the zoom is following, if anything. */
-export type FitMode = "none" | "width" | "page";
+export type FitMode = "none" | "width" | "page" | "height" | "content";
 
 /** The fits that compute a zoom. `"none"` is the absence of one. */
 export type Fitted = Exclude<FitMode, "none">;
@@ -57,6 +57,15 @@ export const MAX_ZOOM = 16;
 
 /** Margin either side of the page when fitting, in CSS pixels. */
 export const FIT_MARGIN = 24;
+
+/**
+ * Margin around the content when fitting it, on all four sides, in CSS pixels.
+ *
+ * On all four, unlike {@link FIT_MARGIN}: the content box is inside the page,
+ * so the page's own paper is around it and text flush against the window's
+ * edge would read as cut off.
+ */
+export const CONTENT_MARGIN = 12;
 
 /** The viewport a page is being fitted into, in CSS pixels. */
 export interface Viewport {
@@ -90,6 +99,15 @@ export function clampZoom(zoom: number): number {
  * would be unreachable, and an unreachable guard reads as load-bearing.
  */
 export function fitZoom(mode: Fitted, viewport: Viewport, page: PagePoints): number {
+  if (mode === "content") {
+    // `page` is the content box here, not the sheet: SumatraPDF's Fit Content,
+    // which fits that box on both axes, as fit-page fits the sheet.
+    return clampZoom(Math.min(
+      (viewport.width - CONTENT_MARGIN * 2) / page.width_pt,
+      (viewport.height - CONTENT_MARGIN * 2) / page.height_pt,
+    ));
+  }
+  if (mode === "height") return clampZoom(viewport.height / page.height_pt);
   const wide = (viewport.width - FIT_MARGIN * 2) / page.width_pt;
   if (mode === "width") return clampZoom(wide);
   // No vertical margin, unlike the horizontal one: pages are laid out flush
@@ -141,6 +159,8 @@ export function parseZoomPercent(raw: string): number | null {
 export function describeFit(mode: FitMode): string {
   if (mode === "width") return "Fit width";
   if (mode === "page") return "Fit page";
+  if (mode === "height") return "Fit height";
+  if (mode === "content") return "Fit content";
   return "Fixed zoom";
 }
 

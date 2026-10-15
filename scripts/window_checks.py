@@ -55,6 +55,7 @@ CHECKS: list[tuple[str, str, str, list[str]]] = [
     ("form beside", "tabs_check.py", "testdata/form.pdf", ["--phase", "form-beside"]),
     ("import", "tabs_check.py", "testdata/text-base14.pdf",
      ["--phase", "import", "--other", "testdata/links.pdf"]),
+    ("fit", "tabs_check.py", "testdata/comments.pdf", ["--phase", "fit"]),
     ("session", "session_check.py", TEXT, []),
 ]
 

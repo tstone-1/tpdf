@@ -220,12 +220,14 @@ project conventions.
   the account, including why a path that only *reads* was missed by a section, a risk and a
   gate that are all keyed on writing.
 - Tiled rendering behind a virtual scroller; zoom — in, out, actual size, fit-width,
-  fit-page, or a figure you type; view rotation; and page inversion for reading on a dark
+  fit-page, fit-height, fit-content, or a figure you type; view rotation; and page inversion for reading on a dark
   screen. **Hold the middle mouse button and the pages follow the pointer**, sideways as
   well as down. Past fit-width, a sideways swipe on a trackpad, Shift with the wheel, and
   the left and right arrows also reach the right-hand side of a page. Space, the arrows,
   Page Up and Page Down, Home and End scroll, and so do `j` and `k`, a line at a time.
-  <!-- built: view.zoomIn view.zoomOut view.zoomTo view.actualSize view.fitWidth view.fitPage view.rotateClockwise view.rotateCounterClockwise view.invertPages -->
+  **Fit content** leaves out the blank margins: the printed part of the page fills the
+  window, measured on the rendered page, so it works on a scan too.
+  <!-- built: view.zoomIn view.zoomOut view.zoomTo view.actualSize view.fitWidth view.fitPage view.fitHeight view.fitContent view.rotateClockwise view.rotateCounterClockwise view.invertPages -->
 - **Facing pages and book view.** *Pages: facing* puts two pages side by side, and *Pages:
   book, with the cover alone* puts the first page alone on the right and pairs the rest, as in
   a printed book. *Pages: one to a row* goes back. *Facing pages: read right to left* turns

@@ -944,6 +944,18 @@ export async function appCommandChecks(
       read: fit,
       moved: (b, a) => b !== "page" && a === "page",
     },
+    {
+      id: "view.fitHeight",
+      from: () => viewer.setFit("width"),
+      read: fit,
+      moved: (b, a) => b !== "height" && a === "height",
+    },
+    {
+      id: "view.fitContent",
+      from: () => viewer.setFit("width"),
+      read: fit,
+      moved: (b, a) => b !== "content" && a === "content",
+    },
     // The layouts, with one page to a row last, so the probes after these find
     // the view as every other probe does.
     {
