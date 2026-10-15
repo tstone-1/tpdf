@@ -354,9 +354,12 @@ run, and read the job count beside the conclusion — three jobs (macOS, Windows
 
 What CI structurally cannot cover, and the reason `BUILD.md` still schedules them by hand:
 `window_checks.py` and `mutate_viewer.py` drive a real window and need an unlocked,
-unoccluded screen, so on a headless runner they do not fail, **they hang** — which is the
-failure shape this repository is least able to read, since a hang and a pass both produce no
-red. The mutation harnesses rebuild per mutation and take minutes.
+unoccluded screen, so on a headless macOS or Windows runner they do not fail, **they hang** —
+which is the failure shape this repository is least able to read, since a hang and a pass both
+produce no red. The mutation harnesses rebuild per mutation and take minutes. Linux is the
+exception: Xvfb is a screen, so since 2026-10-15 the Ubuntu job runs `viewer_check.py` on a
+debug checks build, the one check in CI that sees the window come up blank (`ci.yml`, its last
+step).
 
 `release.yml` (tag-only, invokes `scripts/gates.py`, signs `libpdfium.dylib` before bundling,
 creates a draft) and the Windows viewer measurements — including the warning that every harness

@@ -641,8 +641,9 @@ uv run scripts/tabs_check.py <checks-binary> testdata/text-base14.pdf --phase co
 #   own controls and the question's own buttons; only the save panel is
 #   answered by a path (`src/lib/saveanswer.ts`), because no phase drives one.
 #     1  text-base14 copy open; Sign document...; the identity; Invisible.
-#     2  no authority preselected, long-term disabled; DigiCert, long-term
-#        unticked; Sign. The closing sentence names the file, intact, the
+#     2  Sectigo preselected; long-term disabled under No timestamp; DigiCert,
+#        long-term unticked; the lock question with no answer, Sign refused
+#        with the reason, then No, I am the last to sign; Sign. The closing sentence names the file, intact, the
 #        timestamp attested by DigiCert, the authority trusted, and no
 #        revocation. The save panel would have suggested <name>-signed.pdf.
 #     3  the saved copy's Document properties: intact; timestamp attested by
@@ -2723,8 +2724,13 @@ a description of the circumstances, not an argument.
 
 **What CI cannot cover, and why the harnesses below stay manual.** `viewer_check.py` and
 `mutate_viewer.py` drive a real window and need an unlocked, unoccluded screen. On a
-headless runner they do not fail, **they hang** — which is the failure shape this project
-reads worst, since a hang and a pass both produce no red. Do not add them to a workflow.
+headless macOS or Windows runner they do not fail, **they hang** — which is the failure shape
+this project reads worst, since a hang and a pass both produce no red. Do not add them to a
+workflow on those two. On Linux Xvfb is a screen and nothing hangs, so the Ubuntu job of both
+workflows runs `viewer_check.py` under `xvfb-run` since 2026-10-15: the blank window of
+`ca1203e4`, put back, failed it in WSL with *The page threw while it was being built*, and the
+tree passed it, 355 of 355 in 42 s on `links.pdf`. It is a launch check: the full window checks
+and the mutation tables stay here.
 
 `.github/workflows/release.yml` fires on a CalVer tag. It **invokes `scripts/gates.py`** on
 both platforms rather than re-listing commands in YAML, so the checklist and the gate stay

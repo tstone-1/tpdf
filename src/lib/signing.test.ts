@@ -21,7 +21,7 @@ import {
   type SigningShell,
 } from "./signing";
 import { CHOICE_KEY, LONG_TERM_KEY } from "./signtimestamp";
-import { LOCK_KEY } from "./signlock";
+import { LOCK_UNANSWERED } from "./signlock";
 import { LOCKED, WITHOUT_CERTIFICATE } from "./signing";
 import { FakeElement, installFakeDom } from "./testdom";
 
@@ -552,17 +552,23 @@ describe("the chooser", () => {
     const field = (label: string) =>
       all.find((node) => node.tagName === "input" && node.attributes.get("aria-label") === label)!;
     const alert = () => all.find((node) => node.attributes.get("role") === "alert")!;
-    /** A checkbox, which has a name and no value. */
-    const box = (name: string) => all.find((node) => node.tagName === "input" && node.name === name)!;
-    return { answer, radio, button, field, alert, box, done };
+    /** Every alert line's text: the timestamp address's, then the lock question's. */
+    const alerts = () => all.filter((node) => node.attributes.get("role") === "alert").map((node) => node.textContent);
+    /** Answers the lock question: `last` locks, `others` does not. */
+    const answerLock = (value: "last" | "others") => {
+      radio("sign-lock", value).checked = true;
+    };
+    return { answer, radio, button, field, alert, alerts, answerLock, done };
   }
 
   // No storage is handed over in this block, and the fake window has none:
-  // storage that throws reads as no timestamp and as a lock.
+  // storage that throws reads as no timestamp. The lock question is answered
+  // "last" wherever a test is about something else.
   it("offers a visible signature first when a signature field is being signed", async () => {
     const pressed = open([choice], undefined, "Approved");
     expect(pressed.radio("sign-appearance", "visible").checked).toBe(true);
     expect(pressed.radio("sign-appearance", "invisible").checked).toBe(false);
+    pressed.answerLock("last");
     pressed.button("Sign…").dispatch("click", {});
     expect(await pressed.answer).toEqual({
       identity: "abc", visible: true, timestamp: null, longTerm: false, lock: true,
@@ -574,6 +580,7 @@ describe("the chooser", () => {
     const first = open([choice]);
     expect(first.radio("sign-appearance", "visible").checked).toBe(true);
     expect(first.radio("sign-appearance", "invisible").checked).toBe(false);
+    first.answerLock("last");
     first.button("Sign…").dispatch("click", {});
     expect(await first.answer).toEqual({
       identity: "abc", visible: true, timestamp: null, longTerm: false, lock: true,
@@ -583,6 +590,7 @@ describe("the chooser", () => {
     const second = open([choice]);
     second.radio("sign-appearance", "visible").checked = false;
     second.radio("sign-appearance", "invisible").checked = true;
+    second.answerLock("last");
     second.button("Sign…").dispatch("click", {});
     expect(await second.answer).toEqual({
       identity: "abc", visible: false, timestamp: null, longTerm: false, lock: true,
@@ -590,31 +598,36 @@ describe("the chooser", () => {
     second.done();
   });
 
-  it("locks the document until the reader unticks it, and remembers which", async () => {
+  it("asks whether anyone else signs, with no answer, and signs nothing until it has one", async () => {
     const { store, storage } = memory();
     const first = open([choice], storage);
-    const box = (c: ReturnType<typeof open>) => c.box("sign-lock");
-    expect(box(first).checked).toBe(true);
-    box(first).checked = false;
+    expect(first.radio("sign-lock", "last").checked).toBe(false);
+    expect(first.radio("sign-lock", "others").checked).toBe(false);
+    first.button("Sign…").dispatch("click", {});
+    let settled = false;
+    void first.answer.then(() => (settled = true));
+    await Promise.resolve();
+    expect(settled).toBe(false);
+    expect(first.alerts()).toContain(LOCK_UNANSWERED);
+    first.answerLock("others");
     first.button("Sign…").dispatch("click", {});
     expect((await first.answer)?.lock).toBe(false);
     first.done();
-    expect(store.get(LOCK_KEY)).toBe("false");
 
+    // Not remembered: the next document asks again, from nothing.
     const second = open([choice], storage);
-    expect(box(second).checked).toBe(false);
-    box(second).checked = true;
+    expect(second.radio("sign-lock", "last").checked).toBe(false);
+    expect(second.radio("sign-lock", "others").checked).toBe(false);
+    second.answerLock("last");
     second.button("Sign…").dispatch("click", {});
     expect((await second.answer)?.lock).toBe(true);
     second.done();
-    expect(store.get(LOCK_KEY)).toBe("true");
+    expect([...store.keys()].filter((key) => key.includes("Lock"))).toEqual([]);
 
-    // Anything tpdf did not write for "no" is a lock.
-    for (const kept of ["", "0", "no", "False"]) {
-      const odd = open([choice], memory({ [LOCK_KEY]: kept }).storage);
-      expect(box(odd).checked, kept).toBe(true);
-      odd.done();
-    }
+    // The old checkbox's remembered tick is not read.
+    const old = open([choice], memory({ "tpdf.signatureLock": "true" }).storage);
+    expect(old.radio("sign-lock", "last").checked).toBe(false);
+    old.done();
   });
 });
 
@@ -826,6 +839,8 @@ describe("the chooser's timestamp", () => {
     const nodes = (root: FakeElement): FakeElement[] =>
       root.children.flatMap((child) => [child, ...nodes(child)]);
     const all = nodes(body) as (FakeElement & { checked: boolean; value: string; name: string })[];
+    // These tests are about the timestamp: the lock question is answered.
+    all.find((node) => node.name === "sign-lock" && node.value === "last")!.checked = true;
     const stamps = () => all.filter((node) => node.tagName === "input" && node.name === "sign-timestamp");
     const radio = (value: string) => stamps().find((node) => node.value === value)!;
     const url = all.find((node) => node.attributes.get("aria-label") === "Timestamp authority address")!;
@@ -1080,6 +1095,8 @@ describe("the chooser's long-term checkbox", () => {
       value: string;
       name: string;
     })[];
+    // These tests are about long-term data: the lock question is answered.
+    all.find((n) => n.name === "sign-lock" && n.value === "last")!.checked = true;
     const radio = (value: string) =>
       all.find((n) => n.tagName === "input" && n.name === "sign-timestamp" && n.value === value)!;
     const box = all.find((n) => n.tagName === "input" && n.name === "sign-long-term")!;

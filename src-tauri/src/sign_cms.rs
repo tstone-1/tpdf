@@ -168,7 +168,7 @@ pub struct Checked {
     #[serde(default)]
     pub archive: bool,
     /// The level its lock leaves the document at: `docinfo::Signature::lock`.
-    /// 1 for a signature made with *lock the document after signing*.
+    /// 1 for a signature whose signer answered that nobody else still signs.
     #[serde(default)]
     pub lock: u8,
 }

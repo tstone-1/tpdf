@@ -63,14 +63,15 @@ a certified document**: two signatures would each state what may change, and no 
 measured on the pair. The worker's reply says whether the revision locks (`Unsigned::locked`),
 `sign_cms::Made` and `commands::sign::Stage::Sealed` carry it past a timestamp or long-term
 data that did not come, and `commands::sign::read_back` answers `ReadBack::Lock` for a copy
-whose new signature does not read back at level 1. The window ticks the lock until the reader
-unticks it (`signlock.ts`); `tpdf sign` locks only with `--lock`, since a script's output must
+whose new signature does not read back at level 1. The window asks whether anyone else still
+needs to sign, with no answer selected, and locks for *No* (`signlock.ts`, since 2026-10-15;
+a checkbox ticked by default before); `tpdf sign` locks only with `--lock`, since a script's output must
 not change under it. Nothing here stops a program from writing to the file: an ordinary save
 of a locked document shows the signed-save warning in its own words (`signedsave.ts`) and
 goes ahead if the reader says so.
 
 **The window's defaults for a signing (2026-10-13)**: visible, a timestamp from the authority
-`signtimestamp.ts` preselects for a reader who has never chosen, and the lock. The toolbar's
+`signtimestamp.ts` preselects for a reader who has never chosen, and the lock question with no answer. The toolbar's
 *Sign* button is `file.signDocument`. `edit.addSignature`, the picture with no certificate, is
 named *Place a signature picture, without a certificate…* and is in the menu and the palette
 only; a reader with no certificate is sent to it by name (`signing.ts`,

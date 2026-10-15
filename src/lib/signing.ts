@@ -21,7 +21,8 @@
  * 3. **The reader chooses** a certificate, whether the signature is
  *    **visible** (the default since 2026-10-13: a reader who signs expects to
  *    see the signature on the page) or **invisible**, and whether it **locks
- *    the document** (`signlock.ts`; ticked until unticked).
+ *    the document** (`signlock.ts`; asked whether anyone else still signs,
+ *    with no answer selected).
  * 4. **A visible one is configured, then placed**, before the file is named:
  *    the reader's saved visual signature is read (Phase 4's store; none is not
  *    an error), the appearance panel (`signappearance.ts`) asks what it shows
@@ -83,7 +84,7 @@ import {
   writeStampChoice,
   type StampChoice,
 } from "./signtimestamp";
-import { LOCK_LABEL, readLock, writeLock } from "./signlock";
+import { LOCK_ANSWERS, LOCK_NAME, LOCK_QUESTION, LOCK_UNANSWERED, lockOf } from "./signlock";
 
 /** A certificate the chooser may offer. Mirrors `sign_cms::Choice`. */
 export interface Choice {
@@ -499,8 +500,9 @@ export async function signDocument(shell: SigningShell, field: SignTarget | null
  * The chooser: one radio button per certificate, the first selected; the
  * appearance, visible selected; the timestamp, as the reader last chose it,
  * with one authority preselected for a reader who has never chosen
- * (`signtimestamp.ts`); and whether the signature locks the document, ticked
- * until the reader unticks it (`signlock.ts`).
+ * (`signtimestamp.ts`); and whether anyone else still has to sign, which
+ * decides the lock, with no answer selected until the reader gives one
+ * (`signlock.ts`).
  *
  * A modal on the same surface as the signed-save warning. Built from
  * `textContent` only, since a certificate's subject is somebody else's text.
@@ -623,16 +625,29 @@ export function askIdentity(
   };
   for (const radio of stampRadios) radio.addEventListener("change", syncLongTerm);
   syncLongTerm();
-  // The lock: ticked until the reader unticks it, and remembered.
-  const lock = document.createElement("input");
-  lock.type = "checkbox";
-  lock.name = "sign-lock";
-  lock.checked = readLock(storage);
-  const lockLabel = document.createElement("label");
-  lockLabel.append(lock, LOCK_LABEL);
+  // The lock, asked about the people: nothing selected, and not remembered
+  // (`signlock.ts`).
   const locks = document.createElement("div");
-  locks.style.cssText = "margin:12px 0";
-  locks.append(lockLabel);
+  locks.setAttribute("role", "radiogroup");
+  locks.setAttribute("aria-label", LOCK_QUESTION);
+  locks.style.cssText = "display:flex;flex-direction:column;gap:6px;margin:12px 0";
+  const lockQuestion = document.createElement("p");
+  lockQuestion.textContent = LOCK_QUESTION;
+  locks.append(lockQuestion);
+  const lockRadios = LOCK_ANSWERS.map((answer) => {
+    const radio = document.createElement("input");
+    radio.type = "radio";
+    radio.name = LOCK_NAME;
+    radio.value = answer.value;
+    radio.checked = false;
+    const label = document.createElement("label");
+    label.append(radio, ` ${answer.text}`);
+    locks.append(label);
+    return radio;
+  });
+  const unanswered = document.createElement("p");
+  unanswered.setAttribute("role", "alert");
+  locks.append(unanswered);
   const footer = document.createElement("div");
   footer.style.cssText = "display:flex;gap:10px;justify-content:flex-end";
   const cancel = document.createElement("button");
@@ -656,6 +671,13 @@ export function askIdentity(
     next.addEventListener("click", () => {
       const identity = radios.find((radio) => radio.checked)?.value;
       if (identity === undefined) return finish(null);
+      // No answer to the lock question holds the chooser open: a lock nobody
+      // chose is what the question replaced.
+      const lock = lockOf(lockRadios.find((radio) => radio.checked)?.value);
+      if (lock === null) {
+        unanswered.textContent = LOCK_UNANSWERED;
+        return;
+      }
       const chosenStamp: StampChoice = {
         server: stampRadios.find((radio) => radio.checked)?.value ?? "none",
         url: otherUrl.value,
@@ -671,14 +693,13 @@ export function askIdentity(
       }
       writeStampChoice(chosenStamp, storage);
       writeLongTerm(longTerm.checked, storage);
-      writeLock(lock.checked, storage);
       const timestamp = stampUrl(chosenStamp);
       finish({
         identity,
         visible: visible.checked,
         timestamp,
         longTerm: longTerm.checked && timestamp !== null,
-        lock: lock.checked,
+        lock,
       });
     });
     dialog.addEventListener("cancel", (event) => {

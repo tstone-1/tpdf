@@ -36,7 +36,7 @@ import { basename } from "./paths";
 import { closing, keyRequests, parseSignPhase, readBack, type ShownSection } from "./signphase";
 import { CHOICE_KEY, LONG_TERM_KEY } from "./signtimestamp";
 import { LOCKED, NOT_WRITTEN, signedName } from "./signing";
-import { LOCK_KEY } from "./signlock";
+import { LOCK_QUESTION, LOCK_UNANSWERED } from "./signlock";
 
 /** How long the viewer may take to settle after an open. */
 const SETTLE_MS = 20_000;
@@ -58,7 +58,7 @@ export async function signingCheck(host: OpenCheckHost, expected: string, report
 
   // The remembered choices, kept and cleared, so "nothing is preselected" is
   // about a reader who has never chosen rather than about the last run.
-  const kept = [CHOICE_KEY, LONG_TERM_KEY, LOCK_KEY].map((key) => [key, localStorage.getItem(key)] as const);
+  const kept = [CHOICE_KEY, LONG_TERM_KEY].map((key) => [key, localStorage.getItem(key)] as const);
   for (const [key] of kept) localStorage.removeItem(key);
   try {
     await steps(host, report, fixture, identity, at);
@@ -151,6 +151,11 @@ async function steps(
     report.check(`${label}: Invisible is the appearance chosen`, invisible?.checked === true, String(invisible?.checked));
   };
 
+  /** Answers the lock question: `last` locks, `others` does not. */
+  const answerLock = (value: "last" | "others") => {
+    inChooser<HTMLInputElement>(`input[name="sign-lock"][value="${value}"]`)?.click();
+  };
+
   /**
    * *Sign…*, with the save panel answered by `path`. Answers what the message
    * area said before, because an earlier signing's sentence can still be on
@@ -188,9 +193,18 @@ async function steps(
   report.check("choosing an authority enables long-term data, unticked",
     longTerm()?.disabled === false && longTerm()?.checked === false,
     `disabled=${longTerm()?.disabled} checked=${longTerm()?.checked}`);
-  const lock = inChooser<HTMLInputElement>('input[name="sign-lock"]');
-  report.check("locking the document is ticked for a reader who has never chosen",
-    lock?.checked === true, String(lock?.checked));
+  const answers = [...(chooser()?.querySelectorAll<HTMLInputElement>('input[name="sign-lock"]') ?? [])];
+  report.check("the chooser asks whether anyone else still signs, with no answer selected",
+    answers.map((r) => r.value).join(",") === "others,last" && answers.every((r) => !r.checked)
+      && (chooser()?.textContent ?? "").includes(LOCK_QUESTION),
+    answers.map((r) => `${r.value}=${r.checked}`).join(",") || "no answers");
+  host.answerSave(at("unanswered.pdf"));
+  button(chooser(), "Sign…")?.click();
+  await pause(300);
+  report.check("Sign… with no answer keeps the chooser open and says why",
+    chooser() !== null && (chooser()?.textContent ?? "").includes(LOCK_UNANSWERED),
+    chooser() === null ? `chooser closed: ${shown().slice(0, 120)}` : "open, without the sentence");
+  answerLock("last");
   const before1 = sign(at("digicert.pdf"));
   const first = await settle(() => shown() !== before1 && shown() !== "", SIGN_MS);
   await pause(200);
@@ -235,6 +249,10 @@ async function steps(
     JSON.stringify(checkedStamps()) === JSON.stringify(["digicert"]) && longTerm()?.checked === false,
     `${checkedStamps().join(",")} long-term=${longTerm()?.checked}`);
   pickIdentity("second signing");
+  report.check("the lock question is asked again, with no answer selected",
+    [...(chooser()?.querySelectorAll<HTMLInputElement>('input[name="sign-lock"]') ?? [])].every((r) => !r.checked),
+    "an answer was selected");
+  answerLock("last");
   stamp("sectigo")?.click();
   longTerm()?.click();
   report.check("long-term data is ticked", longTerm()?.checked === true, String(longTerm()?.checked));
@@ -270,6 +288,7 @@ async function steps(
 
   // ---- The Cancel path: refused again, cancelled, nothing written, nothing held.
   pickIdentity("third signing");
+  answerLock("others");
   const before3 = sign(at("cancelled.pdf"));
   const again = await settle(() => question() !== null || shown() !== before3, SIGN_MS);
   report.check("the third signing is refused with the same question", again && question() !== null,

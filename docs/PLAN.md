@@ -18020,7 +18020,10 @@ form filling separates the two documents, and a second signature is one. `docs/T
   the chooser. This reverses *nothing preselected* of 2026-09-28. Sectigo was chosen for the
   preselection because it is the one of the three asked over HTTPS.
 - **The lock is ticked until the reader unticks it.** A locked document takes no further
-  signature, and the checkbox says so.
+  signature, and the checkbox says so. *Replaced 2026-10-15, by the owner:* the checkbox
+  became the question *Does anyone else still need to sign this document?*, with no answer
+  selected and none remembered, after the audit of 26.10.18 named the colleague who cannot
+  countersign a copy locked by default (`signlock.ts`).
 
 **Decided here and not put to the owner**, as engineering: the signature is visible by
 default in the window, since the expectation is a signature image on the page; `tpdf sign`

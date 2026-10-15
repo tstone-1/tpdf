@@ -594,6 +594,7 @@ hop through the index.
 - A box fills its rectangle whichever way it is set, so type running the wrong way passed every geometric check
 - A test that reads a component's source passes when the line is in a comment or cannot run
 - A change made after a locking signature has to be one that only the lock forbids, and two that looked right were not
+- A mutant the bundler removes as unused never runs, and the check it was aimed at passed
 ## Harnesses: running checks and reading what they print
 - A mutation harness needs the same control as the thing it is testing
 - A timeout that discards the transcript recreates the failure it was added to diagnose
@@ -26504,3 +26505,22 @@ matter. And `screenshotcheck.ts` reads the message out of the window after a fai
 the `--more` run, which is a check that fails when the window is wrong. A text test of
 `App.svelte` is worth having for a line that must not come back, as `toolbar.test.ts` has for
 the first snapshot. It is not evidence that a behaviour reaches the reader.
+
+### A mutant the bundler removes as unused never runs, and the check it was aimed at passed
+
+The launch check in CI was to be proved by putting the blank window of `ca1203e4` back: a
+variable read before its declaration while `App.svelte` is being built. The first mutant
+added `void tpdfLateMutant;` and then `let tpdfLateMutant = 1;` after the commands are
+registered, and the viewer check passed it, 355 of 355. The check had not missed anything:
+the mutant was not in the build. Svelte's compiled output keeps both lines in the component
+function, in order, which would throw. Vite's bundler then removes them, minified or not,
+because `void x` has no effect and `x` is never used again. Measured on 2026-10-15 with Vite
+8.3.4: `void lateA; let lateA = 1;` came out of `vite build` as nothing, and
+`void lateB.length; let lateB = [1];` came out whole, since reading a property can run a
+getter.
+
+Two mutants the bundler cannot drop went red, each with *The page threw while it was being
+built*: the original line, `$state(toolbarState(commands))`, and `void tpdfLateMutant.length`
+before a `$state` declared below it. A mutant of frontend code that passes is first a
+question about the bundle: search the built JavaScript for it before reading the check's
+verdict. The source and the compiler's output are both one step short of what runs.

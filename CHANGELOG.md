@@ -17,6 +17,23 @@ as *downloadable*, while the release sat as a draft that GitHub showed to nobody
 are given now because they are different facts, and only the second one means a reader can
 have the binary.)
 
+## [26.10.20] - Unreleased
+
+### Changed
+
+- **Signing asks whether anyone else still needs to sign, instead of locking by default.**
+  The signing dialog had *Lock the document after signing* ticked until you unticked it, so
+  a colleague who received the copy could find it would take no further signature. The
+  dialog now asks *Does anyone else still need to sign this document?* with no answer
+  selected, and *Sign…* waits for one. *No, I am the last to sign* locks the document as
+  before; *Yes* leaves it open. The answer is asked again for every document and is not
+  remembered. `tpdf sign` is unchanged: it locks only with `--lock`.
+- **CI starts the application and opens a document in a real window,** in the Ubuntu job
+  under Xvfb: a debug checks build and `viewer_check.py` on `links.pdf`. Every gate stayed
+  green when a change on 2026-10-13 left the window empty on both platforms; that change,
+  put back, fails this step with *The page threw while it was being built*. On macOS and
+  Windows the window checks stay a release step.
+
 ## [26.10.19] - 2026-10-14
 
 ### Fixed

@@ -350,8 +350,9 @@ measured the Windows render constants come out 1.5–1.8x worse.
   written, and you can try again or sign without it, which keeps the timestamp; a certificate
   its authority says is revoked is refused outright. A timestamp already on a signature you
   open is checked, in the document's properties.
-  **Lock the document after signing** is ticked until you untick it. The signature then
-  states that nothing may change after it: every form field is locked and no change to
+  The dialog asks **whether anyone else still needs to sign**, with no answer selected, and
+  signs nothing until you answer. *No, I am the last to sign* locks the document: the
+  signature then states that nothing may change after it: every form field is locked and no change to
   the pages or their comments is permitted. Nothing stops another program from writing
   to the file. What the lock does is put that statement inside the signature, where a
   program that checks signatures reads it and reports a later change as one the signer did
@@ -359,7 +360,8 @@ measured the Windows render constants come out 1.5–1.8x worse.
   `tpdf verify` show the lock and what was appended after the signature. Long-term
   validation data and archive timestamps can still be added, because they are not changes
   in that sense. A locked document takes no further
-  signature, so untick it when somebody else still has to sign. The written copy is read
+  signature, which is why the question is about the people: *Yes* leaves it open for
+  them. The answer is asked again for every document. The written copy is read
   back for the lock as it is for the signature, and a copy whose lock does not read back
   is reported as one not to rely on. A certified document is not locked: its
   certification already says what may change.

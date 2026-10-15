@@ -37,11 +37,13 @@ name: CI
 # stakes are, and both are pinned the same way so neither is the odd one out.
 # ---------------------------------------------------------------------------
 #
-# WHAT THIS CANNOT COVER. `scripts/viewer_check.py` and `scripts/mutate_*.py`
-# are not here and cannot be: the viewer harnesses drive a real window and need
-# an unlocked, unoccluded screen, so on a headless runner they do not fail,
-# they hang. The mutation harnesses rebuild per mutation and take minutes.
-# Both stay local, and `BUILD.md` schedules them at release time.
+# WHAT THIS CANNOT COVER. The window checks on macOS and Windows, and
+# `scripts/mutate_*.py`: the viewer harnesses drive a real window and need an
+# unlocked, unoccluded screen, so on a headless macOS or Windows runner they do
+# not fail, they hang. The mutation harnesses rebuild per mutation and take
+# minutes. Both stay local, and `BUILD.md` schedules them at release time. On
+# Linux Xvfb is a screen, so the Ubuntu job runs the viewer check (since
+# 2026-10-15; the last step of the job says why).
 
 on:
   push:
@@ -63,8 +65,8 @@ jobs:
       fail-fast: false
       matrix:
         # Ubuntu since 2026-10-14, when the command-line suite and all 31
-        # gates first passed there. Not in `release.yml`'s gates job, which
-        # gates what is released: Linux has no package yet.
+        # gates first passed there; in `release.yml`'s gates job too since
+        # 26.10.19, the first release with Linux packages.
         platform: [macos-latest, windows-2025, ubuntu-24.04]
     runs-on: ${{ matrix.platform }}
     steps:
@@ -362,3 +364,33 @@ jobs:
       - name: Measure Windows OCR availability
         if: runner.os == 'Windows'
         run: cargo run --manifest-path src-tauri/Cargo.toml --locked --example win-ocr-probe
+
+      # The application starts and shows a document, in a real window under
+      # Xvfb. Every step above can be green while the window comes up empty:
+      # on 2026-10-13 `App.svelte` read a variable before its declaration while
+      # it was being built, the window was blank on both platforms, and only
+      # the window checks on a second Mac found it (`ca1203e4`). The viewer
+      # check is started by `App.svelte` once it is mounted, so a component
+      # that throws while being built never starts it, and the watchdog says
+      # "The page threw while it was being built". Measured in WSL on
+      # 2026-10-15: that bug put back failed this step and the tree passed it,
+      # 355 of 355 in 42 s.
+      #
+      # Linux only, because only there does a hosted runner have a screen to
+      # give it: Xvfb. On macOS and Windows the window checks stay with
+      # `BUILD.md` step 5. A debug build, which reuses what the `bins` gate
+      # compiled. `links.pdf` because it is generated here, has eight pages of
+      # text and passes the whole check; `text-wide.pdf` is one page that
+      # cannot scroll, and four checks fail on it for that reason alone.
+      # `--timeout 300`: the default of 900 lets a blank window run for 14
+      # minutes before it goes red; with 300 the bug put back went red in
+      # 224 s, and the tree passed in 44 s.
+      - name: The window starts and shows a document, under Xvfb
+        if: runner.os == 'Linux'
+        run: |
+          set -euo pipefail
+          sudo apt-get install -y -qq xvfb
+          npm run tauri build -- --debug --config src-tauri/tauri.checks.conf.json --no-bundle
+          mkdir -p src-tauri/target/debug/pdfium
+          cp vendor/pdfium/lib/libpdfium.so src-tauri/target/debug/pdfium/
+          xvfb-run -a -s "-screen 0 1280x800x24" python -u scripts/viewer_check.py src-tauri/target/debug/tpdf testdata/links.pdf --signed testdata/incr-signed.pdf --timeout 300
