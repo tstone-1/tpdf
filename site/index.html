@@ -68,8 +68,9 @@
   <p class="small"><span id="version"></span>On a Mac you can also run
   <code>brew install --cask tstone-1/tpdf/tpdf</code>. There is no build for Intel Macs,
   Windows on ARM or ARM Linux.</p>
-  <p class="small">On Linux, take the <code>.deb</code> on Debian or Ubuntu
+  <p class="small">On Linux, take the <code>.deb</code> on Ubuntu 24.04 or Debian 13 and newer
   (<code>sudo apt install ./tpdf_&lt;version&gt;_amd64.deb</code>) and the AppImage elsewhere.
+  tpdf needs glibc 2.39 or newer, so it does not start on Ubuntu 22.04 or Debian 12.
   tpdf on Linux does not update itself: install the new package when a release comes out.
   Text recognition needs the system's Tesseract, which the <code>.deb</code> installs and the
   AppImage does not. Tested on Ubuntu 24.04.</p>

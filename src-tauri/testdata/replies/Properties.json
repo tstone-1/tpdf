@@ -36,6 +36,7 @@
       "location": "Hamburg",
       "when": "2026-01-02T03:04:05Z",
       "covers_whole_file": false,
+      "starts_at_zero": true,
       "covered_bytes": 100000,
       "appended_bytes": 23456,
       "appendix": {

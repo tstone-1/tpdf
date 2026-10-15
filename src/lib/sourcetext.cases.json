@@ -1,0 +1,86 @@
+{
+  "about": [
+    "Lines both lexers that read App.svelte as text are held to: withoutComments in src/lib/sourcetext.ts (sourcetext.test.ts) and blanked in scripts/check_view_after_await.py (its --self-test).",
+    "code: text outside comments and literals, which both keep. comment: text in a comment, which both drop. literal: text inside a string, template or regular expression, which withoutComments keeps and blanked blanks.",
+    "So each case states one classification and both readings of it are checked; a case one of them gets wrong is the disagreement this file exists to find."
+  ],
+  "cases": [
+    {
+      "name": "a line comment ends at the line",
+      "source": "const a = 1; // gone(\nconst b = 2;",
+      "code": ["const a = 1;", "const b = 2;"],
+      "comment": ["gone("],
+      "literal": []
+    },
+    {
+      "name": "a block comment spans lines",
+      "source": "x(); /* one\n two */ y();",
+      "code": ["x();", "y();"],
+      "comment": ["one", "two"],
+      "literal": []
+    },
+    {
+      "name": "a // inside a string is not a comment",
+      "source": "const url = \"https://example.com\"; after();",
+      "code": ["const url =", "after();"],
+      "comment": [],
+      "literal": ["example.com"]
+    },
+    {
+      "name": "an escaped quote does not end a string",
+      "source": "const s = 'it\\'s // here'; tail();",
+      "code": ["tail();"],
+      "comment": [],
+      "literal": ["here"]
+    },
+    {
+      "name": "a template's text is literal and its slot is code",
+      "source": "const t = `left // ${inner(1)} right`; last();",
+      "code": ["inner(1)", "last();"],
+      "comment": [],
+      "literal": ["left", "right"]
+    },
+    {
+      "name": "a brace inside a template slot does not end the slot",
+      "source": "const t = `a${ { k: slotted }.k }b`; done();",
+      "code": ["slotted", "done();"],
+      "comment": [],
+      "literal": []
+    },
+    {
+      "name": "a regular expression after = holds a //",
+      "source": "const re = /a\\/\\/b/g; next();",
+      "code": ["const re =", "next();"],
+      "comment": [],
+      "literal": ["a\\/\\/b"]
+    },
+    {
+      "name": "a regular expression after ( with a / in a class",
+      "source": "test(/[/]x/.test(s)); more();",
+      "code": ["test(", "more();"],
+      "comment": [],
+      "literal": []
+    },
+    {
+      "name": "a division is not a regular expression",
+      "source": "const half = total / 2; // gone\nkeep();",
+      "code": ["const half = total / 2;", "keep();"],
+      "comment": ["gone"],
+      "literal": []
+    },
+    {
+      "name": "a regular expression after return, ending in an escaped slash",
+      "source": "function f() { return /a\\//.test(s) && same(); }\nafter();",
+      "code": ["function f()", "same();", "after();"],
+      "comment": [],
+      "literal": []
+    },
+    {
+      "name": "a regular expression after case",
+      "source": "switch (k) { case /x\\//.source: hit(); }",
+      "code": ["hit();"],
+      "comment": [],
+      "literal": []
+    }
+  ]
+}

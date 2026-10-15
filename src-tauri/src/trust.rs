@@ -1131,16 +1131,5 @@ pub(crate) mod platform {
     }
 }
 
-#[cfg(not(any(target_os = "macos", windows, target_os = "linux")))]
-pub(crate) mod platform {
-    use super::{Anchors, Evaluation, Store};
-
-    pub const STORE: Option<Store> = None;
-
-    pub fn evaluate(_: &[u8], _: &[Vec<u8>], _: Anchors<'_>, _: u64) -> Result<Evaluation, String> {
-        Err("no trust store on this platform".into())
-    }
-}
-
 #[cfg(test)]
 mod tests;

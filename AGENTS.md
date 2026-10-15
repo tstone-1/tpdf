@@ -110,9 +110,10 @@ reason, and so must tpdf. **In place for the viewer's own render path since 2026
 `RenderService` defaults to worker processes on macOS, and `examples/backend_probe.rs` proves the
 app process never maps libpdfium by reading the dynamic linker's image table.
 
-**Both platforms are contained, and the detail is in [`docs/DETAIL.md`](docs/DETAIL.md)**
+**All three platforms are contained, and the detail is in [`docs/DETAIL.md`](docs/DETAIL.md)**
 *Every PDF is hostile input*: macOS by `sandbox_init` SBPL, Windows by a low-integrity token
-inside a job object, proved from outside the process by `scripts/win_modules.py`; why printing
+inside a job object, proved from outside the process by `scripts/win_modules.py`, Linux by
+Landlock and seccomp (`sandbox_linux.rs`, `docs/THREAT-MODEL.md` §6a); why printing
 maps a platform PDF parser into the app process; why `src/bin/` must contain only declared bin
 sources; and why normal builds exclude the JavaScript test harness (`npm run build:checks` for
 a check build).
@@ -203,12 +204,13 @@ each provisional choice and the verdict is recorded per row (see `docs/PLAN.md` 
 | Shell | Tauri 2 | Settled |
 | Frontend | Svelte 5 (runes), TypeScript `strict: true`, Vite | Settled |
 | Backend | Rust | Settled |
-| Platforms | macOS + Windows; Linux since 26.10.19 (deb and AppImage, no updater) | Settled; Linux tested on Ubuntu 24.04 only |
+| Platforms | macOS + Windows; Linux since 26.10.19 (deb and AppImage, no updater) | Settled; Linux tested on Ubuntu 24.04 only, which is the floor: the build needs glibc 2.39 (`check_glibc_floor.py`) |
 | Rendering + text extraction | PDFium via [`pdfium-render`](https://docs.rs/pdfium-render) (BSD-3-Clause) | **Settled** — renders, extracts and sandboxes correctly; not usable for redaction (spikes 0.1, 0.3, 0.5) |
 | Object graph + content streams | [`lopdf`](https://docs.rs/lopdf) (MIT) | **Settled** — surgical rewriting and sanitation both work, with our own mark-and-sweep and an encryption guard (spikes 0.3, 0.4, 0.6) |
 | Hardened structural rewrite | [QPDF](https://qpdf.readthedocs.io/) (Apache-2.0) | Candidate — not required for the rewrite, and **no longer wanted for encryption either**: `lopdf`'s own `Document::encrypt` preserves it, measured against `qpdf` field for field (2026-08-28). Object streams remain |
 | macOS print dialog | PDFKit + AppKit via [`objc2`](https://docs.rs/objc2) (Zlib OR Apache-2.0 OR MIT) | **Settled** — paginates and runs the panel; also the independent parser every print job is read back with |
 | Windows print dialog | `Windows.Data.Pdf` + GDI via [`windows`](https://docs.rs/windows) (MIT OR Apache-2.0) | **Settled** — reads the job back, rasterises each page onto a printer DC, `PrintDlgW` for the panel. Raster where macOS is vector; see below |
+| Linux print, sandbox, trust, keys | `gtk` (MIT) dialog with the PDF handed to CUPS; `landlock` (MIT OR Apache-2.0) + `seccompiler` (Apache-2.0 OR BSD-3-Clause); `rustls-webpki` (ISC) against the system CA bundle; `cryptoki` (Apache-2.0) for PKCS#11, `pkcs12` (Apache-2.0 OR MIT) for an ECDSA certificate file | **Settled** — the print read-back is PDFium in a worker, not an independent parser |
 | XMP metadata | [`quick-xml`](https://docs.rs/quick-xml) (MIT) | **Settled** — reads the catalog's `/Metadata` packet for conformance claims. Already in the tree through Tauri's `plist`, so it adds no package; namespace-aware, and expands no entity |
 | Certificates in a signature | [`cms`](https://docs.rs/cms) + [`x509-cert`](https://docs.rs/x509-cert) + [`der`](https://docs.rs/der) (Apache-2.0 OR MIT) | **Settled** — reads the signer's certificate out of `/Contents`: subject, issuer, serial, validity. The chain is the OS's: `trust.rs` asks the system trust store, offline, whether the signer chains to a root it trusts (no revocation); `builder` assembles the CMS the OS signs (`sign_cms.rs`). PDFium's read-only signature API is not a second implementation but *is* the differential, through `signature-probe` |
 
@@ -304,6 +306,8 @@ On Windows the gate runner defaults `CARGO_BUILD_JOBS` to 2, respecting an expli
 override. Concurrent example builds exhausted commit memory with OS error 1455
 and allocation aborts; use the same bound for local Cargo verification outside
 the runner. This limits compilation concurrency, not the Rust test threads.
+On Linux it sets one job per 2 GiB of memory when that is fewer than the CPUs:
+a 7.5 GB WSL VM linked twelve test binaries at once and swapped for 15 minutes.
 
 The root `.cargo/config.toml` supplies the same macOS deployment target as
 `bundle.macOS.minimumSystemVersion` in `src-tauri/tauri.conf.json`. Keep them

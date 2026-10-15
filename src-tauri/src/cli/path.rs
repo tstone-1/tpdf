@@ -100,11 +100,38 @@ fn run(what: Path) -> Result<String, String> {
     })
 }
 
-#[cfg(not(windows))]
+#[cfg(target_os = "macos")]
 fn run(_: Path) -> Result<String, String> {
     Err(
         "`path` changes the Windows PATH --- on macOS, choose Install command-line tool… in \
          tpdf, which links the tool into a folder that is already on yours"
             .into(),
     )
+}
+
+/// Linux has no menu command to point at: the `.deb` installs `tpdf-cli` on
+/// `PATH`, and until 2026-10-15 this said the macOS sentence there.
+#[cfg(target_os = "linux")]
+fn run(_: Path) -> Result<String, String> {
+    Err(
+        "`path` changes the Windows PATH --- on Linux, the .deb package puts tpdf-cli on \
+         your PATH when it installs tpdf"
+            .into(),
+    )
+}
+
+#[cfg(all(test, unix))]
+mod tests {
+    /// Each unix platform is told about its own way onto `PATH`. Until
+    /// 2026-10-15 one arm served both, and Linux was sent to a macOS menu.
+    #[test]
+    fn the_refusal_names_this_platform_and_not_the_other() {
+        let why = super::run(super::Path::Show).expect_err("only Windows changes PATH");
+        let (here, other) = if cfg!(target_os = "macos") {
+            ("macOS", "Linux")
+        } else {
+            ("Linux", "macOS")
+        };
+        assert!(why.contains(here) && !why.contains(other), "{why}");
+    }
 }

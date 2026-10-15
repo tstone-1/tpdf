@@ -268,9 +268,7 @@ impl Backend {
     /// **Worker on every platform that has a boundary**: macOS since 2026-07-28
     /// (`sandbox_init` SBPL), Windows since 2026-07-29 (a low-integrity token
     /// inside a job object) and Linux since 2026-10-14 (Landlock and seccomp,
-    /// `sandbox_linux.rs`). Anywhere else `Worker::spawn` refuses, and
-    /// defaulting to something that cannot start is worse than defaulting to the
-    /// control.
+    /// `sandbox_linux.rs`).
     ///
     /// Windows was the fail-open path until this line changed, and the change is
     /// worth stating precisely because it is one word. The refusal in
@@ -287,16 +285,11 @@ impl Backend {
     /// this function *before* the flip and reported the parser mapped --- a
     /// control, and the reason the pass afterwards means anything.
     ///
-    /// The remaining branch keeps the mark rather than becoming a refusal, for
-    /// the reason it always had: refusing would make a platform useless rather
-    /// than uncontained, and that is a product decision rather than a defect to
-    /// fix in passing.
+    /// Workers on every platform that compiles, since 2026-10-15: `worker.rs`
+    /// refuses any other at build time, so the in-process fallback this chose
+    /// between is reached only by asking for it.
     fn default_here() -> Self {
-        if cfg!(any(target_os = "macos", windows, target_os = "linux")) {
-            Self::Worker
-        } else {
-            Self::InProcess
-        }
+        Self::Worker
     }
 }
 
@@ -2037,29 +2030,20 @@ pub(crate) fn run_content(
 }
 
 /// The share of one page that pictures cover, from 0 to 1
-/// (`ocr_layer::picture_share`).
+/// (`scanshare::picture_share`).
 ///
-/// The page's own pictures and those inside its Form XObjects, all in the page's
-/// space (`objects::read`), against the crop box in the same space, as
-/// [`redaction_plans_of`] measures them. A picture PDFium will not measure has
-/// the unmeasurable box and so covers the page: the cost is one page read that
-/// did not need to be, and the words over existing text are dropped anyway.
+/// The page's own pictures and those inside its Form XObjects at any depth
+/// (`objects::pictures`), all in the page's space, against the crop box in the
+/// same space, as [`redaction_plans_of`] measures them. A picture PDFium will
+/// not measure has the unmeasurable box and so covers the page: the cost is one
+/// page read that did not need to be, and the words over existing text are
+/// dropped anyway.
 pub fn run_pictures(document: &OpenDocument, page: u32) -> Result<f32, String> {
     let page = document.page(page)?;
-    let objects = objects::read(&page)?;
-    let pictures: Vec<[f32; 4]> = objects
-        .all
-        .iter()
-        .filter(|object| object.kind == "image")
-        .map(|object| object.bounds)
-        .chain(
-            objects
-                .forms
-                .iter()
-                .flat_map(|form| form.images.iter().copied()),
-        )
-        .collect();
-    Ok(crate::ocr_layer::picture_share(page.crop_pt(), &pictures))
+    Ok(crate::scanshare::picture_share(
+        page.crop_pt(),
+        &objects::pictures(&page),
+    ))
 }
 
 /// Where a crop box lands inside the page the file describes, and how big it is.
@@ -3263,21 +3247,15 @@ mod tests {
         assert_eq!(whole, FILE_BOX);
     }
 
-    /// The platform list, spelled out a second time on purpose.
+    /// An unset backend is a worker, on every platform that compiles.
     ///
-    /// Sharing a predicate with `default_here` would make this a check deriving
-    /// its expectation from the thing it tests --- it would agree with whatever
-    /// the code said. The duplication is the assertion. It is also what caught
-    /// the Windows flip: both tests here went red on that one-word change,
-    /// because they still said macOS was the only platform with a boundary.
+    /// Stated as a constant rather than derived: sharing a predicate with
+    /// `default_here` would make this a check deriving its expectation from the
+    /// thing it tests. Until 2026-10-15 both named the platform list, and this
+    /// one caught the Windows flip by still saying macOS alone had a boundary.
     #[test]
     fn an_unset_backend_is_the_platform_default() {
-        let expected = if cfg!(target_os = "macos") || cfg!(windows) || cfg!(target_os = "linux") {
-            Backend::Worker
-        } else {
-            Backend::InProcess
-        };
-        assert_eq!(Backend::parse(None), Ok(expected));
+        assert_eq!(Backend::parse(None), Ok(Backend::Worker));
     }
 
     /// The uncontained default leaves a trace, and the contained one does not.

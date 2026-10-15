@@ -27,9 +27,11 @@ under the Autoconf exception; those build-time scripts are not compiled into lib
 rather than imposing GPL ones. All three of the gate's failure modes were proved by mutation
 before it was trusted.
 
-## Every PDF is hostile input: both platforms, printing, packaging
+## Every PDF is hostile input: three platforms, printing, packaging
 
-**On both platforms since 2026-07-29.** macOS gets its boundary from `sandbox_init` SBPL,
+**On macOS and Windows since 2026-07-29, on Linux since 2026-10-14** (Landlock and seccomp,
+which the child applies to itself; `sandbox_linux.rs`, `docs/THREAT-MODEL.md` §6a). macOS gets
+its boundary from `sandbox_init` SBPL,
 which the child applies to itself after `exec`; Windows has no counterpart, so the *parent*
 builds one — a low-integrity token inside a job object, applied while the child is still
 suspended. `Backend::default_here()` selects workers on both, and a platform with neither
@@ -78,7 +80,9 @@ its balloon has to write to every page it takes. That is why `Worker::footprint`
 poll, and it is now the measured kind. (Nothing in production reads `footprint` on either
 platform; only `pool-bench` does.)
 
-**Printing works on both platforms, and only the readback corresponds.** macOS refuses to
+**Printing works on all three platforms, and on macOS and Windows only the readback
+corresponds.** Linux reads the job back with PDFium in a worker, which is not independent of
+what drew the page, and hands the PDF to CUPS (`print_linux.rs`). macOS refuses to
 open a panel for a job PDFKit cannot read; Windows refuses for one `Windows.Data.Pdf` cannot
 read. Both are the platform's own PDF stack, so both are independent of the `lopdf` that wrote
 the job and the PDFium that drew what the reader saw — which is the property the whole print
@@ -94,7 +98,8 @@ and `Windows.Data.Pdf` reports page sizes in **DIPs at 96 to the inch**, not PDF
 a trap with an entry because getting it wrong renders every page 1.33x too large and still looks
 fine.
 
-**Printing maps a PDF parser into the app process, on both platforms**, which is the
+**Printing maps a PDF parser into the app process, on macOS and Windows** (on Linux it
+does not: GTK copies the job's bytes to CUPS), which is the
 honest complication in "the app process never maps the PDF parser". It is measured rather
 than glossed: `print-probe` reads its own module table and finds none named pdfium, with
 `Windows.Data.Pdf.dll` beside it as what it mapped instead. The boundary's real guarantee is
@@ -307,7 +312,7 @@ tree, not a glance at the crate's own README.
 `rustls-webpki`, `rustls-native-certs` and `rustls-pki-types` check a signer's certificate
 against the system's CA bundle (`trust.rs`). `libloading` (ISC) opens Tesseract in the OCR
 worker; it was already in the tree through `pdfium-render`. Tesseract itself (Apache-2.0) is not
-a crate and not shipped: tpdf opens the system's `libtesseract.so.5` at run time and ships only
+a crate and not shipped: tpdf opens the system's `libtesseract.so.5` (or `libtesseract.so.5.x`, the name a CMake build such as Fedora's uses; `ocr_tesseract::LIBRARIES`) at run time and ships only
 the English and German language data (`scripts/fetch_tessdata.py`). `cryptoki`
 (Apache-2.0) talks to smart cards (`pkcs11.rs`) and brings `cryptoki-sys`, `secrecy` and a
 second `libloading`; `pkcs12` and `pkcs5` read certificate files (`pkcs12.rs`) and bring

@@ -1806,20 +1806,6 @@ fn kill_and_wait(pid: u32) -> Result<(), String> {
     Ok(())
 }
 
-/// Off unix there is no worker to kill, because none can be spawned.
-///
-/// Refuses rather than terminating by some other route: this check exists to
-/// prove a worker is *replaced* after dying, and there is nothing to replace on
-/// a platform where the pool never starts one.
-///
-/// # Errors
-///
-/// Always.
-#[cfg(not(any(unix, windows)))]
-fn kill_and_wait(_pid: u32) -> Result<(), String> {
-    Err(worker::NO_WORKERS.into())
-}
-
 /// Kills a worker and waits for it to actually be gone.
 ///
 /// **SIGKILL rather than SIGSEGV, and that is not a stylistic choice.** A Rust

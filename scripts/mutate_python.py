@@ -392,6 +392,47 @@ MUTATIONS = [
         red=True,
         says="SSIGN_REV differs",
     ),
+    Mutation(
+        # Both literals said 2 for a day after Ubuntu made CI three legs, so
+        # the PyPI publish could never pass and nothing went red.
+        "workflows: the publish asking for fewer CI legs than ci.yml has",
+        "workflows",
+        ".github/workflows/pypi.yml",
+        'if [ "$gates" = "3 true" ]; then',
+        'if [ "$gates" = "2 true" ]; then',
+        red=True,
+        says='pypi.yml asks for "2 true"',
+    ),
+    Mutation(
+        "workflows: the release skip asking for more CI legs than ci.yml has",
+        "workflows",
+        ".github/workflows/release.yml",
+        'if [ "$gates" = "3 true" ]; then',
+        'if [ "$gates" = "4 true" ]; then',
+        red=True,
+        says='release.yml asks for "4 true"',
+    ),
+    # --- the platform set: no arm written as "not these platforms" ------------
+    Mutation(
+        # The shape that made Linux take an "unsupported platform" stub for
+        # installed fonts, "Show in folder" and `tpdf path` without anyone deciding.
+        "platforms: a catch-all arm in place of the Linux one",
+        "platforms",
+        "src-tauri/src/cli/path.rs",
+        '/// `PATH`, and until 2026-10-15 this said the macOS sentence there.\n#[cfg(target_os = "linux")]\n',
+        '/// `PATH`, and until 2026-10-15 this said the macOS sentence there.\n#[cfg(not(any(target_os = "macos", windows)))]\n',
+        red=True,
+        says="cli/path.rs",
+    ),
+    Mutation(
+        "platforms: a Linux difference the code marks and the README drops",
+        "platforms",
+        "README.md",
+        " <!-- linux-difference: signing -->",
+        "",
+        red=True,
+        says="signing",
+    ),
     # --- an anchor aimed at nothing -------------------------------------------
     Mutation(
         # The gate that guards the other three harnesses. A drifted anchor is
@@ -436,7 +477,7 @@ MUTATIONS = [
         # asserting this needs a screen and is run by hand.
         "classified: a registered command in neither probes nor undriven",
         "classified",
-        "src/lib/viewercheck.ts",
+        "src/lib/viewercheck/commands.ts",
         # **Two lines, because the id alone occurs twice**: once where the
         # harness registers the command and once in the probe that drives it.
         # The probe is the half that classifies, so the anchor carries the
@@ -488,6 +529,27 @@ MUTATIONS = [
         "TEST_FILES = [] and sorted(",
         red=True,
         says="TEST_FILES is empty",
+    ),
+    Mutation(
+        # The ceiling on one harness file, at a value the tree already passes:
+        # five row parts sit between 2,500 and 3,000 lines.
+        "mutations: a harness ceiling the row parts are already over",
+        "mutations",
+        "scripts/check_mutation_test_files.py",
+        "HARNESS_CEILING = 3_000",
+        "HARNESS_CEILING = 2_500",
+        red=True,
+        says="over 2,500",
+    ),
+    Mutation(
+        # The emptiness control: patterns that find nothing must not pass.
+        "mutations: a harness ceiling that measures no file",
+        "mutations",
+        "scripts/check_mutation_test_files.py",
+        '    "scripts/mutation_rows/**/*.py",\n',
+        '    "scripts/no_such_folder/**/*.py",\n',
+        red=True,
+        says="found nothing",
     ),
     # --- the notices file going stale ----------------------------------------
     Mutation(

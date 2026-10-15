@@ -45,6 +45,23 @@ SHARED = {"checkreport.ts", "signaturecheck.ts", "signingcheck.ts", "signphase.t
 
 FAMILY = ENTRY_POINTS | SHARED
 
+# A directory of the family, attributed to the entry it was split out of. The
+# window check's phases moved from `viewercheck.ts` into `viewercheck/` on
+# 2026-10-15, and several share a base name with a production module
+# (`reading.ts`, `search.ts`, `links.ts`), so they are matched by path and never
+# by name: matched by name, the production `reading.ts` would count as harness.
+FAMILY_DIRS = {"/src/lib/viewercheck/": "viewercheck.ts"}
+
+
+def family_name(source: str) -> "str | None":
+    """The family member a source path belongs to, or None."""
+    source = source.replace("\\", "/")
+    for folder, entry in FAMILY_DIRS.items():
+        if folder in source:
+            return entry
+    name = source.rsplit("/", 1)[-1]
+    return name if name in FAMILY and "/src/lib/" in source else None
+
 # Dynamic runtime imports in the wrapper; type-only references do not count.
 ENTRY_IMPORT = re.compile(r'await import\("\./(\w+)"\)')
 
@@ -172,7 +189,7 @@ def shared_importers() -> "list[str]":
     for path in sorted(ROOT.glob("src/**/*")):
         if path.suffix not in (".ts", ".svelte") or path.name.endswith(".test.ts"):
             continue
-        if path.name in FAMILY:
+        if family_name("/" + path.relative_to(ROOT).as_posix()):
             continue
         if re.search(r'from\s*"\.{1,2}/(?:lib/)?checkreport"', path.read_text(encoding="utf-8")):
             out.append(str(path.relative_to(ROOT)))
@@ -211,8 +228,8 @@ def main() -> int:
 
     family = {}
     for source, units in per.items():
-        name = source.replace("\\", "/").rsplit("/", 1)[-1]
-        if name in FAMILY and "/src/lib/" in source.replace("\\", "/"):
+        name = family_name(source)
+        if name:
             family[name] = family.get(name, 0) + units
     total = sum(family.values())
     share = 100.0 * total / generated

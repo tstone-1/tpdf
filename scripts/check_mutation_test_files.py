@@ -74,6 +74,48 @@ ROOT = pathlib.Path(__file__).resolve().parent.parent
 #: The harness whose two tables this gate reads.
 HARNESS = "scripts/mutate_frontend.py"
 
+#: The most lines one harness file may hold.
+#:
+#: On 2026-10-15 `mutate_rust.py` was 19,419 lines, `mutate_frontend.py` 10,910
+#: and `viewercheck.ts` 11,541, each growing at about the product's rate, and the
+#: codebase review that day named their weight as a strategic risk: a file that
+#: size is read by search, never as a whole, and a row or a phase that has gone
+#: wrong is found by nobody reading past it. They were split that day, the rows
+#: into `scripts/mutation_rows/` and the phases into `src/lib/viewercheck/`, and
+#: the largest file afterwards was 2,524 lines. 3,000 leaves room for a few
+#: reviews' worth of rows and makes the next split a step, not a project: a part
+#: past it is cut in two, as `mutation_rows/*/__init__.py` says.
+HARNESS_CEILING = 3_000
+
+#: What the ceiling covers: the mutation harnesses, their rows, and the window
+#: check with its phases and its sibling checks.
+HARNESS_FILES = (
+    "scripts/mutate_*.py",
+    "scripts/mutation_rows/**/*.py",
+    "src/lib/*check.ts",
+    "src/lib/viewercheck/*.ts",
+)
+
+
+def too_large(ceiling: int = HARNESS_CEILING) -> tuple[list[str], int, list[str]]:
+    """Harness files over `ceiling` lines, how many were measured, and the
+    patterns that matched nothing.
+
+    Per pattern and not in total: a pattern gone stale (a folder renamed) still
+    leaves the others' files, so a total above some floor cannot see it.
+    """
+    over, measured, empty = [], 0, []
+    for pattern in HARNESS_FILES:
+        paths = sorted(ROOT.glob(pattern))
+        if not paths:
+            empty.append(pattern)
+        for path in paths:
+            measured += 1
+            lines = path.read_text(encoding="utf-8").count("\n")
+            if lines > ceiling:
+                over.append(f"{path.relative_to(ROOT).as_posix()} is {lines:,} lines, over {ceiling:,}")
+    return over, measured, empty
+
 
 def load(path: str):
     """The module, imported for its tables alone."""
@@ -131,6 +173,18 @@ def collect(npx: str) -> dict[str, list[str]]:
 
 def main() -> int:
     """Compares the harness's two tables with what vitest can actually run."""
+    over, measured, empty = too_large()
+    # The emptiness control: a pattern that matched nothing passes the ceiling
+    # exactly like a tree of small files.
+    if empty:
+        for pattern in empty:
+            print(f"[FAIL] the harness ceiling's pattern {pattern} found nothing")
+        return 1
+    if over:
+        for line in over:
+            print(f"[FAIL] {line}; split it (HARNESS_CEILING in {pathlib.Path(__file__).name})")
+        return 1
+    print(f"[OK]   {measured} harness files, none over {HARNESS_CEILING:,} lines")
     harness = load(HARNESS)
     listed: list[str] = list(getattr(harness, "TEST_FILES", []))
     excluded: dict[str, str] = dict(getattr(harness, "UNMUTATED", {}))

@@ -202,6 +202,12 @@ export interface SearchStatus {
   /** Whether a scan is still running. */
   running: boolean;
   /**
+   * Pages whose search failed and were skipped. Counted in {@link scanned}
+   * all the same, so this is what tells a page never read from a page read
+   * and found empty.
+   */
+  unread: number;
+  /**
    * Whether every page scanned so far had no extractable text.
    *
    * "No matches" and "nothing to match against" are different answers and are
@@ -7229,6 +7235,7 @@ export class Viewer {
       // behaved on, which is the one state a toggle must not have.
       scoped: this.searchScope !== null,
       running: this.searcher.running,
+      unread: this.searcher.unread,
       textless: this.searcher.textless,
       unsearchablePages: this.searcher.unsearchablePages,
       mappingKnown: this.searcher.mappingKnown,
@@ -7381,6 +7388,11 @@ export class Viewer {
   /** Whether a scan is still running. For the check harness. */
   get searching(): boolean {
     return this.searcher.running;
+  }
+
+  /** Pages the last scan could not search; see `Search.unread`. */
+  get searchUnread(): number {
+    return this.searcher.unread;
   }
 
   /** Wall time of the last completed scan, in ms. For the check harness. */

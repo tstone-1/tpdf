@@ -387,10 +387,42 @@ def packaged_api(text: str) -> list[str]:
     return []
 
 
+def leg_counts() -> list[str]:
+    """Every "N true" test of a CI run must ask for as many legs as CI has.
+
+    `release.yml` skips its gates, and `pypi.yml` agrees to publish, only when a
+    `ci.yml` run on the commit has N green `Gates (...)` jobs, written into each
+    as the literal `"N true"`. Ubuntu made the matrix three on 2026-10-14 and
+    both literals still said 2 the next day: the publish could never pass, and
+    every release ran the gates it meant to skip. Nothing failed, because a
+    test that never matches reads like a run that was never green.
+    """
+    ci = (ROOT / ".github/workflows/ci.yml").read_text(encoding="utf-8")
+    block = "\n".join(job_block(ci, JOB))
+    matrix = re.search(r"^\s*platform:\s*\[([^\]]*)\]", block, re.MULTILINE)
+    if not matrix:
+        return ["ci.yml's gates job has no `platform: [...]` matrix -- cannot count its legs"]
+    legs = len([p for p in matrix.group(1).split(",") if p.strip()])
+    wrong, seen = [], 0
+    for path in sorted((ROOT / ".github/workflows").glob("*.yml")):
+        for number in re.findall(r'"(\d+) true"', path.read_text(encoding="utf-8")):
+            seen += 1
+            if int(number) != legs:
+                wrong.append(f'{path.name} asks for "{number} true" but ci.yml has {legs} gate legs')
+    if not seen:
+        wrong.append('no workflow tests a CI run\'s legs ("N true") -- the scan found nothing')
+    return wrong
+
+
 def main() -> int:
     """Compares the two jobs and reports the first difference."""
     found: dict[str, list[str]] = {}
     checked_out = 0
+    counted = leg_counts()
+    if counted:
+        for line in counted:
+            print(f"[FAIL] {line}")
+        return 1
     cache_findings, secret_jobs = restored_caches()
     if not secret_jobs:
         print("[FAIL] no job holding a secret was found -- the cache scan found nothing")

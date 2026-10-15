@@ -88,16 +88,22 @@ def load(path: str):
 #: Only the two forms this tree actually uses --- inventing more would be a
 #: parser with no subject, and a wrong guess here reads as a table defect.
 PLATFORM_GATES = [
-    (re.compile(r'^#\[cfg\(all\(test,\s*windows\)\)\]'), "windows"),
-    (re.compile(r'^#\[cfg\(all\(test,\s*target_os\s*=\s*"macos"\)\)\]'), "macos"),
+    (re.compile(r'^#\[cfg\(all\(test,\s*windows\)\)\]'), {"windows"}),
+    (re.compile(r'^#\[cfg\(all\(test,\s*target_os\s*=\s*"macos"\)\)\]'), {"macos"}),
+    (re.compile(r'^#\[cfg\(all\(test,\s*target_os\s*=\s*"linux"\)\)\]'), {"linux"}),
+    # `worker_handover.rs`'s, since 2026-10-15: the descriptor shuffle is the
+    # same code on both unix platforms and its tests run on both.
+    (re.compile(r'^#\[cfg\(all\(test,\s*unix\)\)\]'), {"macos", "linux"}),
 ]
 
 
-#: The platforms tpdf ships. `only_on` also knows `"linux"`, and a `#[cfg(unix)]`
-#: test really does compile there --- but nothing is released on it, so the
-#: question this gate asks is *can the named test go red on a platform somebody
-#: runs the harness on*, and that is these two.
-SHIPPED = frozenset({"macos", "windows"})
+#: The platforms tpdf ships, and so the ones the harness is run on.
+#:
+#: Linux joined on 2026-10-15, with the first mutations aimed at Linux-only
+#: tests. Until then this set was macOS and Windows and its note said nothing
+#: was released on Linux, which had stopped being true with 26.10.19; a
+#: mutation naming a Linux test was refused here as "gated to no platform".
+SHIPPED = frozenset({"macos", "windows", "linux"})
 
 
 #: A `#[cfg(...)]` sitting on the **function** rather than on its module.
@@ -156,7 +162,7 @@ def cfg_admits(expr: str, platform: str) -> "bool | None":
         # Always true in the code this scans, and it appears only as a conjunct.
         return True
     if expr == "unix":
-        return platform == "macos"
+        return platform in ("macos", "linux")
     if expr == "windows":
         return platform == "windows"
     match = re.fullmatch(r'target_os\s*=\s*"([a-z0-9_]+)"', expr)
@@ -292,7 +298,7 @@ def gated_tests(root: pathlib.Path) -> dict[str, set[str]]:
                 if not ATTRIBUTE.match(above):
                     break
 
-            here: set[str] | None = set(SHIPPED) if gate is None else {gate}
+            here: set[str] | None = set(SHIPPED) if gate is None else set(gate)
             if saw_test and cfgs:
                 for expr in cfgs:
                     if any(cfg_admits(expr, p) is None for p in SHIPPED):
@@ -475,6 +481,19 @@ def main() -> int:
                     f"       expects `{mutation.expect}`, which is gated to no platform\n"
                     f"       this project ships, so no run of this harness can ever\n"
                     f"       reach it and no only_on value would be true."
+                )
+                continue
+            if len(platforms) > 1:
+                # Two platforms of three, which only became possible with a
+                # third: `#[cfg(unix)]` is macOS and Linux. `only_on` names one,
+                # so the row is written once per platform it can run on.
+                problems.append(
+                    f"{path}: {mutation.name}\n"
+                    f"       expects `{mutation.expect}`, which compiles only on\n"
+                    f"       {', '.join(sorted(platforms))}, and only_on is {mutation.only_on!r}.\n"
+                    f"       Elsewhere the test does not exist and the harness refuses\n"
+                    f"       the WHOLE table. Write the row once per platform, each\n"
+                    f"       with its own only_on."
                 )
                 continue
             (only,) = sorted(platforms)

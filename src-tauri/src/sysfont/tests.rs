@@ -313,3 +313,65 @@ fn a_batch_replaces_the_runs_earlier_edit_and_leaves_out_one_that_restores_it() 
     let (changes, drafted) = batch(vec![earlier], restore);
     assert!(!drafted && changes.is_empty());
 }
+
+/// The pattern escapes what fontconfig reads as syntax.
+#[cfg(target_os = "linux")]
+#[test]
+fn the_fontconfig_pattern_escapes_its_syntax() {
+    assert_eq!(
+        fc_pattern("Helvetica-Bold"),
+        ":postscriptname=Helvetica\\-Bold"
+    );
+    assert_eq!(
+        fc_pattern("A:B,C=D\\E"),
+        ":postscriptname=A\\:B\\,C\\=D\\\\E"
+    );
+    assert_eq!(fc_pattern("DejaVuSans"), ":postscriptname=DejaVuSans");
+}
+
+/// Only an exact name and an absolute file count, and the face index is kept.
+#[cfg(target_os = "linux")]
+#[test]
+fn an_fc_list_line_counts_only_for_the_exact_name() {
+    let listed =
+        "/f/near.ttf\t0\tDejaVuSans-Bold\nrelative.ttf\t0\tDejaVuSans\n/f/a.ttc\t2\tDejaVuSans\n";
+    assert_eq!(
+        from_fc_list(listed, "DejaVuSans"),
+        Some((PathBuf::from("/f/a.ttc"), Some(2)))
+    );
+    assert_eq!(from_fc_list(listed, "Missing"), None);
+    assert_eq!(from_fc_list("", "DejaVuSans"), None);
+}
+
+/// The real lookup, against a font this machine has: the first one `fc-list`
+/// lists with a usable PostScript name is asked for by that name, and what
+/// comes back must be a file `fc-list` lists under it. The control is a name no
+/// font has, which finds nothing. A machine without `fc-list` says so.
+#[cfg(target_os = "linux")]
+#[test]
+fn an_installed_font_is_found_by_its_postscript_name() {
+    let Ok(out) = std::process::Command::new("fc-list")
+        .arg("--format=%{file}\t%{postscriptname}\n")
+        .output()
+    else {
+        eprintln!("[SKIP] no fc-list on this machine");
+        return;
+    };
+    let listed = String::from_utf8_lossy(&out.stdout);
+    let Some(name) = listed.lines().find_map(|line| {
+        let (_, name) = line.split_once('\t')?;
+        (crate::textedit::valid_postscript_name(name) && !name.contains(',')).then_some(name)
+    }) else {
+        eprintln!("[SKIP] fc-list lists no font with a PostScript name");
+        return;
+    };
+    let (found, _) = locate(name).unwrap_or_else(|| panic!("{name} was not found"));
+    assert!(
+        listed
+            .lines()
+            .any(|line| line == format!("{}\t{name}", found.display())),
+        "{name} came back as {}",
+        found.display()
+    );
+    assert_eq!(locate("TPDFNoSuchFontAnywhere"), None);
+}

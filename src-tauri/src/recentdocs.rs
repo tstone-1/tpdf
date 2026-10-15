@@ -102,7 +102,6 @@
 //! them goes through a dialog. Doing it once at the point where a document has
 //! genuinely opened covers all of them, and covers them identically.
 
-#[cfg(any(windows, target_os = "macos", target_os = "linux"))]
 use std::path::{Path, PathBuf};
 
 /// The absolute, existing file both platforms have to be given, or `None`.
@@ -119,7 +118,6 @@ use std::path::{Path, PathBuf};
 /// there, and filing an unresolvable path puts an entry in the reader's list
 /// that opens nothing when clicked --- worse than the absence this module fixes,
 /// because it looks like the feature working.
-#[cfg(any(windows, target_os = "macos", target_os = "linux"))]
 fn resolved(path: &Path) -> Option<PathBuf> {
     std::fs::canonicalize(path).ok()
 }
@@ -322,10 +320,6 @@ fn file_uri(path: &Path) -> Option<String> {
         .ok()
         .map(String::from)
 }
-
-/// Does nothing on a platform with no list.
-#[cfg(not(any(windows, target_os = "macos", target_os = "linux")))]
-pub fn note_opened(_app: &tauri::AppHandle, _path: &std::path::Path) {}
 
 #[cfg(all(test, target_os = "linux"))]
 mod linux_tests {

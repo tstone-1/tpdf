@@ -23,6 +23,7 @@
  * of them is a way this turns into either a busy loop or a lie in the header.
  */
 
+// linux-difference: updates
 /** What a check says where tpdf does not update in place (Linux). */
 export const MANUAL_UPDATES =
   "on Linux tpdf is updated by installing the new package from " +

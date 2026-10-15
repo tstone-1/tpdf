@@ -43,9 +43,8 @@
 //! direction integrity levels permit, since medium may reach into low and never
 //! the reverse.
 //!
-//! On a platform with neither, [`Worker::spawn`] refuses rather than running a
-//! worker that would be uncontained while wearing the same name. See
-//! `NO_WORKERS`, which exists so that the four refusals cannot drift apart.
+//! A platform with neither does not compile: there is no worker that would be
+//! uncontained while wearing the same name (the `compile_error!` below).
 //!
 //! **Split along its four seams at 2,861 lines**, by the reasoning that took
 //! `workers.rs` out of `render.rs`. What is left here is the process and its
@@ -66,12 +65,12 @@
 //! the running program.
 
 use std::io::{BufReader, Write};
-#[cfg(any(target_os = "macos", target_os = "linux"))]
+#[cfg(unix)]
 use std::os::fd::{AsRawFd, OwnedFd};
 use std::path::Path;
-#[cfg(not(windows))]
+#[cfg(unix)]
 use std::process::{Child, ChildStdin, ChildStdout};
-#[cfg(any(target_os = "macos", target_os = "linux"))]
+#[cfg(unix)]
 use std::process::{Command, Stdio};
 use std::sync::{Arc, Mutex};
 
@@ -79,7 +78,7 @@ use serde::Serialize;
 
 #[cfg(windows)]
 use crate::worker_argv::command_line;
-#[cfg(any(target_os = "macos", target_os = "linux"))]
+#[cfg(unix)]
 use crate::worker_handover::{remap_fds, send_document, socket_pair};
 use crate::worker_proto::{read_reply_line, ReplyError};
 #[cfg(windows)]
@@ -92,7 +91,7 @@ use crate::worker_shm::duplicate_into;
 #[cfg(windows)]
 pub use crate::worker_argv::{doc_handle_arg, in_handle_arg, out_handle_arg, tile_handle_arg};
 pub use crate::worker_argv::{doc_len_arg, in_len_arg, library_dir_arg};
-#[cfg(any(target_os = "macos", target_os = "linux"))]
+#[cfg(unix)]
 pub use crate::worker_handover::recv_document;
 #[cfg(windows)]
 pub use crate::worker_proto::Handover;
@@ -107,15 +106,14 @@ pub use crate::worker_shm::Shm;
 /// of defect `AGENTS.md` already records for the PDFium library directory.
 pub const WORKER_ARGV: &str = "--render-worker";
 
-/// Why every worker entry point refuses on a platform with no sandbox.
-///
-/// One constant rather than the same sentence written at each refusal, because
-/// the refusals are the containment argument and four copies of it are four
-/// things to drift. Not a silent fallback to running unsandboxed: every claim in
-/// `docs/THREAT-MODEL.md` is `sandbox_init` SBPL, so a worker without it is a
-/// different thing wearing the same name.
+// The three platforms a worker has a boundary on. Any other is refused here,
+// when the crate is compiled, rather than by an entry point that refuses at run
+// time: it makes every `unix` in this crate mean macOS or Linux, and leaves no
+// arm for a platform no build compiles, which no check could keep correct. Until
+// 2026-10-15 each entry point had such an arm, and on Linux, before its port,
+// arms of that shape in other modules had quietly become its code path.
 #[cfg(not(any(target_os = "macos", target_os = "linux", windows)))]
-pub const NO_WORKERS: &str = "render workers are implemented on macOS, Windows and Linux only";
+compile_error!("tpdf builds for macOS, Windows and Linux only: a worker has no boundary elsewhere");
 
 /// Descriptor the document mapping is handed over on.
 ///
@@ -236,9 +234,27 @@ pub const PRESPAWN_ARGV: &str = "--prespawn";
 /// disagreed for one day, and the half that was missing produced a five-second
 /// wait that read as a defect in the pool. See the trap.
 ///
-/// Kept beside [`Worker::prespawn`] and sharing its `cfg` exactly, so the
-/// constant and the refusal cannot say different things.
-pub const PRESPAWNS: bool = cfg!(any(target_os = "macos", target_os = "linux", windows));
+/// True on every platform that compiles, since 2026-10-15: the
+/// `compile_error!` above leaves no platform without a [`Worker::prespawn`],
+/// and the refusing arm it used to share a `cfg` with is gone. Kept, rather
+/// than removed from its callers, because the reason for one answer still holds
+/// if a platform without spares is ever added.
+pub const PRESPAWNS: bool = true;
+
+/// Says once, in the diagnostics log, what a worker's boundary is on this
+/// kernel (`sandbox_linux::describe`): the file-system half is required, and
+/// the network and scope halves are taken only where the kernel has them, so
+/// the log is where a reader learns which they got. Asked by the app, before the
+/// first worker starts, because a worker's own notes reach only its stderr.
+#[cfg(target_os = "linux")]
+fn note_boundary_once() {
+    static ONCE: std::sync::Once = std::sync::Once::new();
+    ONCE.call_once(|| {
+        crate::diag::record(&crate::sandbox_linux::describe(
+            crate::sandbox_linux::kernel_abi(),
+        ));
+    });
+}
 
 /// Bytes reserved for one tile payload.
 ///
@@ -297,27 +313,6 @@ fn epitaph_of(child: &mut Child) -> String {
     }
 }
 
-/// How a child died, in words --- off unix.
-///
-/// No signal arm, and that is a real difference rather than a stub: Windows does
-/// not kill a process with a signal, so there is no equivalent of the "killed by
-/// signal 11" tell the unix version exists to preserve. A crash arrives as an
-/// exit code, and reporting one as the other would be the exact confusion
-/// `AGENTS.md` records this function was written to avoid.
-///
-/// Excluded on Windows, where [`Worker::epitaph`] delegates to
-/// [`Contained::epitaph`](crate::sandbox_win::Contained::epitaph) instead --- a
-/// worker there is not a `std::process::Child`, so this arm would have no caller
-/// and `-D warnings` would reject it as dead.
-#[cfg(not(any(unix, windows)))]
-fn epitaph_of(child: &mut Child) -> String {
-    match child.try_wait() {
-        Ok(None) => "still running".into(),
-        Ok(Some(status)) => format!("exited with code {}", status.code().unwrap_or(-1)),
-        Err(e) => format!("could not be waited on: {e}"),
-    }
-}
-
 // -------------------------------------------------------------------- parent
 
 /// The child process a [`Worker`] owns.
@@ -334,7 +329,7 @@ fn epitaph_of(child: &mut Child) -> String {
 /// reason that actually decided it --- adding the Windows arm would have edited
 /// every macOS line in this file, so nothing here could be re-verified on macOS
 /// by reading a diff.
-#[cfg(not(windows))]
+#[cfg(unix)]
 type WorkerProcess = Child;
 /// The child process a [`Worker`] owns. See the other arm.
 #[cfg(windows)]
@@ -347,14 +342,14 @@ type WorkerProcess = crate::sandbox_win::Contained;
 /// `CreatePipe` as a bare handle, and `File` is the standard library's owner for
 /// one. It writes, it closes on drop, and closing it is what the child sees as
 /// end of input --- all three of which this needs.
-#[cfg(not(windows))]
+#[cfg(unix)]
 type WorkerStdin = ChildStdin;
 /// What the parent writes requests to. See the other arm.
 #[cfg(windows)]
 type WorkerStdin = std::fs::File;
 
 /// What the parent reads replies from. See [`WorkerStdin`].
-#[cfg(not(windows))]
+#[cfg(unix)]
 type WorkerStdout = ChildStdout;
 /// What the parent reads replies from. See [`WorkerStdin`].
 #[cfg(windows)]
@@ -472,7 +467,7 @@ pub struct PreWorker {
     /// child followed by a line down the request pipe, and both of those are
     /// reachable from `worker` above. Carrying an unused descriptor elsewhere
     /// would be a resource that exists only to be warned about.
-    #[cfg(any(target_os = "macos", target_os = "linux"))]
+    #[cfg(unix)]
     socket: OwnedFd,
 }
 
@@ -564,7 +559,7 @@ impl WarmWorker {
     /// The send failing, or the worker having died while it waited --- reported
     /// with its epitaph, because "the pipe is closed" and "killed by signal 11"
     /// are different diagnoses.
-    #[cfg(any(target_os = "macos", target_os = "linux"))]
+    #[cfg(unix)]
     pub fn adopt(mut self, doc: Arc<Shm>) -> Result<Worker, String> {
         send_document(self.pre.socket.as_raw_fd(), doc.raw_fd(), doc.len()).map_err(|e| {
             format!(
@@ -627,21 +622,6 @@ impl WarmWorker {
         Ok(self.pre.worker)
     }
 
-    /// Hands over the document --- refused where there is no worker at all.
-    ///
-    /// Unreachable in practice, since [`Worker::prespawn`] refuses first and is
-    /// the only route to a `WarmWorker`. Present so the type's surface does not
-    /// change by platform, and refusing rather than panicking so a future caller
-    /// that finds another route is told rather than aborted.
-    ///
-    /// # Errors
-    ///
-    /// Always.
-    #[cfg(not(any(target_os = "macos", target_os = "linux", windows)))]
-    pub fn adopt(self, _doc: Arc<Shm>) -> Result<Worker, String> {
-        Err(NO_WORKERS.into())
-    }
-
     /// The process id, for a probe that wants to prove one exists.
     #[must_use]
     pub fn pid(&self) -> u32 {
@@ -658,17 +638,6 @@ impl Worker {
     /// platform with no sandbox, always --- see the module note.
     pub fn spawn(document: &Path, library_dir: &Path) -> Result<Self, String> {
         Self::spawn_shared(Arc::new(Shm::map_file(document)?), library_dir)
-    }
-
-    /// Starts a worker with no document, to be given one later.
-    ///
-    /// # Errors
-    ///
-    /// Creating the tile buffer, the socket pair, or spawning; and on any
-    /// platform but macOS and Windows, always --- see the module note.
-    #[cfg(not(any(target_os = "macos", target_os = "linux", windows)))]
-    pub fn prespawn(_library_dir: &Path) -> Result<PreWorker, String> {
-        Err(NO_WORKERS.into())
     }
 
     /// Starts a worker with no document, to be given one later.
@@ -717,10 +686,12 @@ impl Worker {
     /// # Errors
     ///
     /// Creating the tile buffer, the socket pair, or spawning.
-    #[cfg(any(target_os = "macos", target_os = "linux"))]
+    #[cfg(unix)]
     pub fn prespawn(library_dir: &Path) -> Result<PreWorker, String> {
         use std::os::unix::process::CommandExt;
 
+        #[cfg(target_os = "linux")]
+        note_boundary_once();
         let tile = Shm::create(TILE_CAPACITY)?;
         let (ours, theirs) = socket_pair()?;
 
@@ -828,26 +799,6 @@ impl Worker {
     pub fn spawn_reading(doc: Arc<Shm>, inputs: &Shm, library_dir: &Path) -> Result<Self, String> {
         let tile = Shm::create(TILE_CAPACITY)?;
         Self::spawn_mapped(doc, tile, library_dir, None, Some(inputs))
-    }
-
-    /// Spawns a worker over mappings the caller already made.
-    ///
-    /// # Errors
-    ///
-    /// As [`Worker::spawn`].
-    #[cfg(not(any(target_os = "macos", target_os = "linux", windows)))]
-    pub fn spawn_mapped(
-        _doc: Arc<Shm>,
-        _tile: Shm,
-        _library_dir: &Path,
-        _out: Option<&std::fs::File>,
-        _inputs: Option<&Shm>,
-    ) -> Result<Self, String> {
-        // Not a silent fallback to running unsandboxed. Every containment claim
-        // in docs/THREAT-MODEL.md is a named boundary --- `sandbox_init` SBPL on
-        // macOS, a low-integrity token inside a job object on Windows --- so a
-        // worker without one is a different thing wearing the same name.
-        Err(NO_WORKERS.into())
     }
 
     /// Spawns a worker over mappings the caller already made, contained.
@@ -1018,7 +969,7 @@ impl Worker {
     /// # Errors
     ///
     /// As [`Worker::spawn`].
-    #[cfg(any(target_os = "macos", target_os = "linux"))]
+    #[cfg(unix)]
     pub fn spawn_mapped(
         doc: Arc<Shm>,
         tile: Shm,
@@ -1029,6 +980,8 @@ impl Worker {
         use std::os::fd::AsRawFd;
         use std::os::unix::process::CommandExt;
 
+        #[cfg(target_os = "linux")]
+        note_boundary_once();
         // Inputs without an output file are a worker that reads one more file
         // and writes nothing (`spawn_reading`). The two optional descriptors
         // are installed independently below, so neither leaves the other's
@@ -1154,7 +1107,7 @@ impl Worker {
     /// races a reaped child whose number has been reused.
     #[must_use]
     pub fn pid(&self) -> u32 {
-        #[cfg(not(windows))]
+        #[cfg(unix)]
         {
             self.child.id()
         }
@@ -1189,7 +1142,7 @@ impl Worker {
         // binaries watch a child that has no protocol yet. Delegating rather
         // than growing a third `epitaph_of` arm keeps one implementation of the
         // rule that a live process is *not* diagnosed from its exit code.
-        #[cfg(not(windows))]
+        #[cfg(unix)]
         {
             epitaph_of(&mut self.child)
         }
@@ -1233,7 +1186,7 @@ impl Worker {
     /// `None` off Windows, exactly as [`Self::footprint`] is `None` off macOS.
     #[must_use]
     pub fn peak_commit(&self) -> Option<u64> {
-        #[cfg(not(windows))]
+        #[cfg(unix)]
         {
             None
         }
@@ -1282,7 +1235,7 @@ pub fn phys_footprint(pid: u32) -> Option<u64> {
 }
 
 /// A process's physical footprint in bytes.
-#[cfg(not(target_os = "macos"))]
+#[cfg(any(windows, target_os = "linux"))]
 #[must_use]
 pub fn phys_footprint(_pid: u32) -> Option<u64> {
     None
@@ -1564,62 +1517,5 @@ mod tests {
             super::PRESPAWNS,
             if started { "started one" } else { "refused" }
         );
-    }
-
-    /// And the entry point callers actually reach refuses too.
-    ///
-    /// Separate from the mapping check because they are different claims: this
-    /// one would still have to hold if `Shm` ever grew a Windows implementation,
-    /// which is exactly the change that would make the refusal above stop firing
-    /// without anyone noticing.
-    ///
-    /// **It is an end-to-end assertion and pins no single guard**, which is worth
-    /// stating because it looks like it pins one. `spawn` chains `map_file`,
-    /// `create` and `spawn_mapped`, and all three refuse with the same sentence,
-    /// so removing any *one* of them leaves this green --- measured, not assumed:
-    /// a mutation making `map_file` succeed changed nothing here. That is the
-    /// "an outcome two mechanisms can produce cannot test either one" shape from
-    /// `AGENTS.md`, and it is deliberate rather than overlooked: what this check
-    /// is for is the property that a worker cannot start, which is exactly the
-    /// thing that survives one guard going away. The guard-level claim is the
-    /// mapping test above, and that one does go red.
-    ///
-    /// Gated on `not(unix)` rather than `not(target_os = "macos")` because on a
-    /// unix that is not macOS the mapping succeeds and `spawn` refuses one layer
-    /// further down with a different message --- a real difference, not a
-    /// portability detail, and asserting the wrong one here would make this pass
-    /// for the wrong reason.
-    ///
-    /// **It used to be handed `"nonexistent.pdf"`, and that stopped being valid
-    /// the moment `Shm` grew a Windows implementation** --- which the note above
-    /// predicted and the fixture did not survive. With every constructor
-    /// refusing, any path reached the same sentence; with `map_file` real, a
-    /// missing file fails at the *first* step with "could not open", so the check
-    /// would have gone red for a reason that has nothing to do with containment.
-    /// A real file is written so the call reaches `spawn_mapped`, which is the
-    /// guard this is actually about, and the assertion now means what it says.
-    ///
-    /// **No longer reachable on Windows**, where `spawn_mapped` is implemented
-    /// and the check above spawns a real contained child instead. Left in place
-    /// rather than deleted, because the claim is still true of a platform with
-    /// no boundary and this is where it is written down.
-    #[cfg(all(not(unix), not(windows)))]
-    #[test]
-    fn spawning_a_worker_refuses_off_macos() {
-        let path = std::env::temp_dir().join(format!("tpdf-spawn-test-{}", std::process::id()));
-        std::fs::write(&path, b"%PDF-1.7 not really").expect("write fixture");
-        // `map(|_| ())` because `expect_err` wants `Debug` on the success type,
-        // and neither `Shm` nor `Worker` has it --- a mapping and a live child
-        // process are not things to format into a panic message.
-        let result = super::Worker::spawn(&path, std::path::Path::new(".")).map(|_| ());
-        let _ = std::fs::remove_file(&path);
-        let err = result.expect_err("Worker::spawn must refuse off macOS");
-        // A literal, not `super::NO_WORKERS`. Comparing against the constant the
-        // code returns is a check deriving its expectation from the thing it
-        // tests --- it compares a value to itself, and `AGENTS.md` records that
-        // shape as one that cannot fail. Substring rather than equality so that
-        // rewording the sentence does not break the check, while dropping the
-        // platform reason from it does.
-        assert!(err.contains("macOS"), "{err}");
     }
 }

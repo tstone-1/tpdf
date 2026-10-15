@@ -339,6 +339,11 @@ def gates() -> "list[tuple[str, list[str], str]]":
             "a doc comment documents nothing: an insertion separated it from its declaration",
         ),
         (
+            "platforms",
+            [sys.executable, str(ROOT / "scripts" / "check_platform_arms.py")],
+            "a platform arm is written as 'not these', or the README's Linux differences and the code disagree",
+        ),
+        (
             "classified",
             [sys.executable, str(ROOT / "scripts" / "check_classified.py")],
             "a registered command is not classified by the window harness",
@@ -391,6 +396,18 @@ def run(name: str, argv: "list[str]") -> "tuple[bool, float, int]":
     return ok, time.monotonic() - started, code
 
 
+def linux_memory_gib() -> int:
+    """MemTotal from /proc/meminfo in whole GiB, or a large number if unread."""
+    try:
+        for line in Path("/proc/meminfo").read_text().splitlines():
+            if line.startswith("MemTotal:"):
+                return int(line.split()[1]) // (1024 * 1024)
+    except (OSError, ValueError, IndexError):
+        pass
+    # Unread means unbounded: Cargo's own default, as before this existed.
+    return 1 << 20
+
+
 def main() -> int:
     """Parses arguments, runs the selected gates, prints a summary."""
     all_gates = gates()
@@ -423,6 +440,17 @@ def main() -> int:
         # Bound the default; an explicit caller setting still takes precedence.
         os.environ.setdefault("CARGO_BUILD_JOBS", "2")
         print(f"[INFO] Cargo build jobs: {os.environ['CARGO_BUILD_JOBS']}", flush=True)
+    elif sys.platform.startswith("linux"):
+        # One job per 2 GiB of memory, when that is fewer than the CPUs. A test
+        # binary links at about 460 MB, and on 2026-10-15 a WSL VM with 7.5 GB
+        # and 12 CPUs linked twelve at once and swapped for over 15 minutes in
+        # `cargo test`, with 73 MB free. A hosted runner (16 GB, 4 CPUs) is not
+        # bounded. An explicit caller setting still takes precedence.
+        jobs = max(1, linux_memory_gib() // 2)
+        if jobs < (os.cpu_count() or 1):
+            os.environ.setdefault("CARGO_BUILD_JOBS", str(jobs))
+        if "CARGO_BUILD_JOBS" in os.environ:
+            print(f"[INFO] Cargo build jobs: {os.environ['CARGO_BUILD_JOBS']}", flush=True)
 
     results = [(name, *run(name, argv), reason) for name, argv, reason in selected]
 

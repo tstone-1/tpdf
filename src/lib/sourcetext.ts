@@ -24,6 +24,15 @@
 const BEFORE_REGEX = "(,=:[!&|?{};+-*%<>~^";
 
 /**
+ * Words after which a `/` starts a regular expression: `return /x/` is a
+ * pattern where `total /x/` would be two divisions. Missing until 2026-10-15,
+ * when the cases shared with the Python lexer (which had them) found it: a
+ * `return /a\//` read its last `//` as a comment and dropped the rest of the
+ * line.
+ */
+const AFTER_WORD = ["return", "typeof", "case"];
+
+/**
  * `source` with its comments removed: `//` to the end of the line, `/* ... *\/`
  * and, for a component's markup, `<!-- ... -->`.
  *
@@ -38,6 +47,9 @@ export function withoutComments(source: string): string {
   const templates: number[] = [];
   let depth = 0;
   let last = "";
+  // The identifier the code last ended with, for the three words after which a
+  // `/` starts a regular expression although a letter precedes it.
+  let word = "";
 
   /** Copies template text from `from`; answers where code resumes. */
   const template = (from: number): number => {
@@ -74,6 +86,7 @@ export function withoutComments(source: string): string {
       out += source.slice(i, k + 1);
       i = k + 1;
       last = c;
+      word = "";
       continue;
     }
     if (c === "`") {
@@ -81,9 +94,10 @@ export function withoutComments(source: string): string {
       out += source.slice(i, end);
       i = end;
       last = "`";
+      word = "";
       continue;
     }
-    if (c === "/" && (last === "" || BEFORE_REGEX.includes(last))) {
+    if (c === "/" && (last === "" || BEFORE_REGEX.includes(last) || AFTER_WORD.includes(word))) {
       let k = i + 1;
       let inClass = false;
       while (k < source.length && source[k] !== "\n") {
@@ -96,6 +110,7 @@ export function withoutComments(source: string): string {
       out += source.slice(i, k + 1);
       i = k + 1;
       last = "/";
+      word = "";
       continue;
     }
     if (c === "{") depth++;
@@ -106,11 +121,18 @@ export function withoutComments(source: string): string {
         out += source.slice(i, end);
         i = end;
         last = "`";
+        word = "";
         continue;
       }
       depth--;
     }
-    if (c.trim() !== "") last = c;
+    if (c.trim() !== "") {
+      // Python's `blanked` keeps the same state the same way, and the shared
+      // cases in `sourcetext.cases.json` hold the two to it.
+      const ident = /[\w$]/.test(c);
+      word = ident ? (/[\w$]/.test(source[i - 1] ?? "") ? word + c : c) : "";
+      last = c;
+    }
     out += c;
     i++;
   }

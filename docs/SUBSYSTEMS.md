@@ -583,8 +583,10 @@ of what the redaction gate asks: this caller wants recall and is not a safety ch
 **A scan with some text (2026-10-15).** A page is read when it has no text, or when pictures
 cover at least half of it (`ocr_layer::wants_reading`, `SCAN_SHARE`). The share comes from the
 worker's `Request::Pictures`, `render::run_pictures`: the page's pictures and those inside its
-Form XObjects (`objects::read`), against the crop box, measured on a 100 x 100 grid so that
-pictures over one another count once. It is asked only of a page that has text. Until then one
+Form XObjects at any depth up to eight (`objects::pictures`), against the crop box, measured on
+a 100 x 100 grid so that pictures over one another count once (`scanshare::picture_share`).
+Until the same day's review the share was built from `objects::read`, which follows a form one
+level down, so a scan whose picture sat in a form inside a form counted as no picture. It is asked only of a page that has text. Until then one
 character kept a page from being read, so a scan with a typed fax line, a stamp or a page
 number got no layer. Text alone could not draw the line: measured on pages built from
 `text-heavy.pdf`, scans with 12 to 48 typed characters have 0.2 to 0.6% of the page under
@@ -594,10 +596,16 @@ picture and born-digital pages 0 to 3.1%.
 A recognised word is dropped when the characters the page already has inside its box spell it,
 letters and digits only, either containing the other (`ocr_layer::already_there`). Dropping
 any word with a character under it took six body words under a typed stamp and one under a
-footer number on those pages; comparing the spelling kept them. Every word dropped this way
-on a page that got no others makes it `AlreadyThere`, which both callers file under
-`already_text`: a scan another program already gave a layer reads as having text, not as
-nothing recognised. `reads_back` counts the page's own characters with the layer's, or a scan
+footer number on those pages; comparing the spelling kept them.
+
+A page on which at least half of the recognised words are already there gets nothing at all
+(`ocr_layer::ALREADY_READ`, `AlreadyThere`), which both callers file under `already_text`: a
+scan another program already gave a layer reads as having text, not as nothing recognised, and
+not as a page to give a second layer. Without it, every word the other program's engine read
+differently was written again over its layer. Measured with Vision on `text-base14.pdf` made a
+scan: its own layer read again, 30 of 30 words there; a layer with five words spelled as
+another engine might, 24 of 30; the scan with a typed fax line, 3 of 33. `tests/cli/ocr.rs`
+holds the second case through the tool and the window. `reads_back` counts the page's own characters with the layer's, or a scan
 with a header would read back one line more than its layer and be refused.
 
 `tests/cli/ocr.rs` holds it end to end, through the tool and the window, with the picture on

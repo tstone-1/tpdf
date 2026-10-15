@@ -68,7 +68,7 @@ use crate::text::PageText;
 #[cfg(windows)]
 pub const MIN_CONTROL_PX: f32 = 32.0;
 /// See the Windows value above for why there are two.
-#[cfg(not(windows))]
+#[cfg(unix)]
 pub const MIN_CONTROL_PX: f32 = 16.0;
 
 /// The scale floor, in pixels per point.

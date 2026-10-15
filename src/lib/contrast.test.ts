@@ -14,7 +14,7 @@
 
 import { describe, expect, it } from "vitest";
 
-const sources = import.meta.glob(["../**/*.svelte", "./*.ts", "!./*.test.ts"], {
+const sources = import.meta.glob(["../**/*.svelte", "./**/*.ts", "!./**/*.test.ts"], {
   query: "?raw",
   import: "default",
   eager: true,

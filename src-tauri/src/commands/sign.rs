@@ -406,10 +406,19 @@ pub(crate) fn read_back(
     let Some(ours) = ours else {
         return ReadBack::Signature;
     };
+    let unlocked = lock && ours.lock != 1;
     match ours.integrity.as_ref() {
         Some(found) if found.verdict == Verdict::Intact => {}
+        // The lock needs no hashing, being read from the dictionaries, so a
+        // signature whose hash ran out of time still says whether it locks.
+        // Until 2026-10-15 the budget's `Unchecked` came first, and a lock
+        // asked for and not written went unsaid there.
         Some(found) if found.verdict == Verdict::Unchecked && found.why == Some(Why::Budget) => {
-            return ReadBack::Unchecked
+            return if unlocked {
+                ReadBack::Lock
+            } else {
+                ReadBack::Unchecked
+            };
         }
         _ => return ReadBack::Signature,
     }
@@ -422,7 +431,7 @@ pub(crate) fn read_back(
     }
     // Before the long-term data, which is added after the lock and is only
     // worth having on a signature that says what was asked of it.
-    if lock && ours.lock != 1 {
+    if unlocked {
         return ReadBack::Lock;
     }
     if long_term {
@@ -772,7 +781,7 @@ pub async fn sign_add_certificate_file(path: String) -> Result<Option<String>, S
         .await
         .map_err(|e| format!("adding the certificate file did not run: {e}"))?
     }
-    #[cfg(not(target_os = "linux"))]
+    #[cfg(any(target_os = "macos", windows))]
     {
         let _ = path;
         Err(
@@ -1743,6 +1752,20 @@ mod tests {
                 ReadBack::Unchecked
             );
         }
+        // But a lock asked for and not written is said even then: it is
+        // read from the dictionaries and needs no hashing.
+        let budget = unchecked(Why::Budget);
+        assert_eq!(
+            read_back(Some(&budget[0]), false, false, true),
+            ReadBack::Lock,
+            "the lock is compared before the budget's answer"
+        );
+        let mut locked = unchecked(Why::Budget);
+        locked[0].lock = 1;
+        assert_eq!(
+            read_back(Some(&locked[0]), false, false, true),
+            ReadBack::Unchecked
+        );
         assert_eq!(
             read(&unchecked(Why::Range), false, false),
             ReadBack::Signature

@@ -1485,9 +1485,9 @@ export function registerAppCommands(
       // The same shape as the highlight above, and deliberately three entries
       // rather than one command that asks which kind: a reader who wants a
       // strikeout wants it in one press, and a palette that answered "Mark
-      // selection" and then asked again would cost two. The chords are left
-      // free for the same reason the highlight's is --- a chord for something
-      // that only ever applies to a selection teaches itself badly.
+      // selection" and then asked again would cost two. No letter of their
+      // own: the highlight is the frequent one and has `h`, and these two are
+      // a palette search away.
       id: "edit.underlineSelection",
       title: "Underline selection",
       enabled: () => withDocument() && actions.hasSelection(),
@@ -1655,9 +1655,9 @@ export function registerAppCommands(
       // Guarded on the selection the way the four mark commands are, and for
       // the same reason rather than by copying them: with nothing selected it
       // would mark nothing, and a command that runs and does nothing reads as a
-      // broken command. No chord, for `edit.highlightSelection`'s reason --- a
-      // chord for something that only ever applies to a selection teaches
-      // itself badly.
+      // broken command. No chord, for the reason "Redact text or regions by
+      // dragging" has none: this workflow removes content, and a stray key
+      // that arms it is worse than one extra keystroke.
       id: "edit.redactSelection",
       title: "Redact selection",
       enabled: () => withDocument() && actions.hasSelection(),
@@ -2619,19 +2619,25 @@ export function handleWindowKey(
     // field for every one of them, where ⌘Z is the only chord above that needs
     // it: a letter is what a reader types into the find bar. With nothing
     // selected `h` is left alone, as ⌘C is.
+    //
+    // **A held key acts once.** The selection stays after a highlight, so
+    // before 2026-10-15 holding `h` past the system's repeat delay laid one
+    // highlight per repeat over the same words, each its own undo step. The
+    // three tools below are refused on a repeat for the same reason: a tool
+    // armed again by a held key is a press the reader did not make.
     if (actions.hasSelection()) {
       event.preventDefault();
-      actions.markSelection("highlight");
+      if (!event.repeat) actions.markSelection("highlight");
     }
   } else if (title && !inTextField(event) && !event.defaultPrevented && matches("edit.addComment", event)) {
     event.preventDefault();
-    actions.addComment(null);
+    if (!event.repeat) actions.addComment(null);
   } else if (title && !inTextField(event) && !event.defaultPrevented && matches("edit.addTextBox", event)) {
     event.preventDefault();
-    actions.drawTextBox();
+    if (!event.repeat) actions.drawTextBox();
   } else if (title && !inTextField(event) && !event.defaultPrevented && matches("edit.editText", event)) {
     event.preventDefault();
-    actions.editText();
+    if (!event.repeat) actions.editText();
   } else if (matches("edit.undo", event) && title && !inTextField(event)) {
     // The `inTextField` guard is on these two and on nothing else here, and the
     // asymmetry is deliberate rather than an oversight. Every other binding

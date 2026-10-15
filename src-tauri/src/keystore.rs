@@ -502,20 +502,5 @@ mod platform {
     }
 }
 
-#[cfg(not(any(target_os = "macos", windows, target_os = "linux")))]
-mod platform {
-    use super::{Identity, KeyKind};
-
-    pub struct Handle;
-
-    pub fn identities() -> Result<Vec<Identity>, String> {
-        Err("signing with a certificate is not available on this platform".into())
-    }
-
-    pub fn sign(_: &Handle, _: KeyKind, _: &[u8; 32]) -> Result<Vec<u8>, String> {
-        Err("signing with a certificate is not available on this platform".into())
-    }
-}
-
 #[cfg(test)]
 mod tests;

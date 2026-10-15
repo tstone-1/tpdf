@@ -61,6 +61,18 @@ describe("statusFor", () => {
     expect(said).toContain("2 pages");
   });
 
+  it("says when a page's search failed, with or without hits", () => {
+    // Mutation: the `unread > 0` branch removed. A failed page is skipped and
+    // counted as searched, so without this the panel read "3 matches" for a
+    // list missing whatever that page held.
+    expect(statusFor(3, "cat", false, 0, 1)).toBe(
+      "3 matches. 1 page could not be searched: reading them failed.",
+    );
+    expect(statusFor(0, "cat", false, 0, 2)).toContain("No matches. 2 pages");
+    // Not while running: "still searching" is the true answer then.
+    expect(statusFor(3, "cat", true, 0, 1)).toBe("3 matches, still searching…");
+  });
+
   it("agrees with itself about one unreadable page", () => {
     expect(statusFor(0, "cat", false, 1)).toContain("1 page ");
     expect(statusFor(0, "cat", false, 2)).toContain("2 pages ");

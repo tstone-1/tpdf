@@ -1,6 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import {
+  revealTitle,
+  setLinux,
   accelerator,
   BINDINGS,
   copyInterfaceText,
@@ -56,6 +58,12 @@ const GERMAN: Record<string, string> = {
   Equal: "´",
   Minus: "ß",
   Slash: "-",
+  KeyC: "c",
+  KeyE: "e",
+  KeyH: "h",
+  KeyN: "n",
+  KeyP: "p",
+  KeyT: "t",
 };
 
 describe("label", () => {
@@ -396,6 +404,27 @@ describe("matching by position as well as character", () => {
     );
   });
 
+  it("takes a bare letter with Caps Lock on and on a layout that prints another letter there", () => {
+    // Mutation: `code` removed from the six bare bindings. Caps Lock sends `H`
+    // with no Shift, which `keys: ["h"]` alone refuses, and a Cyrillic layout
+    // sends `р` from the same key.
+    const bare = [
+      ["edit.highlightSelection", "KeyH", "р"],
+      ["edit.addComment", "KeyC", "с"],
+      ["edit.addTextBox", "KeyT", "е"],
+      ["edit.editText", "KeyE", "у"],
+      ["nav.nextPage", "KeyN", "т"],
+      ["nav.previousPage", "KeyP", "з"],
+    ] as const;
+    for (const [id, code, cyrillic] of bare) {
+      const letter = (BINDINGS[id].keys[0] ?? "").toUpperCase();
+      expect(matches(id, event(letter, { code })), `${id} with Caps Lock`).toBe(true);
+      expect(matches(id, event(cyrillic, { code })), `${id} on a Cyrillic layout`).toBe(true);
+      // Shift is still Shift: a capital typed with it is another chord.
+      expect(matches(id, event(letter, { shift: true, code })), `${id} with Shift`).toBe(false);
+    }
+  });
+
   it("keeps the modifier checks on the position path", () => {
     // A position is not a licence to ignore the rest of the chord. ⇧⌘ on the
     // same key is not this binding, and nothing about matching by code should
@@ -662,5 +691,23 @@ describe("the copy chord pressed on a page", () => {
     expect(nativeCopy(pressed)).toBe(false);
     forgetPageSurface(surface);
     expect(nativeCopy(pressed)).toBe(true);
+  });
+});
+
+describe("revealTitle", () => {
+  afterEach(() => {
+    setMacSpelling();
+    setLinux();
+  });
+
+  it("names each platform's file manager, and none on Linux", () => {
+    setMacSpelling(true);
+    setLinux(false);
+    expect(revealTitle()).toBe("Show in Finder");
+    setMacSpelling(false);
+    setLinux(true);
+    expect(revealTitle()).toBe("Show in Folder");
+    setLinux(false);
+    expect(revealTitle()).toBe("Show in Explorer");
   });
 });

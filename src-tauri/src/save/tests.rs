@@ -210,7 +210,7 @@ fn keeping(baseline: u32, kept: &[(u32, u8)]) -> Plan {
 
 #[cfg(target_os = "macos")]
 use crate::print_macos as os_pdf;
-#[cfg(not(any(target_os = "macos", windows)))]
+#[cfg(target_os = "linux")]
 use crate::print_other as os_pdf;
 
 /// Whether this platform has a PDF parser of its own to read our output back
@@ -219,7 +219,7 @@ use crate::print_other as os_pdf;
 fn os_parser() -> bool {
     #[cfg(any(target_os = "macos", windows))]
     return true;
-    #[cfg(not(any(target_os = "macos", windows)))]
+    #[cfg(target_os = "linux")]
     {
         println!("{}", os_pdf::SKIP);
         false
@@ -878,7 +878,7 @@ fn a_merge_holds_every_page_of_every_document() {
     let written = std::fs::read(&out).expect("read the merge back");
     #[cfg(any(target_os = "macos", windows))]
     let read = os_pdf::read(&written).expect("the OS parser reads the merged document");
-    #[cfg(not(any(target_os = "macos", windows)))]
+    #[cfg(target_os = "linux")]
     let Some(read) = os_pdf::read(&written) else {
         println!("{}", os_pdf::SKIP);
         return;

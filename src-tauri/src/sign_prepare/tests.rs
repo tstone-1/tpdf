@@ -430,7 +430,18 @@ fn a_name_taken_under_a_group_with_no_name_is_taken() {
 /// picked for it, and the refusal says what it was for.
 #[test]
 fn a_form_too_deep_to_read_every_name_of_is_not_given_a_guessed_one() {
+    // A signature is refused first by the lock check, which walks the same
+    // tree to the same depth and cannot see a lock past it either.
     let why = match prepare(grouped_under(&[None; 33]), NOW, None) {
+        Err(why) => why,
+        Ok(_) => panic!("a signature was prepared"),
+    };
+    assert!(
+        why.contains("cannot tell whether a signature locked the document"),
+        "{why}"
+    );
+    // A document timestamp is not stopped by a lock, and still needs a name.
+    let why = match prepare_document_timestamp(grouped_under(&[None; 33]), None) {
         Err(why) => why,
         Ok(_) => panic!("a name was picked"),
     };
@@ -759,9 +770,10 @@ fn a_lock_in_a_field_the_document_has_is_written_on_that_field() {
     assert!(field.has(b"Lock") && field.has(b"V"));
     assert!(signature_of(&after, field).has(b"Reference"));
     let whole = [original.as_slice(), unsigned.update.as_slice()].concat();
-    assert!(crate::docinfo::locked(
-        &Document::load_mem(&whole).expect("loads")
-    ));
+    assert_eq!(
+        crate::docinfo::locked(&Document::load_mem(&whole).expect("loads")),
+        Ok(true)
+    );
 }
 
 /// The signed revision with both places a lock is written set to other

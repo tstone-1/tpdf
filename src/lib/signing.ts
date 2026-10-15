@@ -245,6 +245,13 @@ export function choiceLabel(choice: Choice): string {
 }
 
 /**
+ * How {@link nothingToChoose} begins on every platform, whatever was skipped.
+ * Exported for `fieldcheck.ts`, which has to tell this answer from any other
+ * failure that mentions a certificate.
+ */
+export const NO_CERTIFICATE = "No certificate that can sign was found";
+
+/**
  * What to say when there is nothing to choose from.
  *
  * Names what *was* found, when anything was: a reader whose card holds only an
@@ -255,9 +262,9 @@ export function nothingToChoose(choices: Choices, linux = isLinux()): string {
   // Linux has no keychain or certificate store: a smart card is read through
   // PKCS#11 and a certificate file is added to tpdf (`certfiles.rs`).
   const none = linux
-    ? "No certificate that can sign was found on a smart card or token, or in a certificate file " +
+    ? `${NO_CERTIFICATE} on a smart card or token, or in a certificate file ` +
       "you added. Add a certificate file for signing\u2026 adds one."
-    : "No certificate that can sign was found in your keychain or certificate store.";
+    : `${NO_CERTIFICATE} in your keychain or certificate store.`;
   if (choices.skipped.length === 0) return none + WITHOUT_CERTIFICATE;
   const reasons = choices.skipped.map((s) => `${s.subject}: ${s.why}`).join("; ");
   return `${none} Found but not offered — ${reasons}.${WITHOUT_CERTIFICATE}`;
@@ -678,6 +685,10 @@ export function askIdentity(
         unanswered.textContent = LOCK_UNANSWERED;
         return;
       }
+      // Answered now, so the line asking for it goes: left standing, it read
+      // beside the timestamp address's alert below as a second thing still
+      // wrong.
+      unanswered.textContent = "";
       const chosenStamp: StampChoice = {
         server: stampRadios.find((radio) => radio.checked)?.value ?? "none",
         url: otherUrl.value,

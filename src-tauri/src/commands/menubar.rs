@@ -36,12 +36,12 @@ pub async fn keyboard_positions(
         .ok_or_else(|| "the keyboard layout reader did not answer".to_string())
 }
 
-/// The non-macOS answer: no layout lookup, so every label stays its character.
+/// The Windows and Linux answer: no layout lookup, so every label stays its character.
 ///
 /// An empty map rather than a refusal, for the same reason [`set_menu`] answers
-/// `None`: there is nothing wrong on Windows, and the palette's own rendering is
-/// what that platform has always shown.
-#[cfg(not(target_os = "macos"))]
+/// `None`: there is nothing wrong on Windows or Linux, and the palette's own
+/// rendering is what those platforms have always shown.
+#[cfg(any(windows, target_os = "linux"))]
 #[tauri::command]
 pub async fn keyboard_positions() -> Result<std::collections::HashMap<String, String>, String> {
     Ok(std::collections::HashMap::new())

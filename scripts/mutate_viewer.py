@@ -406,7 +406,7 @@ MUTATIONS = [
         # cleanup, the region survives into the command guard sweep and the
         # later overlay readings.
         "viewercheck: leave the command probe's synthetic redaction behind",
-        "src/lib/viewercheck.ts",
+        "src/lib/viewercheck/commands.ts",
         "      // The stub records the command; it does not remove its synthetic region.\n"
         "      then: () => viewer.setRedactions([]),",
         "      // The stub records the command; it does not remove its synthetic region.",
@@ -551,7 +551,7 @@ MUTATIONS = [
         # ever stopped differing, the check above would pass without a tag being
         # read. Mutating the *geometric* side proves the comparison is live.
         "structure: compare the tagged order against itself",
-        "src/lib/viewercheck.ts",
+        "src/lib/viewercheck/accessibility.ts",
         "  const geometric = lines({ ...text, runs: [] });",
         "  const geometric = lines(text);",
         "a tagged page's reading order is not the one its geometry gives",
@@ -766,7 +766,7 @@ MUTATIONS = [
     ),
     Mutation(
         "the phase does not put the rotation back",
-        "src/lib/viewercheck.ts",
+        "src/lib/viewercheck/commands.ts",
         "  viewer.rotateBy(entry.rotation - viewer.rotation);",
         "",
         "leaves the viewer as the phase before it did",
@@ -801,7 +801,7 @@ MUTATIONS = [
         # the palette phase, which is well before this one, so it could not see a
         # turn left behind here however it were worded.
         "page turn: hand the next phase a page still turned",
-        "src/lib/viewercheck.ts",
+        "src/lib/viewercheck/pages.ts",
         # Narrowed to the FIRST put-back. The phase gained a second
         # `setPageTurns(target, 0)` when the half-turn check was added, and a
         # bare anchor then matched twice -- caught by the `anchors` gate rather
@@ -1056,7 +1056,7 @@ MUTATIONS = [
         # Everywhere else this edit changes nothing, so a mutation aimed at it
         # on any other fixture would report SURVIVED.
         "agree: compare a text box on a page too short for one line",
-        "src/lib/viewercheck.ts",
+        "src/lib/viewercheck/ink.ts",
         "  const typeFits = tall >= TEXT_INSET + TEXT_SIZE;",
         "  const typeFits = true;",
         "control: saving the marks changed what the file renders",

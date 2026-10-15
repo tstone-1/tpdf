@@ -1630,16 +1630,6 @@ pub fn kill_pid(pid: u32) {
     unsafe { CloseHandle(handle) };
 }
 
-/// Ends a worker process. Unreachable on a platform that spawns none.
-///
-/// A silent no-op is safe only because [`Worker::spawn`] refuses where there is no
-/// containment to spawn into, so nothing is ever registered to kill. Both
-/// platforms that *do* spawn have a real implementation above; if a third one is
-/// added, it needs one here before it needs anything else, because the deadline is
-/// the only bound on a render that never returns.
-#[cfg(not(any(unix, windows)))]
-fn kill_pid(_pid: u32) {}
-
 /// How many bytes of the shared mapping a reply is entitled to.
 ///
 /// The worker is our code, and it is also the process holding the attacker's

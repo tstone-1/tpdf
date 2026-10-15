@@ -8637,6 +8637,15 @@ starts at 0 and increments within the month.
    *type-only* TypeScript break to pass while being **counted**, so a deliberately narrow
    exemption stays distinguishable from a checker that saw nothing.
 
+   **Where the rows are.** Since 2026-10-15 the Rust and frontend rows live in
+   `scripts/mutation_rows/rust/` and `scripts/mutation_rows/frontend/`, one part per stretch
+   of the table, joined in order by each folder's `__init__.py` into the harness's `MUTATIONS`.
+   A new row goes at the end of the part for its area, or of the last part. No harness file,
+   row part or window-check phase may pass 3,000 lines: the `mutations` gate
+   (`check_mutation_test_files.py`, `HARNESS_CEILING`) fails it, and a part past it is cut in
+   two. The window check's phases are likewise in `src/lib/viewercheck/`, run in order by
+   `viewercheck.ts`.
+
    **The full tables:**
 
    ```

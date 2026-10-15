@@ -75,7 +75,7 @@ Five principals, each trusting only what is below it in the table; the command-l
 | **Webview** (Svelte) | Draws, receives tiles, issues commands — sixteen of which write files on its behalf (§T6.1), drives the updater's optional launch check and can ask for the process to be ended and started again once an update is applied (§T9), can ask for a document web link to be opened (§T8), reads signature images explicitly selected through its file input (§T6.17), can ask for a second PDF to be opened for reading so its pages can be inserted (§T6.20), can ask for the command-line tool's link in `/usr/local/bin` to be made or removed (§T6.23) and whether it is there, which changes nothing (§T6.38), and can ask for tpdf to be made the default application for PDFs (§T6.27) | No general filesystem access, no network reach of its own and no PDF parsing. It can name an address only in two ways: a document web link the reader confirms (§T8), and the timestamp authority `sign_document`, `sign_resume` and `add_validation_data` are handed --- any `http` or `https` host without credentials, loopback and private addresses included on purpose (§T10) |
 | **Coordinator** (Rust, the Tauri process) | Opens files the user chose, owns the window, spawns and kills workers, owns every shared mapping; asks the OS key store to sign one digest when the reader signs a document (§T6.21); asks the timestamp authority the reader chose for a token over that signature, when they chose one, and the certificate authorities for revocation data, when they also asked for long-term data (§T10) | Parses no PDF syntax on the *viewing* path — with one exception, printing, described below; holds no private key, and parses no part of a document it signs |
 | **Command-line tool** (`tpdf-cli`, the same crate) | A coordinator without a window, run by the reader's own account: opens the files named on its command line, spawns and kills the same workers, asks the OS key store to sign one digest, writes signed, filled or redacted copies, page-operation outputs or a document's text, and reads a document's password from an environment variable it is told the name of (§T6.23) | The coordinator's limits exactly --- parses no part of a document, holds no private key --- and no webview, no updater, and no network but the timestamp authority `sign --timestamp` names and the certificate authorities `--long-term` asks (§T10) |
-| **Worker** (Rust + PDFium) | Parses and renders whatever bytes it is handed | No path to the document and cannot create a file, on both platforms; no filesystem and no network on **macOS** — on Windows, no writes, and reads and sockets are the disclosed ceiling |
+| **Worker** (Rust + PDFium) | Parses and renders whatever bytes it is handed | No path to the document and cannot create a file, on all three platforms; no filesystem and no network on **macOS** — on Windows, no writes, and reads and sockets are the disclosed ceiling; on **Linux**, reads beneath the font folders only and no socket by the `socket` call, io_uring or an x32 number, with what the kernel's Landlock version leaves open in §6a |
 | **Disk** | Holds the document and tpdf's output | — |
 
 **That first row said "No filesystem" flatly until 2026-08-17, and §T6.1 had contradicted it
@@ -1262,7 +1262,9 @@ range --- a later revision can change every page a reader sees while an earlier 
 `intact`, which is why the dialog states the appendix beside the verdict. Since 2026-10-05 the
 command-line gate has the counterpart: `verify --strict` fails a document when what was appended
 after its last intact signature or document timestamp could not be read, or touches a page other
-than by listing a signature or timestamp field among its annotations. A page counts as touched
+than by listing a signature or timestamp field among its annotations; since 2026-10-15 only a
+field holding a signature that append wrote counts as a listing, because an unsigned one's
+appearance can paint over the page and `--strict` passed it. A page counts as touched
 when its object or anything it draws from was added or replaced; until that date only `/Page`
 objects were counted, so a replaced content stream read as no page. Not judged: a change that
 reaches no page (a catalog entry such as form defaults, optional-content configuration or
@@ -4142,9 +4144,11 @@ save and a second file open of a path the app just wrote — the same filesystem
 as a clean answer would be this document's own T5 failure arriving through the platform gate.
 
 ⚠ **This sentence named Windows as that platform until 2026-09-06, eight days after it
-stopped being one.** The refusing arm is `#[cfg(not(any(target_os = "macos", windows)))]`
-(`ocr_worker.rs`, `OcrWorker::spawn` and `serve`), so both shipped platforms run the gate and
-`NO_ENGINE` is reachable only where neither engine exists. Risk 19 recorded the closure on
+stopped being one.** The refusing arm was `#[cfg(not(any(target_os = "macos", windows)))]`
+(`ocr_worker.rs`, `OcrWorker::spawn` and `serve`); Linux gained an engine on 2026-10-14, and
+on 2026-10-15 the arm and `NO_ENGINE` were removed, since `worker.rs` refuses to compile for
+any other platform. Every shipped platform runs the gate, and there is no platform without an
+engine left to describe. Risk 19 recorded the closure on
 2026-08-29 and struck its own half of it; this paragraph, four lines above the Windows arm it
 contradicts, did not move — the same summary-drifting-from-the-section-beneath-it failure
 §3 records three times over, arriving inside one section instead of between two.
@@ -4289,10 +4293,43 @@ after `exec`, so there is a "before" in which to open PDFium (`worker_child.rs`)
 |---|---|---|
 | Landlock, file system | every file right the kernel knows, including executing a file; grants only reading beneath PDFium's font folders (`FONT_DIRS`) | **required**: no Landlock, or a ruleset the kernel did not enforce, is a refusal |
 | Landlock, network (ABI 4+) and scopes (ABI 6+) | TCP bind and connect; abstract Unix sockets made outside the sandbox (X11, D-Bus); signals outside it | taken where the kernel has them |
-| seccomp | `socket`, `socketpair`, `ptrace`, `process_vm_readv`, `process_vm_writev`, with `EPERM` | **required** |
+| seccomp | `socket`, `socketpair`, the three io_uring calls, `ptrace`, `process_vm_readv`, `process_vm_writev`, with `EPERM`; on x86-64 every call made by its x32 number; a call from another architecture ends the process | **required** |
 
 A process with more than one thread is refused at the boundary, because Landlock confines
 only the thread that asks.
+
+**io_uring and x32, added 2026-10-15** after the codebase review of that day. Until then the
+seccomp list held `socket` and `socketpair` alone, and this table said no socket of any family
+could be made. That was not true on a kernel with io_uring (5.19 and up): a ring makes a
+socket (`IORING_OP_SOCKET`) and connects it without either call, and seccomp does not see a
+ring's work. Landlock rules TCP from ABI 4 but not UDP or a Unix socket with a path, such as
+the session bus at `/run/user/<uid>/bus`, so on **Ubuntu 24.04's own kernel (6.8, Landlock
+ABI 4)** a worker taken over through PDFium could have reached D-Bus. The three io_uring calls
+are refused now, and so is any call by its x32 number, which on an x86-64 kernel built with
+x32 names `socket` as `41 | 0x40000000` under the same architecture word. The filter is
+written out in `sandbox_linux::program` because `seccompiler`'s rule compiler matches whole
+numbers only. Measured under WSL (kernel 6.18, io_uring on): the forked-child test gained a
+ring bit, set uncontained and clear contained, and an x32 bit read from the error (`EPERM` is
+the filter's answer, `ENOSYS` the kernel's when it has no x32); replacing `io_uring_setup` in
+the list turned the test red, and `sandbox_linux::tests` runs the filter by hand for each
+listed call, an allowed call and an x32 number.
+
+**Inherited descriptors, added 2026-10-15.** Landlock and seccomp do not restrict a
+descriptor that is already open, and the app process holds descriptors it did not open:
+GTK's, WebKitGTK's, and those of every PKCS#11 module p11-kit loads. `remap_fds`, which both
+workers' spawns run between `fork` and `exec`, now marks every descriptor above standard error
+that it did not install as close-on-exec (`close_range` with `CLOSE_RANGE_CLOEXEC`, or one
+`fcntl` each up to the descriptor limit). `worker_handover::tests` holds it on macOS and
+Linux with a descriptor opened without the flag: a program started through the shuffle does
+not see it, and the control without the shuffle does. No descriptor without the flag was ever
+observed reaching a worker; this closes the possibility rather than a found case.
+
+**Which halves a kernel took is logged.** The app writes one line to the diagnostics log
+before its first worker starts, naming the kernel's Landlock version and what follows from
+it (`sandbox_linux::describe`): Ubuntu 24.04's 6.8 kernel is ABI 4, which rules TCP and has
+no scopes, so signals to other processes and abstract sockets are not refused there; the WSL
+kernel the measurements below ran on is ABI 7, which has both. Below ABI 3 (Debian 12's 6.1),
+truncating a file by its path is not refused either.
 
 **Measured, parser worker.** `worker_child::tests::a_contained_worker_reads_fonts_and_nothing_else`
 forks a child that applies the boundary and tries to read `/etc/passwd`, create a file, open
@@ -4304,7 +4341,7 @@ worker on Linux since the same day; before that the viewer parsed in the app pro
 the first run of the window checks showed as the uncontained warning.
 
 **Measured, OCR worker.** The parent starts it with `OMP_THREAD_LIMIT=1`. It opens
-`libtesseract.so.5` before the boundary, then calls `apply_reading` with the language-data
+`libtesseract.so.5` (or a `5.x` name, `ocr_tesseract::LIBRARIES`) before the boundary, then calls `apply_reading` with the language-data
 folder added to the font folders. `ocr-worker-probe` reads `Seccomp: 2` in the worker's
 `/proc/<pid>/status` and `0` in its own (the control), and the seccomp filter goes on only
 after Landlock has taken. Removing the boundary turned that row red (`Seccomp: worker 0`).
@@ -4318,7 +4355,12 @@ other two, and **tpdf asks for the PIN and passes it to `C_Login`**. The key sta
 token, which signs one digest. What is kept: the application asks in a native GTK dialog
 (`pin_prompt.rs`), so the PIN never reaches the webview; the command-line tool reads it from
 `/dev/tty` with echo off, never from an argument; it is held in a `SecretString`, zeroed on
-drop; and a token with a PIN pad is logged in with no PIN. What is new: the PIN passes
+drop, and since 2026-10-15 the copies before it are too: the dialog's text and the terminal's
+keys go into `Zeroizing` buffers, and the `SecretString` is a fresh allocation copied from
+them. GTK's own copies (the entry's buffer, the `GString` it returns) are GTK's and are not
+zeroed. The terminal prompt reads each key with the terminal's signals off, so Ctrl+C cancels
+the prompt instead of ending the process with echo still off; a signal from elsewhere can
+still do that. A token with a PIN pad is logged in with no PIN. What is new: the PIN passes
 through tpdf's memory, and every PKCS#11 module p11-kit has registered is loaded into the app
 process, vendor code included, as a Windows smart-card minidriver is. Measured with SoftHSM
 2.6.1 (`pkcs11::tests`): listing, a wrong PIN refused, a cancelled prompt, a P-256 signature
@@ -4343,6 +4385,14 @@ MAC), legacy (RC2-40, triple DES, SHA-1 MAC), certificates in the clear, P-384, 
 the root first, RSA refused, a wrong password, a damaged MAC with the right password, a key
 with no certificate, and a remembered file replaced by another; six mutations each turned it
 red.
+
+**Installed fonts are found by running `fc-list`**, since 2026-10-15 (`sysfont.rs`). It is the
+Linux half of §T6.26: the app process asks fontconfig for the file of a font a document names
+by its exact PostScript name, with the pattern as one argument and no shell, bounded to ten
+seconds and 64 KiB of answer, and compares the name it prints. The name comes from the
+document and is checked as a PostScript name first; what it reaches is §T6.26's, the same as
+CoreText's and DirectWrite's lookups. Until that day Linux found no installed font at all,
+because the arm it ran was the one written for "any other platform".
 
 **What Linux does not have that the other two do:**
 

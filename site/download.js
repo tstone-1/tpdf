@@ -51,6 +51,19 @@ export function installers(release) {
   };
 }
 
+/**
+ * Which platform's button to mark as the reader's own, from the browser's user
+ * agent, or `null` for one with no build. An Intel Mac cannot be told from an
+ * Apple silicon one here, so the button says which Macs it is for. Android
+ * says `Linux` too, and has no build.
+ */
+export function platformOf(agent) {
+  if (/Win/.test(agent)) return "windows";
+  if (/Mac/.test(agent)) return "mac";
+  if (/Linux/.test(agent) && !/Android/.test(agent)) return "linux";
+  return null;
+}
+
 async function fill() {
   const reply = await fetch(LATEST, { headers: { Accept: "application/vnd.github+json" } });
   if (!reply.ok) return;
@@ -65,17 +78,8 @@ async function fill() {
 }
 
 if (typeof document !== "undefined") {
-  // The reader's own platform first. An Intel Mac cannot be told from an Apple
-  // silicon one here, so the button says which Macs it is for. Android says
-  // `Linux` too, and has no build.
-  const agent = navigator.userAgent;
-  const here = /Win/.test(agent)
-    ? "windows"
-    : /Mac/.test(agent)
-      ? "mac"
-      : /Linux/.test(agent) && !/Android/.test(agent)
-        ? "linux"
-        : null;
+  // The reader's own platform first.
+  const here = platformOf(navigator.userAgent);
   if (here) document.getElementById(`download-${here}`)?.classList.add("here");
   fill().catch(() => {});
 }

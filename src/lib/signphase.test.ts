@@ -66,6 +66,7 @@ function stamped(): Signature {
     location: "",
     when: "",
     covers_whole_file: true,
+    starts_at_zero: true,
     covered_bytes: 1000,
     appended_bytes: 0,
     appendix: null,

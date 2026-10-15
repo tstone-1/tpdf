@@ -14,8 +14,10 @@
 //! is GIO, which writes the reader's own `mimeapps.list`, the file every
 //! freedesktop desktop reads; no system file changes.
 
-/// How to undo it, in the words of this platform's desktop.
-#[cfg(not(target_os = "linux"))]
+/// How to undo it, in the words of this platform's desktop. Windows compiles
+/// the macOS sentence for [`said`]'s tests and never says it: its [`apply`]
+/// opens Settings and does not read the default back.
+#[cfg(any(target_os = "macos", windows))]
 const CHANGE_BACK: &str = "To change that, select a PDF in Finder, choose Get Info, and pick \
                            another application under \"Open with\".";
 #[cfg(target_os = "linux")]
@@ -181,16 +183,6 @@ pub fn apply(_identifier: &str) -> Result<String, String> {
     ours.set_as_default_for_type("application/pdf")
         .map_err(|e| format!("tpdf is not the default: {e}"))?;
     said(current().as_deref(), DESKTOP_ID, false)
-}
-
-/// No default-application setting this build knows how to reach.
-///
-/// # Errors
-///
-/// Always.
-#[cfg(not(any(target_os = "macos", windows, target_os = "linux")))]
-pub fn apply(_identifier: &str) -> Result<String, String> {
-    Err("making tpdf the default is available on macOS, Windows and Linux".into())
 }
 
 #[cfg(test)]

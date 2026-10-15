@@ -62,14 +62,41 @@ pub fn store() -> Option<PathBuf> {
     )
 }
 
-/// The files in the list at `store`. A missing or unreadable list is an
-/// empty one: nothing was added, or nothing that can be read was.
+/// The files in the list at `store`, for the chooser. A missing list is an
+/// empty one, since nothing was added; one that cannot be read or is damaged
+/// lists nothing and says why in the diagnostics log.
 #[must_use]
 pub fn read(store: &Path) -> Vec<Remembered> {
-    std::fs::read(store)
-        .ok()
-        .and_then(|bytes| serde_json::from_slice(&bytes).ok())
-        .unwrap_or_default()
+    load(store).unwrap_or_else(|why| {
+        crate::diag::note(&format!("[WARN] {why}"));
+        Vec::new()
+    })
+}
+
+/// The list at `store`: empty when there is none, an error when there is one
+/// that cannot be read or is not a list.
+///
+/// Kept apart from [`read`] for [`add`], which writes the list back: until
+/// 2026-10-15 a damaged list read as empty there too, and adding a file then
+/// replaced it with a list of that one file, losing every earlier entry
+/// without a word.
+fn load(store: &Path) -> Result<Vec<Remembered>, String> {
+    let bytes = match std::fs::read(store) {
+        Ok(bytes) => bytes,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
+        Err(e) => {
+            return Err(format!(
+                "The list of certificate files {} could not be read: {e}.",
+                store.display()
+            ))
+        }
+    };
+    serde_json::from_slice(&bytes).map_err(|e| {
+        format!(
+            "The list of certificate files {} is damaged ({e}).",
+            store.display()
+        )
+    })
 }
 
 /// Opens the file at `path` with `password`, and, if it can sign, adds it to
@@ -78,8 +105,12 @@ pub fn read(store: &Path) -> Vec<Remembered> {
 ///
 /// # Errors
 ///
-/// The file's [`Refusal`] as a sentence, or the list not being written.
+/// The file's [`Refusal`] as a sentence; a list already there that cannot be
+/// read or is damaged, which is left exactly as it is; or the list not being
+/// written.
 pub fn add(store: &Path, path: &Path, password: &str) -> Result<Remembered, String> {
+    let mut list = load(store)
+        .map_err(|why| format!("{why} Nothing was added; move it aside to start a new list."))?;
     let bytes =
         std::fs::read(path).map_err(|e| format!("The certificate file could not be read: {e}."))?;
     let opened = pkcs12::open(&bytes, password).map_err(|why| why.sentence())?;
@@ -90,7 +121,6 @@ pub fn add(store: &Path, path: &Path, password: &str) -> Result<Remembered, Stri
         chain: opened.chain.iter().map(|c| hex(c)).collect(),
     };
     drop(opened);
-    let mut list = read(store);
     list.retain(|other| other.path != path);
     list.push(entry.clone());
     if let Some(dir) = store.parent() {
@@ -144,6 +174,23 @@ mod tests {
         let missing =
             std::env::temp_dir().join(format!("tpdf-no-list-{}.json", std::process::id()));
         assert!(read(&missing).is_empty());
+    }
+
+    /// A damaged list refuses an addition and stays byte for byte as it was.
+    /// The certificate file does not exist, which does not matter: the list is
+    /// read first, so the refusal names the list and not the file.
+    #[test]
+    fn a_damaged_list_is_left_as_it_is_and_nothing_is_added() {
+        let dir = std::env::temp_dir().join(format!("tpdf-damaged-list-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).expect("a folder");
+        let store = dir.join("certificate-files.json");
+        let damaged = b"[{\"path\": \"/a.p12\", \"certif";
+        std::fs::write(&store, damaged).expect("written");
+        let err = add(&store, &dir.join("missing.p12"), "x").expect_err("refused");
+        assert!(err.contains("is damaged"), "{err}");
+        assert_eq!(std::fs::read(&store).expect("still there"), damaged);
+        assert!(read(&store).is_empty());
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]

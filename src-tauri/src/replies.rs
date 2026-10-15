@@ -249,6 +249,7 @@ fn samples() -> BTreeMap<&'static str, String> {
                 location: "Hamburg".into(),
                 when: "2026-01-02T03:04:05Z".into(),
                 covers_whole_file: false,
+                starts_at_zero: true,
                 covered_bytes: 100_000,
                 appended_bytes: 23_456,
                 appendix: Some(docinfo::Appendix {

@@ -644,10 +644,6 @@ pub enum Reply {
         /// How many pages `lopdf` finds in the merged document.
         pages: u32,
     },
-    /// The password was accepted, or was not needed.
-    ///
-    /// Carries nothing: [`Request::Unlock`] asks a yes-or-no question, and the
-    /// no is a [`Response::locked`] rather than a variant here.
     /// How many pages `lopdf` finds in the file that was just written.
     ///
     /// A count and nothing else: the bytes it was read from stay in the worker,
@@ -663,6 +659,10 @@ pub enum Reply {
     ///
     /// A verdict and no bytes. See [`Request::Verify`].
     Verified(Box<crate::verify::Report>),
+    /// The password was accepted, or was not needed.
+    ///
+    /// Carries nothing: [`Request::Unlock`] asks a yes-or-no question, and the
+    /// no is a [`Response::locked`] rather than a variant here.
     Unlocked,
     /// A pre-spawned worker has finished warming and has no document yet.
     ///

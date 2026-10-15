@@ -70,6 +70,7 @@ Usage:
 
 from __future__ import annotations
 
+import json
 import re
 import sys
 from pathlib import Path
@@ -887,10 +888,45 @@ SELF_TESTS: list[tuple[str, str, dict[str, str], list[str]]] = [
 ]
 
 
+#: The lexer cases `src/lib/sourcetext.test.ts` runs `withoutComments` against.
+SHARED_CASES = ROOT / "src" / "lib" / "sourcetext.cases.json"
+
+
+def shared_cases(say) -> int:
+    """`blanked` against the cases shared with `sourcetext.ts`; answers how many went wrong.
+
+    Two lexers read `App.svelte`, one per language. Each case says what is code,
+    what is a comment and what is the text of a literal; `blanked` keeps the
+    first and blanks the other two, and `withoutComments` keeps the first and
+    the third. A case one of them misreads is a file the `views` gate and the
+    join checks read differently.
+    """
+    try:
+        cases = json.loads(SHARED_CASES.read_text(encoding="utf-8"))["cases"]
+    except (OSError, ValueError, KeyError) as why:
+        print(f"[FAIL] self-test: could not read {SHARED_CASES.relative_to(ROOT)} ({why})")
+        return 1
+    # The control: an empty list passes the loop below whatever `blanked` does.
+    if len(cases) < 5:
+        print(f"[FAIL] self-test: only {len(cases)} shared lexer case(s)")
+        return 1
+    wrong = 0
+    for case in cases:
+        code = blanked(case["source"])
+        bad = [f"code {t!r} lost" for t in case["code"] if t not in code]
+        bad += [f"{kind} {t!r} kept" for kind in ("comment", "literal") for t in case[kind] if t in code]
+        if bad:
+            wrong += 1
+            print(f"[FAIL] self-test: shared lexer case {case['name']!r}: {'; '.join(bad)}")
+        else:
+            say(f"[OK] self-test: shared lexer case {case['name']!r}")
+    return wrong
+
+
 def self_test(quiet: bool = False) -> int:
     """Runs every planted case. `quiet` prints only what went wrong."""
     say = (lambda line: None) if quiet else print
-    wrong = 0
+    wrong = shared_cases(say)
     for what, body, allowed, expected in SELF_TESTS:
         failures = check(SELF_TEST_HEAD + body + "\n  async function waits2(): Promise<void> { await settle(); }\n",
                          allowed, {"markColor": "the reader's colour"})

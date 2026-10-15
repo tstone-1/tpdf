@@ -1,7 +1,34 @@
 import { describe, expect, it } from "vitest";
 
 import app from "../App.svelte?raw";
+import shared from "./sourcetext.cases.json";
 import { functionIn, missingFrom, withoutComments } from "./sourcetext";
+
+/**
+ * The cases `scripts/check_view_after_await.py` is held to as well. Two lexers
+ * read `App.svelte`, one per language, and these are what keeps them reading it
+ * the same way: a case one of them got wrong would make the `views` gate and the
+ * join checks here disagree about one file.
+ */
+describe("the cases shared with the Python lexer", () => {
+  // The control: an empty file passes the loop below whatever either lexer does.
+  it("has cases of every kind", () => {
+    expect(shared.cases.length).toBeGreaterThan(5);
+    for (const kind of ["code", "comment", "literal"] as const) {
+      expect(shared.cases.some((one) => one[kind].length > 0), kind).toBe(true);
+    }
+  });
+
+  for (const one of shared.cases) {
+    it(one.name, () => {
+      const code = withoutComments(one.source);
+      for (const text of one.code) expect(code, `code: ${text}`).toContain(text);
+      for (const text of one.comment) expect(code, `comment: ${text}`).not.toContain(text);
+      // Kept here, and blanked by the Python side: both classed it as a literal.
+      for (const text of one.literal) expect(code, `literal: ${text}`).toContain(text);
+    });
+  }
+});
 
 describe("source with its comments removed", () => {
   it("drops a line that is only in a comment, of each kind", () => {

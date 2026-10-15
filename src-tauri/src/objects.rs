@@ -689,6 +689,96 @@ fn matrix_of(page: &RawPage<'_>, form: FPDF_PAGEOBJECT) -> [f32; 6] {
     read
 }
 
+/// How many forms deep [`pictures`] follows a form inside a form.
+///
+/// Eight is past any producer measured: the deepest real page seen is a scan
+/// wrapped twice, by an imposing tool around a page that already drew its
+/// picture through a form. A limit at all, because PDFium hands over a form's
+/// children however deep the document nests them.
+const PICTURE_DEPTH: usize = 8;
+
+/// Every picture a page draws, each with its box in the page's own space,
+/// including those inside forms inside forms.
+///
+/// For deciding whether a page is a scan (`ocr_layer::picture_share`), not for
+/// removing anything: [`read`] descends one level because a removal has to
+/// address what it reports, and a share only has to measure it. Until
+/// 2026-10-15 the share was built from [`read`], so a scan whose picture sat
+/// two forms deep counted as no picture at all, and a scan of that shape with
+/// a typed line was filed as already having text.
+///
+/// A picture PDFium will not measure has the unmeasurable box, which covers the
+/// page: one page read that did not need to be. An object it will not hand
+/// over is not a picture it can say anything about, and is left out, as
+/// [`read`]'s list left it out of the share before.
+#[must_use]
+pub fn pictures(page: &RawPage<'_>) -> Vec<Rect> {
+    let bindings = page.bindings();
+    // SAFETY: the page handle is valid for the borrow.
+    let count = unsafe { bindings.FPDFPage_CountObjects(page.handle()) };
+    let mut out = Vec::new();
+    for index in 0..count.max(0) {
+        // SAFETY: `index` is below the reported object count.
+        let object = unsafe { bindings.FPDFPage_GetObject(page.handle(), index) };
+        if !object.is_null() {
+            pictures_in(page, object, IDENTITY, 0, &mut out);
+        }
+    }
+    out
+}
+
+/// The matrix that changes nothing.
+const IDENTITY: [f32; 6] = [1.0, 0.0, 0.0, 1.0, 0.0, 0.0];
+
+/// [`pictures`] for one object, `to_page` taking its space to the page's.
+fn pictures_in(
+    page: &RawPage<'_>,
+    object: FPDF_PAGEOBJECT,
+    to_page: [f32; 6],
+    depth: usize,
+    out: &mut Vec<Rect>,
+) {
+    let bindings = page.bindings();
+    // SAFETY: `object` is a valid page object owned by the page.
+    match kind_of(unsafe { bindings.FPDFPageObj_GetType(object) }) {
+        "image" => out.push(through(to_page, bounds_of(page, object))),
+        "form" if depth < PICTURE_DEPTH => {
+            // The form's children are measured in its own space, which its
+            // matrix takes to the space it sits in (`through`).
+            let inner = then(matrix_of(page, object), to_page);
+            // SAFETY: `object` is a valid page object of type FORM.
+            let count = unsafe { bindings.FPDFFormObj_CountObjects(object) };
+            for index in 0..count.max(0) {
+                // SAFETY: `index` is below the reported child count. `c_ulong`
+                // for `descend`'s reason.
+                let child = unsafe {
+                    bindings.FPDFFormObj_GetObject(object, index as std::os::raw::c_ulong)
+                };
+                if !child.is_null() {
+                    pictures_in(page, child, inner, depth + 1, out);
+                }
+            }
+        }
+        _ => {}
+    }
+}
+
+/// `first` and then `second`, as one matrix: a point taken through `first`
+/// and the result through `second`. PDF's row-vector convention, as
+/// [`through`] applies a matrix.
+fn then(first: [f32; 6], second: [f32; 6]) -> [f32; 6] {
+    let [a1, b1, c1, d1, e1, f1] = first;
+    let [a2, b2, c2, d2, e2, f2] = second;
+    [
+        a1 * a2 + b1 * c2,
+        a1 * b2 + b1 * d2,
+        c1 * a2 + d1 * c2,
+        c1 * b2 + d1 * d2,
+        e1 * a2 + f1 * c2 + e2,
+        e1 * b2 + f1 * d2 + f2,
+    ]
+}
+
 /// A rectangle in a form's space, brought into the page's.
 ///
 /// **Not optional and not obvious**: PDFium reports a form child's bounds in the

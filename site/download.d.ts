@@ -8,3 +8,4 @@ export interface Installers {
 
 export const LATEST: string;
 export function installers(release: unknown): Installers;
+export function platformOf(agent: string): "windows" | "mac" | "linux" | null;

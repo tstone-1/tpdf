@@ -107,13 +107,13 @@ jobs:
           for id in $runs; do
             gates=$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$id/jobs?per_page=50" \
               --jq '[.jobs[] | select(.name | startswith("Gates (")) | .conclusion] | "\(length) \(all(. == "success"))"') || continue
-            if [ "$gates" = "2 true" ]; then
-              echo "CI run $id passed both gate legs on $SHA; the gates below are skipped."
+            if [ "$gates" = "3 true" ]; then
+              echo "CI run $id passed all three gate legs on $SHA; the gates below are skipped."
               echo "passed=true" >> "$GITHUB_OUTPUT"
               exit 0
             fi
           done
-          echo "No green two-leg CI run on $SHA; running the gates."
+          echo "No CI run with all three gate legs green on $SHA; running the gates."
 
   # A tag on a broken commit must not produce artifacts. This runs
   # `scripts/gates.py` rather than restating its commands in YAML: that script
@@ -460,6 +460,13 @@ jobs:
           mkdir -p src-tauri/target/debug/pdfium
           cp vendor/pdfium/lib/libpdfium.so src-tauri/target/debug/pdfium/
           xvfb-run -a -s "-screen 0 1280x800x24" python -u scripts/viewer_check.py src-tauri/target/debug/tpdf testdata/links.pdf --signed testdata/incr-signed.pdf --timeout 300
+
+      # The glibc the window needs is the one README.md states
+      # (`scripts/check_glibc_floor.py`): the runner image decides it, so a
+      # newer `ubuntu-24.04` image or another runner can raise it unseen.
+      - name: The window needs the glibc README.md states
+        if: runner.os == 'Linux'
+        run: python3 scripts/check_glibc_floor.py src-tauri/target/debug/tpdf
 
   # Creates the one draft release both build legs upload into, and hands them
   # its id.
@@ -1434,6 +1441,9 @@ jobs:
           dpkg-deb -x "$DEB" "$ROOT"
           grep -qx 'Exec=tpdf %F' "$ROOT/usr/share/applications/tpdf.desktop" \
             || { echo "::error::the deb's desktop entry does not pass the document"; exit 1; }
+          # The glibc they need is the one README.md states; the runner image
+          # decides it (`scripts/check_glibc_floor.py`).
+          python3 scripts/check_glibc_floor.py "$ROOT/usr/bin/tpdf" "$ROOT/usr/bin/tpdf-cli"
 
       # Tauri notarizes and staples the .app, then builds the DMG and only
       # SIGNS it. The DMG is left unnotarized and `spctl -a -t open` rejects it

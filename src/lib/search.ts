@@ -378,6 +378,18 @@ export class Search {
   toScan = 0;
   /** Characters seen across those pages. */
   charsSeen = 0;
+  /**
+   * Pages whose search failed, of those asked about.
+   *
+   * A page that cannot be read is skipped so that one damaged page does not
+   * hide the hits on the other 774, and for *showing* hits that is the right
+   * trade. For removing them it is not: a page skipped here still counts in
+   * {@link scanned}, so without this count a scan that never read a page looks
+   * exactly like one that read it and found nothing --- and "Redact every
+   * search result" would then leave that page's occurrences in the file under
+   * a redaction that reads as verified. {@link completeForMarking} reads it.
+   */
+  unread = 0;
   /** Whether a scan is in progress. */
   running = false;
   /**
@@ -554,6 +566,7 @@ export class Search {
     this.scanned = 0;
     this.toScan = 0;
     this.charsSeen = 0;
+    this.unread = 0;
     this.problem = "";
     // The mapping is a property of the *document*, not of the query, so it
     // deliberately survives a clear: asking again would repeat a parse whose
@@ -587,6 +600,7 @@ export class Search {
     this.matches = [];
     this.scanned = 0;
     this.charsSeen = 0;
+    this.unread = 0;
     this.problem = "";
     this.scope = scope;
     this.toScan = scope ? scope.length : this.pageCount;
@@ -655,6 +669,11 @@ export class Search {
       } catch {
         // A page that cannot be read is skipped rather than abandoning the
         // scan: one damaged page should not hide the hits on the other 774.
+        // Counted, though, because a skipped page and a page with no hits are
+        // the same to everything below, and marking every hit for removal
+        // must be able to tell them apart (`completeForMarking`).
+        if (generation !== this.generation) return false;
+        this.unread++;
         result = null;
       }
 
@@ -925,4 +944,46 @@ export function tooManyMatchesToMark(count: number): string | null {
     `once. Every region has to be readable in the review list before anything is ` +
     `removed. Narrow the search and try again.`
   );
+}
+
+/**
+ * Why the matches cannot all be marked for removal yet, or `null` when they can.
+ *
+ * **A partial list becomes a partial removal that is then reported clean**, and
+ * this is the window's half of the rule `cli/redact.rs` keeps for `tpdf redact
+ * --search`: every page has to have been searched before every hit is marked.
+ * Two ways a list is partial, and both looked complete before 2026-10-15:
+ *
+ * - **The scan is still running.** The command is offered as soon as there is a
+ *   first hit, and marking then took the hits found so far.
+ * - **A page's search failed.** The scan skips it, rightly, for showing hits;
+ *   the count of such pages is the only thing that tells it from a page with
+ *   none.
+ *
+ * Then the count, which {@link tooManyMatchesToMark} refuses on its own.
+ */
+export function completeForMarking(search: {
+  running: boolean;
+  unread: number;
+  count: number;
+}): string | null {
+  if (search.running) {
+    return (
+      "The search is still running, so not every page has been searched. " +
+      "Nothing was marked: wait for it to finish and try again."
+    );
+  }
+  if (search.unread > 0) {
+    return (
+      `${unreadPages(search.unread)} could not be searched, so a match there would ` +
+      `be left in the file. Nothing was marked. Search again, or mark those ` +
+      `pages by hand.`
+    );
+  }
+  return tooManyMatchesToMark(search.count);
+}
+
+/** "1 page" / "3 pages", for the sentences that count unread pages. */
+export function unreadPages(count: number): string {
+  return count === 1 ? "1 page" : `${count} pages`;
 }

@@ -16,7 +16,7 @@
 //! descriptor numbers between `fork` and `exec`, and the two are right together
 //! or wrong together.
 
-#[cfg(any(target_os = "macos", target_os = "linux"))]
+#[cfg(unix)]
 use std::os::fd::{FromRawFd, OwnedFd};
 
 /// Installs up to four inherited descriptors without allocating between fork and exec.
@@ -26,11 +26,22 @@ use std::os::fd::{FromRawFd, OwnedFd};
 /// `dup2` clears close-on-exec on each destination; scratch copies are closed on
 /// both success and failure. Only async-signal-safe descriptor calls run here.
 ///
+/// **Then every other descriptor above standard error is marked close-on-exec**
+/// ([`cloexec_the_rest`]), so the worker starts with its three standard streams
+/// and the ones installed here and nothing else. Rust opens its own descriptors
+/// close-on-exec, but the app process also holds descriptors it did not open:
+/// GTK's, WebKit's, and on Linux every PKCS#11 module p11-kit loads for signing.
+/// One opened without the flag would reach every later worker already open,
+/// and neither Landlock, seccomp nor the macOS profile restricts a descriptor
+/// that is already open. Marked rather than closed, because the standard
+/// library's own pipe for reporting a failed `exec` is among them and has to
+/// stay open until the `exec`.
+///
 /// # Safety
 ///
 /// Call only in a forked child before exec, with owned source descriptors and
 /// distinct nonnegative targets. The child must exit if any operation fails.
-#[cfg(any(target_os = "macos", target_os = "linux"))]
+#[cfg(unix)]
 pub(crate) unsafe fn remap_fds(mappings: &[(i32, i32)]) -> std::io::Result<()> {
     let mut copies = [-1; 4];
     if mappings.len() > copies.len() {
@@ -66,11 +77,76 @@ pub(crate) unsafe fn remap_fds(mappings: &[(i32, i32)]) -> std::io::Result<()> {
             unsafe { libc::close(copy) };
         }
     }
-    result
+    result?;
+    let mut keep = [-1; 4];
+    for (slot, &(_, target)) in keep.iter_mut().zip(mappings) {
+        *slot = target;
+    }
+    // SAFETY: as above; only descriptor flags change.
+    unsafe { cloexec_the_rest(&keep[..mappings.len()], minimum - 1) };
+    Ok(())
 }
 
+/// Marks close-on-exec every descriptor above standard error that is not in
+/// `keep`, where `highest` is the largest number in `keep` (or 2).
+///
+/// Between `highest` and the top, Linux does it in one call
+/// (`close_range` with `CLOSE_RANGE_CLOEXEC`, kernel 5.11 and up). Elsewhere,
+/// and on an older kernel, each number up to the descriptor limit is marked in
+/// turn, the limit capped at [`LOOP_CEILING`]: a descriptor the process could
+/// hold above that is a process that raised its own limit past it, which tpdf
+/// does not do. A number with nothing open answers `EBADF`, which is ignored.
+///
+/// # Safety
+///
+/// As [`remap_fds`]: a forked child before `exec`. Only `fcntl`, `getrlimit`
+/// and, on Linux, `close_range` run here, none of which allocates.
+#[cfg(unix)]
+unsafe fn cloexec_the_rest(keep: &[i32], highest: i32) {
+    // SAFETY: flag changes on numbers that may or may not be open.
+    unsafe {
+        for fd in 3..=highest {
+            if !keep.contains(&fd) {
+                libc::fcntl(fd, libc::F_SETFD, libc::FD_CLOEXEC);
+            }
+        }
+        #[cfg(target_os = "linux")]
+        {
+            const CLOSE_RANGE_CLOEXEC: libc::c_uint = 1 << 2;
+            let first = libc::c_uint::try_from(highest + 1).unwrap_or(libc::c_uint::MAX);
+            if libc::syscall(
+                libc::SYS_close_range,
+                first,
+                libc::c_uint::MAX,
+                CLOSE_RANGE_CLOEXEC,
+            ) == 0
+            {
+                return;
+            }
+        }
+        let mut limit: libc::rlimit = std::mem::zeroed();
+        let top = if libc::getrlimit(libc::RLIMIT_NOFILE, &raw mut limit) == 0 {
+            limit.rlim_cur.min(LOOP_CEILING)
+        } else {
+            LOOP_CEILING
+        };
+        let top = i32::try_from(top).unwrap_or(i32::MAX);
+        for fd in highest + 1..top {
+            libc::fcntl(fd, libc::F_SETFD, libc::FD_CLOEXEC);
+        }
+    }
+}
+
+/// The most descriptor numbers [`cloexec_the_rest`] walks one at a time.
+///
+/// macOS starts an app with a limit of 256 and a terminal with a few thousand,
+/// and Linux's soft limit is 1,024; this is above all of them and costs a few
+/// milliseconds a worker where it is reached.
+#[cfg(unix)]
+const LOOP_CEILING: libc::rlim_t = 65_536;
+
 /// A connected pair, one half of which is handed to a pre-spawned worker.
-#[cfg(any(target_os = "macos", target_os = "linux"))]
+#[cfg(unix)]
 pub(crate) fn socket_pair() -> Result<(OwnedFd, OwnedFd), String> {
     let mut fds = [0i32; 2];
     // SAFETY: writes exactly two descriptors into a two-element array.
@@ -124,7 +200,7 @@ pub(crate) fn socket_pair() -> Result<(OwnedFd, OwnedFd), String> {
 /// A byte of payload is required, not incidental: a `sendmsg` carrying only
 /// ancillary data may transfer nothing at all, and the receiver then blocks
 /// forever on a message that was never framed.
-#[cfg(any(target_os = "macos", target_os = "linux"))]
+#[cfg(unix)]
 pub(crate) fn send_document(socket: i32, fd: i32, len: usize) -> Result<(), String> {
     let mut payload = (len as u64).to_le_bytes();
     let mut iov = libc::iovec {
@@ -169,7 +245,7 @@ pub(crate) fn send_document(socket: i32, fd: i32, len: usize) -> Result<(), Stri
 /// # Safety
 ///
 /// The caller must own `socket` and must not be reading it concurrently.
-#[cfg(any(target_os = "macos", target_os = "linux"))]
+#[cfg(unix)]
 pub unsafe fn recv_document(socket: i32) -> Result<Option<(OwnedFd, usize)>, String> {
     let mut payload = [0u8; 8];
     let mut iov = libc::iovec {
@@ -220,7 +296,7 @@ pub unsafe fn recv_document(socket: i32) -> Result<Option<(OwnedFd, usize)>, Str
     }
 }
 
-#[cfg(all(test, target_os = "macos"))]
+#[cfg(all(test, unix))]
 mod tests {
     use super::*;
     use std::os::fd::AsRawFd;
@@ -343,5 +419,61 @@ mod tests {
     #[test]
     fn an_invalid_source_closes_every_temporary_without_installing_anything() {
         check_layout(&[crate::worker::TILE_FD, crate::worker::SOCK_FD], true);
+    }
+
+    /// Whether a program started with `pre_exec` (or without, for the control)
+    /// finds descriptor `fd` open, asked through `/dev/fd`, which on both macOS
+    /// and Linux lists what the asking process has open.
+    fn child_sees(fd: i32, shuffle: bool) -> bool {
+        use std::os::unix::process::CommandExt;
+        let mut command = std::process::Command::new("/bin/sh");
+        command.arg("-c").arg(format!("[ -e /dev/fd/{fd} ]"));
+        if shuffle {
+            // SAFETY: remap_fds runs only async-signal-safe descriptor calls.
+            unsafe { command.pre_exec(|| remap_fds(&[])) };
+        }
+        command.status().expect("sh runs").success()
+    }
+
+    /// A descriptor the app holds without close-on-exec does not reach a
+    /// worker. The control is the same program started without the shuffle,
+    /// which finds it open: a check that could not see an inherited descriptor
+    /// would pass either way.
+    ///
+    /// The descriptor is taken at the lowest free number from 200 up rather
+    /// than placed on a fixed one, because the test runner's other threads own
+    /// the numbers below and a `dup2` onto one of them would close it.
+    #[test]
+    fn a_descriptor_opened_without_close_on_exec_does_not_reach_the_child() {
+        let mut pipe = [-1; 2];
+        // SAFETY: writes two descriptors into a two-element array.
+        assert_eq!(unsafe { libc::pipe(pipe.as_mut_ptr()) }, 0);
+        // SAFETY: both were just made by `pipe`; `F_DUPFD` leaves the copy
+        // without close-on-exec, which is the case under test.
+        let (high, ends) = unsafe {
+            let high = libc::fcntl(pipe[0], libc::F_DUPFD, 200);
+            let ends = [OwnedFd::from_raw_fd(pipe[0]), OwnedFd::from_raw_fd(pipe[1])];
+            (high, ends)
+        };
+        assert!(high >= 200, "no descriptor from 200 up");
+        // SAFETY: the copy made above, owned from here.
+        let high = unsafe { OwnedFd::from_raw_fd(high) };
+        // SAFETY: a flag query on a descriptor this test owns.
+        let flags = unsafe { libc::fcntl(high.as_raw_fd(), libc::F_GETFD) };
+        assert_eq!(
+            flags & libc::FD_CLOEXEC,
+            0,
+            "the copy is close-on-exec already"
+        );
+        assert!(
+            child_sees(high.as_raw_fd(), false),
+            "the control cannot see it"
+        );
+        assert!(
+            !child_sees(high.as_raw_fd(), true),
+            "a worker would inherit descriptor {}",
+            high.as_raw_fd()
+        );
+        drop(ends);
     }
 }

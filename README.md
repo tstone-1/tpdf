@@ -18,27 +18,33 @@ Take the file for your computer from the
 |---|---|---|
 | Mac with Apple silicon | `tpdf_<version>_aarch64.dmg` | Signed and notarized. Or `brew install --cask tstone-1/tpdf/tpdf` |
 | Windows, 64-bit | `tpdf_<version>_x64-setup.exe` | Installs for your user account, no administrator rights. Code-signed, see below |
-| Linux, x86-64: Debian, Ubuntu and their relatives | `tpdf_<version>_amd64.deb` | `sudo apt install ./tpdf_<version>_amd64.deb`; brings Tesseract for text recognition |
-| Linux, x86-64: any other distribution | `tpdf_<version>_amd64.AppImage` | `chmod +x` it and run it; nothing is installed |
+| Linux, x86-64: Ubuntu 24.04 or newer, Debian 13 or newer, and their relatives | `tpdf_<version>_amd64.deb` | `sudo apt install ./tpdf_<version>_amd64.deb`; brings Tesseract for text recognition |
+| Linux, x86-64: any other distribution with glibc 2.39 or newer (Fedora 40 or newer, for example) | `tpdf_<version>_amd64.AppImage` | `chmod +x` it and run it; nothing is installed |
 
 The `.sig`, `.tar.gz` and `latest.json` files beside them belong to the built-in updater;
 you do not need them. There is no build for Intel Macs, Windows on ARM or ARM Linux.
 
 **On Linux, four things differ from the other two.**
 
+<!-- linux-differences: each item names the code it describes, and `scripts/check_platform_arms.py` holds the two equal -->
 - **No updates of its own.** tpdf on Linux never checks for a new version: install the new
-  package over the old one when a release comes out.
+  package over the old one when a release comes out. <!-- linux-difference: updates -->
 - **Text recognition needs the system's Tesseract.** The `.deb` installs `libtesseract5` and
   carries the English and German language data. The AppImage does not carry Tesseract: install
-  your distribution's `libtesseract5` (or equivalent) for text recognition and for checking a
-  redaction of a scanned page.
+  your distribution's Tesseract 5 library (`libtesseract5` on Debian and Ubuntu,
+  `tesseract-libs` on Fedora). Without it there is no text recognition, and every redaction is
+  reported as not verified, because the check that a removed area is unreadable reads it with
+  Tesseract. <!-- linux-difference: tesseract -->
 - **Signing** uses a smart card or token through PKCS#11 (p11-kit), where the key stays on the
   card, or a certificate file with an ECDSA key, which tpdf decrypts with the password you give
-  it for each signature. A certificate file with an RSA key is refused.
-- **A drawn signature is not kept** between sessions; draw or import it each time.
+  it for each signature. A certificate file with an RSA key is refused. <!-- linux-difference: signing -->
+- **A drawn signature is not kept** between sessions; draw or import it each time. <!-- linux-difference: drawn-signature -->
+<!-- /linux-differences -->
 
-The Linux packages are tested on Ubuntu 24.04. Other distributions and desktops have not been
-tried; a report of what works or does not is welcome as an issue.
+tpdf does not start on an older Linux, such as Ubuntu 22.04 or Debian 12: it needs glibc 2.39
+or newer. <!-- glibc-floor: 2.39 --> The Linux packages are tested on Ubuntu 24.04. Other
+distributions and desktops have not been tried; a report of what works or does not is welcome
+as an issue.
 
 **The Windows installer is code-signed since 26.10.11**: the publisher reads *Open Source
 Developer Timo Stein*. The certificate is new, so Windows can still show "Windows protected
@@ -297,11 +303,14 @@ project conventions.
   macOS the command sets it and says so; Windows lets only you choose, so there it opens
   Settings at Default apps.
   <!-- built: app.makeDefaultPdfApp -->
-- Printing through the system print panel, on both platforms — and every print job is read
-  back through the operating system's own PDF parser before the panel opens, which is a
-  parser independent of the one that wrote the job and the one that drew what you saw.
-  macOS prints vectors; Windows has no in-box "print this PDF" API at any layer, so it
-  rasterises at 300 dpi like every other Windows PDF viewer does.
+- Printing through the system print panel, on all three platforms, and every print job is
+  read back before the panel opens. On macOS and Windows the operating system's own PDF
+  parser reads it, which is independent of the one that wrote the job and the one that drew
+  what you saw. Linux has no system PDF parser that fits tpdf's licence, so there the job is
+  read back by PDFium in a sandboxed worker: the same engine that drew the page, so the
+  check proves the job is readable but is not an independent second reading. macOS and
+  Linux print vectors (Linux hands the PDF to CUPS); Windows has no in-box "print this PDF"
+  API at any layer, so it rasterises at 300 dpi like every other Windows PDF viewer does.
   <!-- built: file.print -->
 - A compact toolbar exposes the editing tools, with grouped menus and contextual
   colour and width controls. Every command is also reachable from the command palette,
@@ -756,9 +765,10 @@ measured the Windows render constants come out 1.5–1.8x worse.
   selected and copied from. The copy is read back before it gets its name, and then
   opened. A line in the toolbar shows which page is being read and has a Stop button.
   A scan with some typed text on it, such as a fax line, a stamp or a page number, is
-  read too, and the typed words are not written a second time. Other pages that already
-  have text are left as they are, and so is a page the recogniser refuses, which the
-  closing line names. A document with unsaved changes is
+  read too, and the typed words are not written a second time. A scan that another
+  program already gave a text layer is left as it is, even where that program read a
+  word differently. Other pages that already have text are left as they are, and so is a
+  page the recogniser refuses, which the closing line names. A document with unsaved changes is
   asked to be saved first. The engine and its limits are under *Text recognition* below.
   <!-- built: file.recogniseText -->
 - **Find text the pages do not show** is the check for a document redacted somewhere
@@ -1085,8 +1095,9 @@ the page as it is displayed:
 ]
 ```
 
-- **`identities`** lists the certificates in your keychain (macOS) or your personal
-  certificate store (Windows) that have a private key: the ones that can sign a document, and
+- **`identities`** lists the certificates in your keychain (macOS), your personal
+  certificate store (Windows), or on Linux on a smart card or token through PKCS#11 and in the
+  certificate files added with `identities --add`, that have a private key: the ones that can sign a document, and
   the ones that cannot with the reason — expired, not yet valid, a key tpdf does not sign
   with, or issued for something else, such as code signing or a web server. The rules are
   the application's. Under each certificate it prints the SHA-256 and the SHA-1 of the
@@ -1214,8 +1225,9 @@ the page as it is displayed:
   when an archive timestamp later in the document, from an authority this computer trusts,
   attests it existed while that certificate was in force. `--strict` also fails a document
   when something appended after its last intact signature or document timestamp could not be
-  read, or touches a page other than by listing a signature or timestamp field among that
-  page's annotations. Validation data and an archive timestamp are not such a change. Without
+  read, or touches a page other than by listing, among that page's annotations, a signature
+  or timestamp field holding the signature that append wrote. A signature field nobody signed
+  is such a change, since its appearance can paint over the page. Validation data and an archive timestamp are not such a change. Without
   `--json`, `verify` prints a line beginning *After the last signature:* under such a
   document. Under every signature that something was appended after, it prints the properties
   dialog's *Appended* row: what arrived, and what it did to pages. `--json` carries the same
@@ -1577,9 +1589,11 @@ the page looks exactly as it did. Nothing is uploaded and no recogniser is bundl
 
 A page is read when it has no text, or when pictures cover at least half of it, which is
 what a scan is: a scan with a typed fax line, a stamp or a page number is read whole, and a
-recognised word that the page already has in the same place is not written again. Any other
-page with text is left as it is, so running the command on a mixed document reads only its
-scanned pages, and a scan that another program already gave a text layer gets nothing more. `--pages 1-3,7` limits which pages are considered.
+recognised word that the page already has in the same place is not written again. A scan
+on which at least half of the recognised words are already there is one another program
+already gave a text layer, and it gets nothing more, even where that program read a word
+differently. Any other page with text is left as it is, so running the command on a mixed
+document reads only its scanned pages. `--pages 1-3,7` limits which pages are considered.
 `--language de-DE` names the language to expect, as a BCP-47 tag, and may be repeated with
 the most likely first; on Windows the first of them that is installed in Settings is
 used, and with none installed the recogniser reads with its own. A page is read at up to 300 DPI and no finer than a
@@ -1614,8 +1628,8 @@ recogniser refused is named in the same closing line.
 
 The JSON report carries `schema`, `command`, `input`, `output`, the `engine` that read the
 pages, `pages` (each with `page` and the number of `words` written), `already_text` (pages
-left alone because they had text, including scans whose every recognised word was already
-there), `nothing_read` (pages without text on which nothing was
+left alone because they had text, including scans on which at least half of the recognised
+words were already there), `nothing_read` (pages without text on which nothing was
 recognised), `refused` (pages without text that the recogniser would not read),
 `signatures_invalidated` and `signatures_unknown`.
 

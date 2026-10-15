@@ -164,12 +164,18 @@ export const BINDINGS = {
   // and Esc leaves it too. Redaction has no letter: it is the one workflow
   // that removes content, and a stray `r` before a drag would mark text where
   // the reader meant to select it.
-  "edit.highlightSelection": { keys: ["h"] },
-  "edit.addComment": { keys: ["c"] },
-  "edit.addTextBox": { keys: ["t"] },
-  "edit.editText": { keys: ["e"] },
-  "nav.nextPage": { keys: ["n"] },
-  "nav.previousPage": { keys: ["p"] },
+  //
+  // Each names its position too (`Binding.code`), for the two keyboards a bare
+  // letter missed until 2026-10-15: with Caps Lock on, `h` arrives as `H` with
+  // no Shift held, and on a Cyrillic layout the same key arrives as `р`. The
+  // position is the same key on both, so the shortcut is that key whatever the
+  // layout prints on it.
+  "edit.highlightSelection": { keys: ["h"], code: "KeyH" },
+  "edit.addComment": { keys: ["c"], code: "KeyC" },
+  "edit.addTextBox": { keys: ["t"], code: "KeyT" },
+  "edit.editText": { keys: ["e"], code: "KeyE" },
+  "nav.nextPage": { keys: ["n"], code: "KeyN" },
+  "nav.previousPage": { keys: ["p"], code: "KeyP" },
   "nav.firstPage": { keys: ["Home"] },
   "nav.lastPage": { keys: ["End"] },
   "nav.goToPage": { keys: ["g", "G", "©"], accel: true, alt: true },
@@ -340,6 +346,17 @@ export function isLinux(): boolean {
 }
 
 let LINUX = detectLinux();
+
+/**
+ * The tab menu's name for showing the file where it lies. Linux has no one
+ * file manager to name, and until 2026-10-15 it was offered "Show in
+ * Explorer", the Windows name, because the choice was Mac or not.
+ */
+export function revealTitle(): string {
+  if (isMac()) return "Show in Finder";
+  if (isLinux()) return "Show in Folder";
+  return "Show in Explorer";
+}
 
 function detectLinux(): boolean {
   const agent = globalThis.navigator?.userAgent ?? "";

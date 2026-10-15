@@ -689,7 +689,7 @@ fn measure(
 /// as *12 to 16 px*.
 #[cfg(windows)]
 const PX_BUCKETS: [&str; 4] = ["under 8 px", "8 to 12 px", "12 to 32 px", "32 px and over"];
-#[cfg(not(windows))]
+#[cfg(unix)]
 const PX_BUCKETS: [&str; 4] = ["under 8 px", "8 to 12 px", "12 to 16 px", "16 px and over"];
 
 /// Which bucket a control of `px` pixels falls in.
@@ -793,7 +793,7 @@ const PT_BUCKETS: [&str; 4] = [
     "6 to 12 pt",
     "12 pt and over",
 ];
-#[cfg(not(windows))]
+#[cfg(unix)]
 const PT_BUCKETS: [&str; 4] = [
     "under 2 pt (unreachable)",
     "2 to 6 pt",

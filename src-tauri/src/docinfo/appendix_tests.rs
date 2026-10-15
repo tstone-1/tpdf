@@ -296,8 +296,11 @@ fn signs_the_first_page(built: &Built, before: &Document, new: &mut Document) {
 
 /// The same with the widget written as object `widget`.
 fn signs_the_first_page_as(built: &Built, before: &Document, new: &mut Document, widget: ObjectId) {
+    // With a `/ByteRange`, which is what makes it a signature and not an
+    // empty field (`PageRead::new_signature`).
     let value = new.add_object(dictionary! {
         "Type" => "Sig", "Filter" => "Adobe.PPKLite", "SubFilter" => "adbe.pkcs7.detached",
+        "ByteRange" => vec![0.into(), 10.into(), 20.into(), 30.into()],
     });
     let font = new.add_object(dictionary! {
         "Type" => "Font", "Subtype" => "Type1", "BaseFont" => "Courier",
@@ -546,6 +549,64 @@ fn a_visible_second_signature_is_a_listing_whatever_its_widget_brings() {
     );
     assert_eq!(appendix.pages_touched, 1);
     assert_eq!(strict(appendix), After::Unchanged);
+}
+
+/// And what "whatever its widget brings" must not extend to: a signature
+/// field nobody signed. The same widget with its `/V` taken away, its
+/// appearance a white box over the whole page with new figures on it, is a
+/// change to the page and not a listing, and `--strict` says so. The same
+/// with a `/V` that has no `/ByteRange` (a value that is no signature), and
+/// with one the signed revision already had.
+#[test]
+fn an_unsigned_signature_field_with_an_appearance_after_signing_is_a_rewritten_page() {
+    use crate::cli::verify::After;
+    let built = built();
+    let overlay = |value: Option<fn(&Built, &mut Document) -> Object>| {
+        appended(&built, |before, new| {
+            let widget = new.new_object_id();
+            signs_the_first_page_as(&built, before, new, widget);
+            let appearance = new.add_object(form(
+                b"1 g 0 0 612 792 re f 0 g BT /Helv 40 Tf 100 400 Td (9,999,999.00) Tj ET",
+                dictionary! {},
+            ));
+            let mut dict = dict_of(new, widget);
+            dict.set("Rect", vec![0.into(), 0.into(), 612.into(), 792.into()]);
+            dict.set("AP", dictionary! { "N" => appearance });
+            match value {
+                None => {
+                    dict.remove(b"V");
+                }
+                Some(make) => dict.set("V", make(&built, new)),
+            }
+            new.set_object(widget, dict);
+        })
+    };
+    let no_byte_range: fn(&Built, &mut Document) -> Object = |_, new| {
+        new.add_object(dictionary! { "Type" => "Sig", "SubFilter" => "adbe.pkcs7.detached" })
+            .into()
+    };
+    // An object no page draws, which the signed revision had, written again
+    // as a signature: a `/ByteRange` alone does not make it this append's.
+    let signed_already: fn(&Built, &mut Document) -> Object = |built, new| {
+        new.set_object(
+            built.undrawn,
+            dictionary! {
+                "Type" => "Sig", "SubFilter" => "adbe.pkcs7.detached",
+                "ByteRange" => vec![0.into(), 10.into(), 20.into(), 30.into()],
+            },
+        );
+        built.undrawn.into()
+    };
+    for (case, value) in [
+        ("no /V", None),
+        ("a /V with no /ByteRange", Some(no_byte_range)),
+        ("a /V the signed revision had", Some(signed_already)),
+    ] {
+        let appendix = overlay(value);
+        assert!(appendix.pages_listing.is_empty(), "{case}: {appendix:?}");
+        assert_eq!(appendix.pages_touched, 1, "{case}: {appendix:?}");
+        assert_eq!(strict(appendix), After::Pages(1), "{case}");
+    }
 }
 
 /// The third control: an object no page draws, replaced beside the new
@@ -1374,8 +1435,11 @@ fn a_new_signature_field_listed_in_annotations_held_apart_is_a_listing() {
     let prepared = prepared(true);
     let held = prepared.annots.expect("held apart");
     let listed = |new: &mut Document, before: &Document, more: Vec<Object>, drop: bool| {
+        let value = new.add_object(dictionary! {
+            "Type" => "Sig", "ByteRange" => vec![0.into(), 10.into(), 20.into(), 30.into()],
+        });
         let widget = new.add_object(dictionary! {
-            "Type" => "Annot", "Subtype" => "Widget", "FT" => "Sig",
+            "Type" => "Annot", "Subtype" => "Widget", "FT" => "Sig", "V" => value,
             "T" => Object::string_literal("Synthetic second signer"),
             "P" => prepared.built.page[0],
             "Rect" => vec![0.into(), 0.into(), 0.into(), 0.into()],

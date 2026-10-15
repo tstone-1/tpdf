@@ -349,6 +349,7 @@ hop through the index.
 - `mod forms;` in `tests/cli.rs` looks for `tests/forms.rs`, which cargo would also build as a test of its own
 
 - The first HTTP client a test process builds took twenty seconds, and the time was a directory listing
+- A stderr lock held for a whole command deadlocks the first diagnostic another thread writes
 ## Measuring: what a number can and cannot say
 - A documented count that is one sample of a race makes an honest run look like a defect
 - The harness prints the count so nobody has to derive it, and it was derived anyway
@@ -26524,3 +26525,22 @@ built*: the original line, `$state(toolbarState(commands))`, and `void tpdfLateM
 before a `$state` declared below it. A mutant of frontend code that passes is first a
 question about the bundle: search the built JavaScript for it before reading the check's
 verdict. The source and the compiler's output are both one step short of what runs.
+
+### A stderr lock held for a whole command deadlocks the first diagnostic another thread writes
+
+`tpdf-cli` passed `std::io::stderr().lock()` into `cli::run` and kept it for the whole
+command, which is tidy for a single thread and a deadlock for any other: `diag::note` writes
+to stderr too, and a `ReentrantLock` held by the main thread blocks every other thread for as
+long as the command runs. Nothing noted from a background thread in the command-line tool
+until 2026-10-15, when Linux gained a line naming the Landlock version, written once by
+whichever thread spawns the first worker. That is the pool's prewarm thread. It waited for
+the lock; the render thread waited on the same `Once`; the main thread waited for the render
+thread. Every command that opened a document through the pool hung until its 120 s deadline
+and failed with *the render service did not answer*, while `text`, which spawns its worker on
+the main thread, passed.
+
+macOS never writes that line, so every gate there stayed green, and the module's own tests
+in WSL passed because none of them is a command-line run. The Linux CLI suite found it, and
+thread backtraces (`gdb -p <pid> -batch -ex 'thread apply all bt'`) named it in one look:
+`note_boundary_once` inside `Stderr::lock`. `strace` had already said no worker was ever
+spawned, which ruled out the sandbox. Stderr is now unlocked, taken per write.

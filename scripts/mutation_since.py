@@ -258,8 +258,11 @@ _TEST_SUFFIXES = (".rs", ".ts", ".svelte", ".js", ".mjs", ".py")
 
 def _holds_tests(path: str) -> bool:
     name = path.rsplit("/", 1)[-1]
+    # The rows of the Rust and frontend tables moved into `scripts/mutation_rows/`
+    # on 2026-10-15; a row file names tests exactly as the harness did.
     return path.endswith(_TEST_SUFFIXES) and not (
-        name.startswith("mutate_") and path.startswith("scripts/")
+        (name.startswith("mutate_") and path.startswith("scripts/"))
+        or path.startswith("scripts/mutation_rows/")
     )
 
 
@@ -420,8 +423,9 @@ def self_test() -> int:
     check("nothing changed selects nothing", pick_near(table, {}, read) == [])
     # The same text as the test file, where it is not a test: a table that
     # names the test, and a document that quotes it.
-    elsewhere = dict(files, **{"scripts/mutate_rust.py": tests, "docs/RUNS.md": tests})
-    for path in ("scripts/mutate_rust.py", "docs/RUNS.md"):
+    rows = "scripts/mutation_rows/rust/r01_tagging.py"
+    elsewhere = dict(files, **{"scripts/mutate_rust.py": tests, rows: tests, "docs/RUNS.md": tests})
+    for path in ("scripts/mutate_rust.py", rows, "docs/RUNS.md"):
         check(
             f"a test named in {path} is not a test that changed",
             pick_near(table, {path: [(5, 5)]}, elsewhere.get) == [],

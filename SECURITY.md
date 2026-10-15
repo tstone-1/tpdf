@@ -10,9 +10,11 @@ network authority* without qualification until 2026-09-01. On **macOS** it is ex
 reads, writes and socket binds are all denied by the profile, and measured. On **Windows** the
 worker is denied writes and denied any reach into the app process; it is **not** denied reads,
 and nothing in the containment denies it a socket. On **Linux** (since 26.10.19) the worker
-applies Landlock and seccomp to itself: it may read only PDFium's font folders, and sockets,
-`ptrace` and starting a program are refused; it has no memory or CPU limit beyond the
-per-request deadline. `docs/THREAT-MODEL.md` §T4, §6, §6a and residual risk 4 carry the full
+applies Landlock and seccomp to itself: it may read only PDFium's font folders, and sockets
+(by the socket calls and by io_uring), `ptrace` and starting a program are refused; it starts
+with no open descriptor but the ones it was handed; it has no memory or CPU limit beyond the
+per-request deadline. Which of Landlock's newer rules a kernel has is written to the
+diagnostics log when the first worker starts. `docs/THREAT-MODEL.md` §T4, §6, §6a and residual risk 4 carry the full
 version, including which parts are measured and which are read off the code.
 
 `docs/THREAT-MODEL.md` is the worked-out position — what is being defended, the trust

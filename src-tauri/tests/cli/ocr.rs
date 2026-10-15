@@ -56,14 +56,64 @@ fn rgba(path: &Path) -> (u32, u32, Vec<u8>) {
 
 /// A one-page document whose only content is the picture.
 fn scan(picture: &Path, to: &Path) {
-    scan_with(picture, to, None, false);
+    scan_with(picture, to, None, 0);
 }
 
 /// [`scan`], with `typed` written as real text in Helvetica along the top
-/// margin, over the picture: a scanner's or a fax's header line. `in_form`
-/// draws the picture inside a Form XObject, as some scanners write a page,
-/// so the picture is not one of the page's own objects.
-fn scan_with(picture: &Path, to: &Path, typed: Option<&str>, in_form: bool) {
+/// margin, over the picture: a scanner's or a fax's header line. `forms` is
+/// how many Form XObjects the picture is drawn inside: one as some scanners
+/// write a page, two as an imposing or merging tool wraps such a page again.
+fn scan_with(picture: &Path, to: &Path, typed: Option<&str>, forms: usize) {
+    let after = typed
+        .map(|line| {
+            format!(
+                " BT /F1 7 Tf 20 {} Td ({line}) Tj ET",
+                page_height(picture) - 9.0
+            )
+        })
+        .unwrap_or_default();
+    scan_drawing(picture, to, after.as_bytes(), forms);
+}
+
+/// The height in points of a page made from `picture` at [`DPI`].
+fn page_height(picture: &Path) -> f64 {
+    f64::from(rgba(picture).1) * 72.0 / f64::from(DPI)
+}
+
+/// A scan another program already gave a text layer: the picture, and over it
+/// `source`'s own first page drawn in render mode 3, neither filled nor
+/// stroked, with each `(from, to)` in `misreads` replaced in its text.
+///
+/// The source is the document the picture was rendered from, so its words sit
+/// exactly where the picture shows them, as an engine's layer would. The
+/// misreads are what a second engine does not agree with: `rn` for `m`, `1` for
+/// `l`, `0` for `O`.
+fn scan_with_layer(picture: &Path, source: &Path, to: &Path, misreads: &[(&str, &str)]) {
+    let doc = Document::load(source).unwrap();
+    let page = *doc.get_pages().get(&1).unwrap();
+    // Its text objects only: the source also paints a filled box and lines,
+    // which drawn over the picture would hide the words under them.
+    let mut content: String = String::from_utf8(doc.get_page_content(page))
+        .unwrap()
+        .lines()
+        .filter(|line| line.starts_with("BT "))
+        .map(|line| format!("{line}\n"))
+        .collect();
+    assert_eq!(
+        content.lines().count(),
+        4,
+        "the source's four lines of text"
+    );
+    for (from, to) in misreads {
+        assert!(content.contains(from), "{from} is not in the source's text");
+        content = content.replacen(from, to, 1);
+    }
+    scan_drawing(picture, to, format!(" 3 Tr {content}").as_bytes(), 0);
+}
+
+/// A one-page document whose content draws the picture, inside `forms` Form
+/// XObjects, and then `after`, with Helvetica as `/F1`.
+fn scan_drawing(picture: &Path, to: &Path, after: &[u8], forms: usize) {
     let (width, height, data) = rgba(picture);
     let rgb: Vec<u8> = data
         .chunks_exact(4)
@@ -84,29 +134,51 @@ fn scan_with(picture: &Path, to: &Path, typed: Option<&str>, in_form: bool) {
         rgb,
     );
     image.compress().unwrap();
-    let image = doc.add_object(image);
-    let (image, name) = if in_form {
-        let form = doc.add_object(Stream::new(
+    // Where each level puts what it draws, innermost first: the picture in its
+    // own space, then each form's content around the next level in, then the
+    // page around the outermost form. Their product is the page, so the scan
+    // looks the same at any depth. Unwrapped, the picture fills the page.
+    //
+    // **Two deep, the transforms do not cancel level by level**, and that is
+    // the point: the page scales the outer form by two, the outer form moves
+    // the inner three quarters of a page to the right, and the inner form
+    // draws the picture three quarters of a page to the left at half size. A
+    // reader that leaves out a form's transform, or applies two in the wrong
+    // order, puts at most a quarter of the picture on the page.
+    let shift = 0.75 * w_pt;
+    let (half_w, half_h) = (w_pt / 2.0, h_pt / 2.0);
+    let levels: Vec<String> = match forms {
+        0 => vec![format!("{w_pt} 0 0 {h_pt} 0 0")],
+        1 => vec![format!("{half_w} 0 0 {half_h} 0 0"), "2 0 0 2 0 0".into()],
+        2 => vec![
+            format!("{half_w} 0 0 {half_h} {} 0", -shift),
+            format!("1 0 0 1 {shift} 0"),
+            "2 0 0 2 0 0".into(),
+        ],
+        _ => panic!("a scan is made at most two forms deep"),
+    };
+    let mut drawn = doc.add_object(image);
+    let mut name = "Im0";
+    let mut draw = format!("q {} cm /Im0 Do Q", levels[0]);
+    for around in &levels[1..] {
+        // A box wide enough for any of the placements above: it clips
+        // nothing.
+        let wide = |v: f64| -> Object { v.into() };
+        drawn = doc.add_object(Stream::new(
             dictionary! {
                 "Type" => "XObject", "Subtype" => "Form",
-                "BBox" => vec![0.into(), 0.into(), w_pt.into(), h_pt.into()],
-                "Resources" => dictionary! { "XObject" => dictionary! { "Im0" => image } },
+                "BBox" => vec![wide(-4.0 * w_pt), wide(-4.0 * h_pt), wide(4.0 * w_pt), wide(4.0 * h_pt)],
+                "Resources" => dictionary! { "XObject" => dictionary! { name => drawn } },
             },
-            format!("q {w_pt} 0 0 {h_pt} 0 0 cm /Im0 Do Q").into_bytes(),
+            draw.into_bytes(),
         ));
-        (form, "Fm0")
-    } else {
-        (image, "Im0")
-    };
-    let mut drawn = if in_form {
-        format!("/{name} Do")
-    } else {
-        format!("q {w_pt} 0 0 {h_pt} 0 0 cm /{name} Do Q")
-    };
-    if let Some(line) = typed {
-        drawn.push_str(&format!(" BT /F1 7 Tf 20 {} Td ({line}) Tj ET", h_pt - 9.0));
+        name = "Fm0";
+        draw = format!("q {around} cm /Fm0 Do Q");
     }
-    let content = doc.add_object(Stream::new(dictionary! {}, drawn.into_bytes()));
+    let mut drawn_bytes = draw.into_bytes();
+    drawn_bytes.extend_from_slice(after);
+    let image = drawn;
+    let content = doc.add_object(Stream::new(dictionary! {}, drawn_bytes));
     let font = doc.add_object(dictionary! {
         "Type" => "Font", "Subtype" => "Type1", "BaseFont" => "Helvetica",
     });
@@ -446,7 +518,7 @@ fn a_scan_with_a_typed_line(
 ) {
     const TYPED: &str = "FAX 0401 RECEIVED";
     let (typed, out) = (at("typed-scan.pdf"), at("typed-out.pdf"));
-    scan_with(Path::new(picture), Path::new(&typed), Some(TYPED), false);
+    scan_with(Path::new(picture), Path::new(&typed), Some(TYPED), 0);
     report.check(
         "the control: the typed scan's only text is the header, found once",
         text_of(&typed).trim() == TYPED && found(&typed, "RECEIVED").len() == 1,
@@ -501,7 +573,7 @@ fn a_scan_with_a_typed_line(
 
     // A picture inside a Form XObject is a picture on the page all the same.
     let (formed, formed_out) = (at("form-scan.pdf"), at("form-out.pdf"));
-    scan_with(Path::new(picture), Path::new(&formed), Some(TYPED), true);
+    scan_with(Path::new(picture), Path::new(&formed), Some(TYPED), 1);
     let (code, json, stderr) = tool(&["ocr", &formed, "-o", &formed_out, "--json"], &[]);
     let result: serde_json::Value = serde_json::from_str(&json).unwrap_or_default();
     report.check(
@@ -510,6 +582,82 @@ fn a_scan_with_a_typed_line(
             && code == 0
             && result["pages"].as_array().is_some_and(|p| p.len() == 1)
             && found(&formed_out, "quartz").len() == 1,
+        &format!("exit {code}; {stderr}; {json}"),
+    );
+}
+
+/// A scan another program already gave a layer, which reads some words
+/// differently from this machine's engine, is left alone: no second layer, and
+/// the misread words are not written again beside the first program's.
+///
+/// The control the rest of this file has, re-reading tpdf's own copy, cannot
+/// tell: the same engine reads the same words, so every one matches. Here five
+/// words of the layer are spelled as another engine might have read them.
+fn a_scan_another_program_read(
+    report: &mut Report,
+    at: &dyn Fn(&str) -> String,
+    source: &str,
+    picture: &str,
+) {
+    const MISREADS: [(&str, &str); 5] = [
+        ("jumps", "jurnps"),
+        ("lazy", "1azy"),
+        ("account", "acc0unt"),
+        ("Beispiel", "Beispie1"),
+        ("quartz", "qu4rtz"),
+    ];
+    let (layered, out) = (at("layered-scan.pdf"), at("layered-out.pdf"));
+    scan_with_layer(
+        Path::new(picture),
+        Path::new(source),
+        Path::new(&layered),
+        &MISREADS,
+    );
+    report.check(
+        "the control: the other program's layer reads the source's words, five misread",
+        found(&layered, "jurnps").len() == 1
+            && found(&layered, "quartz").is_empty()
+            && found(&layered, "Sphinx").len() == 1,
+        &text_of(&layered),
+    );
+    let (code, json, stderr) = tool(&["ocr", &layered, "-o", &out, "--json"], &[]);
+    report.check(
+        "a scan another program read is left alone, and nothing is written",
+        code == 3 && stderr.contains("already has text") && !Path::new(&out).exists(),
+        &format!("exit {code}; {stderr}; {json}"),
+    );
+
+    let window = at("layered-window.pdf");
+    let (answer, _) = app_path(Path::new(&layered), Path::new(&window), Ask::Plain);
+    report.check(
+        "and the window's command leaves it alone too",
+        answer
+            .as_ref()
+            .is_err_and(|why| why.contains("already has text"))
+            && !Path::new(&window).exists(),
+        &format!("{answer:?}"),
+    );
+}
+
+/// A scan whose picture is two forms deep, with a typed line: a picture all
+/// the same, so the page is read.
+///
+/// The picture's share was measured from the page's objects one level down,
+/// so until 2026-10-15 this page counted as no picture at all, and the typed
+/// line filed it under *already has text*.
+fn a_scan_two_forms_deep(report: &mut Report, at: &dyn Fn(&str) -> String, picture: &str) {
+    const TYPED: &str = "FAX 0401 RECEIVED";
+    let (deep, out) = (at("deep-scan.pdf"), at("deep-out.pdf"));
+    scan_with(Path::new(picture), Path::new(&deep), Some(TYPED), 2);
+    let (code, json, stderr) = tool(&["ocr", &deep, "-o", &out, "--json"], &[]);
+    let result: serde_json::Value = serde_json::from_str(&json).unwrap_or_default();
+    report.check(
+        "a scan whose picture is two forms deep is read, and the typed line kept once",
+        text_of(&deep).trim() == TYPED
+            && code == 0
+            && result["pages"].as_array().is_some_and(|p| p.len() == 1)
+            && found(&out, "quartz").len() == 1
+            && found(&out, "RECEIVED").len() == 1,
         &format!("exit {code}; {stderr}; {json}"),
     );
 }
@@ -726,11 +874,6 @@ pub(super) fn makes_a_scan_searchable(report: &mut Report) {
     );
 
     let (code, json, stderr) = tool(&["ocr", &scanned, "-o", &out, "--json"], &[]);
-    if code == 3 && stderr.contains(tpdf_lib::ocr_worker::NO_ENGINE) {
-        report.skip("ocr", "this platform has no recogniser");
-        let _ = std::fs::remove_dir_all(dir);
-        return;
-    }
     let result: serde_json::Value = serde_json::from_str(&json).unwrap_or_default();
     report.check(
         "ocr reports one page given a layer, and names the engine",
@@ -816,6 +959,8 @@ pub(super) fn makes_a_scan_searchable(report: &mut Report) {
     );
 
     a_scan_with_a_typed_line(report, &at, &source, &picture);
+    a_scan_another_program_read(report, &at, &source, &picture);
+    a_scan_two_forms_deep(report, &at, &picture);
 
     let kept = std::fs::read(&out).unwrap();
     for (args, status) in [

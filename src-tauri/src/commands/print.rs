@@ -10,7 +10,6 @@
 use std::path::{Path, PathBuf};
 
 use super::{outside_of, password_for};
-#[cfg(any(target_os = "macos", windows, target_os = "linux"))]
 use crate::diag;
 use crate::render::RenderService;
 use crate::{edits, print, save};
@@ -330,18 +329,4 @@ fn present_job(
         let _ = std::fs::remove_file(&path);
         format!("the print panel could not be shown on the main thread: {e}")
     })
-}
-
-/// The remaining platforms, where nothing is written.
-///
-/// An error rather than a no-op: a print command that quietly does nothing is the
-/// worse of the two failures.
-#[cfg(not(any(target_os = "macos", windows, target_os = "linux")))]
-fn present_job(
-    _app: &tauri::AppHandle,
-    _bytes: Vec<u8>,
-    _title: String,
-    _expected: Option<usize>,
-) -> Result<(), String> {
-    Err("printing is implemented on macOS, Windows and Linux only".into())
 }

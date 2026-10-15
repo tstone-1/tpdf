@@ -116,6 +116,8 @@ export interface Signature {
   location: string;
   when: string;
   covers_whole_file: boolean;
+  /** Whether the signed range begins at the file's first byte. */
+  starts_at_zero: boolean;
   covered_bytes: number;
   appended_bytes: number;
   appendix: Appendix | null;
@@ -417,12 +419,25 @@ export function coverageOf(signature: Signature, bytes: number): Row {
       value: "the whole file, except the signature container it cannot cover",
     };
   }
-  if (signature.appended_bytes > 0) {
+  // "Everything up to the signature" is true only of a range that begins at
+  // the first byte. Until 2026-10-15 an append was tested first and alone, so a
+  // range that also skipped the head said it, and the branch below that exists
+  // for the skipped head was never reached when there was an append.
+  if (signature.appended_bytes > 0 && signature.starts_at_zero) {
     return {
       name: "Covers",
       value:
         `everything up to the signature, and ${formatBytes(signature.appended_bytes)} ` +
         "were appended afterwards",
+      warn: true,
+    };
+  }
+  if (signature.appended_bytes > 0) {
+    return {
+      name: "Covers",
+      value:
+        "not the whole file: the signed range does not begin at its first byte, and " +
+        `${formatBytes(signature.appended_bytes)} were appended afterwards`,
       warn: true,
     };
   }

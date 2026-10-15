@@ -124,11 +124,6 @@ fn open_url(url: &str) -> Result<(), String> {
         .map_err(|e| format!("the system could not open this link: {e}"))
 }
 
-#[cfg(not(any(windows, target_os = "macos", target_os = "linux")))]
-fn open_url(_url: &str) -> Result<(), String> {
-    Err("opening web links is not supported on this platform".into())
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;

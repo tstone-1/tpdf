@@ -1811,7 +1811,7 @@ describe("opening the palette", () => {
 describe("the window shortcuts for editing", () => {
   function press(
     key: string,
-    modifiers: { shift?: boolean; alt?: boolean; handled?: boolean; picked?: number; bare?: boolean; selected?: boolean; noDocument?: boolean } = {},
+    modifiers: { shift?: boolean; alt?: boolean; handled?: boolean; picked?: number; bare?: boolean; selected?: boolean; noDocument?: boolean; repeat?: boolean } = {},
     target: { tagName?: string; isContentEditable?: boolean; ownerDocument?: { getSelection(): { type: string } | null } } | null = null,
     journal: { undo?: boolean; redo?: boolean } = { undo: true, redo: true },
     dirty = true,
@@ -1826,6 +1826,8 @@ describe("the window shortcuts for editing", () => {
       ctrlKey: false,
       shiftKey: modifiers.shift ?? false,
       altKey: modifiers.alt ?? false,
+      // `false` rather than absent, for `defaultPrevented`'s reason below.
+      repeat: modifiers.repeat ?? false,
       // What the surface leaves behind when it has already claimed the chord.
       // `false` rather than absent so that the guard reading it is exercised in
       // both directions --- an undefined field is falsy, so a harness that never
@@ -2142,6 +2144,18 @@ describe("the window shortcuts for editing", () => {
         expect(fired, `${key} in ${JSON.stringify(target)}`).toEqual([]);
         expect(prevented, `${key} in ${JSON.stringify(target)}`).toBe(0);
       }
+    }
+  });
+
+  it("acts once for a held key, and still keeps the repeats from the page", () => {
+    // Mutation: either `!event.repeat` test removed. The selection stays after
+    // a highlight, so each repeat of a held `h` laid another highlight over
+    // the same words, each its own undo step; a held tool letter armed again.
+    for (const [key] of [...TOOL_KEYS, ["h"]] as const) {
+      const { fired, prevented } = press(key, { bare: true, selected: true, repeat: true }, { tagName: "DIV" });
+      expect(fired, key).toEqual([]);
+      // Taken all the same: a repeat let through would type into the page.
+      expect(prevented, key).toBe(1);
     }
   });
 

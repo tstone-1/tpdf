@@ -333,6 +333,14 @@ pub struct Signature {
     /// The one thing in this struct that is checked rather than claimed, and it
     /// is false for a document that was signed and then appended to.
     pub covers_whole_file: bool,
+    /// Whether `/ByteRange` begins at the file's first byte.
+    ///
+    /// [`Self::covers_whole_file`] is false both for a range that skips the
+    /// head and for one followed by an append, and the panel says different
+    /// things about the two (`coverageOf`). Until 2026-10-15 it told them
+    /// apart by [`Self::appended_bytes`] alone, so a range that skipped the
+    /// head *and* had an append read "everything up to the signature".
+    pub starts_at_zero: bool,
     /// How many bytes the signature covers, and how many there are.
     pub covered_bytes: u64,
     /// How many bytes sit **after** the last byte `/ByteRange` covers.
@@ -1607,7 +1615,8 @@ fn read_signature(
             .map(|last| last[0].saturating_add(last[1]))
             .and_then(|end| u64::try_from(end).ok());
         out.appended_bytes = end.map_or(0, |end| size.saturating_sub(end));
-        out.covers_whole_file = end == Some(size) && numbers.first() == Some(&0);
+        out.starts_at_zero = numbers.first() == Some(&0);
+        out.covers_whole_file = end == Some(size) && out.starts_at_zero;
     }
 
     // A *document* timestamp is a signature whose `/Contents` is the token
@@ -2613,33 +2622,53 @@ pub(crate) fn lock_of(document: &Document, field: &Dictionary, sig: &Dictionary)
 /// Whether a signature in the document locked it against any change.
 ///
 /// For the writers that must not add to such a document. Walked with the
-/// bounds [`read_signatures`] reads by; a field past them is not seen, as it
-/// is not listed either.
-pub(crate) fn locked(document: &Document) -> bool {
+/// bounds [`fields::one_part_names`] reads by, the other walk a signing makes
+/// before it writes: the node budget [`read_signatures`] has, and groups 32
+/// deep rather than its 8, so a form a signing could name a field in is a
+/// form whose lock it can see.
+///
+/// # Errors
+///
+/// **When the walk was cut short**, at those bounds: a field past them could
+/// be the lock, and "not locked" is then a guess in the direction that breaks
+/// it. Until 2026-10-15 a field past the bounds was simply not seen, while
+/// [`fields::one_part_names`] beside it already refused on the same cut.
+/// `/FT` and `/V` are read through `/Parent` as well, since a field may take
+/// both from the node above it; until the same day `/FT` was read on the node
+/// alone, so a signature whose type its parent stated locked nothing here.
+pub(crate) fn locked(document: &Document) -> Result<bool, String> {
     let bounds = fields::Bounds {
         nodes: MAX_FIELD_NODES,
-        depth: Some(8),
+        depth: Some(32),
         dedup: false,
         names: false,
         order: fields::Order::Document,
     };
     let mut locked = false;
-    fields::walk(document, &bounds, |node| {
+    let cut = fields::walk(document, &bounds, |node| {
         let Some(field) = node.dict else {
             return fields::Flow::Leaf;
         };
-        if name_of(document, field, b"FT") == "Sig" {
-            if let Some(sig) = field
-                .get(b"V")
-                .ok()
-                .and_then(|o| resolve(document, o).as_dict().ok())
+        let typed = inherited(document, field, b"FT")
+            .and_then(|o| resolve(document, o).as_name().ok())
+            == Some(b"Sig".as_slice());
+        if typed {
+            if let Some(sig) =
+                inherited(document, field, b"V").and_then(|o| resolve(document, o).as_dict().ok())
             {
                 locked |= lock_of(document, field, sig) == 1;
             }
         }
         fields::Flow::Descend
     });
-    locked
+    if cut.dropped > 0 || cut.too_deep > 0 {
+        return Err(
+            "this form has more fields, or groups nested deeper, than tpdf reads, so it \
+             cannot tell whether a signature locked the document"
+                .into(),
+        );
+    }
+    Ok(locked)
 }
 
 /// What the bytes after `end` added to the document, by comparing two parses.
@@ -3058,7 +3087,21 @@ impl PageRead<'_> {
     /// 2. the new `/Annots` is the old one with entries added --- none
     ///    removed, none replaced;
     /// 3. every added entry is a widget of a signature field (`/FT /Sig`, its
-    ///    own or inherited).
+    ///    own or inherited) holding a signature the append wrote
+    ///    ([`PageRead::new_signature`]).
+    ///
+    /// **A field with no signature in it is not a listing.** What is left out
+    /// of the walk is the gained widget and everything it refers to, its
+    /// appearance included, and that is right only for a signature, whose
+    /// appearance is what the signature row names. Until 2026-10-15 a widget
+    /// with `/FT /Sig` and no `/V` was enough, so an empty field the size of
+    /// the page, appended after the last signature, could paint anything over
+    /// the page and still read "no page was rewritten", and `verify --strict`
+    /// passed. That includes the empty signature field tpdf itself adds
+    /// (`formfields.rs`), whose appearance is a border: an exception for an
+    /// appearance that draws only a border would need its content stream
+    /// judged, and a field nobody signed is a change the signature before it
+    /// does not account for, so it is counted.
     ///
     /// Anything else is `None`, and the page is then reported as rewritten
     /// with no reason given: a false "only a field was listed" is the
@@ -3110,7 +3153,10 @@ impl PageRead<'_> {
         let mut timestamp = true;
         for entry in gained {
             let widget = resolve(self.whole, entry).as_dict().ok()?;
-            if !is_widget(self.whole, widget) || !is_signature_field(self.whole, widget) {
+            if !is_widget(self.whole, widget)
+                || !is_signature_field(self.whole, widget)
+                || self.new_signature(widget).is_none()
+            {
                 return None;
             }
             timestamp &= inherited(self.whole, widget, b"V")
@@ -3185,10 +3231,7 @@ impl PageRead<'_> {
     ///    inherited);
     /// 2. the signed revision gave it no `/V`, its own or inherited --- a
     ///    signature that was there and is replaced is not a place signed;
-    /// 3. it now has one, which is an object the signed revision did not
-    ///    have and a dictionary with a `/ByteRange` --- which every
-    ///    signature in a field has (PDF 32000-1 table 252), and a text
-    ///    field's answer does not;
+    /// 3. it now has one the append wrote ([`PageRead::new_signature`]);
     /// 4. the widget differs from its signed self in [`SIGNING_WRITES`]
     ///    alone, and each field above it in [`SIGNING_WRITES_ABOVE`] alone.
     ///
@@ -3213,12 +3256,7 @@ impl PageRead<'_> {
         {
             return None;
         }
-        let signature = inherited(self.whole, now, b"V")?.as_reference().ok()?;
-        if self.signed.objects.contains_key(&signature)
-            || !self.whole.get_dictionary(signature).ok()?.has(b"ByteRange")
-        {
-            return None;
-        }
+        self.new_signature(now)?;
 
         let mut refers_to = Vec::new();
         let mut writes: &[&[u8]] = &SIGNING_WRITES;
@@ -3243,6 +3281,17 @@ impl PageRead<'_> {
             writes = &SIGNING_WRITES_ABOVE;
         }
         None
+    }
+
+    /// The signature a field now holds, its own `/V` or inherited, when it is
+    /// one the append wrote: an object the signed revision did not have, and
+    /// a dictionary with a `/ByteRange`, which every signature in a field has
+    /// (PDF 32000-1 table 252) and a text field's answer does not.
+    fn new_signature(&self, field: &lopdf::Dictionary) -> Option<lopdf::ObjectId> {
+        let signature = inherited(self.whole, field, b"V")?.as_reference().ok()?;
+        (!self.signed.objects.contains_key(&signature)
+            && self.whole.get_dictionary(signature).ok()?.has(b"ByteRange"))
+        .then_some(signature)
     }
 }
 
@@ -3738,8 +3787,20 @@ mod tests {
                 (4, 0),
                 Object::Dictionary(dictionary! {
                     "Type" => "Annot", "Subtype" => "Widget", "FT" => Object::Name(field.to_vec()),
+                    "V" => Object::Reference((7, 0)),
                 }),
             );
+            // The signature in the field, in a revision that lists it: one the
+            // signed revision did not have (`PageRead::new_signature`).
+            if annots.contains(&Object::Reference((4, 0))) {
+                document.objects.insert(
+                    (7, 0),
+                    Object::Dictionary(dictionary! {
+                        "Type" => "Sig",
+                        "ByteRange" => vec![0.into(), 10.into(), 20.into(), 30.into()],
+                    }),
+                );
+            }
             document.objects.insert(
                 (5, 0),
                 Object::Dictionary(dictionary! { "Type" => "Annot", "Subtype" => "Link" }),
@@ -4410,6 +4471,10 @@ mod tests {
             !read[0].covers_whole_file,
             "the first eight bytes are outside it"
         );
+        assert!(
+            !read[0].starts_at_zero,
+            "and the panel words that apart from an append"
+        );
     }
 
     /// No byte range at all is not zero coverage, and must not read as it.
@@ -4626,11 +4691,12 @@ mod tests {
             );
             assert_eq!(i64::from(read[0].lock), level);
             assert_eq!(read[0].certification, 0, "a lock is not a certification");
-            assert_eq!(locked(&document), wanted, "level {level}");
+            assert_eq!(locked(&document), Ok(wanted), "level {level}");
         }
-        assert!(!locked(&parse(&document_signed(
-            dictionary! { "Type" => "Sig" }
-        ))));
+        assert_eq!(
+            locked(&parse(&document_signed(dictionary! { "Type" => "Sig" }))),
+            Ok(false)
+        );
 
         // An empty field that asks for a lock has locked nothing yet.
         let mut document = parse(&document_signed(locking(1)));
@@ -4648,7 +4714,66 @@ mod tests {
         let dict = document.get_dictionary_mut(field).expect("the field");
         dict.remove(b"V");
         dict.set("Lock", dictionary! { "Action" => "All", "P" => 1 });
-        assert!(!locked(&document));
+        assert_eq!(locked(&document), Ok(false));
+    }
+
+    /// A locking signature whose `/FT` its parent states still locks, and a
+    /// form too large to walk is no answer rather than "not locked".
+    #[test]
+    fn a_lock_behind_an_inherited_type_or_past_the_walk_is_not_missed() {
+        let locking = dictionary! {
+            "Type" => "Sig",
+            "Reference" => vec![Object::Dictionary(dictionary! {
+                "TransformMethod" => "FieldMDP",
+                "TransformParams" => dictionary! { "Action" => "All", "P" => 1 },
+            })],
+        };
+        let field_of = |document: &Document| {
+            document
+                .objects
+                .iter()
+                .find_map(|(id, object)| {
+                    object
+                        .as_dict()
+                        .ok()
+                        .filter(|dict| dict.has(b"FT"))
+                        .map(|_| *id)
+                })
+                .expect("the field")
+        };
+
+        let mut document = parse(&document_signed(locking.clone()));
+        let field = field_of(&document);
+        let parent =
+            document.add_object(dictionary! { "FT" => "Sig", "Kids" => vec![field.into()] });
+        let dict = document.get_dictionary_mut(field).expect("the field");
+        dict.remove(b"FT");
+        dict.set("Parent", parent);
+        assert_eq!(locked(&document), Ok(true), "the type is the parent's");
+
+        // Past the node budget, with the locking field last.
+        let mut document = parse(&document_signed(locking));
+        let field = field_of(&document);
+        let mut fields: Vec<Object> = (0..MAX_FIELD_NODES)
+            .map(|n| {
+                document
+                    .add_object(dictionary! {
+                        "FT" => "Tx", "T" => Object::string_literal(format!("f{n}")),
+                    })
+                    .into()
+            })
+            .collect();
+        fields.push(field.into());
+        let form = document
+            .catalog()
+            .and_then(|catalog| catalog.get(b"AcroForm"))
+            .and_then(Object::as_reference)
+            .expect("the form");
+        document
+            .get_dictionary_mut(form)
+            .expect("the form")
+            .set("Fields", fields);
+        assert!(locked(&document).is_err(), "a walk cut short is no answer");
     }
 
     /// A level outside 1 to 3 is not repeated back.
@@ -4867,6 +4992,8 @@ mod tests {
             location: _,
             when: _,
             covers_whole_file: _,
+            // Where the range begins, which the panel words; not a judgement.
+            starts_at_zero: _,
             covered_bytes: _,
             // A count of bytes, not a judgement about them. What was appended
             // decides whether an append matters, and reading that is not done

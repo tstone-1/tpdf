@@ -74,6 +74,18 @@ pub fn start(path: PathBuf) {
     let _ = SINK.set(Sink::new(path));
 }
 
+/// Puts one line in the file, if a sink was started, and nowhere else.
+///
+/// For what only the log is for. The command-line tool starts no sink and
+/// promises an empty stderr on success, so a line written through [`note`]
+/// broke that promise: the Linux worker boundary's line did, on every command
+/// that spawned a worker (2026-10-15).
+pub fn record(line: &str) {
+    if let Some(sink) = SINK.get() {
+        sink.append(line);
+    }
+}
+
 /// Says one already-formatted line, on stderr and --- if a sink was started ---
 /// in the file.
 ///

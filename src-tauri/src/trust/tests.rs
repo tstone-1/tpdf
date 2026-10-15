@@ -30,7 +30,6 @@ fn issued_by(issuer: &Authority, seed: u8, name: &'static str, authority: bool) 
 
 /// The standing of `leaf`, with `others` offered as issuers and `roots` the
 /// only roots --- the test seam, so no test reads or writes the reader's store.
-#[cfg(any(target_os = "macos", windows, target_os = "linux"))]
 fn standing(leaf: &[u8], others: &[Vec<u8>], roots: &[Vec<u8>], now: u64) -> Trust {
     let parsed = Certificate::from_der(leaf).expect("a certificate");
     judge(&parsed, now, |at| {
@@ -63,7 +62,6 @@ fn untrusted(why: Doubt) -> Trust {
 // evaluation in a process has been measured at seconds (`keystore/tests.rs`),
 // so these share that cost rather than each paying it.
 
-#[cfg(any(target_os = "macos", windows, target_os = "linux"))]
 mod platform_tests {
     use super::*;
 
@@ -508,7 +506,6 @@ mod platform_tests {
 
 // ---------------------------------------------- timestamp tokens' authorities
 
-#[cfg(any(target_os = "macos", windows, target_os = "linux"))]
 mod authority_tests {
     use super::*;
     use crate::integrity::test_tsa::{mint, Imprint, TestTsa, EMAIL_PROTECTION};

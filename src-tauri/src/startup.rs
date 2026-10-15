@@ -127,12 +127,12 @@ fn measure_pre_main_ms() -> Option<f64> {
     (0.0..60_000.0).contains(&delta_ms).then_some(delta_ms)
 }
 
-/// Non-macOS placeholder.
+/// The Windows and Linux placeholder.
 ///
 /// Windows can do this with `GetProcessTimes`, but that needs a Win32 binding
 /// this spike does not otherwise pull in. Until then the timeline on Windows
-/// starts at `main` and says so, rather than guessing.
-#[cfg(not(target_os = "macos"))]
+/// and Linux starts at `main` and says so, rather than guessing.
+#[cfg(any(windows, target_os = "linux"))]
 fn measure_pre_main_ms() -> Option<f64> {
     let _ = (SystemTime::now(), UNIX_EPOCH);
     None

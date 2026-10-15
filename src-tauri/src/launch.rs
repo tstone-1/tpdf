@@ -300,7 +300,7 @@ mod tests {
             "file:///C:/Users/x/my%20report.pdf",
             r"C:\Users\x\my report.pdf",
         );
-        #[cfg(not(windows))]
+        #[cfg(unix)]
         let (text, want) = ("file:///Users/x/my%20report.pdf", "/Users/x/my report.pdf");
 
         let url = tauri::Url::parse(text).expect("url");
@@ -311,7 +311,7 @@ mod tests {
     fn a_second_launch_resolves_its_paths_in_its_own_folder() {
         #[cfg(windows)]
         let (cwd, absolute) = (r"C:\work", r"D:\docs\b.pdf");
-        #[cfg(not(windows))]
+        #[cfg(unix)]
         let (cwd, absolute) = ("/work", "/docs/b.pdf");
         let here = std::path::Path::new(cwd).join("a.pdf");
         let spaced = std::path::Path::new(cwd).join("my report.pdf");

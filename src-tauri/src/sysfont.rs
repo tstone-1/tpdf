@@ -6,7 +6,7 @@
 //! worker answers with the name (`textedit::Preview::wants`), this module asks
 //! the operating system where that font is and reads the file, and the bytes go
 //! back to the worker inside the next request. **Nothing here parses a font**:
-//! CoreText or DirectWrite names the file, and every check on what is in it is
+//! CoreText, DirectWrite or fontconfig names the file, and every check on what is in it is
 //! the worker's (`textedit::fonts::installed::accept`) --- including that the
 //! face really carries the name, because a lookup that misses can answer with
 //! a substitute.
@@ -276,9 +276,76 @@ fn locate(name: &str) -> Option<(PathBuf, Option<u32>)> {
     }
 }
 
-#[cfg(not(any(target_os = "macos", windows)))]
-fn locate(_: &str) -> Option<(PathBuf, Option<u32>)> {
-    None
+/// Linux: fontconfig's `fc-list`, asked for the font whose PostScript name is
+/// exactly `name`. There is no fontconfig library in the tree and the lookup
+/// is one question a text edit asks, so the program is run, with the pattern
+/// as one argument and no shell. `fc-list` filters and never substitutes, and
+/// the name it prints is still compared, as on the other two platforms.
+///
+/// Until 2026-10-15 this arm answered `None`: it was written for "any other
+/// platform" before Linux was one, and the Linux port inherited it unseen.
+#[cfg(target_os = "linux")]
+fn locate(name: &str) -> Option<(PathBuf, Option<u32>)> {
+    use std::process::{Command, Stdio};
+    use std::time::{Duration, Instant};
+
+    let mut child = Command::new("fc-list")
+        .arg("--format=%{file}\t%{index}\t%{postscriptname}\n")
+        .arg(fc_pattern(name))
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .spawn()
+        .ok()?;
+    // Bounded: a first run that builds fontconfig's cache can take seconds,
+    // and a lookup that never answers must not hold the edit.
+    let deadline = Instant::now() + Duration::from_secs(10);
+    loop {
+        match child.try_wait() {
+            Ok(Some(_)) => break,
+            Ok(None) if Instant::now() < deadline => std::thread::sleep(Duration::from_millis(20)),
+            _ => {
+                let _ = child.kill();
+                let _ = child.wait();
+                return None;
+            }
+        }
+    }
+    let mut listed = String::new();
+    child
+        .stdout
+        .take()?
+        .take(64 * 1024)
+        .read_to_string(&mut listed)
+        .ok()?;
+    from_fc_list(&listed, name)
+}
+
+/// The fontconfig pattern that matches a PostScript name exactly. The
+/// characters a pattern reads as syntax are escaped with a backslash; a
+/// PostScript name may hold all of them (`textedit::valid_postscript_name`).
+#[cfg(target_os = "linux")]
+fn fc_pattern(name: &str) -> String {
+    let mut pattern = String::from(":postscriptname=");
+    for c in name.chars() {
+        if matches!(c, '\\' | '-' | ':' | ',' | '=') {
+            pattern.push('\\');
+        }
+        pattern.push(c);
+    }
+    pattern
+}
+
+/// The first line of `fc-list`'s answer whose PostScript name is exactly
+/// `name` and whose file is an absolute path, as the file and the face in it.
+#[cfg(target_os = "linux")]
+fn from_fc_list(listed: &str, name: &str) -> Option<(PathBuf, Option<u32>)> {
+    listed.lines().find_map(|line| {
+        let mut fields = line.split('\t');
+        let (file, index, postscript) = (fields.next()?, fields.next()?, fields.next()?);
+        let file = PathBuf::from(file);
+        (postscript == name && file.is_absolute()).then(|| (file, index.parse().ok()))
+    })
 }
 
 #[cfg(test)]

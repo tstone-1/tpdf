@@ -51,15 +51,17 @@ import ts from "typescript";
 import { describe, expect, it } from "vitest";
 
 /**
- * Every non-test module under `src/lib`, by file name.
+ * Every non-test module under `src/lib`, by its path below it.
  *
  * Through Vite's `?raw` rather than a filesystem read, so this needs no Node
  * type declarations in a project that deliberately has none -- the same route
- * the README check takes.
+ * the README check takes. Recursive since 2026-10-15, when `viewercheck/` became
+ * the first folder under `src/lib`: a flat glob would have left every module
+ * put in a folder unchecked, with nothing saying so.
  */
 const SOURCES: Record<string, string> = Object.fromEntries(
   Object.entries(
-    import.meta.glob("./*.ts", {
+    import.meta.glob("./**/*.ts", {
       query: "?raw",
       import: "default",
       eager: true,
@@ -96,10 +98,15 @@ const SENTINEL = "---";
  * outliving its subjects is how it rots into a blanket permission -- and unlike
  * a per-finding allowlist, an entry here is *not* stale merely because the
  * module currently holds no `---`. It states what the module's strings are for.
+ *
+ * A key ending in `/` names a folder and exempts every module in it, for a
+ * transcript split across files; it fails like a module when the folder holds
+ * none.
  */
 const TRANSCRIPT: Record<string, string> = {
   "checkreport.ts": "the shared printer every unattended check writes through",
   "viewercheck.ts": "the window check's own transcript, read back by viewer_check.py",
+  "viewercheck/": "the window check's phases, which write the same transcript as viewercheck.ts",
   "sessioncheck.ts": "the session check's transcript, read back by session_check.py",
   "opencheck.ts": "the open-route check's transcript, read back by open_check.py",
   "markcheck.ts": "the mark-geometry check's transcript",
@@ -159,10 +166,17 @@ function findingsIn(module: string, text: string): Finding[] {
  * measured, which is why this function exists. An exemption whose strictness is
  * true by construction is not an exemption anybody has checked.
  */
+function exempt(module: string): boolean {
+  return (
+    module in TRANSCRIPT ||
+    Object.keys(TRANSCRIPT).some((key) => key.endsWith("/") && module.startsWith(key))
+  );
+}
+
 function unwanted(sources: Record<string, string>): string[] {
   const bad: string[] = [];
   for (const [module, text] of Object.entries(sources)) {
-    if (module in TRANSCRIPT) continue;
+    if (exempt(module)) continue;
     for (const found of findingsIn(module, text)) {
       if (found.text === SENTINEL) continue;
       bad.push(`${module}:${found.line}: ${JSON.stringify(found.text)}`);
@@ -223,8 +237,25 @@ describe("text a reader is shown", () => {
     expect(unwanted(synthetic)).toEqual(['properties.ts:1: "not applicable --- why"']);
   });
 
+  it("exempts a transcript folder's modules, and no module outside it", () => {
+    const synthetic = {
+      "viewercheck/links.ts": 'const a = "not applicable --- why";',
+      "links.ts": 'const b = "not applicable --- why";',
+    };
+    expect(unwanted(synthetic)).toEqual(['links.ts:1: "not applicable --- why"']);
+  });
+
+  it("reads the modules in a folder", () => {
+    // The flat glob's failure: the folder's modules never reached this file.
+    expect(Object.keys(SOURCES).some((name) => name.startsWith("viewercheck/"))).toBe(true);
+  });
+
   it("names no module in the transcript table that has gone", () => {
-    const missing = Object.keys(TRANSCRIPT).filter((name) => !(name in SOURCES));
+    const missing = Object.keys(TRANSCRIPT).filter((name) =>
+      name.endsWith("/")
+        ? !Object.keys(SOURCES).some((module) => module.startsWith(name))
+        : !(name in SOURCES),
+    );
     expect(missing).toEqual([]);
   });
 

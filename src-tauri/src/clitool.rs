@@ -291,13 +291,13 @@ pub fn state() -> Result<Option<ToolState>, String> {
     }))
 }
 
-/// Neither macOS nor Windows: both commands only say a sentence, so there is
-/// no state and nothing to grey.
+/// Linux: both commands only say a sentence, so there is no state and nothing
+/// to grey. The `.deb` puts the tool on `PATH` itself.
 ///
 /// # Errors
 ///
 /// None; the signature is the other platforms'.
-#[cfg(not(any(target_os = "macos", windows)))]
+#[cfg(target_os = "linux")]
 #[allow(clippy::unnecessary_wraps)]
 pub fn state() -> Result<Option<ToolState>, String> {
     Ok(None)
@@ -414,7 +414,7 @@ fn admin_script(install: bool, paths: &[&Path]) -> String {
 /// A path as a reader types it. `canonicalize` on Windows answers in the
 /// verbatim form, `\\?\C:\...` or `\\?\UNC\server\share\...`, which a
 /// command prompt and the PATH editor do not take.
-#[cfg(any(not(target_os = "macos"), test))]
+#[cfg(any(windows, target_os = "linux", test))]
 fn shown(path: &str) -> String {
     if let Some(share) = path.strip_prefix(r"\\?\UNC\") {
         format!(r"\\{share}")
@@ -428,7 +428,7 @@ fn shown(path: &str) -> String {
 /// # Errors
 ///
 /// The tool is not beside the application.
-#[cfg(not(target_os = "macos"))]
+#[cfg(any(windows, target_os = "linux"))]
 pub fn folder() -> Result<String, String> {
     let tool = tool()?;
     let dir = tool
@@ -464,12 +464,12 @@ pub fn apply(install: bool) -> Result<String, String> {
     })
 }
 
-/// Neither macOS nor Windows: where the tool is, and nothing changed.
+/// Linux: where the tool is, and nothing changed.
 ///
 /// # Errors
 ///
 /// The tool is not beside the application.
-#[cfg(not(any(target_os = "macos", windows)))]
+#[cfg(target_os = "linux")]
 pub fn apply(install: bool) -> Result<String, String> {
     let dir = folder()?;
     Ok(if install {

@@ -43,8 +43,47 @@ use crate::ocr::{EngineId, Options, Pixels, RecogniseError, RecognisedItem, Reco
 /// The engine name, one of [`crate::ocr_worker::KNOWN_ENGINES`].
 pub const NAME: &str = "tesseract";
 
-/// The library's soname, which is what Ubuntu 24.04's `libtesseract5` installs.
-pub const LIBRARY: &str = "libtesseract.so.5";
+/// The names the library is opened by, in order; the first that loads is used.
+///
+/// `libtesseract.so.5` is the soname of an autotools build, which Ubuntu's and
+/// Debian's `libtesseract5` install. A CMake build names it by major and minor
+/// instead: Fedora 44's `tesseract-libs` 5.5.3 installs `libtesseract.so.5.5`
+/// and no `libtesseract.so.5` (measured under WSL on 2026-10-15), so 26.10.19
+/// on Fedora could neither read a scan nor verify any redaction, since the
+/// check that a removed area is unreadable reads it. The C API this module
+/// calls is the same across Tesseract 5, so every 5.x name is tried, newest
+/// first. Not 4 or 6: another major is another API.
+pub const LIBRARIES: [&str; 11] = [
+    "libtesseract.so.5",
+    "libtesseract.so.5.9",
+    "libtesseract.so.5.8",
+    "libtesseract.so.5.7",
+    "libtesseract.so.5.6",
+    "libtesseract.so.5.5",
+    "libtesseract.so.5.4",
+    "libtesseract.so.5.3",
+    "libtesseract.so.5.2",
+    "libtesseract.so.5.1",
+    "libtesseract.so.5.0",
+];
+
+/// The first of `names` that `open` opens, or the error of the first name if
+/// none does: that is the name a reader is told about.
+fn first_that_opens<T, E>(
+    names: &[&str],
+    mut open: impl FnMut(&str) -> Result<T, E>,
+) -> Result<T, E> {
+    let mut first = None;
+    for name in names {
+        match open(name) {
+            Ok(opened) => return Ok(opened),
+            Err(e) => {
+                first.get_or_insert(e);
+            }
+        }
+    }
+    Err(first.expect("LIBRARIES is not empty"))
+}
 
 /// The release the language data comes from, part of the engine's identity.
 pub const DATA_RELEASE: &str = "tessdata_fast 4.1.0";
@@ -264,16 +303,20 @@ struct Api {
 
 impl Api {
     fn load() -> Result<Self, RecogniseError> {
+        // linux-difference: tesseract
         let unavailable = |e: libloading::Error| {
             RecogniseError::Unavailable(format!(
-                "text recognition needs Tesseract, and {LIBRARY} could not be loaded ({e}); \
-                 on Ubuntu and Debian it is the package libtesseract5"
+                "text recognition needs Tesseract 5, and {} could not be loaded ({e}); \
+                 on Ubuntu and Debian it is the package libtesseract5, on Fedora tesseract-libs",
+                LIBRARIES[0]
             ))
         };
         // SAFETY: opening a shared library runs its initialisers. This is
         // Tesseract's own library, opened in the OCR worker before its boundary,
         // which is what the worker exists to hold.
-        let library = unsafe { libloading::Library::new(LIBRARY) }.map_err(unavailable)?;
+        let library =
+            first_that_opens(&LIBRARIES, |name| unsafe { libloading::Library::new(name) })
+                .map_err(unavailable)?;
         macro_rules! symbol {
             ($name:literal) => {
                 // SAFETY: the type each field declares is the one `capi.h`
@@ -532,6 +575,44 @@ impl Recogniser for Tesseract {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Opens only the names in `present`, as a machine with those files would.
+    fn machine(present: &'static [&'static str]) -> impl FnMut(&str) -> Result<String, String> {
+        move |name| {
+            if present.contains(&name) {
+                Ok(name.to_string())
+            } else {
+                Err(format!("{name}: cannot open"))
+            }
+        }
+    }
+
+    #[test]
+    fn fedoras_library_is_found_by_its_major_and_minor_name() {
+        assert_eq!(
+            first_that_opens(&LIBRARIES, machine(&["libtesseract.so.5.5"])),
+            Ok("libtesseract.so.5.5".to_string())
+        );
+    }
+
+    #[test]
+    fn the_soname_debian_and_ubuntu_install_comes_first() {
+        assert_eq!(
+            first_that_opens(
+                &LIBRARIES,
+                machine(&["libtesseract.so.5.5", "libtesseract.so.5"])
+            ),
+            Ok("libtesseract.so.5".to_string())
+        );
+    }
+
+    #[test]
+    fn with_no_tesseract_5_the_soname_is_the_one_named() {
+        assert_eq!(
+            first_that_opens(&LIBRARIES, machine(&["libtesseract.so.4"])),
+            Err("libtesseract.so.5: cannot open".to_string())
+        );
+    }
 
     #[test]
     fn each_channel_weighs_what_luma_gives_it() {

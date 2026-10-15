@@ -60,6 +60,7 @@ function signed(): Signature {
     location: "EUW",
     when: "2026-05-25 08:05:07 UTC",
     covers_whole_file: true,
+    starts_at_zero: true,
     covered_bytes: 1024,
     appended_bytes: 0,
     appendix: null,
@@ -199,6 +200,28 @@ describe("coverageOf", () => {
     expect(coverageOf(short, 1024)).toEqual({
       name: "Covers",
       value: "not the whole file — 324 bytes lie outside the signed range",
+      warn: true,
+    });
+  });
+
+  it("does not say everything up to the signature when the range skips the head and was appended to", () => {
+    // Both at once: the range starts past the first byte and stops before the
+    // last. Until 2026-10-15 the append was tested first and alone, so this read
+    // "everything up to the signature", which the skipped head makes false.
+    const both = {
+      ...signed(),
+      covers_whole_file: false,
+      starts_at_zero: false,
+      covered_bytes: 600,
+      appended_bytes: 100,
+    };
+    const row = coverageOf(both, 1024);
+    expect(row.value).not.toContain("everything up to");
+    expect(row).toEqual({
+      name: "Covers",
+      value:
+        "not the whole file: the signed range does not begin at its first byte, and " +
+        "100 bytes were appended afterwards",
       warn: true,
     });
   });

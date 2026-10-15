@@ -35,7 +35,7 @@
  */
 
 import { placeholder } from "./panelrow";
-import type { Match } from "./search";
+import { unreadPages, type Match } from "./search";
 
 /** Rows drawn at once. Beyond this the panel says how many it is not showing. */
 export const MAX_RESULT_ROWS = 2000;
@@ -153,6 +153,7 @@ export class Results {
     query: string,
     running: boolean,
     unsearchablePages = 0,
+    unread = 0,
   ): void {
     // A different array, or one that has been emptied, means a new query: the
     // rows describe matches that no longer exist and appending to them would
@@ -180,7 +181,7 @@ export class Results {
     this.built = Math.min(matches.length, MAX_RESULT_ROWS);
 
     this.highlight(current);
-    this.say(matches.length, query, running, unsearchablePages);
+    this.say(matches.length, query, running, unsearchablePages, unread);
   }
 
   /** Moves the highlight, scrolling the row into view if it is off screen. */
@@ -225,8 +226,9 @@ export class Results {
     query: string,
     running: boolean,
     unsearchablePages: number,
+    unread: number,
   ): void {
-    const text = statusFor(total, query, running, unsearchablePages);
+    const text = statusFor(total, query, running, unsearchablePages, unread);
     const bare = this.built === 0;
     const wanted = bare && text !== "";
     // Two conditions, because the message is no longer the only state: a new
@@ -337,9 +339,19 @@ export function statusFor(
   query: string,
   running: boolean,
   unsearchablePages = 0,
+  unread = 0,
 ): string {
   if (!query) return "Type in the find field to search.";
   if (running) return total === 0 ? "Searching…" : `${countOf(total)}, still searching…`;
+
+  // A page whose search failed is skipped and counted as searched, so a list
+  // that ends here is shorter than the document's by however many hits it
+  // held. Said before the unreadable-font case: this one is about pages that
+  // were not read at all.
+  if (unread > 0) {
+    const found = total === 0 ? "No matches" : countOf(total);
+    return `${found}. ${unreadPages(unread)} could not be searched: reading them failed.`;
+  }
 
   // The line this whole path exists for. A page whose fonts state no character
   // mapping was never searchable, and "No matches." claims the opposite about

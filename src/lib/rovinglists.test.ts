@@ -43,7 +43,7 @@
 
 import { describe, expect, it } from "vitest";
 
-const sources = import.meta.glob("./*.ts", {
+const sources = import.meta.glob("./**/*.ts", {
   query: "?raw",
   import: "default",
   eager: true,

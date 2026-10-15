@@ -306,7 +306,11 @@ describe("the window's wiring", () => {
     ])).toEqual([]);
   });
 
-  it("takes a pressed row through showPassage, and the ring away when another tab is chosen", () => {
+  // Which tabs take the ring away is `chooseTab`'s, tested in
+  // `documentmount.test.ts`. Its type makes the window hand it a `clearRegion`,
+  // and does not make that one the viewer's: a no-op compiles. The line below
+  // is the join, and the only thing here still read as text for it.
+  it("takes a pressed row through showPassage, and hands chooseTab the viewer's clearRegion", () => {
     expect(missingFrom(functionIn(app, "function showHidden(passage: Passage): void {"), [
       "showPassage(passage, (page) => model.map.slotOf(page), {",
       "page: (slot) => { shown.clearRegion(); shown.goToDestination(slot, null); },",
@@ -314,7 +318,8 @@ describe("the window's wiring", () => {
     ])).toEqual([]);
     expect(missingFrom(app, [
       "hidden: { onPick: (passage) => showHidden(passage) },",
-      'if (tab !== "hidden") viewer?.clearRegion();',
+      "onTab: (tab) => chooseTab(tab, {",
+      "clearRegion: () => viewer?.clearRegion(),",
     ])).toEqual([]);
   });
 });

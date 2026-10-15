@@ -689,11 +689,6 @@ fn engine_here() -> Result<Box<dyn Recogniser>, String> {
         .map_err(|e| e.to_string())
 }
 
-#[cfg(not(any(target_os = "macos", windows, target_os = "linux")))]
-fn engine_here() -> Result<Box<dyn Recogniser>, String> {
-    Err(tpdf_lib::ocr_worker::NO_ENGINE.to_string())
-}
-
 // -------------------------------------------------------------------- render
 
 struct Sheet {

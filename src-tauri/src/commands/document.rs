@@ -56,9 +56,139 @@ fn reveal_local_file(path: &Path) -> Result<(), String> {
     }
 }
 
-#[cfg(not(any(windows, target_os = "macos")))]
-fn reveal_local_file(_path: &Path) -> Result<(), String> {
-    Err("Showing a file is supported on Windows and macOS".into())
+/// Asks the desktop's file manager to select the file, and opens its folder
+/// where none answers.
+///
+/// `org.freedesktop.FileManager1.ShowItems` is the freedesktop call for this,
+/// made through `gdbus` with every value its own argument and no shell. Thunar
+/// installs a service file for it (seen in WSL); Nautilus, Nemo, Caja and
+/// Dolphin implement it too, which was not tried. No call that selected a file
+/// in a real window has been observed. A desktop with no such service, or no
+/// `gdbus`, gets the folder through `xdg-open` instead: the file is then in
+/// front of the reader without being selected. Until 2026-10-15 Linux answered
+/// "supported on Windows and macOS", an arm meant for an unsupported platform
+/// that had become Linux's code path.
+#[cfg(target_os = "linux")]
+fn reveal_local_file(path: &Path) -> Result<(), String> {
+    use std::process::{Command, Stdio};
+    let uri = show_items_uri(path)?;
+    let shown = Command::new("gdbus")
+        .args(show_items_argv(&uri))
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status();
+    if shown.is_ok_and(|status| status.success()) {
+        return Ok(());
+    }
+    let folder = path.parent().ok_or("The file is in no folder")?;
+    let mut child = Command::new("xdg-open")
+        .arg(folder)
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+        .map_err(|error| {
+            format!("No file manager answered, and the folder could not be opened: {error}")
+        })?;
+    // Reaped on a thread of its own: some desktops' `xdg-open` waits for the
+    // window it opened, and the command must not.
+    std::thread::spawn(move || child.wait());
+    Ok(())
+}
+
+/// How long `gdbus` may wait for a file manager to answer, in seconds, before
+/// the folder is opened instead. Not a guess at how long one takes: Thunar
+/// activated for this call under Xvfb in WSL (2026-10-15) never answered, and
+/// `gdbus` gave up after 57 s, cold and warm alike. A wait that long would read
+/// as the command doing nothing.
+#[cfg(target_os = "linux")]
+const SHOW_ITEMS_TIMEOUT: &str = "5";
+
+/// The `file://` URI of `path`, safe inside a single-quoted GVariant string.
+///
+/// `Url::from_file_path` percent-encodes a space, `%`, `#` and `?`, but leaves
+/// `'` alone, and a quote in a file name would end the string `gdbus` parses
+/// --- the call would fail, or name another file. `'` and `\` are the only two
+/// characters that string treats specially, so both are percent-encoded too,
+/// which every file manager decodes.
+#[cfg(target_os = "linux")]
+fn show_items_uri(path: &Path) -> Result<String, String> {
+    let uri = tauri::Url::from_file_path(path)
+        .map_err(|()| "The file path cannot be named as a URI".to_string())?;
+    Ok(String::from(uri).replace('\\', "%5C").replace('\'', "%27"))
+}
+
+/// `gdbus`'s arguments for `ShowItems` on one URI, with no startup id.
+#[cfg(target_os = "linux")]
+fn show_items_argv(uri: &str) -> Vec<String> {
+    [
+        "call",
+        "--session",
+        "--timeout",
+        SHOW_ITEMS_TIMEOUT,
+        "--dest",
+        "org.freedesktop.FileManager1",
+        "--object-path",
+        "/org/freedesktop/FileManager1",
+        "--method",
+        "org.freedesktop.FileManager1.ShowItems",
+    ]
+    .into_iter()
+    .map(String::from)
+    .chain([format!("['{uri}']"), "''".to_string()])
+    .collect()
+}
+
+#[cfg(all(test, target_os = "linux"))]
+mod reveal_tests {
+    use super::{show_items_argv, show_items_uri};
+    use std::path::Path;
+
+    /// The whole Linux path against a real desktop: the file manager answers
+    /// and selects the file, or the folder opens. Ignored because it needs a
+    /// session bus with a file manager on it, which no test machine has; run
+    /// by hand with `TPDF_REVEAL=<file> cargo test --lib -- --ignored
+    /// reveal_tests::`. First run 2026-10-15 in WSLg with Nautilus.
+    #[test]
+    #[ignore = "needs a desktop session; TPDF_REVEAL names the file"]
+    fn a_real_file_is_shown_by_the_desktops_file_manager() {
+        let path = std::env::var("TPDF_REVEAL").expect("TPDF_REVEAL names a file");
+        super::reveal_local_file(Path::new(&path)).expect("shown");
+    }
+
+    #[test]
+    fn a_file_name_with_quotes_and_specials_cannot_leave_the_uri_string() {
+        let uri = show_items_uri(Path::new("/tmp/it's a \\ \"report\" #1 50%?.pdf"))
+            .expect("an absolute path");
+        assert!(uri.starts_with("file:///tmp/"), "{uri}");
+        // The two characters that end or escape a single-quoted GVariant string.
+        assert!(!uri.contains('\'') && !uri.contains('\\'), "{uri}");
+        assert!(uri.contains("it%27s") && uri.contains("%5C"), "{uri}");
+        // And the ones a URI itself must not carry bare.
+        assert!(
+            !uri.contains(' ') && !uri.contains('"') && !uri.contains('#'),
+            "{uri}"
+        );
+        assert!(uri.ends_with("50%25%3F.pdf"), "{uri}");
+    }
+
+    #[test]
+    fn show_items_is_one_array_of_one_uri_and_an_empty_startup_id() {
+        let argv = show_items_argv("file:///tmp/a%27b.pdf");
+        assert_eq!(argv[0], "call");
+        assert!(argv
+            .windows(2)
+            .any(|w| w == ["--dest", "org.freedesktop.FileManager1"]));
+        assert!(argv
+            .windows(2)
+            .any(|w| w == ["--method", "org.freedesktop.FileManager1.ShowItems"]));
+        assert!(argv
+            .windows(2)
+            .any(|w| w == ["--timeout", super::SHOW_ITEMS_TIMEOUT]));
+        assert_eq!(argv[argv.len() - 2], "['file:///tmp/a%27b.pdf']");
+        assert_eq!(argv[argv.len() - 1], "''");
+    }
 }
 
 /// A document open that was started before the webview asked for it.

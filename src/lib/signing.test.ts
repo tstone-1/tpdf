@@ -22,7 +22,7 @@ import {
 } from "./signing";
 import { CHOICE_KEY, LONG_TERM_KEY } from "./signtimestamp";
 import { LOCK_UNANSWERED } from "./signlock";
-import { LOCKED, WITHOUT_CERTIFICATE } from "./signing";
+import { LOCKED, NO_CERTIFICATE, WITHOUT_CERTIFICATE } from "./signing";
 import { FakeElement, installFakeDom } from "./testdom";
 
 const choice: Choice = {
@@ -624,6 +624,25 @@ describe("the chooser", () => {
     second.done();
     expect([...store.keys()].filter((key) => key.includes("Lock"))).toEqual([]);
 
+    // Answered, the line asking for it goes, even when something else then
+    // holds the chooser open. Mutation: the clearing line removed, which left
+    // both alerts standing beside each other.
+    const third = open([choice]);
+    third.button("Sign…").dispatch("click", {});
+    expect(third.alerts()).toContain(LOCK_UNANSWERED);
+    third.answerLock("last");
+    for (const value of ["none", "sectigo", "globalsign"]) {
+      const stamp = third.radio("sign-timestamp", value);
+      if (stamp) stamp.checked = false;
+    }
+    third.radio("sign-timestamp", "other").checked = true;
+    third.field("Timestamp authority address").value = "not an address";
+    third.button("Sign…").dispatch("click", {});
+    // The control: the chooser is held open by the address this time.
+    expect(third.alerts().filter((text) => text !== "")).toHaveLength(1);
+    expect(third.alerts()).not.toContain(LOCK_UNANSWERED);
+    third.done();
+
     // The old checkbox's remembered tick is not read.
     const old = open([choice], memory({ "tpdf.signatureLock": "true" }).storage);
     expect(old.radio("sign-lock", "last").checked).toBe(false);
@@ -1157,5 +1176,17 @@ describe("nothing to choose on Linux", () => {
     expect(said).toContain("Add a certificate file for signing…");
     expect(said).not.toContain("keychain");
     expect(nothingToChoose({ usable: [], skipped: [] }, false)).toContain("keychain");
+  });
+
+  it("begins with the words the field check waits for, on every platform and with anything skipped", () => {
+    // `fieldcheck.ts` tells this answer from any other failure by
+    // `NO_CERTIFICATE`; a wording that stopped beginning with it would make the
+    // check wait for a sentence that never comes.
+    const skipped = [{ subject: "Old", why: "it has expired" }];
+    for (const linux of [true, false]) {
+      for (const choices of [{ usable: [], skipped: [] }, { usable: [], skipped }]) {
+        expect(nothingToChoose(choices, linux).startsWith(NO_CERTIFICATE)).toBe(true);
+      }
+    }
   });
 });

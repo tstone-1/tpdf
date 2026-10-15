@@ -208,6 +208,7 @@ mod platform {
     }
 }
 
+// linux-difference: drawn-signature
 #[cfg(target_os = "linux")]
 mod platform {
     use super::*;
@@ -219,20 +220,6 @@ mod platform {
     }
     pub fn forget(_: &str, _: &Path) -> Result<(), String> {
         Ok(())
-    }
-}
-
-#[cfg(not(any(target_os = "macos", windows, target_os = "linux")))]
-mod platform {
-    use super::*;
-    pub fn load(_: &str, _: &Path) -> Result<Option<Vec<u8>>, String> {
-        Err("protected signature storage is unavailable on this platform".into())
-    }
-    pub fn save(_: &str, _: &Path, _: &[u8]) -> Result<(), String> {
-        Err("protected signature storage is unavailable on this platform".into())
-    }
-    pub fn forget(_: &str, _: &Path) -> Result<(), String> {
-        Err("protected signature storage is unavailable on this platform".into())
     }
 }
 

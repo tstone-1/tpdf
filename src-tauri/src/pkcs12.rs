@@ -68,6 +68,7 @@ impl Refusal {
     pub fn sentence(&self) -> String {
         match self {
             Self::WrongPassword => "The password is not the one this certificate file was saved with.".into(),
+            // linux-difference: signing
             Self::Rsa => "This certificate file holds an RSA key, and tpdf signs from a file only with an ECDSA key. \
                           A smart card or token with this certificate can sign."
                 .into(),

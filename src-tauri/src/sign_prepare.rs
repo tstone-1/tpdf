@@ -563,7 +563,7 @@ fn build(
     // says, and a further signature breaks it the same way. A document
     // timestamp is not a change in that sense (PDF 32000-2 §12.8.2.2.2), and is
     // what keeps a locked signature verifiable.
-    if !details.document_timestamp && crate::docinfo::locked(&prev) {
+    if !details.document_timestamp && crate::docinfo::locked(&prev)? {
         return Err(
             "A signature locked this document with no changes permitted, so a further \
              signature would break that lock."

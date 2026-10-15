@@ -9,6 +9,7 @@
 //! argument, which other users can read in the process list.
 
 use cryptoki::types::AuthPin;
+use zeroize::Zeroizing;
 
 use crate::pkcs11::Asked;
 
@@ -41,7 +42,7 @@ fn dialog(app: &tauri::AppHandle, asked: Asked<'_>) -> Result<Option<AuthPin>, S
     let question = question(asked);
     let (title, _) = names(asked);
     let app_for_dialog = app.clone();
-    let ask = move || -> Option<String> {
+    let ask = move || -> Option<Zeroizing<String>> {
         use gtk::prelude::*;
         use tauri::Manager as _;
 
@@ -75,7 +76,10 @@ fn dialog(app: &tauri::AppHandle, asked: Asked<'_>) -> Result<Option<AuthPin>, S
         area.add(&label);
         area.add(&entry);
         dialog.show_all();
-        let answer = (dialog.run() == gtk::ResponseType::Accept).then(|| entry.text().to_string());
+        // Zeroed when dropped. GTK's own copies, the entry's buffer and the
+        // `GString` `text` returns, are GTK's to free and are not zeroed.
+        let answer = (dialog.run() == gtk::ResponseType::Accept)
+            .then(|| Zeroizing::new(entry.text().to_string()));
         entry.set_text("");
         // SAFETY: the dialog is ours and not used after this.
         unsafe { dialog.destroy() };
@@ -95,21 +99,43 @@ fn dialog(app: &tauri::AppHandle, asked: Asked<'_>) -> Result<Option<AuthPin>, S
         rx.recv()
             .map_err(|_| "the PIN dialog closed without an answer".to_string())?
     };
-    Ok(answer.map(|pin| AuthPin::new(pin.into())))
+    Ok(answer.map(|pin| secret(&pin)))
+}
+
+/// The PIN as `cryptoki` holds it, copied out of a buffer that is zeroed when
+/// the caller drops it.
+///
+/// `Box::from(&str)` makes a new allocation of exactly the PIN's length. A
+/// `String` turned `into()` a `Box<str>` instead may be reallocated to shrink
+/// it, which leaves the old bytes behind unzeroed.
+fn secret(pin: &str) -> AuthPin {
+    AuthPin::new(Box::from(pin))
 }
 
 /// Installs the command-line tool's prompt, on the controlling terminal.
 pub fn install_terminal() {
-    crate::pkcs11::set_pin_asker(Box::new(|asked| terminal(asked).map(Some)));
+    crate::pkcs11::set_pin_asker(Box::new(terminal));
 }
 
-/// Reads one line from `/dev/tty` with echo off.
+/// The longest PIN or password the terminal prompt takes, in bytes.
+const MOST: usize = 255;
+
+/// Reads a PIN from `/dev/tty`, one key at a time with echo off, or `None`
+/// when the reader presses Ctrl+C or Ctrl+D.
 ///
 /// `/dev/tty` rather than standard input, which may be a document or a pipe;
 /// a run with no terminal is refused rather than reading a PIN from somewhere
 /// the reader did not type it.
-fn terminal(asked: Asked<'_>) -> Result<AuthPin, String> {
-    use std::io::{BufRead, Write};
+///
+/// **Ctrl+C is read as a key, not taken as a signal.** With the terminal's
+/// signals on, Ctrl+C ended the process before the settings were put back,
+/// and the reader's shell was left with echo off. So signals are turned off
+/// with echo, and the key cancels the prompt like the dialog's Cancel. Line
+/// editing is off too, so the prompt sees each key and does its own backspace.
+/// A signal from elsewhere (`kill`, a closed terminal) can still end the
+/// process with the settings changed; `stty sane` restores them.
+fn terminal(asked: Asked<'_>) -> Result<Option<AuthPin>, String> {
+    use std::io::Write;
     use std::os::fd::AsRawFd;
 
     let tty = std::fs::OpenOptions::new()
@@ -128,8 +154,9 @@ fn terminal(asked: Asked<'_>) -> Result<AuthPin, String> {
         ));
     }
     let mut quiet = saved;
-    quiet.c_lflag &= !libc::ECHO;
-    quiet.c_lflag |= libc::ICANON;
+    quiet.c_lflag &= !(libc::ECHO | libc::ICANON | libc::ISIG);
+    quiet.c_cc[libc::VMIN] = 1;
+    quiet.c_cc[libc::VTIME] = 0;
     // SAFETY: as above.
     if unsafe { libc::tcsetattr(fd, libc::TCSAFLUSH, &quiet) } != 0 {
         return Err(format!(
@@ -140,13 +167,85 @@ fn terminal(asked: Asked<'_>) -> Result<AuthPin, String> {
     let mut writer = &tty;
     let _ = write!(writer, "{} {}: ", question(asked), names(asked).1);
     let _ = writer.flush();
-    let mut line = String::new();
-    let read = std::io::BufReader::new(&tty).read_line(&mut line);
+    let typed = read_keys(&tty);
     // SAFETY: as above; restores what was read before any change.
     unsafe { libc::tcsetattr(fd, libc::TCSAFLUSH, &saved) };
     let _ = writeln!(writer);
-    read.map_err(|e| format!("reading the PIN: {e}"))?;
-    let pin = line.trim_end_matches(['\r', '\n']).to_string();
-    line.clear();
-    Ok(AuthPin::new(pin.into()))
+    let Some(typed) = typed? else { return Ok(None) };
+    Ok(Some(secret(&typed)))
+}
+
+/// Keys read one at a time until Enter, edited with backspace; `None` for
+/// Ctrl+C, or Ctrl+D on an empty line.
+///
+/// Into a fixed buffer that is zeroed on drop, rather than a `String` that
+/// reallocates as it grows and leaves each earlier copy behind.
+fn read_keys(mut source: impl std::io::Read) -> Result<Option<Zeroizing<String>>, String> {
+    let mut held = Zeroizing::new([0u8; MOST]);
+    let mut len = 0;
+    loop {
+        let mut key = [0u8; 1];
+        match source.read(&mut key) {
+            Ok(0) => break,
+            Ok(_) => {}
+            Err(e) if e.kind() == std::io::ErrorKind::Interrupted => continue,
+            Err(e) => return Err(format!("reading the PIN: {e}")),
+        }
+        match key[0] {
+            b'\r' | b'\n' => break,
+            0x03 => return Ok(None),
+            0x04 if len == 0 => return Ok(None),
+            0x7f | 0x08 => {
+                // A whole character: its continuation bytes, then its first.
+                while len > 0 && held[len - 1] & 0xc0 == 0x80 {
+                    len -= 1;
+                }
+                len = len.saturating_sub(1);
+            }
+            byte => {
+                if len == MOST {
+                    return Err(format!("a PIN or password is at most {MOST} characters"));
+                }
+                held[len] = byte;
+                len += 1;
+            }
+        }
+    }
+    let text = std::str::from_utf8(&held[..len])
+        .map_err(|_| "the PIN was not text the terminal could pass on".to_string())?;
+    Ok(Some(Zeroizing::new(text.to_string())))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn keys(bytes: &[u8]) -> Result<Option<String>, String> {
+        read_keys(bytes).map(|typed| typed.map(|t| t.to_string()))
+    }
+
+    #[test]
+    fn the_terminal_prompt_ends_at_enter_and_edits_with_backspace() {
+        assert_eq!(keys(b"1234\r"), Ok(Some("1234".into())));
+        assert_eq!(keys(b"12x\x7f34\n"), Ok(Some("1234".into())));
+        assert_eq!(keys(b"\x7f\x7f12\x08\r"), Ok(Some("1".into())));
+        assert_eq!(keys(b"p\xc3\xa4ss\r"), Ok(Some("p\u{e4}ss".into())));
+        assert_eq!(keys(b"p\xc3\xa4\x7f\r"), Ok(Some("p".into())));
+    }
+
+    #[test]
+    fn ctrl_c_cancels_the_terminal_prompt() {
+        assert_eq!(keys(b"12\x03"), Ok(None));
+        assert_eq!(keys(b"\x04"), Ok(None));
+        assert_eq!(keys(b"1\x04\r"), Ok(Some("1\u{4}".into())));
+    }
+
+    #[test]
+    fn the_terminal_prompt_refuses_more_than_it_holds() {
+        let long = [b'7'; MOST + 1];
+        assert!(keys(&long).is_err());
+        let mut full = vec![b'7'; MOST];
+        full.push(b'\r');
+        assert_eq!(keys(&full).map(|t| t.map(|t| t.len())), Ok(Some(MOST)));
+    }
 }

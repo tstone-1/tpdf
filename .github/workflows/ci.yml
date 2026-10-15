@@ -394,3 +394,10 @@ jobs:
           mkdir -p src-tauri/target/debug/pdfium
           cp vendor/pdfium/lib/libpdfium.so src-tauri/target/debug/pdfium/
           xvfb-run -a -s "-screen 0 1280x800x24" python -u scripts/viewer_check.py src-tauri/target/debug/tpdf testdata/links.pdf --signed testdata/incr-signed.pdf --timeout 300
+
+      # The glibc the window needs is the one README.md states
+      # (`scripts/check_glibc_floor.py`): the runner image decides it, so a
+      # newer `ubuntu-24.04` image or another runner can raise it unseen.
+      - name: The window needs the glibc README.md states
+        if: runner.os == 'Linux'
+        run: python3 scripts/check_glibc_floor.py src-tauri/target/debug/tpdf

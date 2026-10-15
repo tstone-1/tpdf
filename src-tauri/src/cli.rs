@@ -332,8 +332,13 @@ pub fn main() -> i32 {
         anchors: crate::trust::Anchors::System,
     };
     let stdout = std::io::stdout();
-    let stderr = std::io::stderr();
-    run(&argv[1..], &env, &mut stdout.lock(), &mut stderr.lock())
+    // Stderr unlocked, so it is taken per write. Held for the whole command, as
+    // it was until 2026-10-15, it deadlocked the first `diag::note` made from
+    // another thread: on Linux the pool's prewarm thread notes the Landlock
+    // version before the first worker, waited on this lock for ever, and every
+    // command that opened a document through the pool hung until its 120 s
+    // deadline. `docs/TRAPS.md` has the entry.
+    run(&argv[1..], &env, &mut stdout.lock(), &mut std::io::stderr())
 }
 
 /// Seconds since the epoch, now.

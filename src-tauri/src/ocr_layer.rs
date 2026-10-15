@@ -15,6 +15,8 @@ use crate::ocr::{Options, RecogniseError, RecognisedItem};
 use crate::text::PageText;
 use crate::textlayer::{Layer, Word};
 
+pub use crate::scanshare::{picture_share, SCAN_SHARE};
+
 /// The resolution a page is rendered at for recognition, in pixels per point,
 /// when it fits: 300 DPI.
 pub const WANTED_SCALE: f32 = 300.0 / 72.0;
@@ -109,57 +111,12 @@ pub fn has_text(page: &PageText) -> bool {
         .any(|code| !char::from_u32(*code).is_some_and(char::is_whitespace))
 }
 
-/// The share of a page that pictures must cover for it to be read as a scan,
-/// whatever text it has.
-///
-/// Until 2026-10-15 a page with one character was left alone, so a scan with a
-/// typed fax line, a stamp or a page number got no layer at all. Measured that
-/// day on pages built from a real document: four scans, plain or with 12 to 48
-/// typed characters, are 100% picture; born-digital pages are 0 to 3.1%,
-/// including one with 31 characters and a photo. Text alone could not tell
-/// them apart (0.2 to 0.6% of the page under characters on the scans, 0.4% on
-/// that born-digital page). Any value between the two groups separates them;
-/// half is the middle.
-pub const SCAN_SHARE: f32 = 0.5;
-
-/// How many cells a side of the page is divided into to measure
-/// [`picture_share`].
-const GRID: usize = 100;
-
-/// The share of `page_box` that the `pictures` cover, from 0 to 1.
-///
-/// Both in the page's own space, y up (`objects::Rect`). The union is measured
-/// by the centres of a 100 x 100 grid, so two pictures over the same place
-/// count once: some scanners write a page as strips, and a picture under
-/// another is not more page.
-#[must_use]
-pub fn picture_share(page_box: [f32; 4], pictures: &[[f32; 4]]) -> f32 {
-    let [left, bottom, right, top] = page_box;
-    let (width, height) = (right - left, top - bottom);
-    if !(width.is_finite() && height.is_finite() && width > 0.0 && height > 0.0) {
-        return 0.0;
-    }
-    let mut covered = 0usize;
-    for row in 0..GRID {
-        let y = bottom + (row as f32 + 0.5) * height / GRID as f32;
-        for column in 0..GRID {
-            let x = left + (column as f32 + 0.5) * width / GRID as f32;
-            if pictures
-                .iter()
-                .any(|r| r[0] <= x && x <= r[2] && r[1] <= y && y <= r[3])
-            {
-                covered += 1;
-            }
-        }
-    }
-    covered as f32 / (GRID * GRID) as f32
-}
-
 /// Whether a page is handed to the engine: it has no text, or it is a scan
 /// ([`SCAN_SHARE`]) that may have some.
 ///
-/// A scan with text is read whole, and [`outcome_of`] keeps only the words
-/// where the page has no character yet.
+/// A scan with text is read whole. [`outcome_of`] then leaves it alone if it
+/// already has most of the words read ([`ALREADY_READ`]), and otherwise keeps
+/// only the words where the page has no character yet.
 #[must_use]
 pub fn wants_reading(text: &PageText, pictures: f32) -> bool {
     !has_text(text) || pictures >= SCAN_SHARE
@@ -208,6 +165,26 @@ fn already_there(rect: [f32; 4], centres: &[(char, f32, f32)], text: &str) -> bo
     );
     let word = letters(text.chars());
     !under.is_empty() && !word.is_empty() && (under.contains(&word) || word.contains(&under))
+}
+
+/// The share of the words an engine reads that a page must already have for it
+/// to count as a page another program gave a layer.
+///
+/// Measured 2026-10-15 with Vision on `text-base14.pdf` made a scan: its own
+/// layer read again, 30 of 30 words; a layer in the source's places with five
+/// words spelled as another engine might (`jurnps`, `1azy`, `acc0unt`,
+/// `Beispie1`, `qu4rtz`), 24 of 30; the same scan with a typed fax line, 3 of
+/// 33, and the same with the picture inside a form, 3 of 33. Until then every
+/// word not already there was written, so the five misreads and a sixth word
+/// went on the page a second time, over the first program's layer. Half sits
+/// between the two groups with room on both sides: a layer half of whose
+/// words this engine reads otherwise, or a scan half of whose words are typed.
+pub const ALREADY_READ: f32 = 0.5;
+
+/// Whether a page whose engine read `there` words it already has and `new` it
+/// does not already has its layer ([`ALREADY_READ`]).
+fn has_its_layer(there: usize, new: usize) -> bool {
+    there > 0 && there as f32 >= ALREADY_READ * (there + new) as f32
 }
 
 /// The size in pixels to render a page at, and the scale that gives it.
@@ -274,8 +251,9 @@ pub enum Outcome {
     Layer(Layer),
     /// The engine read the page and found no words on it.
     Nothing,
-    /// Every word the engine read is already text on the page: a scan another
-    /// program has given a layer, or one whose only words are typed ones.
+    /// At least [`ALREADY_READ`] of the words the engine read are already text
+    /// on the page: a scan another program has given a layer, or one whose
+    /// words are mostly typed ones. Nothing is written to it.
     AlreadyThere,
     /// The engine would not read this page's image. The other pages are still
     /// read.
@@ -285,9 +263,13 @@ pub enum Outcome {
 /// What one page's answer from the engine comes to, or the error that stops
 /// the whole recognition.
 ///
-/// `before` is the page's text before the layer. A word it already has in the
-/// same place is dropped (`already_there`), so a typed header is not written
-/// twice and a page another program already gave a layer gets nothing more.
+/// `before` is the page's text before the layer. A page that already has at
+/// least [`ALREADY_READ`] of the words read gets nothing, so a page another
+/// program already gave a layer gets nothing more, even where that program
+/// read a word differently. Otherwise a word the page already has in the same
+/// place is dropped (`already_there`), so a typed header is not written twice.
+/// A scan whose typed words outnumber its printed ones gets nothing, as every
+/// scan with text did before 2026-10-15.
 ///
 /// **Only [`RecogniseError::Rejected`] is this page's alone.** It is the
 /// engine saying no to one image, with the process still there to read the
@@ -315,15 +297,16 @@ pub fn outcome_of(
 ) -> Result<Outcome, RecogniseError> {
     match answer {
         Ok(items) => {
-            let read_any = items.iter().any(|item| !item.text.trim().is_empty());
             let centres = centres(before);
-            let new: Vec<RecognisedItem> = items
+            let (there, new): (Vec<RecognisedItem>, Vec<RecognisedItem>) = items
                 .into_iter()
-                .filter(|item| !already_there(item.rect, &centres, &item.text))
-                .collect();
+                .filter(|item| !item.text.trim().is_empty())
+                .partition(|item| already_there(item.rect, &centres, &item.text));
+            if has_its_layer(there.len(), new.len()) {
+                return Ok(Outcome::AlreadyThere);
+            }
             Ok(match layer_of(page, new) {
                 Some(layer) => Outcome::Layer(layer),
-                None if read_any => Outcome::AlreadyThere,
                 None => Outcome::Nothing,
             })
         }
@@ -711,14 +694,16 @@ mod tests {
         let read = vec![
             // The typed header, read off the scan where it is drawn.
             word("FAX", [35.0, 2.0, 67.0, 16.0]),
-            // The first line of the scan, its box touching the header's.
+            // The first line of the scan, its first box touching the header's.
             word("Dear", [36.0, 15.0, 80.0, 30.0]),
+            word("Sir,", [84.0, 15.0, 110.0, 30.0]),
+            word("thank", [114.0, 15.0, 150.0, 30.0]),
         ];
         let Ok(Outcome::Layer(layer)) = outcome_of(0, Ok(read), &before) else {
             panic!("a layer");
         };
         let texts: Vec<&str> = layer.words.iter().map(|w| w.text.as_str()).collect();
-        assert_eq!(texts, ["Dear"]);
+        assert_eq!(texts, ["Dear", "Sir,", "thank"]);
         // Every word already there is said as that, not as nothing read.
         let only = vec![word("FAX", [35.0, 2.0, 67.0, 16.0])];
         assert_eq!(outcome_of(0, Ok(only), &before), Ok(Outcome::AlreadyThere));
@@ -764,6 +749,55 @@ mod tests {
             outcome_of(0, Ok(again), &blank),
             Ok(Outcome::Layer(_))
         ));
+    }
+
+    /// A page's text made of several words, each spread over its own box.
+    fn words_at(words: &[(&str, [f32; 4])]) -> PageText {
+        let mut page = PageText::default();
+        for (text, at) in words {
+            let one = typed(text, *at);
+            page.codes.extend(one.codes);
+            page.boxes.extend(one.boxes);
+        }
+        page
+    }
+
+    #[test]
+    fn a_scan_another_program_read_gets_nothing_where_its_engine_read_otherwise() {
+        let at = |i: usize| {
+            let left = 36.0 + 60.0 * i as f32;
+            [left, 100.0, left + 50.0, 112.0]
+        };
+        let read: Vec<RecognisedItem> = ["Sphinx", "of", "black", "quartz"]
+            .iter()
+            .enumerate()
+            .map(|(i, text)| word(text, at(i)))
+            .collect();
+        // The other program's layer read one of the four otherwise: nothing
+        // is written, not even the word it misread.
+        let layer = words_at(&[
+            ("Sphinx", at(0)),
+            ("of", at(1)),
+            ("black", at(2)),
+            ("qu4rtz", at(3)),
+        ]);
+        assert_eq!(
+            outcome_of(0, Ok(read.clone()), &layer),
+            Ok(Outcome::AlreadyThere)
+        );
+        // Half is enough.
+        let half = words_at(&[("Sphinx", at(0)), ("of", at(1))]);
+        assert_eq!(
+            outcome_of(0, Ok(read.clone()), &half),
+            Ok(Outcome::AlreadyThere)
+        );
+        // One of four is a typed word on a scan, and the other three are read.
+        let one = words_at(&[("Sphinx", at(0))]);
+        let Ok(Outcome::Layer(written)) = outcome_of(0, Ok(read), &one) else {
+            panic!("a layer");
+        };
+        let texts: Vec<&str> = written.words.iter().map(|w| w.text.as_str()).collect();
+        assert_eq!(texts, ["of", "black", "quartz"]);
     }
 
     #[test]

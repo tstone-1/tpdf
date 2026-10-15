@@ -35,7 +35,7 @@ files, so both sides can be read without running anything:
   from a table with `` id: `edit.color.${...}` ``, which are covered by the
   family prefix rather than one id at a time --- the harness classifies them the
   same way, from the same tables.
-- **Classified**: `id: "..."` inside `viewercheck.ts`'s `probes` array, its
+- **Classified**: `id: "..."` inside `viewercheck/commands.ts`'s `probes` array, its
   template families, and the keys of its `undriven` table.
 
 It is deliberately **not** a replacement for the harness's own check. This one
@@ -51,7 +51,8 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 REGISTRY = ROOT / "src" / "lib" / "appcommands.ts"
-HARNESS = ROOT / "src" / "lib" / "viewercheck.ts"
+# The window check's command phase, split out of `viewercheck.ts` on 2026-10-15.
+HARNESS = ROOT / "src" / "lib" / "viewercheck" / "commands.ts"
 
 ID = re.compile(r'id:\s*"([a-z]+\.[A-Za-z0-9.]+)"')
 FAMILY = re.compile(r'id:\s*`([a-z]+\.[A-Za-z0-9.]+)\$\{')
@@ -73,7 +74,7 @@ def main() -> int:
     end = harness.find("const registered = registry.all()")
     if start < 0 or end <= start:
         print(
-            "[FAIL] could not find viewercheck.ts's probes list -- this checker reads "
+            "[FAIL] could not find viewercheck/commands.ts's probes list -- this checker reads "
             "source text and the text moved.",
             file=sys.stderr,
         )
@@ -111,7 +112,7 @@ def main() -> int:
         for one in unfamilied:
             print(f"       family absent from the harness: {one}", file=sys.stderr)
         print(
-            "       Put it in viewercheck.ts's `probes` with a way to drive it, or in "
+            "       Put it in viewercheck/commands.ts's `probes` with a way to drive it, or in "
             "its `undriven` table with a written reason. There is no third state.",
             file=sys.stderr,
         )

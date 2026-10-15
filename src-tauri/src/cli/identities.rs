@@ -98,7 +98,7 @@ fn add_file(file: &std::path::Path, env: &Env<'_>, out: &mut dyn Write) -> Resul
 
 /// `identities --add` off Linux, where certificate files go into the system's
 /// own store instead.
-#[cfg(not(target_os = "linux"))]
+#[cfg(any(target_os = "macos", windows))]
 fn add_file(_: &std::path::Path, _: &Env<'_>, _: &mut dyn Write) -> Result<Exit, Failure> {
     Err(Failure::new(
         Exit::Usage,

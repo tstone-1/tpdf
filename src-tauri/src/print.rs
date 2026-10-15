@@ -945,7 +945,7 @@ mod tests {
     /// the platform where nothing checked that its jobs were readable at all.
     #[cfg(target_os = "macos")]
     use crate::print_macos as os_pdf;
-    #[cfg(not(any(target_os = "macos", windows)))]
+    #[cfg(target_os = "linux")]
     use crate::print_other as os_pdf;
 
     /// Whether this platform has a PDF parser of its own to read our output back
@@ -954,7 +954,7 @@ mod tests {
     fn os_parser() -> bool {
         #[cfg(any(target_os = "macos", windows))]
         return true;
-        #[cfg(not(any(target_os = "macos", windows)))]
+        #[cfg(target_os = "linux")]
         {
             println!("{}", os_pdf::SKIP);
             false
@@ -1709,7 +1709,7 @@ mod tests {
         return Some(
             crate::print_win::read(bytes).expect("the OS parser could not read the print job"),
         );
-        #[cfg(not(any(target_os = "macos", windows)))]
+        #[cfg(target_os = "linux")]
         {
             let _ = bytes;
             println!("{}", os_pdf::SKIP);

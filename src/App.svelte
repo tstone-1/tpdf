@@ -43,7 +43,8 @@
   } from "./lib/appcommands";
   import { CommandRegistry } from "./lib/commands";
   import { areasFrom } from "./lib/selection";
-  import { tooManyMatchesToMark } from "./lib/search";
+  import { completeForMarking } from "./lib/search";
+  import { chooseTab, commentTarget, followStatus } from "./lib/documentmount";
   import {
     ContextMenu,
     menuForSurface,
@@ -98,7 +99,7 @@
   import * as validationData from "./lib/validationdata";
   import { emptySignatureFields, signTarget, type SignTarget } from "./lib/signfield";
   import { openWithPassword } from "./lib/unlock";
-  import { isLinux, isMac, label, setPrintedKeys } from "./lib/keys";
+  import { isLinux, isMac, label, revealTitle, setPrintedKeys } from "./lib/keys";
   import { buildMenu, menuEnablement, runMenuCommand } from "./lib/menubar";
   import { namePages } from "./lib/pageranges";
   import { Palette } from "./lib/palette";
@@ -1730,7 +1731,10 @@
    * {@link redactSelection}'s shape over a different set of quads, and two
    * things are genuinely different rather than copied.
    *
-   * **It can refuse before it starts.** Above {@link MAX_MATCHES_TO_MARK} the
+   * **It can refuse before it starts**, for three reasons `completeForMarking`
+   * gives: the scan is still running, a page's search failed, or there are too
+   * many. The first two were missing until 2026-10-15, so the matches found so
+   * far were marked as though they were all of them. Above {@link MAX_MATCHES_TO_MARK} the
    * reader is told the number and asked to narrow the search, because the review
    * list is this subsystem's whole safety mechanism and a list nobody can read
    * is the same as no list. Marking the first five hundred and reporting success
@@ -1744,7 +1748,11 @@
   async function redactMatches(): Promise<void> {
     const view = openView, searched = viewer;
     if (!searched) return;
-    const refusal = tooManyMatchesToMark(searched.matchCount);
+    const refusal = completeForMarking({
+      running: searched.searching,
+      unread: searched.searchUnread,
+      count: searched.matchCount,
+    });
     if (refusal) {
       say(refusal);
       return;
@@ -3740,7 +3748,7 @@
       run: () => moveTab(id, across),
     }, {
       id: "tab.reveal",
-      title: isMac() ? "Show in Finder" : "Show in Explorer",
+      title: revealTitle(),
       enabled: () => tabs.find(id) === tab,
       run: async () => {
         try { await call("reveal_file", { path: tab.path }); }
@@ -5138,17 +5146,11 @@
       // finding those words is one text extraction per page carrying one. So
       // it is paid for by a reader who opens that tab, and by nobody else ---
       // a document opened, read and closed on the outline costs none of it.
-      onTab: (tab) => {
-        if (tab === "comments") void fillCommentWords();
-        // The same bargain for the same reason: the words under a region are
-        // a text extraction per page carrying one, and a reader who never
-        // opens this tab pays none of it. Unlike the comments walk this one
-        // is *also* driven from `runEdit`, because a region the reader has
-        // just dragged wants its words while they are looking at the panel.
-        if (tab === "redactions") void fillRedactionWords();
-        // The ring over a passage belongs to the list that drew it.
-        if (tab !== "hidden") viewer?.clearRegion();
-      },
+      onTab: (tab) => chooseTab(tab, {
+        commentWords: () => void fillCommentWords(),
+        redactionWords: () => void fillRedactionWords(),
+        clearRegion: () => viewer?.clearRegion(),
+      }),
     }, runningAs(view)));
   }
 
@@ -5269,10 +5271,8 @@
       // the same guard `Edits.mark` states, and the reader cannot have got
       // here anyway --- `setComments` closes a popup whose comment has gone.
       onCommentEdit: (comment, body) => {
-        const object = comment.object;
-        const page = edits?.map.idOf(comment.page);
-        if (!object || page === undefined) return;
-        void applyEdit((e) => e.rewrite(object, page, body));
+        const to = commentTarget(comment, (slot) => edits?.map.idOf(slot));
+        if (to) void applyEdit((e) => e.rewrite(to.object, to.page, body));
       },
       // The same two lookups as the rewrite above and for its reasons: a
       // comment the file wrote as a direct dictionary has no object to name,
@@ -5281,10 +5281,8 @@
       // rather than predicted here --- the refusal names the order to do the
       // two in, which is more than this side could say.
       onCommentDelete: (comment) => {
-        const object = comment.object;
-        const page = edits?.map.idOf(comment.page);
-        if (!object || page === undefined) return;
-        void applyEdit((e) => e.discard(object, page));
+        const to = commentTarget(comment, (slot) => edits?.map.idOf(slot));
+        if (to) void applyEdit((e) => e.discard(to.object, to.page));
       },
       // The reply's own icon goes on the parent's rectangle, which is why
       // this callback needs a third thing off the comment where the one above
@@ -5293,10 +5291,8 @@
       // an id and a slot are both `number`, which this repository has paid
       // for once.
       onCommentReply: (comment, body) => {
-        const object = comment.object;
-        const page = edits?.map.idOf(comment.page);
-        if (!object || page === undefined) return;
-        void applyEdit((e) => e.reply(page, object, comment.rect, body));
+        const to = commentTarget(comment, (slot) => edits?.map.idOf(slot));
+        if (to) void applyEdit((e) => e.reply(to.page, to.object, comment.rect, body));
       },
       onMarkRemove: (mark, sweep) => removeNamed(mark, sweep),
       // A colour picked in the swatch row, or by a `Colour:` command with a
@@ -5373,18 +5369,8 @@
         // the coverage actually changes, and the gate wants one reading of
         // the clock per change rather than one per render.
         degraded = degradedGate.update(next, performance.now());
-        // What keeps thumbnails out of the way of the page: the strip stops
-        // asking, and withdraws what it asked for, whenever the viewer has
-        // work outstanding. See `thumbnails.ts`.
-        sidebar?.setViewerBusy(next.pending > 0);
-        // Through the status rather than from the rotate command, so the
-        // strip follows however the rotation was reached --- the palette, the
-        // keyboard, or anything later that rotates without going via here.
-        sidebar?.setTurns(next.turns);
-        // Same reasoning as the rotation above: the strip follows the view
-        // however the inversion was reached, rather than only via the command.
-        sidebar?.setInvert(next.invert);
-        // Same reasoning again, and it is the whole wiring for the results
+        followStatus(sidebar, next);
+        // Through the status for `followStatus`'s reason, and it is the whole wiring for the results
         // tab: the panel follows the scan through the status, so it is fed
         // whether the search came from the find field, the palette, or a
         // toggle rescanning what was already there.
@@ -5395,6 +5381,7 @@
             next.search.query,
             next.search.running,
             next.search.unsearchablePages,
+            next.search.unread,
           );
         }
         notePlace();

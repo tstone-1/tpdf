@@ -116,8 +116,6 @@ pub fn offered_languages() -> Result<Vec<String>, String> {
     #[cfg(target_os = "linux")]
     let listed: Result<Vec<String>, crate::ocr::RecogniseError> =
         Ok(crate::ocr_tesseract::languages());
-    #[cfg(not(any(target_os = "macos", windows, target_os = "linux")))]
-    let listed: Result<Vec<String>, crate::ocr::RecogniseError> = Ok(Vec::new());
     listed.map_err(|why| why.to_string())
 }
 

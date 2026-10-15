@@ -36,13 +36,88 @@ have the binary.)
 - **Text recognition reads a scan that already has a little text.** A page with a typed fax
   line, a stamp or a page number was left alone because it had text, so the scan behind it
   could not be searched. A page is now read when pictures cover at least half of it, and a
-  word the page already has in the same place is not written again; a scan that another
-  program already gave a text layer is still left as it is. Born-digital pages are not read.
+  word the page already has in the same place is not written again. A scan is left alone
+  when at least half of the words read are already on the page, so a scan that another
+  program already gave a text layer gets no second one where the two programs read a word
+  differently. A picture inside a form inside another form counts as a picture. Born-digital
+  pages are not read.
 - **CI starts the application and opens a document in a real window,** in the Ubuntu job
   under Xvfb: a debug checks build and `viewer_check.py` on `links.pdf`. Every gate stayed
   green when a change on 2026-10-13 left the window empty on both platforms; that change,
   put back, fails this step with *The page threw while it was being built*. On macOS and
   Windows the window checks stay a release step.
+- **A new gate, `platforms`, refuses a platform arm written as "not these platforms",** and
+  holds the README's list of Linux differences equal to the markers in the code it describes.
+  Arms of that shape had quietly become Linux's code path for installed fonts, "Show in
+  folder" and `tpdf path`. Arms no build could reach since Linux became the third platform
+  were removed.
+- **The large check files are split.** The Rust and frontend mutation tables moved into row
+  files per area under `scripts/mutation_rows/`, and the window check `viewercheck.ts` into
+  one file per phase under `src/lib/viewercheck/`, each move proved byte for byte. No harness
+  file may pass 3,000 lines. A test stops the number of suites that read `App.svelte` as text
+  from growing, and three decisions the window made while mounting a document moved to
+  `documentmount.ts` with tests.
+
+### Fixed
+
+- **"Redact every search result" no longer marks only part of the matches.** It marked the
+  matches found so far while the search was still running, and treated a page whose search
+  failed as searched, so occurrences on the other pages stayed in the file while the
+  redaction read as verified. It now refuses in both cases and says how many pages could not
+  be searched; the results panel shows that count too.
+- **`verify --strict` no longer passes a document where a signature field nobody signed was
+  added after the last signature.** Its appearance can paint over the page, so the page now
+  counts as changed. Only a field holding the signature that append wrote is excused.
+- **Signing refuses when it cannot tell whether an earlier signature locked the document**
+  (a form too large or too deeply nested to read), and finds a lock whose field type is
+  stated on the field's parent. After signing, a lock that was asked for and not written is
+  reported even when the read-back ran out of time to check the signature's hash.
+- **The signature card's *Covers* row** no longer says "everything up to the signature" when
+  the signed range skips the start of the file and bytes were also appended.
+- **Holding down h, c, t or e acts once,** instead of laying a new highlight or arming the
+  tool again for every key repeat. The single-letter shortcuts h, c, t, e, n and p work with
+  Caps Lock on and on keyboards that print a different letter on those keys.
+- **The prompt asking whether anyone else still needs to sign goes away once it is
+  answered.**
+- **A Linux worker is also refused io_uring and x32 system calls.** io_uring can make a
+  socket without the `socket` call, so the threat model's "no socket of any family" was not
+  true on Ubuntu 24.04's own kernel; it is now, and the threat model says what that kernel's
+  Landlock version leaves open. The diagnostics log names the Landlock version in force.
+- **A worker on macOS and Linux starts with only the descriptors it was handed.** Any other
+  descriptor the application holds, such as one a PKCS#11 module opened, is closed at
+  `exec`.
+- **On Linux, text editing finds a document's font among the installed fonts,** through
+  fontconfig, as it already did on macOS and Windows.
+- **The command-line PIN prompt on Linux cancels on Ctrl+C** instead of leaving the terminal
+  with echo off, and its copies of the PIN are zeroed. Adding a certificate file when the
+  saved list is damaged is refused and the list is left as it was; before, the list was
+  replaced and earlier entries were lost.
+- **"Show in folder" works on Linux.** tpdf asks the desktop's file manager to select the
+  file, through the freedesktop `ShowItems` call, and opens its folder if no file manager
+  answers within 5 seconds. Before, Linux answered that the command was supported on Windows
+  and macOS only. `tpdf path` on Linux says that the `.deb` puts `tpdf-cli` on your PATH,
+  instead of pointing to a macOS menu command, and `tpdf sign` and `tpdf identities` name the
+  Linux key sources in their help.
+  The tab menu on Linux says *Show in Folder*, where it said *Show in Explorer*.
+- **Text recognition and verified redaction work on Fedora.** tpdf opened Tesseract only as
+  `libtesseract.so.5`, the name Debian and Ubuntu install. Fedora's `tesseract-libs` installs
+  `libtesseract.so.5.5` instead, so on Fedora with the AppImage no scan could be read and every
+  redaction was reported as not verified, since the check that a removed area is unreadable
+  uses Tesseract. tpdf now tries each Tesseract 5 name. The README names Fedora's package and
+  says that without Tesseract no redaction is verified, where it said only scanned pages.
+- **A missing text-recognition engine is reported as missing.** On Linux without Tesseract,
+  and on Windows without an OCR language pack, every region said "the engine crashed: the OCR
+  worker stopped listening: Broken pipe". It now gives the reason, such as which library could
+  not be loaded and which package provides it.
+- **The README and the download page say which Linux tpdf runs on.** The Linux build needs
+  glibc 2.39 or newer: Ubuntu 24.04, Debian 13, Fedora 40 and later. On Ubuntu 22.04 and
+  Debian 12 it stops at once with "version `GLIBC_2.39' not found", and both pages had offered
+  the `.deb` to "Debian, Ubuntu and their relatives". CI and the release now check that the
+  binaries need the glibc the README states, so a newer build machine cannot raise it unseen.
+- **Publishing the Python client works again.** Its workflow required exactly two green CI
+  jobs and CI has run three since the Ubuntu job was added; the release workflow had the same
+  count and ran its gates again instead of skipping them. A check now holds both to CI's job
+  list.
 
 ## [26.10.19] - 2026-10-14
 

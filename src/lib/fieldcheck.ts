@@ -17,6 +17,7 @@ import { SAVED_BASE } from "./savedfields";
 import { DIALOG_CLASS as PROPERTIES_CLASS } from "./fieldprops";
 import type { OpenCheckHost } from "./opencheck";
 import { pause, settle, type Report } from "./checkreport";
+import { NO_CERTIFICATE } from "./signing";
 import type { Viewer } from "./viewer";
 import type { Anchor } from "./popup";
 
@@ -759,14 +760,18 @@ export async function fieldCheck(host: OpenCheckHost, expected: string, report: 
       await host.idle();
       // With nothing unsaved the command starts the signing in that field: the
       // chooser, with a visible signature offered first and the field named,
-      // or the sentence for a machine with no certificate to sign with.
+      // or the sentence for a machine with no certificate to sign with. That
+      // sentence and no other: any failure naming a certificate (a store that
+      // could not be read) matched the word, so a press that never reached
+      // signing passed here and skipped the next check as "no certificate".
       host.run("file.signField");
-      await settle(() => chooser() !== null || /certificate/i.test(said()), SETTLE_MS);
+      const noCertificate = () => said().includes(NO_CERTIFICATE);
+      await settle(() => chooser() !== null || noCertificate(), SETTLE_MS);
       const open = chooser();
       const visible = open?.querySelector<HTMLInputElement>('input[name="sign-appearance"][value="visible"]');
       check(
         "the sign-in-the-field command opens the signing for that field",
-        open ? visible?.checked === true && (visible.parentElement?.textContent ?? "").includes("the field Signature 1") : /certificate/i.test(said()),
+        open ? visible?.checked === true && (visible.parentElement?.textContent ?? "").includes("the field Signature 1") : noCertificate(),
         open ? `chooser: ${visible?.parentElement?.textContent}` : `no chooser: ${said()}`,
       );
       if (open) {

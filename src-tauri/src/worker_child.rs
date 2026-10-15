@@ -396,10 +396,6 @@ fn establish_boundary() -> Result<(), String> {
     {
         crate::sandbox_linux::apply()
     }
-    #[cfg(not(any(target_os = "macos", windows, target_os = "linux")))]
-    {
-        Err("no process boundary is implemented on this platform".into())
-    }
 }
 
 /// Serves a locked document's requests until a password opens it.
@@ -1169,12 +1165,6 @@ fn wait_for_document() -> Result<Option<Shm>, String> {
     unsafe { Shm::from_handle(handover.handle, handover.len, false) }.map(Some)
 }
 
-/// Not reachable: a worker refuses to start at all on this platform.
-#[cfg(not(any(target_os = "macos", target_os = "linux", windows)))]
-fn wait_for_document() -> Result<Option<Shm>, String> {
-    Err("pre-spawned workers are implemented on macOS and Windows only".into())
-}
-
 /// Makes PDFium build its system font list, before any document needs it.
 ///
 /// Deliberately ignores every failure. This is an optimisation: a worker that
@@ -1268,7 +1258,7 @@ pub fn apply_sandbox(profile: &str) -> Result<(), String> {
 ///
 /// Always, off macOS. Returning `Ok` here would leave every containment claim in
 /// `docs/THREAT-MODEL.md` asserted by a process that has none.
-#[cfg(not(target_os = "macos"))]
+#[cfg(any(windows, target_os = "linux"))]
 pub fn apply_sandbox(_profile: &str) -> Result<(), String> {
     Err("no sandbox is implemented on this platform".into())
 }
@@ -1296,7 +1286,7 @@ mod tests {
     /// pre-existing one, exercised end to end by `examples/fdpass_probe.rs` in a child
     /// process, which is where a call with this blast radius belongs. Linux
     /// applies its boundary as macOS does, so it is tested in a forked child below.
-    #[cfg(not(any(target_os = "macos", target_os = "linux")))]
+    #[cfg(windows)]
     #[test]
     fn a_worker_that_is_not_contained_refuses_to_serve() {
         let err = super::establish_boundary().expect_err("a test runner is not contained");
@@ -1318,44 +1308,114 @@ mod tests {
             .find(|dir| std::path::Path::new(dir).is_dir());
         let uncontained = probe(fonts);
         // Everything forbidden works outside the boundary; the font bit is
-        // clear because reading one works too.
+        // clear because reading one works too. A kernel with io_uring turned
+        // off (`kernel.io_uring_disabled`) refuses a ring to everybody, and
+        // there that probe proves nothing, so it is said rather than assumed.
+        // The x32 bit exists only on x86-64.
+        let mut expected = if cfg!(target_arch = "x86_64") {
+            0b1101_1111
+        } else {
+            0b0101_1111
+        };
+        if uncontained & RING == 0 {
+            eprintln!("[SKIP] io_uring is off on this kernel, so its probe sees nothing here");
+            expected &= !RING;
+        }
         assert_eq!(
-            uncontained, 0b1_1111,
-            "the probes cannot see what they look for"
+            uncontained, expected,
+            "the probes cannot see what they look for, bits {uncontained:#010b}"
         );
+        // The answer travels over a pipe rather than in the exit status, which
+        // has room for seven bits and one for "no boundary".
+        let mut pipe = [-1; 2];
+        // SAFETY: writes two descriptors into a two-element array.
+        assert_eq!(unsafe { libc::pipe(pipe.as_mut_ptr()) }, 0);
         // SAFETY: the child calls only what it needs and leaves with `_exit`.
         let pid = unsafe { libc::fork() };
         assert!(pid >= 0, "fork failed");
         if pid == 0 {
-            let code = match super::establish_boundary() {
-                Err(_) => 0x80,
+            let code: i32 = match super::establish_boundary() {
+                Err(_) => -1,
                 Ok(()) => probe(fonts),
             };
-            // SAFETY: ends the child without running the parent's destructors.
-            unsafe { libc::_exit(code) };
+            // SAFETY: four bytes from a local, then the child ends without
+            // running the parent's destructors.
+            unsafe {
+                libc::write(pipe[1], (&raw const code).cast(), 4);
+                libc::_exit(0);
+            }
         }
+        // SAFETY: the parent's copy of the write end, closed so the read ends.
+        unsafe { libc::close(pipe[1]) };
+        let mut code: i32 = -2;
+        // SAFETY: four bytes into a local.
+        let read = unsafe { libc::read(pipe[0], (&raw mut code).cast(), 4) };
+        // SAFETY: the read end, no longer needed.
+        unsafe { libc::close(pipe[0]) };
         let mut status = 0;
         // SAFETY: our own child, waited for once.
         assert_eq!(unsafe { libc::waitpid(pid, &raw mut status, 0) }, pid);
         assert!(
-            libc::WIFEXITED(status),
-            "the child did not exit: {status:#x}"
+            libc::WIFEXITED(status) && read == 4,
+            "the child did not answer: status {status:#x}, {read} bytes"
         );
-        let code = libc::WEXITSTATUS(status);
-        assert_ne!(code, 0x80, "the boundary could not be established");
+        assert_ne!(code, -1, "the boundary could not be established");
         // Nothing forbidden worked, and the font folder, if there is one, read.
         assert_eq!(
             code, 0,
-            "a contained worker did what it must not, bits {code:#08b}"
+            "a contained worker did what it must not, bits {code:#010b}"
         );
     }
 
+    /// The probe bit for making an io_uring ring.
+    #[cfg(target_os = "linux")]
+    const RING: i32 = 64;
+
     /// The probes, as bits: 1 read /etc/passwd, 2 created a file, 4 opened an
-    /// internet socket, 8 opened a Unix socket, 16 started a program; and with
-    /// `fonts`, 32 when that folder could NOT be listed.
+    /// internet socket, 8 opened a Unix socket, 16 started a program; with
+    /// `fonts`, 32 when that folder could NOT be listed; [`RING`] made an
+    /// io_uring ring, which can make a socket without the `socket` call; and on
+    /// x86-64, 128 when `socket` called by its x32 number was NOT refused by
+    /// the filter.
+    ///
+    /// The x32 bit is read from the error rather than from success, because a
+    /// kernel without x32 refuses the call itself with `ENOSYS` whatever the
+    /// filter does: the filter's answer is `EPERM`, and anything else means the
+    /// call got past it. So the bit is set uncontained on every x86-64 kernel.
     #[cfg(target_os = "linux")]
     fn probe(fonts: Option<&str>) -> i32 {
         let mut bits = 0;
+        // SAFETY: `io_uring_setup(1, params)` with zeroed parameters of the
+        // kernel's size (120 bytes); a ring it returns is closed.
+        let ring = unsafe {
+            let mut params = [0u8; 120];
+            libc::syscall(libc::SYS_io_uring_setup, 1u32, params.as_mut_ptr())
+        };
+        if ring >= 0 {
+            bits |= RING;
+            // SAFETY: the descriptor just made.
+            unsafe { libc::close(ring as i32) };
+        }
+        #[cfg(target_arch = "x86_64")]
+        {
+            // SAFETY: `socket(AF_UNIX, SOCK_STREAM, 0)` by its x32 number; a
+            // descriptor it returns is closed.
+            let fd = unsafe {
+                libc::syscall(
+                    libc::SYS_socket | 0x4000_0000,
+                    libc::AF_UNIX,
+                    libc::SOCK_STREAM,
+                    0,
+                )
+            };
+            if fd >= 0 {
+                // SAFETY: the descriptor just made.
+                unsafe { libc::close(fd as i32) };
+            }
+            if fd >= 0 || std::io::Error::last_os_error().raw_os_error() != Some(libc::EPERM) {
+                bits |= 128;
+            }
+        }
         if std::fs::File::open("/etc/passwd").is_ok() {
             bits |= 1;
         }

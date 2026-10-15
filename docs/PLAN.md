@@ -18102,7 +18102,9 @@ or after an OS update pays Vision's model compile, 24 s here.
   stamp gets no layer. Deciding by coverage rather than by presence needs a measurement first.~~ **Built 2026-10-15**: a page is read when it has no text or when pictures
   cover at least half of it (`ocr_layer::SCAN_SHARE`, the worker's `Pictures` request), and a
   recognised word the page already has in the same place is dropped (`docs/SUBSYSTEMS.md`,
-  *A scan with some text*).
+  *A scan with some text*). A page on which at least half of the recognised words are already
+  there gets nothing, so a scan another program read is not given a second layer where the two
+  engines read a word differently.
 - A page is read at no more than a 16 MiB image allows, about 208 DPI for A4, because that is
   the OCR worker's pixel buffer. Reading in overlapping bands would lift it.
 - The boxes are the engine's. Trimming each to the ink inside it would make a selection as

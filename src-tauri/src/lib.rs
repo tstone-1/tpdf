@@ -92,7 +92,7 @@ pub mod print;
 pub mod print_linux;
 #[cfg(target_os = "macos")]
 pub mod print_macos;
-#[cfg(all(test, not(any(target_os = "macos", windows))))]
+#[cfg(all(test, target_os = "linux"))]
 pub mod print_other;
 #[cfg(windows)]
 pub mod print_win;
@@ -125,6 +125,7 @@ pub mod sandbox_win;
 pub mod save;
 mod save_order;
 pub mod save_outside;
+pub mod scanshare;
 pub mod search;
 pub mod session;
 pub mod sign_cms;

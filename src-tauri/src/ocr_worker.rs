@@ -35,15 +35,14 @@
 // `BufRead`, `BufReader`, `Command` and `Stdio` are used only by the macOS arms
 // below, and importing them here made three compile gates red on Windows and
 // green on a Mac --- `docs/TRAPS.md` records that an unused-import warning on one
-// platform is not an unused import. They are imported where they are used. The
-// first three serve the platforms with a recogniser.
+// platform is not an unused import. They are imported where they are used. Every
+// platform that compiles has a recogniser, so the first three are unconditional.
 use std::io::Write;
-#[cfg(any(target_os = "macos", windows, target_os = "linux"))]
 use std::io::{BufRead, BufReader, Read};
 // Not on Windows, where `OcrProcess` and `OcrStdin` are a `Contained` and a
 // `File`: `spawn_contained` builds the child suspended with a token and a job
 // rather than through `Command`, so there is no `Child` to take a stdin from.
-#[cfg(not(windows))]
+#[cfg(unix)]
 use std::process::{Child, ChildStdin};
 use std::sync::mpsc::{Receiver, RecvTimeoutError};
 use std::time::Duration;
@@ -187,10 +186,6 @@ impl Named {
     }
 }
 
-/// The message a platform with no engine is refused with.
-pub const NO_ENGINE: &str = "no OCR engine is implemented on this platform, so nothing here can \
-                             be shown to have been read";
-
 /// Whether an image can be handed over at all, and why not.
 ///
 /// A free function rather than two `if`s inside [`OcrWorker::recognise`], for the
@@ -230,7 +225,7 @@ fn room_for(pixels: &Pixels<'_>, capacity: usize) -> Result<(), RecogniseError> 
 /// way and for the same reason: on Windows the child is not a
 /// `std::process::Child`, because `spawn_contained` builds it suspended with a
 /// token and a job rather than through `Command`.
-#[cfg(not(windows))]
+#[cfg(unix)]
 type OcrProcess = Child;
 /// The child process. See the other arm.
 #[cfg(windows)]
@@ -242,7 +237,7 @@ type OcrProcess = crate::sandbox_win::Contained;
 /// pipe end arrives from `CreatePipe` as a bare handle, and `File` is the
 /// standard library's owner for one. Closing it is what the child reads as end of
 /// input, which is how [`serve_loop`] is asked to stop.
-#[cfg(not(windows))]
+#[cfg(unix)]
 type OcrStdin = ChildStdin;
 /// What the parent writes requests to. See the other arm.
 #[cfg(windows)]
@@ -259,7 +254,6 @@ type OcrStdin = std::fs::File;
 /// Generic over the reader because the two platforms hand over different types
 /// for the same pipe: a `ChildStdout` where there is a `Child`, a `File` where
 /// the handle came from `CreatePipe`.
-#[cfg(any(target_os = "macos", windows, target_os = "linux"))]
 fn reply_thread<R: Read + Send + 'static>(stdout: R) -> Receiver<std::io::Result<String>> {
     let (tx, replies) = std::sync::mpsc::channel();
     std::thread::spawn(move || {
@@ -304,17 +298,6 @@ pub struct OcrWorker {
 }
 
 impl OcrWorker {
-    /// Starts one.
-    ///
-    /// # Errors
-    ///
-    /// Creating the mapping or spawning; and on any platform with no engine,
-    /// always --- see [`NO_ENGINE`].
-    #[cfg(not(any(target_os = "macos", windows, target_os = "linux")))]
-    pub fn spawn() -> Result<Self, String> {
-        Err(NO_ENGINE.into())
-    }
-
     /// Starts one, contained the way the parser worker is.
     ///
     /// **The containment is `sandbox_win::Containment::default()` --- job object
@@ -431,23 +414,12 @@ impl OcrWorker {
         command.env("OMP_THREAD_LIMIT", "1");
 
         let fd = pixels.raw_fd();
-        // SAFETY: only dup/dup2/close run between fork and exec, all of which are
-        // async-signal-safe. The source is dup'd first because it may already be
-        // sitting on the target number.
+        // SAFETY: `remap_fds` runs only async-signal-safe descriptor calls, and
+        // `pixels` keeps the source open until spawn returns. It is the parser
+        // worker's shuffle, so this worker too starts with the pixel buffer and
+        // the standard streams and every other descriptor marked close-on-exec.
         unsafe {
-            command.pre_exec(move || {
-                let scratch = libc::dup(fd);
-                if scratch < 0 {
-                    return Err(std::io::Error::last_os_error());
-                }
-                if libc::dup2(scratch, PIXELS_FD) < 0 {
-                    return Err(std::io::Error::last_os_error());
-                }
-                if scratch != PIXELS_FD {
-                    libc::close(scratch);
-                }
-                Ok(())
-            });
+            command.pre_exec(move || crate::worker_handover::remap_fds(&[(fd, PIXELS_FD)]));
         }
         let mut child = command.spawn().map_err(|e| format!("spawn failed: {e}"))?;
         let stdin = child.stdin.take().ok_or("the OCR worker has no stdin")?;
@@ -468,7 +440,7 @@ impl OcrWorker {
     /// Two arms because the two child types spell it differently, and for no
     /// deeper reason: `Child::id()` is a method, `Contained::pid` a field.
     #[must_use]
-    #[cfg(not(windows))]
+    #[cfg(unix)]
     pub fn pid(&self) -> u32 {
         self.child.id()
     }
@@ -639,8 +611,8 @@ impl Drop for OcrWorker {
 ///
 /// **No platform gate at all**, for the reason the parser worker's dispatch
 /// beneath it in `lib.rs` records: the refusal that matters belongs in the
-/// child, where [`child_main`] returns [`NO_ENGINE`] on a platform
-/// with neither recogniser. Refusing here as well would read as belt and braces
+/// child, which has a recogniser on every platform that compiles (`worker.rs`
+/// refuses any other at build time). Refusing here as well would read as belt and braces
 /// while hiding which of the two is load-bearing --- and it is this one that
 /// went wrong, in the direction where a worker that was never reached is
 /// reported as an engine that crashed.
@@ -785,8 +757,10 @@ fn serve() -> Result<(), String> {
     // the child's `main`, its only channel is the stderr the parent inherited,
     // and `Unavailable("no OCR recogniser language pack is installed")` is
     // already the whole message a reader needs.
-    let engine = crate::ocr_windows::WindowsOcr::new().map_err(|e| e.to_string())?;
-    serve_loop(&engine, &pixels)
+    match crate::ocr_windows::WindowsOcr::new() {
+        Ok(engine) => serve_loop(&engine, &pixels),
+        Err(why) => serve_loop(&Unopened(why), &pixels),
+    }
 }
 
 /// Maps the buffer, opens Tesseract, puts the sandbox in force, and answers
@@ -801,20 +775,42 @@ fn serve() -> Result<(), String> {
     // SAFETY: the parent dup2'd a live descriptor to this number before exec, and
     // nothing else in this process owns it. Read-only, as on macOS.
     let pixels = unsafe { Shm::from_fd(PIXELS_FD, PIXELS_CAPACITY, false)? };
-    let engine = crate::ocr_tesseract::Tesseract::load().map_err(|e| e.to_string())?;
+    let engine = match crate::ocr_tesseract::Tesseract::load() {
+        Ok(engine) => engine,
+        Err(why) => {
+            // Contained before it reads a request, as a working child is.
+            crate::sandbox_linux::apply_reading(&[])?;
+            return serve_loop(&Unopened(why), &pixels);
+        }
+    };
     crate::sandbox_linux::apply_reading(&[engine.data_dir()])?;
     serve_loop(&engine, &pixels)
 }
 
-/// A platform with no engine, refusing rather than serving nothing.
+/// An engine that could not be opened, answering every request with why.
 ///
-/// Unreachable through the application --- [`OcrWorker::spawn`] refuses first, so
-/// the marker this dispatches on never appears in an argv. It is here because a
-/// `serve` that did not exist would make `child_main` fail to compile rather than
-/// fail to run, and the refusal a reader needs is the one with a sentence in it.
-#[cfg(not(any(target_os = "macos", windows, target_os = "linux")))]
-fn serve() -> Result<(), String> {
-    Err(NO_ENGINE.into())
+/// A child whose engine would not load used to write the reason to the stderr
+/// it inherited and exit before reading a request. The parent reads only
+/// stdout, so it saw a broken pipe and reported "the engine crashed" on every
+/// region. Measured on Fedora 44 under WSL on 2026-10-15: a redaction of a text
+/// page came back not verified with that reason 112 times, and the real one,
+/// that the system had no `libtesseract.so.5`, never reached the report.
+/// Staying up and refusing puts the reason where the parent reads it. macOS
+/// has no such state: Vision is part of the system.
+#[cfg(any(windows, target_os = "linux"))]
+struct Unopened(RecogniseError);
+
+#[cfg(any(windows, target_os = "linux"))]
+impl crate::ocr::Recogniser for Unopened {
+    fn id(&self) -> EngineId {
+        EngineId {
+            name: "none",
+            build: String::new(),
+        }
+    }
+    fn recognise(&self, _: Pixels<'_>, _: &Options) -> Result<Vec<RecognisedItem>, RecogniseError> {
+        Err(self.0.clone())
+    }
 }
 
 /// The request loop, which is the same on every platform.
@@ -823,7 +819,6 @@ fn serve() -> Result<(), String> {
 /// does not parse and the flush after every reply are properties of `Ask` and
 /// `Said`, not of an operating system --- and `docs/TRAPS.md` records what a
 /// second copy of a distinction costs: a mutation of one survives.
-#[cfg(any(target_os = "macos", windows, target_os = "linux"))]
 fn serve_loop<E: crate::ocr::Recogniser>(engine: &E, pixels: &Shm) -> Result<(), String> {
     let id = engine.id();
     let named = Named {
@@ -860,12 +855,6 @@ fn serve_loop<E: crate::ocr::Recogniser>(engine: &E, pixels: &Shm) -> Result<(),
 ///
 /// Generic over the engine rather than naming one, which is what lets both
 /// platforms share it. It named `ocr_vision::Vision` while there was only one.
-// Called by `serve_loop` on the platforms with a recogniser, and by the tests
-// on every platform.
-#[cfg_attr(
-    not(any(target_os = "macos", windows, target_os = "linux")),
-    allow(dead_code)
-)]
 fn answer<E: crate::ocr::Recogniser>(engine: &E, named: &Named, pixels: &Shm, ask: &Ask) -> Said {
     let rgba = match frame_of(pixels.as_slice(), ask) {
         Ok(rgba) => rgba,
@@ -1097,6 +1086,26 @@ mod tests {
         }
     }
 
+    /// A child with no engine answers with the reason it has none, which the
+    /// parent reports as it is. Dropped, the child exits and every region of a
+    /// redaction says the engine crashed.
+    #[cfg(any(windows, target_os = "linux"))]
+    #[test]
+    fn a_child_with_no_engine_answers_why() {
+        let mapping = crate::worker_shm::Shm::create(64).expect("a mapping");
+        let named = Named {
+            name: "none".into(),
+            build: String::new(),
+        };
+        let why = RecogniseError::Unavailable("libtesseract.so.5 could not be loaded".into());
+        for any_script in [true, false] {
+            let mut request = ask(3, 2);
+            request.any_script = any_script;
+            let said = answer(&Unopened(why.clone()), &named, &mapping, &request);
+            assert_eq!(said, Said::Failed(why.clone()));
+        }
+    }
+
     #[test]
     fn both_answers_survive_the_wire() {
         let read = Said::Read {
@@ -1190,30 +1199,5 @@ mod tests {
         assert!(room_for(&px, 24).is_ok(), "exactly the capacity fits");
         let why = room_for(&px, 23).expect_err("refused");
         assert!(format!("{why}").contains("buffer holds 23"), "{why}");
-    }
-
-    /// On a platform with no engine the spawn refuses rather than returning a
-    /// worker that answers nothing. A caller that got one would report *no text
-    /// survived*.
-    ///
-    /// ⚠ **This now runs on neither supported platform**, and saying so is the
-    /// point of this paragraph. It was `not(target_os = "macos")`, so Windows ran
-    /// it; Windows got an engine on 2026-08-29 and the condition had to widen,
-    /// which leaves the test compiled by nothing macOS or Windows builds. It is
-    /// kept because the arm it covers is still real code --- `spawn` and `serve`
-    /// both have a `not(any(macos, windows))` branch, and a third platform would
-    /// compile them --- but a reader must not take its presence as evidence that
-    /// the refusal is covered here. Nothing in CI executes it.
-    #[cfg(not(any(target_os = "macos", windows, target_os = "linux")))]
-    #[test]
-    fn a_platform_with_no_engine_refuses_to_spawn() {
-        // Matched rather than `expect_err`, which would need `OcrWorker: Debug`
-        // --- and a `Debug` on a type holding a live child is a derive that
-        // exists only to satisfy a test.
-        let why = match OcrWorker::spawn() {
-            Err(why) => why,
-            Ok(_) => panic!("a platform with no engine handed back a worker"),
-        };
-        assert!(why.contains("no OCR engine"), "{why}");
     }
 }

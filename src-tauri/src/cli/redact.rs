@@ -406,8 +406,9 @@ pub struct Found {
 /// # Errors
 ///
 /// A page that could not be read. **Everything stops**, as the window's
-/// `redactMatches` stops: a partial list becomes a partial removal that is then
-/// reported clean.
+/// `redactMatches` stops (`completeForMarking` in `search.ts` refuses while a
+/// page's search failed or the scan is still running): a partial list becomes a
+/// partial removal that is then reported clean.
 pub fn search_pages(
     queries: &[(SearchKind, String, Prepared)],
     pages: &[u32],
