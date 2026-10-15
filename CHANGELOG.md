@@ -38,6 +38,11 @@ have the binary.)
 - **Close other tabs, Close tabs to the left and right, and Reopen closed tab.** From the tab
   in front or from a tab's right-click menu; unsaved changes are asked about once. *Reopen
   closed tab* (Ctrl+Shift+T, ⌘⇧T on macOS) opens the document closed last, where you left it.
+- **Lines, arrows, polygons and connected lines.** *Add a line* and *Add an arrow* draw one
+  by a drag from end to end; *Add a polygon* and *Add connected lines* take a corner per
+  click, and Enter or a second click on the last corner finishes. They take the chosen
+  colour and line width, move like the other marks, and are saved as `/Line`, `/Polygon`
+  and `/PolyLine` annotations that other readers show and can edit.
 - **Fit height and fit content.** *Fit height* makes the page as tall as the window. *Fit
   content* leaves out the blank margins and fits the printed part of the page, or of the two
   facing pages, measured on the rendered page so that it works on a scan too.

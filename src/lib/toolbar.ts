@@ -78,6 +78,10 @@ export const TOOL_GROUPS: ToolGroup[] = [
       { id: "edit.draw", label: "Draw freehand" },
       { id: "edit.drawBox", label: "Box" },
       { id: "edit.drawEllipse", label: "Ellipse" },
+      { id: "edit.drawLine", label: "Line" },
+      { id: "edit.drawArrow", label: "Arrow" },
+      { id: "edit.drawPolygon", label: "Polygon" },
+      { id: "edit.drawPolyline", label: "Connected lines" },
       { id: "edit.stamp.approved", label: "Approved stamp" },
       { id: "edit.stamp.confidential", label: "Confidential stamp" },
       { id: "edit.stamp.draft", label: "Draft stamp" },
@@ -269,10 +273,12 @@ export function toolbarState(
 export type ArmedTool = MarkKind | "crop" | "redact" | "place" | null;
 
 /** The kinds a chosen colour changes. A stamp and a signature keep their own. */
-const COLORED: readonly ArmedTool[] = ["note", "square", "ellipse", "textbox", "ink"];
+const COLORED: readonly ArmedTool[] = [
+  "note", "square", "ellipse", "textbox", "ink", "line", "arrow", "polygon", "polyline",
+];
 
 /** The kinds drawn as a line, which is what a width is the width of. */
-const STROKED: readonly ArmedTool[] = ["square", "ellipse", "ink"];
+const STROKED: readonly ArmedTool[] = ["square", "ellipse", "ink", "line", "arrow", "polygon", "polyline"];
 
 /**
  * Which of the colour and width controls the armed tool's status row carries.

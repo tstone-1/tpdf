@@ -131,6 +131,8 @@ fn color_for(kind: MarkKind) -> [f32; 3] {
         // stroke, so `--mode outline` classifies its pixels by the colour it
         // asked for and yellow ink on white paper would measure as an absence.
         MarkKind::Ink => RULE_RED,
+        // Strokes again, so the lines' red for ink's reason.
+        MarkKind::Line | MarkKind::Arrow | MarkKind::Polygon | MarkKind::Polyline => RULE_RED,
         // The box's red, for the box's reason: an ellipse's ink is a stroke and
         // `--mode outline` classifies pixels by the colour it asked for.
         MarkKind::Ellipse => RULE_RED,
@@ -623,6 +625,17 @@ fn mark_and_save(args: &Args, document: &OpenDocument) -> Result<(PathBuf, Vec<Q
                 vec![long_start, far, long_end, far],
             ]
         }
+    } else if args.kind.has_strokes() {
+        // The other drawn kinds, from the corners of the text's rectangle: a
+        // diagonal for a line or an arrow, and three corners for a polygon or
+        // a polyline.
+        let box_ = union(&quads);
+        let (left, top, right, bottom) = (box_[0], box_[1], box_[2], box_[3]);
+        if matches!(args.kind, MarkKind::Line | MarkKind::Arrow) {
+            vec![vec![left, top, right, bottom]]
+        } else {
+            vec![vec![left, bottom, (left + right) / 2.0, top, right, bottom]]
+        }
     } else {
         Vec::new()
     };
@@ -806,6 +819,10 @@ fn roundtrip(args: &Args, document: &OpenDocument) -> Result<bool, String> {
         // which is in neither enum, so both of the two spellings this file can
         // see happen to be the third one.
         MarkKind::Ink => Kind::Ink,
+        // An arrow is a `/Line` with a line ending, so both read back as a line.
+        MarkKind::Line | MarkKind::Arrow => Kind::Line,
+        MarkKind::Polygon => Kind::Polygon,
+        MarkKind::Polyline => Kind::PolyLine,
         // **The pair whose names differ in the direction that matters most
         // here.** `MarkKind::Ellipse` is written as `/Circle` and read back as
         // `Kind::Circle`, so this arm is the one that would catch `subtype`
@@ -875,6 +892,10 @@ fn roundtrip(args: &Args, document: &OpenDocument) -> Result<bool, String> {
         MarkKind::Note
             | MarkKind::Square
             | MarkKind::Ink
+            | MarkKind::Line
+            | MarkKind::Arrow
+            | MarkKind::Polygon
+            | MarkKind::Polyline
             | MarkKind::Ellipse
             | MarkKind::TextBox
             | MarkKind::Stamp
@@ -2409,6 +2430,10 @@ fn rule(
         // `--mode outline` measures it, and the inset it uses for a box does not
         // transfer --- see that mode.
         MarkKind::Ink => unreachable!("refused above"),
+        // Refused above with ink, for its reason: the ink is along the corners.
+        MarkKind::Line | MarkKind::Arrow | MarkKind::Polygon | MarkKind::Polyline => {
+            unreachable!("refused above")
+        }
         // Refused above with the box, whose reason it shares exactly: an
         // ellipse's ink is on a curve through all three bands rather than in
         // one of them, so thirds discriminate nothing. `--mode outline` is
@@ -3271,6 +3296,11 @@ fn parse_args() -> Result<Args, String> {
                     // The serde name once more. `/Ink` is the file's spelling
                     // and "draw" is the reader's; neither is accepted here.
                     "ink" => MarkKind::Ink,
+                    // The serde names of the four shapes of straight lines.
+                    "line" => MarkKind::Line,
+                    "arrow" => MarkKind::Arrow,
+                    "polygon" => MarkKind::Polygon,
+                    "polyline" => MarkKind::Polyline,
                     // The serde name, the PDF name and the reader's word, all
                     // three the same for once.
                     "squiggly" => MarkKind::Squiggly,

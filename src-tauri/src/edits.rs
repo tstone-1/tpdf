@@ -1516,8 +1516,8 @@ impl Edits {
         // and tight bounds would additionally refuse a straight vertical line as
         // covering no area. See `Stroke::bounds`.
         let width = nib(want.width);
-        if want.kind == MarkKind::Ink {
-            quads = Stroke::bounds(&strokes, (width / 2.0) as f32)
+        if want.kind.has_strokes() {
+            quads = Stroke::bounds(&strokes, want.kind.stroke_pad(width))
                 .into_iter()
                 .collect();
         }
@@ -7409,6 +7409,35 @@ mod tests {
             marks.iter().all(|m| m.quads.iter().all(|v| v.is_finite())),
             "and what the model holds is finite: {marks:?}"
         );
+    }
+
+    /// A line, an arrow and the shapes of straight sides get the rectangle
+    /// round their points, as ink does: the viewer sends no rectangle for them,
+    /// and a mark with none would have no `/Rect`, no anchor and no hit test.
+    #[test]
+    fn a_line_or_a_shape_gets_the_rectangle_round_its_points() {
+        let edits = opened();
+        let page = edits.state(7).expect("state").pages[1].id;
+        for kind in [MarkKind::Line, MarkKind::Arrow, MarkKind::Polyline] {
+            let mut want = of_kind(kind, page);
+            want.quads = Vec::new();
+            want.strokes = vec![vec![100.0, 200.0, 300.0, 200.0]];
+            edits.annotate(7, want, stamped()).expect("a line");
+        }
+        let marks = edits.state(7).expect("state").marks;
+        let pad = |kind: MarkKind| kind.stroke_pad(INK_WIDTH);
+        for mark in &marks {
+            let p = pad(mark.kind);
+            assert_eq!(
+                mark.quads,
+                vec![100.0 - p, 200.0 - p, 300.0 + p, 200.0 + p],
+                "{:?}",
+                mark.kind
+            );
+        }
+        // The arrow's rectangle is wider than the line's, by its head.
+        assert!(pad(MarkKind::Arrow) > pad(MarkKind::Line));
+        assert_eq!(marks.len(), 3);
     }
 
     /// A note past the bound is refused at both doors it can arrive through.

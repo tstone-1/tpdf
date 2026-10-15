@@ -168,6 +168,13 @@ const NAMES: Record<MarkKind, string> = {
   // are one word --- after "Squiggly" and "Ellipse", and for their reason.
   stamp: "Stamp",
   signature: "Signature",
+  // The words `comments.ts`'s `labelFor` already gives a document's own
+  // `/Line`, `/Polygon` and `/PolyLine`, so one shape is named one way in one
+  // window. An arrow is a `/Line` in the file and an arrow to a reader.
+  line: "Line",
+  arrow: "Arrow",
+  polygon: "Polygon",
+  polyline: "Polyline",
   // "Drawing", never "Ink". `/Ink` is the file's spelling, `ink` is the serde
   // name, and inside this codebase "ink" already means how a mark is laid down
   // --- `Paint` in `save.rs`, `markBand` here. A reader who drew a line and

@@ -1949,7 +1949,7 @@ ROWS += [
         # armed tool only when something unrelated moves.
         "status: leave the mode fields out of the summary that gates a report",
         "src/lib/viewer.ts",
-        "      status.drawing,\n      // Both halves, because either can move on its own: a sweep across a\n"
+        "      status.drawing,\n      status.corners,\n      // Both halves, because either can move on its own: a sweep across a\n"
         "      // drawing and a highlight changes one number per mark it crosses, and a\n"
         "      // field left out of this string is a field the window is told about only\n"
         "      // when something else happens to move.\n"
@@ -2005,6 +2005,10 @@ ROWS += [
         '    case "ellipse":\n'
         '    case "textbox":\n'
         '    case "ink":\n'
+        '    case "line":\n'
+        '    case "arrow":\n'
+        '    case "polygon":\n'
+        '    case "polyline":\n'
         "    // A stamp is placed by the reader and anchored to nothing, so it moves for\n"
         "    // the box's reason exactly.\n"
         '    case "stamp":\n'
@@ -2016,6 +2020,10 @@ ROWS += [
         '    case "ellipse":\n'
         '    case "textbox":\n'
         '    case "ink":\n'
+        '    case "line":\n'
+        '    case "arrow":\n'
+        '    case "polygon":\n'
+        '    case "polyline":\n'
         '    case "stamp":\n'
         '    case "signature":\n'
         "      return false;",

@@ -815,6 +815,23 @@ pub enum MarkKind {
     /// `save.rs`'s `Paint`, which is how a mark is laid down rather than which
     /// mark it is.
     Ink,
+    /// A straight line a reader drew, `/Line`.
+    ///
+    /// Its two ends are the one [`Stroke`] in [`Mark::strokes`], which is how ink
+    /// holds what was drawn, so the strokes are a field of every drawn shape and
+    /// not of ink alone. Its quad is [`Stroke::bounds`], for ink's reason.
+    Line,
+    /// A line with an open arrowhead at its second end: `/Line` with
+    /// `/LE [/None /OpenArrow]`. A kind of its own rather than a flag on a line,
+    /// so that [`MarkKind`] stays `Copy` and the command that draws it is one
+    /// command, as SumatraPDF's is.
+    Arrow,
+    /// A closed shape of straight sides a reader drew, `/Polygon`: its corners
+    /// are the one stroke, in order, and the last joins the first.
+    Polygon,
+    /// An open run of straight lines a reader drew, `/PolyLine`: its corners are
+    /// the one stroke, in order. The serde name is `polyline`.
+    Polyline,
     /// A standard stamp a reader placed, `/Stamp`.
     ///
     /// **The last markup kind, and the first whose content is a closed set.**
@@ -864,6 +881,61 @@ pub enum MarkKind {
     /// dictionary of `save/marks.rs`'s own, because a field also belongs to the
     /// document's form and needs the form's font.
     Field,
+}
+
+impl MarkKind {
+    /// Whether a mark of this kind is made of the points a reader drew, held in
+    /// [`Mark::strokes`]: ink, a line, an arrow, a polygon and a polyline.
+    #[must_use]
+    pub fn has_strokes(self) -> bool {
+        matches!(
+            self,
+            Self::Ink | Self::Line | Self::Arrow | Self::Polygon | Self::Polyline
+        )
+    }
+
+    /// Whether `strokes` is a shape this kind can be: any strokes for ink, one
+    /// stroke of two points for a line or an arrow, of three or more corners
+    /// for a polygon and of two or more for a polyline. Nothing for a kind
+    /// without strokes.
+    #[must_use]
+    pub fn takes_strokes(self, strokes: &[Stroke]) -> bool {
+        let one = |least: usize, most: usize| matches!(strokes, [only] if (least..=most).contains(&only.points.len()));
+        match self {
+            Self::Ink => !strokes.is_empty(),
+            Self::Line | Self::Arrow => one(2, 2),
+            Self::Polygon => one(3, MAX_CORNERS),
+            Self::Polyline => one(2, MAX_CORNERS),
+            _ => strokes.is_empty(),
+        }
+    }
+
+    /// How far a mark's rectangle reaches past the points it runs through, for
+    /// a stroke `width` points wide: half the width, because a stroke straddles
+    /// its path, and for an arrow half its head as well, which spreads either
+    /// side of the line at its end.
+    #[must_use]
+    pub fn stroke_pad(self, width: f64) -> f32 {
+        let head = if self == Self::Arrow {
+            arrow_head(width) / 2.0
+        } else {
+            0.0
+        };
+        (width / 2.0 + head) as f32
+    }
+}
+
+/// The most corners a polygon or a polyline may have. A reader places each by
+/// hand, so this is far past any real drawing and only bounds what a caller
+/// can send.
+pub const MAX_CORNERS: usize = 1000;
+
+/// How long an arrow's head is, in points, for a line `width` points wide:
+/// three widths, and never less than 6 points, so a thin arrow still reads as
+/// one. `markband.ts` holds the same rule for the overlay.
+#[must_use]
+pub fn arrow_head(width: f64) -> f64 {
+    (width * 3.0).max(6.0)
 }
 
 /// Which standard stamp a [`MarkKind::Stamp`] is.
@@ -3306,7 +3378,7 @@ impl Doc {
         // checked rather than typed is written there. Before the emptiness
         // check below, because a mark whose shape and kind disagree has no
         // meaningful emptiness to report.
-        if mark.strokes.is_empty() != (mark.kind != MarkKind::Ink) {
+        if !mark.kind.takes_strokes(&mark.strokes) {
             return Err(Refusal::ShapeMismatch(mark.kind));
         }
         // The same shape for [`Mark::stamp`], and beside the one above rather
@@ -3348,7 +3420,7 @@ impl Doc {
         // accept a mark of one repeated point --- invisible, unfindable, and an
         // unsaved change the reader cannot see. This is the trap about one
         // predicate answering two questions, caught while adding the second.
-        let empty = if mark.kind == MarkKind::Ink {
+        let empty = if mark.kind.has_strokes() {
             !mark.strokes.iter().any(Stroke::is_drawable)
         } else {
             !mark.quads.iter().any(|quad| quad.covers_area())
@@ -5460,6 +5532,59 @@ mod tests {
         // the first assertion and read as the rule working.
         assert!(doc.annotate(ink_on(page), String::new()).is_ok());
         assert_eq!(doc.marks_issued(), 1, "a refused mark spent an id");
+    }
+
+    #[test]
+    fn a_line_or_a_shape_takes_its_own_number_of_corners() {
+        // One stroke for each, of two points for a line or an arrow, three or
+        // more for a polygon and two or more for a polyline. The window sends
+        // only those; the CLI's JSON can send anything.
+        let mut doc = Doc::open(1);
+        let page = doc.working().order()[0];
+        let corners = |kind: MarkKind, n: usize| {
+            let mut mark = mark_on(page);
+            mark.kind = kind;
+            mark.quads.clear();
+            mark.strokes = vec![Stroke {
+                points: (0..n)
+                    .map(|at| Point {
+                        x: 72.0 + 40.0 * at as f32,
+                        y: 90.0 + 30.0 * (at % 2) as f32,
+                    })
+                    .collect(),
+            }];
+            mark
+        };
+        for (kind, refused, taken) in [
+            (MarkKind::Line, 3, 2),
+            (MarkKind::Arrow, 1, 2),
+            (MarkKind::Polygon, 2, 3),
+            (MarkKind::Polyline, 1, 2),
+        ] {
+            assert_eq!(
+                doc.annotate(corners(kind, refused), String::new()),
+                Err(Refusal::ShapeMismatch(kind)),
+                "{kind:?} with {refused} corners"
+            );
+            let mut two = corners(kind, taken);
+            two.strokes.push(two.strokes[0].clone());
+            assert_eq!(
+                doc.annotate(two, String::new()),
+                Err(Refusal::ShapeMismatch(kind)),
+                "{kind:?} with two strokes"
+            );
+            // The control, for each kind.
+            assert!(
+                doc.annotate(corners(kind, taken), String::new()).is_ok(),
+                "{kind:?} with {taken}"
+            );
+        }
+        let mut without = mark_on(page);
+        without.kind = MarkKind::Line;
+        assert_eq!(
+            doc.annotate(without, String::new()),
+            Err(Refusal::ShapeMismatch(MarkKind::Line))
+        );
     }
 
     #[test]

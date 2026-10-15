@@ -57,6 +57,11 @@ import {
   grown,
   RESIZE_REACH_PX,
   isPath,
+  arrowHead,
+  arrowWings,
+  drawsALine,
+  leastCorners,
+  placesCorners,
   paintOf,
   LINE_FRACTION,
   STAMP_CAP,
@@ -299,6 +304,12 @@ export interface ViewerStatus {
    * nothing has been drawn yet.
    */
   drawing: number | null;
+  /**
+   * Corners placed in the polygon or the connected lines being drawn, or
+   * `null` when neither is armed. Their own field rather than
+   * {@link drawing}'s, whose words are strokes; zero is armed with no corner.
+   */
+  corners: number | null;
   /**
    * What this sweep of the eraser has taken, or `null` when it is not armed.
    *
@@ -710,6 +721,12 @@ const LINE_HEIGHT = 40;
 
 /** CSS pixels an arrow key scrolls. */
 const ARROW_STEP = 60;
+
+/**
+ * How near, in CSS pixels, a click on the last corner of a polygon or a
+ * polyline must be to finish it, and how far a line must be dragged to be one.
+ */
+const CORNER_REACH_PX = 4;
 /** How far a wheel pushes past a row's end before the next row comes, under one row at a time. */
 const ROW_CHANGE_PX = 120;
 /** Shortest time between two row changes made by pushing past a row's end, in milliseconds. */
@@ -1101,6 +1118,37 @@ export type ArmedTool =
 export interface Placed {
   page: PageId;
   rect: [number, number, number, number];
+}
+
+/**
+ * Strokes the straight lines through `points`, in device pixels, for a line,
+ * an arrow, a polygon or a polyline: closed for a polygon, and with an open
+ * head `head` device pixels long at the last point for an arrow. What
+ * `draw_segments` in `save/marks.rs` writes, for the overlay and the preview.
+ */
+function strokeSegments(
+  ctx: CanvasRenderingContext2D,
+  points: readonly { x: number; y: number }[],
+  kind: MarkKind,
+  head: number,
+): void {
+  const [first, ...rest] = points;
+  if (!first) return;
+  ctx.beginPath();
+  ctx.moveTo(first.x, first.y);
+  for (const point of rest) ctx.lineTo(point.x, point.y);
+  if (kind === "polygon") ctx.closePath();
+  ctx.stroke();
+  const tip = points[points.length - 1];
+  const from = points[points.length - 2];
+  if (kind !== "arrow" || !tip || !from) return;
+  const wings = arrowWings(from, tip, head);
+  if (!wings) return;
+  ctx.beginPath();
+  ctx.moveTo(wings[0].x, wings[0].y);
+  ctx.lineTo(wings[1].x, wings[1].y);
+  ctx.lineTo(wings[2].x, wings[2].y);
+  ctx.stroke();
 }
 
 /**
@@ -2049,6 +2097,38 @@ export class Viewer {
           this.wake();
           return;
         }
+        if (placesCorners(kind)) {
+          // **A corner per click.** The release is the corner, kept in the one
+          // stroke the drawing in progress holds, and the tool stays armed.
+          // A click on the last corner again finishes, as Enter does: the
+          // double-click every drawing program takes to close a shape.
+          this.inking ??= { slot: live.slot, strokes: [[]] };
+          const corners = this.inking.strokes[0]!;
+          const last = corners[corners.length - 1];
+          const near = CORNER_REACH_PX / this.zoom;
+          if (last && Math.abs(last.x - live.to.x) <= near && Math.abs(last.y - live.to.y) <= near) {
+            this.finishDrawing();
+            return;
+          }
+          corners.push({ ...live.to });
+          this.wake();
+          return;
+        }
+        if (drawsALine(kind)) {
+          // **One drag, end to end.** A click that never moved keeps the tool
+          // armed, as the box's does: a line of no length is not one.
+          const id = this.pages.idOf(live.slot);
+          if (Math.hypot(live.to.x - live.from.x, live.to.y - live.from.y) * this.zoom < CORNER_REACH_PX) return;
+          if (id === undefined) return;
+          if (this.tool.kind === "draw") this.tool = NO_TOOL;
+          this.showCursor();
+          const ends = [live.from, live.to].flatMap((point) => {
+            const mapped = this.fileRectOn(live.slot, { left: point.x, top: point.y, right: point.x, bottom: point.y });
+            return [mapped[0], mapped[1]];
+          });
+          this.opts.onDrawn?.(kind, id, { quads: [], strokes: [ends], width: this.nib }, null);
+          return;
+        }
         // **A comment is placed, not dragged out, so it reads one point and not
         // the rectangle.** Every other armed kind needs two corners and refuses
         // a click, which is right for a shape and wrong for a pin: a reader
@@ -2419,6 +2499,7 @@ export class Viewer {
       failed: this.scroller.stats.failed,
       selected: this.selectedCount(),
       drawing: this.drawnStrokes,
+      corners: this.placedCorners,
       erasing: this.swept,
       // Never while `drawing` is reporting. `drawnStrokes` answers `0` for an
       // armed pen as well as for one mid-drawing, so the two would otherwise
@@ -2460,6 +2541,7 @@ export class Viewer {
       // line that exists to make a mode visible could be a frame late, or never
       // arrive. Found while adding `armed`, which would have inherited it.
       status.drawing,
+      status.corners,
       // Both halves, because either can move on its own: a sweep across a
       // drawing and a highlight changes one number per mark it crosses, and a
       // field left out of this string is a field the window is told about only
@@ -5420,6 +5502,10 @@ export class Viewer {
   finishDrawing(): void {
     const made = this.inking;
     if (!made || made.strokes.length === 0) return;
+    // A polygon or a polyline is its corners, and one with too few is not yet
+    // a shape: Enter does nothing until there are enough.
+    const kind = this.drawArmed ?? "ink";
+    if (placesCorners(kind) && (made.strokes[0]?.length ?? 0) < leastCorners(kind)) return;
     const id = this.pages.idOf(made.slot);
     this.inking = null;
     if (this.tool.kind === "draw") this.tool = NO_TOOL;
@@ -5433,7 +5519,7 @@ export class Viewer {
     // this is what is left for a slot that is in no document at all.
     if (id === undefined) return;
     this.opts.onDrawn?.(
-      "ink",
+      kind,
       id,
       {
         quads: [],
@@ -5450,7 +5536,7 @@ export class Viewer {
         ),
         width: this.nib,
       },
-      // Never a stamp: ink is finished with Enter and a stamp with a drag.
+      // Never a stamp: ink and corners are finished with Enter, a stamp with a drag.
       null,
     );
   }
@@ -5468,8 +5554,14 @@ export class Viewer {
    * which is a mode, and the window says so.
    */
   get drawnStrokes(): number | null {
-    if (this.inking) return this.inking.strokes.length;
-    return this.drawArmed === "ink" ? 0 : null;
+    if (this.drawArmed !== "ink") return null;
+    return this.inking?.strokes.length ?? 0;
+  }
+
+  /** Corners placed so far; {@link ViewerStatus.corners}. */
+  get placedCorners(): number | null {
+    if (!placesCorners(this.drawArmed)) return null;
+    return this.inking?.strokes[0]?.length ?? 0;
   }
 
   /** The armed tool, or `null`. For the menu's enablement and the harness. */
@@ -7023,6 +7115,28 @@ export class Viewer {
       // reader drew a line. Same class of defect as the underline that looked
       // like a highlight, and the same tell --- the saved file would be right.
       const style = paintOf(mark.kind);
+      if (style === "segments") {
+        const drawn = this.viewStrokesOf(mark);
+        if (drawn) {
+          ctx.strokeStyle = markInk(mark.color, false);
+          ctx.lineWidth = mark.width * this.zoom * dpr;
+          // Round, matching the `1 J 1 j` the appearance stream sets.
+          ctx.lineCap = "round";
+          ctx.lineJoin = "round";
+          for (const stroke of drawn.strokes) {
+            strokeSegments(
+              ctx,
+              stroke.map((point) => ({
+                x: (origin.left + point.x * this.zoom) * dpr + ox,
+                y: (origin.top + point.y * this.zoom - this.scrollTop) * dpr + oy,
+              })),
+              mark.kind,
+              arrowHead(mark.width) * this.zoom * dpr,
+            );
+          }
+        }
+        continue;
+      }
       if (style === "path") {
         const inked = this.viewStrokesOf(mark);
         if (inked) {
@@ -7472,7 +7586,12 @@ export class Viewer {
    */
   private paintInkPreview(ctx: CanvasRenderingContext2D, dpr: number): void {
     const pending = this.inking;
-    const live = this.drawArmed === "ink" ? this.drawing : null;
+    const armed = this.drawArmed;
+    if (armed !== null && (drawsALine(armed) || placesCorners(armed))) {
+      this.paintCornerPreview(ctx, dpr, armed);
+      return;
+    }
+    const live = armed === "ink" ? this.drawing : null;
     if (!pending && !live) return;
     const slot = pending?.slot ?? live?.slot;
     if (slot === undefined) return;
@@ -7506,6 +7625,36 @@ export class Viewer {
       }
       ctx.stroke();
     }
+  }
+
+  /**
+   * A line, an arrow, a polygon or a polyline being drawn: the corners placed
+   * so far and, while the button is held, the segment to the pointer. In the
+   * preview colour at the armed nib, for {@link paintInkPreview}'s reason.
+   */
+  private paintCornerPreview(ctx: CanvasRenderingContext2D, dpr: number, kind: MarkKind): void {
+    const live = this.drawing;
+    const slot = this.inking?.slot ?? live?.slot;
+    if (slot === undefined) return;
+    const points = drawsALine(kind)
+      ? live ? [live.from, live.to] : []
+      : [...(this.inking?.strokes[0] ?? []), ...(live && live.slot === slot ? [live.to] : [])];
+    if (points.length === 0) return;
+    const origin = this.scroller.pageOrigin(slot);
+    ctx.globalCompositeOperation = "source-over";
+    ctx.strokeStyle = PREVIEW_STROKE;
+    ctx.lineWidth = this.nib * this.zoom * dpr;
+    ctx.lineCap = "round";
+    ctx.lineJoin = "round";
+    strokeSegments(
+      ctx,
+      points.map((point) => ({
+        x: (origin.left + point.x * this.zoom) * dpr,
+        y: (origin.top + point.y * this.zoom - this.scrollTop) * dpr,
+      })),
+      kind,
+      arrowHead(this.nib) * this.zoom * dpr,
+    );
   }
 
   private paintSelection(

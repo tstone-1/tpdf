@@ -27,7 +27,7 @@
 
 use lopdf::{dictionary, Dictionary, Document, IncrementalDocument, Object, ObjectId};
 
-use crate::docmodel::MarkKind;
+use crate::docmodel::{arrow_head, MarkKind};
 use crate::edits::PlannedMark;
 use crate::pagetree::{apply_crops, apply_turns, displayed_page, DisplayedPage};
 use crate::textbox;
@@ -489,6 +489,39 @@ fn mark_dictionary(
             ),
         );
     }
+    // The corners of a line or a shape of straight sides, in the keys a reader
+    // that regenerates appearances reads: `/L` for a line, with `/LE` naming
+    // its ends, and `/Vertices` for a polygon or a polyline. `/BS /W` is the
+    // width, which those readers also draw from.
+    if paint(mark.kind) == Paint::Segments {
+        let flat: Vec<Object> = strokes
+            .first()
+            .into_iter()
+            .flatten()
+            .flat_map(|(x, y)| [Object::Real(*x as f32), Object::Real(*y as f32)])
+            .collect();
+        if matches!(mark.kind, MarkKind::Line | MarkKind::Arrow) {
+            dictionary.set("L", Object::Array(flat));
+            let end: &[u8] = if mark.kind == MarkKind::Arrow {
+                b"OpenArrow"
+            } else {
+                b"None"
+            };
+            dictionary.set(
+                "LE",
+                Object::Array(vec![
+                    Object::Name(b"None".to_vec()),
+                    Object::Name(end.to_vec()),
+                ]),
+            );
+        } else {
+            dictionary.set("Vertices", Object::Array(flat));
+        }
+        dictionary.set(
+            "BS",
+            Object::Dictionary(dictionary! { "W" => Object::Real(mark.width as f32) }),
+        );
+    }
     dictionary.set(
         "C",
         Object::Array(mark.color.iter().map(|c| Object::Real(*c)).collect()),
@@ -614,6 +647,11 @@ pub(super) fn subtype(kind: MarkKind) -> &'static [u8] {
         // than anything about the words. A reader sees "Text box".
         MarkKind::TextBox => b"FreeText",
         MarkKind::Ink => b"Ink",
+        // An arrow is a `/Line` with a line ending, written as `/LE`.
+        MarkKind::Line | MarkKind::Arrow => b"Line",
+        MarkKind::Polygon => b"Polygon",
+        // `/PolyLine`, with that capitalisation; the serde name is `polyline`.
+        MarkKind::Polyline => b"PolyLine",
         // `/Stamp`, and the one kind whose three spellings all agree.
         MarkKind::Stamp | MarkKind::Signature => b"Stamp",
         // `/Widget`, the annotation a form field is shown by. Named here for
@@ -696,6 +734,13 @@ enum Paint {
     /// hand-drawn corner spikes, which reads as a rendering fault rather than as
     /// a style.
     Path,
+    /// Straight lines between the corners of one stroke, in the mark's width,
+    /// with round joins and caps as a path has: a line, an arrow (with its
+    /// head), a polyline, and a polygon (closed back to its first corner).
+    ///
+    /// Separate from [`Paint::Path`] because the dictionary differs: a path is
+    /// `/Ink` and writes `/InkList`, and these write `/L` or `/Vertices`.
+    Segments,
     /// A word inside a border, both in the mark's colour.
     ///
     /// **The second style whose content is not geometry**, after [`Paint::Text`]
@@ -728,6 +773,9 @@ fn paint(kind: MarkKind) -> Paint {
         MarkKind::Ellipse => Paint::Ellipse,
         MarkKind::TextBox => Paint::Text,
         MarkKind::Ink => Paint::Path,
+        MarkKind::Line | MarkKind::Arrow | MarkKind::Polygon | MarkKind::Polyline => {
+            Paint::Segments
+        }
         MarkKind::Note => Paint::None,
         // **Not `Paint::None`, and the difference from the comment above was
         // measured.** A `/Stamp` with `/Name /Approved` and no `/AP` renders 0
@@ -950,6 +998,8 @@ pub(super) fn line_rect(kind: MarkKind, bottom: f64, top: f64) -> (f64, f64) {
         // narrowing it would need a second enum whose only job is to say which
         // three those are.
         MarkKind::Ink => (bottom, full),
+        // Not reached, for ink's reason: drawn from the corners.
+        MarkKind::Line | MarkKind::Arrow | MarkKind::Polygon | MarkKind::Polyline => (bottom, full),
         // Not reached, a sixth time: a stamp is a border and a word, both placed
         // from its own rectangle by `Paint::Stamp`. The whole quad.
         MarkKind::Stamp | MarkKind::Signature => (bottom, full),
@@ -1471,7 +1521,7 @@ fn appearance_stream(
     // a statement about what a box is for rather than a default somebody has
     // not got round to making adjustable.
     let (width, joins) = match style {
-        Paint::Path => (mark.width, "1 J 1 j "),
+        Paint::Path | Paint::Segments => (mark.width, "1 J 1 j "),
         _ => (OUTLINE_WIDTH, ""),
     };
     let mut content = format!(
@@ -1525,6 +1575,7 @@ fn appearance_stream(
         Paint::Wave => draw_wave(&mut content, quads, mark.kind, turns),
         Paint::Ellipse => draw_ellipse(&mut content, quads),
         Paint::Path => draw_path(&mut content, strokes),
+        Paint::Segments => draw_segments(&mut content, strokes, mark.kind, mark.width),
         // Nothing. Unreachable, because the caller does not build an
         // appearance stream for a kind that has none; written out rather
         // than caught by a wildcard so that a kind added later is a compile
@@ -1828,6 +1879,67 @@ fn draw_path(out: &mut String, strokes: &[Vec<(f64, f64)>]) {
         }
         out.push_str("S\n");
     }
+}
+
+/// Straight lines through the corners of the one stroke a line, an arrow, a
+/// polygon or a polyline has. A polygon closes back to its first corner with
+/// `h`; an arrow adds an open head at its second end, two strokes of
+/// [`arrow_head`] at 30 degrees either side of the line.
+fn draw_segments(out: &mut String, strokes: &[Vec<(f64, f64)>], kind: MarkKind, width: f64) {
+    for stroke in strokes {
+        let Some(((x0, y0), rest)) = stroke.split_first() else {
+            continue;
+        };
+        out.push_str(&format!("{x0} {y0} m\n"));
+        for (x, y) in rest {
+            out.push_str(&format!("{x} {y} l\n"));
+        }
+        out.push_str(if kind == MarkKind::Polygon {
+            "h S\n"
+        } else {
+            "S\n"
+        });
+    }
+    if kind == MarkKind::Arrow {
+        if let Some([wing, tip, other]) = arrow_wings(strokes, width) {
+            out.push_str(&format!(
+                "{} {} m\n{} {} l\n{} {} l\nS\n",
+                wing.0, wing.1, tip.0, tip.1, other.0, other.1
+            ));
+        }
+    }
+}
+
+/// [`arrow_wings`], for the test that holds the head inside the rectangle.
+#[cfg(test)]
+pub(super) fn arrow_wings_for_tests(
+    strokes: &[Vec<(f64, f64)>],
+    width: f64,
+) -> Option<[(f64, f64); 3]> {
+    arrow_wings(strokes, width)
+}
+
+/// An arrow's head: one wing, the tip, the other wing. `None` for a line of no
+/// length, which has no direction to point in.
+fn arrow_wings(strokes: &[Vec<(f64, f64)>], width: f64) -> Option<[(f64, f64); 3]> {
+    let [from, tip] = strokes.first()?.as_slice() else {
+        return None;
+    };
+    let (dx, dy) = (tip.0 - from.0, tip.1 - from.1);
+    let length = dx.hypot(dy);
+    if length == 0.0 {
+        return None;
+    }
+    let head = arrow_head(width);
+    let (ux, uy) = (dx / length, dy / length);
+    let (cos, sin) = (30f64.to_radians().cos(), 30f64.to_radians().sin());
+    let wing = |side: f64| {
+        (
+            tip.0 - head * (ux * cos - side * uy * sin),
+            tip.1 - head * (uy * cos + side * ux * sin),
+        )
+    };
+    Some([wing(1.0), *tip, wing(-1.0)])
 }
 
 /// Appends an annotation to a page's `/Annots`, whatever shape that array is in.

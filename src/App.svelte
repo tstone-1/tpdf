@@ -1155,6 +1155,9 @@
     // has already destroyed something will not review the list.
     if (kind === "redact")
       return "Redact — drag across words or blank paper to mark; Esc when done; nothing is removed yet";
+    if (kind === "polygon" || kind === "polyline")
+      return `${nameOf(kind)} — click each corner; Enter or a click on the last corner finishes`;
+    if (kind === "line" || kind === "arrow") return `${nameOf(kind)} — drag from one end to the other`;
     return kind === "note"
       ? `${nameOf(kind)} — click to place`
       : `${nameOf(kind)} — click and drag`;
@@ -1660,6 +1663,7 @@
     addComment: (at) => void addComment(at),
     drawBox: () => viewer?.armDraw("square"),
     drawEllipse: () => viewer?.armDraw("ellipse"),
+    drawShape: (kind) => viewer?.armDraw(kind),
     stamp: (name) => viewer?.armDraw("stamp", name),
     drawTextBox: () => viewer?.armDraw("textbox"),
     drawField: (kind, options = []) => {
@@ -6123,7 +6127,7 @@
   {#if title}
     <Toolbar state={toolState}
       active={status?.armed ? armedLabel(status.armed) : null} armed={status?.armed ?? null}
-      drawing={status?.drawing ?? null} erasing={status?.erasing != null} editing={textEditor !== null}
+      drawing={status?.drawing ?? null} corners={status?.corners ?? null} erasing={status?.erasing != null} editing={textEditor !== null}
       colorId={markColor.id} widthLabel={markNib.name}
       selected={status?.selected ?? 0} run={runToolbarCommand}
       finish={finishToolbarDrawing} cancel={cancelToolbarTool} />

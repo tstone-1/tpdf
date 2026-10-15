@@ -400,6 +400,7 @@ export async function appCommandChecks(
     addComment: (at) => fired.push(`addComment:${at === null ? "here" : "at"}`),
     drawBox: () => fired.push("drawBox"),
     drawEllipse: () => fired.push("drawEllipse"),
+    drawShape: (kind) => fired.push(`drawShape:${kind}`),
     stamp: (name: StampName) => fired.push(`stamp:${name}`),
     drawTextBox: () => fired.push("drawTextBox"),
     drawField: (kind) => fired.push(`drawField:${kind}`),
@@ -1360,6 +1361,12 @@ export async function appCommandChecks(
       ...shell("drawEllipse"),
       read: () => fired.join(","),
     },
+    // The four shapes of straight lines arm one action with four kinds, which
+    // is where a copy leaves two of them drawing the same shape.
+    { id: "edit.drawLine", ...shell("drawShape:line"), read: () => fired.join(",") },
+    { id: "edit.drawArrow", ...shell("drawShape:arrow"), read: () => fired.join(",") },
+    { id: "edit.drawPolygon", ...shell("drawShape:polygon"), read: () => fired.join(",") },
+    { id: "edit.drawPolyline", ...shell("drawShape:polyline"), read: () => fired.join(",") },
     {
       // The third drag tool, aimed separately for the reason the two above it
       // are: three commands now arm the same primitive with three different

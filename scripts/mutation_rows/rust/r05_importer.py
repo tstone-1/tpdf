@@ -783,8 +783,8 @@ ROWS += [
         # overlay showed them while they drew it.
         "save: write the default nib rather than the mark's",
         "src/save/marks.rs",
-        '        Paint::Path => (mark.width, "1 J 1 j "),',
-        '        Paint::Path => (crate::docmodel::INK_WIDTH, "1 J 1 j "),',
+        '        Paint::Path | Paint::Segments => (mark.width, "1 J 1 j "),',
+        '        Paint::Path | Paint::Segments => (crate::docmodel::INK_WIDTH, "1 J 1 j "),',
         "the_stroke_width_is_the_nib_the_reader_chose",
     ),
 ]

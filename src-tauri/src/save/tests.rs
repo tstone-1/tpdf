@@ -13098,3 +13098,170 @@ fn a_redaction_beside_a_field_change_gets_its_black_fill() {
         );
     }
 }
+
+/// A plan carrying one mark of `kind` through `corners`, on page 0.
+fn plan_with_corners(kind: MarkKind, corners: &[(f32, f32)]) -> Plan {
+    let strokes = vec![crate::docmodel::Stroke {
+        points: corners
+            .iter()
+            .map(|&(x, y)| crate::docmodel::Point { x, y })
+            .collect(),
+    }];
+    let pad = kind.stroke_pad(crate::docmodel::INK_WIDTH);
+    let mut plan = plan_of_kind(
+        kind,
+        crate::docmodel::Stroke::bounds(&strokes, pad)
+            .into_iter()
+            .collect(),
+    );
+    plan.marks[0].strokes = strokes;
+    plan
+}
+
+/// The one annotation dictionary a saved plan added.
+fn written_annotation(doc: &Document) -> Dictionary {
+    let mut found = doc
+        .objects
+        .values()
+        .filter_map(|object| object.as_dict().ok())
+        .filter(|dict| {
+            dict.get(b"Type")
+                .and_then(Object::as_name)
+                .is_ok_and(|name| name == b"Annot")
+        });
+    let annotation = found.next().expect("one annotation").clone();
+    assert!(found.next().is_none(), "one annotation and no more");
+    annotation
+}
+
+#[test]
+fn a_line_and_the_shapes_of_straight_sides_write_their_corners() {
+    // `/L` with `/LE` for a line and an arrow, `/Vertices` for a polygon and a
+    // polyline: what a reader that regenerates appearances, or an editor that
+    // moves a corner, reads. Never `/InkList`, which is ink's.
+    let scratch = Scratch::new("annots-corners");
+    let three = [(72.0, 300.0), (200.0, 120.0), (330.0, 300.0)];
+    for (kind, corners, subtype) in [
+        (MarkKind::Line, &three[..2], b"Line".as_slice()),
+        (MarkKind::Arrow, &three[..2], b"Line".as_slice()),
+        (MarkKind::Polygon, &three[..], b"Polygon".as_slice()),
+        (MarkKind::Polyline, &three[..], b"PolyLine".as_slice()),
+    ] {
+        let (doc, _) = written_appearance_of(&plan_with_corners(kind, corners), &scratch);
+        let annotation = written_annotation(&doc);
+        assert_eq!(
+            annotation.get(b"Subtype").and_then(Object::as_name).ok(),
+            Some(subtype),
+            "{kind:?}"
+        );
+        assert!(
+            annotation.get(b"InkList").is_err(),
+            "{kind:?} carries an /InkList"
+        );
+        let numbers = |key: &[u8]| {
+            annotation
+                .get(key)
+                .and_then(Object::as_array)
+                .map(Vec::len)
+                .ok()
+        };
+        let ending = annotation
+            .get(b"LE")
+            .and_then(Object::as_array)
+            .ok()
+            .map(|ends| {
+                ends.iter()
+                    .filter_map(|end| end.as_name().ok())
+                    .collect::<Vec<_>>()
+            });
+        match kind {
+            MarkKind::Line | MarkKind::Arrow => {
+                assert_eq!(numbers(b"L"), Some(4), "{kind:?}");
+                assert!(annotation.get(b"Vertices").is_err(), "{kind:?}");
+                let end: &[u8] = if kind == MarkKind::Arrow {
+                    b"OpenArrow"
+                } else {
+                    b"None"
+                };
+                assert_eq!(ending, Some(vec![b"None".as_slice(), end]), "{kind:?}");
+            }
+            _ => {
+                assert_eq!(numbers(b"Vertices"), Some(6), "{kind:?}");
+                assert!(annotation.get(b"L").is_err(), "{kind:?}");
+            }
+        }
+        let width = annotation
+            .get(b"BS")
+            .and_then(Object::as_dict)
+            .and_then(|bs| bs.get(b"W"))
+            .and_then(Object::as_float)
+            .ok();
+        assert_eq!(width, Some(crate::docmodel::INK_WIDTH as f32), "{kind:?}");
+    }
+}
+
+#[test]
+fn a_polygon_closes_and_an_arrow_has_a_head() {
+    // In the appearance stream every reader draws: one path for a line and a
+    // polyline, left open; one closed with `h` for a polygon; and for an arrow
+    // the line and then the head, two paths.
+    let scratch = Scratch::new("annots-corner-paths");
+    let three = [(72.0, 300.0), (200.0, 120.0), (330.0, 300.0)];
+    for (kind, corners, paths, closed) in [
+        (MarkKind::Line, &three[..2], 1, false),
+        (MarkKind::Arrow, &three[..2], 2, false),
+        (MarkKind::Polygon, &three[..], 1, true),
+        (MarkKind::Polyline, &three[..], 1, false),
+    ] {
+        let content = appearance_of_plan(&plan_with_corners(kind, corners), &scratch);
+        assert_eq!(
+            content.matches(" m\n").count(),
+            paths,
+            "{kind:?}: {content}"
+        );
+        assert_eq!(content.contains("h S"), closed, "{kind:?}: {content}");
+        assert!(
+            content.contains("1 J 1 j"),
+            "{kind:?}: round caps and joins: {content}"
+        );
+        assert!(
+            !content.contains(" re f"),
+            "{kind:?} is stroked, never filled: {content}"
+        );
+    }
+}
+
+#[test]
+fn an_arrows_head_is_inside_its_rectangle() {
+    // The head spreads either side of the line at its end, past the stroke's
+    // own bounds, and an appearance is clipped to `/BBox`, which is the mark's
+    // rectangle: a head outside it would be cut off in every reader.
+    for (from, tip) in [
+        ((100.0, 200.0), (300.0, 200.0)),
+        ((150.0, 100.0), (150.0, 400.0)),
+    ] {
+        let width = crate::docmodel::INK_WIDTH;
+        let strokes = vec![vec![from, tip]];
+        let [one, _, other] = super::marks::arrow_wings_for_tests(&strokes, width).expect("a head");
+        let pad = f64::from(MarkKind::Arrow.stroke_pad(width));
+        let (left, right) = (from.0.min(tip.0) - pad, from.0.max(tip.0) + pad);
+        let (low, high) = (from.1.min(tip.1) - pad, from.1.max(tip.1) + pad);
+        for (x, y) in [one, other] {
+            assert!(
+                (left..=right).contains(&x) && (low..=high).contains(&y),
+                "wing {x},{y} outside {left},{low} to {right},{high}"
+            );
+        }
+        // The control: without the head's share of the pad, the wings are outside.
+        let bare = width / 2.0;
+        assert!(
+            [one, other]
+                .iter()
+                .any(|&(x, y)| x < from.0.min(tip.0) - bare
+                    || x > from.0.max(tip.0) + bare
+                    || y < from.1.min(tip.1) - bare
+                    || y > from.1.max(tip.1) + bare),
+            "the head reaches past the stroke's own bounds"
+        );
+    }
+}

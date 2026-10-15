@@ -519,13 +519,15 @@ measured the Windows render constants come out 1.5–1.8x worse.
   it is. Each mark takes a note, and **Next mark** / **Previous mark** walk them from the
   keyboard: the pointer is not the only way to reach one.
   <!-- built: edit.highlightSelection edit.underlineSelection edit.strikeoutSelection edit.squigglySelection nav.nextMark nav.previousMark -->
-- **Draw on a page** — freehand ink, a box, an ellipse, a text box, or a comment placed
-  where you press. Each is a real annotation of its own kind rather than ink pretending to
+- **Draw on a page** — freehand ink, a box, an ellipse, a line, an arrow, a polygon,
+  connected lines, a text box, or a comment placed where you press. A line or an arrow is
+  one drag; a polygon or connected lines take a corner per click, and Enter or a second
+  click on the last corner finishes them. Each is a real annotation of its own kind rather than ink pretending to
   be one, so another reader gets a comment they can open and a shape they can select. What
   you have drawn can be dragged to somewhere else on its page afterwards, and a box, an
   ellipse or a text box can be resized by its lower right corner. The words of a text box
   are typed in the box beside it and appear on the page as you type them.
-  <!-- built: edit.draw edit.drawBox edit.drawEllipse edit.addTextBox edit.addComment -->
+  <!-- built: edit.draw edit.drawBox edit.drawEllipse edit.drawLine edit.drawArrow edit.drawPolygon edit.drawPolyline edit.addTextBox edit.addComment -->
 - **Everything about a form is in the *Form* menu**, and under the *Form* button in the
   tool row: filling one in, adding fields, changing the fields a document already has,
   their properties and their tab order. The command palette has the same commands.

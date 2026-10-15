@@ -1714,3 +1714,93 @@ describe("the eraser on marks that have no strokes", () => {
     expect(erased).toEqual([]);
   });
 });
+
+/** A click: a press and a release at one point. */
+function click(at: { x: number; y: number }): void {
+  drag(at, at);
+}
+
+describe("drawing a line or an arrow", () => {
+  it("commits the two ends of one drag and no rectangle, and spends the tool", async () => {
+    const viewer = build();
+    await settle();
+    viewer.armDraw("line");
+    drag({ x: 100, y: 100 }, { x: 300, y: 200 });
+    expect(drawn).toHaveLength(1);
+    expect(drawn[0]?.kind).toBe("line");
+    expect(drawn[0]?.shape.quads).toEqual([]);
+    expect(drawn[0]?.shape.strokes).toHaveLength(1);
+    const [x0, y0, x1, y1] = stroke();
+    // Two points, and the drag's direction kept: the second end is right of
+    // and below the first, which is where an arrow's head goes.
+    expect(stroke()).toHaveLength(4);
+    expect(x1! > x0! && y1! > y0!).toBe(true);
+    expect(viewer.drawArmed).toBeNull();
+    viewer.destroy();
+  });
+
+  it("refuses a click, and keeps the tool armed", async () => {
+    const viewer = build();
+    await settle();
+    viewer.armDraw("arrow");
+    click({ x: 150, y: 150 });
+    expect(drawn).toEqual([]);
+    expect(viewer.drawArmed).toBe("arrow");
+    // The control: a real drag after it is taken, as an arrow.
+    drag({ x: 150, y: 150 }, { x: 250, y: 150 });
+    expect(drawn.map((made) => made.kind)).toEqual(["arrow"]);
+    viewer.destroy();
+  });
+});
+
+describe("drawing a polygon or connected lines", () => {
+  it("places a corner per click and commits them on Enter", async () => {
+    const viewer = build();
+    await settle();
+    viewer.armDraw("polygon");
+    click({ x: 100, y: 100 });
+    click({ x: 300, y: 100 });
+    // Counted as corners, not as strokes, so the window says the right word.
+    expect(viewer.placedCorners).toBe(2);
+    expect(viewer.drawnStrokes).toBeNull();
+    // Two corners are not a polygon yet: Enter waits for a third.
+    enter();
+    expect(drawn).toEqual([]);
+    click({ x: 200, y: 250 });
+    expect(drawn).toEqual([]);
+    enter();
+    expect(drawn).toHaveLength(1);
+    expect(drawn[0]?.kind).toBe("polygon");
+    expect(drawn[0]?.shape.quads).toEqual([]);
+    expect(stroke()).toHaveLength(6);
+    expect(viewer.drawArmed).toBeNull();
+    viewer.destroy();
+  });
+
+  it("finishes on a second click on the last corner", async () => {
+    const viewer = build();
+    await settle();
+    viewer.armDraw("polyline");
+    click({ x: 100, y: 100 });
+    click({ x: 300, y: 150 });
+    click({ x: 301, y: 151 });
+    expect(drawn.map((made) => made.kind)).toEqual(["polyline"]);
+    // The second click finished the shape and was not a corner of it.
+    expect(stroke()).toHaveLength(4);
+    viewer.destroy();
+  });
+
+  it("throws the corners away on Escape", async () => {
+    const viewer = build();
+    await settle();
+    viewer.armDraw("polygon");
+    click({ x: 100, y: 100 });
+    click({ x: 300, y: 100 });
+    click({ x: 200, y: 250 });
+    escape();
+    enter();
+    expect(drawn).toEqual([]);
+    expect(viewer.drawArmed).toBeNull();
+    viewer.destroy();
+  });
+});

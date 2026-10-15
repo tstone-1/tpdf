@@ -212,6 +212,11 @@ export const MENU_LAYOUT: LayoutSection[] = [
       // wants to ring a figure rather than frame it is picking a shape, and two
       // shapes a menu separates read as two unrelated tools.
       "edit.drawEllipse",
+      // The shapes of straight lines, with the two shapes for their reason.
+      "edit.drawLine",
+      "edit.drawArrow",
+      "edit.drawPolygon",
+      "edit.drawPolyline",
       // After the two shapes, because it is the third thing a drag can place and
       // a reader choosing between them is choosing what appears.
       "edit.addTextBox",

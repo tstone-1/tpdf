@@ -18222,6 +18222,25 @@ the file's, so in a document with unsaved deleted pages it counts them as on scr
 
 #### 7.5 Annotation parity
 
+**Done 2026-10-15: lines, arrows, polygons and polylines** (`edit.drawLine`,
+`edit.drawArrow`, `edit.drawPolygon`, `edit.drawPolyline`). Four `MarkKind`s whose points
+are the one stroke in `Mark::strokes`, as ink's are; `MarkKind::takes_strokes` holds the
+count of corners and the rectangle is `Stroke::bounds`, grown for an arrow by half its head
+(`arrow_head`, three widths and at least 6 points). Saved as `/Line` with `/L` and `/LE`
+(`/OpenArrow` at the second end for an arrow), `/Polygon` and `/PolyLine` with `/Vertices`,
+`/BS /W` and an appearance stream of straight segments (`Paint::Segments`). A line or an
+arrow is one drag; a polygon or a polyline is a corner per click, finished by Enter or a
+second click on the last corner, and the window counts corners in `ViewerStatus.corners`.
+The eraser takes them whole. Redaction needs nothing new: `covered_annots` takes any
+annotation whose `/Rect` meets a region. Evidence: `annot-probe --mode roundtrip` reads all
+four back as their kind with the rectangle unchanged on `text-base14`, `rotated-90` and
+`links-cropped`, except an arrow on `links-cropped`, whose rectangle the probe places 2.5
+points above the cropped page's top and the reader clips to it; `mark_check.py` draws an
+arrow and a polygon through their commands into the model and onto the overlay. Not
+measured: rendering in Acrobat or Preview, and a polygon drawn on a page turned by an edit.
+
+**Still to build in 7.5:** pictures, copying and pasting marks, and links.
+
 SumatraPDF makes these and tpdf does not:
 
 - A line and an arrow (`/Line` with `/LE`), and an open or closed polygon (`/PolyLine`,

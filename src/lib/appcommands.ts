@@ -427,6 +427,13 @@ export interface AppActions {
    */
   drawEllipse(): void;
   /**
+   * Arms one of the four shapes of straight lines: a line or an arrow, drawn
+   * by one drag end to end, or a polygon or a polyline, drawn a corner per
+   * click and finished with Enter. One method taking the kind, for
+   * {@link stamp}'s reason: the four commands carry the distinction.
+   */
+  drawShape(kind: "line" | "arrow" | "polygon" | "polyline"): void;
+  /**
    * Arms the stamp tool for one of the four standard stamps.
    *
    * **One method taking the name, where the two shapes above are two methods.**
@@ -1434,6 +1441,33 @@ export function registerAppCommands(
       title: "Draw an ellipse...",
       enabled: withDocument,
       run: () => actions.drawEllipse(),
+    },
+    // The four shapes of straight lines, beside the two shapes, as SumatraPDF
+    // offers them. No keys, for the box's reason above. "Add", not "Draw", so
+    // that typing "draw" still finds *Draw freehand* among the first three.
+    {
+      id: "edit.drawLine",
+      title: "Add a line...",
+      enabled: withDocument,
+      run: () => actions.drawShape("line"),
+    },
+    {
+      id: "edit.drawArrow",
+      title: "Add an arrow...",
+      enabled: withDocument,
+      run: () => actions.drawShape("arrow"),
+    },
+    {
+      id: "edit.drawPolygon",
+      title: "Add a polygon, a corner per click...",
+      enabled: withDocument,
+      run: () => actions.drawShape("polygon"),
+    },
+    {
+      id: "edit.drawPolyline",
+      title: "Add connected lines, a corner per click...",
+      enabled: withDocument,
+      run: () => actions.drawShape("polyline"),
     },
     {
       id: "edit.editText",

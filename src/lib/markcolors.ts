@@ -98,6 +98,12 @@ export const MARK_COLORS: Record<MarkKind, MarkColor> = {
   // type on white paper reads as an annotation rather than as part of the
   // document, which is the whole reason a reader puts a text box on a page.
   textbox: [0.85, 0.15, 0.15],
+  // The lines' red for the four shapes of straight lines, for the box's
+  // reason: each is a stroke, drawn opaque and on top.
+  line: [0.85, 0.15, 0.15],
+  arrow: [0.85, 0.15, 0.15],
+  polygon: [0.85, 0.15, 0.15],
+  polyline: [0.85, 0.15, 0.15],
   // Blue, and the one default here that is not a colour written to the file:
   // a field has no ink of its own. It is what the placed field is outlined in
   // until the document is saved, and it is not red so that a field is not

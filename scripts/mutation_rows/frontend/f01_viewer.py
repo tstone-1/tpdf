@@ -37,8 +37,8 @@ ROWS += [
     Mutation('locale: hardcode color command spelling', 'src/lib/appcommands.ts', '${message("color", locale)}: ${entry.name}', 'Colour: ${entry.name}', 'localizes command titles but preserves command ids in en-US'),
     Mutation('toolbar: omit color swatches', 'src/lib/toolbar.ts', '      swatch: entry,', '', 'offers a visible swatch for every color using the annotation palette'),
     Mutation('toolbar: offer the colour and width while erasing', 'src/lib/toolbar.ts', '  if (tool.erasing) return { color: false, width: false };', '', 'offers neither while erasing, even if the pen is still reported'),
-    Mutation('toolbar: offer a width to a comment', 'src/lib/toolbar.ts', 'const STROKED: readonly ArmedTool[] = ["square", "ellipse", "ink"];', 'const STROKED: readonly ArmedTool[] = ["square", "ellipse", "ink", "note"];', 'offers each tool what it uses'),
-    Mutation('toolbar: recolour a stamp', 'src/lib/toolbar.ts', 'const COLORED: readonly ArmedTool[] = ["note", "square", "ellipse", "textbox", "ink"];', 'const COLORED: readonly ArmedTool[] = ["note", "square", "ellipse", "textbox", "ink", "stamp"];', 'offers each tool what it uses'),
+    Mutation('toolbar: offer a width to a comment', 'src/lib/toolbar.ts', 'const STROKED: readonly ArmedTool[] = ["square", "ellipse", "ink", "line", "arrow", "polygon", "polyline"];', 'const STROKED: readonly ArmedTool[] = ["square", "ellipse", "ink", "line", "arrow", "polygon", "polyline", "note"];', 'offers each tool what it uses'),
+    Mutation('toolbar: recolour a stamp', 'src/lib/toolbar.ts', '  "note", "square", "ellipse", "textbox", "ink", "line", "arrow", "polygon", "polyline",\n];', '  "note", "square", "ellipse", "textbox", "ink", "line", "arrow", "polygon", "polyline", "stamp",\n];', 'offers each tool what it uses'),
     Mutation('toolbar: let a menu run off the left of the window', 'src/lib/toolbar.ts', '    return POPUP_MARGIN - left;', '    return 0;', 'moves a menu that starts left of the window to the left margin'),
     Mutation('toolbar: let a menu run off the right of the window', 'src/lib/toolbar.ts', '  return right > limit ? limit - right : 0;', '  return 0;', 'moves a menu that ends right of the window back by the overhang'),
     Mutation('icons: redraw a vendored icon in place', 'src/lib/icons.ts', '{ d: "m15 18-6-6 6-6" }', '{ d: "m15 18-6-6 6-5" }', 'draws every vendored file exactly as it is vendored'),
@@ -1273,8 +1273,8 @@ ROWS += [
         # a reader sees. Removing the copy is what makes this catchable.
         "viewer: keep the drawing out of the status, so the mode is invisible",
         "src/lib/viewer.ts",
-        "    if (this.inking) return this.inking.strokes.length;",
-        "    if (false) return this.inking?.strokes.length ?? 0;",
+        '    if (this.drawArmed !== "ink") return null;\n    return this.inking?.strokes.length ?? 0;',
+        '    if (this.drawArmed !== "ink") return null;\n    return 0;',
         "reports the drawing in the status, so the mode is visible",
     ),
     Mutation(
@@ -1323,8 +1323,8 @@ ROWS += [
         # doing nothing rather than as a wire defect.
         "viewer: send a rectangle alongside a drawing's strokes",
         "src/lib/viewer.ts",
-        '      "ink",\n      id,\n      {\n        quads: [],',
-        '      "ink",\n      id,\n      {\n        quads: [0, 0, 1, 1],',
+        '      kind,\n      id,\n      {\n        quads: [],',
+        '      kind,\n      id,\n      {\n        quads: [0, 0, 1, 1],',
         "commits strokes and no rectangle",
     ),
     Mutation(

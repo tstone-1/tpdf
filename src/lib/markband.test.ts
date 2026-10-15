@@ -3,6 +3,13 @@ import { describe, expect, it } from "vitest";
 import type { MarkKind } from "./pages";
 
 import {
+  arrowHead,
+  arrowWings,
+  drawsALine,
+  hasStrokes,
+  isPath,
+  leastCorners,
+  placesCorners,
   boxQuad,
   ERASER_RADIUS,
   ICON_SIZE,
@@ -754,5 +761,52 @@ describe("how the overlay is blended with the page", () => {
 
   it("stays a plain overlay on an inverted page, where multiply would hide a highlight", () => {
     expect(overlayBlend(true)).toBe("normal");
+  });
+});
+
+
+describe("the shapes of straight lines", () => {
+  it("are drawn from strokes, and the eraser takes them whole", () => {
+    for (const kind of ["line", "arrow", "polygon", "polyline"] as const) {
+      expect(hasStrokes(kind)).toBe(true);
+      expect(isPath(kind)).toBe(false);
+      expect(paintOf(kind)).toBe("segments");
+      expect(isMovable(kind)).toBe(true);
+      expect(isResizable(kind)).toBe(false);
+      expect(dragsABox(kind)).toBe(false);
+    }
+    expect(hasStrokes("ink")).toBe(true);
+    expect(hasStrokes("square")).toBe(false);
+  });
+
+  it("split into one drag and a corner per click", () => {
+    expect([drawsALine("line"), drawsALine("arrow"), drawsALine("polygon")]).toEqual([true, true, false]);
+    expect([placesCorners("polygon"), placesCorners("polyline"), placesCorners("line")]).toEqual([true, true, false]);
+    // `MarkKind::takes_strokes`: a polygon needs three, a polyline two.
+    expect([leastCorners("polygon"), leastCorners("polyline")]).toEqual([3, 2]);
+  });
+});
+
+describe("arrowWings", () => {
+  it("puts the head at the tip, its wings back along the line at 30 degrees", () => {
+    const wings = arrowWings({ x: 0, y: 0 }, { x: 100, y: 0 }, 10);
+    expect(wings).not.toBeNull();
+    const [one, tip, other] = wings!;
+    expect(tip).toEqual({ x: 100, y: 0 });
+    for (const wing of [one, other]) {
+      expect(wing.x).toBeCloseTo(100 - 10 * Math.cos(Math.PI / 6));
+      expect(Math.abs(wing.y)).toBeCloseTo(10 * Math.sin(Math.PI / 6));
+    }
+    // Either side of the line, not both on one.
+    expect(Math.sign(one.y)).toBe(-Math.sign(other.y));
+  });
+
+  it("points nowhere for a line of no length", () => {
+    expect(arrowWings({ x: 5, y: 5 }, { x: 5, y: 5 }, 10)).toBeNull();
+  });
+
+  it("is three widths long, and never under 6 points", () => {
+    expect(arrowHead(4)).toBe(12);
+    expect(arrowHead(1)).toBe(6);
   });
 });

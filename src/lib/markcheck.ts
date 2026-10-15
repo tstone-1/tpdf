@@ -397,4 +397,49 @@ async function run(host: MarkCheckHost): Promise<void> {
       }
     }
   }
+
+  // --- An arrow by a drag, and a polygon a corner per click ---------------
+  //
+  // The two gestures the four shapes of straight lines use, through their
+  // commands. What reaches the model is the kind and its points, which the
+  // viewer sends as strokes rather than as a rectangle.
+  {
+    const low = { x: bounds.left + bounds.width * 0.3, y: bounds.top + bounds.height * 0.7 };
+    const armed = host.run("edit.drawArrow");
+    check("the add-arrow command runs and arms the pointer", armed && viewer.drawArmed === "arrow", `armed: ${viewer.drawArmed}`);
+    let before = new Set(host.marks().map((mark) => mark.id));
+    drag(root, low, { x: low.x + 150, y: low.y + 40 });
+    await settle(() => added(before, host.marks()) !== null);
+    const arrow = added(before, host.marks());
+    check(
+      "an arrow dragged out reaches the model as its two ends",
+      arrow?.kind === "arrow" && arrow.strokes.length === 1 && arrow.strokes[0]?.length === 4,
+      arrow ? `a ${arrow.kind} with strokes of ${arrow.strokes.map((one) => one.length / 2).join(", ")} point(s)` : "the model gained nothing",
+    );
+    await settle(() => viewer.idle);
+    const anchor = arrow ? viewer.markAnchor(arrow.id) : null;
+    const ink = anchor ? inked(viewer, anchor) : null;
+    if (ink === null) report.skip("and the overlay draws the arrow", "the arrow has no anchor or no readable overlay");
+    else check("and the overlay draws the arrow", ink > 0.005, `${(ink * 100).toFixed(1)}% of its rectangle is inked`);
+
+    check("the add-polygon command runs and arms the pointer",
+      host.run("edit.drawPolygon") && viewer.drawArmed === "polygon", `armed: ${viewer.drawArmed}`);
+    before = new Set(host.marks().map((mark) => mark.id));
+    const at = { x: low.x, y: low.y - 160 };
+    click(root, at.x, at.y);
+    click(root, at.x + 120, at.y);
+    click(root, at.x + 60, at.y + 90);
+    await pause(QUIET_MS);
+    const early = added(before, host.marks());
+    root.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
+    await settle(() => added(before, host.marks()) !== null);
+    const polygon = added(before, host.marks());
+    check(
+      "a polygon placed a corner per click reaches the model on Enter, and not before",
+      early === null && polygon?.kind === "polygon" && polygon.strokes[0]?.length === 6,
+      polygon
+        ? `a ${polygon.kind} of ${(polygon.strokes[0]?.length ?? 0) / 2} corner(s)${early ? ", made before Enter" : ""}`
+        : "the model gained nothing",
+    );
+  }
 }

@@ -1946,8 +1946,8 @@ ROWS += [
         # strokes is empty.
         "save: draw every stroke as one path rather than one each",
         "src/save/marks.rs",
-        "    for stroke in strokes {",
-        "    for stroke in strokes.iter().take(1) {",
+        "fn draw_path(out: &mut String, strokes: &[Vec<(f64, f64)>]) {\n    for stroke in strokes {",
+        "fn draw_path(out: &mut String, strokes: &[Vec<(f64, f64)>]) {\n    for stroke in strokes.iter().take(1) {",
         "each_stroke_is_its_own_path_in_the_appearance_stream",
     ),
     Mutation(
@@ -1956,8 +1956,8 @@ ROWS += [
         # a point that reads as a rendering fault.
         "save: leave a drawing's joins mitred, as a box's are",
         "src/save/marks.rs",
-        '        Paint::Path => (mark.width, "1 J 1 j "),',
-        '        Paint::Path => (mark.width, ""),',
+        '        Paint::Path | Paint::Segments => (mark.width, "1 J 1 j "),',
+        '        Paint::Path | Paint::Segments => (mark.width, ""),',
         "each_stroke_is_its_own_path_in_the_appearance_stream",
     ),
     Mutation(
@@ -1976,7 +1976,7 @@ ROWS += [
         # for it -- which is the case a rule with no failing case is in.
         "docmodel: let a kind and a shape disagree",
         "src/docmodel.rs",
-        "        if mark.strokes.is_empty() != (mark.kind != MarkKind::Ink) {",
+        "        if !mark.kind.takes_strokes(&mark.strokes) {",
         "        if false {",
         "a_kind_and_a_shape_that_disagree_are_refused_both_ways_round",
     ),
@@ -1987,7 +1987,7 @@ ROWS += [
         # an unsaved change the reader cannot see.
         "docmodel: judge ink empty by its rectangle rather than by its length",
         "src/docmodel.rs",
-        "        let empty = if mark.kind == MarkKind::Ink {\n            !mark.strokes.iter().any(Stroke::is_drawable)",
+        "        let empty = if mark.kind.has_strokes() {\n            !mark.strokes.iter().any(Stroke::is_drawable)",
         "        let empty = if false {\n            !mark.strokes.iter().any(Stroke::is_drawable)",
         "ink_that_never_moved_is_refused_though_its_rectangle_covers_area",
     ),
@@ -1997,7 +1997,7 @@ ROWS += [
         # down a margin is answered with "that mark covers nothing".
         "edits: take ink's rectangle tight against the strokes",
         "src/edits.rs",
-        "            quads = Stroke::bounds(&strokes, (width / 2.0) as f32)",
+        "            quads = Stroke::bounds(&strokes, want.kind.stroke_pad(width))",
         "            quads = Stroke::bounds(&strokes, 0.0)",
         # **Not the `docmodel` test that looks like the right one.** That one
         # builds its `Mark` by hand, so it exercises `Stroke::bounds` and says

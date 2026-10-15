@@ -10,6 +10,7 @@
     active = null,
     armed = null,
     drawing = null,
+    corners = null,
     erasing = false,
     editing = false,
     selected = 0,
@@ -23,6 +24,8 @@
     active: string | null;
     armed?: ArmedTool;
     drawing: number | null;
+    /** Corners of a polygon or connected lines placed so far; `null` when neither is armed. */
+    corners?: number | null;
     erasing: boolean;
     /** Existing text is being edited: the row says so and offers Done. */
     editing?: boolean;
@@ -50,12 +53,12 @@
   );
   const colors = TOOL_GROUPS.find((group) => group.id === "color")!;
   let selectedSwatch = $derived(swatch(colorId) ?? DEFAULT_SWATCH);
-  let unfinished = $derived((drawing ?? 0) > 0);
+  let unfinished = $derived((drawing ?? 0) > 0 || (corners ?? 0) > 0);
   let inTool = $derived(active !== null || drawing !== null || erasing || editing);
   let offered = $derived(styleOptions({ armed, drawing: drawing !== null, erasing }));
 
   function toolPressed(id: string): boolean {
-    if (id === "draw") return drawing !== null || erasing || /^(Box|Ellipse|Stamp)/.test(active ?? "");
+    if (id === "draw") return drawing !== null || erasing || /^(Box|Ellipse|Line|Arrow|Polygon|Polyline|Stamp)/.test(active ?? "");
     if (id === "edit.addComment") return active?.startsWith("Comment") ?? false;
     if (id === "edit.addTextBox") return active?.startsWith("Text box") ?? false;
     if (id === "edit.editText") return editing;
@@ -292,8 +295,9 @@
         <button class="finish" disabled={drawing === 0} onclick={finish}>Finish</button>
         <button onclick={cancel}>{drawing > 0 ? "Discard" : "Cancel"}</button>
       {:else}
-        <span data-testid={erasing ? "erasing" : "armed"}>{erasing ? "Erasing marks" : active}</span>
-        <button onclick={cancel}>{erasing ? "Stop" : "Cancel"}</button>
+        <span data-testid={erasing ? "erasing" : "armed"}>{erasing ? "Erasing marks" : active}{corners ? ` (${corners} corner${corners === 1 ? "" : "s"})` : ""}</span>
+        {#if corners !== null}<button class="finish" disabled={corners === 0} onclick={finish}>Finish</button>{/if}
+        <button onclick={cancel}>{erasing ? "Stop" : corners ? "Discard" : "Cancel"}</button>
       {/if}
       <!-- What the armed tool draws with, in the row that names it; see `styleOptions`. -->
       {#if offered.color || offered.width}

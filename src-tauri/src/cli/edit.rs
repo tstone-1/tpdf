@@ -427,14 +427,14 @@ fn apply(
                             && x <= size.width_pt
                             && y <= size.height_pt
                     };
-                    let mut quads = if *kind == MarkKind::Ink {
+                    let mut quads = if kind.has_strokes() {
                         if rect.is_some() {
-                            return Err("ink takes strokes, not rect".into());
+                            return Err("ink, lines and shapes take strokes, not rect".into());
                         }
                         if strokes.iter().any(|s| {
                             s.len() % 2 != 0 || s.chunks_exact(2).any(|p| !within(p[0], p[1]))
                         }) {
-                            return Err("ink strokes must contain x,y pairs within the page".into());
+                            return Err("strokes must contain x,y pairs within the page".into());
                         }
                         Vec::new()
                     } else {

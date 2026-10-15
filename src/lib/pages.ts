@@ -111,6 +111,16 @@ export type MarkKind =
   | "ellipse"
   | "textbox"
   | "ink"
+  /**
+   * The four shapes of straight lines, `MarkKind::Line` and its neighbours in
+   * `docmodel.rs`: a line and an arrow from their two ends, a polygon and a
+   * polyline from their corners. Their points are the one stroke in
+   * {@link MarkView.strokes}, as ink's are.
+   */
+  | "line"
+  | "arrow"
+  | "polygon"
+  | "polyline"
   | "stamp"
   | "signature"
   /**

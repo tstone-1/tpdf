@@ -245,6 +245,67 @@ export function isPath(kind: MarkKind): boolean {
 }
 
 /**
+ * Whether a kind's shape is the points a reader drew, in its strokes: ink and
+ * the four shapes of straight lines. `MarkKind::has_strokes` in `docmodel.rs`.
+ * The eraser asks {@link isPath} instead: it cuts a drawing, and takes a line
+ * or a polygon whole.
+ */
+export function hasStrokes(kind: MarkKind): boolean {
+  return kind === "ink" || drawsALine(kind) || placesCorners(kind);
+}
+
+/** Whether a kind is drawn by one drag from its first end to its second: a line or an arrow. */
+export function drawsALine(kind: MarkKind | null): boolean {
+  return kind === "line" || kind === "arrow";
+}
+
+/**
+ * Whether a kind is drawn a corner at a time: a polygon or a polyline. Each
+ * click places a corner; Enter, or a click on the last corner again, finishes.
+ */
+export function placesCorners(kind: MarkKind | null): boolean {
+  return kind === "polygon" || kind === "polyline";
+}
+
+/** The fewest corners a kind placed a corner at a time can have: `MarkKind::takes_strokes`. */
+export function leastCorners(kind: MarkKind): number {
+  return kind === "polygon" ? 3 : 2;
+}
+
+/**
+ * How long an arrow's head is, in points, for a line `width` points wide.
+ * `arrow_head` in `docmodel.rs`: three widths, and never less than 6 points.
+ */
+export function arrowHead(width: number): number {
+  return Math.max(width * 3, 6);
+}
+
+/**
+ * An arrow's head: one wing, the tip, the other wing, at 30 degrees either side
+ * of the line. `arrow_wings` in `save/marks.rs`, in the same space as the
+ * points it is given. `null` for a line of no length, which points nowhere.
+ */
+export function arrowWings(
+  from: { x: number; y: number },
+  tip: { x: number; y: number },
+  head: number,
+): [{ x: number; y: number }, { x: number; y: number }, { x: number; y: number }] | null {
+  const dx = tip.x - from.x;
+  const dy = tip.y - from.y;
+  const length = Math.hypot(dx, dy);
+  if (length === 0) return null;
+  const ux = dx / length;
+  const uy = dy / length;
+  const cos = Math.cos(Math.PI / 6);
+  const sin = Math.sin(Math.PI / 6);
+  const wing = (side: number) => ({
+    x: tip.x - head * (ux * cos - side * uy * sin),
+    y: tip.y - head * (uy * cos + side * ux * sin),
+  });
+  return [wing(1), { ...tip }, wing(-1)];
+}
+
+/**
  * Whether a reader can drag a mark to somewhere else on the page.
  *
  * **The only predicate here that is not about drawing**, and it is a product
@@ -283,6 +344,10 @@ export function isMovable(kind: MarkKind): boolean {
     case "ellipse":
     case "textbox":
     case "ink":
+    case "line":
+    case "arrow":
+    case "polygon":
+    case "polyline":
     // A stamp is placed by the reader and anchored to nothing, so it moves for
     // the box's reason exactly.
     case "stamp":
@@ -783,7 +848,7 @@ export function commentGhostAt<P>(pointer: P | null, held: { from: P; to: P } | 
  * for a comment, which is placed and has no second corner.
  */
 export function dragsABox(kind: MarkKind | null): boolean {
-  return kind !== "ink" && kind !== "note";
+  return kind !== "ink" && kind !== "note" && !drawsALine(kind) && !placesCorners(kind);
 }
 
 /**
@@ -891,6 +956,12 @@ export function markBand(kind: MarkKind, quad: Quad): Quad {
       // strokes, so nothing reaches this arm --- it exists because the switch
       // is exhaustive, which is what makes a sixth kind a compile error here.
       return quad;
+    case "line":
+    case "arrow":
+    case "polygon":
+    case "polyline":
+      // Ink's answer: drawn from the corners, and the quad is the box round them.
+      return quad;
     case "signature":
     case "stamp":
       // The whole quad a sixth time. A stamp is a border on the quad's edge and
@@ -927,6 +998,8 @@ export type Paint =
   | "ellipse"
   | "text"
   | "path"
+  /** Straight lines through the corners: `Paint::Segments` in `save.rs`. */
+  | "segments"
   | "icon"
   | "stamp"
   | "image"
@@ -973,6 +1046,11 @@ export function paintOf(kind: MarkKind): Paint {
       return "text";
     case "ink":
       return "path";
+    case "line":
+    case "arrow":
+    case "polygon":
+    case "polyline":
+      return "segments";
     case "note":
       return "icon";
     case "signature":
