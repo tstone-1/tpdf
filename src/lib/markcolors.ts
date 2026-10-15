@@ -109,6 +109,9 @@ export const MARK_COLORS: Record<MarkKind, MarkColor> = {
   // until the document is saved, and it is not red so that a field is not
   // taken for a box drawn round something.
   field: [0.15, 0.35, 0.9],
+  // The field's blue, and for its reason: a link draws nothing in the file,
+  // and its frame on screen is blue as links are.
+  link: [0.15, 0.35, 0.9],
   // The lines' red a fourth time, and it is the box's argument with one word
   // added: a stamp is a stroked border *and* red type, so both halves of it are
   // the reasons the box and the text box are red. A stamp is also the one kind

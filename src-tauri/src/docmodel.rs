@@ -881,6 +881,16 @@ pub enum MarkKind {
     /// dictionary of `save/marks.rs`'s own, because a field also belongs to the
     /// document's form and needs the form's font.
     Field,
+    /// A rectangle that goes somewhere when clicked, `/Link`: to a page of this
+    /// document or to a web address.
+    ///
+    /// **Its target is its note**, read when the document is saved: a page
+    /// number, or a web address. The note is already what a reader types into
+    /// a mark's box after placing it and edits afterwards, which is exactly
+    /// what choosing and changing a link's target is; a field of its own would
+    /// have been a second editable string on every mark. See
+    /// `save::marks::link_target` for what it accepts.
+    Link,
 }
 
 impl MarkKind {
@@ -3734,7 +3744,13 @@ impl Doc {
     pub fn can_reshape(&self, mark: MarkId, quad: Quad) -> Result<(), Refusal> {
         self.now.live_mark(mark)?;
         let kind = self.mark(mark).map(|m| m.kind);
-        let Some(MarkKind::Square | MarkKind::Ellipse | MarkKind::TextBox | MarkKind::Field) = kind
+        let Some(
+            MarkKind::Square
+            | MarkKind::Ellipse
+            | MarkKind::TextBox
+            | MarkKind::Field
+            | MarkKind::Link,
+        ) = kind
         else {
             return Err(Refusal::ShapeMismatch(kind.unwrap_or(MarkKind::Highlight)));
         };

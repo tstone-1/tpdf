@@ -352,6 +352,8 @@ export function isMovable(kind: MarkKind): boolean {
     // the box's reason exactly.
     case "stamp":
     case "signature":
+    // A link is placed by a drag and anchored to nothing, like the box.
+    case "link":
       return true;
   }
 }
@@ -366,7 +368,7 @@ export function isMovable(kind: MarkKind): boolean {
  * is an icon of one size; and a mark tied to words takes its shape from them.
  */
 export function isResizable(kind: MarkKind): boolean {
-  return kind === "square" || kind === "ellipse" || kind === "textbox" || kind === "field";
+  return kind === "square" || kind === "ellipse" || kind === "textbox" || kind === "field" || kind === "link";
 }
 
 /** How far from a mark's lower right corner a press still takes the corner, in CSS pixels. */
@@ -973,6 +975,9 @@ export function markBand(kind: MarkKind, quad: Quad): Quad {
     case "field":
       // The whole quad: it is the rectangle the field will occupy in the form.
       return quad;
+    case "link":
+      // The whole quad: it is the place a click goes somewhere from.
+      return quad;
   }
 }
 
@@ -1008,7 +1013,12 @@ export type Paint =
    * one paint with no counterpart in `save.rs` at all, because what a save
    * writes for it is a field of the form and not an annotation's appearance.
    */
-  | "field";
+  | "field"
+  /**
+   * A link: a dashed frame, drawn only here. The saved `/Link` draws nothing,
+   * so the frame is how a reader sees where the link is before saving.
+   */
+  | "link";
 
 /**
  * Which of those a kind is drawn as.
@@ -1059,5 +1069,7 @@ export function paintOf(kind: MarkKind): Paint {
       return "stamp";
     case "field":
       return "field";
+    case "link":
+      return "link";
   }
 }

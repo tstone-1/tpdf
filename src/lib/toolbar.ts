@@ -82,6 +82,7 @@ export const TOOL_GROUPS: ToolGroup[] = [
       { id: "edit.drawArrow", label: "Arrow" },
       { id: "edit.drawPolygon", label: "Polygon" },
       { id: "edit.drawPolyline", label: "Connected lines" },
+      { id: "edit.addLink", label: "Link" },
       { id: "edit.stamp.approved", label: "Approved stamp" },
       { id: "edit.stamp.confidential", label: "Confidential stamp" },
       { id: "edit.stamp.draft", label: "Draft stamp" },

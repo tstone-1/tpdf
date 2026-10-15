@@ -432,7 +432,7 @@ export interface AppActions {
    * click and finished with Enter. One method taking the kind, for
    * {@link stamp}'s reason: the four commands carry the distinction.
    */
-  drawShape(kind: "line" | "arrow" | "polygon" | "polyline"): void;
+  drawShape(kind: "line" | "arrow" | "polygon" | "polyline" | "link"): void;
   /**
    * Arms the stamp tool for one of the four standard stamps.
    *
@@ -1474,6 +1474,14 @@ export function registerAppCommands(
       title: "Add connected lines, a corner per click...",
       enabled: withDocument,
       run: () => actions.drawShape("polyline"),
+    },
+    {
+      // A rectangle to click, dragged like a box; where it goes is typed in
+      // the box that opens on it, as a page number or a web address.
+      id: "edit.addLink",
+      title: "Add a link...",
+      enabled: withDocument,
+      run: () => actions.drawShape("link"),
     },
     {
       id: "edit.editText",

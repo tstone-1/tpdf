@@ -1377,6 +1377,7 @@ export async function appCommandChecks(
     { id: "edit.drawArrow", ...shell("drawShape:arrow"), read: () => fired.join(",") },
     { id: "edit.drawPolygon", ...shell("drawShape:polygon"), read: () => fired.join(",") },
     { id: "edit.drawPolyline", ...shell("drawShape:polyline"), read: () => fired.join(",") },
+    { id: "edit.addLink", ...shell("drawShape:link"), read: () => fired.join(",") },
     {
       // The third drag tool, aimed separately for the reason the two above it
       // are: three commands now arm the same primitive with three different

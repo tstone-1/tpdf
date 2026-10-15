@@ -7367,6 +7367,20 @@ export class Viewer {
           ctx.lineWidth = OUTLINE_WIDTH * this.zoom * dpr;
           traceEllipse(ctx, left, top, width, height);
           ctx.stroke();
+        } else if (style === "link") {
+          // A dashed frame and a faint wash, and only here: the saved `/Link`
+          // draws nothing, so this is how a reader sees where it is.
+          ctx.save();
+          ctx.globalCompositeOperation = "source-over";
+          ctx.fillStyle = markInk(mark.color, false);
+          ctx.globalAlpha = 0.1;
+          ctx.fillRect(left, top, width, height);
+          ctx.globalAlpha = 1;
+          ctx.strokeStyle = markInk(mark.color, false);
+          ctx.lineWidth = Math.max(1, this.zoom * dpr);
+          ctx.setLineDash([4 * dpr, 3 * dpr]);
+          ctx.strokeRect(left, top, width, height);
+          ctx.restore();
         } else if (style === "field") {
           // A field that is placed and not yet saved: a faint wash, a dashed
           // frame and its name. Dashed like a drag's preview and for a related

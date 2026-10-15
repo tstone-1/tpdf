@@ -970,3 +970,15 @@ ROWS += [
         "          const back = [x, y];",
         "is where they were, a step down and to the right on their own page, and inside the page"),
 ]
+
+# --- links, 2026-10-15 --------------------------------------------------------------
+ROWS += [
+    Mutation("link: not resizable", "src/lib/markband.ts",
+        ' || kind === "field" || kind === "link";',
+        ' || kind === "field";',
+        "is placed, moved and resized like a box, and drawn as a frame only on screen"),
+    Mutation("link: painted as a field", "src/lib/markband.ts",
+        '    case "link":\n      return "link";',
+        '    case "link":\n      return "field";',
+        "is placed, moved and resized like a box, and drawn as a frame only on screen"),
+]

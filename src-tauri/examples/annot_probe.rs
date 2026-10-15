@@ -133,6 +133,8 @@ fn color_for(kind: MarkKind) -> [f32; 3] {
         MarkKind::Ink => RULE_RED,
         // Strokes again, so the lines' red for ink's reason.
         MarkKind::Line | MarkKind::Arrow | MarkKind::Polygon | MarkKind::Polyline => RULE_RED,
+        // Not offered by `--kind`: a link draws nothing to measure.
+        MarkKind::Link => unreachable!("--kind does not take link"),
         // The box's red, for the box's reason: an ellipse's ink is a stroke and
         // `--mode outline` classifies pixels by the colour it asked for.
         MarkKind::Ellipse => RULE_RED,
@@ -823,6 +825,8 @@ fn roundtrip(args: &Args, document: &OpenDocument) -> Result<bool, String> {
         MarkKind::Line | MarkKind::Arrow => Kind::Line,
         MarkKind::Polygon => Kind::Polygon,
         MarkKind::Polyline => Kind::PolyLine,
+        // Not offered by `--kind`: a link is not a comment the scan reads back.
+        MarkKind::Link => unreachable!("--kind does not take link"),
         // **The pair whose names differ in the direction that matters most
         // here.** `MarkKind::Ellipse` is written as `/Circle` and read back as
         // `Kind::Circle`, so this arm is the one that would catch `subtype`
@@ -2434,6 +2438,7 @@ fn rule(
         MarkKind::Line | MarkKind::Arrow | MarkKind::Polygon | MarkKind::Polyline => {
             unreachable!("refused above")
         }
+        MarkKind::Link => unreachable!("--kind does not take link"),
         // Refused above with the box, whose reason it shares exactly: an
         // ellipse's ink is on a curve through all three bands rather than in
         // one of them, so thirds discriminate nothing. `--mode outline` is

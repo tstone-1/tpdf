@@ -172,6 +172,7 @@ const NAMES: Record<MarkKind, string> = {
   // `/Line`, `/Polygon` and `/PolyLine`, so one shape is named one way in one
   // window. An arrow is a `/Line` in the file and an arrow to a reader.
   line: "Line",
+  link: "Link",
   arrow: "Arrow",
   polygon: "Polygon",
   polyline: "Polyline",
@@ -373,11 +374,14 @@ export class MarkPopup {
     // since it is chosen with the pointer somewhere else entirely and cannot.
     this.title.textContent = NAMES[mark.kind];
     this.remove.textContent = `Remove ${NAMES[mark.kind].toLowerCase()}`;
-    // A field's note is its name, so the box says so and is one line.
-    const label = mark.kind === "field" ? "Field name" : "Note";
+    // A field's note is its name and a link's is where it goes, so the box
+    // says so and is one line for both.
+    const label = mark.kind === "field"
+      ? "Field name"
+      : mark.kind === "link" ? "Goes to: a page number or a web address" : "Note";
     this.input.setAttribute("aria-label", label);
     this.input.placeholder = label;
-    this.input.rows = mark.kind === "field" ? 1 : 3;
+    this.input.rows = mark.kind === "field" || mark.kind === "link" ? 1 : 3;
     this.was = mark.note;
     // A box shown again on the mark it is already on is filled again, so what
     // was typed in it is gone and the page must stop drawing it.

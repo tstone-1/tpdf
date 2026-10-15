@@ -810,3 +810,12 @@ describe("arrowWings", () => {
     expect(arrowHead(1)).toBe(6);
   });
 });
+
+describe("a link", () => {
+  it("is placed, moved and resized like a box, and drawn as a frame only on screen", () => {
+    expect(isMovable("link")).toBe(true);
+    expect(isResizable("link")).toBe(true);
+    expect(paintOf("link")).toBe("link");
+    expect(hasStrokes("link")).toBe(false);
+  });
+});

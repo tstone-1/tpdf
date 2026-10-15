@@ -527,9 +527,10 @@ measured the Windows render constants come out 1.5–1.8x worse.
   you have drawn can be dragged to somewhere else on its page afterwards, and a box, an
   ellipse or a text box can be resized by its lower right corner. *Copy mark*, *Cut mark* and
   *Paste mark* (also on a mark's right-click menu) copy marks you placed and put them on the
-  page in front, in this document or another tab. The words of a text box
+  page in front, in this document or another tab. *Add a link* is dragged like a box, and
+  where it goes is typed in the box that opens on it: a page number or a web address. The words of a text box
   are typed in the box beside it and appear on the page as you type them.
-  <!-- built: edit.draw edit.drawBox edit.drawEllipse edit.drawLine edit.drawArrow edit.drawPolygon edit.drawPolyline edit.addTextBox edit.addComment edit.copyMark edit.cutMark edit.pasteMark -->
+  <!-- built: edit.draw edit.drawBox edit.drawEllipse edit.drawLine edit.drawArrow edit.drawPolygon edit.drawPolyline edit.addLink edit.addTextBox edit.addComment edit.copyMark edit.cutMark edit.pasteMark -->
 - **Everything about a form is in the *Form* menu**, and under the *Form* button in the
   tool row: filling one in, adding fields, changing the fields a document already has,
   their properties and their tab order. The command palette has the same commands.

@@ -217,6 +217,7 @@ export const MENU_LAYOUT: LayoutSection[] = [
       "edit.drawArrow",
       "edit.drawPolygon",
       "edit.drawPolyline",
+      "edit.addLink",
       // After the two shapes, because it is the third thing a drag can place and
       // a reader choosing between them is choosing what appears.
       "edit.addTextBox",

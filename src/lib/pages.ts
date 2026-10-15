@@ -129,7 +129,13 @@ export type MarkKind =
    * it is dragged, moved, renamed, removed and undone as every mark is. Its
    * name is the mark's note and its kind is {@link MarkView.field}.
    */
-  | "field";
+  | "field"
+  /**
+   * A rectangle that goes somewhere when clicked: `MarkKind::Link`. Its target
+   * is its note, a page number or a web address, read when the document is
+   * saved (`link_target` in `save/marks.rs`).
+   */
+  | "link";
 
 /** Which kind of form field a placed field is. `formfields::Kind`'s wire names. */
 export type FieldKind = "text" | "multiline" | "checkbox" | "dropdown" | "radio" | "signature";

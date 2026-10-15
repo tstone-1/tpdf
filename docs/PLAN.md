@@ -18251,7 +18251,19 @@ paste can carry their pixels. Held in the window, not on the system clipboard. E
 `mark_check.py` copies an arrow and pastes it 12 points down and right, and cuts a polygon
 and pastes it back, through the commands.
 
-**Still to build in 7.5:** pictures and links.
+**Done 2026-10-15: links** (`edit.addLink`). `MarkKind::Link` is dragged out as a box is,
+and its target is its note, typed into the box that opens on it and read at the save by
+`save::marks::link_target`: a page number (`3`, `page 3`) becomes `/Dest [page /Fit]`, a web
+address starting with `http://`, `https://`, `mailto:` or `www.` becomes a `/URI` action,
+and anything else, an empty note included, refuses the save and names the page. Only those
+schemes, because a `/URI` is followed by readers that would follow `file:` and
+`javascript:` as readily. Written with `/Border [0 0 0]` and no appearance; the overlay draws
+a dashed frame until the save. Evidence: `links::scan` reads a saved page link and web link
+back as the viewer will; `mark_check.py` adds one through the command and its target through
+the box. Not measured: following a created link in the window after reopening, which the
+links phase of the viewer check covers for a document's own links.
+
+**Still to build in 7.5:** pictures.
 
 SumatraPDF makes these and tpdf does not:
 

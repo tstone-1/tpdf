@@ -13265,3 +13265,148 @@ fn an_arrows_head_is_inside_its_rectangle() {
         );
     }
 }
+
+#[test]
+fn a_links_note_names_a_page_or_a_web_address_and_nothing_else() {
+    use super::marks::{link_target, LinkTarget};
+    assert_eq!(link_target("3", 5), Ok(LinkTarget::Page(3)));
+    assert_eq!(link_target(" page 5 ", 5), Ok(LinkTarget::Page(5)));
+    assert_eq!(
+        link_target("https://example.com/a?b=1", 5),
+        Ok(LinkTarget::Web("https://example.com/a?b=1".into()))
+    );
+    assert_eq!(
+        link_target("www.example.com", 5),
+        Ok(LinkTarget::Web("https://www.example.com".into()))
+    );
+    assert_eq!(
+        link_target("mailto:someone@example.com", 5),
+        Ok(LinkTarget::Web("mailto:someone@example.com".into()))
+    );
+    // A page the document does not have, nothing at all, and the schemes a
+    // reader would follow without meaning to: `javascript:` and `file:`.
+    for refused in [
+        "0",
+        "6",
+        "",
+        "javascript:alert(1)",
+        "file:///etc/passwd",
+        "https://",
+        "https://exa mple.com",
+        "somewhere",
+    ] {
+        assert!(link_target(refused, 5).is_err(), "{refused:?} was taken");
+    }
+    let long = format!(
+        "https://example.com/{}",
+        "a".repeat(super::marks::LINK_ADDRESS_MAX)
+    );
+    assert!(
+        link_target(&long, 5).is_err(),
+        "an address past the bound was taken"
+    );
+}
+
+#[test]
+fn a_link_is_written_with_no_border_and_its_target() {
+    let scratch = Scratch::new("annots-link");
+    let page_target = {
+        let mut plan = plan_of_kind(MarkKind::Link, one_quad());
+        plan.marks[0].note = "1".to_string();
+        let (doc, _) = written_link(&plan, &scratch);
+        let annotation = written_annotation(&doc);
+        assert_eq!(
+            annotation.get(b"Subtype").and_then(Object::as_name).ok(),
+            Some(b"Link".as_slice())
+        );
+        assert_eq!(
+            annotation
+                .get(b"Border")
+                .and_then(Object::as_array)
+                .map(Vec::len)
+                .ok(),
+            Some(3)
+        );
+        assert!(
+            annotation.get(b"A").is_err(),
+            "a page link carries an action"
+        );
+        let dest = annotation
+            .get(b"Dest")
+            .and_then(Object::as_array)
+            .expect("a /Dest")
+            .clone();
+        let page = doc.get_pages().into_values().next().expect("a page");
+        assert_eq!(
+            dest[0].as_reference().ok(),
+            Some(page),
+            "the /Dest names the page"
+        );
+        dest
+    };
+    assert_eq!(page_target.len(), 2);
+
+    let mut plan = plan_of_kind(MarkKind::Link, one_quad());
+    plan.marks[0].note = "https://example.com/".to_string();
+    let (doc, _) = written_link(&plan, &scratch);
+    let action = written_annotation(&doc)
+        .get(b"A")
+        .and_then(Object::as_dict)
+        .expect("an action")
+        .clone();
+    assert_eq!(
+        action.get(b"S").and_then(Object::as_name).ok(),
+        Some(b"URI".as_slice())
+    );
+    assert_eq!(
+        action.get(b"URI").and_then(Object::as_str).ok(),
+        Some(b"https://example.com/".as_slice())
+    );
+}
+
+#[test]
+fn a_link_that_goes_nowhere_is_refused_rather_than_written() {
+    let scratch = Scratch::new("annots-link-refused");
+    for note in ["", "javascript:alert(1)", "2"] {
+        let mut plan = plan_of_kind(MarkKind::Link, one_quad());
+        plan.marks[0].note = note.to_string();
+        let source = scratch.join("in.pdf");
+        let out = scratch.join("out.pdf");
+        std::fs::write(&source, document_with_annots(AnnotShape::Absent)).expect("write fixture");
+        let refused = copy_here(&source, &plan, &out, None);
+        assert!(refused.is_err(), "a link to {note:?} was saved");
+    }
+}
+
+/// The reopened document a plan with one link was saved to.
+fn written_link(plan: &Plan, scratch: &Scratch) -> (Document, ()) {
+    let source = scratch.join("in.pdf");
+    let out = scratch.join("out.pdf");
+    std::fs::write(&source, document_with_annots(AnnotShape::Absent)).expect("write fixture");
+    copy_here(&source, plan, &out, None).expect("save");
+    (Document::load(&out).expect("reopen"), ())
+}
+
+#[test]
+fn a_saved_link_is_read_back_as_a_link_by_the_scan_the_viewer_uses() {
+    // The other end of the file: `links::scan` is what a reopened document's
+    // links come from, so a link this writer makes and that reader cannot
+    // follow would be a rectangle that does nothing.
+    let scratch = Scratch::new("annots-link-scan");
+    for (note, web) in [("1", false), ("https://example.com/path", true)] {
+        let mut plan = plan_of_kind(MarkKind::Link, one_quad());
+        plan.marks[0].note = note.to_string();
+        let source = scratch.join("in.pdf");
+        let out = scratch.join("out.pdf");
+        std::fs::write(&source, document_with_annots(AnnotShape::Absent)).expect("write fixture");
+        copy_here(&source, &plan, &out, None).expect("save");
+        let bytes = std::fs::read(&out).expect("read back");
+        let found = crate::links::scan(&bytes, 1, None).expect("scan");
+        assert_eq!(found.items.len(), 1, "{note:?}: one link");
+        match (&found.items[0].target, web) {
+            (crate::outline::Target::Page { page, .. }, false) => assert_eq!(*page, 0),
+            (crate::outline::Target::Web { host, .. }, true) => assert_eq!(host, "example.com"),
+            (other, _) => panic!("{note:?} read back as {other:?}"),
+        }
+    }
+}

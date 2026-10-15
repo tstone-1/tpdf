@@ -63,6 +63,7 @@ export function notCopied(kind: MarkKind): string | null {
     case "polygon":
     case "polyline":
     case "stamp":
+    case "link":
       return null;
   }
 }

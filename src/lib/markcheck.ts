@@ -481,5 +481,30 @@ async function run(host: MarkCheckHost): Promise<void> {
     } else {
       report.skip("a cut polygon leaves the page, and pastes back as a polygon", "no polygon was made");
     }
+
+    // --- A link, and where it goes ---------------------------------------
+    //
+    // Dragged like a box; its target is typed in the box that opens on it,
+    // and reaches the model as the link's note, which a save reads.
+    check("the add-link command runs and arms the pointer",
+      host.run("edit.addLink") && viewer.drawArmed === "link", `armed: ${viewer.drawArmed}`);
+    before = new Set(host.marks().map((mark) => mark.id));
+    const corner = { x: low.x + 200, y: low.y - 120 };
+    drag(root, corner, { x: corner.x + 100, y: corner.y + 30 });
+    await settle(() => added(before, host.marks()) !== null);
+    const link = added(before, host.marks());
+    const opened = link !== null && (await settle(() => viewer.markOpen === link.id));
+    if (opened) {
+      const field = viewer.markNoteField;
+      field.value = "https://example.com/";
+      field.dispatchEvent(new Event("input", { bubbles: true }));
+      viewer.closeMark();
+    }
+    const target = link && (await settle(() => host.marks().find((mark) => mark.id === link.id)?.note === "https://example.com/"));
+    check(
+      "a link's target, typed in its box, reaches the model as its note",
+      link?.kind === "link" && opened && target === true,
+      link ? `a ${link.kind}${opened ? "" : " whose box did not open"}; note ${JSON.stringify(host.marks().find((mark) => mark.id === link.id)?.note)}` : "the model gained nothing",
+    );
   }
 }

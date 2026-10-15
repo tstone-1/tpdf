@@ -1937,4 +1937,32 @@ ROWS += [
         "        out.push_str(if kind == MarkKind::Polyline {",
         "a_polygon_closes_and_an_arrow_has_a_head",
     ),
+    Mutation(
+        "link: follow a javascript: address",
+        "src/save/marks.rs",
+        '    let scheme = ["http://", "https://", "mailto:"]',
+        '    let scheme = ["http://", "https://", "mailto:", "javascript:"]',
+        "a_links_note_names_a_page_or_a_web_address_and_nothing_else",
+    ),
+    Mutation(
+        "link: take page nought",
+        "src/save/marks.rs",
+        "            Ok(page) if (1..=pages).contains(&page) => Ok(LinkTarget::Page(page)),",
+        "            Ok(page) if (0..=pages).contains(&page) => Ok(LinkTarget::Page(page.max(1))),",
+        "a_links_note_names_a_page_or_a_web_address_and_nothing_else",
+    ),
+    Mutation(
+        "link: drawn with a border",
+        "src/save/marks.rs",
+        '            dictionary.set("Border", Object::Array(vec![0.into(), 0.into(), 0.into()]));\n',
+        "",
+        "a_link_is_written_with_no_border_and_its_target",
+    ),
+    Mutation(
+        "link: no bound on an address",
+        "src/save/marks.rs",
+        "        && address.len() <= LINK_ADDRESS_MAX\n",
+        "",
+        "a_links_note_names_a_page_or_a_web_address_and_nothing_else",
+    ),
 ]

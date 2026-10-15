@@ -248,6 +248,8 @@ pub(super) fn write_marks(
     doc: &mut Document,
     marks: &[PlannedMark],
     sites: &[MarkSite],
+    // The page objects in the plan's order, which a link to a page names.
+    pages: &[ObjectId],
     _replies_were_checked: RepliesChecked,
 ) -> Result<MarksWritten, String> {
     for (mark, site) in marks.iter().zip(sites) {
@@ -317,7 +319,36 @@ pub(super) fn write_marks(
                 shown.turns,
             ))
         };
-        let dictionary = mark_dictionary(mark, page, &quads, &strokes, rect, appearance);
+        let mut dictionary = mark_dictionary(mark, page, &quads, &strokes, rect, appearance);
+        if mark.kind == MarkKind::Link {
+            // No border, which a reader would otherwise draw round it, and
+            // where it goes: a page as `/Dest`, a web address as a `/URI`
+            // action, which every reader asks about before following.
+            dictionary.set("Border", Object::Array(vec![0.into(), 0.into(), 0.into()]));
+            match link_target(&mark.note, pages.len())
+                .map_err(|why| format!("a link on page {}: {why}", mark.at + 1))?
+            {
+                LinkTarget::Page(number) => {
+                    let target = pages[number - 1];
+                    dictionary.set(
+                        "Dest",
+                        Object::Array(vec![
+                            Object::Reference(target),
+                            Object::Name(b"Fit".to_vec()),
+                        ]),
+                    );
+                }
+                LinkTarget::Web(address) => {
+                    dictionary.set(
+                        "A",
+                        Object::Dictionary(dictionary! {
+                            "S" => "URI",
+                            "URI" => Object::string_literal(address),
+                        }),
+                    );
+                }
+            }
+        }
         let annotation = doc.add_object(dictionary);
         attach(doc, page, annots, annotation)?;
     }
@@ -658,6 +689,7 @@ pub(super) fn subtype(kind: MarkKind) -> &'static [u8] {
         // completeness: `write_marks` hands a field to `formfields::place`,
         // which writes the dictionary, and never asks this.
         MarkKind::Field => b"Widget",
+        MarkKind::Link => b"Link",
     }
 }
 
@@ -787,6 +819,8 @@ fn paint(kind: MarkKind) -> Paint {
         MarkKind::Signature => Paint::Image,
         // Its appearance is the form's business: `formfields::place` draws it.
         MarkKind::Field => Paint::None,
+        // A link draws nothing: it is a place to click, with `/Border [0 0 0]`.
+        MarkKind::Link => Paint::None,
     }
 }
 
@@ -1010,6 +1044,8 @@ pub(super) fn line_rect(kind: MarkKind, bottom: f64, top: f64) -> (f64, f64) {
         MarkKind::Ellipse => (bottom, full),
         // Not reached: a field has no appearance stream of this file's.
         MarkKind::Field => (bottom, full),
+        // Not reached: a link draws nothing.
+        MarkKind::Link => (bottom, full),
     }
 }
 
@@ -1940,6 +1976,72 @@ fn arrow_wings(strokes: &[Vec<(f64, f64)>], width: f64) -> Option<[(f64, f64); 3
         )
     };
     Some([wing(1.0), *tip, wing(-1.0)])
+}
+
+/// Where a link goes, read from its note.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum LinkTarget {
+    /// A page of the saved document, counted from 1.
+    Page(usize),
+    /// A web address, as it will be written.
+    Web(String),
+}
+
+/// The longest web address a link takes, in bytes. Far past any real one; it
+/// bounds what a note can put in the file as an action.
+pub const LINK_ADDRESS_MAX: usize = 2000;
+
+/// Where a link's note says it goes, in a document of `pages` pages.
+///
+/// A page is a number, or `page` and a number: `12`, `page 12`. A web address
+/// starts with `http://`, `https://` or `mailto:`, or with `www.`, which is
+/// taken as `https://www.`. Nothing else, because a `/URI` action is followed
+/// by readers that would also follow `file:` or `javascript:`: only addresses
+/// a reader means to give are written.
+///
+/// # Errors
+///
+/// What the reader should write instead, for an empty note, a page the
+/// document does not have, and anything that is neither.
+pub fn link_target(note: &str, pages: usize) -> Result<LinkTarget, String> {
+    let text = note.trim();
+    let number = text
+        .strip_prefix("page ")
+        .or_else(|| text.strip_prefix("Page "))
+        .unwrap_or(text)
+        .trim();
+    if !number.is_empty() && number.bytes().all(|b| b.is_ascii_digit()) {
+        return match number.parse::<usize>() {
+            Ok(page) if (1..=pages).contains(&page) => Ok(LinkTarget::Page(page)),
+            _ => Err(format!(
+                "it goes to page {number}, and the document has {pages}"
+            )),
+        };
+    }
+    let lower = text.to_ascii_lowercase();
+    let address = if lower.starts_with("www.") {
+        format!("https://{text}")
+    } else {
+        text.to_string()
+    };
+    let lower = address.to_ascii_lowercase();
+    let scheme = ["http://", "https://", "mailto:"]
+        .iter()
+        .find(|scheme| lower.starts_with(**scheme));
+    let ok = scheme.is_some_and(|scheme| address.len() > scheme.len())
+        && address.len() <= LINK_ADDRESS_MAX
+        && address.chars().all(|c| c.is_ascii_graphic());
+    if ok {
+        Ok(LinkTarget::Web(address))
+    } else if text.is_empty() {
+        Err("it goes nowhere: write a page number or a web address in its box".to_string())
+    } else {
+        Err(
+            "a link goes to a page number, or to a web address starting with http://, \
+             https:// or mailto:"
+                .to_string(),
+        )
+    }
 }
 
 /// Appends an annotation to a page's `/Annots`, whatever shape that array is in.

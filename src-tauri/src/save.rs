@@ -2163,9 +2163,14 @@ pub fn append_update(
     // rotation and no crop on this path --- `append_ready` refuses a plan
     // carrying either --- so there is no later step for the token to gate. The
     // binding says so out loud, because `#[must_use]` is right to ask.
-    let _marks_are_all_this_path_writes =
-        write_marks(&mut incremental.new_document, &plan.marks, &sites, replies)
-            .map_err(Refusal::from)?;
+    let _marks_are_all_this_path_writes = write_marks(
+        &mut incremental.new_document,
+        &plan.marks,
+        &sites,
+        &sheet,
+        replies,
+    )
+    .map_err(Refusal::from)?;
 
     // **Comments that were already in the file, overridden in place.** An
     // incremental update writes a *new version of an object*, which is exactly
@@ -4174,7 +4179,7 @@ fn rewrite(plan: &Plan, checked: Checked, job: Job) -> Result<Vec<u8>, Refusal> 
             .get(mark.at as usize)
             .map_or(0, |page| page.turns % 4);
     }
-    let written = write_marks(&mut doc, &plan.marks, &sites, replies)?;
+    let written = write_marks(&mut doc, &plan.marks, &sites, &order, replies)?;
 
     // The order Tab takes a page's fields in. Every page when the plan asks,
     // and otherwise a page this write added a field to, if its fields were in
