@@ -7007,7 +7007,9 @@ Without authentication `releases/latest` is v26.10.20, the `.dmg`, the `-setup.e
 printed no finding and `brew livecheck` reads 26.10.20. An installed 26.10.19 updated
 itself: `update_check_mac.py` 12/12 over SSH on a second Mac and `update_check.py` 17/17 on
 the Windows build computer, and each `--control no-press` failed its seven checks and
-nothing else. winget was not updated.
+nothing else. winget was not updated. Step 7's pass after the release, `--since v26.10.19
+--resume` on `543008f4`, found no survivor: 498 of 498 Rust mutations caught and 30 skipped
+as Linux- or Windows-only, 594 of 594 frontend, and 38 of 38 in `mutate_python.py`.
 
 **26.10.20 verification, 2026-10-15:** a release of fixes from the codebase review of that
 day, cut the day after 26.10.19. All 32 gates passed on macOS arm64 on the release tree and
