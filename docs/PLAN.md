@@ -18111,10 +18111,12 @@ column, and a column count other than two is one (`session.rs`, `spreads.ts`).
   layouts* in `menubar.test.ts`; the mutations are the `spread:` and `spreads:` rows in
   `scripts/mutation_rows/frontend/f05_latest.py`.
 
-**Not checked yet**, and each needs a window: a real document in each layout on the three
-platforms; *Scroll both sides together* with one side in facing and the other not (it
-counts pages, so it should hold); the 95 % sharp scroll criterion of section 4 in facing at
-fit page.
+**Checked in a window**, on the Mac mini, 2026-10-15 (`viewercheck/spreads.ts`, 344 of 344):
+both pages of a row came 100 % sharp under facing; the middle of the screen read 40 %
+lightness, the surround's 40 %, between pages at 89 % and 88 %; back at one page to a row
+it read 91 %. The four commands ran from the palette. **Not checked yet**: Windows and
+Linux; *Scroll both sides together* with one side in facing and the other not (it counts
+pages, so it should hold); section 4's scroll criterion in facing at fit page.
 
 **Still to build in 7.2:**
 

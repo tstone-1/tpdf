@@ -1924,6 +1924,10 @@ export async function appCommandChecks(
     // the install it follows.
     "app.restartForUpdate",
     "find.inSelection",
+    // A document opens one page to a row, so that layout is the one not
+    // offered, and right to left needs two pages to a row.
+    "view.singlePage",
+    "view.rightToLeft",
     // New text fields get a line round them here, so turning that on is not
     // offered. Found missing with the two above.
     "edit.fieldBorderOn",
