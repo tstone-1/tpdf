@@ -49,4 +49,22 @@ export async function closingCheck(host: OpenCheckHost, expected: string, report
   report.check("Reopen closed tab brings back the one closed last", await until("2,3"), names());
   host.run("file.reopenClosedTab");
   report.check("and again, the one closed before it", await until("2,3,1"), names());
+
+  // The three copies are first.pdf, second.pdf and third.pdf in one folder,
+  // so from the first the next is the second, which is open already: it is
+  // shown, and the tab the reader came from is closed.
+  report.emit("[closing] stepping through the folder");
+  await host.activate(host.tabs().find((tab) => tab.path === first)!.id);
+  await host.idle();
+  host.run("file.nextInFolder");
+  report.check("the next PDF in the folder moves the tab on", await until("2,3"), names());
+  // The tab list changes before the close behind it finishes, and a command
+  // run while a tab is closing is not offered.
+  await host.openings();
+  await host.idle();
+  host.run("file.previousInFolder");
+  const back = await until("3,1");
+  const said = document.querySelector('[data-testid="problem"]')?.textContent?.trim() ?? "";
+  report.check("and the previous one moves it back", back,
+    `${names()}; in front: ${host.path()}${said ? `; said: ${said}` : ""}`);
 }

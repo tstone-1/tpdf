@@ -266,8 +266,10 @@ project conventions.
   *Close other tabs*, *Close tabs to the left* and *Close tabs to the right* close several
   at once, from the tab in front or from a tab's right-click menu, and ask once about
   unsaved changes. *Reopen closed tab* (Ctrl+Shift+T, ⌘⇧T on macOS) opens the document
-  closed last, where you left it.
-  <!-- built: file.close file.closeAll view.nextTab view.previousTab view.tabLabelsLarger view.tabLabelsSmaller view.tabLabelsDefault file.closeOtherTabs file.closeTabsLeft file.closeTabsRight file.reopenClosedTab -->
+  closed last, where you left it. *Open the next PDF in this folder* and *Open the previous
+  PDF in this folder* step through a folder in the order the file manager shows it; the tab
+  moves on unless it has unsaved changes.
+  <!-- built: file.nextInFolder file.previousInFolder file.close file.closeAll view.nextTab view.previousTab view.tabLabelsLarger view.tabLabelsSmaller view.tabLabelsDefault file.closeOtherTabs file.closeTabsLeft file.closeTabsRight file.reopenClosedTab -->
 - Two documents side by side. *Show side by side with...* asks for the other open
   document by name; a tab's right-click menu moves that tab to the right or left side,
   or to the start or end of its row, and a tab dragged over the pages is dropped on the

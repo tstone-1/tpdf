@@ -127,6 +127,8 @@ export const MENU_LAYOUT: LayoutSection[] = [
       "file.closeTabsLeft",
       "file.closeTabsRight",
       "file.reopenClosedTab",
+      "file.nextInFolder",
+      "file.previousInFolder",
       "file.reopenLastTabs",
       "file.reopenTabsAtLaunch",
       "file.reopenLastDocumentAtLaunch",

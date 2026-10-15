@@ -822,3 +822,18 @@ ROWS += [
         '    const title = link ? linkTitle(link.target) : this.linkTitleShown;',
         "says where the link under the pointer goes, and goes away off it"),
 ]
+
+# --- the next and previous PDF in the folder, 2026-10-15 ---------------------
+ROWS += [
+    Mutation("folder order: digits as text", "src/lib/folderorder.ts",
+        'new Intl.Collator(undefined, { numeric: true, sensitivity: "base" });',
+        'new Intl.Collator(undefined, { sensitivity: "base" });',
+        "sorts by name as the file manager does: numbers by value, case ignored"),
+    Mutation("folder order: go round at the end", "src/lib/folderorder.ts",
+        "  return sorted[at + step] ?? null;",
+        "  return sorted[(at + step + sorted.length) % sorted.length] ?? null;",
+        "stops at either end rather than going round"),
+    Mutation("folder order: a missing document starts from the first", "src/lib/folderorder.ts",
+        "  if (at < 0) return null;\n", "",
+        "finds nothing for a document the folder no longer has"),
+]

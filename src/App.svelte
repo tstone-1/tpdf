@@ -167,6 +167,7 @@
   import { placeOfSpread, spreadOfPlace } from "./lib/spreads";
   import { ScreenMode, type Screen } from "./lib/fullscreen";
   import { ClosedTabs, tabsToClose, type CloseWhich } from "./lib/tabclose";
+  import { neighbourIn } from "./lib/folderorder";
   import {
     canOrderTabs, placing, readFieldBorder, writeFieldBorder,
   } from "./lib/fieldnames";
@@ -878,6 +879,32 @@
     for (const id of ids) await closeTab(id, true);
   }
 
+  /**
+   * Opens the next or previous PDF in the folder of the document in front,
+   * and closes the tab it came from unless that has unsaved work or is one of
+   * two views of its document: stepping through a folder moves the tab on.
+   */
+  async function openInFolder(step: 1 | -1): Promise<void> {
+    const from = openView;
+    const tab = from === null ? undefined : tabs.find(from);
+    if (from === null || !tab) return;
+    let paths: string[];
+    try {
+      paths = await call("folder_pdfs", { path: tab.path });
+    } catch (error) {
+      say(String(error));
+      return;
+    }
+    const next = neighbourIn(paths, tab.path, step);
+    if (next === null) {
+      say(step > 0 ? "This is the last PDF in its folder." : "This is the first PDF in its folder.");
+      return;
+    }
+    const keep = tab.edits.state.dirty || twinsOf(tabs.all, tab).length > 0;
+    await openPath(next);
+    if (!keep && tabs.find(from) === tab && tabs.forPath(next) !== undefined) await closeTab(from);
+  }
+
   /** Opens again the document closed most recently, where it was left. */
   async function reopenClosedTab(): Promise<void> {
     const path = closedTabs.latest((one) => tabs.forPath(one) !== undefined);
@@ -1493,6 +1520,7 @@
     closeTabs: (which: CloseWhich) => { if (openView !== null) void closeTabs(tabsClosedBy(openView, which)); },
     canReopenClosedTab: () => closedTabs.latest((path) => tabs.forPath(path) !== undefined) !== null,
     reopenClosedTab: () => void reopenClosedTab(),
+    openInFolder: (step: 1 | -1) => void openInFolder(step),
     sides: () => ({
       split: panes.split,
       focused: panes.focused,
@@ -4874,6 +4902,7 @@
           saveSuggestions: () => signSaves?.asked ?? [],
           pendingImport: () => pendingImports.current(edits?.doc ?? null),
           idle: async () => { await pendingEdit; await formLayer?.settle(); await textEditor?.settle(); await documentTasks.idle(); await tick(); },
+          openings: () => opens.run(async () => {}),
         })
       )
         return;

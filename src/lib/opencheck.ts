@@ -135,6 +135,12 @@ export interface OpenCheckHost {
   /** Every name a signing's save panel was asked to suggest, in order. */
   saveSuggestions: () => readonly string[];
   idle: () => Promise<void>;
+  /**
+   * Waits for the opens and closes already queued to finish. Not part of
+   * {@link idle}, because a phase that leaves a dialog open inside one would
+   * then wait for itself.
+   */
+  openings: () => Promise<void>;
 }
 
 const report = new Report();

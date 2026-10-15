@@ -26,6 +26,40 @@ pub async fn reveal_file(path: String) -> Result<(), String> {
     reveal_local_file(&path)
 }
 
+/// How many entries of a folder [`folder_pdfs`] reads before it stops.
+const FOLDER_ENTRIES: usize = 10_000;
+
+/// The PDF files in the folder `path` is in, as full paths, for the next and
+/// previous file in the folder.
+///
+/// Names only: nothing is opened or read, so this runs in the app process as
+/// the open dialog does. Bounded, because a folder can hold anything; a PDF
+/// past the bound is not offered. The order is the frontend's (`folderorder.ts`),
+/// which sorts as the file manager does.
+#[tauri::command]
+pub async fn folder_pdfs(path: String) -> Result<Vec<String>, String> {
+    pdfs_beside(Path::new(&path))
+}
+
+fn pdfs_beside(path: &Path) -> Result<Vec<String>, String> {
+    let folder = path.parent().ok_or("The document has no folder")?;
+    let entries =
+        std::fs::read_dir(folder).map_err(|error| format!("Could not read the folder: {error}"))?;
+    let mut found = Vec::new();
+    for entry in entries.take(FOLDER_ENTRIES).flatten() {
+        let candidate = entry.path();
+        let pdf = candidate
+            .extension()
+            .is_some_and(|extension| extension.eq_ignore_ascii_case("pdf"));
+        if pdf && candidate.is_file() {
+            if let Some(text) = candidate.to_str() {
+                found.push(text.to_owned());
+            }
+        }
+    }
+    Ok(found)
+}
+
 #[cfg(windows)]
 fn reveal_local_file(path: &Path) -> Result<(), String> {
     use std::os::windows::process::CommandExt;
@@ -815,4 +849,31 @@ pub async fn document_differs(
     })
     .await
     .map_err(|e| format!("the file check did not run: {e}"))
+}
+
+#[cfg(test)]
+mod folder_tests {
+    use super::pdfs_beside;
+    use crate::testutil::TempDir;
+
+    #[test]
+    fn lists_the_pdfs_beside_a_document_and_nothing_else() {
+        let dir = TempDir::new("folder");
+        for name in ["a.pdf", "b.PDF", "notes.txt", "c.pdf.bak"] {
+            std::fs::write(dir.join(name), b"x").unwrap();
+        }
+        std::fs::create_dir(dir.join("d.pdf")).unwrap();
+        let mut found: Vec<String> = pdfs_beside(&dir.join("a.pdf"))
+            .unwrap()
+            .into_iter()
+            .map(|path| path.rsplit(['/', '\\']).next().unwrap().to_owned())
+            .collect();
+        found.sort();
+        assert_eq!(found, ["a.pdf", "b.PDF"]);
+    }
+
+    #[test]
+    fn refuses_a_path_with_no_folder() {
+        assert!(pdfs_beside(std::path::Path::new("a.pdf")).is_err());
+    }
 }

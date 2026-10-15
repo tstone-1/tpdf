@@ -38,6 +38,8 @@ have the binary.)
 - **Close other tabs, Close tabs to the left and right, and Reopen closed tab.** From the tab
   in front or from a tab's right-click menu; unsaved changes are asked about once. *Reopen
   closed tab* (Ctrl+Shift+T, ⌘⇧T on macOS) opens the document closed last, where you left it.
+- **The next and previous PDF in the folder**, in the order the file manager shows them. The
+  tab moves on, unless it has unsaved changes.
 - **A link says where it goes.** With the pointer over a link, its tooltip names the page or
   the web address.
 - **The outline in one step.** *Open every entry of the outline*, *Close every entry of the

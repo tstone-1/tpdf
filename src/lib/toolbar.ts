@@ -187,7 +187,8 @@ export const WINDOW_MENU: MenuSection[] = [
     label: "Documents",
     items: [
       "file.fromPictures", "file.closeAll", "file.closeOtherTabs", "file.closeTabsLeft",
-      "file.closeTabsRight", "file.reopenClosedTab", "file.reopenLastTabs", "file.clearRecents",
+      "file.closeTabsRight", "file.reopenClosedTab", "file.nextInFolder", "file.previousInFolder",
+      "file.reopenLastTabs", "file.clearRecents",
     ],
   },
   {

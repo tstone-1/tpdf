@@ -192,6 +192,8 @@ export interface AppActions {
   canReopenClosedTab(): boolean;
   /** Open again the document closed most recently. */
   reopenClosedTab(): void;
+  /** Opens the next (`1`) or previous (`-1`) PDF in the folder of the one in front. */
+  openInFolder(step: 1 | -1): void;
   /** Whether the document in front has an outline. */
   hasOutline(): boolean;
   /**
@@ -742,6 +744,20 @@ export function registerAppCommands(
       title: "Close tabs to the right",
       enabled: () => withDocument() && actions.canCloseTabs("right"),
       run: () => actions.closeTabs("right"),
+    },
+    // Through a folder, a document at a time: the tab moves on rather than a
+    // tab being added for each, unless it has unsaved work.
+    {
+      id: "file.nextInFolder",
+      title: "Open the next PDF in this folder",
+      enabled: withDocument,
+      run: () => actions.openInFolder(1),
+    },
+    {
+      id: "file.previousInFolder",
+      title: "Open the previous PDF in this folder",
+      enabled: withDocument,
+      run: () => actions.openInFolder(-1),
     },
     {
       // A browser's chord, where a reader looks for it. The document opens

@@ -361,6 +361,7 @@ export async function appCommandChecks(
     closeTabs: (which: string) => fired.push(`closeTabs:${which}`),
     canReopenClosedTab: () => false,
     reopenClosedTab: () => fired.push("reopenClosedTab"),
+    openInFolder: (step: number) => fired.push(`openInFolder:${step}`),
     hasOutline: () => true,
     arrangeOutline: (how: string) => fired.push(`arrangeOutline:${how}`),
     sides: () => ({ split: false, focused: "left" as const, others: [] as string[] }),
@@ -1683,6 +1684,10 @@ export async function appCommandChecks(
     "file.closeTabsLeft": "needs other tabs; tabs_check.py --phase closing drives it",
     "file.closeTabsRight": "needs other tabs; tabs_check.py --phase closing drives it",
     "file.reopenClosedTab": "needs a tab closed earlier; tabs_check.py --phase closing drives it",
+    // Opening another file ends this phase's document; `folderorder.test.ts`
+    // holds the order and the Rust tests the listing.
+    "file.nextInFolder": "opens another document, which would end the run",
+    "file.previousInFolder": "opens another document, which would end the run",
     "edit.fieldBorderOn": "a stored preference; fieldnames.test.ts and appcommands.test.ts cover the pair",
     "edit.fieldBorderOff": "a stored preference; tabs_check.py --phase fields drives it",
     "edit.formEditOn": "needs a document with a form; appcommands.test.ts and savedfields.test.ts",

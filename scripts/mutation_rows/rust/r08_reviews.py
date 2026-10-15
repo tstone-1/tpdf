@@ -1867,4 +1867,25 @@ ROWS += [
         "a_child_with_no_engine_answers_why",
         only_on="linux",
     ),
+    Mutation(
+        "folder: offer every file, not only PDFs",
+        "src/commands/document.rs",
+        "        if pdf && candidate.is_file() {",
+        "        if candidate.is_file() {",
+        "lists_the_pdfs_beside_a_document_and_nothing_else",
+    ),
+    Mutation(
+        "folder: offer a folder named like a PDF",
+        "src/commands/document.rs",
+        "        if pdf && candidate.is_file() {",
+        "        if pdf {",
+        "lists_the_pdfs_beside_a_document_and_nothing_else",
+    ),
+    Mutation(
+        "folder: match the extension's case",
+        "src/commands/document.rs",
+        '            .is_some_and(|extension| extension.eq_ignore_ascii_case("pdf"));',
+        '            .is_some_and(|extension| extension == "pdf");',
+        "lists_the_pdfs_beside_a_document_and_nothing_else",
+    ),
 ]

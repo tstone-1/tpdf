@@ -76,6 +76,8 @@ const NAMED: Record<string, readonly string[]> = {
   "view.outlineExpandAll": ["expand all"],
   "view.outlineCollapseAll": ["collapse all"],
   "view.outlineToCurrent": ["where am i"],
+  "file.nextInFolder": ["next file", "directory"],
+  "file.previousInFolder": ["previous file", "directory"],
   "view.presentation": ["slideshow", "slides", "presentation mode"],
   "view.showOutline": ["bookmarks", "contents", "table of contents", "toc"],
   "view.showThumbnails": ["pages panel"],

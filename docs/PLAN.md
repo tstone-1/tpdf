@@ -18190,13 +18190,18 @@ producer's `/Count` sign said; tests in `outline.test.ts`.
 pointer goes: *Go to page N*, or *Open* and the address, its host in punycode as the
 confirmation shows it (`linkTitle` in `links.ts`, set in `onHover`; `viewerhover.test.ts`).
 
+**Done: the next and previous PDF in the folder** (`file.nextInFolder`,
+`file.previousInFolder`). `folder_pdfs` (`commands/document.rs`) lists the folder's PDF
+files by name in the app process, nothing opened, at most 10,000 entries read;
+`folderorder.ts` sorts them as Finder and Explorer do (case and accents ignored, digits by
+value) and stops at either end. The tab moves on: the one it came from is closed unless it
+has unsaved work or is one of two views of its document.
+
 **Still to build in 7.4:**
 
-- Next and previous file in the folder: the app process lists the folder (names only, no
-  parsing), sorted the way the platform's file manager sorts, PDFs only.
 - Favourites: a named place (document path, page, optional name) kept in the settings, listed
   in the sidebar beside the outline and in the palette; next and previous favourite.
-- Commands: `file.nextInFolder`, `file.previousInFolder`, `nav.addFavourite`, `nav.nextFavourite`,
+- Commands: `nav.addFavourite`, `nav.nextFavourite`,
   `nav.previousFavourite`.
 - Exit: unit tests in the new `src/lib` modules (the tab history and the favourites store are
   state, so they start outside `App.svelte`); a window check per command.
