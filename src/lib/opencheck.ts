@@ -37,6 +37,7 @@ import { recogniseCheck } from "./recognisecheck";
 import { signingCheck } from "./signingcheck";
 import { screenshotCheck } from "./screenshotcheck";
 import { screenCheck } from "./screencheck";
+import { closingCheck } from "./closecheck";
 
 import { pause, Report, settle } from "./checkreport";
 import { basename } from "./paths";
@@ -1159,6 +1160,7 @@ async function run(host: OpenCheckHost, phase: string, expected: string): Promis
     case "fields-turned": await turnedFieldCheck(host, expected, report); break;
     case "screenshots": await screenshotCheck(host, expected, report); break;
     case "screen": await screenCheck(host, expected, report); break;
+    case "closing": await closingCheck(host, expected, report); break;
     case "forms": {
       const check = (name: string, ok: boolean) => report.check(name, ok, "form workflow");
       const [first, second] = expected.split("|");

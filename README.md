@@ -260,7 +260,11 @@ project conventions.
   close it, or close all tabs, which asks once if any of them has unsaved changes.
   The tab labels' size is adjustable: Larger, Smaller and Default tab labels, in the
   View menu and the command palette; the choice is remembered.
-  <!-- built: file.close file.closeAll view.nextTab view.previousTab view.tabLabelsLarger view.tabLabelsSmaller view.tabLabelsDefault -->
+  *Close other tabs*, *Close tabs to the left* and *Close tabs to the right* close several
+  at once, from the tab in front or from a tab's right-click menu, and ask once about
+  unsaved changes. *Reopen closed tab* (Ctrl+Shift+T, ⌘⇧T on macOS) opens the document
+  closed last, where you left it.
+  <!-- built: file.close file.closeAll view.nextTab view.previousTab view.tabLabelsLarger view.tabLabelsSmaller view.tabLabelsDefault file.closeOtherTabs file.closeTabsLeft file.closeTabsRight file.reopenClosedTab -->
 - Two documents side by side. *Show side by side with...* asks for the other open
   document by name; a tab's right-click menu moves that tab to the right or left side,
   or to the start or end of its row, and a tab dragged over the pages is dropped on the

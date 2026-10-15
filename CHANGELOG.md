@@ -35,6 +35,9 @@ have the binary.)
 - **Full screen and presentation.** *Full screen* (F11) hides everything but the document.
   *Present one page at a time* shows one page at a time on black; a click, Space or an arrow
   goes on, and `b` or `w` blanks the screen. Esc leaves either.
+- **Close other tabs, Close tabs to the left and right, and Reopen closed tab.** From the tab
+  in front or from a tab's right-click menu; unsaved changes are asked about once. *Reopen
+  closed tab* (Ctrl+Shift+T, ⌘⇧T on macOS) opens the document closed last, where you left it.
 
 ## [26.10.20] - 2026-10-15
 

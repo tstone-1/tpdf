@@ -166,6 +166,7 @@
   } from "./lib/session";
   import { placeOfSpread, spreadOfPlace } from "./lib/spreads";
   import { ScreenMode, type Screen } from "./lib/fullscreen";
+  import { ClosedTabs, tabsToClose, type CloseWhich } from "./lib/tabclose";
   import {
     canOrderTabs, placing, readFieldBorder, writeFieldBorder,
   } from "./lib/fieldnames";
@@ -837,7 +838,59 @@
     refreshMenu();
   }
 
-  function closeTab(id: ViewId): Promise<void> {
+  /** The documents closed in this session, for *Reopen closed tab*. */
+  const closedTabs = new ClosedTabs();
+
+  /** The tabs in `id`'s strip: its own side's when there are two. */
+  function stripOf(id: ViewId): ViewId[] {
+    const slot = tabRows.find((row) => row.id === id)?.slot;
+    return tabRows.filter((row) => !paneLayout.split || row.slot === slot).map((row) => row.id);
+  }
+
+  /** The tabs `which` closes, counted from the tab `id`. See `tabclose.ts`. */
+  function tabsClosedBy(id: ViewId, which: CloseWhich): ViewId[] {
+    return tabsToClose(tabs.all.map((tab) => tab.view), stripOf(id), id, which);
+  }
+
+  /**
+   * Closes several tabs, asking once about the unsaved work among them, then
+   * one at a time through {@link closeTab}, which knows the two sides and the
+   * two views of one document. Work is unsaved only where every view of the
+   * document is closing: one left open keeps it.
+   */
+  async function closeTabs(ids: ViewId[]): Promise<void> {
+    if (!ids.length) return;
+    const go = await documentTasks.idle().then(() => opens.run(async () => {
+      await settleDocument();
+      const closing = new Set(ids);
+      const unsaved = oneEach(tabs.all.filter((tab) => closing.has(tab.view)))
+        .filter((tab) => tab.edits.state.dirty && twinsOf(tabs.all, tab).every((twin) => closing.has(twin.view)))
+        .map((tab) => basename(tab.path));
+      if (!unsaved.length) return true;
+      return confirmDialog(
+        unsaved.length === 1
+          ? `Discard unsaved changes to ${unsaved[0]}?`
+          : `Discard unsaved changes in ${unsaved.length} documents?`,
+        { title: "Close tabs", kind: "warning", okLabel: "Discard changes", cancelLabel: "Keep open" },
+      );
+    }));
+    if (!go) return;
+    for (const id of ids) await closeTab(id, true);
+  }
+
+  /** Opens again the document closed most recently, where it was left. */
+  async function reopenClosedTab(): Promise<void> {
+    const path = closedTabs.latest((one) => tabs.forPath(one) !== undefined);
+    if (path === null) return;
+    closedTabs.reopened(path);
+    await openPath(path);
+  }
+
+  /**
+   * Closes one tab. `asked` when the caller has already asked about its
+   * unsaved work, as {@link closeTabs} does once for several.
+   */
+  function closeTab(id: ViewId, asked = false): Promise<void> {
     return documentTasks.idle().then(() => opens.run(async () => {
       const tab = tabs.find(id);
       if (!tab) return;
@@ -851,13 +904,14 @@
         // releasing anything: the document, and its unsaved work, stay open in
         // the other.
         const lastView = twinsOf(tabs.all, tab).length === 0;
-        if (lastView && tab.edits.state.dirty && !await confirmDialog(
+        if (lastView && !asked && tab.edits.state.dirty && !await confirmDialog(
           `Discard unsaved changes to ${basename(tab.path)}?`,
           { title: "Close tab", kind: "warning", okLabel: "Discard changes", cancelLabel: "Keep open" },
         )) return;
         if (id === openView) clearActiveDocument();
         panes.closed(id, tabs.all.map((entry) => entry.view));
         tabs.remove(id);
+        if (lastView) closedTabs.closed(tab.path);
         refreshTabs();
         // A teardown refusal must not prevent the next document from mounting.
         if (lastView) await call("close_document", { doc: tab.doc.id }).catch((e) => {
@@ -892,6 +946,7 @@
         )) return;
         const ids = tabs.all.map((tab) => tab.view);
         const handles = oneEach(tabs.all).map((tab) => tab.doc.id);
+        for (const tab of oneEach(tabs.all)) closedTabs.closed(tab.path);
         for (const beside of stage.parked) asDocument(beside, () => unmountDocument());
         bodyHeld = false;
         setSyncScroll(false);
@@ -1434,6 +1489,10 @@
     setDiskChangeMode: (mode) => setDiskChangeMode(mode),
     closeDocument: () => void closeTab(openView),
     closeAllDocuments: () => void closeAllTabs(),
+    canCloseTabs: (which: CloseWhich) => openView !== null && tabsClosedBy(openView, which).length > 0,
+    closeTabs: (which: CloseWhich) => { if (openView !== null) void closeTabs(tabsClosedBy(openView, which)); },
+    canReopenClosedTab: () => closedTabs.latest((path) => tabs.forPath(path) !== undefined) !== null,
+    reopenClosedTab: () => void reopenClosedTab(),
     sides: () => ({
       split: panes.split,
       focused: panes.focused,
@@ -3737,7 +3796,7 @@
     const tab = tabs.find(id);
     if (!tab) return;
     const across = otherSide(panes.sideOf(id));
-    contextMenu?.show(["tab.reveal", "tab.copyPath", "tab.copyName", "---", "tab.moveStart", "tab.moveEnd", "tab.moveSide", "---", "tab.close", "file.closeAll"], { x: event.clientX, y: event.clientY }, [{
+    contextMenu?.show(["tab.reveal", "tab.copyPath", "tab.copyName", "---", "tab.moveStart", "tab.moveEnd", "tab.moveSide", "---", "tab.close", "tab.closeOthers", "tab.closeLeft", "tab.closeRight", "file.closeAll"], { x: event.clientX, y: event.clientY }, [{
       id: "tab.moveStart", title: "Move to start",
       enabled: () => tabs.find(id) === tab && tabs.all.length > 1,
       run: () => { tabs.moveTo(id, "start"); refreshTabs(); },
@@ -3776,7 +3835,12 @@
       id: "tab.close", title: "Close",
       enabled: () => tabs.find(id) === tab && !opening && !documentBusy,
       run: () => closeTab(id),
-    }]);
+    }, ...(["others", "left", "right"] as const).map((which) => ({
+      id: { others: "tab.closeOthers", left: "tab.closeLeft", right: "tab.closeRight" }[which],
+      title: { others: "Close other tabs", left: "Close tabs to the left", right: "Close tabs to the right" }[which],
+      enabled: () => tabs.find(id) === tab && !opening && !documentBusy && tabsClosedBy(id, which).length > 0,
+      run: () => closeTabs(tabsClosedBy(id, which)),
+    }))]);
   }
 
   /**

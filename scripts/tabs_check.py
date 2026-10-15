@@ -49,6 +49,10 @@ panel, which no phase can answer, and both report through the same sentence.
   uv run scripts/tabs_check.py <app> testdata/redact-pages.pdf --phase redact-pages
 --saved-copy keeps the first pass's redacted output, which is a real redacted
 file an independent reader can be pointed at.
+--phase closing opens three documents and closes to the right of the middle one, reopens
+it, closes to the left, closes the others, and reopens the one closed last, reading the
+window's own tab list after each:
+  uv run scripts/tabs_check.py <app> testdata/links.pdf --phase closing
 --phase screen goes full screen and back, presents, blanks the screen with b, leaves with
 Esc, and takes the window out of full screen directly to see tpdf follow. It takes the
 screen it runs on: run it on a machine nobody is working at, with a PDF of two or more pages:
@@ -123,7 +127,7 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("binary", type=Path)
     parser.add_argument("pdf", type=Path)
-    parser.add_argument("--phase", choices=("tabs", "sides", "views", "answers", "form-beside", "tabs-position", "tabs-rotation", "forms", "signatures", "textedit", "textedit-dash", "textedit-cff-unicode", "textedit-cff-ligatures", "textedit-passport", "textedit-agenda", "textedit-agenda-page2", "textedit-factsheet", "textedit-factsheet-body", "textedit-w3c", "textedit-latin1", "textedit-cid-latin1", "textedit-overhang", "textedit-multipage", "textedit-wrapped", "textedit-wide-spacing", "textedit-list-child", "textedit-grow", "textedit-push", "textedit-w9", "textedit-centred", "import", "redact-pages", "sign", "recognise", "protect", "pictures", "compress", "fields", "fields-turned", "screen"), default="tabs")
+    parser.add_argument("--phase", choices=("tabs", "sides", "views", "answers", "form-beside", "tabs-position", "tabs-rotation", "forms", "signatures", "textedit", "textedit-dash", "textedit-cff-unicode", "textedit-cff-ligatures", "textedit-passport", "textedit-agenda", "textedit-agenda-page2", "textedit-factsheet", "textedit-factsheet-body", "textedit-w3c", "textedit-latin1", "textedit-cid-latin1", "textedit-overhang", "textedit-multipage", "textedit-wrapped", "textedit-wide-spacing", "textedit-list-child", "textedit-grow", "textedit-push", "textedit-w9", "textedit-centred", "import", "redact-pages", "sign", "recognise", "protect", "pictures", "compress", "fields", "fields-turned", "screen", "closing"), default="tabs")
     parser.add_argument("--other", type=Path, help="The second file --phase import and --phase answers read")
     parser.add_argument("--identity", help="--phase sign only: the SHA-256 of the signing certificate")
     # 90 s by default; the signing phase waits on a person answering the
@@ -153,8 +157,9 @@ def main() -> int:
             shutil.copyfile(args.other, second)
         else:
             shutil.copyfile(args.pdf, second)
-        if args.phase == "sides":
-            # A third tab, so that a side still has one when its front tab moves.
+        if args.phase in ("sides", "closing"):
+            # A third tab, so that a side still has one when its front tab
+            # moves, and so that a middle tab has one on each side.
             shutil.copyfile(args.pdf, room / "third.pdf")
             copies.append(room / "third.pdf")
         if args.phase == "redact-pages":

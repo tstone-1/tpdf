@@ -41,6 +41,7 @@ import {
 } from "./pageranges";
 import { DISK_CHANGE_MODES, type DiskChangeMode } from "./diskwatch";
 import { PALETTE } from "./markcolors";
+import type { CloseWhich } from "./tabclose";
 import { kindOf, SPREAD_TITLES, withKind, type SpreadKind } from "./spreads";
 import { message, UI_LOCALE, type UiLocale } from "./i18n";
 import { NIBS } from "./marknibs";
@@ -183,6 +184,14 @@ export interface AppActions {
   showTab(tab: Tab): void;
   /** Invert the page colours, and remember it. */
   toggleInvert(): void;
+  /** Whether closing these tabs from the one in front would close any. */
+  canCloseTabs(which: CloseWhich): boolean;
+  /** Close every other tab, or those before or after the one in front. */
+  closeTabs(which: CloseWhich): void;
+  /** Whether a document closed in this session is not open again. */
+  canReopenClosedTab(): boolean;
+  /** Open again the document closed most recently. */
+  reopenClosedTab(): void;
   /** Fill the screen with the document, or go back to the window. */
   toggleFullScreen(): void;
   /** Present one page at a time on black, or stop presenting. */
@@ -706,6 +715,35 @@ export function registerAppCommands(
       title: "Close all tabs",
       enabled: withDocument,
       run: () => actions.closeAllDocuments(),
+    },
+    // From the tab in front; a tab's own menu offers the same three for the
+    // tab it was opened on. Unsaved work is asked about once for all of them.
+    {
+      id: "file.closeOtherTabs",
+      title: "Close other tabs",
+      enabled: () => withDocument() && actions.canCloseTabs("others"),
+      run: () => actions.closeTabs("others"),
+    },
+    {
+      id: "file.closeTabsLeft",
+      title: "Close tabs to the left",
+      enabled: () => withDocument() && actions.canCloseTabs("left"),
+      run: () => actions.closeTabs("left"),
+    },
+    {
+      id: "file.closeTabsRight",
+      title: "Close tabs to the right",
+      enabled: () => withDocument() && actions.canCloseTabs("right"),
+      run: () => actions.closeTabs("right"),
+    },
+    {
+      // A browser's chord, where a reader looks for it. The document opens
+      // where it was left, as a remembered one does.
+      id: "file.reopenClosedTab",
+      title: "Reopen closed tab",
+      keys: label("file.reopenClosedTab"),
+      enabled: () => available() && actions.canReopenClosedTab(),
+      run: () => actions.reopenClosedTab(),
     },
     {
       // Offered whatever the preference below says, which is the point of it:
@@ -2615,6 +2653,9 @@ export function handleWindowKey(
   } else if (matches("view.invertPages", event) && title) {
     event.preventDefault();
     actions.toggleInvert();
+  } else if (matches("file.reopenClosedTab", event)) {
+    event.preventDefault();
+    if (actions.canReopenClosedTab()) actions.reopenClosedTab();
   } else if (matches("view.fullScreen", event) && title) {
     event.preventDefault();
     actions.toggleFullScreen();

@@ -102,6 +102,7 @@ export interface Binding {
 export const BINDINGS = {
   "file.open": { keys: ["o"], accel: true },
   "file.close": { keys: ["w"], accel: true },
+  "file.reopenClosedTab": { keys: ["t", "T"], accel: true, shift: true },
   "view.nextTab": { keys: ["Tab"], ctrl: true },
   "view.previousTab": { keys: ["Tab"], ctrl: true, shift: true },
   "file.print": { keys: ["p"], accel: true },

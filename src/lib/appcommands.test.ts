@@ -119,6 +119,12 @@ function harness(
     openDocument: () => fired.push("openDocument"),
     closeDocument: () => fired.push("closeDocument"),
     closeAllDocuments: () => fired.push("closeAllDocuments"),
+    // Yes, so that the commands they guard can be run here; the guards
+    // themselves are `tabclose.test.ts`'s.
+    canCloseTabs: () => true,
+    closeTabs: (which: string) => fired.push(`closeTabs:${which}`),
+    canReopenClosedTab: () => true,
+    reopenClosedTab: () => fired.push("reopenClosedTab"),
     sides: () => update.sides ?? { split: false, focused: "left" as const, others: [] as string[] },
     showBeside: (index: number) => fired.push(`showBeside:${index}`),
     moveToOtherSide: () => fired.push("moveToOtherSide"),
@@ -663,6 +669,9 @@ describe("the commands a document is needed for", () => {
     const { registry } = harness(false);
     const offered = registry.search("").map((ranked) => ranked.command.id);
     expect(offered).toEqual([
+      // A document closed is reopened from an empty window as well: closing
+      // the last tab is exactly when it is wanted.
+      "file.reopenClosedTab",
       // A preference, and off by default, so this is the one of its pair on
       // offer. First because the tab commands are registered first.
       "file.reopenTabsAtLaunch",
@@ -1880,6 +1889,10 @@ describe("the window shortcuts for editing", () => {
       openDocument: () => fired.push("openDocument"),
     closeDocument: () => fired.push("closeDocument"),
     closeAllDocuments: () => fired.push("closeAllDocuments"),
+    canCloseTabs: () => false,
+    closeTabs: (which: string) => fired.push(`closeTabs:${which}`),
+    canReopenClosedTab: () => false,
+    reopenClosedTab: () => fired.push("reopenClosedTab"),
     sides: () => ({ split: false, focused: "left" as const, others: [] as string[] }),
     showBeside: (index: number) => fired.push(`showBeside:${index}`),
     moveToOtherSide: () => fired.push("moveToOtherSide"),

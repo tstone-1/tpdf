@@ -38,6 +38,8 @@ function harness() {
     savedFields: () => 0,
     formEditing: () => false,
     canOrderTabs: () => false,
+    canCloseTabs: () => false,
+    canReopenClosedTab: () => false,
     fieldPicked: () => false,
     signableFields: () => 0,
     // What the window menu's guards read, in the state a first launch is in.

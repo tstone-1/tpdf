@@ -357,6 +357,10 @@ export async function appCommandChecks(
     openDocument: () => fired.push("openDocument"),
     closeDocument: () => fired.push("closeDocument"),
     closeAllDocuments: () => fired.push("closeAllDocuments"),
+    canCloseTabs: () => false,
+    closeTabs: (which: string) => fired.push(`closeTabs:${which}`),
+    canReopenClosedTab: () => false,
+    reopenClosedTab: () => fired.push("reopenClosedTab"),
     sides: () => ({ split: false, focused: "left" as const, others: [] as string[] }),
     showBeside: (index: number) => fired.push(`showBeside:${index}`),
     moveToOtherSide: () => fired.push("moveToOtherSide"),
@@ -1654,6 +1658,12 @@ export async function appCommandChecks(
     "edit.fillForm": "Driven against the real application by tabs_check.py --phase forms.",
     "file.close": "tab ownership is exercised by the open check's tabs phase",
     "file.closeAll": "closes every tab, which would end the run; no automated check drives it yet",
+    // This check has one document and so nothing beside it to close; the
+    // `closing` phase of `tabs_check.py` drives all four with three.
+    "file.closeOtherTabs": "needs other tabs; tabs_check.py --phase closing drives it",
+    "file.closeTabsLeft": "needs other tabs; tabs_check.py --phase closing drives it",
+    "file.closeTabsRight": "needs other tabs; tabs_check.py --phase closing drives it",
+    "file.reopenClosedTab": "needs a tab closed earlier; tabs_check.py --phase closing drives it",
     "edit.fieldBorderOn": "a stored preference; fieldnames.test.ts and appcommands.test.ts cover the pair",
     "edit.fieldBorderOff": "a stored preference; tabs_check.py --phase fields drives it",
     "edit.formEditOn": "needs a document with a form; appcommands.test.ts and savedfields.test.ts",
@@ -1925,6 +1935,11 @@ export async function appCommandChecks(
   // selection, exactly as `find.inSelection` does, and a check that subtracted
   // a count would have absorbed it in silence.
   const NEEDS_MORE_THAN_A_DOCUMENT = [
+    // One tab, so no other to close, and none closed earlier to reopen.
+    "file.closeOtherTabs",
+    "file.closeTabsLeft",
+    "file.closeTabsRight",
+    "file.reopenClosedTab",
     // No tabs from an earlier launch to reopen, and reopening all of them is
     // this fixture's launch preference, so its other half is not offered. Both
     // joined the registry with the tab restore and not this list; the first

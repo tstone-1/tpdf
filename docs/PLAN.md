@@ -18169,12 +18169,20 @@ recorder instead, for the same reason.
 **Not run yet:** Windows and Linux, including whether WebView2 lets F11 through to the
 page; full screen with two documents side by side.
 
-#### 7.4 Navigation and tabs
+#### 7.4 Navigation and tabs --- closing several tabs and reopening one done 2026-10-15
+
+**Done:** *Close other tabs*, *Close tabs to the left*, *Close tabs to the right* and
+*Reopen closed tab* (Ctrl+Shift+T, ⌘⇧T), as commands from the tab in front and in a tab's
+right-click menu for that tab. `tabclose.ts` decides which tabs each means (left and right
+in the tab's own side when there are two; others across the window) and keeps the last 20
+documents closed; `App.svelte` asks once about unsaved work, counting a document only when
+every view of it is closing, and then closes each tab through the one `closeTab`. A closed
+document reopens by its path, so it opens where it was left. Run in a window on the Mac
+mini: `tabs_check.py --phase closing` (`closecheck.ts`), 7 of 7.
+
+**Still to build in 7.4:**
 
 - Outline: expand all, collapse all, expand to the current page.
-- Tabs: reopen the last closed tab (path, page, zoom; unsaved edits are gone and the command
-  says so); close the other tabs, the tabs to the left, the tabs to the right, each asking
-  once about unsaved changes as *Close all* does.
 - Next and previous file in the folder: the app process lists the folder (names only, no
   parsing), sorted the way the platform's file manager sorts, PDFs only.
 - Favourites: a named place (document path, page, optional name) kept in the settings, listed
@@ -18182,7 +18190,6 @@ page; full screen with two documents side by side.
 - A link's target on hover: the page number for an internal link, the host (punycode, as the
   confirmation shows it) for a web link.
 - Commands: `view.outlineExpandAll`, `view.outlineCollapseAll`, `view.outlineToCurrent`,
-  `file.reopenClosedTab`, `file.closeOtherTabs`, `file.closeTabsLeft`, `file.closeTabsRight`,
   `file.nextInFolder`, `file.previousInFolder`, `nav.addFavourite`, `nav.nextFavourite`,
   `nav.previousFavourite`.
 - Exit: unit tests in the new `src/lib` modules (the tab history and the favourites store are
