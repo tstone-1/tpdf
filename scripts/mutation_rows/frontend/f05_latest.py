@@ -803,3 +803,22 @@ ROWS += [
         "        if (node.children.length === 0) return;\n        this.set(id, node.open, node.open);",
         "opens every entry that has entries under it, whatever the document said"),
 ]
+
+# --- a link's target as its tooltip, 2026-10-15 ------------------------------
+ROWS += [
+    Mutation("link title: count pages from zero", "src/lib/links.ts",
+        '    case "page": return `Go to page ${target.page + 1}`;',
+        '    case "page": return `Go to page ${target.page}`;',
+        "names the page for a link inside the document and the address for a web link"),
+    Mutation("link title: the host alone", "src/lib/links.ts",
+        '    case "web": return `Open ${target.host}${target.rest}`;',
+        '    case "web": return `Open ${target.host}`;',
+        "names the page for a link inside the document and the address for a web link"),
+    Mutation("link title: never written", "src/lib/viewer.ts",
+        "      // Empty is no tooltip.\n      this.root.title = title;\n", "",
+        "says where the link under the pointer goes, and goes away off it"),
+    Mutation("link title: kept after leaving the link", "src/lib/viewer.ts",
+        '    const title = link ? linkTitle(link.target) : "";',
+        '    const title = link ? linkTitle(link.target) : this.linkTitleShown;',
+        "says where the link under the pointer goes, and goes away off it"),
+]

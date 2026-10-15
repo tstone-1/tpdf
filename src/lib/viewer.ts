@@ -110,6 +110,7 @@ import { hitTest, onPage, turnedFor, viewRect, type Comment } from "./comments";
 import {
   History,
   linkAt,
+  linkTitle,
   onPage as linksOnPage,
   orderedLinks,
   refusalFor,
@@ -1244,6 +1245,8 @@ export class Viewer {
   private turnedLinks: { page: number; turns: number; items: Link[] } | null = null;
   /** Whether the pointer is currently over a link, so the cursor is set once. */
   private overLink = false;
+  /** The tooltip on the surface while the pointer is over a link. */
+  private linkTitleShown = "";
   /**
    * Whether the pointer is on text while the redaction tool is armed.
    *
@@ -4566,7 +4569,17 @@ export class Viewer {
       this.showCursor();
     }
     if (this.linkItems.length === 0) return;
-    const over = this.linkUnder(event) !== null;
+    const link = this.linkUnder(event);
+    // The tooltip says where the link goes; SumatraPDF shows the same.
+    // Written only when the link under the pointer changes, for the cursor's
+    // reason below.
+    const title = link ? linkTitle(link.target) : "";
+    if (title !== this.linkTitleShown) {
+      this.linkTitleShown = title;
+      // Empty is no tooltip.
+      this.root.title = title;
+    }
+    const over = link !== null;
     if (over === this.overLink) return;
     this.overLink = over;
     this.showCursor();

@@ -18186,14 +18186,16 @@ and *Show this page's entry in the outline* (`view.outlineToCurrent`), which sho
 outline tab first. `Expansion.setAll` sets every entry with entries under it, whatever the
 producer's `/Count` sign said; tests in `outline.test.ts`.
 
+**Done: a link's target on hover.** The surface's tooltip names where the link under the
+pointer goes: *Go to page N*, or *Open* and the address, its host in punycode as the
+confirmation shows it (`linkTitle` in `links.ts`, set in `onHover`; `viewerhover.test.ts`).
+
 **Still to build in 7.4:**
 
 - Next and previous file in the folder: the app process lists the folder (names only, no
   parsing), sorted the way the platform's file manager sorts, PDFs only.
 - Favourites: a named place (document path, page, optional name) kept in the settings, listed
   in the sidebar beside the outline and in the palette; next and previous favourite.
-- A link's target on hover: the page number for an internal link, the host (punycode, as the
-  confirmation shows it) for a web link.
 - Commands: `file.nextInFolder`, `file.previousInFolder`, `nav.addFavourite`, `nav.nextFavourite`,
   `nav.previousFavourite`.
 - Exit: unit tests in the new `src/lib` modules (the tab history and the favourites store are

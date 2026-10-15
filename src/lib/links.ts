@@ -507,3 +507,19 @@ export class History {
     return { back: this.past.length, forward: this.future.length };
   }
 }
+
+/**
+ * What a link goes to, in the words its tooltip shows when the pointer is
+ * over it: the page for a link inside the document, the address for a web
+ * link. The host is the backend's, in punycode, as the confirmation before
+ * opening shows it; this side never builds one.
+ */
+export function linkTitle(target: Target): string {
+  switch (target.kind) {
+    case "page": return `Go to page ${target.page + 1}`;
+    case "web": return `Open ${target.host}${target.rest}`;
+    case "broken": return "This link goes to a page the document does not have";
+    case "refused": return `tpdf does not follow this link: ${target.action}`;
+    case "none": return "";
+  }
+}
