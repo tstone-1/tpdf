@@ -18098,8 +18098,11 @@ or after an OS update pays Vision's model compile, 24 s here.
   takes one language the machine offers, or the engine's own choice, and the session
   remembers it (`docs/SUBSYSTEMS.md`). Not run in a window yet, and the Windows engine's
   use of a named language is compiled and not run.
-- A page that has *any* text is left alone, so a scan with a typed header, a fax line or a
-  stamp gets no layer. Deciding by coverage rather than by presence needs a measurement first.
+- ~~A page that has *any* text is left alone, so a scan with a typed header, a fax line or a
+  stamp gets no layer. Deciding by coverage rather than by presence needs a measurement first.~~ **Built 2026-10-15**: a page is read when it has no text or when pictures
+  cover at least half of it (`ocr_layer::SCAN_SHARE`, the worker's `Pictures` request), and a
+  recognised word the page already has in the same place is dropped (`docs/SUBSYSTEMS.md`,
+  *A scan with some text*).
 - A page is read at no more than a 16 MiB image allows, about 208 DPI for A4, because that is
   the OCR worker's pixel buffer. Reading in overlapping bands would lift it.
 - The boxes are the engine's. Trimming each to the ink inside it would make a selection as

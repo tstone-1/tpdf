@@ -100,15 +100,114 @@ pub fn choose(remembered: Option<&str>, offered: &[String]) -> Choice {
     }
 }
 
-/// Whether a page already has text of its own.
-///
-/// Any character that is not white space. A page with one is left alone: a
-/// layer over text that is already there would make every word findable twice.
+/// Whether a page already has text of its own: any character that is not
+/// white space.
 #[must_use]
 pub fn has_text(page: &PageText) -> bool {
     page.codes
         .iter()
         .any(|code| !char::from_u32(*code).is_some_and(char::is_whitespace))
+}
+
+/// The share of a page that pictures must cover for it to be read as a scan,
+/// whatever text it has.
+///
+/// Until 2026-10-15 a page with one character was left alone, so a scan with a
+/// typed fax line, a stamp or a page number got no layer at all. Measured that
+/// day on pages built from a real document: four scans, plain or with 12 to 48
+/// typed characters, are 100% picture; born-digital pages are 0 to 3.1%,
+/// including one with 31 characters and a photo. Text alone could not tell
+/// them apart (0.2 to 0.6% of the page under characters on the scans, 0.4% on
+/// that born-digital page). Any value between the two groups separates them;
+/// half is the middle.
+pub const SCAN_SHARE: f32 = 0.5;
+
+/// How many cells a side of the page is divided into to measure
+/// [`picture_share`].
+const GRID: usize = 100;
+
+/// The share of `page_box` that the `pictures` cover, from 0 to 1.
+///
+/// Both in the page's own space, y up (`objects::Rect`). The union is measured
+/// by the centres of a 100 x 100 grid, so two pictures over the same place
+/// count once: some scanners write a page as strips, and a picture under
+/// another is not more page.
+#[must_use]
+pub fn picture_share(page_box: [f32; 4], pictures: &[[f32; 4]]) -> f32 {
+    let [left, bottom, right, top] = page_box;
+    let (width, height) = (right - left, top - bottom);
+    if !(width.is_finite() && height.is_finite() && width > 0.0 && height > 0.0) {
+        return 0.0;
+    }
+    let mut covered = 0usize;
+    for row in 0..GRID {
+        let y = bottom + (row as f32 + 0.5) * height / GRID as f32;
+        for column in 0..GRID {
+            let x = left + (column as f32 + 0.5) * width / GRID as f32;
+            if pictures
+                .iter()
+                .any(|r| r[0] <= x && x <= r[2] && r[1] <= y && y <= r[3])
+            {
+                covered += 1;
+            }
+        }
+    }
+    covered as f32 / (GRID * GRID) as f32
+}
+
+/// Whether a page is handed to the engine: it has no text, or it is a scan
+/// ([`SCAN_SHARE`]) that may have some.
+///
+/// A scan with text is read whole, and [`outcome_of`] keeps only the words
+/// where the page has no character yet.
+#[must_use]
+pub fn wants_reading(text: &PageText, pictures: f32) -> bool {
+    !has_text(text) || pictures >= SCAN_SHARE
+}
+
+/// A page's characters, each with its centre, in the convention of
+/// [`PageText::boxes`]. A character with no box is left out: its four zeroes
+/// would put it in the page's corner. White space is kept and counts for
+/// nothing, since [`letters`] reads only letters and digits.
+fn centres(page: &PageText) -> Vec<(char, f32, f32)> {
+    page.codes
+        .iter()
+        .zip(page.boxes.chunks_exact(4))
+        .filter_map(|(code, b)| Some((char::from_u32(*code)?, b)))
+        .filter(|(_, b)| b.iter().any(|v| *v != 0.0))
+        .map(|(c, b)| (c, (b[0] + b[2]) / 2.0, (b[1] + b[3]) / 2.0))
+        .collect()
+}
+
+/// Letters and digits, lower case: what two readings of a word are compared by.
+fn letters(text: impl Iterator<Item = char>) -> String {
+    text.filter(|c| c.is_alphanumeric())
+        .flat_map(char::to_lowercase)
+        .collect()
+}
+
+/// Whether a recognised word is text the page already has: the characters
+/// whose centres lie inside its box spell it, or it spells them.
+///
+/// Both halves were measured on 2026-10-15. **The centres**, not any overlap:
+/// an engine boxes a word as tall as its line, so a typed header a point above
+/// the first line touches that line's boxes. **The spelling**, not the centres
+/// alone: a typed stamp or page number drawn over scanned words puts its
+/// characters inside their boxes, and "a character is there" dropped
+/// `carrier`, `journal` and four more words under a stamp and `outline` under a
+/// footer number. Containment either way, because the engine and the program
+/// that wrote the text split and read a word differently (`ref` and `xref`).
+fn already_there(rect: [f32; 4], centres: &[(char, f32, f32)], text: &str) -> bool {
+    let (left, right) = (rect[0].min(rect[2]), rect[0].max(rect[2]));
+    let (top, bottom) = (rect[1].min(rect[3]), rect[1].max(rect[3]));
+    let under = letters(
+        centres
+            .iter()
+            .filter(|(_, x, y)| left <= *x && *x <= right && top <= *y && *y <= bottom)
+            .map(|(c, _, _)| *c),
+    );
+    let word = letters(text.chars());
+    !under.is_empty() && !word.is_empty() && (under.contains(&word) || word.contains(&under))
 }
 
 /// The size in pixels to render a page at, and the scale that gives it.
@@ -175,6 +274,9 @@ pub enum Outcome {
     Layer(Layer),
     /// The engine read the page and found no words on it.
     Nothing,
+    /// Every word the engine read is already text on the page: a scan another
+    /// program has given a layer, or one whose only words are typed ones.
+    AlreadyThere,
     /// The engine would not read this page's image. The other pages are still
     /// read.
     Refused,
@@ -182,6 +284,10 @@ pub enum Outcome {
 
 /// What one page's answer from the engine comes to, or the error that stops
 /// the whole recognition.
+///
+/// `before` is the page's text before the layer. A word it already has in the
+/// same place is dropped (`already_there`), so a typed header is not written
+/// twice and a page another program already gave a layer gets nothing more.
 ///
 /// **Only [`RecogniseError::Rejected`] is this page's alone.** It is the
 /// engine saying no to one image, with the process still there to read the
@@ -205,9 +311,22 @@ pub enum Outcome {
 pub fn outcome_of(
     page: u32,
     answer: Result<Vec<RecognisedItem>, RecogniseError>,
+    before: &PageText,
 ) -> Result<Outcome, RecogniseError> {
     match answer {
-        Ok(items) => Ok(layer_of(page, items).map_or(Outcome::Nothing, Outcome::Layer)),
+        Ok(items) => {
+            let read_any = items.iter().any(|item| !item.text.trim().is_empty());
+            let centres = centres(before);
+            let new: Vec<RecognisedItem> = items
+                .into_iter()
+                .filter(|item| !already_there(item.rect, &centres, &item.text))
+                .collect();
+            Ok(match layer_of(page, new) {
+                Some(layer) => Outcome::Layer(layer),
+                None if read_any => Outcome::AlreadyThere,
+                None => Outcome::Nothing,
+            })
+        }
         Err(RecogniseError::Rejected(_)) => Ok(Outcome::Refused),
         Err(other) => Err(other),
     }
@@ -259,7 +378,8 @@ fn repeats(word: &Word, item: &RecognisedItem) -> bool {
 /// picture pages measured on 2026-10-05.
 const LINE_END_HYPHEN: u32 = 2;
 
-/// Whether a written page reads back with the characters its layer was given.
+/// Whether a written page reads back with the characters it had before and
+/// the ones its layer was given.
 ///
 /// Compared as the two sets of characters with their counts, white space left
 /// out and order ignored. That is deliberately weaker than comparing words:
@@ -270,17 +390,29 @@ const LINE_END_HYPHEN: u32 = 2;
 /// whose codes do not map back to the characters.
 ///
 /// A hyphen that ends a line is read as [`LINE_END_HYPHEN`] and counted as
-/// the hyphen it is.
+/// the hyphen it is, on both pages.
+///
+/// `before` is what the page read before the layer: empty for a page with no
+/// text, and the typed words of a scan that had some. Without it a scan with a
+/// fax line read back one line more than its layer and was refused.
 #[must_use]
-pub fn reads_back(written: &Layer, read: &PageText) -> bool {
+pub fn reads_back(written: &Layer, before: &PageText, read: &PageText) -> bool {
     let mut wanted: Vec<char> = written
         .words
         .iter()
         .flat_map(|word| word.text.chars())
         .filter(|c| !c.is_whitespace() && !c.is_control())
+        .chain(characters(before))
         .collect();
-    let mut got: Vec<char> = read
-        .codes
+    let mut got: Vec<char> = characters(read).collect();
+    wanted.sort_unstable();
+    got.sort_unstable();
+    wanted == got
+}
+
+/// A page's characters as [`reads_back`] counts them.
+fn characters(page: &PageText) -> impl Iterator<Item = char> + '_ {
+    page.codes
         .iter()
         .map(|code| {
             if *code == LINE_END_HYPHEN {
@@ -291,10 +423,6 @@ pub fn reads_back(written: &Layer, read: &PageText) -> bool {
         })
         .filter_map(char::from_u32)
         .filter(|c| !c.is_whitespace() && !c.is_control())
-        .collect();
-    wanted.sort_unstable();
-    got.sort_unstable();
-    wanted == got
 }
 
 #[cfg(test)]
@@ -305,6 +433,36 @@ mod tests {
         PageText {
             codes: text.chars().map(u32::from).collect(),
             ..PageText::default()
+        }
+    }
+
+    /// A page with no text, as before a layer on a page that had none.
+    fn none() -> PageText {
+        PageText::default()
+    }
+
+    /// A page whose characters are `text`, each in a box of its own along one
+    /// line: `at` is the line's `left, top, right, bottom`.
+    fn typed(text: &str, at: [f32; 4]) -> PageText {
+        let n = text.chars().count().max(1) as f32;
+        let step = (at[2] - at[0]) / n;
+        PageText {
+            codes: text.chars().map(u32::from).collect(),
+            boxes: (0..text.chars().count())
+                .flat_map(|i| {
+                    let left = at[0] + step * i as f32;
+                    [left, at[1], left + step, at[3]]
+                })
+                .collect(),
+            ..PageText::default()
+        }
+    }
+
+    fn word(text: &str, rect: [f32; 4]) -> RecognisedItem {
+        RecognisedItem {
+            text: text.into(),
+            rect,
+            confidence: None,
         }
     }
 
@@ -419,7 +577,7 @@ mod tests {
     #[test]
     fn only_a_page_the_engine_rejected_is_passed_over() {
         assert_eq!(
-            outcome_of(2, Err(RecogniseError::Rejected("no model".into()))),
+            outcome_of(2, Err(RecogniseError::Rejected("no model".into())), &none()),
             Ok(Outcome::Refused)
         );
         // Each of these is about the run, and the next page would meet it too.
@@ -429,15 +587,18 @@ mod tests {
             RecogniseError::TimedOut("30 s".into()),
             RecogniseError::MalformedInput("short buffer".into()),
         ] {
-            assert_eq!(outcome_of(2, Err(stops.clone())), Err(stops));
+            assert_eq!(outcome_of(2, Err(stops.clone()), &none()), Err(stops));
         }
     }
 
     #[test]
     fn an_answer_is_a_layer_on_its_own_page_or_nothing() {
-        assert_eq!(outcome_of(2, Ok(Vec::new())), Ok(Outcome::Nothing));
-        assert_eq!(outcome_of(2, Ok(vec![item(" ")])), Ok(Outcome::Nothing));
-        let Ok(Outcome::Layer(layer)) = outcome_of(2, Ok(vec![item("word")])) else {
+        assert_eq!(outcome_of(2, Ok(Vec::new()), &none()), Ok(Outcome::Nothing));
+        assert_eq!(
+            outcome_of(2, Ok(vec![item(" ")]), &none()),
+            Ok(Outcome::Nothing)
+        );
+        let Ok(Outcome::Layer(layer)) = outcome_of(2, Ok(vec![item("word")]), &none()) else {
             panic!("a word is a layer");
         };
         assert_eq!((layer.page, layer.words.len()), (2, 1));
@@ -459,8 +620,8 @@ mod tests {
     #[test]
     fn two_words_read_back_as_one_still_read_back() {
         let layer = layer_of(0, vec![item("black"), item("quartz")]).expect("words");
-        assert!(reads_back(&layer, &page("blackquartz")));
-        assert!(reads_back(&layer, &page("quartz\r\nblack")));
+        assert!(reads_back(&layer, &none(), &page("blackquartz")));
+        assert!(reads_back(&layer, &none(), &page("quartz\r\nblack")));
     }
 
     #[test]
@@ -498,20 +659,120 @@ mod tests {
     #[test]
     fn a_hyphen_that_ends_a_line_reads_back_as_the_hyphen_it_is() {
         let layer = layer_of(0, vec![item("quar-"), item("tz")]).expect("words");
-        assert!(reads_back(&layer, &page("quar\u{2}\r\ntz")));
+        assert!(reads_back(&layer, &none(), &page("quar\u{2}\r\ntz")));
         // The mark stands for one hyphen and for nothing else.
-        assert!(!reads_back(&layer, &page("quar\r\ntz")));
-        assert!(!reads_back(&layer, &page("quar-\u{2}\r\ntz")));
+        assert!(!reads_back(&layer, &none(), &page("quar\r\ntz")));
+        assert!(!reads_back(&layer, &none(), &page("quar-\u{2}\r\ntz")));
         let plain = layer_of(0, vec![item("quartz")]).expect("words");
-        assert!(!reads_back(&plain, &page("quartz\u{2}")));
+        assert!(!reads_back(&plain, &none(), &page("quartz\u{2}")));
     }
 
     #[test]
     fn a_missing_layer_and_a_wrong_character_do_not_read_back() {
         let layer = layer_of(0, vec![item("black"), item("quartz")]).expect("words");
-        assert!(!reads_back(&layer, &page("")));
-        assert!(!reads_back(&layer, &page("black quart")));
-        assert!(!reads_back(&layer, &page("black quartz z")));
-        assert!(!reads_back(&layer, &page("black quartx")));
+        assert!(!reads_back(&layer, &none(), &page("")));
+        assert!(!reads_back(&layer, &none(), &page("black quart")));
+        assert!(!reads_back(&layer, &none(), &page("black quartz z")));
+        assert!(!reads_back(&layer, &none(), &page("black quartx")));
+    }
+
+    #[test]
+    fn a_scan_is_read_whatever_text_it_has_and_a_page_of_text_is_not() {
+        let letter = [0.0, 0.0, 612.0, 792.0];
+        // The measured shapes: a scan is one picture over the whole page.
+        assert_eq!(picture_share(letter, &[letter]), 1.0);
+        assert_eq!(picture_share(letter, &[]), 0.0);
+        let header = typed("FAX P.001", [36.0, 4.0, 300.0, 14.0]);
+        assert!(wants_reading(&header, picture_share(letter, &[letter])));
+        // A page of text with a photo is not, and one with no text always is.
+        let photo = [412.0, 80.0, 532.0, 170.0];
+        assert!(picture_share(letter, &[photo]) < 0.03);
+        assert!(!wants_reading(&header, picture_share(letter, &[photo])));
+        assert!(wants_reading(&none(), 0.0));
+        // Half the page is the line, and a picture under another counts once.
+        let lower = [0.0, 0.0, 612.0, 396.0];
+        assert!(wants_reading(&header, picture_share(letter, &[lower])));
+        let under = [0.0, 0.0, 612.0, 380.0];
+        assert!(!wants_reading(
+            &header,
+            picture_share(letter, &[under, under])
+        ));
+        // A page box away from the origin is measured in its own space.
+        let moved = [100.0, 100.0, 712.0, 892.0];
+        assert_eq!(picture_share(moved, &[moved]), 1.0);
+        // 512 x 692 of 612 x 792 pt is shared: 0.73.
+        assert!((picture_share(moved, &[letter]) - 0.73).abs() < 0.02);
+        assert_eq!(picture_share([0.0, 0.0, 0.0, 792.0], &[letter]), 0.0);
+    }
+
+    #[test]
+    fn a_word_already_on_the_page_is_not_written_again() {
+        let before = typed("FAX", [36.0, 4.0, 66.0, 14.0]);
+        let read = vec![
+            // The typed header, read off the scan where it is drawn.
+            word("FAX", [35.0, 2.0, 67.0, 16.0]),
+            // The first line of the scan, its box touching the header's.
+            word("Dear", [36.0, 15.0, 80.0, 30.0]),
+        ];
+        let Ok(Outcome::Layer(layer)) = outcome_of(0, Ok(read), &before) else {
+            panic!("a layer");
+        };
+        let texts: Vec<&str> = layer.words.iter().map(|w| w.text.as_str()).collect();
+        assert_eq!(texts, ["Dear"]);
+        // Every word already there is said as that, not as nothing read.
+        let only = vec![word("FAX", [35.0, 2.0, 67.0, 16.0])];
+        assert_eq!(outcome_of(0, Ok(only), &before), Ok(Outcome::AlreadyThere));
+        assert_eq!(outcome_of(0, Ok(Vec::new()), &before), Ok(Outcome::Nothing));
+        // A different word under the same characters is kept: a stamp drawn
+        // over a scanned word does not take the word.
+        let stamp = typed("RECEIVED", [36.0, 15.0, 80.0, 30.0]);
+        let under = vec![word("journal", [36.0, 15.0, 80.0, 30.0])];
+        assert!(matches!(
+            outcome_of(0, Ok(under), &stamp),
+            Ok(Outcome::Layer(_))
+        ));
+        // The same word read a little differently is the same word, either way
+        // round, whatever its case and punctuation.
+        let xref = typed("xref", [36.0, 4.0, 66.0, 14.0]);
+        for read in ["ref", "XREF", "xref,", "xrefs"] {
+            let again = vec![word(read, [35.0, 2.0, 67.0, 16.0])];
+            assert_eq!(
+                outcome_of(0, Ok(again), &xref),
+                Ok(Outcome::AlreadyThere),
+                "{read}"
+            );
+        }
+        // A character with no box is nowhere, not in the page's corner.
+        let unplaced = PageText {
+            codes: "FAX".chars().map(u32::from).collect(),
+            boxes: vec![0.0; 12],
+            ..PageText::default()
+        };
+        let corner = vec![word("FAX", [0.0, 0.0, 30.0, 10.0])];
+        assert!(matches!(
+            outcome_of(0, Ok(corner), &unplaced),
+            Ok(Outcome::Layer(_))
+        ));
+        // White space on the page is not text to keep a word off.
+        let blank = PageText {
+            codes: vec![u32::from(' ')],
+            boxes: vec![35.0, 2.0, 67.0, 16.0],
+            ..PageText::default()
+        };
+        let again = vec![word("FAX", [35.0, 2.0, 67.0, 16.0])];
+        assert!(matches!(
+            outcome_of(0, Ok(again), &blank),
+            Ok(Outcome::Layer(_))
+        ));
+    }
+
+    #[test]
+    fn a_scan_with_typed_words_reads_back_with_them() {
+        let before = typed("FAX", [36.0, 4.0, 66.0, 14.0]);
+        let layer = layer_of(0, vec![item("Dear")]).expect("words");
+        assert!(reads_back(&layer, &before, &page("FAX\r\nDear")));
+        // Without the typed words the copy reads one line short.
+        assert!(!reads_back(&layer, &before, &page("Dear")));
+        assert!(!reads_back(&layer, &none(), &page("FAX\r\nDear")));
     }
 }

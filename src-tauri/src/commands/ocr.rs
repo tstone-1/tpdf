@@ -142,10 +142,13 @@ fn wait<T: Send + 'static, E: Send + 'static + From<String>>(
 /// The layers to write, and the account of the pages that got none.
 struct Read {
     layers: Vec<Layer>,
+    /// Each layered page's text before its layer, in the order of `layers`.
+    before: Vec<crate::text::PageText>,
     report: Recognised,
 }
 
-/// Recognises every page of `doc` that has no text of its own.
+/// Recognises every page of `doc` that has no text of its own, or is a scan
+/// (`ocr_layer::wants_reading`).
 fn read(
     service: &RenderService,
     doc: u32,
@@ -158,6 +161,7 @@ fn read(
     let capacity = PIXELS_CAPACITY.min(TILE_CAPACITY);
     let mut engine: Option<OcrWorker> = None;
     let mut layers = Vec::new();
+    let mut before = Vec::new();
     let mut report = Recognised::default();
     for page in 0..pages {
         if cancelled() {
@@ -166,7 +170,13 @@ fn read(
         let n = page + 1;
         progress(Progress { page: n, of: pages });
         let text: crate::text::PageText = wait(|reply| service.text(doc, page, None, reply))?;
-        if ocr_layer::has_text(&text) {
+        // Asked only of a page with text: one with none is read anyway.
+        let pictures = if ocr_layer::has_text(&text) {
+            wait(|reply| service.pictures(doc, page, reply))?
+        } else {
+            0.0
+        };
+        if !ocr_layer::wants_reading(&text, pictures) {
             report.already_text.push(n);
             continue;
         }
@@ -223,7 +233,7 @@ fn read(
             }
             items
         });
-        let outcome = ocr_layer::outcome_of(page, answer)
+        let outcome = ocr_layer::outcome_of(page, answer, &text)
             .map_err(|why| format!("Page {n} could not be read: {why}"))?;
         match outcome {
             Outcome::Layer(layer) => {
@@ -232,7 +242,9 @@ fn read(
                     words: layer.words.len(),
                 });
                 layers.push(layer);
+                before.push(text);
             }
+            Outcome::AlreadyThere => report.already_text.push(n),
             Outcome::Nothing => report.nothing_read.push(n),
             Outcome::Refused => report.refused.push(n),
         }
@@ -241,7 +253,11 @@ fn read(
     if cancelled() {
         return Err(CANCELLED.into());
     }
-    Ok(Read { layers, report })
+    Ok(Read {
+        layers,
+        before,
+        report,
+    })
 }
 
 /// Why a document none of whose pages got a layer is not written.
@@ -281,6 +297,7 @@ fn reads_back(
     password: Option<String>,
     pages: u32,
     layers: &[Layer],
+    before: &[crate::text::PageText],
 ) -> Result<(), String> {
     let opened = wait(|reply| service.open(staged.to_path_buf(), true, password, reply)).map_err(
         |refusal| {
@@ -297,10 +314,10 @@ fn reads_back(
                 opened.page_count
             ));
         }
-        for layer in layers {
+        for (layer, before) in layers.iter().zip(before) {
             let text: crate::text::PageText =
                 wait(|reply| service.text(opened.id, layer.page, None, reply))?;
-            if !ocr_layer::reads_back(layer, &text) {
+            if !ocr_layer::reads_back(layer, before, &text) {
                 return Err(format!(
                     "Page {} of the copy did not read back with the text that was recognised, so \
                      the copy was not kept.",
@@ -370,8 +387,15 @@ pub fn ocr_copy_asked(
         password.as_deref(),
         &*writing,
         &|staged| {
-            reads_back(service, staged, password.clone(), pages, &read.layers)
-                .map_err(save::Refusal::from)
+            reads_back(
+                service,
+                staged,
+                password.clone(),
+                pages,
+                &read.layers,
+                &read.before,
+            )
+            .map_err(save::Refusal::from)
         },
     )
     .map_err(|why| why.message)?;

@@ -737,8 +737,10 @@ measured the Windows render constants come out 1.5–1.8x worse.
   into a copy as an invisible layer, so the pages look as they did and can be searched,
   selected and copied from. The copy is read back before it gets its name, and then
   opened. A line in the toolbar shows which page is being read and has a Stop button.
-  Pages that already have text are left as they are, and so is a page the recogniser
-  refuses, which the closing line names. A document with unsaved changes is
+  A scan with some typed text on it, such as a fax line, a stamp or a page number, is
+  read too, and the typed words are not written a second time. Other pages that already
+  have text are left as they are, and so is a page the recogniser refuses, which the
+  closing line names. A document with unsaved changes is
   asked to be saved first. The engine and its limits are under *Text recognition* below.
   <!-- built: file.recogniseText -->
 - **Find text the pages do not show** is the check for a document redacted somewhere
@@ -1554,8 +1556,11 @@ Vision on macOS and Windows OCR on Windows, in a separate process with no networ
 The words go into the copy as an invisible layer over the picture, one box per word, so
 the page looks exactly as it did. Nothing is uploaded and no recogniser is bundled.
 
-A page that already has any text is left as it is, so running the command on a mixed
-document reads only its scanned pages. `--pages 1-3,7` limits which pages are considered.
+A page is read when it has no text, or when pictures cover at least half of it, which is
+what a scan is: a scan with a typed fax line, a stamp or a page number is read whole, and a
+recognised word that the page already has in the same place is not written again. Any other
+page with text is left as it is, so running the command on a mixed document reads only its
+scanned pages, and a scan that another program already gave a text layer gets nothing more. `--pages 1-3,7` limits which pages are considered.
 `--language de-DE` names the language to expect, as a BCP-47 tag, and may be repeated with
 the most likely first; on Windows the first of them that is installed in Settings is
 used, and with none installed the recogniser reads with its own. A page is read at up to 300 DPI and no finer than a
@@ -1590,7 +1595,8 @@ recogniser refused is named in the same closing line.
 
 The JSON report carries `schema`, `command`, `input`, `output`, the `engine` that read the
 pages, `pages` (each with `page` and the number of `words` written), `already_text` (pages
-left alone because they had text), `nothing_read` (pages without text on which nothing was
+left alone because they had text, including scans whose every recognised word was already
+there), `nothing_read` (pages without text on which nothing was
 recognised), `refused` (pages without text that the recogniser would not read),
 `signatures_invalidated` and `signatures_unknown`.
 

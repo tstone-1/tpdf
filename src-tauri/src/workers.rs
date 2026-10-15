@@ -1889,6 +1889,13 @@ impl Engine for Workers {
         }
     }
 
+    fn pictures(&self, doc: u32, page: u32) -> Result<f32, String> {
+        match self.ask(doc, &Request::Pictures { page })? {
+            Reply::Pictures(share) => Ok(share),
+            other => Err(mismatched("pictures", &other)),
+        }
+    }
+
     fn geometry(
         &self,
         doc: u32,

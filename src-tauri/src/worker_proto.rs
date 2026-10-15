@@ -119,6 +119,12 @@ pub enum Request {
     /// page and never document-wide --- it costs a render, and a reader crops
     /// the page in front of them.
     Content { page: u32 },
+    /// The share of one page that pictures cover, from 0 to 1.
+    ///
+    /// What text recognition asks before it reads a page that already has
+    /// text: a scan with a typed line is read, a page of text with a photo is
+    /// not (`ocr_layer::SCAN_SHARE`). Per page, for the reason `Content` is.
+    Pictures { page: u32 },
     /// One page's displayed size under a crop box, or under the file's own.
     ///
     /// The frontend lays out from this, and it cannot compute it: the crop is in
@@ -572,6 +578,8 @@ pub enum Reply {
     Search(crate::search::PageMatches),
     /// The ink's bounds on a page, or `None` where there is no ink.
     Content(Option<[f64; 4]>),
+    /// The share of a page that pictures cover, from 0 to 1.
+    Pictures(f32),
     /// A page's size and origin under the crop the reader has.
     Geometry(crate::render::CropGeometry),
     /// The rectangle a proposed crop would actually produce.
@@ -955,6 +963,7 @@ mod tests {
             ("Text", "text"),
             ("Search", "search"),
             ("Content", "content"),
+            ("Pictures", "pictures"),
             ("Geometry", "geometry"),
             ("CropBox", "crop_box"),
             ("RedactPlans", "redaction_plans"),
@@ -1341,6 +1350,7 @@ mod tests {
             // The confusable pair, given the *same* four numbers so that only
             // the tag can tell them apart.
             Reply::Content(Some([1.0, 2.0, 3.0, 4.0])),
+            Reply::Pictures(0.5),
             Reply::CropBox([1.0, 2.0, 3.0, 4.0]),
             Reply::Geometry(crate::render::CropGeometry {
                 width_pt: 595.0,
@@ -1429,6 +1439,7 @@ mod tests {
                 | Reply::Text(_)
                 | Reply::Search(_)
                 | Reply::Content(_)
+                | Reply::Pictures(_)
                 | Reply::CropBox(_)
                 | Reply::RedactPlans(_)
                 | Reply::Geometry(_)

@@ -443,6 +443,11 @@ pub(crate) enum Job {
         page: u32,
         reply: Reply<Option<[f64; 4]>>,
     },
+    Pictures {
+        doc: u32,
+        page: u32,
+        reply: Reply<f32>,
+    },
     Geometry {
         doc: u32,
         page: u32,
@@ -922,6 +927,14 @@ impl RenderService {
         }
     }
 
+    /// Measures the share of a page that pictures cover, invoking `reply` on
+    /// a service thread. See [`run_pictures`].
+    pub fn pictures(&self, doc: u32, page: u32, reply: Reply<f32>) {
+        if self.tx.send(Job::Pictures { doc, page, reply }).is_err() {
+            // Render thread is gone; nothing left to reply with.
+        }
+    }
+
     /// Reports a page's displayed size under a crop, on a service thread.
     pub fn geometry(
         &self,
@@ -1286,6 +1299,7 @@ pub(crate) trait Engine {
         carry: Option<&search::Carry>,
     ) -> Result<PageMatches, String>;
     fn content(&self, doc: u32, page: u32) -> Result<Option<[f64; 4]>, String>;
+    fn pictures(&self, doc: u32, page: u32) -> Result<f32, String>;
     fn geometry(&self, doc: u32, page: u32, crop: Option<[f32; 4]>)
         -> Result<CropGeometry, String>;
     fn crop_box(&self, doc: u32, page: u32, rect: [f32; 4]) -> Result<[f32; 4], String>;
@@ -1374,6 +1388,7 @@ pub(crate) fn dispatch(job: Job, engine: &dyn Engine) {
             reply(engine.search(doc, first, run, &query, options, carry.as_ref()))
         }
         Job::Content { doc, page, reply } => reply(engine.content(doc, page)),
+        Job::Pictures { doc, page, reply } => reply(engine.pictures(doc, page)),
         Job::Geometry {
             doc,
             page,
@@ -1451,6 +1466,7 @@ fn drain(rx: Receiver<Job>, error: &str) {
             Job::Text { reply, .. } => reply(Err(error.to_string())),
             Job::Search { reply, .. } => reply(Err(error.to_string())),
             Job::Content { reply, .. } => reply(Err(error.to_string())),
+            Job::Pictures { reply, .. } => reply(Err(error.to_string())),
             Job::Geometry { reply, .. } => reply(Err(error.to_string())),
             Job::CropBox { reply, .. } => reply(Err(error.to_string())),
             Job::RedactPlans { reply, .. } => reply(Err(error.to_string())),
@@ -1628,6 +1644,11 @@ impl Engine for InProcess {
         open_slot(&self.docs.borrow(), doc)?.with_text_view(&self.views.view(doc), |view| {
             run_content(self.bindings, view, page, &CancelToken::default())
         })
+    }
+
+    fn pictures(&self, doc: u32, page: u32) -> Result<f32, String> {
+        open_slot(&self.docs.borrow(), doc)?
+            .with_text_view(&self.views.view(doc), |view| run_pictures(view, page))
     }
 
     fn geometry(
@@ -2013,6 +2034,32 @@ pub(crate) fn run_content(
     cancel: &CancelToken,
 ) -> Result<Option<[f64; 4]>, String> {
     content::content_box(bindings, &document.page(page)?, cancel)
+}
+
+/// The share of one page that pictures cover, from 0 to 1
+/// (`ocr_layer::picture_share`).
+///
+/// The page's own pictures and those inside its Form XObjects, all in the page's
+/// space (`objects::read`), against the crop box in the same space, as
+/// [`redaction_plans_of`] measures them. A picture PDFium will not measure has
+/// the unmeasurable box and so covers the page: the cost is one page read that
+/// did not need to be, and the words over existing text are dropped anyway.
+pub fn run_pictures(document: &OpenDocument, page: u32) -> Result<f32, String> {
+    let page = document.page(page)?;
+    let objects = objects::read(&page)?;
+    let pictures: Vec<[f32; 4]> = objects
+        .all
+        .iter()
+        .filter(|object| object.kind == "image")
+        .map(|object| object.bounds)
+        .chain(
+            objects
+                .forms
+                .iter()
+                .flat_map(|form| form.images.iter().copied()),
+        )
+        .collect();
+    Ok(crate::ocr_layer::picture_share(page.crop_pt(), &pictures))
 }
 
 /// Where a crop box lands inside the page the file describes, and how big it is.

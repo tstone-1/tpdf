@@ -56,6 +56,14 @@ fn rgba(path: &Path) -> (u32, u32, Vec<u8>) {
 
 /// A one-page document whose only content is the picture.
 fn scan(picture: &Path, to: &Path) {
+    scan_with(picture, to, None, false);
+}
+
+/// [`scan`], with `typed` written as real text in Helvetica along the top
+/// margin, over the picture: a scanner's or a fax's header line. `in_form`
+/// draws the picture inside a Form XObject, as some scanners write a page,
+/// so the picture is not one of the page's own objects.
+fn scan_with(picture: &Path, to: &Path, typed: Option<&str>, in_form: bool) {
     let (width, height, data) = rgba(picture);
     let rgb: Vec<u8> = data
         .chunks_exact(4)
@@ -77,15 +85,39 @@ fn scan(picture: &Path, to: &Path) {
     );
     image.compress().unwrap();
     let image = doc.add_object(image);
-    let content = doc.add_object(Stream::new(
-        dictionary! {},
-        format!("q {w_pt} 0 0 {h_pt} 0 0 cm /Im0 Do Q").into_bytes(),
-    ));
+    let (image, name) = if in_form {
+        let form = doc.add_object(Stream::new(
+            dictionary! {
+                "Type" => "XObject", "Subtype" => "Form",
+                "BBox" => vec![0.into(), 0.into(), w_pt.into(), h_pt.into()],
+                "Resources" => dictionary! { "XObject" => dictionary! { "Im0" => image } },
+            },
+            format!("q {w_pt} 0 0 {h_pt} 0 0 cm /Im0 Do Q").into_bytes(),
+        ));
+        (form, "Fm0")
+    } else {
+        (image, "Im0")
+    };
+    let mut drawn = if in_form {
+        format!("/{name} Do")
+    } else {
+        format!("q {w_pt} 0 0 {h_pt} 0 0 cm /{name} Do Q")
+    };
+    if let Some(line) = typed {
+        drawn.push_str(&format!(" BT /F1 7 Tf 20 {} Td ({line}) Tj ET", h_pt - 9.0));
+    }
+    let content = doc.add_object(Stream::new(dictionary! {}, drawn.into_bytes()));
+    let font = doc.add_object(dictionary! {
+        "Type" => "Font", "Subtype" => "Type1", "BaseFont" => "Helvetica",
+    });
     let page = doc.add_object(dictionary! {
         "Type" => "Page", "Parent" => tree,
         "MediaBox" => vec![0.into(), 0.into(), w_pt.into(), h_pt.into()],
         "Contents" => content,
-        "Resources" => dictionary! { "XObject" => dictionary! { "Im0" => image } },
+        "Resources" => dictionary! {
+            "XObject" => dictionary! { name => image },
+            "Font" => dictionary! { "F1" => font },
+        },
     });
     doc.objects.insert(
         tree,
@@ -398,6 +430,90 @@ fn another_script(report: &mut Report, at: &dyn Fn(&str) -> String) {
     );
 }
 
+/// A scan with a typed header line: read, and the header not written twice.
+///
+/// Until 2026-10-15 one character of text kept a page from being read, so this
+/// page was refused with *every selected page already has text*. A scan is
+/// read whatever text it has (`ocr_layer::SCAN_SHARE`), and a word the page
+/// already has in the same place is dropped (`ocr_layer::outcome_of`). The
+/// header is a word the engine reads off the picture too, so a filter that
+/// failed would make it findable twice.
+fn a_scan_with_a_typed_line(
+    report: &mut Report,
+    at: &dyn Fn(&str) -> String,
+    source: &str,
+    picture: &str,
+) {
+    const TYPED: &str = "FAX 0401 RECEIVED";
+    let (typed, out) = (at("typed-scan.pdf"), at("typed-out.pdf"));
+    scan_with(Path::new(picture), Path::new(&typed), Some(TYPED), false);
+    report.check(
+        "the control: the typed scan's only text is the header, found once",
+        text_of(&typed).trim() == TYPED && found(&typed, "RECEIVED").len() == 1,
+        &text_of(&typed),
+    );
+    let (code, json, stderr) = tool(&["ocr", &typed, "-o", &out, "--json"], &[]);
+    let result: serde_json::Value = serde_json::from_str(&json).unwrap_or_default();
+    report.check(
+        "a scan with a typed line is read",
+        code == 0
+            && result["pages"].as_array().is_some_and(|p| p.len() == 1)
+            && result["already_text"].as_array().is_some_and(Vec::is_empty),
+        &format!("exit {code}; {stderr}; {json}"),
+    );
+    if code != 0 {
+        return;
+    }
+    // The source's words and the typed ones: the copy holds both, and
+    // `overlap` divides by the longer list.
+    let mut want = words(&text_of(source));
+    want.extend(words(TYPED));
+    let got = words(&text_of(&out));
+    let shared = overlap(&want, &got);
+    report.check(
+        "its copy reads the source's words and the typed line's",
+        shared >= ENOUGH,
+        &format!("{shared:.2} of {} words: {got:?}", want.len()),
+    );
+    report.check(
+        "and the typed line is found once, not again from the picture",
+        found(&out, "RECEIVED").len() == 1 && found(&out, "0401").len() == 1,
+        &format!(
+            "RECEIVED {:?}; 0401 {:?}",
+            found(&out, "RECEIVED"),
+            found(&out, "0401")
+        ),
+    );
+
+    // The window's command walks the pages in code of its own.
+    let window = at("typed-window.pdf");
+    let (answer, _) = app_path(Path::new(&typed), Path::new(&window), Ask::Plain);
+    let pages = answer.as_ref().map(|r| r.pages.len()).unwrap_or(0);
+    report.check(
+        "the window's command reads it too, and finds the typed line once",
+        pages == 1 && found(&window, "RECEIVED").len() == 1 && found(&window, "quartz").len() == 1,
+        &format!(
+            "{:?}; RECEIVED {:?}",
+            answer.err(),
+            found(&window, "RECEIVED")
+        ),
+    );
+
+    // A picture inside a Form XObject is a picture on the page all the same.
+    let (formed, formed_out) = (at("form-scan.pdf"), at("form-out.pdf"));
+    scan_with(Path::new(picture), Path::new(&formed), Some(TYPED), true);
+    let (code, json, stderr) = tool(&["ocr", &formed, "-o", &formed_out, "--json"], &[]);
+    let result: serde_json::Value = serde_json::from_str(&json).unwrap_or_default();
+    report.check(
+        "a scan whose picture is inside a form is read the same",
+        text_of(&formed).trim() == TYPED
+            && code == 0
+            && result["pages"].as_array().is_some_and(|p| p.len() == 1)
+            && found(&formed_out, "quartz").len() == 1,
+        &format!("exit {code}; {stderr}; {json}"),
+    );
+}
+
 /// A page the engine will not read, beside one it reads.
 ///
 /// The second page is a picture of `multilingual.pdf`'s Arabic page. Vision in
@@ -698,6 +814,8 @@ pub(super) fn makes_a_scan_searchable(report: &mut Report) {
             && found(&both, "quartz").len() == 2,
         &format!("exit {code}; {stderr}; {json}"),
     );
+
+    a_scan_with_a_typed_line(report, &at, &source, &picture);
 
     let kept = std::fs::read(&out).unwrap();
     for (args, status) in [

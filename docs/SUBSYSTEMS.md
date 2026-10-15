@@ -580,6 +580,31 @@ behind.
 The engine is asked for words with its language model on (`ocr_layer::options`), the opposite
 of what the redaction gate asks: this caller wants recall and is not a safety check.
 
+**A scan with some text (2026-10-15).** A page is read when it has no text, or when pictures
+cover at least half of it (`ocr_layer::wants_reading`, `SCAN_SHARE`). The share comes from the
+worker's `Request::Pictures`, `render::run_pictures`: the page's pictures and those inside its
+Form XObjects (`objects::read`), against the crop box, measured on a 100 x 100 grid so that
+pictures over one another count once. It is asked only of a page that has text. Until then one
+character kept a page from being read, so a scan with a typed fax line, a stamp or a page
+number got no layer. Text alone could not draw the line: measured on pages built from
+`text-heavy.pdf`, scans with 12 to 48 typed characters have 0.2 to 0.6% of the page under
+characters, and a born-digital page with 31 characters has 0.4%; but the scans are 100%
+picture and born-digital pages 0 to 3.1%.
+
+A recognised word is dropped when the characters the page already has inside its box spell it,
+letters and digits only, either containing the other (`ocr_layer::already_there`). Dropping
+any word with a character under it took six body words under a typed stamp and one under a
+footer number on those pages; comparing the spelling kept them. Every word dropped this way
+on a page that got no others makes it `AlreadyThere`, which both callers file under
+`already_text`: a scan another program already gave a layer reads as having text, not as
+nothing recognised. `reads_back` counts the page's own characters with the layer's, or a scan
+with a header would read back one line more than its layer and be refused.
+
+`tests/cli/ocr.rs` holds it end to end, through the tool and the window, with the picture on
+the page and inside a form. Three lines no unit test reaches were broken by hand on
+2026-10-15 and each turned exactly its own check red: `run_pictures` without the forms'
+pictures, and the tool's and the window's `Pictures` answer read as 0.
+
 **A page the engine will not read.** `ocr_layer::outcome_of` turns each page's answer into a
 layer, nothing, or *refused*, and it is the one place that decides which engine errors are a
 page's own: `RecogniseError::Rejected` only. `Unavailable`, `Crashed`, `TimedOut` and

@@ -1,9 +1,10 @@
 //! `tpdf ocr`: a copy of a scanned document that can be searched and selected.
 //!
-//! Each selected page that has no text of its own is rendered by the sandboxed
-//! worker, read by the operating system's recogniser in the OCR worker, and
-//! the words are written into the copy as an invisible layer
-//! (`textlayer.rs`). A page that already has text is left as it is, and so is
+//! Each selected page that has no text of its own, or is a scan with some
+//! (`ocr_layer::wants_reading`), is rendered by the sandboxed worker, read by
+//! the operating system's recogniser in the OCR worker, and the words the page
+//! does not already have are written into the copy as an invisible layer
+//! (`textlayer.rs`). Any other page that has text is left as it is, and so is
 //! a page whose image the recogniser will not read, which is named in the
 //! report while the other pages get their layer (`ocr_layer::outcome_of`).
 //!
@@ -32,7 +33,7 @@ use crate::worker_proto::{Reply, Request};
 pub const COMMAND: Registered = Registered {
     name: "ocr",
     usage: "ocr <in.pdf> -o <out.pdf> [--pages 1-3,7] [--language TAG]...\n        [--password-env VAR] [--invalidate-signatures] [--force] [--json]",
-    summary: "Writes a copy in which scanned pages can be searched and selected:\n            pages without text are read by the system's text recogniser and\n            the words are added as an invisible layer. Pages that already\n            have text are left as they are. --language takes a BCP-47 tag such\n            as de-DE, most preferred first. A page the recogniser refuses is\n            named and left as it is. Not every script is read, and a page in\n            one that is not can get wrong letters without a warning: on macOS\n            that is Greek and Armenian, while Hebrew and Georgian get nothing\n            and Arabic, Persian, Hindi, Bengali and Tamil are refused.",
+    summary: "Writes a copy in which scanned pages can be searched and selected:\n            pages without text, and scans with some typed text, are read by\n            the system's text recogniser and the words the page does not\n            already have are added as an invisible layer. Other pages that\n            have text are left as they are. --language takes a BCP-47 tag such\n            as de-DE, most preferred first. A page the recogniser refuses is\n            named and left as it is. Not every script is read, and a page in\n            one that is not can get wrong letters without a warning: on macOS\n            that is Greek and Armenian, while Hebrew and Georgian get nothing\n            and Arabic, Persian, Hindi, Bengali and Tamil are refused.",
     parse: |args| parse(args).map(|p| Box::new(p) as Box<dyn Subcommand>),
 };
 
@@ -157,6 +158,10 @@ pub(super) fn render(
 #[derive(Default)]
 struct Read {
     layers: Vec<Layer>,
+    /// Each layered page's text before its layer, in the order of `layers`:
+    /// what the staged copy must read back besides the layer
+    /// (`ocr_layer::reads_back`).
+    before: Vec<crate::text::PageText>,
     already_text: Vec<u32>,
     nothing_read: Vec<u32>,
     refused: Vec<u32>,
@@ -164,7 +169,8 @@ struct Read {
 }
 
 impl Ocr {
-    /// Recognises every selected page that has no text of its own.
+    /// Recognises every selected page that has no text of its own, or is a scan
+    /// (`ocr_layer::wants_reading`).
     fn read(
         &self,
         session: &mut Session,
@@ -187,7 +193,24 @@ impl Ocr {
                     format!("unexpected worker reply: {reply:?}"),
                 ));
             };
-            if ocr_layer::has_text(&text) {
+            // Asked only of a page with text: one with none is read anyway.
+            let pictures = if ocr_layer::has_text(&text) {
+                match session
+                    .ask(Request::Pictures { page })
+                    .map_err(|why| declined(&shown, why, has_password))?
+                {
+                    Reply::Pictures(share) => share,
+                    other => {
+                        return Err(Failure::new(
+                            Exit::Internal,
+                            format!("unexpected worker reply: {other:?}"),
+                        ));
+                    }
+                }
+            } else {
+                0.0
+            };
+            if !ocr_layer::wants_reading(&text, pictures) {
                 read.already_text.push(*n);
                 continue;
             }
@@ -226,11 +249,15 @@ impl Ocr {
                 read.engine.get_or_insert_with(|| id.to_string());
                 items
             });
-            let outcome = ocr_layer::outcome_of(page, answer).map_err(|why| {
+            let outcome = ocr_layer::outcome_of(page, answer, &text).map_err(|why| {
                 Failure::new(Exit::Internal, format!("page {n} could not be read: {why}"))
             })?;
             match outcome {
-                Outcome::Layer(layer) => read.layers.push(layer),
+                Outcome::Layer(layer) => {
+                    read.layers.push(layer);
+                    read.before.push(text);
+                }
+                Outcome::AlreadyThere => read.already_text.push(*n),
                 Outcome::Nothing => read.nothing_read.push(*n),
                 Outcome::Refused => read.refused.push(*n),
             }
@@ -296,15 +323,14 @@ impl Ocr {
                          output was published",
                     ));
                 }
-                for layer in &read.layers {
+                for (layer, before) in read.layers.iter().zip(&read.before) {
                     let reply = session
                         .ask(Request::Text {
                             page: layer.page,
                             crop: None,
                         })
                         .map_err(|why| checking(why.into()))?;
-                    let back =
-                        matches!(&reply, Reply::Text(text) if ocr_layer::reads_back(layer, text));
+                    let back = matches!(&reply, Reply::Text(text) if ocr_layer::reads_back(layer, before, text));
                     if !back {
                         return Err(Failure::new(
                             Exit::Internal,

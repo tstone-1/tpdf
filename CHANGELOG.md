@@ -28,6 +28,11 @@ have the binary.)
   selected, and *Sign…* waits for one. *No, I am the last to sign* locks the document as
   before; *Yes* leaves it open. The answer is asked again for every document and is not
   remembered. `tpdf sign` is unchanged: it locks only with `--lock`.
+- **Text recognition reads a scan that already has a little text.** A page with a typed fax
+  line, a stamp or a page number was left alone because it had text, so the scan behind it
+  could not be searched. A page is now read when pictures cover at least half of it, and a
+  word the page already has in the same place is not written again; a scan that another
+  program already gave a text layer is still left as it is. Born-digital pages are not read.
 - **CI starts the application and opens a document in a real window,** in the Ubuntu job
   under Xvfb: a debug checks build and `viewer_check.py` on `links.pdf`. Every gate stayed
   green when a change on 2026-10-13 left the window empty on both platforms; that change,

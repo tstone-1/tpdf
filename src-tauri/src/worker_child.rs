@@ -630,6 +630,10 @@ fn handle(
                 Err(e) => Response::err(e),
             }
         }
+        Request::Pictures { page } => match render::run_pictures(document, *page) {
+            Ok(share) => Response::reply(Reply::Pictures(share)),
+            Err(e) => Response::err(e),
+        },
         Request::Geometry { page, crop } => match render::geometry_of(document, *page, *crop) {
             Ok(size) => Response::reply(Reply::Geometry(size)),
             Err(e) => Response::err(e),
