@@ -144,6 +144,24 @@ pub async fn session_set_invert_pages(app: tauri::AppHandle, invert: bool) -> Re
     .map_err(|e| format!("the session write did not run: {e}"))?
 }
 
+/// Records the reader's favourites, the whole list at once.
+///
+/// A preference, so it has a command of its own for
+/// [`session_set_invert_pages`]'s reason and goes through the same lock.
+#[tauri::command]
+pub async fn session_set_favourites(
+    app: tauri::AppHandle,
+    favourites: Vec<session::Favourite>,
+) -> Result<(), String> {
+    let path = session_file(&app);
+    let favourites = session::sanitized_favourites(favourites);
+    tauri::async_runtime::spawn_blocking(move || {
+        with_session(&path, |stored| stored.favourites = favourites)
+    })
+    .await
+    .map_err(|e| format!("the session write did not run: {e}"))?
+}
+
 /// Records the language *Recognise text* asks for, or `None` for the engine's
 /// own choice.
 ///

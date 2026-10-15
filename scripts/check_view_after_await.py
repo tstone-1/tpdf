@@ -91,6 +91,7 @@ ALLOWED: dict[str, str] = {
     "openDocument": "it is the mount: it parks, clears and fills the variables itself, under `opening`",
     "showPanes": "it carries out the plan that moves documents in and out of the variables, under `opening`",
     "boot": "every name is in a listener or a check's accessor, which runs later as the focused document",
+    "goToFavourite": "the viewer it reads is the one openPath has just put in front, the favourite's document",
 }
 
 #: Top-level `let`s that are about the window and not about one document.
@@ -144,6 +145,7 @@ PER_WINDOW: dict[str, str] = {
     "screenMode": "whether the window is full screen or presenting, drawn from fullscreen.ts",
     "windowWasFull": "whether the window has reported being full screen",
     "screenBlank": "the colour a presentation is blanked to, over the whole window",
+    "favourites": "the reader's favourites, one list across every document",
     "diskChangeMode": "a preference, kept between sessions",
     "restoreTabs": "a preference, kept in the session",
     # Built once at launch, on `document.body`.

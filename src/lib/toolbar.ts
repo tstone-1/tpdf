@@ -192,6 +192,10 @@ export const WINDOW_MENU: MenuSection[] = [
     ],
   },
   {
+    label: "Favourites",
+    items: ["nav.addFavourite", "nav.removeFavourite", "nav.nextFavourite", "nav.previousFavourite"],
+  },
+  {
     label: "Outline",
     items: ["view.outlineExpandAll", "view.outlineCollapseAll", "view.outlineToCurrent"],
   },

@@ -74,7 +74,6 @@ const PLANNED = [
   "edit.cutMark", "edit.drawArrow", "edit.drawLine", "edit.drawPolygon",
   "edit.drawPolyline", "edit.pasteMark", "edit.pastePicture",
   "file.saveAttachment", "file.saveRegionAsPicture",
-  "nav.addFavourite", "nav.nextFavourite", "nav.previousFavourite",
   "view.fitContent", "view.fitHeight",
 ];
 

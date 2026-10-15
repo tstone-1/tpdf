@@ -67,4 +67,28 @@ export async function closingCheck(host: OpenCheckHost, expected: string, report
   const said = document.querySelector('[data-testid="problem"]')?.textContent?.trim() ?? "";
   report.check("and the previous one moves it back", back,
     `${names()}; in front: ${host.path()}${said ? `; said: ${said}` : ""}`);
+
+  report.emit("[closing] a favourite");
+  await host.openings();
+  await host.idle();
+  const viewer = host.viewer()!;
+  const settled = () => settle(() => host.viewer()?.idle === true, SETTLE_MS);
+  viewer.goToPage(1);
+  await settled();
+  const marked = host.status()?.page ?? 0;
+  host.run("nav.addFavourite", "Results");
+  viewer.goToPage(0);
+  await settled();
+  host.run("nav.nextFavourite");
+  await settled();
+  // Not page 1, or going back to page 1 below could not tell the two apart.
+  report.check("Next favourite goes to the page marked", marked > 1 && host.status()?.page === marked,
+    `marked page ${marked}, now on page ${host.status()?.page}`);
+  host.run("nav.removeFavourite");
+  viewer.goToPage(0);
+  await settled();
+  host.run("nav.nextFavourite");
+  await settled();
+  report.check("and after it is removed there is none to go to", host.status()?.page === 1,
+    `now on page ${host.status()?.page}`);
 }

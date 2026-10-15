@@ -1027,6 +1027,7 @@ pub fn run() {
             session_load,
             session_remember,
             session_set_invert_pages,
+            session_set_favourites,
             session_set_ocr_language,
             session_set_tabs,
             session_set_restore_tabs,

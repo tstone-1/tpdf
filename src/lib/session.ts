@@ -22,6 +22,14 @@
 import { call } from "./ipc";
 import type { FitMode } from "./zoom";
 
+/** A page the reader marked to come back to. Field names match the Rust struct. */
+export interface Favourite {
+  path: string;
+  /** Zero-based page. */
+  page: number;
+  name: string;
+}
+
 /** Where one document was left. Field names match the Rust struct. */
 export interface Place {
   path: string;
@@ -85,6 +93,8 @@ export interface Session {
   restore_tabs?: boolean;
   /** The two sides, when the window was showing two documents side by side. */
   sides?: Sides | null;
+  /** Pages the reader marked to come back to. See `favourites.ts`. */
+  favourites?: Favourite[];
   /**
    * The reader's home folder on this machine, when the platform names one.
    *

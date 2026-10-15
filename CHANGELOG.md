@@ -38,6 +38,9 @@ have the binary.)
 - **Close other tabs, Close tabs to the left and right, and Reopen closed tab.** From the tab
   in front or from a tab's right-click menu; unsaved changes are asked about once. *Reopen
   closed tab* (Ctrl+Shift+T, ⌘⇧T on macOS) opens the document closed last, where you left it.
+- **Favourites.** *Add this page to favourites…* marks the page you are reading; each
+  favourite is then in the command palette and opens its document at that page. Next and
+  previous favourite step through a document's, and the list is kept between launches.
 - **The next and previous PDF in the folder**, in the order the file manager shows them. The
   tab moves on, unless it has unsaved changes.
 - **A link says where it goes.** With the pointer over a link, its tooltip names the page or

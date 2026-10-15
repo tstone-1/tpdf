@@ -194,6 +194,16 @@ export interface AppActions {
   reopenClosedTab(): void;
   /** Opens the next (`1`) or previous (`-1`) PDF in the folder of the one in front. */
   openInFolder(step: 1 | -1): void;
+  /** Whether the page being read is a favourite. */
+  isFavourite(): boolean;
+  /** Marks the page being read as a favourite, named `name` or after its number. */
+  addFavourite(name: string): void;
+  /** Unmarks the page being read. */
+  removeFavourite(): void;
+  /** Whether this document has a favourite page after (`1`) or before (`-1`) this one. */
+  canStepFavourite(step: 1 | -1): boolean;
+  /** Goes to that favourite. */
+  stepFavourite(step: 1 | -1): void;
   /** Whether the document in front has an outline. */
   hasOutline(): boolean;
   /**
@@ -1234,6 +1244,37 @@ export function registerAppCommands(
     { id: "view.singlePage", title: SPREAD_TITLES.single, ...layoutCommand("single") },
     { id: "view.facing", title: SPREAD_TITLES.facing, ...layoutCommand("facing") },
     { id: "view.book", title: SPREAD_TITLES.book, ...layoutCommand("book") },
+    // Favourites: pages the reader marked, across every document. Each one is
+    // also a palette entry of its own (`favourites.ts`, `FAVOURITE_PREFIX`).
+    {
+      id: "nav.addFavourite",
+      title: "Add this page to favourites…",
+      enabled: withDocument,
+      argument: {
+        placeholder: "A name for this page, or Enter for its number",
+        problem: () => null,
+        preview: (raw: string) => (raw.trim() ? `Add as "${raw.trim()}"` : "Add, named after the page"),
+        run: (raw: string) => actions.addFavourite(raw),
+      },
+    },
+    {
+      id: "nav.removeFavourite",
+      title: "Remove this page from favourites",
+      enabled: () => withDocument() && actions.isFavourite(),
+      run: () => actions.removeFavourite(),
+    },
+    {
+      id: "nav.nextFavourite",
+      title: "Next favourite in this document",
+      enabled: () => withDocument() && actions.canStepFavourite(1),
+      run: () => actions.stepFavourite(1),
+    },
+    {
+      id: "nav.previousFavourite",
+      title: "Previous favourite in this document",
+      enabled: () => withDocument() && actions.canStepFavourite(-1),
+      run: () => actions.stepFavourite(-1),
+    },
     // The outline, opened or closed as a whole, or down to where the reader is.
     {
       id: "view.outlineExpandAll",

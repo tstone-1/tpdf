@@ -41,6 +41,8 @@ function harness() {
     canCloseTabs: () => false,
     canReopenClosedTab: () => false,
     hasOutline: () => false,
+    isFavourite: () => false,
+    canStepFavourite: () => false,
     fieldPicked: () => false,
     signableFields: () => 0,
     // What the window menu's guards read, in the state a first launch is in.

@@ -837,3 +837,31 @@ ROWS += [
         "  if (at < 0) return null;\n", "",
         "finds nothing for a document the folder no longer has"),
 ]
+
+# --- favourites, 2026-10-15 ---------------------------------------------------
+ROWS += [
+    Mutation("favourites: an empty name stays empty", "src/lib/favourites.ts",
+        "    const added = { path, page, name: name.trim() || `Page ${page + 1}` };",
+        "    const added = { path, page, name: name.trim() };",
+        "names a page after its number when the reader gives no name"),
+    Mutation("favourites: a page marked twice is listed twice", "src/lib/favourites.ts",
+        "    if (at >= 0) this.list[at] = added;\n    else this.list.push(added);",
+        "    this.list.push(added);",
+        "renames a page marked twice rather than listing it twice"),
+    Mutation("favourites: removing says nothing changed", "src/lib/favourites.ts",
+        "    return this.list.length !== before;",
+        "    return false;",
+        "removes a page, and says whether it was marked"),
+    Mutation("favourites: step across documents", "src/lib/favourites.ts",
+        "    const pages = this.list.filter((one) => one.path === path).map((one) => one.page);",
+        "    const pages = this.list.map((one) => one.page);",
+        "steps to the nearest favourite page of the same document, either way"),
+    Mutation("favourites: step to the furthest", "src/lib/favourites.ts",
+        "    return step > 0 ? Math.min(...beyond) : Math.max(...beyond);",
+        "    return step > 0 ? Math.max(...beyond) : Math.min(...beyond);",
+        "steps to the nearest favourite page of the same document, either way"),
+    Mutation("favourites: name the page from zero", "src/lib/favourites.ts",
+        "(${basename(favourite.path)}, page ${favourite.page + 1})`,",
+        "(${basename(favourite.path)}, page ${favourite.page})`,",
+        "offers one entry per favourite, which goes to it"),
+]

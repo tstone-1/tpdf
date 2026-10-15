@@ -70,7 +70,7 @@ import type {
   PageMatches,
   SearchOptions,
 } from "./search";
-import type { Place, Session, Sides } from "./session";
+import type { Favourite, Place, Session, Sides } from "./session";
 import type { Choices, Placement, SignOutcome, SignRecord } from "./signing";
 import type { AppearanceOptions, SignaturePreview } from "./signappearance";
 import type { PageText } from "./text";
@@ -546,6 +546,7 @@ export interface Commands {
   session_load: { args: NoArgs; reply: Session };
   session_remember: { args: { place: Place }; reply: void };
   session_set_invert_pages: { args: { invert: boolean }; reply: void };
+  session_set_favourites: { args: { favourites: Favourite[] }; reply: void };
   session_set_ocr_language: { args: { language: string | null }; reply: void };
   session_set_tabs: { args: { paths: string[]; active: string | null; sides: Sides | null }; reply: void };
   session_set_restore_tabs: { args: { restore: boolean }; reply: void };

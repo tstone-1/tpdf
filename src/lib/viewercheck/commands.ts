@@ -362,6 +362,11 @@ export async function appCommandChecks(
     canReopenClosedTab: () => false,
     reopenClosedTab: () => fired.push("reopenClosedTab"),
     openInFolder: (step: number) => fired.push(`openInFolder:${step}`),
+    isFavourite: () => true,
+    addFavourite: (name: string) => fired.push(`addFavourite:${name}`),
+    removeFavourite: () => fired.push("removeFavourite"),
+    canStepFavourite: () => true,
+    stepFavourite: (step: number) => fired.push(`stepFavourite:${step}`),
     hasOutline: () => true,
     arrangeOutline: (how: string) => fired.push(`arrangeOutline:${how}`),
     sides: () => ({ split: false, focused: "left" as const, others: [] as string[] }),
@@ -848,6 +853,29 @@ export async function appCommandChecks(
     {
       id: "view.invertPages",
       ...shell("toggleInvert"),
+      read: () => fired.join(","),
+    },
+    // Through the recorder: the list is the window's and the session's, and
+    // `favourites.test.ts` holds its rules.
+    {
+      id: "nav.addFavourite",
+      argument: "Results",
+      ...shell("addFavourite:Results"),
+      read: () => fired.join(","),
+    },
+    {
+      id: "nav.removeFavourite",
+      ...shell("removeFavourite"),
+      read: () => fired.join(","),
+    },
+    {
+      id: "nav.nextFavourite",
+      ...shell("stepFavourite:1"),
+      read: () => fired.join(","),
+    },
+    {
+      id: "nav.previousFavourite",
+      ...shell("stepFavourite:-1"),
       read: () => fired.join(","),
     },
     // Through the recorder: the sidebar these arrange is the window's, and this

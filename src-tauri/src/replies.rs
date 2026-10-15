@@ -994,6 +994,11 @@ fn samples() -> BTreeMap<&'static str, String> {
                     page_count: 40,
                 }],
                 invert_pages: true,
+                favourites: vec![session::Favourite {
+                    path: "/tmp/one.pdf".into(),
+                    page: 7,
+                    name: "Results".into(),
+                }],
                 ocr_language: Some("de-DE".into()),
                 tabs: vec!["/tmp/one.pdf".into(), "/tmp/two.pdf".into()],
                 active_tab: Some("/tmp/one.pdf".into()),

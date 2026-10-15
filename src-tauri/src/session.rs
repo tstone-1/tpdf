@@ -197,6 +197,53 @@ pub struct Session {
     /// the divider stood. `None` for a window showing one document.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub sides: Option<Sides>,
+    /// Pages the reader marked to come back to, in the order they were added.
+    ///
+    /// The reader's, not a document's, for [`Session::invert_pages`]'s reason:
+    /// one list across every file, offered in the palette whatever is open.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub favourites: Vec<Favourite>,
+}
+
+/// The most favourites kept. A list longer than this is cut on load.
+const FAVOURITES: usize = 500;
+
+/// The longest name a favourite keeps, in characters.
+const FAVOURITE_NAME: usize = 200;
+
+/// A page the reader marked to come back to.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct Favourite {
+    /// The document, as it was opened.
+    pub path: String,
+    /// Zero-based page.
+    #[serde(default)]
+    pub page: u32,
+    /// What the reader called it; the frontend names it after the page when
+    /// the reader gave no name.
+    #[serde(default)]
+    pub name: String,
+}
+
+impl Favourite {
+    /// Keeps a name to [`FAVOURITE_NAME`] characters: the file is on disk
+    /// where anything can edit it, and the name is drawn in the palette.
+    #[must_use]
+    pub fn sanitized(mut self) -> Self {
+        if self.name.chars().count() > FAVOURITE_NAME {
+            self.name = self.name.chars().take(FAVOURITE_NAME).collect();
+        }
+        self
+    }
+}
+
+/// `list`, each entry bounded and the list cut to [`FAVOURITES`].
+#[must_use]
+pub fn sanitized_favourites(list: Vec<Favourite>) -> Vec<Favourite> {
+    list.into_iter()
+        .map(Favourite::sanitized)
+        .take(FAVOURITES)
+        .collect()
 }
 
 /// The narrowest a side is drawn, as a share of the width. `App.svelte`'s
@@ -247,6 +294,7 @@ impl Session {
             // preference reads as "it does not remember", with nothing failing.
             invert_pages: session.invert_pages,
             restore_tabs: session.restore_tabs,
+            favourites: sanitized_favourites(session.favourites),
             ..Self::default()
         }
         .with_tabs(session.tabs, session.active_tab, session.sides)
@@ -427,7 +475,7 @@ fn temp_beside(path: &Path) -> PathBuf {
 
 #[cfg(test)]
 mod tests {
-    use super::{Fit, Place, Session, Sides, CAPACITY};
+    use super::{Favourite, Fit, Place, Session, Sides, CAPACITY};
     use std::path::PathBuf;
 
     use crate::testutil::TempDir;
@@ -490,6 +538,35 @@ mod tests {
         };
         session.save(&dir.file()).expect("save");
         assert!(Session::load(&dir.file()).invert_pages);
+    }
+
+    #[test]
+    fn favourites_survive_a_round_trip() {
+        // `load` names what it carries, so a field it forgets resets.
+        let dir = TempDir::new("favourites");
+        let marked = Favourite {
+            path: "/tmp/a.pdf".into(),
+            page: 7,
+            name: "Results".into(),
+        };
+        let session = Session {
+            favourites: vec![marked.clone()],
+            ..Session::default()
+        };
+        session.save(&dir.file()).expect("save");
+        assert_eq!(Session::load(&dir.file()).favourites, vec![marked]);
+    }
+
+    #[test]
+    fn a_long_favourite_name_and_a_long_list_are_cut() {
+        let long = Favourite {
+            path: "/tmp/a.pdf".into(),
+            page: 0,
+            name: "x".repeat(super::FAVOURITE_NAME + 50),
+        };
+        let kept = super::sanitized_favourites(vec![long; super::FAVOURITES + 10]);
+        assert_eq!(kept.len(), super::FAVOURITES);
+        assert_eq!(kept[0].name.chars().count(), super::FAVOURITE_NAME);
     }
 
     #[test]

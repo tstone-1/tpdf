@@ -250,6 +250,12 @@ project conventions.
   made, and Next link / Previous link reach one without the pointer. Back and Forward grey out
   when there is nowhere to go.
   <!-- built: nav.back nav.forward nav.nextLink nav.previousLink -->
+- **Favourites.** *Add this page to favourites…* marks the page you are reading, with a name
+  or its number; each favourite is then in the command palette as *Go to favourite*, and
+  opens its document at that page from any other. *Next favourite in this document* and
+  *Previous favourite in this document* step between them, and *Remove this page from
+  favourites* unmarks one. The list is kept between launches.
+  <!-- built: nav.addFavourite nav.removeFavourite nav.nextFavourite nav.previousFavourite -->
 - **Web links open in your browser, after you confirm the site.** `http` and `https` only —
   everything else a `/URI` can name is still declined — and the confirmation shows the host
   in the form that cannot lie: an internationalised name is shown as its punycode, never as

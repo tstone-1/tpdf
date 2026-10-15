@@ -168,6 +168,8 @@
   import { ScreenMode, type Screen } from "./lib/fullscreen";
   import { ClosedTabs, tabsToClose, type CloseWhich } from "./lib/tabclose";
   import { neighbourIn } from "./lib/folderorder";
+  import { favouriteCommands, Favourites, FAVOURITE_PREFIX } from "./lib/favourites";
+  import type { Favourite } from "./lib/session";
   import {
     canOrderTabs, placing, readFieldBorder, writeFieldBorder,
   } from "./lib/fieldnames";
@@ -879,6 +881,38 @@
     for (const id of ids) await closeTab(id, true);
   }
 
+  /** The reader's favourites; see `favourites.ts`. Loaded with the session. */
+  let favourites = new Favourites();
+
+  /** The page being read, zero-based: the one filling the screen. */
+  function readingPage(): number {
+    return Math.max(0, (status?.page ?? 1) - 1);
+  }
+
+  /** Offers each favourite in the palette, and writes the list down. */
+  function saveFavourites(): void {
+    offerFavourites();
+    void call("session_set_favourites", { favourites: [...favourites.all] }).catch(() => {
+      // As a failed place write: the list in this window still holds.
+    });
+  }
+
+  function offerFavourites(): void {
+    commands.replace(FAVOURITE_PREFIX, favouriteCommands(favourites.all, (favourite) => void goToFavourite(favourite)));
+  }
+
+  /**
+   * Opens a favourite's document, or brings its tab forward, and goes to the
+   * page. The page is the file's: a document with pages deleted and not saved
+   * since counts them as they are on screen.
+   */
+  async function goToFavourite(favourite: Favourite): Promise<void> {
+    await openPath(favourite.path);
+    // Only in the favourite's document: when it would not open, the one in
+    // front is still another, and its page is not the one marked.
+    if (openPathName === favourite.path) viewer?.goToPage(favourite.page);
+  }
+
   /**
    * Opens the next or previous PDF in the folder of the document in front,
    * and closes the tab it came from unless that has unsaved work or is one of
@@ -1521,6 +1555,21 @@
     canReopenClosedTab: () => closedTabs.latest((path) => tabs.forPath(path) !== undefined) !== null,
     reopenClosedTab: () => void reopenClosedTab(),
     openInFolder: (step: 1 | -1) => void openInFolder(step),
+    isFavourite: () => openPathName !== "" && favourites.has(openPathName, readingPage()),
+    addFavourite: (name: string) => {
+      if (!openPathName) return;
+      favourites.add(openPathName, readingPage(), name);
+      saveFavourites();
+    },
+    removeFavourite: () => {
+      if (openPathName && favourites.remove(openPathName, readingPage())) saveFavourites();
+    },
+    canStepFavourite: (step: 1 | -1) =>
+      openPathName !== "" && favourites.step(openPathName, readingPage(), step) !== null,
+    stepFavourite: (step: 1 | -1) => {
+      const page = openPathName ? favourites.step(openPathName, readingPage(), step) : null;
+      if (page !== null) viewer?.goToPage(page);
+    },
     sides: () => ({
       split: panes.split,
       focused: panes.focused,
@@ -4852,6 +4901,8 @@
       // Read before any document opens, so the first tiles of the first page are
       // requested in the polarity the reader left the application in.
       invertPages = session.invert_pages ?? false;
+      favourites = new Favourites(session.favourites ?? []);
+      offerFavourites();
       recognitionLanguage.restore(session.ocr_language);
       restoreTabs = session.restore_tabs ?? false;
       const plan = launchPlan(session, handed);

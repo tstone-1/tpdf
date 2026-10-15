@@ -18169,7 +18169,7 @@ recorder instead, for the same reason.
 **Not run yet:** Windows and Linux, including whether WebView2 lets F11 through to the
 page; full screen with two documents side by side.
 
-#### 7.4 Navigation and tabs --- tabs and the outline done 2026-10-15
+#### 7.4 Navigation and tabs --- done 2026-10-15
 
 **Done:** *Close other tabs*, *Close tabs to the left*, *Close tabs to the right* and
 *Reopen closed tab* (Ctrl+Shift+T, ⌘⇧T), as commands from the tab in front and in a tab's
@@ -18197,14 +18197,19 @@ files by name in the app process, nothing opened, at most 10,000 entries read;
 value) and stops at either end. The tab moves on: the one it came from is closed unless it
 has unsaved work or is one of two views of its document.
 
-**Still to build in 7.4:**
+**Done: favourites.** *Add this page to favourites…* (`nav.addFavourite`, asking for an
+optional name in the palette), *Remove this page from favourites* (`nav.removeFavourite`),
+*Next favourite in this document* and *Previous favourite in this document*
+(`nav.nextFavourite`, `nav.previousFavourite`). One list across every document, in the
+session as `favourites` (`session.rs`: at most 500, names cut to 200 characters, and carried
+through `load`, which resets any field it does not name), written by
+`session_set_favourites`. Each favourite is a palette entry, *Go to favourite: name (file,
+page N)*, which opens the document or brings its tab forward and goes to the page.
+`favourites.ts` holds the rules; the `closing` phase marks a page, steps to it and removes it
+in a running window (11 of 11 with the rest of the phase).
 
-- Favourites: a named place (document path, page, optional name) kept in the settings, listed
-  in the sidebar beside the outline and in the palette; next and previous favourite.
-- Commands: `nav.addFavourite`, `nav.nextFavourite`,
-  `nav.previousFavourite`.
-- Exit: unit tests in the new `src/lib` modules (the tab history and the favourites store are
-  state, so they start outside `App.svelte`); a window check per command.
+**Not built:** a favourites list in the sidebar; the palette is the only list. The page is
+the file's, so in a document with unsaved deleted pages it counts them as on screen.
 
 #### 7.5 Annotation parity
 

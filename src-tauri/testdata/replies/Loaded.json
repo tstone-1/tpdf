@@ -30,5 +30,12 @@
     "beside": "/tmp/two.pdf",
     "share": 0.4
   },
+  "favourites": [
+    {
+      "path": "/tmp/one.pdf",
+      "page": 7,
+      "name": "Results"
+    }
+  ],
   "home": "/Users/reader"
 }
