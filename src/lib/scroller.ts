@@ -265,10 +265,16 @@ export interface Spread {
   coverAlone: boolean;
   /** With two columns, the earlier page of a row on the right. */
   rightToLeft: boolean;
+  /**
+   * Rows one after another down the document, or one row at a time: each row
+   * then has a slot at least one window tall, so no other row is in view, and
+   * the viewer keeps the scroll inside the row it is on.
+   */
+  continuous: boolean;
 }
 
 /** One page to a row: the layout every document had before 2026-10-15. */
-export const SINGLE: Spread = { columns: 1, coverAlone: false, rightToLeft: false };
+export const SINGLE: Spread = { columns: 1, coverAlone: false, rightToLeft: false, continuous: true };
 
 /**
  * The pages of each row, in reading order, for `count` pages under `spread`.
@@ -367,6 +373,11 @@ interface PageBox {
   rowWidth: number;
   /** CSS height of the page's row: its taller page. */
   rowHeight: number;
+  /**
+   * CSS distance from this row's top to the next row's: the row and the gap,
+   * or under one row at a time at least the window's height and the gap.
+   */
+  pitch: number;
 }
 
 /** A request that has been issued and has not settled. */
@@ -941,6 +952,8 @@ export class Scroller {
       const secondColumn = second ? second.widthCss : lone ? first.widthCss : 0;
       const rowWidth = lone || second ? firstColumn + PAGE_GAP + secondColumn : firstColumn;
       const rowHeight = Math.max(...placed.map((one) => one.heightCss));
+      const slot = spread.continuous ? rowHeight : Math.max(rowHeight, this.opts.viewport.height);
+      const pitch = slot + PAGE_GAP;
       placed.forEach((one, index) => {
         // Left to right, the earlier page takes the first column; the cover
         // alone takes the second.
@@ -957,10 +970,11 @@ export class Scroller {
           x,
           rowWidth,
           rowHeight,
+          pitch,
         };
       });
       widest = Math.max(widest, rowWidth);
-      top += rowHeight + PAGE_GAP;
+      top += pitch;
     }
     this.boxes = boxes;
     this.widestCss = widest;
@@ -1050,7 +1064,7 @@ export class Scroller {
       if (was.widthDev !== now.widthDev || was.heightDev !== now.heightDev) {
         this.invalidatePage(page);
         changed = true;
-      } else if (was.top !== now.top || was.x !== now.x || was.rowWidth !== now.rowWidth) {
+      } else if (was.top !== now.top || was.x !== now.x || was.rowWidth !== now.rowWidth || was.pitch !== now.pitch) {
         changed = true;
       }
     }
@@ -1299,7 +1313,8 @@ export class Scroller {
     if (
       now.columns === spread.columns &&
       now.coverAlone === spread.coverAlone &&
-      now.rightToLeft === spread.rightToLeft
+      now.rightToLeft === spread.rightToLeft &&
+      now.continuous === spread.continuous
     ) {
       return false;
     }
@@ -1378,7 +1393,19 @@ export class Scroller {
       this.surface.style.width = `${viewport.width}px`;
       this.surface.style.height = `${viewport.height}px`;
     }
+    // One row at a time sizes each row's slot by the window.
+    if (!this.spread.continuous) this.computeGeometry();
     this.relayout();
+  }
+
+  /**
+   * The scroll offsets that keep the row at `css` in view and no other: from
+   * its top to as far as it is taller than the window.
+   */
+  rowSpan(css: number): { top: number; bottom: number } {
+    const box = this.boxes[this.pageAt(css)];
+    const top = box?.top ?? 0;
+    return { top, bottom: top + Math.max(0, (box?.rowHeight ?? 0) - this.opts.viewport.height) };
   }
 
   /**
@@ -1684,7 +1711,7 @@ export class Scroller {
    * rotating the view does, and what learning a page's real size does.
    */
   pagePitchOf(page: number): number {
-    return (this.boxes[page]?.rowHeight ?? 0) + PAGE_GAP;
+    return this.boxes[page]?.pitch ?? PAGE_GAP;
   }
 
   /** CSS-pixel top of a page in the scrolled document. */

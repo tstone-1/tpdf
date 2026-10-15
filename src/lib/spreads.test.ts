@@ -7,7 +7,7 @@ import { describe, expect, it } from "vitest";
 import { SINGLE, type Spread } from "./scroller";
 import { kindOf, placeOfSpread, SPREAD_KINDS, spreadOfPlace, withKind } from "./spreads";
 
-const FACING: Spread = { columns: 2, coverAlone: false, rightToLeft: false };
+const FACING: Spread = { columns: 2, coverAlone: false, rightToLeft: false, continuous: true };
 
 describe("The layouts by name", () => {
   it("names each spread", () => {
@@ -32,8 +32,20 @@ describe("The layouts by name", () => {
 });
 
 describe("A layout in the session", () => {
+  it("keeps one page at a time through a change of layout", () => {
+    expect(withKind({ ...SINGLE, continuous: false }, "facing").continuous).toBe(false);
+    expect(withKind(SINGLE, "book").continuous).toBe(true);
+  });
+
   it("comes back as it was written", () => {
-    for (const spread of [SINGLE, FACING, { ...FACING, coverAlone: true }, { ...FACING, rightToLeft: true }]) {
+    for (const spread of [
+      SINGLE,
+      FACING,
+      { ...FACING, coverAlone: true },
+      { ...FACING, rightToLeft: true },
+      { ...SINGLE, continuous: false },
+      { ...FACING, continuous: false },
+    ]) {
       expect(spreadOfPlace(placeOfSpread(spread))).toEqual(spread);
     }
   });

@@ -1802,6 +1802,7 @@ mod tests {
             columns: 1,
             cover_alone: false,
             right_to_left: false,
+            continuous: true,
             page_count: 12,
         }
     }

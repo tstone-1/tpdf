@@ -18080,7 +18080,7 @@ Done:
 Not done: half a screen. Its usual chord, vi's Ctrl+D, is *Duplicate* on Windows and Linux,
 where the accelerator is Ctrl, and Space already moves most of a screen.
 
-#### 7.2 Page layouts --- facing and book view done 2026-10-15
+#### 7.2 Page layouts --- facing, book view and one page at a time done 2026-10-15
 
 SumatraPDF has single page, facing pages and book view (page 1 alone, then pairs), each
 continuous or one row at a time, plus fit height, fit content, and right-to-left rows (its
@@ -18118,16 +18118,21 @@ it read 91 %. The four commands ran from the palette. **Not checked yet**: Windo
 Linux; *Scroll both sides together* with one side in facing and the other not (it counts
 pages, so it should hold); section 4's scroll criterion in facing at fit page.
 
-**Still to build in 7.2:**
+**Done: one page or pair at a time** (`view.pageAtATime`, and `view.continuous` back),
+SumatraPDF's continuous switch turned off. `Spread.continuous` is false, and each row's
+slot in `computeGeometry` is at least one window tall, so no other row can be in view;
+hit tests, tiles and marks are unchanged because it is only geometry. The viewer keeps the
+offset inside the row: `scrollTop` is a setter that clamps to the row, because eight places
+assign it directly. A key at the row's end goes to the next row at once; a wheel has to push
+120 px past the end, and 300 ms must pass after the last change, or a trackpad's momentum
+turns several pages for one swipe. Going back lands at the end of the row before. A zoom
+keeps its centre within the row (the slots do not scale with the zoom), and a resize keeps
+the reader's page. Remembered with the place as `continuous`.
 
-- One row at a time instead of continuous (`view.continuous`): the scroll range is one
-  row; `n`/`p`, Space and the wheel at the end of the row move to the next row. Find,
-  links, Back/Forward and *Go to page* change the row.
-- Fit height and fit content join the zoom commands (`view.fitHeight`, `view.fitContent`).
-  Fit content needs each page's content bounds, which `textedit` already computes for text;
-  for a page of pictures it is the rendered ink bounds, measured on the tier-1 placeholder.
-- Grayscale (`view.grayscale`) joins *Invert page colours* as a second view filter, the same
-  CSS path.
+**Still to build in 7.2:** fit height and fit content join the zoom commands
+(`view.fitHeight`, `view.fitContent`). Fit content needs each page's content bounds, which
+`textedit` already computes for text; for a page of pictures it is the rendered ink bounds,
+measured on the tier-1 placeholder.
 
 #### 7.3 Full screen and presentation
 
@@ -18257,6 +18262,10 @@ COM server is thin: it starts a tpdf worker, sandboxed as today, and receives on
   manages machines to ask.
 - Page grid, page boxes, caret and file-attachment annotations, auto-scroll, tab colours and
   tab groups: used rarely enough that each waits for a request.
+- Grayscale, moved here from 7.2 on 2026-10-15. The plan said it would share inverting's CSS
+  path; inverting is done by the renderer (`Scroller.setInvert` discards every tile), so
+  grayscale is a renderer change or a filter that a read-back of the surface cannot see.
+  Inverting already covers reading on a dark screen.
 
 ### Cross-cutting
 

@@ -31,7 +31,7 @@ import {
 } from "./menubar";
 
 /** One page to a row, which is how every document opens. */
-const ONE_TO_A_ROW = { columns: 1, coverAlone: false, rightToLeft: false };
+const ONE_TO_A_ROW = { columns: 1, coverAlone: false, rightToLeft: false, continuous: true };
 
 /**
  * A registry holding every application command.
@@ -320,7 +320,7 @@ describe("menuEnablement", () => {
 });
 
 describe("the page layouts", () => {
-  const FACING = { columns: 2, coverAlone: false, rightToLeft: false };
+  const FACING = { columns: 2, coverAlone: false, rightToLeft: false, continuous: true };
 
   it("offers each layout but the current one, and right to left only with two columns", () => {
     const single = menuEnablement(registry());
@@ -333,6 +333,15 @@ describe("the page layouts", () => {
       .toEqual([true, false, true, true]);
   });
 
+  it("offers one page at a time while scrolling continuously, and the way back after", () => {
+    const continuous = menuEnablement(registry());
+    expect([continuous["view.continuous"], continuous["view.pageAtATime"]]).toEqual([false, true]);
+    const paged = menuEnablement(
+      registry({ viewer: () => ({ searchScoped: false, hasSelection: false, spread: { ...ONE_TO_A_ROW, continuous: false } }) }),
+    );
+    expect([paged["view.continuous"], paged["view.pageAtATime"]]).toEqual([true, false]);
+  });
+
   it("sets the layout chosen, keeping the reading direction", () => {
     const set: unknown[] = [];
     const viewer = { searchScoped: false, hasSelection: false, spread: { ...FACING, rightToLeft: true }, setSpread: (spread: unknown) => set.push(spread) };
@@ -340,8 +349,8 @@ describe("the page layouts", () => {
     commands.find("view.book")?.run?.();
     commands.find("view.rightToLeft")?.run?.();
     expect(set).toEqual([
-      { columns: 2, coverAlone: true, rightToLeft: true },
-      { columns: 2, coverAlone: false, rightToLeft: false },
+      { columns: 2, coverAlone: true, rightToLeft: true, continuous: true },
+      { columns: 2, coverAlone: false, rightToLeft: false, continuous: true },
     ]);
   });
 });

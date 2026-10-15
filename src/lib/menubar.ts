@@ -401,6 +401,8 @@ export const MENU_LAYOUT: LayoutSection[] = [
       "view.facing",
       "view.book",
       "view.rightToLeft",
+      "view.continuous",
+      "view.pageAtATime",
       SEPARATOR,
       "view.toggleSidebar",
       "view.showOutline",

@@ -990,6 +990,7 @@ fn samples() -> BTreeMap<&'static str, String> {
                     columns: 2,
                     cover_alone: true,
                     right_to_left: false,
+                    continuous: false,
                     page_count: 40,
                 }],
                 invert_pages: true,

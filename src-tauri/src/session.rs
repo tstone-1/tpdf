@@ -95,6 +95,10 @@ pub struct Place {
     /// With two columns, whether a row is read from the right.
     #[serde(default)]
     pub right_to_left: bool,
+    /// Whether rows follow each other down the document, or one is shown at a
+    /// time. A place written before the choice existed was continuous.
+    #[serde(default = "continuous")]
+    pub continuous: bool,
     /// Pages the document had when this was written.
     ///
     /// Kept so a restore can tell "the file has been replaced by a shorter one"
@@ -106,6 +110,10 @@ pub struct Place {
 
 fn one_column() -> u8 {
     1
+}
+
+fn continuous() -> bool {
+    true
 }
 
 fn unit_zoom() -> f32 {
@@ -450,6 +458,7 @@ mod tests {
             columns: 2,
             cover_alone: true,
             right_to_left: false,
+            continuous: false,
             page_count: 10,
         }
     }
@@ -979,8 +988,13 @@ mod tests {
     fn a_place_written_before_facing_pages_is_one_column() {
         let old: Place = serde_json::from_str(r#"{"path":"/tmp/a.pdf","page":4}"#).unwrap();
         assert_eq!(
-            (old.columns, old.cover_alone, old.right_to_left),
-            (1, false, false)
+            (
+                old.columns,
+                old.cover_alone,
+                old.right_to_left,
+                old.continuous
+            ),
+            (1, false, false, true)
         );
     }
 

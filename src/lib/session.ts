@@ -43,6 +43,8 @@ export interface Place {
   columns?: number;
   cover_alone?: boolean;
   right_to_left?: boolean;
+  /** Rows one after another, or one at a time. Absent means continuous. */
+  continuous?: boolean;
   /** Pages the document had when this was written. */
   page_count: number;
 }
@@ -140,7 +142,8 @@ export function samePlace(a: Place, b: Place): boolean {
     a.sidebar === b.sidebar &&
     a.columns === b.columns &&
     a.cover_alone === b.cover_alone &&
-    a.right_to_left === b.right_to_left
+    a.right_to_left === b.right_to_left &&
+    a.continuous === b.continuous
   );
 }
 

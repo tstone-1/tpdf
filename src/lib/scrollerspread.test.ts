@@ -20,8 +20,8 @@ const tiles = vi.hoisted(() => ({
 
 vi.mock("./tiles", () => tiles);
 
-const FACING: Spread = { columns: 2, coverAlone: false, rightToLeft: false };
-const BOOK: Spread = { columns: 2, coverAlone: true, rightToLeft: false };
+const FACING: Spread = { columns: 2, coverAlone: false, rightToLeft: false, continuous: true };
+const BOOK: Spread = { columns: 2, coverAlone: true, rightToLeft: false, continuous: true };
 const PAGE: PageSize = { width_pt: 300, height_pt: 400 };
 
 let dom: FakeDom;
@@ -171,5 +171,33 @@ describe("Changing the spread", () => {
     expect(scroller.pageOrigin(1).top).toBe(0);
     expect(scroller.setSpread({ ...FACING, coverAlone: true })).toBe(true);
     expect(scroller.pageOrigin(1).top).toBe(416);
+  });
+});
+
+describe("One row at a time", () => {
+  const ONE_AT_A_TIME: Spread = { ...SINGLE, continuous: false };
+
+  it("gives each row a slot one window tall, so no other row is in view", () => {
+    // The window is 900 px tall and the pages 400: each slot is the window
+    // and the gap.
+    expect(origins(build(ONE_AT_A_TIME), 3)).toEqual([
+      [300, 0],
+      [300, 916],
+      [300, 1832],
+    ]);
+    expect(build(ONE_AT_A_TIME).rowSpan(950)).toEqual({ top: 916, bottom: 916 });
+  });
+
+  it("scrolls within a row as far as it is taller than the window", () => {
+    const tall: PageSize = { width_pt: 300, height_pt: 1200 };
+    const scroller = build(ONE_AT_A_TIME, [tall, tall]);
+    expect(scroller.pageOrigin(1).top).toBe(1216);
+    expect(scroller.rowSpan(10)).toEqual({ top: 0, bottom: 300 });
+  });
+
+  it("sizes the slots again when the window changes height", () => {
+    const scroller = build(ONE_AT_A_TIME);
+    scroller.resize({ width: 900, height: 600 });
+    expect(scroller.pageOrigin(1).top).toBe(616);
   });
 });

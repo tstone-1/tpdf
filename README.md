@@ -230,8 +230,10 @@ project conventions.
   book, with the cover alone* puts the first page alone on the right and pairs the rest, as in
   a printed book. *Pages: one to a row* goes back. *Facing pages: read right to left* turns
   each row round, for a document read from the right. Fit width and fit page fit the row of
-  two, and each document remembers its layout.
-  <!-- built: view.singlePage view.facing view.book view.rightToLeft -->
+  two, and each document remembers its layout. *Pages: one page or pair at a time* shows one
+  page, or one pair, and nothing else: the wheel, Space and the arrows scroll inside it and
+  go on to the next at its end. *Pages: scroll continuously* goes back.
+  <!-- built: view.singlePage view.facing view.book view.rightToLeft view.continuous view.pageAtATime -->
 - Text selection and copy; find-in-document, with case, whole-word, regular-expression and
   within-the-selection options; a sidebar carrying the outline, a page-thumbnail strip and
   your own marks; and a text layer for screen readers.

@@ -708,6 +708,10 @@ const LINE_HEIGHT = 40;
 
 /** CSS pixels an arrow key scrolls. */
 const ARROW_STEP = 60;
+/** How far a wheel pushes past a row's end before the next row comes, under one row at a time. */
+const ROW_CHANGE_PX = 120;
+/** Shortest time between two row changes made by pushing past a row's end, in milliseconds. */
+const ROW_CHANGE_MS = 300;
 /**
  * A letter pressed with no modifier, by character or by position: with Caps
  * Lock on `j` arrives as `J` with no Shift, and on a Cyrillic layout as `о`.
@@ -1168,7 +1172,15 @@ export class Viewer {
   private anchorUnit: { page: number; from: number; to: number } | null = null;
 
   private readonly scroller: Scroller;
-  private scrollTop = 0;
+  /** The scroll offset as stored; read and written through {@link scrollTop}. */
+  private scrollY = 0;
+  /**
+   * How far a wheel has pushed past the end of the row on screen, under one
+   * row at a time, and when the view last moved to another row. See
+   * {@link scrollBy}.
+   */
+  private overscroll = 0;
+  private lastRowChange = -Infinity;
   private zoom = 1;
   /** Quarter-turns clockwise the view is rotated by, 0 to 3. */
   private turns = 0;
@@ -2421,6 +2433,7 @@ export class Viewer {
       status.spread.columns,
       status.spread.coverAlone,
       status.spread.rightToLeft,
+      status.spread.continuous,
       Math.round(status.sharp * 100),
       Math.round(status.any * 100),
       status.pending > 0,
@@ -2579,8 +2592,65 @@ export class Viewer {
     this.setZoom(this.zoomFor(this.fit, page), settle);
   }
 
-  private scrollBy(delta: number): void {
-    this.scrollTo(this.scrollTop + delta);
+  /**
+   * The scroll offset, in CSS pixels down the document.
+   *
+   * A setter so that one row at a time holds wherever the offset is set: eight
+   * places assign it directly to keep the reader's place through a zoom, a
+   * rotation or a change of layout, and each would otherwise have to remember
+   * to keep the view inside a row.
+   */
+  private get scrollTop(): number {
+    return this.scrollY;
+  }
+
+  private set scrollTop(top: number) {
+    if (this.scroller.spread.continuous) {
+      this.scrollY = top;
+      return;
+    }
+    const span = this.scroller.rowSpan(top);
+    this.scrollY = Math.max(span.top, Math.min(top, span.bottom));
+  }
+
+  /**
+   * Scrolls by `delta`; under one row at a time, within the row, and past its
+   * end to the next row or the one before.
+   *
+   * A key moves to the next row at once (`now`). A wheel has to push past the
+   * end by {@link ROW_CHANGE_PX} first, and a row change waits
+   * {@link ROW_CHANGE_MS} after the last one: a trackpad's momentum sends a
+   * stream of events after the finger has lifted, and without both it would
+   * turn several pages for one swipe.
+   */
+  private scrollBy(delta: number, change: "now" | "pushed" = "pushed"): void {
+    if (this.scroller.spread.continuous) {
+      this.scrollTo(this.scrollTop + delta);
+      return;
+    }
+    const span = this.scroller.rowSpan(this.scrollTop);
+    const atEnd = delta > 0 ? this.scrollTop >= span.bottom : this.scrollTop <= span.top;
+    if (!atEnd) {
+      this.overscroll = 0;
+      // Clamped to this row here: the setter would clamp to whichever row the
+      // target lands in, and a long swipe would then jump rows.
+      this.scrollTo(Math.max(span.top, Math.min(this.scrollTop + delta, span.bottom)));
+      return;
+    }
+    this.overscroll += delta;
+    const now = performance.now();
+    const far = change === "now" || Math.abs(this.overscroll) >= ROW_CHANGE_PX;
+    if (!far || (change === "pushed" && now - this.lastRowChange < ROW_CHANGE_MS)) return;
+    this.overscroll = 0;
+    this.lastRowChange = now;
+    if (delta > 0) {
+      this.nextPage();
+    } else {
+      // Backwards lands at the end of the row before, where reading it
+      // backwards continues.
+      this.previousPage();
+      this.scrollTo(this.scroller.rowSpan(this.scrollTop).bottom);
+    }
   }
 
   private scrollTo(top: number): void {
@@ -2603,6 +2673,11 @@ export class Viewer {
 
     const half = this.viewportSize().height / 2;
     const anchor = (this.scrollTop + half) / this.zoom;
+    // Under one row at a time each row's slot is a window tall at every zoom,
+    // so the offset does not scale with the zoom; the centre is kept inside
+    // the row on screen instead.
+    const row = this.scroller.spread.continuous ? null : this.currentPage();
+    const inRow = row === null ? 0 : (this.scrollTop + half - this.scroller.pageTopOf(row)) / this.zoom;
     this.zoom = next;
     // `settle` is set by the two zooms that arrive as a stream of events rather
     // than as one: a trackpad pinch, which is a wheel event per frame, and a
@@ -2612,10 +2687,15 @@ export class Viewer {
     // scale the reader has already left is work nobody ever sees. See
     // `Scroller.quieten`.
     this.scroller.setZoom(next, settle ? ZOOM_SETTLE_MS : 0);
-    this.scrollTop = Math.max(
-      0,
-      Math.min(anchor * next - half, this.scroller.maxScroll),
-    );
+    if (row !== null) {
+      const top = this.scroller.pageTopOf(row);
+      this.scrollTop = Math.max(top, Math.min(top + inRow * next - half, this.scroller.rowSpan(top).bottom));
+    } else {
+      this.scrollTop = Math.max(
+        0,
+        Math.min(anchor * next - half, this.scroller.maxScroll),
+      );
+    }
     this.wake();
   }
 
@@ -3227,11 +3307,15 @@ export class Viewer {
     // says the answer has changed, and everything else reads what is left here.
     this.viewport = this.measureViewport();
     const viewport = this.viewport;
+    // Under one row at a time each row's slot is the window's height, so a
+    // resize moves every row; the reader stays on theirs.
+    const row = this.scroller.spread.continuous ? null : this.currentPage();
     this.scroller.resize(viewport);
     this.sizeOverlay();
     // A window drag delivers one of these per frame, so the fit it recomputes is
     // the same stream of zooms a pinch is --- see {@link setZoom}.
     this.applyFit(true);
+    if (row !== null) this.goToPage(row);
     this.scrollTo(Math.min(this.scrollTop, this.scroller.maxScroll));
     this.wake();
   }
@@ -3449,17 +3533,17 @@ export class Viewer {
     } else if (event.key === "ArrowDown" || bareLetter(event, "j")) {
       // `j` and `k` are SumatraPDF's and vi's line keys, by position as well
       // as by character, for the two keyboards `Binding.code` names.
-      this.scrollBy(ARROW_STEP);
+      this.scrollBy(ARROW_STEP, "now");
     } else if (event.key === "ArrowUp" || bareLetter(event, "k")) {
-      this.scrollBy(-ARROW_STEP);
+      this.scrollBy(-ARROW_STEP, "now");
     } else if (event.key === "ArrowRight") {
       this.panBy(ARROW_STEP);
     } else if (event.key === "ArrowLeft") {
       this.panBy(-ARROW_STEP);
     } else if (event.key === "PageDown" || event.key === " ") {
-      this.scrollBy(event.shiftKey ? -screen : screen);
+      this.scrollBy(event.shiftKey ? -screen : screen, "now");
     } else if (event.key === "PageUp") {
-      this.scrollBy(-screen);
+      this.scrollBy(-screen, "now");
     } else {
       return;
     }

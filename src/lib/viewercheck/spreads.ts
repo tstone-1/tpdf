@@ -16,7 +16,7 @@ import { Viewer, type ViewerStatus } from "../viewer";
 import { check, settle, skip } from "./common";
 import { meanLightness } from "./invert";
 
-const FACING: Spread = { columns: 2, coverAlone: false, rightToLeft: false };
+const FACING: Spread = { columns: 2, coverAlone: false, rightToLeft: false, continuous: true };
 
 /** Leaves the view one page to a row, fitted and where it found it. */
 export async function spreadChecks(

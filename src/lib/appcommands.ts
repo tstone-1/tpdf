@@ -1169,6 +1169,26 @@ export function registerAppCommands(
     { id: "view.singlePage", title: SPREAD_TITLES.single, ...layoutCommand("single") },
     { id: "view.facing", title: SPREAD_TITLES.facing, ...layoutCommand("facing") },
     { id: "view.book", title: SPREAD_TITLES.book, ...layoutCommand("book") },
+    // Continuous, or one page (or pair) at a time: SumatraPDF's continuous
+    // switch, as a pair of choices so that each says what it does.
+    {
+      id: "view.continuous",
+      title: "Pages: scroll continuously",
+      enabled: () => withDocument() && actions.viewer()?.spread.continuous === false,
+      run: () => {
+        const viewer = actions.viewer();
+        if (viewer) viewer.setSpread({ ...viewer.spread, continuous: true });
+      },
+    },
+    {
+      id: "view.pageAtATime",
+      title: "Pages: one page or pair at a time",
+      enabled: () => withDocument() && actions.viewer()?.spread.continuous === true,
+      run: () => {
+        const viewer = actions.viewer();
+        if (viewer) viewer.setSpread({ ...viewer.spread, continuous: false });
+      },
+    },
     {
       // SumatraPDF's manga mode. Only with two pages to a row, where there is
       // a direction to change.

@@ -29,6 +29,9 @@ have the binary.)
   right to left* turns each row round. Fit width and fit page fit the pair, next and previous
   page move a row, and each document remembers its layout. In the View menu, and in the
   header menu on Windows and Linux.
+- **One page or pair at a time.** *Pages: one page or pair at a time* shows only the page (or
+  pair) you are on; the wheel, Space and the arrows scroll inside it and go on to the next at
+  its end. *Pages: scroll continuously* goes back.
 
 ## [26.10.20] - 2026-10-15
 

@@ -24,8 +24,8 @@ const tiles = vi.hoisted(() => ({
 vi.mock("@tauri-apps/api/core", () => core);
 vi.mock("./tiles", () => tiles);
 
-const FACING: Spread = { columns: 2, coverAlone: false, rightToLeft: false };
-const BOOK: Spread = { columns: 2, coverAlone: true, rightToLeft: false };
+const FACING: Spread = { columns: 2, coverAlone: false, rightToLeft: false, continuous: true };
+const BOOK: Spread = { columns: 2, coverAlone: true, rightToLeft: false, continuous: true };
 
 let dom: FakeDom;
 
@@ -163,13 +163,138 @@ describe("Facing pages in the viewer", () => {
       await settle();
     }
     expect(statuses.at(-1)?.spread).toEqual(FACING);
+    // And a change of nothing but continuous: on the first row at a fixed
+    // zoom, no other field of the status moves.
+    viewer.setSpread({ ...FACING, continuous: false });
+    for (let round = 0; round < 5; round++) {
+      dom.runFrames();
+      await settle();
+    }
+    expect(statuses.at(-1)?.spread.continuous).toBe(false);
   });
 
   it("goes back to one page to a row", () => {
     const viewer = build();
     viewer.setSpread(FACING);
-    viewer.setSpread({ columns: 1, coverAlone: false, rightToLeft: false });
+    viewer.setSpread({ columns: 1, coverAlone: false, rightToLeft: false, continuous: true });
     viewer.nextPage();
     expect(viewer.position.page).toBe(1);
+  });
+});
+
+describe("One page at a time in the viewer", () => {
+  const ONE_AT_A_TIME: Spread = { columns: 1, coverAlone: false, rightToLeft: false, continuous: false };
+
+  /** Sends a wheel notch of `deltaY` pixels at time `at`. */
+  function wheel(deltaY: number, at: number): void {
+    vi.spyOn(performance, "now").mockReturnValue(at);
+    dom.root.dispatch("wheel", { deltaX: 0, deltaY, deltaMode: 0, shiftKey: false, ctrlKey: false, metaKey: false, target: dom.root, preventDefault: () => {} });
+  }
+
+  function press(key: string, shiftKey = false): void {
+    dom.root.dispatch("keydown", { key, code: "", shiftKey, ctrlKey: false, metaKey: false, altKey: false, target: dom.root, preventDefault: () => {} });
+  }
+
+  it("keeps the wheel inside the page, and turns it only after a push past the end", () => {
+    const viewer = build();
+    viewer.setSpread(ONE_AT_A_TIME);
+    // At fit width a 400 pt page is 1170 px, taller than the 700 px window.
+    wheel(10000, 1000);
+    expect(viewer.position.page).toBe(0);
+    const bottom = viewer.offset;
+    expect(bottom).toBeGreaterThan(0);
+    // A small push at the end does nothing; enough of them turn the page.
+    wheel(50, 2000);
+    expect(viewer.position.page).toBe(0);
+    expect(viewer.offset).toBe(bottom);
+    wheel(80, 2010);
+    expect(viewer.position.page).toBe(1);
+  });
+
+  it("does not turn twice for one swipe's momentum", () => {
+    const viewer = build();
+    viewer.setSpread(ONE_AT_A_TIME);
+    wheel(10000, 1000);
+    wheel(200, 2000);
+    expect(viewer.position.page).toBe(1);
+    wheel(10000, 2050);
+    wheel(200, 2100);
+    expect(viewer.position.page).toBe(1);
+    // The control: the same push once the pause has passed does turn it.
+    wheel(200, 2500);
+    expect(viewer.position.page).toBe(2);
+  });
+
+  it("turns the page at once for Space at the end, and Shift+Space goes back to the end of the one before", () => {
+    const viewer = build();
+    viewer.setSpread(ONE_AT_A_TIME);
+    // The page is 1120 px in a 700 px window, so one press reaches its end.
+    press(" ");
+    expect(viewer.position.page).toBe(0);
+    const end = viewer.offset;
+    expect(end).toBe(420);
+    press(" ");
+    expect(viewer.position.page).toBe(1);
+    press(" ", true);
+    expect(viewer.position.page).toBe(0);
+    expect(viewer.offset).toBe(end);
+  });
+
+  it("turns the page at once for an arrow at the end, which is shorter than a wheel's push", () => {
+    const viewer = build();
+    viewer.setSpread(ONE_AT_A_TIME);
+    press(" ");
+    expect(viewer.position.page).toBe(0);
+    press("ArrowDown");
+    expect(viewer.position.page).toBe(1);
+  });
+
+  it("lands at the top of the page when the change is made part way down it", () => {
+    // Pages of 400 px at zoom 1: continuously each is 416 px from the next,
+    // one at a time 716 (the window and the gap). The same share of the way
+    // down would put the view below the page; it has to stay on it.
+    const viewer = build();
+    viewer.setZoomFixed(1);
+    viewer.goToPage(2);
+    wheel(300, 1000);
+    expect(viewer.position.page).toBe(2);
+    expect(viewer.position.top).toBeGreaterThan(0);
+    viewer.setSpread(ONE_AT_A_TIME);
+    expect(viewer.position).toEqual({ page: 2, top: 0 });
+  });
+
+  it("keeps the reader's page when the window changes height", () => {
+    // At zoom 1 the pages are shorter than the window, so each slot is the
+    // window's height and a resize moves every page after the first.
+    const viewer = build();
+    viewer.setZoomFixed(1);
+    viewer.setSpread(ONE_AT_A_TIME);
+    viewer.goToPage(5);
+    dom.root.clientHeight = 500;
+    // The fake has no ResizeObserver to deliver it, so the handler is called
+    // as the observer would call it.
+    (viewer as unknown as { onResize(): void }).onResize();
+    expect(viewer.position.page).toBe(5);
+  });
+
+  it("holds a jump inside the page it lands on", () => {
+    const viewer = build();
+    viewer.setSpread(ONE_AT_A_TIME);
+    viewer.goToPage(3);
+    expect(viewer.position.page).toBe(3);
+    // A zoom keeps the centre, and under one page at a time the view stays
+    // on this page whatever the centre's new offset.
+    viewer.setZoomFixed(0.5);
+    expect(viewer.position.page).toBe(3);
+  });
+
+  it("scrolls continuously again, from the same page", () => {
+    const viewer = build();
+    viewer.setSpread(ONE_AT_A_TIME);
+    viewer.goToPage(2);
+    viewer.setSpread({ ...ONE_AT_A_TIME, continuous: true });
+    expect(viewer.position.page).toBe(2);
+    wheel(2000, 5000);
+    expect(viewer.position.page).toBeGreaterThan(2);
   });
 });

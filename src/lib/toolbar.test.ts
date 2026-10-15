@@ -28,7 +28,7 @@ function harness() {
   // snapshot starts executing commands instead of describing them.
   const actions = {
     // Not a viewer: the guards ask only whether there is one.
-    viewer: () => state.open ? ({ spread: { columns: 1, coverAlone: false, rightToLeft: false } } as never) : null,
+    viewer: () => state.open ? ({ spread: { columns: 1, coverAlone: false, rightToLeft: false, continuous: true } } as never) : null,
     hasSelection: () => state.selected,
     isDirty: () => state.dirty,
     canUndo: () => state.undo,

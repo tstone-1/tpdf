@@ -745,8 +745,10 @@ export async function appCommandChecks(
   const zoom = () => viewer.currentZoom.toFixed(3);
   const page = () => String(viewer.position.page);
   const turn = () => String(viewer.rotation);
-  const layout = () => `${kindOf(viewer.spread)}${viewer.spread.rightToLeft ? " right to left" : ""}`;
-  const facing = { columns: 2 as const, coverAlone: false, rightToLeft: false };
+  const layout = () =>
+    `${kindOf(viewer.spread)}${viewer.spread.rightToLeft ? " right to left" : ""}` +
+    `${viewer.spread.continuous ? "" : " one at a time"}`;
+  const facing = { columns: 2 as const, coverAlone: false, rightToLeft: false, continuous: true };
   const fit = () => viewer.fitMode;
   const selection = () => String(viewer.selectedText.length);
   const shell = (expected: string) => ({
@@ -895,6 +897,18 @@ export async function appCommandChecks(
       from: () => viewer.setSpread(facing),
       read: layout,
       moved: (b, a) => b === "facing" && a === "facing right to left",
+    },
+    {
+      id: "view.pageAtATime",
+      from: () => viewer.setSpread(SINGLE),
+      read: layout,
+      moved: (b, a) => b === "single" && a === "single one at a time",
+    },
+    {
+      id: "view.continuous",
+      from: () => viewer.setSpread({ ...SINGLE, continuous: false }),
+      read: layout,
+      moved: (b, a) => b === "single one at a time" && a === "single",
     },
     {
       id: "view.singlePage",
@@ -1924,9 +1938,11 @@ export async function appCommandChecks(
     // the install it follows.
     "app.restartForUpdate",
     "find.inSelection",
-    // A document opens one page to a row, so that layout is the one not
-    // offered, and right to left needs two pages to a row.
+    // A document opens one page to a row and scrolling continuously, so those
+    // two are the choices not offered, and right to left needs two pages to a
+    // row.
     "view.singlePage",
+    "view.continuous",
     "view.rightToLeft",
     // New text fields get a line round them here, so turning that on is not
     // offered. Found missing with the two above.

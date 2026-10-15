@@ -112,7 +112,7 @@ function harness(
             canGoBack: history.back ?? false,
             canGoForward: history.forward ?? false,
             // One page to a row, which is how every document opens.
-            spread: { columns: 1, coverAlone: false, rightToLeft: false },
+            spread: { columns: 1, coverAlone: false, rightToLeft: false, continuous: true },
           } as never)
         : null,
     pageCount: () => 3,

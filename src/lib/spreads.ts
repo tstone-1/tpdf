@@ -38,6 +38,7 @@ export function withKind(spread: Spread, kind: SpreadKind): Spread {
     columns: kind === "single" ? 1 : 2,
     coverAlone: kind === "book",
     rightToLeft: spread.rightToLeft,
+    continuous: spread.continuous,
   };
 }
 
@@ -46,6 +47,7 @@ export interface PlaceSpread {
   columns?: number;
   cover_alone?: boolean;
   right_to_left?: boolean;
+  continuous?: boolean;
 }
 
 /**
@@ -54,11 +56,20 @@ export interface PlaceSpread {
  * than two, as the backend reads it.
  */
 export function spreadOfPlace(place: PlaceSpread): Spread {
-  if (place.columns !== 2) return { ...SINGLE, rightToLeft: place.right_to_left === true };
-  return { columns: 2, coverAlone: place.cover_alone === true, rightToLeft: place.right_to_left === true };
+  // Continuous unless the place says otherwise: a place written before the
+  // choice existed was read continuously.
+  const continuous = place.continuous !== false;
+  const rightToLeft = place.right_to_left === true;
+  if (place.columns !== 2) return { ...SINGLE, rightToLeft, continuous };
+  return { columns: 2, coverAlone: place.cover_alone === true, rightToLeft, continuous };
 }
 
 /** The fields to write for `spread`. */
 export function placeOfSpread(spread: Spread): Required<PlaceSpread> {
-  return { columns: spread.columns, cover_alone: spread.coverAlone, right_to_left: spread.rightToLeft };
+  return {
+    columns: spread.columns,
+    cover_alone: spread.coverAlone,
+    right_to_left: spread.rightToLeft,
+    continuous: spread.continuous,
+  };
 }
