@@ -226,6 +226,12 @@ project conventions.
   the left and right arrows also reach the right-hand side of a page. Space, the arrows,
   Page Up and Page Down, Home and End scroll, and so do `j` and `k`, a line at a time.
   <!-- built: view.zoomIn view.zoomOut view.zoomTo view.actualSize view.fitWidth view.fitPage view.rotateClockwise view.rotateCounterClockwise view.invertPages -->
+- **Facing pages and book view.** *Pages: facing* puts two pages side by side, and *Pages:
+  book, with the cover alone* puts the first page alone on the right and pairs the rest, as in
+  a printed book. *Pages: one to a row* goes back. *Facing pages: read right to left* turns
+  each row round, for a document read from the right. Fit width and fit page fit the row of
+  two, and each document remembers its layout.
+  <!-- built: view.singlePage view.facing view.book view.rightToLeft -->
 - Text selection and copy; find-in-document, with case, whole-word, regular-expression and
   within-the-selection options; a sidebar carrying the outline, a page-thumbnail strip and
   your own marks; and a text layer for screen readers.

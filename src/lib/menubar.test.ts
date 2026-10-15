@@ -30,6 +30,9 @@ import {
   SEPARATOR,
 } from "./menubar";
 
+/** One page to a row, which is how every document opens. */
+const ONE_TO_A_ROW = { columns: 1, coverAlone: false, rightToLeft: false };
+
 /**
  * A registry holding every application command.
  *
@@ -48,7 +51,7 @@ function registry(overrides: Record<string, () => unknown> = {}): CommandRegistr
   const answers: Record<string, () => unknown> = {
     // The two fields `find.inSelection`'s guard reads. Not a Viewer; a stub with
     // its real surface would suggest the commands' actions are exercised here.
-    viewer: () => ({ searchScoped: false, hasSelection: false }),
+    viewer: () => ({ searchScoped: false, hasSelection: false, spread: ONE_TO_A_ROW }),
     pageCount: () => 3,
     canUndo: () => false,
     canRedo: () => false,
@@ -300,7 +303,7 @@ describe("menuEnablement", () => {
     // reason; a reader who drags across a paragraph must find it live.
     expect(menuEnablement(registry())["find.inSelection"]).toBe(false);
     const selected = registry({
-      viewer: () => ({ searchScoped: false, hasSelection: true }),
+      viewer: () => ({ searchScoped: false, hasSelection: true, spread: ONE_TO_A_ROW }),
     });
     expect(menuEnablement(selected)["find.inSelection"]).toBe(true);
   });
@@ -310,9 +313,36 @@ describe("menuEnablement", () => {
     // the selection, and without this arm of the guard the reader would be left
     // in a scoped search with the only command that unscopes it greyed.
     const scoped = registry({
-      viewer: () => ({ searchScoped: true, hasSelection: false }),
+      viewer: () => ({ searchScoped: true, hasSelection: false, spread: ONE_TO_A_ROW }),
     });
     expect(menuEnablement(scoped)["find.inSelection"]).toBe(true);
+  });
+});
+
+describe("the page layouts", () => {
+  const FACING = { columns: 2, coverAlone: false, rightToLeft: false };
+
+  it("offers each layout but the current one, and right to left only with two columns", () => {
+    const single = menuEnablement(registry());
+    expect([single["view.singlePage"], single["view.facing"], single["view.book"], single["view.rightToLeft"]])
+      .toEqual([false, true, true, false]);
+    const facing = menuEnablement(
+      registry({ viewer: () => ({ searchScoped: false, hasSelection: false, spread: FACING }) }),
+    );
+    expect([facing["view.singlePage"], facing["view.facing"], facing["view.book"], facing["view.rightToLeft"]])
+      .toEqual([true, false, true, true]);
+  });
+
+  it("sets the layout chosen, keeping the reading direction", () => {
+    const set: unknown[] = [];
+    const viewer = { searchScoped: false, hasSelection: false, spread: { ...FACING, rightToLeft: true }, setSpread: (spread: unknown) => set.push(spread) };
+    const commands = registry({ viewer: () => viewer });
+    commands.find("view.book")?.run?.();
+    commands.find("view.rightToLeft")?.run?.();
+    expect(set).toEqual([
+      { columns: 2, coverAlone: true, rightToLeft: true },
+      { columns: 2, coverAlone: false, rightToLeft: false },
+    ]);
   });
 });
 

@@ -188,6 +188,10 @@ export const WINDOW_MENU: MenuSection[] = [
     items: ["file.fromPictures", "file.closeAll", "file.reopenLastTabs", "file.clearRecents"],
   },
   {
+    label: "Pages",
+    items: ["view.singlePage", "view.facing", "view.book", "view.rightToLeft"],
+  },
+  {
     label: "Side by side",
     items: [
       "view.sideBySide", "view.moveToOtherSide", "view.bothSides", "view.switchSides",

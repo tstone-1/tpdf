@@ -8,6 +8,9 @@
       "fit": "page",
       "turns": 2,
       "sidebar": true,
+      "columns": 2,
+      "cover_alone": true,
+      "right_to_left": false,
       "page_count": 40
     }
   ],

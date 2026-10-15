@@ -146,6 +146,11 @@ export interface ScrollerOptions {
    * screen is something a check can read rather than infer from a style.
    */
   invert: boolean;
+  /**
+   * How pages sit beside each other. Optional, defaulting to {@link SINGLE},
+   * for the reason `order` is: the benchmark harnesses lay out one column.
+   */
+  spread?: Spread;
   layout: Layout;
   /** Tile edge in device pixels. Section 4 measured 1024-2048 as the range. */
   tilePx: number;
@@ -244,8 +249,47 @@ export interface RunStats {
  */
 export const TIER1_WIDTH = 150;
 
-/** CSS pixels between pages. */
-const PAGE_GAP = 16;
+/** CSS pixels between pages, down the document and across a row. */
+export const PAGE_GAP = 16;
+
+/**
+ * How pages sit beside each other: one to a row, or two facing.
+ *
+ * SumatraPDF's single, facing and book views are the three values a reader
+ * picks; `rightToLeft` is its manga mode, a row read from the right.
+ */
+export interface Spread {
+  /** Pages in a row. */
+  columns: 1 | 2;
+  /** With two columns, the first page alone on the right, as a book's cover is. */
+  coverAlone: boolean;
+  /** With two columns, the earlier page of a row on the right. */
+  rightToLeft: boolean;
+}
+
+/** One page to a row: the layout every document had before 2026-10-15. */
+export const SINGLE: Spread = { columns: 1, coverAlone: false, rightToLeft: false };
+
+/**
+ * The pages of each row, in reading order, for `count` pages under `spread`.
+ *
+ * A row of two is a facing pair. A row of one, under two columns, is the cover
+ * (when it stands alone) or the last page of a document whose pages do not
+ * pair up --- {@link Scroller} puts the first on the right and the second on
+ * the left, which is where each falls in a bound book.
+ */
+export function rowsOf(count: number, spread: Spread): number[][] {
+  const rows: number[][] = [];
+  let page = 0;
+  if (spread.columns === 2 && spread.coverAlone && count > 0) {
+    rows.push([0]);
+    page = 1;
+  }
+  for (; page < count; page += spread.columns) {
+    rows.push(spread.columns === 2 && page + 1 < count ? [page, page + 1] : [page]);
+  }
+  return rows;
+}
 
 /**
  * A page's size as displayed under `turns` quarter-turns clockwise.
@@ -308,8 +352,21 @@ interface PageBox {
   heightCss: number;
   cols: number;
   rows: number;
-  /** CSS-pixel top of the page in the scrolled document. */
+  /**
+   * CSS-pixel top of the page in the scrolled document: the top of its row.
+   *
+   * Pages in a row share it, aligned at the top rather than centred on each
+   * other, so `top` never decreases from one page to the next. {@link
+   * Scroller.pageAt} and `pagesIn` are a binary search and a walk that both
+   * depend on that.
+   */
   top: number;
+  /** CSS pixels from the row's left edge to the page's. */
+  x: number;
+  /** CSS width of the page's row, both pages and the gap between them. */
+  rowWidth: number;
+  /** CSS height of the page's row: its taller page. */
+  rowHeight: number;
 }
 
 /** A request that has been issued and has not settled. */
@@ -862,28 +919,52 @@ export class Scroller {
    */
   private computeGeometry(): void {
     const { zoom, dpr, tilePx, pageCount } = this.opts;
+    const spread = this.spread;
     const boxes: PageBox[] = new Array<PageBox>(Math.max(0, pageCount));
     let top = 0;
     let widest = 0;
-    for (let page = 0; page < boxes.length; page++) {
-      const shown = this.displayedPageSize(page);
-      const widthDev = Math.round(shown.width_pt * zoom * dpr);
-      const heightDev = Math.round(shown.height_pt * zoom * dpr);
-      boxes[page] = {
-        widthDev,
-        heightDev,
-        widthCss: widthDev / dpr,
-        heightCss: heightDev / dpr,
-        cols: Math.ceil(widthDev / tilePx),
-        rows: Math.ceil(heightDev / tilePx),
-        top,
-      };
-      widest = Math.max(widest, widthDev / dpr);
-      top += heightDev / dpr + PAGE_GAP;
+    for (const row of rowsOf(boxes.length, spread)) {
+      const placed = row.map((page) => {
+        const shown = this.displayedPageSize(page);
+        const widthDev = Math.round(shown.width_pt * zoom * dpr);
+        const heightDev = Math.round(shown.height_pt * zoom * dpr);
+        return { page, widthDev, heightDev, widthCss: widthDev / dpr, heightCss: heightDev / dpr };
+      });
+      // The two columns of a row, in reading order. A row of one under two
+      // columns keeps the empty column at its own width, so the cover sits on
+      // the right and a last unpaired page on the left, as in a bound book.
+      const first = placed[0]!;
+      const second = placed[1];
+      const cover = spread.columns === 2 && placed.length === 1 && first.page === 0 && spread.coverAlone;
+      const lone = spread.columns === 2 && placed.length === 1;
+      const firstColumn = first.widthCss;
+      const secondColumn = second ? second.widthCss : lone ? first.widthCss : 0;
+      const rowWidth = lone || second ? firstColumn + PAGE_GAP + secondColumn : firstColumn;
+      const rowHeight = Math.max(...placed.map((one) => one.heightCss));
+      placed.forEach((one, index) => {
+        // Left to right, the earlier page takes the first column; the cover
+        // alone takes the second.
+        let x = index === 0 && !cover ? 0 : firstColumn + PAGE_GAP;
+        if (spread.rightToLeft && spread.columns === 2) x = rowWidth - x - one.widthCss;
+        boxes[one.page] = {
+          widthDev: one.widthDev,
+          heightDev: one.heightDev,
+          widthCss: one.widthCss,
+          heightCss: one.heightCss,
+          cols: Math.ceil(one.widthDev / tilePx),
+          rows: Math.ceil(one.heightDev / tilePx),
+          top,
+          x,
+          rowWidth,
+          rowHeight,
+        };
+      });
+      widest = Math.max(widest, rowWidth);
+      top += rowHeight + PAGE_GAP;
     }
     this.boxes = boxes;
     this.widestCss = widest;
-    // The trailing gap is between pages, so the last page does not get one.
+    // The trailing gap is between rows, so the last row does not get one.
     this.totalHeight = Math.max(0, top - PAGE_GAP);
   }
 
@@ -969,7 +1050,7 @@ export class Scroller {
       if (was.widthDev !== now.widthDev || was.heightDev !== now.heightDev) {
         this.invalidatePage(page);
         changed = true;
-      } else if (was.top !== now.top) {
+      } else if (was.top !== now.top || was.x !== now.x || was.rowWidth !== now.rowWidth) {
         changed = true;
       }
     }
@@ -1205,6 +1286,34 @@ export class Scroller {
     this.opts.turns = next;
     this.computeGeometry();
     this.relayout();
+  }
+
+  /**
+   * Lays the pages out one to a row or two, answering whether anything moved.
+   *
+   * The caller keeps the reader on their page: the document changes length
+   * under the scroll offset, as it does when the view is rotated.
+   */
+  setSpread(spread: Spread): boolean {
+    const now = this.opts.spread ?? SINGLE;
+    if (
+      now.columns === spread.columns &&
+      now.coverAlone === spread.coverAlone &&
+      now.rightToLeft === spread.rightToLeft
+    ) {
+      return false;
+    }
+    // Nothing is dropped: every page keeps its size, so every tile and
+    // placeholder is still the right picture and only has to move.
+    this.opts.spread = { ...spread };
+    this.computeGeometry();
+    this.relayout();
+    return true;
+  }
+
+  /** How pages sit beside each other now. */
+  get spread(): Spread {
+    return this.opts.spread ?? SINGLE;
   }
 
   /**
@@ -1526,7 +1635,35 @@ export class Scroller {
       if ((this.boxes[mid]?.top ?? 0) <= css) low = mid;
       else high = mid - 1;
     }
+    // The first page of the row: the search lands on the last page whose top
+    // is above `css`, and the pages of a row share one.
+    while (low > 0 && this.boxes[low - 1]?.top === this.boxes[low]?.top) low--;
     return low;
+  }
+
+  /** The pages of `page`'s row, in the order they are numbered. */
+  rowOf(page: number): number[] {
+    const first = this.pageAt(this.pageTop(page));
+    return this.boxes[first + 1]?.top === this.boxes[first]?.top ? [first, first + 1] : [first];
+  }
+
+  /**
+   * The page under a point of the document, in CSS pixels from the left of
+   * the viewport and the top of the document.
+   *
+   * {@link pageAt} answers for the row; this picks the page in it whose span
+   * holds `x`, or the nearer one when `x` is in the gap or beyond the row.
+   */
+  pageAtPoint(x: number, y: number): number {
+    const first = this.pageAt(y);
+    const second = first + 1;
+    if (this.boxes[second]?.top !== this.boxes[first]?.top) return first;
+    const distance = (page: number): number => {
+      const left = this.pageLeftCss(page);
+      const right = left + (this.boxes[page]?.widthCss ?? 0);
+      return x < left ? left - x : x > right ? x - right : 0;
+    };
+    return distance(second) < distance(first) ? second : first;
   }
 
   /** Scroll offset that puts a page's top edge at the top of the viewport. */
@@ -1547,7 +1684,7 @@ export class Scroller {
    * rotating the view does, and what learning a page's real size does.
    */
   pagePitchOf(page: number): number {
-    return (this.boxes[page]?.heightCss ?? 0) + PAGE_GAP;
+    return (this.boxes[page]?.rowHeight ?? 0) + PAGE_GAP;
   }
 
   /** CSS-pixel top of a page in the scrolled document. */
@@ -1914,13 +2051,16 @@ export class Scroller {
    * document rather than as two left-aligned stacks.
    */
   private pageLeftCss(page: number): number {
-    const width = this.boxes[page]?.widthCss ?? 0;
+    const box = this.boxes[page];
     // **The one horizontal term in the whole scroller.** Tiles, placeholders,
     // blank fills, the surface painter, `isWanted`, `coverage` and
     // `pageOrigin` all place themselves from this, so the pan applies to the
     // overlay, the hit tests and the tile window by arithmetic rather than by
     // seven call sites remembering to subtract it.
-    return Math.max(0, (this.opts.viewport.width - width) / 2) - this.pan;
+    // A row is centred and the page placed inside it; with one page to a row
+    // the two are the same and `x` is zero.
+    const row = box?.rowWidth ?? 0;
+    return Math.max(0, (this.opts.viewport.width - row) / 2) - this.pan + (box?.x ?? 0);
   }
 
   /**

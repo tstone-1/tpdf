@@ -24,6 +24,11 @@ have the binary.)
 - **Sideways scrolling.** A trackpad's sideways swipe, a tilt wheel, Shift with a wheel, and
   the left and right arrows now move the view across a page wider than the window. Until now
   only dragging with the middle button did. `j` and `k` scroll a line, as in SumatraPDF.
+- **Facing pages and book view.** *Pages: facing* shows two pages side by side, *Pages: book,
+  with the cover alone* shows the first page alone and then pairs, and *Facing pages: read
+  right to left* turns each row round. Fit width and fit page fit the pair, next and previous
+  page move a row, and each document remembers its layout. In the View menu, and in the
+  header menu on Windows and Linux.
 
 ## [26.10.20] - 2026-10-15
 

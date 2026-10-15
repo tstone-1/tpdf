@@ -86,6 +86,15 @@ pub struct Place {
     /// Whether the sidebar was showing.
     #[serde(default)]
     pub sidebar: bool,
+    /// Pages in a row: 1, or 2 for facing pages and book view.
+    #[serde(default = "one_column")]
+    pub columns: u8,
+    /// With two columns, whether the first page stands alone, as a book's cover.
+    #[serde(default)]
+    pub cover_alone: bool,
+    /// With two columns, whether a row is read from the right.
+    #[serde(default)]
+    pub right_to_left: bool,
     /// Pages the document had when this was written.
     ///
     /// Kept so a restore can tell "the file has been replaced by a shorter one"
@@ -93,6 +102,10 @@ pub struct Place {
     /// frontend, which is the side that knows what the document has *now*.
     #[serde(default)]
     pub page_count: u32,
+}
+
+fn one_column() -> u8 {
+    1
 }
 
 fn unit_zoom() -> f32 {
@@ -113,6 +126,9 @@ impl Place {
     #[must_use]
     pub fn sanitized(mut self) -> Self {
         self.turns %= 4;
+        if self.columns != 2 {
+            self.columns = 1;
+        }
         if !self.zoom.is_finite() || self.zoom <= 0.0 {
             self.zoom = 1.0;
             self.fit = Fit::Width;
@@ -431,6 +447,9 @@ mod tests {
             fit: Fit::None,
             turns: 1,
             sidebar: true,
+            columns: 2,
+            cover_alone: true,
+            right_to_left: false,
             page_count: 10,
         }
     }
@@ -942,6 +961,27 @@ mod tests {
         spun.turns = 7;
         // Unlike `protocol.rs`, which refuses one -- see the module comment.
         assert_eq!(spun.sanitized().turns, 3);
+    }
+
+    #[test]
+    fn a_column_count_other_than_two_is_one() {
+        for wrong in [0, 3, 255] {
+            let mut odd = place("/tmp/a.pdf");
+            odd.columns = wrong;
+            assert_eq!(odd.sanitized().columns, 1, "{wrong}");
+        }
+        // The control: two is kept, so the loop above is not a field that
+        // always reads one.
+        assert_eq!(place("/tmp/a.pdf").sanitized().columns, 2);
+    }
+
+    #[test]
+    fn a_place_written_before_facing_pages_is_one_column() {
+        let old: Place = serde_json::from_str(r#"{"path":"/tmp/a.pdf","page":4}"#).unwrap();
+        assert_eq!(
+            (old.columns, old.cover_alone, old.right_to_left),
+            (1, false, false)
+        );
     }
 
     #[test]

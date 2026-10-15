@@ -18080,42 +18080,52 @@ Done:
 Not done: half a screen. Its usual chord, vi's Ctrl+D, is *Duplicate* on Windows and Linux,
 where the accelerator is Ctrl, and Space already moves most of a screen.
 
-#### 7.2 Page layouts
+#### 7.2 Page layouts --- facing and book view done 2026-10-15
 
-Today every page sits alone in one column, continuously. SumatraPDF has single page (one
-page or spread at a time, no continuous scroll), facing pages, book view (page 1 alone, then
-pairs), each continuous or not, plus fit height, fit content, and right-to-left spreads
-(its manga mode).
+SumatraPDF has single page, facing pages and book view (page 1 alone, then pairs), each
+continuous or one row at a time, plus fit height, fit content, and right-to-left rows (its
+manga mode).
 
-**Where the change goes.** `scroller.ts` lays out one `PageBox` per page with a `top`, and
-its horizontal position comes from `pageLeftCss`, which centres each page in the viewport on
-its own. A spread needs a `left` per box, kept in the box and read by `pageLeftCss`, and
-`top` becomes the top of the row, so two pages share one. `pagesIn` and the page lookup
-by offset are binary searches over `top`, which stays non-decreasing, so they keep working;
-every other reader of a page's position goes through `pageOrigin`, `pageTop` and
-`pageLeftCss` (16 calls outside the scroller, all in `viewer.ts`). The audit before writing
-code is: every place that turns a page index into a position without those accessors.
-Selection, marks, links, the drag tools, the text layer and middle-button panning all ride
-on them.
+**Done: facing, book view and right to left.** *Pages: one to a row* (`view.singlePage`),
+*Pages: facing* (`view.facing`), *Pages: book, with the cover alone* (`view.book`), and
+*Facing pages: read right to left* (`view.rightToLeft`), in the View menu, the Windows and
+Linux header menu, and the palette. Per document, written into the session's `Place` as
+`columns`, `cover_alone` and `right_to_left`; a place written before them reads as one
+column, and a column count other than two is one (`session.rs`, `spreads.ts`).
 
-- Layout is a value, `{ columns: 1 | 2, coverAlone: boolean, continuous: boolean,
-  rightToLeft: boolean }`, kept per tab and restored with the session.
-- A row of two pages of different sizes: centred on each other vertically, as SumatraPDF
-  does. `testdata/make_mixed_pdf.py` is the fixture that can tell this apart; it needs a
-  spread case with a landscape page beside a portrait one.
-- Non-continuous: the scroll range is one row; `n`/`p`, Space and the wheel at the end of
-  the row move to the next row. Find, links, Back/Forward and *Go to page* change the row.
-- *Scroll both sides together* counts pages, not rows, so one side in facing and the other
-  in single still stay the same number of pages apart.
-- Fit height and fit content join the zoom commands. Fit content needs each page's
-  content bounds, which `textedit` already computes for text; for a page of pictures it is
-  the rendered ink bounds, measured on the tier-1 placeholder.
-- Grayscale joins *Invert page colours* as a second view filter, the same CSS path.
-- Commands: `view.singlePage`, `view.facing`, `view.book`, `view.continuous`,
-  `view.rightToLeft`, `view.fitHeight`, `view.fitContent`, `view.grayscale`.
-- Exit: the window checks open the mixed fixture in each layout and assert each page's box
-  against the expected position; a mutation that drops `left` or the cover rule is caught;
-  section 4's scroll criterion (no dropped frames, 95 % sharp) holds in facing at fit page.
+- `scroller.ts`: a `Spread` value and `rowsOf`, which groups pages into rows. Each `PageBox`
+  carries its offset in its row and the row's width and height; `pageLeftCss` centres the
+  row and adds the offset, so every caller of `pageOrigin` follows without change.
+- **Pages in a row are aligned at the top, not centred on each other.** The plan said
+  centred, as SumatraPDF does; centring would let a page's `top` fall below the next page's,
+  and `pageAt` is a binary search and `pagesIn` a walk that both need `top` never to
+  decrease. On a document of one page size the two are the same picture.
+- `pageAt` answers with the first page of a row; the new `pageAtPoint(x, y)` picks the page
+  of a row the pointer is over. The audit found two hit tests asking `pageAt(y)` alone
+  (`pageAndPoint` and `pointFrom` in `viewer.ts`); both ask `pageAtPoint` now. Every other
+  position goes through `pageOrigin` or `pageTopOf`.
+- Fit width and fit page fit the row as one sheet, less the gap. Next page steps a row:
+  under facing the next page is often beside the current one, and going to it would not
+  have moved the view. The change of layout keeps the reader on their page, as rotation does.
+- Tests: `scrollerspread.test.ts`, `viewerspread.test.ts`, `spreads.test.ts`, and *the page
+  layouts* in `menubar.test.ts`; the mutations are the `spread:` and `spreads:` rows in
+  `scripts/mutation_rows/frontend/f05_latest.py`.
+
+**Not checked yet**, and each needs a window: a real document in each layout on the three
+platforms; *Scroll both sides together* with one side in facing and the other not (it
+counts pages, so it should hold); the 95 % sharp scroll criterion of section 4 in facing at
+fit page.
+
+**Still to build in 7.2:**
+
+- One row at a time instead of continuous (`view.continuous`): the scroll range is one
+  row; `n`/`p`, Space and the wheel at the end of the row move to the next row. Find,
+  links, Back/Forward and *Go to page* change the row.
+- Fit height and fit content join the zoom commands (`view.fitHeight`, `view.fitContent`).
+  Fit content needs each page's content bounds, which `textedit` already computes for text;
+  for a page of pictures it is the rendered ink bounds, measured on the tier-1 placeholder.
+- Grayscale (`view.grayscale`) joins *Invert page colours* as a second view filter, the same
+  CSS path.
 
 #### 7.3 Full screen and presentation
 

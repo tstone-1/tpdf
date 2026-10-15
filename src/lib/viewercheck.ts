@@ -46,6 +46,7 @@ import {
   WIDTH,
 } from "./viewercheck/common";
 import { fitChecks, readingChecks, selectionChecks } from "./viewercheck/reading";
+import { spreadChecks } from "./viewercheck/spreads";
 import { mappingChecks, resultsChecks, searchChecks } from "./viewercheck/search";
 import { accessibilityChecks, crossPageChecks, scopedSearchChecks } from "./viewercheck/accessibility";
 import { appCommandChecks, paletteChecks } from "./viewercheck/commands";
@@ -405,6 +406,9 @@ async function run(path: string): Promise<void> {
 
   await readingChecks(doc);
   await fitChecks(root, viewer);
+  // Early, on an upright view that nothing has edited, and it leaves the view
+  // one page to a row and fitted as it found it.
+  await spreadChecks(viewer, doc, seen);
   await selectionChecks(root, viewer, doc);
   await searchChecks(root, viewer, doc, seen);
   await resultsChecks(viewer, sidebar, doc, seen);

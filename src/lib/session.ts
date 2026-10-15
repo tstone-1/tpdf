@@ -35,6 +35,14 @@ export interface Place {
   /** Quarter-turns clockwise, 0 to 3. */
   turns: number;
   sidebar: boolean;
+  /**
+   * Pages in a row, 1 or 2, and how a row of two is made up. Optional because
+   * a session written before facing pages has none, and the backend fills in
+   * one column for it; the frontend writes all three.
+   */
+  columns?: number;
+  cover_alone?: boolean;
+  right_to_left?: boolean;
   /** Pages the document had when this was written. */
   page_count: number;
 }
@@ -129,7 +137,10 @@ export function samePlace(a: Place, b: Place): boolean {
     a.zoom === b.zoom &&
     a.fit === b.fit &&
     a.turns === b.turns &&
-    a.sidebar === b.sidebar
+    a.sidebar === b.sidebar &&
+    a.columns === b.columns &&
+    a.cover_alone === b.cover_alone &&
+    a.right_to_left === b.right_to_left
   );
 }
 

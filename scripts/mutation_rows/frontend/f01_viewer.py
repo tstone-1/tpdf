@@ -909,8 +909,8 @@ ROWS += [
         # movement, and the right-hand side of a zoomed page stays unreachable.
         "scroller: lay the pages out as though nothing had been panned",
         "src/lib/scroller.ts",
-        "    return Math.max(0, (this.opts.viewport.width - width) / 2) - this.pan;",
-        "    return Math.max(0, (this.opts.viewport.width - width) / 2);",
+        "    return Math.max(0, (this.opts.viewport.width - row) / 2) - this.pan + (box?.x ?? 0);",
+        "    return Math.max(0, (this.opts.viewport.width - row) / 2) + (box?.x ?? 0);",
         "moves every page by the same amount, whatever its width",
     ),
     Mutation(
@@ -948,7 +948,7 @@ ROWS += [
         # which is why the fixture behind this one has to overflow the window.
         "scroller: never grow the widest page",
         "src/lib/scroller.ts",
-        "      widest = Math.max(widest, widthDev / dpr);",
+        "      widest = Math.max(widest, rowWidth);",
         "      widest = Math.max(widest, 0);",
         "has nothing to pan while every page fits, and the widest page sets the bound",
     ),

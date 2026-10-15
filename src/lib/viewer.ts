@@ -134,7 +134,7 @@ import {
   type PageView,
   type RedactionView,
 } from "./pages";
-import { displayedSize, Scroller, type PageSize } from "./scroller";
+import { displayedSize, PAGE_GAP, Scroller, SINGLE, type PageSize, type Spread } from "./scroller";
 import {
   matchHalves,
   PLAIN_SEARCH,
@@ -263,6 +263,8 @@ export interface ViewerStatus {
   turns: number;
   /** Whether the page's lightness is inverted, for reading in the dark. */
   invert: boolean;
+  /** How pages sit beside each other. */
+  spread: Spread;
   /** Fraction of the visible page area backed by a sharp tile. */
   sharp: number;
   /** Fraction backed by anything at all, tier-1 placeholder included. */
@@ -2385,6 +2387,7 @@ export class Viewer {
       fit: this.fit,
       turns: this.turns,
       invert: this.invert,
+      spread: this.scroller.spread,
       sharp: stats.sharp,
       any: stats.any,
       pending: this.scroller.pendingWork,
@@ -2415,6 +2418,9 @@ export class Viewer {
       status.fit,
       status.turns,
       status.invert,
+      status.spread.columns,
+      status.spread.coverAlone,
+      status.spread.rightToLeft,
       Math.round(status.sharp * 100),
       Math.round(status.any * 100),
       status.pending > 0,
@@ -2536,7 +2542,23 @@ export class Viewer {
 
   /** The zoom `mode` asks for, against the viewport and page as they are now. */
   private zoomFor(mode: Fitted, page?: number): number {
-    return fitZoom(mode, this.viewportSize(), this.displayedPage(page));
+    const viewport = this.viewportSize();
+    if (this.scroller.spread.columns === 1) {
+      return fitZoom(mode, viewport, this.displayedPage(page));
+    }
+    // Two columns fit as one sheet: the row's pages side by side, less the gap
+    // between them. A page alone in its row keeps the other column empty at its
+    // own width, as the scroller lays it out.
+    const sizes = this.scroller.rowOf(page ?? this.currentPage()).map((one) => this.displayedPage(one));
+    const [first, second] = sizes as [PageSize, PageSize | undefined];
+    return fitZoom(
+      mode,
+      { width: viewport.width - PAGE_GAP, height: viewport.height },
+      {
+        width_pt: first.width_pt + (second ?? first).width_pt,
+        height_pt: Math.max(first.height_pt, second?.height_pt ?? 0),
+      },
+    );
   }
 
   /**
@@ -2758,6 +2780,34 @@ export class Viewer {
     this.wake();
   }
 
+  /** How pages sit beside each other. */
+  get spread(): Spread {
+    return this.scroller.spread;
+  }
+
+  /**
+   * Lays pages out one to a row, or two facing, keeping the reader on the page
+   * they were reading and as far down it as they were.
+   *
+   * Refitted for {@link rotateBy}'s reason: a fit-width that fitted one page is
+   * twice too wide for a row of two.
+   */
+  setSpread(spread: Spread): void {
+    const page = this.currentPage();
+    const before = this.scroller.pagePitchOf(page);
+    const through = before > 0 ? (this.scrollTop - this.scroller.pageTopOf(page)) / before : 0;
+    if (!this.scroller.setSpread(spread)) return;
+    this.applyFit(false, page);
+    this.scrollTop = Math.max(
+      0,
+      Math.min(
+        this.scroller.pageTopOf(page) + through * this.scroller.pagePitchOf(page),
+        this.scroller.maxScroll,
+      ),
+    );
+    this.wake();
+  }
+
   /**
    * Turns the view, and everything keyed to its orientation.
    *
@@ -2970,9 +3020,11 @@ export class Viewer {
     zoom: number;
     fit: FitMode;
     turns: number;
+    spread?: Spread;
   }): void {
     const page = Math.max(0, Math.min(place.page, this.opts.pageCount - 1));
     this.applyTurns(quarterTurns(place.turns));
+    this.scroller.setSpread(place.spread ?? SINGLE);
 
     this.fit = place.fit;
     const offset =
@@ -3155,10 +3207,17 @@ export class Viewer {
 
   /** Scrolls to the top of the next page. */
   nextPage(): void {
-    this.goToPage(this.currentPage() + 1);
+    // By row: under facing pages the next page is often beside this one, at
+    // the same height, and going to it would not move the view.
+    const row = this.scroller.rowOf(this.currentPage());
+    this.goToPage((row[row.length - 1] ?? 0) + 1);
   }
 
-  /** Scrolls to the top of the previous page. */
+  /**
+   * Scrolls to the top of the previous page, or the previous row of two: the
+   * current page is the first of its row, so the page before it is in the row
+   * above, and any page of a row scrolls to that row's top.
+   */
   previousPage(): void {
     this.goToPage(this.currentPage() - 1);
   }
@@ -4120,7 +4179,7 @@ export class Viewer {
   private pageAndPoint(event: ScreenPoint): { page: number; x: number; y: number } {
     const bounds = this.root.getBoundingClientRect();
     const docY = event.clientY - bounds.top + this.scrollTop;
-    const page = this.scroller.pageAt(docY);
+    const page = this.scroller.pageAtPoint(event.clientX - bounds.left, docY);
     const origin = this.scroller.pageOrigin(page);
     return {
       page,
@@ -5739,7 +5798,7 @@ export class Viewer {
   ): { page: number; text: PageText; x: number; y: number } | null {
     const bounds = this.root.getBoundingClientRect();
     const docY = event.clientY - bounds.top + this.scrollTop;
-    const page = this.scroller.pageAt(docY);
+    const page = this.scroller.pageAtPoint(event.clientX - bounds.left, docY);
 
     const text = this.textOn(page);
     if (!text) {

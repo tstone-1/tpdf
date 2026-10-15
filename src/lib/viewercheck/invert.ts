@@ -85,7 +85,7 @@ function invertedCopy(rgba: Uint8ClampedArray): Uint8ClampedArray {
 }
 
 /** Mean lightness, `(max + min) / 2` per pixel, over an RGBA buffer. */
-function meanLightness(rgba: Uint8ClampedArray): number {
+export function meanLightness(rgba: Uint8ClampedArray): number {
   let total = 0;
   let count = 0;
   for (let at = 0; at + 3 < rgba.length; at += 4) {

@@ -77,9 +77,9 @@ const PLANNED = [
   "file.nextInFolder", "file.previousInFolder", "file.reopenClosedTab",
   "file.saveAttachment", "file.saveRegionAsPicture",
   "nav.addFavourite", "nav.nextFavourite", "nav.previousFavourite",
-  "view.book", "view.continuous", "view.facing", "view.fitContent", "view.fitHeight",
+  "view.continuous", "view.fitContent", "view.fitHeight",
   "view.fullScreen", "view.grayscale", "view.outlineCollapseAll", "view.outlineExpandAll",
-  "view.outlineToCurrent", "view.presentation", "view.rightToLeft", "view.singlePage",
+  "view.outlineToCurrent", "view.presentation",
 ];
 
 /**

@@ -164,6 +164,7 @@
     type Place,
     type Session,
   } from "./lib/session";
+  import { placeOfSpread, spreadOfPlace } from "./lib/spreads";
   import {
     canOrderTabs, placing, readFieldBorder, writeFieldBorder,
   } from "./lib/fieldnames";
@@ -3984,6 +3985,7 @@
       fit: viewer.fitMode,
       turns: viewer.rotation,
       sidebar: sidebarShown,
+      ...placeOfSpread(viewer.spread),
       page_count: openPageCount,
     };
   }
@@ -5452,7 +5454,7 @@
     shown.setMarks(shownMarks(model.state));
     shown.setRedactions(model.state.redactions);
     panel.thumbnails?.setPages(model.state.pages.length);
-    if (resume) shown.restore(resume);
+    if (resume) shown.restore({ ...resume, spread: spreadOfPlace(resume) });
     // Only for a tab being returned to. A document opened for the first time
     // has no search to put back and opens on the tab the sidebar starts on.
     if (kept) restore(kept, "mounted", restoring);

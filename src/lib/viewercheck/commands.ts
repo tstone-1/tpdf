@@ -20,6 +20,8 @@ import type { DocumentInfo } from "../ipc";
 import { Palette } from "../palette";
 import { isLinux } from "../keys";
 import type { StampName } from "../pages";
+import { SINGLE } from "../scroller";
+import { kindOf } from "../spreads";
 import { Viewer } from "../viewer";
 import { check, settle, skip } from "./common";
 import { syntheticMark, syntheticRedaction } from "./marks";
@@ -743,6 +745,8 @@ export async function appCommandChecks(
   const zoom = () => viewer.currentZoom.toFixed(3);
   const page = () => String(viewer.position.page);
   const turn = () => String(viewer.rotation);
+  const layout = () => `${kindOf(viewer.spread)}${viewer.spread.rightToLeft ? " right to left" : ""}`;
+  const facing = { columns: 2 as const, coverAlone: false, rightToLeft: false };
   const fit = () => viewer.fitMode;
   const selection = () => String(viewer.selectedText.length);
   const shell = (expected: string) => ({
@@ -871,6 +875,32 @@ export async function appCommandChecks(
       from: () => viewer.setFit("width"),
       read: fit,
       moved: (b, a) => b !== "page" && a === "page",
+    },
+    // The layouts, with one page to a row last, so the probes after these find
+    // the view as every other probe does.
+    {
+      id: "view.facing",
+      from: () => viewer.setSpread(SINGLE),
+      read: layout,
+      moved: (b, a) => b === "single" && a === "facing",
+    },
+    {
+      id: "view.book",
+      from: () => viewer.setSpread(SINGLE),
+      read: layout,
+      moved: (b, a) => b === "single" && a === "book",
+    },
+    {
+      id: "view.rightToLeft",
+      from: () => viewer.setSpread(facing),
+      read: layout,
+      moved: (b, a) => b === "facing" && a === "facing right to left",
+    },
+    {
+      id: "view.singlePage",
+      from: () => viewer.setSpread(facing),
+      read: layout,
+      moved: (b, a) => b === "facing" && a === "single",
     },
     {
       id: "view.rotateClockwise",

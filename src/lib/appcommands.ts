@@ -41,6 +41,7 @@ import {
 } from "./pageranges";
 import { DISK_CHANGE_MODES, type DiskChangeMode } from "./diskwatch";
 import { PALETTE } from "./markcolors";
+import { kindOf, SPREAD_TITLES, withKind, type SpreadKind } from "./spreads";
 import { message, UI_LOCALE, type UiLocale } from "./i18n";
 import { NIBS } from "./marknibs";
 import {
@@ -667,6 +668,17 @@ export function registerAppCommands(
    */
   const available = () => !(actions.busyDocument?.() ?? false);
   const withDocument = () => actions.viewer() !== null && available();
+  /** Offered while `kind` is not the layout already shown; changes to it. */
+  const layoutCommand = (kind: SpreadKind) => ({
+    enabled: () => {
+      const viewer = actions.viewer();
+      return viewer !== null && withDocument() && kindOf(viewer.spread) !== kind;
+    },
+    run: () => {
+      const viewer = actions.viewer();
+      viewer?.setSpread(withKind(viewer.spread, kind));
+    },
+  });
   /** When an arrangement is offered, what is missing when it is not, and what it runs. */
   const arranges = (how: Arrangement) => {
     const why = () => lacks(how, actions.pickedMarks());
@@ -1148,6 +1160,25 @@ export function registerAppCommands(
       keys: label("view.rotateCounterClockwise"),
       enabled: withDocument,
       run: () => actions.viewer()?.rotateBy(-1),
+    },
+    // The page layouts: one command per choice, each offered while it is not
+    // the current one, the shape `file.onDiskChange.*` has. Per document, and
+    // remembered with its place.
+    // Written out rather than mapped from `SPREAD_KINDS`, so that each id is a
+    // literal `check_classified.py` can find.
+    { id: "view.singlePage", title: SPREAD_TITLES.single, ...layoutCommand("single") },
+    { id: "view.facing", title: SPREAD_TITLES.facing, ...layoutCommand("facing") },
+    { id: "view.book", title: SPREAD_TITLES.book, ...layoutCommand("book") },
+    {
+      // SumatraPDF's manga mode. Only with two pages to a row, where there is
+      // a direction to change.
+      id: "view.rightToLeft",
+      title: "Facing pages: read right to left, or left to right again",
+      enabled: () => withDocument() && actions.viewer()?.spread.columns === 2,
+      run: () => {
+        const viewer = actions.viewer();
+        if (viewer) viewer.setSpread({ ...viewer.spread, rightToLeft: !viewer.spread.rightToLeft });
+      },
     },
     {
       // ⇧⌘R beside ⌘R, because these two are the same gesture on two different
