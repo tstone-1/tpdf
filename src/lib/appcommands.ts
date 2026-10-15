@@ -490,6 +490,8 @@ export interface AppActions {
   arrange(how: Arrangement): void;
   /** Draw or import a visual signature, then place it on a page. */
   signature(): void;
+  /** Choose a picture file, then place the picture on a page by a drag. */
+  picture(): void;
   editText(): void;
   /**
    * Arms the freehand tool for one drawing.
@@ -1482,6 +1484,14 @@ export function registerAppCommands(
       title: "Add a link...",
       enabled: withDocument,
       run: () => actions.drawShape("link"),
+    },
+    {
+      // A PNG or JPEG decoded in a worker, then placed by a drag as a
+      // signature picture is; it keeps its proportions.
+      id: "edit.addPicture",
+      title: "Add a picture from a file...",
+      enabled: withDocument,
+      run: () => actions.picture(),
     },
     {
       id: "edit.editText",

@@ -443,6 +443,9 @@ const UNNAMED_LEAVES = new Set([
   "[f64; 4]",
   "(String, f64)",
   "std::collections::HashMap<String, String>",
+  // Bytes, not JSON: a picture's pixels. There are no fields to mirror;
+  // `readPicture` in `picture.ts` checks the layout and its test holds it.
+  "tauri::ipc::Response",
 ]);
 
 /** The first top-level generic argument of `Result<A, B>`, as written. */

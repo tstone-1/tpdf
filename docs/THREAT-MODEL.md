@@ -3287,6 +3287,39 @@ wrong width would move the rest of a line and leak nothing. A font whose glyph f
 changes with its neighbours would draw the kept glyphs differently once a neighbour is
 gone; none was met and nothing looks for one.
 
+#### T6.41 — A picture placed on a page, added 2026-10-15
+
+*Add a picture from a file* puts a PNG or JPEG on a page as a `/Stamp` whose appearance is
+the picture, through three commands.
+
+- **`picture_open` takes a path, reads the file, and decodes it in a worker.** The app
+  process reads at most 50 MiB of the file and parses nothing. The bytes go to a worker
+  started over the warm-up document, as *New document from pictures* does, as its second
+  read-only mapping (`Request::Picture`), and `signature_import::decode_picture` reads them
+  there: the header grammar the signature image uses, with a picture's limits (50 MiB, 16384
+  pixels a side, 40 megapixels), then the same `png` and `zune-jpeg` decoders under those
+  limits, an EXIF orientation from `imagepages`, and a scale to at most 4096 pixels a side and
+  4 megapixels. The pixels come back through the tile mapping, which is 16 MiB, the size of
+  the largest picture; the coordinator takes exactly width times height times four bytes
+  of it and holds the result to `Image::valid_picture` before anything else sees it. The
+  path is the webview's to name, which is the authority every document open already gives
+  it: a webview that could call this could read a picture file it could not otherwise see,
+  and receive the pixels. It cannot learn any other file's bytes, since a file that is not
+  a picture is refused in the decoder's words.
+- **`annot_picture` places one**: a raw body of a JSON header and the pixels
+  (`picture.rs`). The parse refuses a body whose parts do not add up, a kind that is not a
+  picture, and pixels sent twice; the model then refuses a picture past its limits, as it
+  refuses any mark. Pictures have their own pool of 64 MiB per document, separate from the
+  signature pool, so pictures cannot crowd out the signature a reader places.
+- **`annot_picture_pixels` gives a picture's pixels back** by mark id, for the overlay.
+  The state reply carries a picture's size and not its pixels.
+
+The writing worker saves the pixels as `signature::Image::xobject` saves a signature's:
+RGB and a separate alpha mask, deflated. No picture file reaches the saved document.
+
+**Not covered.** As with the signature image, these limits bound the decoded size and not
+every allocation inside a decoder; the worker's own resource limits are what bound those.
+
 ### T9 — The updater
 
 **The threat.** The updater is the only code path in tpdf that fetches bytes and then

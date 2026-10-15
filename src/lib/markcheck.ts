@@ -101,6 +101,12 @@ export interface MarkCheckHost {
   pages: () => readonly PageView[];
   /** The path that is open, so the check can say it had a document. */
   path: () => string;
+  /** Queues the file the next picture panel answers with, as the panel would. */
+  answerPictures: (paths: string[]) => void;
+  /** A picture's pixels, read back from the model over the IPC boundary. */
+  picturePixels: (id: number) => Promise<Uint8Array>;
+  /** The kinds the mark clipboard holds, so a paste waits for its copy. */
+  held: () => readonly string[];
 }
 
 /**
@@ -506,5 +512,62 @@ async function run(host: MarkCheckHost): Promise<void> {
       link?.kind === "link" && opened && target === true,
       link ? `a ${link.kind}${opened ? "" : " whose box did not open"}; note ${JSON.stringify(host.marks().find((mark) => mark.id === link.id)?.note)}` : "the model gained nothing",
     );
+
+    // --- A picture from a file -------------------------------------------
+    //
+    // The app's own 128 pixel icon, tracked beside the fixture, chosen through
+    // the panel's queue and decoded by a worker. What reaches the model is
+    // its size; the pixels come back through their own command.
+    const icon = host.path().replace(/testdata[\\/][^\\/]*$/, "src-tauri/icons/128x128.png");
+    host.answerPictures([icon]);
+    const chosen = host.run("edit.addPicture") && (await settle(() => viewer.drawArmed === "picture"));
+    check("the add-picture command decodes the file and arms the placement", chosen,
+      `armed: ${viewer.drawArmed} for ${icon}`);
+    before = new Set(host.marks().map((mark) => mark.id));
+    const spot = { x: low.x + 40, y: low.y - 260 };
+    if (chosen) drag(root, spot, { x: spot.x + 120, y: spot.y + 60 });
+    await settle(() => added(before, host.marks()) !== null);
+    const picture = added(before, host.marks());
+    const [left, top, right, bottom] = picture?.quads ?? [];
+    const square = picture !== null && left !== undefined && Math.abs((right! - left) - (bottom! - top!)) < 0.01;
+    check(
+      "a picture is placed keeping its proportions, and the model holds its size and not its pixels",
+      picture?.kind === "picture" && picture.picture?.width === 128 && picture.picture.height === 128
+        && picture.image === undefined && square,
+      picture ? `a ${picture.kind} of ${JSON.stringify(picture.picture)} over ${picture.quads.map((v) => v.toFixed(1)).join(", ")}` : "the model gained nothing",
+    );
+    const pixels = picture ? await host.picturePixels(picture.id).catch(() => new Uint8Array()) : new Uint8Array();
+    check(
+      "its pixels come back whole, with something to see",
+      pixels.length === 128 * 128 * 4 && pixels.some((value, at) => at % 4 === 3 && value > 0),
+      `${pixels.length} bytes`,
+    );
+    // The overlay draws a picture from pixels it fetches after the mark
+    // arrives, and an outline until then. The icon covers most of its square
+    // and a dashed outline a few percent of it, so a quarter tells them apart.
+    const shown = picture ? viewer.markAnchor(picture.id) : null;
+    const covered = shown !== null && (await settle(() => (inked(viewer, shown) ?? 0) > 0.25));
+    check(
+      "and the overlay draws the picture, not only its outline",
+      covered,
+      shown ? `${((inked(viewer, shown) ?? 0) * 100).toFixed(1)}% of its box inked` : "the picture has no anchor",
+    );
+    if (picture) {
+      viewer.showMark(picture.id);
+      const copied = await settle(() => viewer.markOpen === picture.id) && host.run("edit.copyMark")
+        && (await settle(() => host.held().includes("picture")));
+      before = new Set(host.marks().map((mark) => mark.id));
+      const pasted = copied && host.run("edit.pasteMark");
+      await settle(() => added(before, host.marks()) !== null);
+      const copy = added(before, host.marks());
+      const same = copy ? await host.picturePixels(copy.id).catch(() => new Uint8Array()) : new Uint8Array();
+      check(
+        "a copied picture pastes as the same picture",
+        pasted && copy?.kind === "picture" && same.length === pixels.length && same.every((value, at) => value === pixels[at]),
+        copy ? `a ${copy.kind} of ${same.length} bytes` : copied ? "nothing pasted" : "the copy held no picture",
+      );
+    } else {
+      report.skip("a copied picture pastes as the same picture", "no picture was placed");
+    }
   }
 }

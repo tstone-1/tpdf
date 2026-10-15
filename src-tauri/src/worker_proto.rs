@@ -293,6 +293,15 @@ pub enum Request {
     /// mapped document**; the document is only what the worker was started
     /// over. The answer is the pixels a visible signature draws.
     SignatureImage,
+    /// Decode the picture file handed over as this worker's second mapping,
+    /// for a picture placed on a page.
+    ///
+    /// [`Request::SignatureImage`] with a picture's limits, and with the pixels
+    /// written into the tile mapping rather than the reply: a picture is up to
+    /// 16 MiB, which is the mapping's size and more than half
+    /// [`MAX_REPLY_BYTES`] as JSON. **It reads nothing of the mapped
+    /// document.** The answer is [`Reply::Picture`].
+    Picture,
     /// Draw a visible signature's appearance before anything is signed.
     ///
     /// [`Request::PrepareSignature`]'s sibling, answered with a picture rather
@@ -615,6 +624,12 @@ pub enum Reply {
     PreparedSignature(crate::sign_prepare::Unsigned),
     /// The pixels of the image file a `sign --image` named.
     SignatureImage(crate::signature::Image),
+    /// A decoded picture's size; its pixels are in the tile mapping,
+    /// [`Response::bytes`] long.
+    Picture {
+        width: u32,
+        height: u32,
+    },
     /// A visible signature's appearance, drawn as PNG.
     SignaturePreview(crate::sign_prepare::Preview),
     /// A `/DSS` revision and what the signatures read as with it appended.
@@ -1050,6 +1065,11 @@ mod tests {
                  file as its second mapping, which no pooled worker has",
             ),
             (
+                "Picture",
+                "asked by `save::InWorker` of a worker it spawned itself with the picture \
+                 as its second mapping, which no pooled worker has",
+            ),
+            (
                 "Unlock",
                 "sent by whoever holds the password before its first real request, on \
                  both the pooled and the save path",
@@ -1392,6 +1412,10 @@ mod tests {
                 height: 2,
                 rgba: vec![1, 2, 3, 4, 5, 6, 7, 8],
             }),
+            Reply::Picture {
+                width: 3,
+                height: 4,
+            },
             Reply::SignaturePreview(crate::sign_prepare::Preview {
                 png: vec![137, 80, 78, 71],
                 width: 480,
@@ -1454,6 +1478,7 @@ mod tests {
                 | Reply::Append(_)
                 | Reply::PreparedSignature(_)
                 | Reply::SignatureImage(_)
+                | Reply::Picture { .. }
                 | Reply::SignaturePreview(_)
                 | Reply::Validated(_)
                 | Reply::Surveyed(_)

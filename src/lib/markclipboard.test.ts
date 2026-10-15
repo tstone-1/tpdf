@@ -23,11 +23,12 @@ function mark(kind: MarkKind, id = 1): MarkView {
 }
 
 describe("notCopied", () => {
-  it("copies the marks a reader places, and not those made of words, fields or signatures", () => {
-    for (const kind of ["note", "square", "ellipse", "textbox", "ink", "line", "arrow", "polygon", "polyline", "stamp"] as const) {
+  it("copies the marks a reader places, and not those made of words or fields", () => {
+    for (const kind of ["note", "square", "ellipse", "textbox", "ink", "line", "arrow", "polygon", "polyline", "stamp",
+      "link", "signature", "picture"] as const) {
       expect(notCopied(kind)).toBeNull();
     }
-    for (const kind of ["highlight", "underline", "strikeout", "squiggly", "field", "signature"] as const) {
+    for (const kind of ["highlight", "underline", "strikeout", "squiggly", "field"] as const) {
       expect(notCopied(kind)).toEqual(expect.any(String));
     }
   });
@@ -56,6 +57,24 @@ describe("a copied mark", () => {
     if (typeof line === "string" || typeof box === "string") throw new Error("not copied");
     expect(shapeOf(line)).toEqual({ quads: [], strokes: [[12, 22, 108, 68]] });
     expect(shapeOf(box)).toEqual({ quads: [10, 20, 110, 70], strokes: [] });
+  });
+});
+
+describe("a copied picture", () => {
+  it("carries its pixels, and is not copied without them", () => {
+    const pixels = { width: 1, height: 1, rgba: new Uint8Array([1, 2, 3, 255]) };
+    const picture = { ...mark("picture"), picture: { width: 1, height: 1 } };
+    expect(describeMark(picture, pixels)).toMatchObject({ kind: "picture", picture: pixels });
+    expect(typeof describeMark(picture)).toBe("string");
+    const clipboard = new MarkClipboard();
+    expect(clipboard.copy([picture], { doc: 1, page: pageId(3) }).copied).toBe(0);
+    expect(clipboard.copy([picture], { doc: 1, page: pageId(3) }, new Map([[1, pixels]])).copied).toBe(1);
+    expect(clipboard.marks[0]?.picture).toBe(pixels);
+  });
+
+  it("is a signature's with the pixels its view carries", () => {
+    const image = { width: 1, height: 1, rgba: [1, 2, 3, 255] };
+    expect(describeMark({ ...mark("signature"), image })).toMatchObject({ kind: "signature", image });
   });
 });
 

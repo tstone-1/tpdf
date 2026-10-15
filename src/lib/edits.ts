@@ -31,6 +31,7 @@ import {
 } from "./pages";
 import { colorFor, type MarkColor } from "./markcolors";
 import { INK_WIDTH } from "./markband";
+import { pictureBody } from "./picture";
 import type { Fill } from "./redactfill";
 import type { PreparedImport } from "./pendingimport";
 import type { Pictures, Shrinkage } from "./compress";
@@ -542,25 +543,39 @@ export class Edits {
     );
   }
 
-  /**
-   * Adds a comment answering one the file already carries.
-   *
-   * **A name over {@link Edits.mark} rather than a command of its own**, because
-   * a reply *is* a comment: the same subtype, the same body, the same colour,
-   * the same removal and the same undo. What the file gains is one key, `/IRT`,
-   * which is why nothing new crosses the boundary --- see `Mark::reply_to`,
-   * whose own note argues the case for reusing the machinery rather than
-   * duplicating it to express one extra field.
-   *
-   * `at` is the parent's own rectangle, so the reply's icon lands on the comment
-   * it answers. A reader dragging nothing has chosen no position, and putting it
-   * anywhere else would make the thread's two halves sit apart on the page.
-   *
-   * `parent` is the annotation's object, never a scan position, for the reason
-   * {@link Comment.object} gives.
-   */
   async resizeSignature(mark: number, width: number): Promise<EditState> {
     return this.adopt(await call("annot_resize_signature", { doc: this.doc, mark, width }));
+  }
+
+  /**
+   * Puts a picture on a page, over `quads`: {@link mark} for a mark whose
+   * pixels go as bytes (`picture.ts`). The note is empty for a picture a
+   * reader places and is the copied one's for a paste.
+   */
+  async placePicture(
+    page: PageId,
+    quads: number[],
+    pixels: import("./picture").PicturePixels,
+    note = "",
+    sweep = 0,
+  ): Promise<EditState> {
+    if (!this.current.pages.some((view) => view.id === page)) return this.current;
+    const header = {
+      doc: this.doc,
+      sweep,
+      width: pixels.width,
+      height: pixels.height,
+      mark: {
+        kind: "picture", page, quads, strokes: [], stamp: null, reply_to: null,
+        color: colorFor("picture", null), width: INK_WIDTH, author: "", note,
+      } satisfies Omit<import("./ipc").NewMark, "image">,
+    };
+    return this.adopt(await call("annot_picture", pictureBody(header, pixels)));
+  }
+
+  /** A picture's pixels, which its view leaves out; the size is the view's. */
+  async picturePixels(mark: number): Promise<Uint8Array<ArrayBuffer>> {
+    return new Uint8Array(await call("annot_picture_pixels", { doc: this.doc, mark }));
   }
 
   /** Gives a box, an ellipse, a text box or a form field a new rectangle. */
@@ -597,6 +612,23 @@ export class Edits {
     return this.adopt(await call("annot_arrange", { doc: this.doc, moves, sweep }));
   }
 
+  /**
+   * Adds a comment answering one the file already carries.
+   *
+   * **A name over {@link Edits.mark} rather than a command of its own**, because
+   * a reply *is* a comment: the same subtype, the same body, the same colour,
+   * the same removal and the same undo. What the file gains is one key, `/IRT`,
+   * which is why nothing new crosses the boundary --- see `Mark::reply_to`,
+   * whose own note argues the case for reusing the machinery rather than
+   * duplicating it to express one extra field.
+   *
+   * `at` is the parent's own rectangle, so the reply's icon lands on the comment
+   * it answers. A reader dragging nothing has chosen no position, and putting it
+   * anywhere else would make the thread's two halves sit apart on the page.
+   *
+   * `parent` is the annotation's object, never a scan position, for the reason
+   * {@link Comment.object} gives.
+   */
   async reply(
     page: PageId,
     parent: readonly [number, number],

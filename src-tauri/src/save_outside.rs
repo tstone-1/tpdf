@@ -952,6 +952,48 @@ impl Rewriter for InWorker {
         awaited(&rx, DEFAULT_DEADLINE, pid)?
     }
 
+    fn picture(&self, bytes: &[u8]) -> Result<crate::signature::Image, Refusal> {
+        // Started over the warm-up document, as `images` is; the picture is the
+        // second mapping and the only thing the request reads.
+        let seed = crate::worker_child::WARM_DOCUMENT;
+        let mut mapped = Shm::create(seed.len())?;
+        mapped.as_mut_slice()[..seed.len()].copy_from_slice(seed);
+        let mut inputs = Shm::create(bytes.len().max(1))?;
+        inputs.as_mut_slice()[..bytes.len()].copy_from_slice(bytes);
+        let worker =
+            Worker::spawn_reading(std::sync::Arc::new(mapped), &inputs, &self.library_dir)?;
+        let pid = worker.pid();
+        let rx = asked_on_a_thread(worker, move |worker| {
+            let answered = worker.call(&Request::Picture)?;
+            if !answered.ok {
+                return Err(Refusal::from(answered.error));
+            }
+            let Some(Reply::Picture { width, height }) = answered.reply else {
+                return Err("the worker answered the picture with something else".into());
+            };
+            let expected = (width as usize)
+                .checked_mul(height as usize)
+                .and_then(|n| n.checked_mul(4))
+                .ok_or("the worker stated a picture too large to hold")?;
+            let length = raw_tile_length(answered.bytes, expected, worker.tile.len())
+                .map_err(|declined| Refusal::from(declined.message().to_string()))?;
+            let image = crate::signature::Image {
+                width,
+                height,
+                rgba: worker.tile.as_slice()[..length].to_vec(),
+            };
+            // Held to the model's own limits before anything else sees it.
+            if !image.valid_picture() {
+                return Err("the worker answered with a picture past its limits".into());
+            }
+            Ok(image)
+        });
+        // The picture's segment is this function's and outlives the wait.
+        let answer = awaited(&rx, DEFAULT_DEADLINE, pid)?;
+        drop(inputs);
+        answer
+    }
+
     fn write_range(
         &self,
         source: &mut std::fs::File,

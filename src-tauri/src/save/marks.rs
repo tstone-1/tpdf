@@ -253,11 +253,14 @@ pub(super) fn write_marks(
     _replies_were_checked: RepliesChecked,
 ) -> Result<MarksWritten, String> {
     for (mark, site) in marks.iter().zip(sites) {
-        if mark.image.is_some() != (mark.kind == MarkKind::Signature)
-            || mark.image.as_ref().is_some_and(|image| !image.valid())
-            || (mark.kind == MarkKind::Signature && mark.quads.len() != 1)
+        if mark.image.is_some() != mark.kind.holds_image()
+            || mark.image.as_ref().is_some_and(|image| match mark.kind {
+                MarkKind::Picture => !image.valid_picture(),
+                _ => !image.valid(),
+            })
+            || (mark.kind.holds_image() && mark.quads.len() != 1)
         {
-            return Err("Invalid signature raster in save plan".into());
+            return Err("Invalid signature or picture raster in save plan".into());
         }
         let MarkSite {
             page,
@@ -684,7 +687,7 @@ pub(super) fn subtype(kind: MarkKind) -> &'static [u8] {
         // `/PolyLine`, with that capitalisation; the serde name is `polyline`.
         MarkKind::Polyline => b"PolyLine",
         // `/Stamp`, and the one kind whose three spellings all agree.
-        MarkKind::Stamp | MarkKind::Signature => b"Stamp",
+        MarkKind::Stamp | MarkKind::Signature | MarkKind::Picture => b"Stamp",
         // `/Widget`, the annotation a form field is shown by. Named here for
         // completeness: `write_marks` hands a field to `formfields::place`,
         // which writes the dictionary, and never asks this.
@@ -816,7 +819,7 @@ fn paint(kind: MarkKind) -> Paint {
         // annotation that draws nothing at all, which is `MarkKind::Square`'s
         // situation rather than the comment's.
         MarkKind::Stamp => Paint::Stamp,
-        MarkKind::Signature => Paint::Image,
+        MarkKind::Signature | MarkKind::Picture => Paint::Image,
         // Its appearance is the form's business: `formfields::place` draws it.
         MarkKind::Field => Paint::None,
         // A link draws nothing: it is a place to click, with `/Border [0 0 0]`.
@@ -1036,7 +1039,7 @@ pub(super) fn line_rect(kind: MarkKind, bottom: f64, top: f64) -> (f64, f64) {
         MarkKind::Line | MarkKind::Arrow | MarkKind::Polygon | MarkKind::Polyline => (bottom, full),
         // Not reached, a sixth time: a stamp is a border and a word, both placed
         // from its own rectangle by `Paint::Stamp`. The whole quad.
-        MarkKind::Stamp | MarkKind::Signature => (bottom, full),
+        MarkKind::Stamp | MarkKind::Signature | MarkKind::Picture => (bottom, full),
         // Not reached, for the box's reason exactly: an ellipse is drawn from
         // its quad by `Paint::Ellipse` and has no band inside it either. The
         // whole quad a fifth time, which is the argument above getting stronger

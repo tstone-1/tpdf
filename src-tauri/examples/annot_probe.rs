@@ -145,7 +145,7 @@ fn color_for(kind: MarkKind) -> [f32; 3] {
         // of a stroke -- `/DA` carries it as a fill. Black would read better on
         // a page and would make every ink measurement in these modes unable to
         // tell the mark's pixels from the document's own text.
-        MarkKind::TextBox | MarkKind::Signature => RULE_RED,
+        MarkKind::TextBox | MarkKind::Signature | MarkKind::Picture => RULE_RED,
     }
 }
 
@@ -805,7 +805,7 @@ fn roundtrip(args: &Args, document: &OpenDocument) -> Result<bool, String> {
         // reason: `/Stamp` is a subtype tpdf could not write until this kind
         // existed, so the round trip is what says `save.rs` emits it and
         // `annots.rs` reads it back rather than reporting some other annotation.
-        MarkKind::Stamp | MarkKind::Signature => Kind::Stamp,
+        MarkKind::Stamp | MarkKind::Signature | MarkKind::Picture => Kind::Stamp,
         // The one pair whose two names differ. `MarkKind::Note` is what a
         // reader calls it and `Kind::Text` is what the file calls it, so this
         // arm is the round trip that says `save.rs` wrote `/Text` and
@@ -2449,7 +2449,7 @@ fn rule(
         // middle one, so thirds discriminate nothing about it either.
         // `--mode outline` measures the border, which is the part this mode's
         // question is nearest to.
-        MarkKind::Stamp | MarkKind::Signature => unreachable!("refused above"),
+        MarkKind::Stamp | MarkKind::Signature | MarkKind::Picture => unreachable!("refused above"),
         // Refused above, and for a reason none of the others has: a text box's
         // ink is wherever its words fall, which depends on how many there are.
         // A one-line box puts everything in the top third and a four-line box

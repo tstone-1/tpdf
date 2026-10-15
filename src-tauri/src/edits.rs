@@ -217,6 +217,15 @@ pub struct PageView {
     pub crop: Option<[f64; 4]>,
 }
 
+/// A picture's width and height in pixels, as [`MarkView::picture`] carries it.
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Serialize, Deserialize)]
+pub struct PictureSize {
+    /// Width in pixels.
+    pub width: u32,
+    /// Height in pixels.
+    pub height: u32,
+}
+
 /// One mark as the frontend sees it.
 ///
 /// Field names are the Rust identifiers, as [`PageView`]'s are and for the same
@@ -255,9 +264,18 @@ pub struct MarkView {
     /// Which kind of form field, for [`MarkKind::Field`] and nothing else.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub field: Option<crate::formfields::Placed>,
-    /// Normalized signature pixels, shared by journal snapshots.
+    /// Normalized signature pixels, shared by journal snapshots. `None` for a
+    /// picture, whose pixels are [`MarkView::picture`]'s to fetch.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub image: Option<std::sync::Arc<signature::Image>>,
+    /// A picture's size in pixels, for [`MarkKind::Picture`] and nothing else.
+    ///
+    /// **The size and not the pixels**, which is the difference from a
+    /// signature's [`MarkView::image`]. This view goes back to the webview after
+    /// every edit, and a picture is up to 16 MiB; the overlay fetches the pixels
+    /// once per mark with `annot_picture_pixels`, as bytes rather than JSON.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub picture: Option<PictureSize>,
     /// Red, green and blue in 0..=1.
     pub color: [f32; 3],
     /// How thick this mark's ink is, in points.
@@ -1485,7 +1503,10 @@ impl Edits {
             return Err(format!("a mark cannot have a corner at {bad}"));
         }
         if let Some(image) = &want.image {
-            if !image.valid() {
+            if want.kind == MarkKind::Picture && !image.valid_picture() {
+                return Err("The picture is empty, invalid or too large".into());
+            }
+            if want.kind != MarkKind::Picture && !image.valid() {
                 return Err("The signature image is empty, invalid or too large".into());
             }
         }
@@ -2118,6 +2139,26 @@ impl Edits {
             .resize_signature(MarkId::from_raw(mark), width)
             .map_err(describe)?;
         Ok(reply(open))
+    }
+
+    /// A picture's pixels, which [`MarkView::picture`] leaves out.
+    ///
+    /// Any picture the model issued, whether or not it is on a page now: the
+    /// overlay asks for a mark the moment it sees its id, and an undo can bring
+    /// back one whose pixels it has dropped. Shared, not copied, until the
+    /// command turns them into the reply's bytes.
+    pub fn picture_pixels(
+        &self,
+        doc: u32,
+        mark: u64,
+    ) -> Result<std::sync::Arc<signature::Image>, String> {
+        let docs = self.docs.lock().expect("edits lock");
+        let open = docs.get(&doc).ok_or_else(|| unknown(doc))?;
+        open.model
+            .mark(MarkId::from_raw(mark))
+            .filter(|m| m.kind == MarkKind::Picture)
+            .and_then(|m| m.image.clone())
+            .ok_or_else(|| format!("mark {mark} is not a picture"))
     }
 
     /// Applies a command and returns the state it produced.
@@ -3593,7 +3634,18 @@ fn snapshot(model: &Doc) -> EditState {
                 // made, so there is no "what it is now" for the model to answer.
                 stamp: mark.stamp,
                 field: model.field_of(id).cloned(),
-                image: mark.image.clone(),
+                image: mark
+                    .image
+                    .clone()
+                    .filter(|_| mark.kind != MarkKind::Picture),
+                picture: mark
+                    .image
+                    .as_ref()
+                    .filter(|_| mark.kind == MarkKind::Picture)
+                    .map(|image| PictureSize {
+                        width: image.width,
+                        height: image.height,
+                    }),
                 page: page.get(),
                 // **Through the model's accessors, not off the body**, because
                 // an eraser moves both: `Doc::quads_of` and `Doc::strokes_of`

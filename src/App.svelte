@@ -116,6 +116,7 @@
   import { duplicate, type DuplicateDeps } from "./lib/duplicate";
   import { MarkClipboard, notCopied, shapeOf } from "./lib/markclipboard";
   import { EXTENSIONS as PICTURE_EXTENSIONS, afterPictures, suggestedName as pictureName } from "./lib/pictures";
+  import { readPicture, type PicturePixels } from "./lib/picture";
   import { afterProtect, suggestedName as protectedName } from "./lib/protect";
   import { afterCompress, suggestedName as smallerName } from "./lib/compress";
   import { CompressDialog } from "./lib/compressdialog";
@@ -1717,13 +1718,14 @@
       refreshMenu();
     },
     signature: () => void addSignature(),
+    picture: () => void addPicture(),
     editText: () => void editExistingText(),
     draw: () => viewer?.armDraw("ink"),
     erase: () => viewer?.armErase(),
     hasSelection: () => (status?.selected ?? 0) > 0,
     removeMark: () => removeMark(),
     hasOpenMark: () => viewer?.canRemoveMark ?? false,
-    copyMarks: (cut) => copyMarks(cut),
+    copyMarks: (cut) => void copyMarks(cut),
     pasteMarks: () => void pasteMarks(),
     canPasteMarks: () => markClipboard.marks.length > 0,
     removeRedaction: () => removeRedaction(),
@@ -1999,6 +2001,32 @@
     if (image && stillIn(view, model, target)) target.armSignature(image);
   }
 
+  /**
+   * Asks for a picture file, has a worker decode it, and arms its placement:
+   * the next drag on a page places it, keeping its proportions, as a
+   * signature picture is placed. In a checks build the file can be queued as
+   * *New document from pictures*' are.
+   */
+  async function addPicture(): Promise<void> {
+    const target = viewer, doc = openDoc, view = openView, model = edits;
+    if (!target || doc < 0 || documentBusy || opening || copyTaskBusy) return;
+    const queued = __TPDF_CHECKS__ ? queuedPictures : null;
+    queuedPictures = null;
+    try {
+      const picked = queued?.[0] ?? await openDialog({
+        multiple: false,
+        directory: false,
+        title: "Choose a picture to put on the page",
+        filters: [{ name: "Pictures", extensions: PICTURE_EXTENSIONS }],
+      });
+      if (typeof picked !== "string") return;
+      const pixels = readPicture(await call("picture_open", { path: picked }));
+      if (stillIn(view, model, target)) target.armPicture(pixels);
+    } catch (e) {
+      say(String(e));
+    }
+  }
+
   async function drawn(
     kind: MarkKind,
     page: PageId,
@@ -2016,8 +2044,9 @@
       : undefined;
     const field = placed?.field;
     const name = placed?.name ?? "";
+    const picture = shape.picture;
     const made = await markMade((run) => applyEdit(run, view), (e) =>
-      e.mark(
+      kind === "picture" && picture ? e.placePicture(page, shape.quads, picture) : e.mark(
         kind,
         page,
         shape.quads,
@@ -2067,10 +2096,11 @@
    * Copies the marks the viewer names, or cuts them. A cut refuses when any
    * of them cannot be copied, so that nothing is removed that is not held.
    */
-  function copyMarks(cut: boolean): void {
-    const state = edits?.state;
-    if (!viewer || !edits || !state) return;
-    const named = viewer.namedMarks();
+  async function copyMarks(cut: boolean): Promise<void> {
+    const view = openView, model = edits, mounted = viewer;
+    const state = model?.state;
+    if (!mounted || !model || !state) return;
+    const named = mounted.namedMarks();
     const marks = state.marks.filter((mark) => named.includes(mark.id));
     const page = marks[0]?.page;
     if (page === undefined) return;
@@ -2079,14 +2109,32 @@
       say(refused[0] ?? null);
       return;
     }
-    const { copied } = markClipboard.copy(marks, { doc: edits.doc, page });
-    if (copied === 0) {
-      say(refused[0] ?? "Nothing was copied");
+    // A picture's pixels are not in its view, so they are fetched first; one
+    // that cannot be read is not copied, and says so.
+    const pixels = new Map<number, PicturePixels>();
+    for (const mark of marks) {
+      if (mark.kind !== "picture" || !mark.picture) continue;
+      try {
+        pixels.set(mark.id, { ...mark.picture, rgba: await model.picturePixels(mark.id) });
+      } catch {
+        // Left out of `pixels`, so `describe` refuses it below.
+      }
+    }
+    if (!stillIn(view, model, mounted)) return;
+    const { copied, refused: unread } = markClipboard.copy(marks, { doc: model.doc, page }, pixels);
+    if (cut && unread.length > refused.length) {
+      say(unread.at(-1) ?? null);
       return;
     }
-    if (cut) viewer.removeMarks();
+    if (copied === 0) {
+      say(unread[0] ?? "Nothing was copied");
+      return;
+    }
+    if (cut) mounted.removeMarks();
     const kept = `${copied} mark${copied === 1 ? "" : "s"} ${cut ? "cut" : "copied"}`;
-    notice = refused.length > 0 ? `${kept}; ${refused.length} not copied: ${refused[0]}` : kept;
+    asDocument(view, () => {
+      notice = unread.length > 0 ? `${kept}; ${unread.length} not copied: ${unread[0]}` : kept;
+    });
     refreshMenu();
   }
 
@@ -2110,9 +2158,11 @@
       const placed = landed.placed[at];
       if (!placed) continue;
       const shape = shapeOf({ ...mark, quads: placed.quads, strokes: placed.strokes });
-      await applyEdit((e) =>
-        e.mark(mark.kind, landed.page, shape.quads, shape.strokes, mark.note, mark.color, mark.stamp, null,
-          mark.width, undefined, undefined, landed.sweep), view);
+      const picture = mark.picture;
+      await applyEdit((e) => picture
+        ? e.placePicture(landed.page, shape.quads, picture, mark.note, landed.sweep)
+        : e.mark(mark.kind, landed.page, shape.quads, shape.strokes, mark.note, mark.color, mark.stamp, null,
+          mark.width, mark.image, undefined, landed.sweep), view);
     }
     asDocument(view, () =>
       viewer?.pick((edits?.state.marks ?? []).filter((mark) => !before.has(mark.id)).map((mark) => mark.id)));
@@ -5047,6 +5097,9 @@
           marks: () => edits?.state.marks ?? [],
           pages: () => edits?.state.pages ?? [],
           path: () => openPathName,
+          answerPictures: (paths) => { queuedPictures = paths; },
+          picturePixels: (id) => edits ? edits.picturePixels(id) : Promise.reject(new Error("no document")),
+          held: () => markClipboard.marks.map((mark) => mark.kind),
         })
       )
         return;
@@ -5624,6 +5677,7 @@
           ? changeField(scannedForm && edits ? fieldMoved(scannedForm, edits.state, id, dx, dy) : null)
           : void applyEdit((e) => e.displace(id, dx, dy)),
       onSignatureResize: (id, width) => void applyEdit((e) => e.resizeSignature(id, width)),
+      onPicturePixels: (id) => edits ? edits.picturePixels(id) : Promise.reject(new Error("no document")),
       onMarkResized: (id, rect) =>
         isSaved(id)
           ? changeField(scannedForm && edits ? fieldPlaced(scannedForm, edits.state, id, rect) : null)

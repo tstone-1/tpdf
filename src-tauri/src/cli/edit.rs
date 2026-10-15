@@ -399,8 +399,11 @@ fn apply(
                     text,
                 } => {
                     let id = page(&state, *n)?;
-                    if *kind == MarkKind::Signature {
-                        return Err("signature images are not supported by edit schema 1".into());
+                    if kind.holds_image() {
+                        return Err(
+                            "signature images and pictures are not supported by edit schema 1"
+                                .into(),
+                        );
                     }
                     if color
                         .iter()

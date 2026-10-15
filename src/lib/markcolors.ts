@@ -119,6 +119,8 @@ export const MARK_COLORS: Record<MarkKind, MarkColor> = {
   // wash's yellow more firmly than for any other kind here.
   stamp: [0.85, 0.15, 0.15],
   signature: [0, 0, 0],
+  // Not drawn in any colour: the picture is its own pixels.
+  picture: [0, 0, 0],
 };
 
 /**

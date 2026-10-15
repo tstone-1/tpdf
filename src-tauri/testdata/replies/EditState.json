@@ -185,6 +185,31 @@
       "width": 1.0,
       "note": "",
       "lines": []
+    },
+    {
+      "id": 7,
+      "kind": "picture",
+      "page": 2,
+      "quads": [
+        10.0,
+        80.0,
+        210.0,
+        230.0
+      ],
+      "strokes": [],
+      "stamp": null,
+      "picture": {
+        "width": 400,
+        "height": 300
+      },
+      "color": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "width": 1.0,
+      "note": "",
+      "lines": []
     }
   ],
   "redactions": [

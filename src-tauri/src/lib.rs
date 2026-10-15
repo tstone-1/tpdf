@@ -87,6 +87,7 @@ pub mod outline_repair;
 pub mod pades;
 pub mod pagetree;
 pub mod pathcut;
+pub mod picture;
 pub mod print;
 #[cfg(target_os = "linux")]
 pub mod print_linux;
@@ -978,6 +979,9 @@ pub fn run() {
             annot_field_props,
             form_tab_order,
             annot_resize_signature,
+            annot_picture,
+            annot_picture_pixels,
+            picture_open,
             signature_store,
             edit_undo,
             edit_redo,

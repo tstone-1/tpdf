@@ -135,7 +135,13 @@ export type MarkKind =
    * is its note, a page number or a web address, read when the document is
    * saved (`link_target` in `save/marks.rs`).
    */
-  | "link";
+  | "link"
+  /**
+   * A picture from a file or the clipboard: `MarkKind::Picture`. Its pixels are
+   * not in the view, only its size, {@link MarkView.picture}; the overlay
+   * fetches them once per mark (`picture.ts`).
+   */
+  | "picture";
 
 /** Which kind of form field a placed field is. `formfields::Kind`'s wire names. */
 export type FieldKind = "text" | "multiline" | "checkbox" | "dropdown" | "radio" | "signature";
@@ -412,6 +418,8 @@ export interface MarkView {
   /** Which kind of form field, for a `field` and absent on everything else. */
   field?: PlacedField;
   image?: import("./signature").SignatureImage;
+  /** A picture's size in pixels, for `"picture"` and absent on everything else. */
+  picture?: { width: number; height: number };
   color: [number, number, number];
   /**
    * How thick this mark's ink is, in points, before any zoom.

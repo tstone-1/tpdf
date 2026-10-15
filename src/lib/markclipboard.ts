@@ -15,6 +15,7 @@
 
 import type { MarkKind, MarkView, PageId, StampName } from "./pages";
 import { hasStrokes } from "./markband";
+import type { PicturePixels } from "./picture";
 
 /** One copied mark. Geometry in the model's space for its page, as `MarkView` holds it. */
 export interface CopiedMark {
@@ -26,6 +27,10 @@ export interface CopiedMark {
   color: [number, number, number];
   width: number;
   stamp: StampName | null;
+  /** A signature picture's pixels, for `"signature"` alone. */
+  image?: import("./signature").SignatureImage;
+  /** A picture's pixels, for `"picture"` alone: its view carries only the size. */
+  picture?: PicturePixels;
 }
 
 /** Where the copied marks came from: a document and a page in it. */
@@ -39,8 +44,10 @@ export interface CopiedFrom {
  *
  * A highlight and the three lines under or through words are made of the words
  * they mark; pasted on another page they would mark nothing there. A form
- * field belongs to the document's form, which *Duplicate* handles. A signature
- * picture is left out until a paste can carry its pixels.
+ * field belongs to the document's form, which *Duplicate* handles.
+ *
+ * A signature picture and a picture are copied with their pixels: a
+ * signature's are in its view, and a picture's the caller fetches.
  */
 export function notCopied(kind: MarkKind): string | null {
   switch (kind) {
@@ -51,8 +58,6 @@ export function notCopied(kind: MarkKind): string | null {
       return "A mark made over words is not copied: on another page it would mark nothing";
     case "field":
       return "A form field is not copied; use Arrange: duplicate";
-    case "signature":
-      return "A signature picture is not copied";
     case "note":
     case "square":
     case "ellipse":
@@ -64,14 +69,21 @@ export function notCopied(kind: MarkKind): string | null {
     case "polyline":
     case "stamp":
     case "link":
+    case "signature":
+    case "picture":
       return null;
   }
 }
 
-/** The description of a mark, or why it is not copied. */
-export function describe(mark: MarkView): CopiedMark | string {
+/**
+ * The description of a mark, or why it is not copied. A picture needs its
+ * pixels in `pixels`; one without them is not copied.
+ */
+export function describe(mark: MarkView, pixels?: PicturePixels): CopiedMark | string {
   const why = notCopied(mark.kind);
   if (why) return why;
+  if (mark.kind === "picture" && !pixels) return "A picture whose pixels could not be read is not copied";
+  if (mark.kind === "signature" && !mark.image) return "A signature picture without its pixels is not copied";
   return {
     kind: mark.kind,
     quads: [...mark.quads],
@@ -80,6 +92,8 @@ export function describe(mark: MarkView): CopiedMark | string {
     color: [...mark.color],
     width: mark.width,
     stamp: mark.stamp,
+    ...(mark.kind === "signature" && mark.image ? { image: mark.image } : {}),
+    ...(mark.kind === "picture" && pixels ? { picture: pixels } : {}),
   };
 }
 
@@ -101,11 +115,15 @@ export class MarkClipboard {
    * Copies `marks`, replacing what was held. Answers how many were copied and
    * why the rest were not; nothing is replaced when none can be.
    */
-  copy(marks: readonly MarkView[], from: CopiedFrom): { copied: number; refused: string[] } {
+  copy(
+    marks: readonly MarkView[],
+    from: CopiedFrom,
+    pixels: ReadonlyMap<number, PicturePixels> = new Map(),
+  ): { copied: number; refused: string[] } {
     const copied: CopiedMark[] = [];
     const refused: string[] = [];
     for (const mark of marks) {
-      const one = describe(mark);
+      const one = describe(mark, pixels.get(mark.id));
       if (typeof one === "string") refused.push(one);
       else copied.push(one);
     }

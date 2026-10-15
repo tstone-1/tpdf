@@ -36,14 +36,43 @@ pub const CLEAR: &str = "it is transparent everywhere, so nothing would be drawn
 
 const PNG: [u8; 8] = [137, 80, 78, 71, 13, 10, 26, 10];
 
-fn bounded(width: u32, height: u32) -> Result<(u32, u32), String> {
+/// What a file may be before it is decoded, and the sentence refusing one.
+pub struct Limits {
+    /// Bytes in the file.
+    pub bytes: u64,
+    /// Pixels on either side.
+    pub side: u32,
+    /// Pixels in all.
+    pub pixels: u64,
+    /// The refusal, naming the limits.
+    pub invalid: &'static str,
+}
+
+/// A signature image's limits: the chooser's.
+pub const SIGNATURE: Limits = Limits {
+    bytes: MAX_BYTES,
+    side: MAX_SIDE,
+    pixels: MAX_PIXELS,
+    invalid: INVALID,
+};
+
+/// A picture file's limits, larger than a signature's because a photograph
+/// from a phone is the common case. At most 160 MiB of decoded pixels.
+pub const PICTURE: Limits = Limits {
+    bytes: 50 * 1024 * 1024,
+    side: 16384,
+    pixels: 40 * 1024 * 1024,
+    invalid: "it is not a valid, still PNG or JPEG image smaller than 50 MB and 40 megapixels",
+};
+
+fn bounded(width: u32, height: u32, limits: &Limits) -> Result<(u32, u32), String> {
     if width == 0
         || height == 0
-        || width > MAX_SIDE
-        || height > MAX_SIDE
-        || u64::from(width) * u64::from(height) > MAX_PIXELS
+        || width > limits.side
+        || height > limits.side
+        || u64::from(width) * u64::from(height) > limits.pixels
     {
-        return Err(INVALID.into());
+        return Err(limits.invalid.into());
     }
     Ok((width, height))
 }
@@ -65,8 +94,17 @@ fn be16(bytes: &[u8], at: usize) -> Option<u32> {
 ///
 /// [`INVALID`]: too large, not a PNG or JPEG, animated, or not framed whole.
 pub fn dimensions(bytes: &[u8]) -> Result<(u32, u32), String> {
-    let invalid = || INVALID.to_string();
-    if bytes.len() as u64 > MAX_BYTES {
+    dimensions_within(bytes, &SIGNATURE)
+}
+
+/// [`dimensions`] with any limits: the grammar is the same for a picture.
+///
+/// # Errors
+///
+/// `limits.invalid`, for what [`dimensions`] refuses with these limits.
+pub fn dimensions_within(bytes: &[u8], limits: &Limits) -> Result<(u32, u32), String> {
+    let invalid = || limits.invalid.to_string();
+    if bytes.len() as u64 > limits.bytes {
         return Err(invalid());
     }
     if bytes.len() >= 33 && bytes.starts_with(&PNG) {
@@ -76,6 +114,7 @@ pub fn dimensions(bytes: &[u8]) -> Result<(u32, u32), String> {
         let size = bounded(
             be32(bytes, 16).ok_or_else(invalid)?,
             be32(bytes, 20).ok_or_else(invalid)?,
+            limits,
         )?;
         let (mut data, mut end, mut offset) = (false, false, 8);
         while offset < bytes.len() {
@@ -149,6 +188,7 @@ pub fn dimensions(bytes: &[u8]) -> Result<(u32, u32), String> {
             size = Some(bounded(
                 be16(bytes, offset + 5).ok_or_else(invalid)?,
                 be16(bytes, offset + 3).ok_or_else(invalid)?,
+                limits,
             )?);
         }
         // DNL changes a frame's height; it is outside the supported grammar.
@@ -160,8 +200,8 @@ pub fn dimensions(bytes: &[u8]) -> Result<(u32, u32), String> {
     Err(invalid())
 }
 
-fn png(bytes: &[u8], (width, height): (u32, u32)) -> Result<Vec<u8>, String> {
-    let invalid = |_| INVALID.to_string();
+fn png(bytes: &[u8], (width, height): (u32, u32), refusal: &str) -> Result<Vec<u8>, String> {
+    let invalid = |_| refusal.to_string();
     let pixels = width as usize * height as usize;
     let mut decoder = png::Decoder::new(Cursor::new(bytes));
     decoder.set_transformations(png::Transformations::STRIP_16 | png::Transformations::ALPHA);
@@ -171,16 +211,16 @@ fn png(bytes: &[u8], (width, height): (u32, u32)) -> Result<Vec<u8>, String> {
     });
     let mut reader = decoder.read_info().map_err(invalid)?;
     if reader.info().width != width || reader.info().height != height {
-        return Err(INVALID.into());
+        return Err(refusal.into());
     }
-    let size = reader.output_buffer_size().ok_or(INVALID)?;
+    let size = reader.output_buffer_size().ok_or(refusal)?;
     if size > pixels * 4 {
-        return Err(INVALID.into());
+        return Err(refusal.into());
     }
     let mut decoded = vec![0; size];
     let frame = reader.next_frame(&mut decoded).map_err(invalid)?;
     if frame.bit_depth != png::BitDepth::Eight {
-        return Err(INVALID.into());
+        return Err(refusal.into());
     }
     match frame.color_type {
         png::ColorType::Rgba if size == pixels * 4 => Ok(decoded),
@@ -188,12 +228,12 @@ fn png(bytes: &[u8], (width, height): (u32, u32)) -> Result<Vec<u8>, String> {
             .chunks_exact(2)
             .flat_map(|p| [p[0], p[0], p[0], p[1]])
             .collect()),
-        _ => Err(INVALID.into()),
+        _ => Err(refusal.into()),
     }
 }
 
-fn jpeg(bytes: &[u8], (width, height): (u32, u32)) -> Result<Vec<u8>, String> {
-    let invalid = |_| INVALID.to_string();
+fn jpeg(bytes: &[u8], (width, height): (u32, u32), refusal: &str) -> Result<Vec<u8>, String> {
+    let invalid = |_| refusal.to_string();
     let options = DecoderOptions::default()
         .set_strict_mode(true)
         .set_max_width(width as usize)
@@ -203,13 +243,13 @@ fn jpeg(bytes: &[u8], (width, height): (u32, u32)) -> Result<Vec<u8>, String> {
     let mut source = Cursor::new(bytes);
     let mut decoder = JpegDecoder::new_with_options(&mut source, options);
     decoder.decode_headers().map_err(invalid)?;
-    let info = decoder.info().ok_or(INVALID)?;
+    let info = decoder.info().ok_or(refusal)?;
     let pixels = width as usize * height as usize;
     if u32::from(info.width) != width
         || u32::from(info.height) != height
         || decoder.output_buffer_size() != Some(pixels * 3)
     {
-        return Err(INVALID.into());
+        return Err(refusal.into());
     }
     let mut rgb = vec![0; pixels * 3];
     decoder.decode_into(&mut rgb).map_err(invalid)?;
@@ -246,6 +286,18 @@ fn scaled(width: u32, rgba: &[u8], [left, top, right, bottom]: [u32; 4]) -> Imag
         .min(1.);
     let out_w = ((f64::from(w) * scale).round() as u32).max(1);
     let out_h = ((f64::from(h) * scale).round() as u32).max(1);
+    averaged(width, rgba, [left, top, right, bottom], (out_w, out_h))
+}
+
+/// The box `[left, top, right, bottom]` of a `width`-wide raster, scaled to
+/// `out_w` by `out_h` by an alpha-weighted area average.
+fn averaged(
+    width: u32,
+    rgba: &[u8],
+    [left, top, right, bottom]: [u32; 4],
+    (out_w, out_h): (u32, u32),
+) -> Image {
+    let (w, h) = (right - left, bottom - top);
     let mut out = Vec::with_capacity(out_w as usize * out_h as usize * 4);
     let span = |i: u32, from: u32, to: u32| {
         let start = u64::from(i) * u64::from(from) / u64::from(to);
@@ -290,15 +342,103 @@ fn scaled(width: u32, rgba: &[u8], [left, top, right, bottom]: [u32; 4]) -> Imag
 pub fn decode(bytes: &[u8]) -> Result<Image, String> {
     let size = dimensions(bytes)?;
     let rgba = if bytes.starts_with(&PNG) {
-        png(bytes, size)?
+        png(bytes, size, INVALID)?
     } else {
-        jpeg(bytes, size)?
+        jpeg(bytes, size, INVALID)?
     };
     // An image with nothing visible keeps its whole box, and is refused with
     // one that scaling averaged away: `valid` wants a pixel that shows.
     let visible = trimmed(size.0, size.1, &rgba).unwrap_or([0, 0, size.0, size.1]);
     let image = scaled(size.0, &rgba, visible);
     if !image.valid() {
+        return Err(CLEAR.into());
+    }
+    Ok(image)
+}
+
+/// The size a picture is held at: its own when it fits, otherwise the largest
+/// with the same proportions inside `PICTURE_SIDE` a side and
+/// `PICTURE_PIXELS` in all. Rounded down, so the product cannot round up past
+/// the limit, and never larger than the picture.
+#[must_use]
+pub fn placed_size(width: u32, height: u32) -> (u32, u32) {
+    let (w, h) = (f64::from(width), f64::from(height));
+    let side = f64::from(crate::signature::PICTURE_SIDE);
+    let scale = (side / w)
+        .min(side / h)
+        .min((crate::signature::PICTURE_PIXELS as f64 / (w * h)).sqrt())
+        .min(1.);
+    (
+        ((w * scale).floor() as u32).max(1),
+        ((h * scale).floor() as u32).max(1),
+    )
+}
+
+/// Turns a raster upright by its EXIF orientation, 1 to 8, as a viewer shows
+/// the photograph. 5 to 8 swap the sides.
+#[must_use]
+pub fn oriented(image: Image, orientation: u8) -> Image {
+    if !(2..=8).contains(&orientation) {
+        return image;
+    }
+    let (w, h) = (image.width as usize, image.height as usize);
+    let swapped = orientation >= 5;
+    let (out_w, out_h) = if swapped { (h, w) } else { (w, h) };
+    let mut rgba = vec![0; image.rgba.len()];
+    for y in 0..out_h {
+        for x in 0..out_w {
+            // Which source pixel lands at (x, y): the EXIF table, read as
+            // where each corner goes.
+            let (sx, sy) = match orientation {
+                2 => (w - 1 - x, y),
+                3 => (w - 1 - x, h - 1 - y),
+                4 => (x, h - 1 - y),
+                5 => (y, x),
+                6 => (y, h - 1 - x),
+                7 => (w - 1 - y, h - 1 - x),
+                _ => (w - 1 - y, x),
+            };
+            let from = (sy * w + sx) * 4;
+            let to = (y * out_w + x) * 4;
+            rgba[to..to + 4].copy_from_slice(&image.rgba[from..from + 4]);
+        }
+    }
+    Image {
+        width: out_w as u32,
+        height: out_h as u32,
+        rgba,
+    }
+}
+
+/// A picture in a PNG or JPEG file's bytes, upright and scaled to
+/// [`placed_size`]: what a page holds.
+///
+/// [`decode`]'s path with [`PICTURE`]'s limits, no trimming, and a JPEG's
+/// EXIF orientation applied, since a photograph from a phone is usually
+/// stored on its side.
+///
+/// # Errors
+///
+/// `PICTURE.invalid` for what the grammar or the decoder refuses, and
+/// [`CLEAR`] for a picture with nothing to see.
+pub fn decode_picture(bytes: &[u8]) -> Result<Image, String> {
+    let size = dimensions_within(bytes, &PICTURE)?;
+    let (rgba, orientation) = if bytes.starts_with(&PNG) {
+        (png(bytes, size, PICTURE.invalid)?, 1)
+    } else {
+        (
+            jpeg(bytes, size, PICTURE.invalid)?,
+            crate::imagepages::jpeg_orientation(bytes),
+        )
+    };
+    let image = averaged(
+        size.0,
+        &rgba,
+        [0, 0, size.0, size.1],
+        placed_size(size.0, size.1),
+    );
+    let image = oriented(image, orientation);
+    if !image.valid_picture() {
         return Err(CLEAR.into());
     }
     Ok(image)

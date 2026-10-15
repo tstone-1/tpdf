@@ -168,6 +168,7 @@ const NAMES: Record<MarkKind, string> = {
   // are one word --- after "Squiggly" and "Ellipse", and for their reason.
   stamp: "Stamp",
   signature: "Signature",
+  picture: "Picture",
   // The words `comments.ts`'s `labelFor` already gives a document's own
   // `/Line`, `/Polygon` and `/PolyLine`, so one shape is named one way in one
   // window. An arrow is a `/Line` in the file and an arrow to a reader.
@@ -389,9 +390,11 @@ export class MarkPopup {
     this.input.value = mark.note;
     if (refilled) this.opts.onDraft(mark.id, mark.note);
     this.showColor(mark.color);
-    this.signatureSize.hidden = mark.kind !== "signature";
+    // A signature and a picture are sized by width and drawn in their own pixels.
+    const raster = mark.kind === "signature" || mark.kind === "picture";
+    this.signatureSize.hidden = !raster;
     this.syncSignatureSize(mark);
-    for (const button of this.swatches) button.hidden = mark.kind === "signature";
+    for (const button of this.swatches) button.hidden = raster;
     this.together.hidden = !together;
     this.element.style.display = "block";
     this.place(at);

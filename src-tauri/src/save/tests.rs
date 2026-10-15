@@ -6012,6 +6012,10 @@ impl Rewriter for FakeWriter {
         Ok((bytes.len() + self.overstate_by, inputs.each.len() as u32))
     }
 
+    fn picture(&self, _bytes: &[u8]) -> Result<crate::signature::Image, Refusal> {
+        Err("a fake writer decodes no picture".into())
+    }
+
     fn merge(
         &self,
         _source: &mut std::fs::File,
@@ -10467,7 +10471,11 @@ fn signature_pixels_alpha_and_placement_survive_append_and_rewrite() {
         height: 2,
         rgba: vec![255, 0, 0, 255, 0, 255, 0, 255, 0, 0, 255, 255, 0, 0, 0, 0],
     });
-    for turns in 0..4 {
+    // A picture is written as a signature is, with its own limits.
+    for (kind, turns) in [MarkKind::Signature, MarkKind::Picture]
+        .into_iter()
+        .flat_map(|kind| (0..4).map(move |turns| (kind, turns)))
+    {
         let (mut source, _, _) = crate::forms::tests::fixture();
         let page = ordered_pages(&source)[0];
         source
@@ -10486,7 +10494,7 @@ fn signature_pixels_alpha_and_placement_survive_append_and_rewrite() {
         source.save_to(&mut original).unwrap();
         let mut plan = one_mark_over(
             2,
-            MarkKind::Signature,
+            kind,
             crate::docmodel::Quad {
                 left: 40.0,
                 top: 40.0,
@@ -10548,20 +10556,26 @@ fn signature_pixels_alpha_and_placement_survive_append_and_rewrite() {
                 .unwrap()
                 .contains("/Signature Do"));
         }
+        // The signature files keep the names `signature_pdf_check.py` reads.
+        let stem = if kind == MarkKind::Picture {
+            "picture"
+        } else {
+            "signature"
+        };
         if let Ok(path) = std::env::var("TPDF_SIGNATURE_PROBE") {
             std::fs::create_dir_all(&path).unwrap();
             std::fs::write(
-                Path::new(&path).join(format!("signature-source-{turns}.pdf")),
+                Path::new(&path).join(format!("{stem}-source-{turns}.pdf")),
                 &original,
             )
             .unwrap();
             std::fs::write(
-                Path::new(&path).join(format!("signature-{turns}.pdf")),
+                Path::new(&path).join(format!("{stem}-{turns}.pdf")),
                 &rewritten,
             )
             .unwrap();
             std::fs::write(
-                Path::new(&path).join(format!("signature-append-{turns}.pdf")),
+                Path::new(&path).join(format!("{stem}-append-{turns}.pdf")),
                 &appended,
             )
             .unwrap();

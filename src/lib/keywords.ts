@@ -68,6 +68,7 @@ const NAMED: Record<string, readonly string[]> = {
   "edit.drawPolygon": ["triangle", "shape", "outline"],
   "edit.drawPolyline": ["polyline", "path", "zigzag", "shape"],
   "edit.addLink": ["hyperlink", "url", "jump", "goto"],
+  "edit.addPicture": ["image", "photo", "logo", "insert"],
   "edit.erase": ["eraser", "rubber"],
   "edit.removeMark": ["delete mark"],
   "edit.copyMark": ["duplicate annotation", "clipboard"],

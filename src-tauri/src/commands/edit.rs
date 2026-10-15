@@ -361,6 +361,91 @@ pub async fn annot_resize_signature(
     edits.resize_signature(doc, mark, width)
 }
 
+/// Puts a picture on a page: [`annot_mark`] for a mark whose pixels come as
+/// bytes.
+///
+/// The body is raw, laid out as `picture.rs` describes, because a picture's
+/// pixels as JSON would be four times their size and a number each in the
+/// webview. Everything after the parse is [`annot_mark`]'s path, so the model
+/// refuses a picture for exactly the reasons it refuses any other mark.
+#[tauri::command]
+pub async fn annot_picture(
+    edits: tauri::State<'_, edits::Edits>,
+    request: tauri::ipc::Request<'_>,
+) -> Result<edits::EditState, String> {
+    let tauri::ipc::InvokeBody::Raw(body) = request.body() else {
+        return Err("a picture is sent as bytes".into());
+    };
+    let upload = crate::picture::parse(body)?;
+    edits.annotate_in(
+        upload.doc,
+        upload.mark,
+        save::pdf_date(std::time::SystemTime::now()),
+        upload.sweep,
+    )
+}
+
+/// Reads the picture file a reader chose and decodes it in a worker: the
+/// pixels a placed picture holds, upright and scaled to what a page holds.
+///
+/// The answer is bytes, [`picture_reply`]'s layout. Nothing is placed: the
+/// webview arms the placement with these pixels, and the drag that follows
+/// sends them back through [`annot_picture`].
+#[tauri::command]
+pub async fn picture_open(
+    app: tauri::AppHandle,
+    service: tauri::State<'_, crate::render::RenderService>,
+    path: String,
+) -> Result<tauri::ipc::Response, String> {
+    let outside = super::outside_of(&app, service.backend());
+    tauri::async_runtime::spawn_blocking(move || {
+        use std::io::Read as _;
+        let limit = crate::signature_import::PICTURE.bytes;
+        let mut bytes = Vec::new();
+        std::fs::File::open(&path)
+            .and_then(|file| file.take(limit + 1).read_to_end(&mut bytes))
+            .map_err(|e| format!("the picture could not be read: {e}"))?;
+        if bytes.len() as u64 > limit {
+            return Err(format!(
+                "the picture was not used: {}",
+                crate::signature_import::PICTURE.invalid
+            ));
+        }
+        decoded(&*outside, &bytes)
+    })
+    .await
+    .map_err(|e| format!("the picture was not read: {e}"))?
+}
+
+fn decoded(outside: &dyn save::Outside, bytes: &[u8]) -> Result<tauri::ipc::Response, String> {
+    let image = outside
+        .picture(bytes)
+        .map_err(|why| format!("the picture was not used: {}", why.message))?;
+    Ok(tauri::ipc::Response::new(picture_reply(&image)))
+}
+
+/// A decoded picture as the webview reads it: width and height as four bytes
+/// each, little endian, then the pixels.
+fn picture_reply(image: &crate::signature::Image) -> Vec<u8> {
+    let mut out = Vec::with_capacity(8 + image.rgba.len());
+    out.extend_from_slice(&image.width.to_le_bytes());
+    out.extend_from_slice(&image.height.to_le_bytes());
+    out.extend_from_slice(&image.rgba);
+    out
+}
+
+/// A picture's pixels, as bytes: four per pixel, top row first. The size is
+/// in the mark's view.
+#[tauri::command]
+pub async fn annot_picture_pixels(
+    edits: tauri::State<'_, edits::Edits>,
+    doc: u32,
+    mark: u64,
+) -> Result<tauri::ipc::Response, String> {
+    let image = edits.picture_pixels(doc, mark)?;
+    Ok(tauri::ipc::Response::new(image.rgba.clone()))
+}
+
 /// Steps the edit journal back one command.
 #[tauri::command]
 pub async fn edit_undo(

@@ -2013,6 +2013,7 @@ ROWS += [
         "    // the box's reason exactly.\n"
         '    case "stamp":\n'
         '    case "signature":\n'
+        '    case "picture":\n'
         "    // A link is placed by a drag and anchored to nothing, like the box.\n"
         '    case "link":\n'
         "      return true;",
@@ -2028,6 +2029,7 @@ ROWS += [
         '    case "polyline":\n'
         '    case "stamp":\n'
         '    case "signature":\n'
+        '    case "picture":\n'
         '    case "link":\n'
         "      return false;",
         "moves a box, an ellipse, a text box and a drawing",

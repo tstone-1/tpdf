@@ -233,6 +233,13 @@ fn jpeg_facts(bytes: &[u8]) -> Result<JpegFacts, String> {
     }
 }
 
+/// A JPEG's EXIF orientation, 1 to 8, or 1 when its header states none or
+/// does not read. For `signature_import::decode_picture`, which turns the
+/// pixels where this module turns the content matrix.
+pub(crate) fn jpeg_orientation(bytes: &[u8]) -> u8 {
+    jpeg_facts(bytes).map_or(1, |facts| facts.orientation)
+}
+
 fn jpeg(bytes: &[u8]) -> Result<Picture, String> {
     let facts = jpeg_facts(bytes)?;
     bounded(facts.width, facts.height)?;

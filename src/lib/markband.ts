@@ -352,6 +352,7 @@ export function isMovable(kind: MarkKind): boolean {
     // the box's reason exactly.
     case "stamp":
     case "signature":
+    case "picture":
     // A link is placed by a drag and anchored to nothing, like the box.
     case "link":
       return true;
@@ -965,6 +966,7 @@ export function markBand(kind: MarkKind, quad: Quad): Quad {
       // Ink's answer: drawn from the corners, and the quad is the box round them.
       return quad;
     case "signature":
+    case "picture":
     case "stamp":
       // The whole quad a sixth time. A stamp is a border on the quad's edge and
       // a word across its middle, which is two things rather than a band --- the
@@ -1064,6 +1066,7 @@ export function paintOf(kind: MarkKind): Paint {
     case "note":
       return "icon";
     case "signature":
+    case "picture":
       return "image";
     case "stamp":
       return "stamp";

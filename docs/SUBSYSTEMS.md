@@ -690,6 +690,15 @@ used ends the run with no certificate listed and no key touched; with `--image` 
 image is never read. Only `signature_import`'s own two refusals are reported as the image's;
 any other refusal from that worker is the document's.
 
+**A picture placed on a page is decoded here too** (`decode_picture`, asked for by
+`Request::Picture` from the window's `picture_open`). The grammar, the two decoders and the
+area average are shared, under `PICTURE`'s limits rather than `SIGNATURE`'s
+(`dimensions_within`); nothing is trimmed, a JPEG is turned upright by its EXIF orientation
+(`oriented`, the orientation read by `imagepages::jpeg_orientation`), and the size is
+`placed_size`. The pixels go back through the worker's tile mapping, not in the reply. So a
+change to the grammar reaches the chooser, `sign --image` and pictures; only the first two
+share `headers.json`.
+
 `sign --hide reason,location` sets `Options::hide_reason` and `hide_location`: the text is
 written to `/Reason` and `/Location` and left out of the appearance's lines
 (`Options::drawn_reason`). Both default to off on the wire, so the application and every

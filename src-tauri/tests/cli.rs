@@ -152,7 +152,7 @@ fn main() {
     run_outside_cargo_deps(&argv);
     // The order is load-bearing: never_maps_pdfium asserts this process has
     // not mapped PDFium, so it must precede the in-process PDFium readers.
-    let checks: [Check; 40] = [
+    let checks: [Check; 41] = [
         ("verify agrees with the in-process reader", verify_agrees),
         (
             "verify reports what was appended after each signature",
@@ -165,6 +165,10 @@ fn main() {
         (
             "sign --image draws the file's image, and refuses a bad file before the store",
             sign_image::draws_the_file,
+        ),
+        (
+            "a picture for a page is decoded in a worker and arrives as decoded here",
+            picture_in_a_worker,
         ),
         (
             "sign --text draws its own lines; an invisible signature carries its notes",
@@ -1855,6 +1859,34 @@ fn read_back(path: &Path) -> Result<(Vec<(String, String)>, serde_json::Value), 
         .map(|l| (l.0, l.1))
         .collect();
     Ok((lines, json))
+}
+
+/// The window's *Add a picture*: the file decoded in a sandboxed worker, its
+/// pixels back through the tile mapping. The same decoder run here is the
+/// answer, since it is pure Rust and maps no PDFium.
+fn picture_in_a_worker(report: &mut Report) {
+    use tpdf_lib::save::Rewriter as _;
+    let jpeg: &[u8] = include_bytes!("../src/textedit/images/synthetic-rgb.jpg");
+    let outside = tpdf_lib::save::InWorker::at(library_dir());
+    let here = tpdf_lib::signature_import::decode_picture(jpeg);
+    match outside.picture(jpeg) {
+        Ok(image) => report.check(
+            "the worker's picture is the decoder's, pixel for pixel",
+            here.as_ref().is_ok_and(|here| *here == image),
+            &format!("{} x {}", image.width, image.height),
+        ),
+        Err(why) => report.check("the worker decodes the picture", false, &why.message),
+    }
+    // A file the decoder refuses is refused through the worker too, with its
+    // sentence rather than a lost worker's.
+    let refused = outside.picture(b"not a picture").map(|_| ());
+    report.check(
+        "a file that is not a picture is refused in the decoder's words",
+        refused
+            .as_ref()
+            .is_err_and(|why| why.message.contains("PNG or JPEG")),
+        &format!("{:?}", refused.map_err(|why| why.message)),
+    );
 }
 
 fn sign_reads_back(report: &mut Report) {

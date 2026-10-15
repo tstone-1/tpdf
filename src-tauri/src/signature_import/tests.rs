@@ -309,3 +309,121 @@ fn the_shared_headers_are_read_as_the_chooser_reads_them() {
     // A file that lost its cases would compare nothing and pass.
     assert_eq!((read, refused), (10, 36));
 }
+
+#[test]
+fn a_picture_keeps_its_size_up_to_a_pages_limits_and_its_proportions_past_them() {
+    use crate::signature::{PICTURE_PIXELS, PICTURE_SIDE};
+    assert_eq!(placed_size(600, 300), (600, 300));
+    assert_eq!(placed_size(1, 1), (1, 1));
+    // The side limit, and the pixel limit, each the one that binds.
+    assert_eq!(placed_size(8192, 2048), (PICTURE_SIDE, 1024));
+    for (w, h) in [(4000, 3000), (16384, 16384), (16384, 40), (3000, 4000)] {
+        let (pw, ph) = placed_size(w, h);
+        assert!(pw <= PICTURE_SIDE && ph <= PICTURE_SIDE, "{w} x {h}");
+        assert!(pw as usize * ph as usize <= PICTURE_PIXELS, "{w} x {h}");
+        let (want, got) = (f64::from(w) / f64::from(h), f64::from(pw) / f64::from(ph));
+        assert!(
+            (want - got).abs() / want < 0.01,
+            "{w} x {h} became {pw} x {ph}"
+        );
+    }
+}
+
+#[test]
+fn every_exif_orientation_turns_the_pixels_upright() {
+    // Two columns, three rows, each pixel its own number in red.
+    let image = Image {
+        width: 2,
+        height: 3,
+        rgba: (0..6).flat_map(|n| [n, 0, 0, 255]).collect(),
+    };
+    let reds = |image: &Image| {
+        (
+            image.width,
+            image.height,
+            image.rgba.chunks_exact(4).map(|p| p[0]).collect::<Vec<_>>(),
+        )
+    };
+    // 0 1        The source, row by row. Each answer is the picture as a
+    // 2 3        viewer shows it, per the EXIF table.
+    // 4 5
+    let want: [(u32, u32, Vec<u8>); 8] = [
+        (2, 3, vec![0, 1, 2, 3, 4, 5]),
+        (2, 3, vec![1, 0, 3, 2, 5, 4]),
+        (2, 3, vec![5, 4, 3, 2, 1, 0]),
+        (2, 3, vec![4, 5, 2, 3, 0, 1]),
+        (3, 2, vec![0, 2, 4, 1, 3, 5]),
+        (3, 2, vec![4, 2, 0, 5, 3, 1]),
+        (3, 2, vec![5, 3, 1, 4, 2, 0]),
+        (3, 2, vec![1, 3, 5, 0, 2, 4]),
+    ];
+    for (orientation, want) in (1..=8).zip(want) {
+        assert_eq!(
+            reds(&oriented(image.clone(), orientation)),
+            want,
+            "orientation {orientation}"
+        );
+    }
+    // A value outside the table leaves the picture as it is.
+    assert_eq!(reds(&oriented(image.clone(), 9)), reds(&image));
+}
+
+#[test]
+fn a_picture_file_is_read_with_a_pictures_limits() {
+    // Past a signature's 512 by 256 and kept whole as a picture.
+    let wide = rgba(600, 300, |x, _| [x as u8, 0, 0, 255]);
+    let image = decode_picture(&wide).unwrap();
+    assert_eq!((image.width, image.height), (600, 300));
+    assert!(image.valid_picture());
+    // Not trimmed: a picture's transparent margin is part of it.
+    let framed = rgba(10, 10, |x, y| {
+        [
+            9,
+            9,
+            9,
+            if (3..7).contains(&x) && (3..7).contains(&y) {
+                255
+            } else {
+                0
+            },
+        ]
+    });
+    assert_eq!(
+        decode_picture(&framed).map(|i| (i.width, i.height)),
+        Ok((10, 10))
+    );
+    // Nothing to see, and a header past the picture limits.
+    assert_eq!(
+        decode_picture(&rgba(4, 4, |_, _| [0; 4])),
+        Err(CLEAR.into())
+    );
+    let mut huge = rgba(4, 4, |_, _| [1, 2, 3, 255]);
+    huge[16..20].copy_from_slice(&16385_u32.to_be_bytes());
+    assert_eq!(decode_picture(&huge), Err(PICTURE.invalid.into()));
+}
+
+#[test]
+fn a_photograph_stored_on_its_side_is_turned_upright() {
+    // The fixture with an EXIF segment saying "turn a quarter clockwise" (6),
+    // put straight after the start marker as a camera puts it.
+    let tiff: &[u8] = &[
+        b'I', b'I', 42, 0, 8, 0, 0, 0, // little endian, directory at 8
+        1, 0, // one entry
+        0x12, 0x01, 3, 0, 1, 0, 0, 0, 6, 0, 0, 0, // Orientation, SHORT, 1, 6
+        0, 0, 0, 0, // no next directory
+    ];
+    let payload = [b"Exif\0\0".as_slice(), tiff].concat();
+    let mut turned = RGB[..2].to_vec();
+    turned.extend_from_slice(&[0xff, 0xe1]);
+    turned.extend_from_slice(&((payload.len() + 2) as u16).to_be_bytes());
+    turned.extend_from_slice(&payload);
+    turned.extend_from_slice(&RGB[2..]);
+    assert_eq!(crate::imagepages::jpeg_orientation(&turned), 6);
+    let upright = decode_picture(RGB).unwrap();
+    assert_eq!(
+        decode_picture(&turned).unwrap(),
+        oriented(upright.clone(), 6)
+    );
+    // The control: a fixture the turn leaves unchanged could not show it.
+    assert_ne!(oriented(upright.clone(), 6), upright);
+}

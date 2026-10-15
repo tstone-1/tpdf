@@ -70,7 +70,7 @@ const ID_SHAPED = /\b(?:app|edit|file|find|nav|view)\.[a-zA-Z][a-zA-Z0-9.]*/g;
  */
 const PLANNED = [
   "app.disableExplorerIntegration", "app.enableExplorerIntegration",
-  "edit.addPicture", "edit.copyRegionAsPicture",
+  "edit.copyRegionAsPicture",
   "edit.pastePicture",
   "file.saveAttachment", "file.saveRegionAsPicture",
 ];

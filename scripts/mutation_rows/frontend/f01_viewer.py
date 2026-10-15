@@ -1346,9 +1346,9 @@ ROWS += [
         # identical `const id = quad ? ...`, and it builds its quad with
         # `boxQuad(live.from, live.to, ...)` unconditionally rather than choosing
         # between an icon and a box.
-        '        if (kind === "signature" && image && quad) quad = fitSignature(quad, image);\n'
+        '        if (kind === "picture" && picture && quad) quad = fitSignature(quad, picture);\n'
         "        const id = quad ? this.pages.idOf(live.slot) : undefined;",
-        '        if (kind === "signature" && image && quad) quad = fitSignature(quad, image);\n'
+        '        if (kind === "picture" && picture && quad) quad = fitSignature(quad, picture);\n'
         "        const id = quad ? live.slot : undefined;",
         "carries the armed kind and the page's id",
     ),

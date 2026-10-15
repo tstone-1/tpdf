@@ -353,6 +353,12 @@ export interface Commands {
   };
   form_tab_order: { args: { doc: DocHandle }; reply: EditState };
   annot_resize_signature: { args: { doc: DocHandle; mark: number; width: number }; reply: EditState };
+  /** The body `picture.ts`'s `pictureBody` builds: a header and the pixels, as bytes. */
+  annot_picture: { args: Uint8Array; reply: EditState };
+  /** A picture's pixels as bytes, four a pixel; the size is in its `MarkView`. */
+  annot_picture_pixels: { args: { doc: DocHandle; mark: number }; reply: ArrayBuffer };
+  /** A picture file decoded in a worker: `readPicture`'s layout. */
+  picture_open: { args: { path: string }; reply: ArrayBuffer };
   signature_store: { args: { action: { kind: "load" } | { kind: "save"; image: import("./signature").SignatureImage } | { kind: "forget" } }; reply: import("./signature").SignatureImage | null };
   edit_undo: { args: { doc: DocHandle }; reply: EditState };
   edit_redo: { args: { doc: DocHandle }; reply: EditState };

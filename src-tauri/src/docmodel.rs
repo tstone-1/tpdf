@@ -891,9 +891,30 @@ pub enum MarkKind {
     /// have been a second editable string on every mark. See
     /// `save::marks::link_target` for what it accepts.
     Link,
+    /// A picture from a file or the clipboard, saved as a `/Stamp` whose
+    /// appearance is the picture.
+    ///
+    /// **A signature's twin with larger limits.** Both hold their pixels in
+    /// [`Mark::image`], keep their proportions, are resized by width alone and
+    /// write the same appearance. They are two kinds because a signature is
+    /// what the signing flow places and a reader recognises as one, and
+    /// because their limits differ by a factor of thirty-two:
+    /// [`signature::Image::valid_picture`] against
+    /// [`signature::Image::valid`].
+    ///
+    /// An annotation and not page content, so it moves and goes away as a
+    /// stamp does.
+    Picture,
 }
 
 impl MarkKind {
+    /// Whether a mark of this kind is a raster held in [`Mark::image`]: a
+    /// signature and a picture, and nothing else.
+    #[must_use]
+    pub fn holds_image(self) -> bool {
+        matches!(self, MarkKind::Signature | MarkKind::Picture)
+    }
+
     /// Whether a mark of this kind is made of the points a reader drew, held in
     /// [`Mark::strokes`]: ink, a line, an arrow, a polygon and a polyline.
     #[must_use]
@@ -3401,20 +3422,30 @@ impl Doc {
         if mark.field.is_some() != (mark.kind == MarkKind::Field) {
             return Err(Refusal::FieldMismatch(mark.kind));
         }
-        // Signature pixels belong only to signatures. Bound the whole retained
-        // pool, including undo history, as well as each individual raster.
-        if mark.image.is_some() != (mark.kind == MarkKind::Signature)
-            || mark.image.as_ref().is_some_and(|image| !image.valid())
-            || (mark.kind == MarkKind::Signature && mark.quads.len() != 1)
+        // Pixels belong only to signatures and pictures. Bound the whole
+        // retained pool of the kind, including undo history, as well as each
+        // individual raster: a signature's pool and a picture's are separate,
+        // so pictures cannot crowd out the signature a reader signs with.
+        let (fits, budget): (fn(&signature::Image) -> bool, usize) = match mark.kind {
+            MarkKind::Picture => (
+                signature::Image::valid_picture,
+                signature::PICTURE_DOCUMENT_BYTES,
+            ),
+            _ => (signature::Image::valid, signature::DOCUMENT_BYTES),
+        };
+        if mark.image.is_some() != mark.kind.holds_image()
+            || mark.image.as_ref().is_some_and(|image| !fits(image))
+            || (mark.kind.holds_image() && mark.quads.len() != 1)
             || mark.image.as_ref().is_some_and(|image| {
                 image.rgba.len()
                     + self
                         .marks
                         .values()
+                        .filter(|m| m.kind == mark.kind)
                         .filter_map(|m| m.image.as_ref())
                         .map(|i| i.rgba.len())
                         .sum::<usize>()
-                    > signature::DOCUMENT_BYTES
+                    > budget
             })
         {
             return Err(Refusal::ShapeMismatch(mark.kind));
@@ -3785,11 +3816,11 @@ impl Doc {
         self.apply_in(Command::Reink { mark, ink }, sweep)
     }
 
+    /// Sets a signature's or a picture's width, and its height with it so the
+    /// proportions stay.
     pub fn resize_signature(&mut self, mark: MarkId, width: f32) -> Result<(), Refusal> {
         self.now.live_mark(mark)?;
-        if self
-            .mark(mark)
-            .is_none_or(|m| m.kind != MarkKind::Signature)
+        if self.mark(mark).is_none_or(|m| !m.kind.holds_image())
             || !width.is_finite()
             || !(4.0..=2000.0).contains(&width)
         {

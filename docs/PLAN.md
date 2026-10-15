@@ -18246,8 +18246,9 @@ marks a copy means are `Viewer.namedMarks`, the same as a removal's: the open no
 picked ones. A paste goes to the page in front at the place the marks had on theirs, a step
 down and to the right on their own page, and is kept inside the page as a duplicate is
 (`Viewer.placePasted`). Not copied: the four marks made over words, which would mark nothing
-on another page; form fields, which *Duplicate* handles; and signature pictures, until a
-paste can carry their pixels. Held in the window, not on the system clipboard. Evidence:
+on another page, and form fields, which *Duplicate* handles. A signature picture is copied
+with the pixels its view carries, and a picture with the pixels the copy fetches (below).
+Held in the window, not on the system clipboard. Evidence:
 `mark_check.py` copies an arrow and pastes it 12 points down and right, and cuts a polygon
 and pastes it back, through the commands.
 
@@ -18263,7 +18264,29 @@ back as the viewer will; `mark_check.py` adds one through the command and its ta
 the box. Not measured: following a created link in the window after reopening, which the
 links phase of the viewer check covers for a document's own links.
 
-**Still to build in 7.5:** pictures.
+**Done 2026-10-15: a picture from a file** (`edit.addPicture`). `MarkKind::Picture` is a
+signature's twin with larger limits: its pixels are in `Mark::image`, it is saved as a
+`/Stamp` with the picture as its appearance, it is resized by width keeping its proportions,
+and it has its own pool of 64 MiB per document. The webview decodes nothing: `picture_open`
+reads the file and a worker decodes it (`Request::Picture`,
+`signature_import::decode_picture`) with the signature image's header grammar and decoders
+under a picture's limits, turns a JPEG upright by its EXIF orientation, and scales it to at
+most 4096 pixels a side and 4 megapixels. The pixels come back through the tile mapping
+(16 MiB, the largest picture) rather than in the JSON reply, which is capped at 32 MB. The
+state reply carries a picture's size and not its pixels; the overlay fetches them once per
+mark with `annot_picture_pixels`, as bytes, and the drag sends them with the mark as a raw
+body (`picture.rs`), so no picture crosses the boundary as JSON. Evidence: the CLI integration
+binary decodes a JPEG in a sandboxed worker and gets the in-process decoder's pixels back,
+byte for byte; `mark_check.py` places the app's icon through the command and the file panel's
+queue, reads 128 by 128 in the model and the pixels back whole, sees the overlay draw 96% of
+the box (17% with the draw call removed), and copies and pastes it as the same bytes. The
+save test writes a picture as a `/Stamp` with its pixels and alpha on every turn of a cropped
+page, appended and rewritten. Not measured: rendering in Acrobat or Preview, and a saved
+picture read back as a picture rather than as a stamp, which tpdf does not do for signature
+pictures either.
+
+**Still to build in 7.5:** pasting a picture from the clipboard (`edit.pastePicture`). Whether
+each webview hands a page a picture from the system clipboard is not measured.
 
 SumatraPDF makes these and tpdf does not:
 

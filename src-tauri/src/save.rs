@@ -3030,6 +3030,18 @@ pub trait Rewriter: Send {
         inputs: Inputs<'_>,
         options: crate::imagepages::Options,
     ) -> Result<(usize, u32), Refusal>;
+
+    /// The pixels of a picture file's bytes, for a picture placed on a page:
+    /// `signature_import::decode_picture`, upright and scaled to what a page
+    /// holds.
+    ///
+    /// Here for [`Rewriter::images`]' reason: the file is one a reader chose
+    /// and tpdf has never seen, so it is decoded where every other parse is.
+    ///
+    /// # Errors
+    ///
+    /// What `decode_picture` refuses.
+    fn picture(&self, bytes: &[u8]) -> Result<crate::signature::Image, Refusal>;
 }
 
 /// Where a parse of the reader's own document happens.
@@ -3119,6 +3131,10 @@ impl Rewriter for Here {
             .and_then(|()| out.flush())
             .map_err(|e| format!("the document could not be written: {e}"))?;
         Ok((bytes.len(), pages))
+    }
+
+    fn picture(&self, bytes: &[u8]) -> Result<crate::signature::Image, Refusal> {
+        Ok(crate::signature_import::decode_picture(bytes)?)
     }
 }
 

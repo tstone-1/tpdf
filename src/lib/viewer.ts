@@ -34,6 +34,7 @@ import { redrawn, type FieldEdited } from "./savedfields";
 import { AccessibleText } from "./a11y";
 import { forgetPageSurface, inTextField, isMac, matches, namePageSurface, nativeCopy } from "./keys";
 import { drawSignature, fitSignature, rotateSignature, signatureCanvas, validSignature, type SignatureImage } from "./signature";
+import { PictureCache, pictureCanvas, rotatePixels, visible, type PicturePixels } from "./picture";
 import { CommentPopup } from "./commentpopup";
 import {
   intoCrop,
@@ -376,6 +377,8 @@ export interface ViewerStatus {
  */
 export interface Drawn {
   image?: SignatureImage;
+  /** A picture's pixels, for `"picture"` alone, held the way the page's own space has them. */
+  picture?: PicturePixels;
   /** Four numbers per rectangle. Empty for ink, whose rectangle is derived. */
   quads: number[];
   /** `x y x y ...` per stroke. Empty for every kind but ink. */
@@ -592,6 +595,8 @@ export interface ViewerOptions {
   onMarkMoved?: (id: number, dx: number, dy: number) => void;
   /** Resize a visual signature in original page display points. */
   onSignatureResize?: (id: number, width: number) => void;
+  /** A picture's pixels, which its view leaves out; the size is in the view. */
+  onPicturePixels?: (id: number) => Promise<Uint8Array<ArrayBuffer>>;
   /**
    * A box, an ellipse, a text box or a form field dragged by its lower right
    * corner to a new rectangle, `[left, top, right, bottom]` in the file's
@@ -1104,7 +1109,7 @@ function release(element: HTMLElement, pointerId: number): void {
  */
 export type ArmedTool =
   | { kind: "none" }
-  | { kind: "draw"; mark: MarkKind; stamp: StampName | null; image?: SignatureImage }
+  | { kind: "draw"; mark: MarkKind; stamp: StampName | null; image?: SignatureImage; picture?: PicturePixels }
   | { kind: "erase" }
   | { kind: "crop" }
   | { kind: "redact" }
@@ -1382,6 +1387,16 @@ export class Viewer {
   }
   private readonly signatureImages = new Map<number, HTMLCanvasElement>();
   private signaturePreview: HTMLCanvasElement | null = null;
+  /** The pictures on the pages, fetched once a mark and drawn from canvases. */
+  private readonly pictures = new PictureCache<HTMLCanvasElement>(
+    async (id) => {
+      const size = this.markById(id)?.picture;
+      const fetch = this.opts.onPicturePixels;
+      if (!size || !fetch) throw new Error("no picture to fetch");
+      return pictureCanvas({ ...size, rgba: await fetch(id) });
+    },
+    () => this.wake(),
+  );
 
   /**
    * How thick the next drawing is, in points.
@@ -2141,7 +2156,9 @@ export class Viewer {
             ? iconQuad(lands.x, lands.y, this.laidSize(live.slot))
             : boxQuad(live.from, live.to, this.laidSize(live.slot));
         const image = this.tool.kind === "draw" ? this.tool.image : undefined;
+        const picture = this.tool.kind === "draw" ? this.tool.picture : undefined;
         if (kind === "signature" && image && quad) quad = fitSignature(quad, image);
+        if (kind === "picture" && picture && quad) quad = fitSignature(quad, picture);
         const id = quad ? this.pages.idOf(live.slot) : undefined;
         if (!quad || id === undefined) {
           // **A click rather than a drag, and the tool stays armed.** Silent,
@@ -2162,7 +2179,8 @@ export class Viewer {
           kind,
           id,
           { quads: this.fileRectOn(live.slot, quad), strokes: [], width: this.nib,
-            ...(image ? { image: rotateSignature(image, -this.scroller.effectiveTurns(live.slot)) } : {}) },
+            ...(image ? { image: rotateSignature(image, -this.scroller.effectiveTurns(live.slot)) } : {}),
+            ...(picture ? { picture: rotatePixels(picture, -this.scroller.effectiveTurns(live.slot)) } : {}) },
           stamp,
         );
       },
@@ -5199,6 +5217,17 @@ export class Viewer {
   }
 
   /**
+   * Prepare a picture for one placement drag, as a signature is prepared: the
+   * drag says where and how wide, and the picture keeps its proportions.
+   */
+  armPicture(pixels: PicturePixels): void {
+    if (!visible(pixels)) return;
+    this.armDraw("picture");
+    this.tool = { kind: "draw", mark: "picture", stamp: null, picture: pixels };
+    this.signaturePreview = pictureCanvas(pixels);
+  }
+
+  /**
    * Arms the box tool: the next drag on a page draws one.
    *
    * Takes the kind rather than being `armBox()`, because the next tool that
@@ -6046,7 +6075,7 @@ export class Viewer {
     if (id === null) return false;
     const mark = this.markById(id);
     if (!mark) return false;
-    if (mark.kind === "signature") return false;
+    if (mark.kind === "signature" || mark.kind === "picture") return false;
     const want = colorFor(mark.kind, color);
     if (sameColor(mark.color, want)) return false;
     this.opts.onMarkRecolor?.(id, want);
@@ -6890,6 +6919,7 @@ export class Viewer {
     this.markIndex = null;
     const live = new Set(marks.map((mark) => mark.id));
     for (const id of this.signatureImages.keys()) if (!live.has(id)) this.signatureImages.delete(id);
+    this.pictures.keep(live);
     const open = marks.find((mark) => mark.id === this.markNote.openId);
     if (open) this.markNote.syncSignatureSize(open);
     // A text box resized under its open box has a draft wrapped for the old width.
@@ -7263,7 +7293,19 @@ export class Viewer {
           ctx.fillRect(left + width - side / 2, top + height - side / 2, side, side);
           ctx.restore();
         }
-        if (style === "image" && mark.image) {
+        if (style === "image" && mark.kind === "picture") {
+          // Drawn once its pixels arrive; until then, its outline, so a reader
+          // sees where it is.
+          const image = this.pictures.get(mark.id);
+          if (image) drawSignature(ctx, image, left, top, width, height, this.scroller.effectiveTurns(slot));
+          else {
+            ctx.save();
+            ctx.strokeStyle = PREVIEW_STROKE;
+            ctx.setLineDash([4 * dpr, 4 * dpr]);
+            ctx.strokeRect(left, top, width, height);
+            ctx.restore();
+          }
+        } else if (style === "image" && mark.image) {
           let image = this.signatureImages.get(mark.id);
           if (!image) { image = signatureCanvas(mark.image); this.signatureImages.set(mark.id, image); }
           drawSignature(ctx, image, left, top, width, height, this.scroller.effectiveTurns(slot));
@@ -7485,8 +7527,9 @@ export class Viewer {
     const py = (origin.top + top * this.zoom - this.scrollTop) * dpr;
     const pw = (right - left) * this.zoom * dpr;
     const ph = (bottom - top) * this.zoom * dpr;
-    if (this.drawArmed === "signature" && this.tool.kind === "draw" && this.tool.image && this.signaturePreview) {
-      const quad = fitSignature({ left, top, right, bottom }, this.tool.image);
+    const placed = this.tool.kind === "draw" ? this.tool.image ?? this.tool.picture : undefined;
+    if ((this.drawArmed === "signature" || this.drawArmed === "picture") && placed && this.signaturePreview) {
+      const quad = fitSignature({ left, top, right, bottom }, placed);
       const width = (quad.right - quad.left) * this.zoom * dpr;
       const height = (quad.bottom - quad.top) * this.zoom * dpr;
       ctx.drawImage(this.signaturePreview, px, py, width, height);

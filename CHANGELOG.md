@@ -38,6 +38,11 @@ have the binary.)
 - **Close other tabs, Close tabs to the left and right, and Reopen closed tab.** From the tab
   in front or from a tab's right-click menu; unsaved changes are asked about once. *Reopen
   closed tab* (Ctrl+Shift+T, ⌘⇧T on macOS) opens the document closed last, where you left it.
+- **Pictures.** *Add a picture from a file* takes a PNG or JPEG and places it by a drag, at
+  its own proportions; a photograph stored on its side is turned upright. It is saved as a
+  stamp whose appearance is the picture, and can be moved, made larger or smaller, removed
+  and copied. The file is decoded in a sandboxed worker, and a
+  picture larger than 4 megapixels is scaled down to that.
 - **Links.** *Add a link* is dragged out like a box, and where it goes is typed in the box
   that opens on it: a page number, or a web address starting with `http://`, `https://`,
   `mailto:` or `www.`. It is saved as a `/Link` with no border, and a save with a link that
@@ -45,8 +50,8 @@ have the binary.)
 - **Copy, cut and paste marks.** *Copy mark* and *Cut mark*, also on a mark's right-click
   menu, copy the mark whose note is open or the picked ones; *Paste mark* puts them on the
   page in front, in this document or another tab, a step down and to the right when they
-  land on their own page. Highlights and the other marks made over words, form fields and
-  signature pictures are not copied, and a cut that includes one does nothing.
+  land on their own page. Highlights and the other marks made over words, and form fields,
+  are not copied, and a cut that includes one does nothing.
 - **Lines, arrows, polygons and connected lines.** *Add a line* and *Add an arrow* draw one
   by a drag from end to end; *Add a polygon* and *Add connected lines* take a corner per
   click, and Enter or a second click on the last corner finishes. They take the chosen
