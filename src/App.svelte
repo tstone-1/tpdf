@@ -1526,6 +1526,12 @@
     toggleSearchScope: () => toggleSearchScope(),
     toggleSidebar: () => toggleSidebar(),
     showTab: (tab) => showTab(tab),
+    hasOutline: () => sidebar?.hasOutline ?? false,
+    arrangeOutline: (how: "all" | "none" | "current") => {
+      showTab("outline");
+      if (how === "current") sidebar?.revealCurrent();
+      else sidebar?.setAllExpanded(how === "all");
+    },
     toggleInvert: () => toggleInvert(),
     toggleFullScreen: () => void toggleFullScreen(),
     togglePresentation: () => void togglePresentation(),

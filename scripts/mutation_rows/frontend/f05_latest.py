@@ -787,3 +787,19 @@ ROWS += [
         "  reopened(path: string): void {\n    this.paths = [...this.paths];",
         "moves a document closed again to the end, and forgets one reopened"),
 ]
+
+# --- the outline opened or closed as a whole, 2026-10-15 ---------------------
+ROWS += [
+    Mutation("outline: open all leaves the deeper entries", "src/lib/outline.ts",
+        "        this.set(id, node.open, expanded);\n        walk(node.children, id);",
+        "        this.set(id, node.open, expanded);",
+        "closes every entry, down to the deepest, so the top level is all that shows"),
+    Mutation("outline: open all only toggles", "src/lib/outline.ts",
+        "        this.set(id, node.open, expanded);\n        walk(node.children, id);",
+        "        this.toggle(id);\n        walk(node.children, id);",
+        "opens every entry that has entries under it, whatever the document said"),
+    Mutation("outline: open all asks the document's flag", "src/lib/outline.ts",
+        "        if (node.children.length === 0) return;\n        this.set(id, node.open, expanded);",
+        "        if (node.children.length === 0) return;\n        this.set(id, node.open, node.open);",
+        "opens every entry that has entries under it, whatever the document said"),
+]

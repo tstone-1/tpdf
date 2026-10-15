@@ -18169,7 +18169,7 @@ recorder instead, for the same reason.
 **Not run yet:** Windows and Linux, including whether WebView2 lets F11 through to the
 page; full screen with two documents side by side.
 
-#### 7.4 Navigation and tabs --- closing several tabs and reopening one done 2026-10-15
+#### 7.4 Navigation and tabs --- tabs and the outline done 2026-10-15
 
 **Done:** *Close other tabs*, *Close tabs to the left*, *Close tabs to the right* and
 *Reopen closed tab* (Ctrl+Shift+T, ⌘⇧T), as commands from the tab in front and in a tab's
@@ -18180,17 +18180,21 @@ every view of it is closing, and then closes each tab through the one `closeTab`
 document reopens by its path, so it opens where it was left. Run in a window on the Mac
 mini: `tabs_check.py --phase closing` (`closecheck.ts`), 7 of 7.
 
+**Done: the outline as a whole.** *Open every entry of the outline*
+(`view.outlineExpandAll`), *Close every entry of the outline* (`view.outlineCollapseAll`)
+and *Show this page's entry in the outline* (`view.outlineToCurrent`), which show the
+outline tab first. `Expansion.setAll` sets every entry with entries under it, whatever the
+producer's `/Count` sign said; tests in `outline.test.ts`.
+
 **Still to build in 7.4:**
 
-- Outline: expand all, collapse all, expand to the current page.
 - Next and previous file in the folder: the app process lists the folder (names only, no
   parsing), sorted the way the platform's file manager sorts, PDFs only.
 - Favourites: a named place (document path, page, optional name) kept in the settings, listed
   in the sidebar beside the outline and in the palette; next and previous favourite.
 - A link's target on hover: the page number for an internal link, the host (punycode, as the
   confirmation shows it) for a web link.
-- Commands: `view.outlineExpandAll`, `view.outlineCollapseAll`, `view.outlineToCurrent`,
-  `file.nextInFolder`, `file.previousInFolder`, `nav.addFavourite`, `nav.nextFavourite`,
+- Commands: `file.nextInFolder`, `file.previousInFolder`, `nav.addFavourite`, `nav.nextFavourite`,
   `nav.previousFavourite`.
 - Exit: unit tests in the new `src/lib` modules (the tab history and the favourites store are
   state, so they start outside `App.svelte`); a window check per command.

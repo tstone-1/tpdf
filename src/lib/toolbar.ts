@@ -191,6 +191,10 @@ export const WINDOW_MENU: MenuSection[] = [
     ],
   },
   {
+    label: "Outline",
+    items: ["view.outlineExpandAll", "view.outlineCollapseAll", "view.outlineToCurrent"],
+  },
+  {
     label: "Pages",
     items: [
       "view.singlePage", "view.facing", "view.book", "view.rightToLeft",

@@ -361,6 +361,8 @@ export async function appCommandChecks(
     closeTabs: (which: string) => fired.push(`closeTabs:${which}`),
     canReopenClosedTab: () => false,
     reopenClosedTab: () => fired.push("reopenClosedTab"),
+    hasOutline: () => true,
+    arrangeOutline: (how: string) => fired.push(`arrangeOutline:${how}`),
     sides: () => ({ split: false, focused: "left" as const, others: [] as string[] }),
     showBeside: (index: number) => fired.push(`showBeside:${index}`),
     moveToOtherSide: () => fired.push("moveToOtherSide"),
@@ -845,6 +847,23 @@ export async function appCommandChecks(
     {
       id: "view.invertPages",
       ...shell("toggleInvert"),
+      read: () => fired.join(","),
+    },
+    // Through the recorder: the sidebar these arrange is the window's, and this
+    // phase has none. `outline.test.ts` holds what each does to the tree.
+    {
+      id: "view.outlineExpandAll",
+      ...shell("arrangeOutline:all"),
+      read: () => fired.join(","),
+    },
+    {
+      id: "view.outlineCollapseAll",
+      ...shell("arrangeOutline:none"),
+      read: () => fired.join(","),
+    },
+    {
+      id: "view.outlineToCurrent",
+      ...shell("arrangeOutline:current"),
       read: () => fired.join(","),
     },
     // Through the recorder: going full screen for real would take the screen

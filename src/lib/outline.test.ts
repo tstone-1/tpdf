@@ -53,6 +53,36 @@ function manual(): OutlineItem[] {
   ];
 }
 
+describe("Expansion.setAll", () => {
+  /** The manual with Chapter One closed by its producer. */
+  const closed = (): OutlineItem[] => {
+    const items = manual();
+    items[1] = { ...items[1]!, open: false };
+    return items;
+  };
+
+  it("opens every entry that has entries under it, whatever the document said", () => {
+    const expansion = new Expansion();
+    expansion.setAll(closed(), true);
+    expect(flatten(closed(), expansion).map((row) => row.title)).toEqual([
+      "Introduction", "Chapter One", "Setup", "Fonts", "Subsetting", "Chapter Two", "Appendix",
+    ]);
+  });
+
+  it("closes every entry, down to the deepest, so the top level is all that shows", () => {
+    const expansion = new Expansion();
+    expansion.setAll(manual(), false);
+    expect(flatten(manual(), expansion).map((row) => row.title)).toEqual([
+      "Introduction", "Chapter One", "Chapter Two", "Appendix",
+    ]);
+    // Opening Chapter One again finds Fonts closed too.
+    expansion.toggle("1");
+    expect(flatten(manual(), expansion).map((row) => row.title)).toEqual([
+      "Introduction", "Chapter One", "Setup", "Fonts", "Chapter Two", "Appendix",
+    ]);
+  });
+});
+
 describe("flatten", () => {
   it("gives every row when everything is open", () => {
     const rows = flatten(manual(), new Expansion());

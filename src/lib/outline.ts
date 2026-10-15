@@ -216,6 +216,22 @@ export class Expansion implements ExpansionState {
     return true;
   }
 
+  /**
+   * Opens or closes every entry that has entries under it, whatever the
+   * document's own `open` flags said.
+   */
+  setAll(items: OutlineItem[], expanded: boolean): void {
+    const walk = (nodes: OutlineItem[], prefix: string): void => {
+      nodes.forEach((node, index) => {
+        const id = prefix === "" ? String(index) : `${prefix}.${index}`;
+        if (node.children.length === 0) return;
+        this.set(id, node.open, expanded);
+        walk(node.children, id);
+      });
+    };
+    walk(items, "");
+  }
+
   /** Expands every row on the path to `id`, so a deep row can be revealed. */
   reveal(id: string, openOf: (id: string) => boolean): void {
     const parts = id.split(".");

@@ -38,6 +38,8 @@ have the binary.)
 - **Close other tabs, Close tabs to the left and right, and Reopen closed tab.** From the tab
   in front or from a tab's right-click menu; unsaved changes are asked about once. *Reopen
   closed tab* (Ctrl+Shift+T, ⌘⇧T on macOS) opens the document closed last, where you left it.
+- **The outline in one step.** *Open every entry of the outline*, *Close every entry of the
+  outline*, and *Show this page's entry in the outline*.
 
 ## [26.10.20] - 2026-10-15
 

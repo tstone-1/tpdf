@@ -777,6 +777,23 @@ export class Sidebar {
     this.elements.get(parent)?.focus();
   }
 
+  /** Whether the document has an outline to open or close. */
+  get hasOutline(): boolean {
+    return (this.outline?.items.length ?? 0) > 0;
+  }
+
+  /** Opens or closes every entry of the outline that has entries under it. */
+  setAllExpanded(expanded: boolean): void {
+    if (!this.outline) return;
+    this.expansion.setAll(this.outline.items, expanded);
+    this.paint();
+  }
+
+  /** Opens the outline down to the entry the reader is in, and shows it. */
+  revealCurrent(): void {
+    if (this.current) this.reveal(this.current);
+  }
+
   /** Expands every ancestor of `id` and focuses it. For "reveal in outline". */
   reveal(id: string): void {
     if (!this.outline) return;

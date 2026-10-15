@@ -242,7 +242,9 @@ project conventions.
 - Text selection and copy; find-in-document, with case, whole-word, regular-expression and
   within-the-selection options; a sidebar carrying the outline, a page-thumbnail strip and
   your own marks; and a text layer for screen readers.
-  <!-- built: edit.selectAll edit.copy find.open find.next find.previous find.matchCase find.wholeWord find.regex find.inSelection view.toggleSidebar view.showOutline view.showThumbnails view.showMarks -->
+  *Open every entry of the outline*, *Close every entry of the outline* and *Show this
+  page's entry in the outline* arrange the outline in one step.
+  <!-- built: edit.selectAll edit.copy find.open find.next find.previous find.matchCase find.wholeWord find.regex find.inSelection view.toggleSidebar view.showOutline view.showThumbnails view.showMarks view.outlineExpandAll view.outlineCollapseAll view.outlineToCurrent -->
 - **Links are followable**, and so is the way back: Back and Forward walk the jumps you have
   made, and Next link / Previous link reach one without the pointer. Back and Forward grey out
   when there is nowhere to go.

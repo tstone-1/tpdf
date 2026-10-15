@@ -192,6 +192,13 @@ export interface AppActions {
   canReopenClosedTab(): boolean;
   /** Open again the document closed most recently. */
   reopenClosedTab(): void;
+  /** Whether the document in front has an outline. */
+  hasOutline(): boolean;
+  /**
+   * Shows the outline, with every entry open (`all`), closed (`none`), or open
+   * down to the entry the reader is in (`current`).
+   */
+  arrangeOutline(how: "all" | "none" | "current"): void;
   /** Fill the screen with the document, or go back to the window. */
   toggleFullScreen(): void;
   /** Present one page at a time on black, or stop presenting. */
@@ -1211,6 +1218,25 @@ export function registerAppCommands(
     { id: "view.singlePage", title: SPREAD_TITLES.single, ...layoutCommand("single") },
     { id: "view.facing", title: SPREAD_TITLES.facing, ...layoutCommand("facing") },
     { id: "view.book", title: SPREAD_TITLES.book, ...layoutCommand("book") },
+    // The outline, opened or closed as a whole, or down to where the reader is.
+    {
+      id: "view.outlineExpandAll",
+      title: "Open every entry of the outline",
+      enabled: () => withDocument() && actions.hasOutline(),
+      run: () => actions.arrangeOutline("all"),
+    },
+    {
+      id: "view.outlineCollapseAll",
+      title: "Close every entry of the outline",
+      enabled: () => withDocument() && actions.hasOutline(),
+      run: () => actions.arrangeOutline("none"),
+    },
+    {
+      id: "view.outlineToCurrent",
+      title: "Show this page's entry in the outline",
+      enabled: () => withDocument() && actions.hasOutline(),
+      run: () => actions.arrangeOutline("current"),
+    },
     {
       // Full screen leaves the layout as it is; presenting is full screen with
       // one page at a time at fit page on black. Esc leaves either.

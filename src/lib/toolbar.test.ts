@@ -40,6 +40,7 @@ function harness() {
     canOrderTabs: () => false,
     canCloseTabs: () => false,
     canReopenClosedTab: () => false,
+    hasOutline: () => false,
     fieldPicked: () => false,
     signableFields: () => 0,
     // What the window menu's guards read, in the state a first launch is in.
