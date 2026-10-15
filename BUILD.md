@@ -6985,6 +6985,30 @@ read through. **Not run:** the written copy of `tpdf long-term` against a public
 authority (`docs/VERIFICATION.md` has why), the new entry of `mutate_viewer.py` by the
 harness itself, `print-probe` and `redact-reach-probe`.
 
+**26.10.20 publication, 2026-10-15:** one rehearsal tag first, because `release.yml` had
+changed (CI's job count, and the glibc check on the packaged binaries). `v26.10.20-rc1`
+passed every job, the Linux leg's glibc check read 2.39 for both binaries, and
+`installed_check.py` passed 23/23 on the rehearsal's signed installer on the Windows build
+computer, run in its desktop session through an interactive scheduled task: the first run of
+that check on a release candidate rather than a published installer. The rc draft and tag
+were deleted by id. On the release commit `543008f4` CI passed all three jobs and `Audit`
+passed; the `Release` run 38737638466 skipped its gates on CI's account and passed every job
+at the first attempt. On the draft's files: 8 assets, counted with GraphQL, and `latest.json`
+named 26.10.20 for `darwin-aarch64`, `darwin-aarch64-app`, `windows-x86_64` and
+`windows-x86_64-nsis`. The release body had no paragraph for 26.10.20, because it was not
+added to `release.yml` before the tag; it was written there afterwards and the draft's body
+replaced by a PATCH carrying `tag_name`, with GraphQL reading `v26.10.20` after it. The
+`.dmg` was accepted by Gatekeeper as Notarized Developer ID, stapled, with a `tpdf-cli`
+inside under the hardened runtime that answered `--version` with 26.10.20 and verified
+`testdata/incr-signed.pdf`. `scripts/publish_release.py v26.10.20 --publish` published it.
+Without authentication `releases/latest` is v26.10.20, the `.dmg`, the `-setup.exe`, the
+`.deb`, the `.AppImage` and `latest.json` answer 200 under the tag, and `latest.json` offers
+26.10.20. The Homebrew cask went from 26.10.19 to 26.10.20; `brew audit --cask --online`
+printed no finding and `brew livecheck` reads 26.10.20. An installed 26.10.19 updated
+itself: `update_check_mac.py` 12/12 over SSH on a second Mac and `update_check.py` 17/17 on
+the Windows build computer, and each `--control no-press` failed its seven checks and
+nothing else. winget was not updated.
+
 **26.10.20 verification, 2026-10-15:** a release of fixes from the codebase review of that
 day, cut the day after 26.10.19. All 32 gates passed on macOS arm64 on the release tree and
 on Ubuntu 24.04 under WSL on the code before the version bump, with Cargo bounded to 3 jobs

@@ -567,6 +567,19 @@ jobs:
           workers run under Landlock and seccomp. The Linux packages (deb
           and AppImage) do not update themselves: install the new one.
 
+          **New in 26.10.20.** Signing asks whether anyone else still
+          needs to sign, and locks the document only when you answer that
+          you are the last; it locked by default before. Text recognition
+          reads a scan that already has a little text. Fixed: *Redact
+          every search result* could mark only part of the matches while
+          the document was still being searched; it now waits. On Linux,
+          text recognition and verified redaction work on Fedora, whose
+          Tesseract library has another name; a missing recognition
+          engine is reported as missing, with the package to install;
+          "Show in folder" selects the file in the file manager; and the
+          packages need glibc 2.39 or newer: Ubuntu 24.04, Debian 13,
+          Fedora 40 and later.
+
           **New in 26.10.19.** tpdf runs on Linux. Releases carry a deb
           and an AppImage for x86-64. A document prints through GTK's
           dialog and is handed to CUPS as a PDF; a PDF opened from a file
