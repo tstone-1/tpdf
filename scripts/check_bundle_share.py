@@ -38,10 +38,11 @@ ENTRY_POINTS = {
 # concludes. `saveanswer.ts` is constructed in `App.svelte` only under
 # `__TPDF_CHECKS__`, so a normal build must drop it too --- which this asserts
 # rather than assumes.
-# `screenshotcheck.ts` is the phase `scripts/screenshots.py` drives.
+# `screenshotcheck.ts` is the phase `scripts/screenshots.py` drives, and
+# `screencheck.ts` the full screen phase of `tabs_check.py`.
 SHARED = {"checkreport.ts", "signaturecheck.ts", "signingcheck.ts", "signphase.ts", "saveanswer.ts",
           "screenshotcheck.ts", "recognisecheck.ts", "protectcheck.ts", "picturescheck.ts",
-          "compresscheck.ts", "fieldcheck.ts"}
+          "compresscheck.ts", "fieldcheck.ts", "screencheck.ts"}
 
 FAMILY = ENTRY_POINTS | SHARED
 

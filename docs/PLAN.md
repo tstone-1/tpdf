@@ -18134,7 +18134,7 @@ the reader's page. Remembered with the place as `continuous`.
 `textedit` already computes for text; for a page of pictures it is the rendered ink bounds,
 measured on the tier-1 placeholder.
 
-#### 7.3 Full screen and presentation --- built 2026-10-15, not yet run in a window
+#### 7.3 Full screen and presentation --- built 2026-10-15, run in a window on macOS
 
 **Built.** `fullscreen.ts` holds the three states (window, full screen, presenting) and
 what each changes; `App.svelte` draws them.
@@ -18158,11 +18158,16 @@ what each changes; `App.svelte` draws them.
 **Not built:** showing the toolbar when the pointer reaches the top edge in full screen;
 hiding the pointer after a pause while presenting; a laser pointer.
 
-**Not run in a window yet**, and each needs one: entering and leaving each mode on macOS
-(a separate Space), Windows and Linux; whether WebView2 lets F11 through to the page;
-that the sandboxed workers and the side-by-side split are unaffected. The window check's
-command probes run the two commands through its recorder, deliberately, because going full
-screen for real would take the screen of whoever runs it.
+**Run in a window on macOS**, on the Mac mini, 2026-10-15: `tabs_check.py --phase screen`
+(`screencheck.ts`), 16 of 16. Full screen and back, with the toolbar hidden and shown;
+presenting at one page at a time and fit page on black; Space to the next page; `b` and
+any key; Esc out, with the layout and fit put back; and the window taken out of full
+screen directly, which tpdf followed. It takes the screen it runs on, so it belongs on a
+machine nobody is working at. The viewer window check runs the two commands through its
+recorder instead, for the same reason.
+
+**Not run yet:** Windows and Linux, including whether WebView2 lets F11 through to the
+page; full screen with two documents side by side.
 
 #### 7.4 Navigation and tabs
 
