@@ -45,6 +45,10 @@ have the binary.)
   picture larger than 4 megapixels is scaled down to that. *Paste a picture from the
   clipboard*, or ⌘V on the page, does the same with the picture on the clipboard, decoded in
   the same worker.
+- **A region as a picture.** *Copy a region as a picture* (also on the page's right-click
+  menu) and *Save a region as a picture* take the part of a page you drag across, as sharp
+  as it is on screen and never under 144 pixels an inch, to the clipboard or to a PNG file.
+  A sandboxed worker renders it; marks not yet saved are not in it.
 - **⌘V pastes text in the find field, the palette and every other text field on
   macOS.** It pasted nothing there, because a web view pastes only when a Paste menu item's
   action reaches it and tpdf's menu has no such item; ⌘V now sends that action itself.
@@ -74,6 +78,12 @@ have the binary.)
   the web address.
 - **The outline in one step.** *Open every entry of the outline*, *Close every entry of the
   outline*, and *Show this page's entry in the outline*.
+
+### Fixed
+
+- **A page cropped by dragging is drawn cropped.** Its tiles were rendered from the
+  uncropped page, because a crop moves no page and the viewer passed new pages to its
+  renderer only when the order moved. Found by *Copy a region as a picture*.
 
 ## [26.10.20] - 2026-10-15
 

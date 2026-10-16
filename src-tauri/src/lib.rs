@@ -108,6 +108,7 @@ pub mod reading;
 pub mod recentdocs;
 pub mod redact;
 pub mod redaction_fill;
+pub mod region;
 pub mod render;
 /// One serialised sample of every named reply payload, which
 /// `src/lib/replyshapes.test.ts` checks the TypeScript mirror against.
@@ -983,6 +984,8 @@ pub fn run() {
             annot_picture_pixels,
             picture_open,
             picture_decode,
+            region_save,
+            region_copy,
             signature_store,
             edit_undo,
             edit_redo,

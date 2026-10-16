@@ -24,7 +24,7 @@ import type { Comment } from "./comments";
 import type { CropGeometry } from "./crop";
 import { pageId, type MarkView, type PageView } from "./pages";
 import { installFakeDom, settle, type FakeDom } from "./testdom";
-import { Viewer, type Placed } from "./viewer";
+import { Viewer, type Placed, type Region } from "./viewer";
 import { INK_WIDTH } from "./markband";
 
 const core = vi.hoisted(() => ({ invoke: vi.fn() }));
@@ -835,5 +835,79 @@ describe("placing a visible signature shares the crop's drag and nothing else", 
     viewer.destroy();
     await settle();
     expect(third).toEqual([null]);
+  });
+});
+
+describe("a region to copy or save shares the crop's drag and nothing else", () => {
+  function arm(viewer: Viewer) {
+    const answers: (Region | null)[] = [];
+    void viewer.armRegion().then((region) => answers.push(region));
+    return answers;
+  }
+
+  it("answers the dragged rectangle as the page is laid out, and what its tile is rendered from", async () => {
+    // On an uncropped, unturned page the laid-out space is the file's, so the
+    // region must be the rectangle a crop of the same drag reports.
+    const viewer = build();
+    await settle();
+    viewer.setPages(pages(false));
+    await settle();
+    viewer.armCrop();
+    drag({ x: 120, y: 140 }, { x: 320, y: 340 });
+
+    const answers = arm(viewer);
+    expect(viewer.regionArmed).toBe(true);
+    drag({ x: 120, y: 140 }, { x: 320, y: 340 });
+    await settle();
+
+    const region = answers[0];
+    expect(answers).toHaveLength(1);
+    expect(region && [region.quad.left, region.quad.top, region.quad.right, region.quad.bottom]).toEqual(cropped[0]?.rect);
+    expect(region?.source).toEqual({ doc: 1, page: 0, turns: 0, crop: undefined, invert: false });
+    expect(region?.pageNumber).toBe(1);
+    expect(region?.screenScale).toBeGreaterThan(0);
+    expect(cropped).toHaveLength(1);
+    expect(viewer.regionArmed).toBe(false);
+    viewer.destroy();
+  });
+
+  it("carries the page's crop, which the tile is rendered under, and keeps the region in the laid-out space", async () => {
+    const viewer = build();
+    await settle();
+    viewer.setPages(pages(true));
+    await settle();
+    viewer.armCrop();
+    drag({ x: 120, y: 140 }, { x: 320, y: 340 });
+    const answers = arm(viewer);
+    drag({ x: 120, y: 140 }, { x: 320, y: 340 });
+    await settle();
+    expect(answers[0]?.source.crop).toEqual(CROP);
+    // The crop's rectangle is in the file's space, moved by the crop's corner;
+    // the region's is not.
+    expect(answers[0]?.quad.left).toBeLessThan(cropped[0]?.rect[0] ?? 0);
+    viewer.destroy();
+  });
+
+  it("keeps waiting through a click, and answers nothing for Escape or another tool", async () => {
+    const viewer = build();
+    await settle();
+    viewer.setPages(pages(false));
+    await settle();
+
+    const answers = arm(viewer);
+    drag({ x: 120, y: 140 }, { x: 121, y: 141 });
+    await settle();
+    expect(answers).toEqual([]);
+    expect(viewer.regionArmed).toBe(true);
+    escape();
+    await settle();
+    expect(answers).toEqual([null]);
+
+    const again = arm(viewer);
+    viewer.armCrop();
+    await settle();
+    expect(again).toEqual([null]);
+    expect(cropped).toEqual([]);
+    viewer.destroy();
   });
 });

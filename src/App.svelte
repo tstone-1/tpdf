@@ -117,6 +117,8 @@
   import { MarkClipboard, notCopied, shapeOf } from "./lib/markclipboard";
   import { EXTENSIONS as PICTURE_EXTENSIONS, afterPictures, suggestedName as pictureName } from "./lib/pictures";
   import { pastedPicture, readPicture, type PicturePixels } from "./lib/picture";
+  import { regionName, regionRequest, regionSaid } from "./lib/regionshot";
+  import { fetchTilePng, tileSpec, type TileRequest } from "./lib/tiles";
   import { afterProtect, suggestedName as protectedName } from "./lib/protect";
   import { afterCompress, suggestedName as smallerName } from "./lib/compress";
   import { CompressDialog } from "./lib/compressdialog";
@@ -1147,9 +1149,10 @@
    * that counts strokes --- and it is left out of the table rather than given an
    * unreachable entry, so the fallback is the honest one if that ever changes.
    */
-  function armedLabel(kind: MarkKind | "crop" | "redact" | "place"): string {
+  function armedLabel(kind: MarkKind | "crop" | "redact" | "place" | "region"): string {
     if (kind === "crop") return "Crop — drag out what to keep";
     if (kind === "place") return "Signature — drag out where it appears; Esc cancels";
+    if (kind === "region") return "Picture — drag out the region to copy or save; Esc cancels";
     // **Says what goes, where the crop's says what stays**, because the two are
     // the same drag and this is the only place the reader is told which one
     // they armed. "Nothing is removed yet" is the other half: marking is
@@ -1211,6 +1214,8 @@
   const signSaves = __TPDF_CHECKS__ ? new SaveAnswers() : null;
   /** The pictures the next open panel answers with, in a checks build. */
   let queuedPictures: string[] | null = null;
+  /** The last region copied or saved, so the mark check can render it again. Checks builds only. */
+  let lastRegion: TileRequest | null = null;
   let propertiesDialog: PropertiesDialog | null = null;
   let passwordDialog: PasswordDialog | null = null;
   let newPasswordDialog: NewPasswordDialog | null = null;
@@ -1720,6 +1725,8 @@
     signature: () => void addSignature(),
     picture: () => void addPicture(),
     pastePicture: () => void pastePicture(),
+    copyRegion: () => void copyRegion(),
+    saveRegion: () => void saveRegion(),
     pasteKey: () => {
       if (!isMac()) return false;
       call("paste").catch((e: unknown) => say(String(e)));
@@ -2046,6 +2053,61 @@
     if (focused instanceof HTMLElement && focused !== document.body) focused.blur();
     try {
       if (!(await call("paste"))) say("Press Ctrl+V on the page to paste the picture on the clipboard.");
+    } catch (e) {
+      say(String(e));
+    }
+  }
+
+  /**
+   * *Copy a region as a picture*: arms a drag, and the region it covers goes to
+   * the clipboard as a PNG a worker rendered (`regionshot.ts`).
+   *
+   * On macOS the backend puts it on the pasteboard (`region_copy`), because
+   * WebKit refuses a page's `ClipboardItem` outside a user gesture. Elsewhere
+   * the web view writes it, handed the PNG as a promise so the write starts at
+   * the drag's end, where the reader's gesture is; neither WebView2 nor
+   * WebKitGTK is measured, and where one refuses the window says what it
+   * refused.
+   */
+  async function copyRegion(): Promise<void> {
+    const target = viewer;
+    if (!target || openDoc < 0) return;
+    const region = await target.armRegion();
+    if (!region) return;
+    const request = regionRequest(region.source, region.quad, region.screenScale);
+    if (__TPDF_CHECKS__) lastRegion = request;
+    try {
+      if (isMac()) await call("region_copy", { tile: tileSpec(request) });
+      else await navigator.clipboard.write([new ClipboardItem({ "image/png": fetchTilePng(request) })]);
+      say(regionSaid(request));
+    } catch (e) {
+      say(`The region was not copied: ${e instanceof Error ? e.message : String(e)}`);
+    }
+  }
+
+  /**
+   * *Save a region as a picture*: arms a drag, asks where, and a worker
+   * renders the region and the backend writes it as a PNG (`region_save`).
+   * The web view names the region and the file, never the bytes.
+   */
+  async function saveRegion(): Promise<void> {
+    const target = viewer, name = openPathName;
+    if (!target || openDoc < 0 || !name) return;
+    const region = await target.armRegion();
+    if (!region) return;
+    const request = regionRequest(region.source, region.quad, region.screenScale);
+    if (__TPDF_CHECKS__) lastRegion = request;
+    const suggested = regionName(basename(name), region.pageNumber);
+    const panel = () => saveDialog({
+      title: "Save a region as a picture",
+      defaultPath: suggested,
+      filters: [{ name: "PNG picture", extensions: ["png"] }],
+    });
+    try {
+      const chosen = __TPDF_CHECKS__ && signSaves ? await signSaves.ask(suggested, panel) : await panel();
+      if (!chosen) return;
+      await call("region_save", { tile: tileSpec(request), path: chosen });
+      say(regionSaid(request, basename(chosen)));
     } catch (e) {
       say(String(e));
     }
@@ -5152,6 +5214,8 @@
           picturePixels: (id) => edits ? edits.picturePixels(id) : Promise.reject(new Error("no document")),
           held: () => markClipboard.marks.map((mark) => mark.kind),
           said: () => error,
+          lastRegion: () => lastRegion,
+          answerSave: (path) => signSaves?.queue(path),
         })
       )
         return;

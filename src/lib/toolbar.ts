@@ -50,6 +50,7 @@ export const TOOL_GROUPS: ToolGroup[] = [
       { id: "file.saveCopy", label: "Save a copy...", rule: true },
       { id: "file.recogniseText", label: message("recogniseText") },
       { id: "file.compress", label: "Save a smaller copy..." },
+      { id: "file.saveRegionAsPicture", label: "Save a region as a picture..." },
       { id: "file.protect", label: "Save a copy with a password..." },
       { id: "file.unprotect", label: "Save a copy without its password..." },
       { id: "file.signField", label: "Sign in the signature field...", rule: true },
@@ -273,7 +274,7 @@ export function toolbarState(
 }
 
 /** What the viewer reports as armed; `ViewerStatus.armed`'s type. */
-export type ArmedTool = MarkKind | "crop" | "redact" | "place" | null;
+export type ArmedTool = MarkKind | "crop" | "redact" | "place" | "region" | null;
 
 /** The kinds a chosen colour changes. A stamp and a signature keep their own. */
 const COLORED: readonly ArmedTool[] = [

@@ -142,6 +142,8 @@ export const MENU_LAYOUT: LayoutSection[] = [
       // choice is the reader's and is made with nothing open too.
       "file.recogniseTextLanguage",
       "file.compress",
+      // A copy of part of a page rather than of the document.
+      "file.saveRegionAsPicture",
       "file.protect",
       "file.unprotect",
       // Beside the copy, because it is one --- and after it rather than before,
@@ -187,6 +189,7 @@ export const MENU_LAYOUT: LayoutSection[] = [
       "edit.redo",
       SEPARATOR,
       "edit.copy",
+      "edit.copyRegionAsPicture",
       SEPARATOR,
       // The three marks together, then the removal, then the selection items.
       // Grouped rather than listed in one run because "Remove mark" is the

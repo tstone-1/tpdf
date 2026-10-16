@@ -433,6 +433,84 @@ pub async fn picture_decode(
         .map_err(|e| format!("the picture was not read: {e}"))?
 }
 
+/// Saves a region of a page as a PNG file at `path` (*Save a region as a
+/// picture*): [`region_png`]'s render, written by `region::write_png`.
+#[tauri::command]
+pub async fn region_save(
+    service: tauri::State<'_, crate::render::RenderService>,
+    tile: String,
+    path: String,
+) -> Result<(), String> {
+    let png = region_png(&service, &tile)
+        .await
+        .map_err(|why| format!("The picture was not saved: {why}"))?;
+    tauri::async_runtime::spawn_blocking(move || {
+        crate::region::write_png(std::path::Path::new(&path), &png)
+    })
+    .await
+    .map_err(|e| format!("The picture was not saved: {e}"))?
+}
+
+/// Copies a region of a page to the clipboard as a PNG (*Copy a region as a
+/// picture*), on macOS: [`region_save`]'s render, put on the general
+/// pasteboard as `public.png`.
+///
+/// **Here and not in the web view** because WebKit lets a page write a picture
+/// to the clipboard only while it handles a user gesture: `ClipboardItem`
+/// from the drag that chose the region was refused in the window checks,
+/// whose drag is synthetic (measured 2026-10-16), and a WKWebView probe that
+/// seemed to show otherwise had run its script through `evaluateJavaScript`,
+/// which WebKit counts as a gesture. A write from here needs none, so what
+/// the check drives is what a reader gets.
+#[cfg(target_os = "macos")]
+#[tauri::command]
+pub async fn region_copy(
+    service: tauri::State<'_, crate::render::RenderService>,
+    tile: String,
+) -> Result<(), String> {
+    use objc2_app_kit::{NSPasteboard, NSPasteboardTypePNG};
+    let png = region_png(&service, &tile)
+        .await
+        .map_err(|why| format!("The region was not copied: {why}"))?;
+    objc2::rc::autoreleasepool(|_| {
+        let board = NSPasteboard::generalPasteboard();
+        board.clearContents();
+        let data = objc2_foundation::NSData::with_bytes(&png);
+        // SAFETY: an AppKit constant, initialised before any code of ours runs.
+        let png_type = unsafe { NSPasteboardTypePNG };
+        if board.setData_forType(Some(&data), png_type) {
+            Ok(())
+        } else {
+            Err("The region was not copied: the clipboard refused it.".into())
+        }
+    })
+}
+
+/// The Windows and Linux answer: the web view copies the region itself, with
+/// `ClipboardItem`. See the macOS arm.
+#[cfg(any(windows, target_os = "linux"))]
+#[tauri::command]
+pub async fn region_copy(tile: String) -> Result<(), String> {
+    let _ = tile;
+    Err("The region is copied by the web view on this platform.".into())
+}
+
+/// A region rendered and PNG-encoded by a worker: one tile, named as the
+/// `tile` scheme names one without the origin, and bounded by that scheme's
+/// parser (`protocol::parse_spec`), so at most the 16 MiB the tile mapping
+/// holds. The webview sends no pixels.
+async fn region_png(service: &crate::render::RenderService, tile: &str) -> Result<Vec<u8>, String> {
+    let mut request = crate::protocol::parse_spec(tile)?;
+    request.format = crate::render::TileFormat::Png;
+    request.rid = 0;
+    let (reply, rx) = super::reply_channel();
+    service.tile(request, reply);
+    match super::await_reply::<_, String>("region", rx).await? {
+        crate::render::TileOutcome::Rendered(tile) => Ok(tile.bytes),
+        crate::render::TileOutcome::Abandoned => Err("its render was abandoned.".into()),
+    }
+}
+
 /// A picture file's bytes decoded in a worker, refused unread past a picture
 /// file's 50 MiB: a file is read one byte past it to tell, a paste arrives whole.
 fn decoded(outside: &dyn save::Outside, bytes: &[u8]) -> Result<tauri::ipc::Response, String> {

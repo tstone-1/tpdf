@@ -74,7 +74,7 @@
 import { Backoff } from "./backoff";
 import type { PageSize } from "./ipc";
 import { Lifetime } from "./lifetime";
-import { cancelTile, fetchTile, nextRequestId } from "./tiles";
+import { cancelTile, fetchTile, nextRequestId, type TileSource } from "./tiles";
 // From `tilestatus`, never from `./tiles`: four test files replace that
 // module wholesale, and a class reached through it would be `undefined`
 // inside them --- turning this `instanceof` into a TypeError thrown from a
@@ -1908,6 +1908,41 @@ export class Scroller {
     if (this.backoff.note(id, performance.now()) === 1) {
       console.warn(`tile ${id} could not be rendered: ${String(reason)}`);
     }
+  }
+
+  /**
+   * Takes the model's pages for an order that has not moved: the crop each
+   * slot is rendered under, and the view it draws from.
+   *
+   * A crop keeps the order, so {@link setPages} does not run for one, and until
+   * 2026-10-16 nothing else told this class: every tile of a page the reader
+   * cropped was requested without the crop, into the cropped page's layout
+   * (measured by the mark check's crop stage). The pixels already held are the
+   * viewer's to throw away, which it does once the cropped size is known
+   * (`adoptCrops`).
+   */
+  adoptViews(next: readonly PageView[]): void {
+    this.order = [...next];
+    this.pageCrops = next.map((page) => page.crop);
+  }
+
+  /**
+   * What a tile of `slot` is rendered from: its document and page, the turn
+   * and crop in force, and whether it is shown dark --- every field a tile
+   * request here carries but where and how large. For a region copied as a
+   * picture, which is one tile of its own. `undefined` where {@link addressOf}
+   * is, and once the document's bytes are gone.
+   */
+  tileSource(slot: number): TileSource | undefined {
+    const source = this.gone ? undefined : this.addressOf(slot);
+    if (source === undefined) return undefined;
+    return {
+      doc: source.doc,
+      page: source.page,
+      turns: this.requestTurns(slot),
+      crop: this.cropOf(slot),
+      invert: this.opts.invert,
+    };
   }
 
   /**

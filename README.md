@@ -247,6 +247,11 @@ project conventions.
   *Open every entry of the outline*, *Close every entry of the outline* and *Show this
   page's entry in the outline* arrange the outline in one step.
   <!-- built: edit.selectAll edit.copy find.open find.next find.previous find.matchCase find.wholeWord find.regex find.inSelection view.toggleSidebar view.showOutline view.showThumbnails view.showMarks view.outlineExpandAll view.outlineCollapseAll view.outlineToCurrent -->
+- **Copy a region as a picture** and **Save a region as a picture**: drag across part of a
+  page, and that part goes to the clipboard, or to a PNG file you name, as sharp as it is on
+  screen and never under 144 pixels an inch. It is the page as the file draws it, under the
+  crop and turn you see: marks you have not saved yet are not in it.
+  <!-- built: edit.copyRegionAsPicture file.saveRegionAsPicture -->
 - **Links are followable**, and say where they go when the pointer is over them: the page,
   or the web address. So is the way back: Back and Forward walk the jumps you have
   made, and Next link / Previous link reach one without the pointer. Back and Forward grey out

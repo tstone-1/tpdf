@@ -197,6 +197,7 @@ describe("when the colour and width controls are offered", () => {
       ["crop", false, false],
       ["redact", false, false],
       ["place", false, false],
+      ["region", false, false],
     ];
     for (const [armed, color, width] of cases) {
       expect(styleOptions({ ...idle, armed }), String(armed)).toEqual({ color, width });

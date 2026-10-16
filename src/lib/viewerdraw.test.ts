@@ -323,6 +323,7 @@ const ARM: Record<ToolKind, (viewer: Viewer) => void> = {
   redact: (viewer) => viewer.armRedact(),
   // The promise is the signing sequence's; here only the arming matters.
   place: (viewer) => void viewer.armPlacement(),
+  region: (viewer) => void viewer.armRegion(),
 };
 
 /** What each tool answers when it is the armed one. Same keys, same reason. */
@@ -332,6 +333,7 @@ const ARMED: Record<ToolKind, (viewer: Viewer) => boolean> = {
   crop: (viewer) => viewer.cropArmed,
   redact: (viewer) => viewer.redactArmed,
   place: (viewer) => viewer.placeArmed,
+  region: (viewer) => viewer.regionArmed,
 };
 
 describe("one hand, one tool", () => {

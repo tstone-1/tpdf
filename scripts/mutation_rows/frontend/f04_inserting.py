@@ -1348,8 +1348,9 @@ ROWS += [
         "        if (false) placing({ page: id, rect });\n        else if (marking)",
         "answers the dragged rectangle, in the space a crop is reported in, and crops nothing"),
     Mutation("viewer: refuse the drag a placement is armed for", "src/lib/viewer.ts",
-        '        if (this.tool.kind !== "crop" && this.tool.kind !== "redact" && this.tool.kind !== "place") return false;',
-        '        if (this.tool.kind !== "crop" && this.tool.kind !== "redact") return false;',
+        # Re-aimed 2026-10-16 when the region to copy or save joined the crop's drag.
+        '        if (this.tool.kind !== "crop" && this.tool.kind !== "redact" && this.tool.kind !== "place" && this.tool.kind !== "region") {',
+        '        if (this.tool.kind !== "crop" && this.tool.kind !== "redact" && this.tool.kind !== "region") {',
         "answers the dragged rectangle, in the space a crop is reported in, and crops nothing"),
     Mutation("viewer: answer a committed placement with nothing", "src/lib/viewer.ts",
         "        const placing = this.placing;\n        this.placing = null;\n",

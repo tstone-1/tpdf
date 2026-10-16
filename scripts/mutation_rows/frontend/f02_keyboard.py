@@ -1363,10 +1363,11 @@ ROWS += [
         # the other half: the two were disarmed by one line.
         "viewer: spend the redaction tool on its first region",
         "src/lib/viewer.ts",
-        '        if (this.tool.kind === "crop" || this.tool.kind === "place") {\n'
+        # Re-aimed 2026-10-16 when the region to copy or save joined the crop's drag.
+        '        if (this.tool.kind === "crop" || this.tool.kind === "place" || this.tool.kind === "region") {\n'
         "          this.tool = NO_TOOL;\n"
         "        }",
-        '        if (this.tool.kind === "crop" || this.tool.kind === "redact" || this.tool.kind === "place") {\n'
+        '        if (this.tool.kind === "crop" || this.tool.kind === "redact" || this.tool.kind === "place" || this.tool.kind === "region") {\n'
         "          this.tool = NO_TOOL;\n"
         "        }",
         "stays armed for the next region, like the eraser, until Escape",

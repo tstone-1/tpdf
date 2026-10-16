@@ -354,6 +354,8 @@ export async function appCommandChecks(
     picture: () => { fired.push("picture"); },
     pastePicture: () => { fired.push("pastePicture"); },
     pasteKey: () => false,
+    copyRegion: () => { fired.push("copyRegion"); },
+    saveRegion: () => { fired.push("saveRegion"); },
     fillForm: () => {},
     viewer: () => viewer,
     pageCount: () => doc.page_count,
@@ -1383,6 +1385,8 @@ export async function appCommandChecks(
     { id: "edit.addLink", ...shell("drawShape:link"), read: () => fired.join(",") },
     { id: "edit.addPicture", ...shell("picture"), read: () => fired.join(",") },
     { id: "edit.pastePicture", ...shell("pastePicture"), read: () => fired.join(",") },
+    { id: "edit.copyRegionAsPicture", ...shell("copyRegion"), read: () => fired.join(",") },
+    { id: "file.saveRegionAsPicture", ...shell("saveRegion"), read: () => fired.join(",") },
     {
       // The third drag tool, aimed separately for the reason the two above it
       // are: three commands now arm the same primitive with three different

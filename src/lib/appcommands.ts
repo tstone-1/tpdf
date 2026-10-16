@@ -494,6 +494,10 @@ export interface AppActions {
   picture(): void;
   /** Take the picture on the clipboard, then place it on a page by a drag. */
   pastePicture(): void;
+  /** Arm a drag over a page; the region it covers goes to the clipboard as a PNG. */
+  copyRegion(): void;
+  /** Arm a drag over a page; the region it covers is saved as a PNG file. */
+  saveRegion(): void;
   /**
    * Sends the platform's paste for ⌘V, where the web view needs it sent:
    * macOS, whose web view pastes only on a Paste menu item's action
@@ -2324,6 +2328,14 @@ export function registerAppCommands(
       run: () => actions.compressCopy(),
     },
     {
+      // *Copy a region as a picture*, to a PNG file rather than the clipboard.
+      // A worker renders and encodes it; the web view names the region only.
+      id: "file.saveRegionAsPicture",
+      title: "Save a region as a picture...",
+      enabled: withDocument,
+      run: () => actions.saveRegion(),
+    },
+    {
       // Copies, like every command that changes what a file is: the open
       // document keeps the password it has, or none.
       id: "file.protect",
@@ -2637,6 +2649,17 @@ export function registerAppCommands(
       keys: label("edit.copy"),
       enabled: withDocument,
       run: () => void actions.viewer()?.copySelection(),
+    },
+    {
+      // The page as a picture rather than as text: a figure, a signature, a
+      // table to paste into a mail. A drag says which part, and a worker
+      // renders it at the screen's sharpness (`regionshot.ts`). Through the
+      // web view's clipboard, which takes a PNG on macOS (measured
+      // 2026-10-16); where it refuses, the window says why.
+      id: "edit.copyRegionAsPicture",
+      title: "Copy a region as a picture",
+      enabled: withDocument,
+      run: () => actions.copyRegion(),
     },
     {
       id: "edit.clearSelection",

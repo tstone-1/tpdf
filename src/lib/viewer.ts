@@ -35,6 +35,7 @@ import { AccessibleText } from "./a11y";
 import { forgetPageSurface, inTextField, isMac, matches, namePageSurface, nativeCopy } from "./keys";
 import { drawSignature, fitSignature, rotateSignature, signatureCanvas, validSignature, type SignatureImage } from "./signature";
 import { PictureCache, pictureCanvas, rotatePixels, visible, type PicturePixels } from "./picture";
+import type { TileSource } from "./tiles";
 import { CommentPopup } from "./commentpopup";
 import {
   intoCrop,
@@ -359,7 +360,7 @@ export interface ViewerStatus {
    * same drag with opposite meanings. The line of chrome is where they are told
    * which one their next press is.
    */
-  armed: MarkKind | "crop" | "redact" | "place" | null;
+  armed: MarkKind | "crop" | "redact" | "place" | "region" | null;
   /** State of the find-in-document scan. */
   search: SearchStatus;
 }
@@ -1113,7 +1114,8 @@ export type ArmedTool =
   | { kind: "erase" }
   | { kind: "crop" }
   | { kind: "redact" }
-  | { kind: "place" };
+  | { kind: "place" }
+  | { kind: "region" };
 
 /**
  * Where the reader put a visible digital signature: the page's id and the
@@ -1123,6 +1125,18 @@ export type ArmedTool =
 export interface Placed {
   page: PageId;
   rect: [number, number, number, number];
+}
+
+/**
+ * A region the reader dragged out to copy or save as a picture: what its tile
+ * is rendered from, the rectangle as the page is laid out, in points, the
+ * page's number for the file's name, and the pixels a point on screen.
+ */
+export interface Region {
+  source: TileSource;
+  quad: Quad;
+  pageNumber: number;
+  screenScale: number;
 }
 
 /**
@@ -1374,6 +1388,8 @@ export class Viewer {
    * place to forget nothing.
    */
   private placing: ((placed: Placed | null) => void) | null = null;
+  /** Who is waiting for {@link armRegion}'s rectangle; settled as `placing` is. */
+  private regioning: ((region: Region | null) => void) | null = null;
   private get tool(): ArmedTool {
     return this.current;
   }
@@ -1382,6 +1398,11 @@ export class Viewer {
     if (next.kind !== "place" && this.placing) {
       const waiting = this.placing;
       this.placing = null;
+      waiting(null);
+    }
+    if (next.kind !== "region" && this.regioning) {
+      const waiting = this.regioning;
+      this.regioning = null;
       waiting(null);
     }
   }
@@ -1890,7 +1911,9 @@ export class Viewer {
     // no equivalent of ink's several strokes.
     this.cropDrag = new PointerDrag(root, {
       begin: (at: DragPoint) => {
-        if (this.tool.kind !== "crop" && this.tool.kind !== "redact" && this.tool.kind !== "place") return false;
+        if (this.tool.kind !== "crop" && this.tool.kind !== "redact" && this.tool.kind !== "place" && this.tool.kind !== "region") {
+          return false;
+        }
         const { page, x, y } = this.pageAndPoint(at);
         this.cropDrawing = { slot: page, from: { x, y }, to: { x, y } };
         this.wake();
@@ -1915,7 +1938,7 @@ export class Viewer {
           // Cancelled. The tool goes with it, because Escape means "stop" and
           // `cancelDraw` has already cleared it --- this is the browser's own
           // `pointercancel` arriving by the same door.
-          if (this.tool.kind === "crop" || this.tool.kind === "redact" || this.tool.kind === "place") {
+          if (this.tool.kind === "crop" || this.tool.kind === "redact" || this.tool.kind === "place" || this.tool.kind === "region") {
             this.tool = NO_TOOL;
           }
           this.showCursor();
@@ -1946,9 +1969,14 @@ export class Viewer {
         // still finds with `null`, which is the cancel, and this is the commit.
         const placing = this.placing;
         this.placing = null;
+        // The region's waiter, and what its tile is rendered from, read
+        // before the tool goes for the same reason.
+        const regioning = this.regioning;
+        this.regioning = null;
+        const source = regioning ? this.scroller.tileSource(live.slot) : undefined;
         // The redaction tool is not in this list: it stays armed for the next
         // region, and `armRedact` says why.
-        if (this.tool.kind === "crop" || this.tool.kind === "place") {
+        if (this.tool.kind === "crop" || this.tool.kind === "place" || this.tool.kind === "region") {
           this.tool = NO_TOOL;
         }
         this.showCursor();
@@ -1956,6 +1984,17 @@ export class Viewer {
         // there: `onCropped`'s caller turns it into a crop box, which needs the
         // page's own `/Rotate` and a further turn; `onRedacted`'s does not,
         // because the model holds a redaction in exactly this space.
+        if (regioning) {
+          // In the laid-out space, which is the tile's: no turn or crop to
+          // undo, because the worker renders the page as it is laid out.
+          regioning(source ? {
+            source,
+            quad,
+            pageNumber: live.slot + 1,
+            screenScale: this.zoom * (window.devicePixelRatio || 1),
+          } : null);
+          return;
+        }
         const rect = this.fileRectOn(live.slot, quad);
         if (placing) placing({ page: id, rect });
         else if (marking) this.opts.onRedacted?.(id, rect);
@@ -2531,6 +2570,8 @@ export class Viewer {
           ? "crop"
           : this.tool.kind === "place"
             ? "place"
+            : this.tool.kind === "region"
+            ? "region"
             : this.drawnStrokes === null
             ? this.drawArmed
             : null,
@@ -3234,6 +3275,9 @@ export class Viewer {
     void this.adoptCrops(after);
 
     if (before.sameOrder(after)) {
+      // The crops, which a crop changes without moving a page; the scroller
+      // renders under them.
+      this.scroller.adoptViews(views);
       // Every slot, not the ones that differ: `setPageTurns` returns early for a
       // page whose turn has not moved, so the comparison it would take to avoid
       // the call is the comparison it already does.
@@ -5309,6 +5353,33 @@ export class Viewer {
     });
   }
 
+  /**
+   * Arms a region to copy or save as a picture: the next drag on a page is the
+   * region, and the promise answers it, with what its tile is rendered from.
+   *
+   * The crop's gesture and preview, the outside of the rectangle shaded: what
+   * stays in the picture is what is lit. One-shot, and answers `null` when
+   * anything else takes the tool, as {@link armPlacement} does; `null` too for
+   * a page tpdf made, which no worker renders.
+   */
+  armRegion(): Promise<Region | null> {
+    if (this.markNote.openId !== null) this.closeMark();
+    if (this.popup.openId !== null) this.closeComment();
+    this.inking = null;
+    this.tool = NO_TOOL;
+    return new Promise((resolve) => {
+      this.tool = { kind: "region" };
+      this.regioning = resolve;
+      this.showCursor();
+      this.wake();
+    });
+  }
+
+  /** Whether a region to copy or save is armed. For the harness. */
+  get regionArmed(): boolean {
+    return this.tool.kind === "region";
+  }
+
   /** Whether a signature placement is armed. For the status line and the harness. */
   get placeArmed(): boolean {
     return this.tool.kind === "place";
@@ -5709,7 +5780,8 @@ export class Viewer {
         : this.tool.kind === "draw" ||
           this.tool.kind === "crop" ||
           this.tool.kind === "redact" ||
-          this.tool.kind === "place"
+          this.tool.kind === "place" ||
+          this.tool.kind === "region"
         ? "crosshair"
         : this.overLink
           ? "pointer"

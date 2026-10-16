@@ -3332,6 +3332,28 @@ RGB and a separate alpha mask, deflated. No picture file reaches the saved docum
 **Not covered.** As with the signature image, these limits bound the decoded size and not
 every allocation inside a decoder; the worker's own resource limits are what bound those.
 
+#### T6.42 — A region of a page as a picture, added 2026-10-16
+
+*Copy a region as a picture* and *Save a region as a picture* hand part of a page out as a
+PNG. The region is one tile, rendered by a worker as every tile is.
+
+- **The copy is the webview's.** It fetches the tile as a PNG over the `tile` scheme, which
+  it can do for any page of an open document already, and writes it to the clipboard with
+  `ClipboardItem`. Nothing new crosses into the app process. A page that can run it can put
+  a picture of an open document on the clipboard, which the reader's own ⌘C on selected
+  text already allows for the words.
+- **`region_save` writes one PNG to a path the webview names.** It takes the region as a
+  tile's path and query, bounded by the `tile` scheme's own parser (`protocol::parse_spec`:
+  at most the 16 MiB tile mapping, a scale of at most 256), has a worker render and encode
+  it, and writes the worker's bytes, never bytes the webview sent (`region::write_png`). It
+  refuses a name that does not end in `.png` and bytes that do not start with the PNG
+  signature, and writes beside the file first and renames over it. The path is the
+  webview's to name, which is the authority *Save a copy* already gives it; what this adds
+  is a file whose contents are a rendering of a page the reader opened.
+
+**Not covered.** A PNG written over an existing file replaces it after the save panel has
+asked; the command does not ask again, as *Save a copy* does not.
+
 ### T9 — The updater
 
 **The threat.** The updater is the only code path in tpdf that fetches bytes and then

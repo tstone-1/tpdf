@@ -167,6 +167,7 @@ PER_WINDOW: dict[str, str] = {
     "menuInstalled": "whether there is a native menu bar",
     "menuPushed": "the enablement last pushed to the menu bar",
     "queuedPictures": "what a checks build answers the next open panel with",
+    "lastRegion": "the last region a checks build copied or saved, read by the mark check",
 }
 
 

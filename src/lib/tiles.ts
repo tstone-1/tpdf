@@ -131,6 +131,14 @@ export function resetTileOrigin(): void {
  * dependent decimal formatting can creep in.
  */
 export function tileUrl(req: TileRequest): string {
+  return `${tileOrigin()}${tileSpec(req)}`;
+}
+
+/**
+ * A tile's path and query without the origin: what `region_save` takes, so a
+ * region saved as a picture is parsed and bounded by the scheme's own parser.
+ */
+export function tileSpec(req: TileRequest): string {
   const scale = Math.round(req.scale * 1000);
   const path = [
     req.doc,
@@ -153,8 +161,11 @@ export function tileUrl(req: TileRequest): string {
   const crop = req.crop
     ? `&cl=${req.crop[0]}&cb=${req.crop[1]}&cr=${req.crop[2]}&ct=${req.crop[3]}`
     : "";
-  return `${tileOrigin()}${path}?fmt=${req.format}${rid}${turns}${invert}${crop}`;
+  return `${path}?fmt=${req.format}${rid}${turns}${invert}${crop}`;
 }
+
+/** What a tile of a page is rendered from, apart from where and how large. */
+export type TileSource = Pick<TileRequest, "doc" | "page" | "turns" | "invert" | "crop">;
 
 let lastRequestId = 0;
 
@@ -238,6 +249,19 @@ export async function fetchTile(req: TileRequest): Promise<TileResult | null> {
     transferMs: t1 - t0,
     decodeMs: t2 - t1,
   };
+}
+
+/**
+ * Fetches one tile as a PNG file's bytes, never withdrawn: a region copied as a
+ * picture. Refused as {@link fetchTile} refuses.
+ */
+export async function fetchTilePng(req: TileRequest): Promise<Blob> {
+  const response = await fetch(tileUrl({ ...req, format: "png", rid: 0 }));
+  if (response.status === 410) throw new DocumentGone(await response.text());
+  if (!response.ok || response.status === 204) {
+    throw new Error(`tile ${req.page}@${req.x},${req.y}: ${await response.text()}`);
+  }
+  return new Blob([await response.arrayBuffer()], { type: "image/png" });
 }
 
 /**

@@ -277,6 +277,9 @@ objc2-app-kit = { version = "0.3", features = [
     # `noteNewRecentDocumentURL:`, which fills *File > Open Recent* and the Dock
     # icon's Recent Documents. See `recentdocs.rs`.
     "NSDocumentController",
+    # The general pasteboard, which *Copy a region as a picture* writes a PNG
+    # to (`region_copy`). A feature on a crate already here; no package.
+    "NSPasteboard",
 ] }
 objc2-pdf-kit = { version = "0.3", features = [
     "PDFDocument",

@@ -1040,3 +1040,37 @@ ROWS += [
         '  } else if (matches("edit.pastePicture", event) && !inTextField(event)) {',
         "sends the paste on Cmd-V in a text field and out of one, with or without a document"),
 ]
+
+# --- a region of a page as a picture, 2026-10-16 ---------------------------------------
+# The window half (the macOS pasteboard write, the crop reaching a tile in the
+# application) is proved by `mark_check.py` on a Mac, which no row here can run.
+ROWS += [
+    Mutation("region: copied under the floor", "src/lib/regionshot.ts",
+        "  const wanted = Math.floor(Math.min(Math.max(screenScale, REGION_FLOOR), MAX_SCALE) * 1000);",
+        "  const wanted = Math.floor(Math.min(screenScale, MAX_SCALE) * 1000);",
+        "never goes under the floor, so a region from a page zoomed out stays readable"),
+    Mutation("region: past the tile mapping", "src/lib/regionshot.ts",
+        "  return rect.width * rect.height <= REGION_PIXELS && rect.width <= MAX_SIDE",
+        "  return rect.width <= MAX_SIDE",
+        "shrinks a region past the tile mapping to the largest scale that fits"),
+    Mutation("region: left under the largest scale that fits", "src/lib/regionshot.ts",
+        "  while (at < wanted && fits(pixelsOf(quad, (at + 1) / 1000))) at++;\n",
+        "",
+        "steps back up when the shrink lands under the largest scale that fits"),
+    Mutation("region: the scale not rounded to what the wire carries", "src/lib/regionshot.ts",
+        "  const scale = at / 1000;",
+        "  const scale = at / 1000 + (screenScale % 0.001);",
+        "rounds the scale down to the thousandths the wire carries, and works the pixels out from that"),
+    Mutation("region: rendered without the page's crop", "src/lib/scroller.ts",
+        "      crop: this.cropOf(slot),",
+        "      crop: undefined,",
+        "carries the page's crop, which the tile is rendered under, and keeps the region in the laid-out space"),
+    Mutation("crop: never reaches the scroller when the order stays", "src/lib/viewer.ts",
+        "      this.scroller.adoptViews(views);\n",
+        "",
+        "carries the page's crop, which the tile is rendered under, and keeps the region in the laid-out space"),
+    Mutation("region: a waiter left hanging when the tool goes", "src/lib/viewer.ts",
+        "      this.regioning = null;\n      waiting(null);",
+        "      this.regioning = null;\n      void waiting;",
+        "keeps waiting through a click, and answers nothing for Escape or another tool"),
+]

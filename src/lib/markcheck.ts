@@ -47,6 +47,8 @@
  */
 
 import { call } from "./ipc";
+import { readPicture } from "./picture";
+import { tileUrl, type TileRequest } from "./tiles";
 
 import { pause, Report, settle as settleFor } from "./checkreport";
 import type { MarkView, PageView } from "./pages";
@@ -110,6 +112,31 @@ export interface MarkCheckHost {
   held: () => readonly string[];
   /** The message the window shows, if any: what a refused paste said. */
   said: () => string | null;
+  /** The tile the last region copied or saved was rendered as. */
+  lastRegion: () => TileRequest | null;
+  /** Queues the path the next save panel answers with, as the panel would. */
+  answerSave: (path: string) => void;
+}
+
+/**
+ * The pixels a region's tile holds, rendered again as raw RGBA: what a copied
+ * or saved region must come back as.
+ */
+async function rawTile(request: TileRequest): Promise<Uint8Array> {
+  const response = await fetch(tileUrl({ ...request, format: "raw", rid: 0 }));
+  if (!response.ok) throw new Error(await response.text());
+  return new Uint8Array(await response.arrayBuffer());
+}
+
+/** The largest and the mean difference between two runs of bytes of one length. */
+function difference(a: Uint8Array, b: Uint8Array): { max: number; mean: number } {
+  let max = 0, sum = 0;
+  for (let at = 0; at < a.length; at++) {
+    const delta = Math.abs((a[at] ?? 0) - (b[at] ?? 0));
+    sum += delta;
+    if (delta > max) max = delta;
+  }
+  return { max, mean: a.length ? sum / a.length : 0 };
 }
 
 /**
@@ -622,6 +649,98 @@ async function run(host: MarkCheckHost): Promise<void> {
       const pasted = await settle(() => field.value === "pasted by Cmd-V");
       check("and Cmd-V in a text field pastes text", pasted, `the field holds ${JSON.stringify(field.value)}`);
       field.remove();
+    }
+
+    // --- A region as a picture ---------------------------------------------
+    //
+    // After the clipboard stage, whose picture the copy replaces. Under the
+    // arrow, on the page every stage above drew on. What reaches the clipboard
+    // is read back by pasting it, on macOS where the paste is driven; what
+    // reaches a file is read back by a worker's decoder, everywhere.
+    const region = { x: low.x, y: low.y + 70 };
+    const dragRegion = () => drag(root, region, { x: region.x + 90, y: region.y + 50 });
+    const sized = (said: string | null, request: TileRequest | null) =>
+      request !== null && said?.includes(`${request.width} by ${request.height} pixels`) === true;
+    const copyArmed = host.run("edit.copyRegionAsPicture") && viewer.regionArmed;
+    check("the copy-region command arms a drag", copyArmed, `armed: ${viewer.regionArmed}`);
+    if (copyArmed) dragRegion();
+    const copiedSaid = await settle(() => host.said()?.startsWith("Copied the region") === true);
+    const copied = host.lastRegion();
+    check(
+      "a region dragged out is copied, and the window says its size",
+      copiedSaid && sized(host.said(), copied),
+      `said: ${host.said()}; tile ${copied ? `${copied.width}x${copied.height} at ${copied.scale}` : "none"}`,
+    );
+    if (!isMac() || !copied || !copiedSaid) {
+      report.skip("and it pastes back as a picture of the region's pixels",
+        !isMac() ? "macOS only: elsewhere the web view pastes on Ctrl+V" : "nothing was copied");
+    } else {
+      const armed = host.run("edit.pastePicture") && (await settle(() => viewer.drawArmed === "picture"));
+      before = new Set(host.marks().map((mark) => mark.id));
+      const at = { x: low.x + 260, y: low.y - 200 };
+      if (armed) drag(root, at, { x: at.x + 80, y: at.y + 40 });
+      await settle(() => added(before, host.marks()) !== null);
+      const back = added(before, host.marks());
+      const got = back ? await host.picturePixels(back.id).catch(() => new Uint8Array()) : new Uint8Array();
+      const want = await rawTile(copied).catch(() => new Uint8Array());
+      const off = got.length === want.length ? difference(got, want) : null;
+      check(
+        "and it pastes back as a picture of the region's pixels",
+        back?.picture?.width === copied.width && back.picture.height === copied.height && off !== null && off.mean <= 2,
+        back ? `${JSON.stringify(back.picture)}; ${off ? `largest difference ${off.max}, mean ${off.mean.toFixed(3)}` : `${got.length} bytes against ${want.length}`}`
+          : `armed: ${viewer.drawArmed}; said: ${host.said()}`,
+      );
+    }
+
+    const scratch = await call("viewercheck_scratch");
+    if (scratch === null) {
+      report.skip("a region saved as a picture is a PNG of the region's pixels", "no scratch path to save to");
+    } else {
+      const file = scratch.replace(/(\.[^.\\/]*)?$/, "-region.png");
+      host.answerSave(file);
+      const saveArmed = host.run("file.saveRegionAsPicture") && viewer.regionArmed;
+      if (saveArmed) dragRegion();
+      const savedSaid = await settle(() => host.said()?.startsWith("Saved the region") === true);
+      const saved = host.lastRegion();
+      const read = savedSaid ? await call("picture_open", { path: file }).then(readPicture).catch((e: unknown) => String(e)) : null;
+      const want = saved ? await rawTile(saved).catch(() => new Uint8Array()) : new Uint8Array();
+      const same = typeof read === "object" && read !== null && saved !== null
+        && read.width === saved.width && read.height === saved.height
+        && read.rgba.length === want.length && read.rgba.every((value, at) => value === want[at]);
+      check(
+        "a region saved as a picture is a PNG of the region's pixels",
+        savedSaid && sized(host.said(), saved) && same,
+        typeof read === "object" && read !== null ? `${read.width}x${read.height} read back from ${file}; said: ${host.said()}`
+          : `armed: ${saveArmed}; said: ${host.said()}; read: ${read}`,
+      );
+    }
+
+    // --- A crop the reader drew reaches the renderer --------------------------
+    //
+    // A region is a tile, so the crop it carries is the crop every tile of the
+    // page is rendered under. A crop keeps the page order, and until 2026-10-16
+    // the viewer passed only a new order to the scroller: the crop never
+    // reached a tile request.
+    {
+      const slot = viewer.position.page;
+      const cropArmed = host.run("edit.cropToDrag");
+      const from = { x: low.x - 40, y: low.y - 300 };
+      if (cropArmed) drag(root, from, { x: from.x + 380, y: from.y + 460 });
+      const cropped = await settle(() => host.pages()[slot]?.crop !== undefined);
+      const crop = host.pages()[slot]?.crop;
+      await settle(() => viewer.idle);
+      const prior = host.lastRegion();
+      const armed = host.run("edit.copyRegionAsPicture") && viewer.regionArmed;
+      const middle = { x: from.x + 150, y: from.y + 200 };
+      if (armed) drag(root, middle, { x: middle.x + 60, y: middle.y + 40 });
+      await settle(() => host.lastRegion() !== prior);
+      const carried = host.lastRegion()?.crop;
+      check(
+        "a page cropped by a drag is rendered under its crop",
+        cropped && crop !== undefined && JSON.stringify(carried) === JSON.stringify(crop),
+        `the model's crop ${JSON.stringify(crop)}; the tile's ${JSON.stringify(carried)}`,
+      );
+      if (cropped) host.run("edit.undo");
     }
   }
 }

@@ -95,7 +95,7 @@ function harness(
   let formEditing = update.formEditing ?? false;
   let diskMode: DiskChangeMode = update.disk ?? "ask";
   const actions: AppActions = {
-    editText: () => { fired.push("editText"); }, signature: () => { fired.push("signature"); }, picture: () => { fired.push("picture"); }, pastePicture: () => { fired.push("pastePicture"); }, pasteKey: () => { fired.push("pasteKey"); return true; },
+    editText: () => { fired.push("editText"); }, signature: () => { fired.push("signature"); }, picture: () => { fired.push("picture"); }, pastePicture: () => { fired.push("pastePicture"); }, pasteKey: () => { fired.push("pasteKey"); return true; }, copyRegion: () => { fired.push("copyRegion"); }, saveRegion: () => { fired.push("saveRegion"); },
     fillForm: () => { fired.push("fillForm"); },
     // Not a real viewer: the guards ask whether it is null and, since
     // 2026-08-23, whether the history has anywhere to go. A cast is honest
@@ -1886,7 +1886,7 @@ describe("the window shortcuts for editing", () => {
     // and the point of this block is the one the palette does not cover.
     const fired: string[] = [];
     const actions: AppActions = {
-    editText: () => { fired.push("editText"); }, signature: () => { fired.push("signature"); }, picture: () => { fired.push("picture"); }, pastePicture: () => { fired.push("pastePicture"); }, pasteKey: () => { fired.push("pasteKey"); return true; },
+    editText: () => { fired.push("editText"); }, signature: () => { fired.push("signature"); }, picture: () => { fired.push("picture"); }, pastePicture: () => { fired.push("pastePicture"); }, pasteKey: () => { fired.push("pasteKey"); return true; }, copyRegion: () => { fired.push("copyRegion"); }, saveRegion: () => { fired.push("saveRegion"); },
     fillForm: () => { fired.push("fillForm"); },
       // Two real methods rather than `{}`, because ⌘A and ⌘C are the only
       // window chords that reach *through* `viewer()` instead of an action of

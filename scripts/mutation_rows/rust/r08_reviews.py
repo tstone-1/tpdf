@@ -2068,3 +2068,35 @@ ROWS += [
         "signature_pixels_alpha_and_placement_survive_append_and_rewrite",
     ),
 ]
+
+# --- a region of a page saved as a picture, 2026-10-16 --------------------------------
+ROWS += [
+    Mutation(
+        "region: a name that is not a PNG is written",
+        "src/region.rs",
+        "        .is_some_and(|ext| ext.eq_ignore_ascii_case(\"png\"));",
+        "        .is_some_and(|ext| ext.eq_ignore_ascii_case(\"png\"))\n        || true;",
+        "refuses_a_name_that_is_not_a_png_and_writes_nothing",
+    ),
+    Mutation(
+        "region: bytes that are not a PNG are written",
+        "src/region.rs",
+        "    if !png.starts_with(&SIGNATURE) {",
+        "    if png.is_empty() {",
+        "refuses_bytes_that_are_not_a_png_and_keeps_the_old_file",
+    ),
+    Mutation(
+        "region: a failed write leaves its staged file",
+        "src/region.rs",
+        "        let _ = std::fs::remove_file(&staged);\n",
+        "",
+        "a_failed_write_removes_its_staged_file",
+    ),
+    Mutation(
+        "region: a spec's query dropped",
+        "src/protocol.rs",
+        "        Some((path, query)) => (path, Some(query)),",
+        "        Some((path, _)) => (path, None),",
+        "a_spec_is_a_path_and_its_query_without_the_origin",
+    ),
+]

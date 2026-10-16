@@ -1967,13 +1967,14 @@ ROWS += [
         # removed is `drawnStrokes`, which is what decides ink's own line.
         # Re-aimed 2026-09-06 when the five tool flags became one `tool` field.
         # Re-aimed 2026-09-27 when the signature placement joined the crop's drag.
-        '          : this.tool.kind === "place"\n'
-        '            ? "place"\n'
+        # Re-aimed 2026-10-16 when the region to copy or save joined the crop's drag.
+        '          : this.tool.kind === "region"\n'
+        '            ? "region"\n'
         "            : this.drawnStrokes === null\n"
         "            ? this.drawArmed\n"
         "            : null,",
-        '          : this.tool.kind === "place"\n'
-        '            ? "place"\n'
+        '          : this.tool.kind === "region"\n'
+        '            ? "region"\n'
         "            : this.drawArmed,",
         "names a drawing in one field, not two",
     ),
@@ -2096,8 +2097,9 @@ ROWS += [
         "src/lib/viewer.ts",
         # Re-aimed 2026-09-06 when the five tool flags became one `tool` field.
         # Re-aimed 2026-09-27 when the signature placement joined the crop's drag.
-        '        if (this.tool.kind !== "crop" && this.tool.kind !== "redact" && this.tool.kind !== "place") return false;',
-        "        if (false) return false;",
+        # Re-aimed 2026-10-16 when the region to copy or save joined the crop's drag.
+        '        if (this.tool.kind !== "crop" && this.tool.kind !== "redact" && this.tool.kind !== "place" && this.tool.kind !== "region") {',
+        "        if (false) {",
         "reports nothing until the tool is armed",
     ),
     Mutation(
@@ -2123,10 +2125,11 @@ ROWS += [
         # Re-aimed 2026-09-06 when the five tool flags became one `tool` field.
         # Re-aimed 2026-09-27 when the signature placement joined the crop's drag.
         # Re-aimed 2026-10-07 when the redaction tool left this line to stay armed.
-        '        if (this.tool.kind === "crop" || this.tool.kind === "place") {\n'
+        # Re-aimed 2026-10-16 when the region to copy or save joined the crop's drag.
+        '        if (this.tool.kind === "crop" || this.tool.kind === "place" || this.tool.kind === "region") {\n'
         "          this.tool = NO_TOOL;\n"
         "        }",
-        '        if (this.tool.kind === "crop" || this.tool.kind === "place") {\n'
+        '        if (this.tool.kind === "crop" || this.tool.kind === "place" || this.tool.kind === "region") {\n'
         '          this.tool = { kind: "crop" };\n'
         "        }",
         "is spent by one rectangle",

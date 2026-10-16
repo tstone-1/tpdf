@@ -166,6 +166,9 @@ export const SELECTION_MENU: Entry[] = [
   // were on theirs. Left out until a mark has been copied.
   "edit.pasteMark",
   "edit.copy",
+  // The page as a picture, beside the copy of its words: a right-click is
+  // where a reader looking at a figure is already pointing.
+  "edit.copyRegionAsPicture",
   "edit.highlightSelection",
   "edit.underlineSelection",
   "edit.strikeoutSelection",

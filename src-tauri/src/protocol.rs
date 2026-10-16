@@ -95,6 +95,17 @@ fn withdrawal(path: &str) -> Option<&str> {
     (first == "cancel").then_some(rest)
 }
 
+/// A tile named as the scheme names one, without the origin:
+/// `<doc>/<page>/<scale>/<x>/<y>/<w>/<h>?<query>`. What `region_save` takes, so
+/// a region saved as a picture is bounded by this parser as a fetched one is.
+pub(crate) fn parse_spec(spec: &str) -> Result<TileRequest, String> {
+    let (path, query) = match spec.split_once('?') {
+        Some((path, query)) => (path, Some(query)),
+        None => (spec, None),
+    };
+    parse(path, query)
+}
+
 fn parse(path: &str, query: Option<&str>) -> Result<TileRequest, String> {
     let segments: Vec<&str> = path.trim_start_matches('/').split('/').collect();
 
@@ -372,6 +383,23 @@ mod tests {
         assert_eq!(req.y, 96);
         assert_eq!(req.width, 512);
         assert_eq!(req.height, 256);
+    }
+
+    #[test]
+    fn a_spec_is_a_path_and_its_query_without_the_origin() {
+        let req = parse_spec("3/17/1500/64/96/512/256?fmt=png&turns=1&invert=1").expect("parses");
+        assert_eq!(
+            (req.doc, req.page, req.x, req.y, req.width, req.height),
+            (3, 17, 64, 96, 512, 256)
+        );
+        assert_eq!(
+            (req.format, req.turns, req.invert),
+            (TileFormat::Png, 1, true)
+        );
+        let bare = parse_spec("3/17/1500/64/96/512/256").expect("parses");
+        assert_eq!((bare.format, bare.turns), (TileFormat::Raw, 0));
+        // The same bounds as a fetched tile: past the mapping is refused.
+        assert!(parse_spec("0/0/1000/0/0/4096/4096?fmt=png").is_err());
     }
 
     #[test]

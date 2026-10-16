@@ -327,6 +327,7 @@ hop through the index.
 - A viewer built in a page area that is still hidden restores its place against nothing
 - A helper that reads the focused document by default is the same read as naming the variable
 - On macOS a web view pastes only on a Paste menu item's action, so ⌘V pasted nothing
+- A WKWebView probe's evaluateJavaScript runs as a user gesture, so it measured a clipboard write the app is refused
 
 ## Rust and macOS
 - A locked macOS session cannot be unlocked from a script, so it must be prevented
@@ -597,6 +598,7 @@ hop through the index.
 - A test that reads a component's source passes when the line is in a comment or cannot run
 - A change made after a locking signature has to be one that only the lock forbids, and two that looked right were not
 - A mutant the bundler removes as unused never runs, and the check it was aimed at passed
+- A crop keeps the page order, so a branch on whether the order moved never told the renderer
 ## Harnesses: running checks and reading what they print
 - A mutation harness needs the same control as the thing it is testing
 - A timeout that discards the transcript recreates the failure it was added to diagnose
@@ -26571,3 +26573,44 @@ Three more things the same probe measured, each of which looks like a route and 
 clipboard* call it. A synthetic keydown from a check reaches the same send, which is why
 `markcheck.ts` can drive ⌘V without the screen; it cannot show that a real key did nothing
 before, which is what the probe was for.
+
+### A WKWebView probe's evaluateJavaScript runs as a user gesture, so it measured a clipboard write the app is refused
+
+A probe on 2026-10-16 put a PNG on the pasteboard from a page in a bare WKWebView with
+`navigator.clipboard.write([new ClipboardItem(...)])`, in three cases: called with no user
+gesture, inside a keydown handler, and with the PNG arriving two seconds after the key. All
+three worked, also with the window not in front, and the first was read as "WebKit lets a
+page write a picture to the clipboard without a gesture".
+
+It does not. The "no gesture" case ran through `evaluateJavaScript`, which WebKit treats as
+a user gesture: run again with a fourth case, a write started by the page's own
+`setTimeout`, the timer's write was refused and the `evaluateJavaScript` one in the same run
+went through. In tpdf the same
+write, made at the end of the drag that chose a region, was refused in `mark_check.py`:
+"The request is not allowed by the user agent or the platform in the current context". That
+drag is dispatched by the check and is not a gesture either, so the refusal is what any
+synthetic event gets; whether a real drag would have been enough is not measured.
+
+*Copy a region as a picture* writes the pasteboard from Rust on macOS (`region_copy`), which
+needs no gesture, so the check drives what a reader gets. A probe of a gesture rule has to
+state how its script reached the page; `evaluateJavaScript` is the one route that answers
+the question for every page.
+
+### A crop keeps the page order, so a branch on whether the order moved never told the renderer
+
+*Crop page by dragging* worked in the model from 2026-08-18 and was laid out at the cropped
+size, and every tile of the page was still requested without the crop. `Viewer.setPages`
+passes the model's pages to the scroller only when the page order has moved
+(`before.sameOrder(after)`), because a new order throws every tile away; a crop moves no
+page, so the scroller kept the views it had, and `cropOf` answered the old crop on every
+tile request. The worker rendered the uncropped page into the cropped page's layout; how
+that looked on screen was not captured.
+
+No check could see it. `viewercrop.test.ts` asserted the viewer's own crop geometry, which
+was right; the window check excuses the crop commands as "two IPC replies the probe cannot
+wait for"; and the scroller's tests build a scroller with its pages already cropped. It was
+found by *Copy a region as a picture*, whose tile carries the crop the scroller holds: the
+mark check's stage "a page cropped by a drag is rendered under its crop" read the model's
+crop as `[154.49, 504.56, 352.82, 744.65]` and the tile's as `undefined` on both fixtures.
+`Scroller.adoptViews` now takes the pages on the same-order path. The question for any
+branch keyed on "did X move" is what changes without X moving.

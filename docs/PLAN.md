@@ -18332,6 +18332,26 @@ SumatraPDF makes these and tpdf does not:
   file the name claims to be. The worker extracts the bytes, bounded like every stream.
 - Commands: `edit.copyRegionAsPicture`, `file.saveRegionAsPicture`, `file.saveAttachment`.
 
+**Done 2026-10-16: a region as a picture** (`edit.copyRegionAsPicture`, also on the page's
+right-click menu, and `file.saveRegionAsPicture`). Both arm the crop's drag with the outside
+shaded (`Viewer.armRegion`), and the region is one tile, rendered by a worker as every tile is:
+the page as the file draws it, under the crop and turn on screen; marks not yet saved are not
+in it. The scale is the screen's, never under 2 pixels a point (144 an inch), and a region past
+the 16 MiB tile mapping is rendered at the largest scale in thousandths that fits
+(`regionshot.ts`). A chosen resolution was planned and is not built. The save names the region
+as a tile's path and query, bounded by the `tile` scheme's own parser (`region_save`), and the
+backend writes the worker's PNG beside the file and renames it over (`region.rs`). The copy is
+written by the backend on macOS (`region_copy`, `NSPasteboard`), because WebKit refuses a page's
+`ClipboardItem` outside a user gesture: refused in the window check, and in a WKWebView probe
+for a write started by the page's timer, where one started through `evaluateJavaScript` went
+through. Elsewhere the web view writes it; WebView2 and WebKitGTK are **not measured**.
+Evidence: `mark_check.py` on both fixtures copies a region and pastes it back as a picture with
+the region's size and a largest difference of 0 from the tile, saves one and reads the file
+back through a worker's decoder as the tile's exact pixels; with the pasteboard write skipped,
+only the paste-back fails. It also found that a crop drawn in the window never reached a tile
+request (`Scroller.adoptViews`, and the trap *A crop keeps the page order, so a branch on
+whether the order moved never told the renderer*): with the fix removed, only that stage fails.
+
 #### 7.7 Launching and integration
 
 - Launch options for the window: open at a page and a zoom (`tpdf-app file.pdf --page 12

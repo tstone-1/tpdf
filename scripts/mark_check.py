@@ -33,6 +33,7 @@ import argparse
 import os
 import subprocess
 import sys
+import tempfile
 from pathlib import Path
 
 import harness_launch
@@ -63,8 +64,16 @@ def launch(binary: str, pdf: str, timeout: float) -> tuple[int, str]:
     The launch and the transcript reader are `harness_launch.py`'s; what is left
     here is the one environment variable this check needs.
     """
-    env = dict(os.environ, TPDF_MARKCHECK="1")
-    done = run_app([binary, pdf], env=env, timeout=timeout)
+    # A scratch path for the region the check saves as a picture, removed
+    # with its directory after the run: the webview has no file system to put
+    # one in (`viewercheck_scratch`).
+    with tempfile.TemporaryDirectory(prefix="tpdf-markcheck-") as scratch:
+        env = dict(
+            os.environ,
+            TPDF_MARKCHECK="1",
+            TPDF_VIEWERCHECK_SCRATCH=str(Path(scratch) / "scratch.pdf"),
+        )
+        done = run_app([binary, pdf], env=env, timeout=timeout)
     return done.code, done.out
 
 
