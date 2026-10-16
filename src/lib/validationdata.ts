@@ -58,6 +58,7 @@ import {
   writeStampChoice,
   type StampChoice,
 } from "./signtimestamp";
+import { button, footer, option, paragraph, section } from "./dialogparts";
 
 /** The refusal for a document with edits nobody has saved. Mirrors `commands::validation::refuse_unsaved`. */
 export const UNSAVED =
@@ -170,52 +171,48 @@ export function askAuthority(
 ): Promise<string | null> {
   const previous = document.activeElement as HTMLElement | null;
   const dialog = document.createElement("dialog");
-  dialog.className = "validation-data-dialog";
+  dialog.className = "validation-data-dialog tpdf-dialog";
   dialog.setAttribute("aria-label", "Add long-term validation data");
-  dialog.style.cssText =
-    "max-width:560px;padding:22px;border:1px solid #8885;border-radius:12px;" +
-    "font:13px/1.55 system-ui,-apple-system,sans-serif;" +
-    "background:Canvas;color:CanvasText;box-shadow:0 15px 70px #0005";
   const heading = document.createElement("h2");
   heading.textContent = "Add long-term validation data";
-  const help = document.createElement("p");
-  help.textContent = HELP;
+  const help = paragraph("tpdf-dialog-intro", HELP);
   const remembered = readStampChoice(storage, AUTHORITY_KEY);
+  const authority = section("Timestamp authority");
   const list = document.createElement("div");
   list.setAttribute("role", "radiogroup");
   list.setAttribute("aria-label", "Timestamp authority");
-  list.style.cssText = "display:flex;flex-direction:column;gap:6px;margin:12px 0";
-  const option = (value: string, text: string) => {
+  list.className = "tpdf-dialog-stack";
+  const entry = (value: string, text: string) => {
     const radio = document.createElement("input");
     radio.type = "radio";
     radio.name = "validation-authority";
     radio.value = value;
     radio.checked = remembered.server === value;
-    const label = document.createElement("label");
-    label.append(radio, ` ${text}`);
-    list.append(label);
+    list.append(option(radio, text));
     return radio;
   };
   const radios = [
-    ...SERVERS.map((server) => option(server.name, `Timestamp from ${server.label}`)),
-    option("other", "Timestamp from another authority:"),
+    ...SERVERS.map((server) => entry(server.name, server.label)),
+    entry("other", "Another authority\u2026"),
   ];
   const otherUrl = document.createElement("input");
   otherUrl.type = "url";
   otherUrl.value = remembered.url;
   otherUrl.placeholder = "https://";
   otherUrl.setAttribute("aria-label", "Timestamp authority address");
+  // The address shows only while *another authority* is chosen. The alert
+  // stays outside it: it also says that no authority is chosen at all.
+  const syncOther = () => {
+    otherUrl.hidden = radios.find((radio) => radio.checked)?.value !== "other";
+  };
+  for (const radio of radios) radio.addEventListener("change", syncOther);
+  syncOther();
   const problem = document.createElement("p");
   problem.setAttribute("role", "alert");
-  list.append(otherUrl, problem);
-  const footer = document.createElement("div");
-  footer.style.cssText = "display:flex;gap:10px;justify-content:flex-end";
-  const cancel = document.createElement("button");
-  cancel.textContent = "Cancel";
-  const next = document.createElement("button");
-  next.textContent = "Add…";
-  footer.append(cancel, next);
-  dialog.append(heading, help, list, footer);
+  authority.append(list, otherUrl, problem);
+  const cancel = button("Cancel");
+  const next = button("Add…", true);
+  dialog.append(heading, help, authority, footer(cancel, next));
   document.body.append(dialog);
   return new Promise((resolve) => {
     let settled = false;

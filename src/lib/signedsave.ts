@@ -1,4 +1,5 @@
 import type { Properties } from "./properties";
+import { button, footer, paragraph } from "./dialogparts";
 
 export class SaveCancelled extends Error {}
 
@@ -35,16 +36,15 @@ export async function confirmSignatureSave(read: () => Promise<Properties>,
 export function askSignatureSave(message: string): Promise<boolean> {
   const previous = document.activeElement as HTMLElement | null;
   const dialog = document.createElement("dialog");
-  dialog.className = "signed-save-dialog";
+  // No primary button: the work here is the risky one, and Cancel is the default.
+  dialog.className = "signed-save-dialog tpdf-dialog";
   dialog.setAttribute("role", "alertdialog"); dialog.setAttribute("aria-label", "Digital signatures");
-  dialog.style.cssText = "max-width:480px;padding:22px;border:1px solid #8885;border-radius:12px;font:13px/1.55 system-ui,-apple-system,sans-serif;background:Canvas;color:CanvasText;box-shadow:0 15px 70px #0005";
   const heading = document.createElement("h2"); heading.textContent = "Digital signatures";
-  const text = document.createElement("p"); text.textContent = message; text.id = "tpdf-signed-save-message";
+  const text = paragraph("", message); text.id = "tpdf-signed-save-message";
   dialog.setAttribute("aria-describedby", text.id);
-  const footer = document.createElement("div"); footer.style.cssText = "display:flex;gap:10px;justify-content:flex-end";
-  const cancel = document.createElement("button"); cancel.textContent = "Cancel"; cancel.autofocus = true;
-  const save = document.createElement("button"); save.textContent = "Save anyway";
-  footer.append(cancel, save); dialog.append(heading, text, footer); document.body.append(dialog);
+  const cancel = button("Cancel"); cancel.autofocus = true;
+  const save = button("Save anyway");
+  dialog.append(heading, text, footer(cancel, save)); document.body.append(dialog);
   return new Promise((resolve) => {
     let settled = false;
     const finish = (accepted: boolean) => {

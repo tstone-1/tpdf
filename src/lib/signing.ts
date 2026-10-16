@@ -85,6 +85,7 @@ import {
   type StampChoice,
 } from "./signtimestamp";
 import { LOCK_ANSWERS, LOCK_NAME, LOCK_QUESTION, LOCK_UNANSWERED, lockOf } from "./signlock";
+import { button, footer as buttons, option, paragraph, section } from "./dialogparts";
 
 /** A certificate the chooser may offer. Mirrors `sign_cms::Choice`. */
 export interface Choice {
@@ -239,9 +240,15 @@ function day(expires: string): string {
   return expires.split(" ")[0] ?? expires;
 }
 
-/** One row of the chooser: who, from whom, until when, and how. */
-export function choiceLabel(choice: Choice): string {
-  return `${choice.subject} — issued by ${choice.issuer}, expires ${day(choice.expires)} (${choice.method})`;
+/**
+ * The smaller line under a certificate in the chooser: from whom, until when,
+ * and how. The subject is the line above it. A certificate that names itself
+ * as its issuer is called self-signed rather than having its name printed
+ * twice in a row.
+ */
+export function choiceDetail(choice: Choice): string {
+  const from = choice.issuer === choice.subject ? "Self-signed" : `Issued by ${choice.issuer}`;
+  return `${from}, expires ${day(choice.expires)} (${choice.method})`;
 }
 
 /**
@@ -270,21 +277,20 @@ export function nothingToChoose(choices: Choices, linux = isLinux()): string {
   return `${none} Found but not offered — ${reasons}.${WITHOUT_CERTIFICATE}`;
 }
 
+/** The chooser's line under its heading. */
+export const CHOOSER_INTRO = "The signed document is saved as a new file; the original is not changed.";
+
 /**
- * The chooser's first paragraph. Who asks for the PIN differs: on macOS and
- * Windows the system does and tpdf never sees it; on Linux there is no such
- * service, so tpdf asks in a window of its own and hands the answer to the card
- * or the certificate file (`pin_prompt.rs`).
+ * The line under the certificates: who asks for the PIN. On macOS and Windows
+ * the system does and tpdf never sees it; on Linux there is no such service,
+ * so tpdf asks in a window of its own and hands the answer to the card or the
+ * certificate file (`pin_prompt.rs`).
  */
-export function chooserHelp(linux = isLinux()): string {
-  const saved =
-    "Choose the certificate to sign with. The signed document is saved as a new file; " +
-    "the original is not changed. ";
+export function keyHint(linux = isLinux()): string {
   return linux
-    ? saved +
-        "tpdf asks for a smart card's PIN or a certificate file's password in a window of its own, " +
+    ? "tpdf asks for a smart card's PIN or a certificate file's password in a window of its own, " +
         "passes it to the card or the file, and keeps no copy."
-    : saved + "Your operating system may ask for access to the key or for a PIN — tpdf never sees it.";
+    : "Your operating system may ask for access to the key or for a PIN; tpdf never sees it.";
 }
 
 /** A verdict in a few words, for a list of signatures. */
@@ -521,38 +527,41 @@ export function askIdentity(
 ): Promise<Chosen | null> {
   const previous = document.activeElement as HTMLElement | null;
   const dialog = document.createElement("dialog");
-  dialog.className = "sign-identity-dialog";
+  // Its look is `dialog.css`: four sections, each a small label over its
+  // controls, every explanation a smaller grey line under what it explains.
+  // Until 2026-10-16 each option was one sentence, "option — explanation",
+  // all at one size and colour, and the reader saw a wall of wrapped text.
+  dialog.className = "sign-identity-dialog tpdf-dialog";
   dialog.setAttribute("aria-label", "Sign document");
-  dialog.style.cssText =
-    "max-width:560px;padding:22px;border:1px solid #8885;border-radius:12px;" +
-    "font:13px/1.55 system-ui,-apple-system,sans-serif;" +
-    "background:Canvas;color:CanvasText;box-shadow:0 15px 70px #0005";
   const heading = document.createElement("h2");
   heading.textContent = "Sign document";
-  const help = document.createElement("p");
-  help.textContent = chooserHelp();
+  const intro = paragraph("tpdf-dialog-intro", CHOOSER_INTRO);
+
+  const certificates = section("Certificate");
   const list = document.createElement("div");
   list.setAttribute("role", "radiogroup");
-  list.style.cssText = "display:flex;flex-direction:column;gap:6px;margin:12px 0";
+  list.setAttribute("aria-label", "Certificate");
+  list.className = "tpdf-dialog-stack";
   const radios = choices.map((choice, at) => {
     const radio = document.createElement("input");
     radio.type = "radio";
     radio.name = "sign-identity";
     radio.value = choice.id;
     radio.checked = at === 0;
-    const label = document.createElement("label");
-    label.append(radio, ` ${choiceLabel(choice)}`);
-    list.append(label);
+    list.append(option(radio, choice.subject, choiceDetail(choice)));
     return radio;
   });
+  certificates.append(list, paragraph("tpdf-dialog-hint", keyHint()));
+
   // The appearance: visible first and selected. Until 2026-10-13 invisible
   // was, as what signing did before there was a choice; a reader who signs
   // expects to see the signature on the page, and one who does not is one
   // click from the other.
+  const appearanceSection = section("Appearance");
   const shows = document.createElement("div");
   shows.setAttribute("role", "radiogroup");
   shows.setAttribute("aria-label", "Appearance");
-  shows.style.cssText = "display:flex;flex-direction:column;gap:6px;margin:12px 0";
+  shows.className = "tpdf-segmented";
   const appearance = (value: string, text: string, checked: boolean) => {
     const radio = document.createElement("input");
     radio.type = "radio";
@@ -560,49 +569,57 @@ export function askIdentity(
     radio.value = value;
     radio.checked = checked;
     const label = document.createElement("label");
-    label.append(radio, ` ${text}`);
+    const words = document.createElement("span");
+    words.textContent = text;
+    label.append(radio, words);
     shows.append(label);
     return radio;
   };
+  const visible = appearance("visible", "Visible", true);
+  const invisible = appearance("invisible", "Invisible", false);
   // In a signature field the field is where it shows and nothing is dragged.
-  const visible = appearance(
-    "visible",
-    field === null
-      ? "Visible — choose what it shows, with a preview, then drag a rectangle on a page"
-      : `Visible — choose what it shows, with a preview; it is drawn in the field ${field}`,
-    true,
-  );
-  appearance("invisible", "Invisible — the signature is in the file, not on a page", false);
+  const appearanceHint = paragraph("tpdf-dialog-hint", "");
+  const syncAppearance = () => {
+    appearanceHint.textContent = invisible.checked
+      ? "The signature is in the file, not on a page."
+      : field === null
+        ? "You choose what it shows, with a preview, then drag a rectangle on a page."
+        : `You choose what it shows, with a preview; it is drawn in the field ${field}.`;
+  };
+  for (const radio of [visible, invisible]) radio.addEventListener("change", syncAppearance);
+  syncAppearance();
+  appearanceSection.append(shows, appearanceHint);
+
   // The timestamp: as last chosen. A reader who has never chosen sees one
   // authority selected, by name, under a note saying what is sent to it;
-  // nothing is asked of it until they press Sign.
+  // nothing is asked of it until they press Sign. A list rather than a radio
+  // per authority, which was five rows for one setting.
   const remembered = readStampChoice(storage, undefined, preselectedStamp);
-  const stamps = document.createElement("div");
-  stamps.setAttribute("role", "radiogroup");
-  stamps.setAttribute("aria-label", "Timestamp");
-  stamps.style.cssText = "display:flex;flex-direction:column;gap:6px;margin:12px 0";
-  const stampNote = document.createElement("p");
-  stampNote.textContent =
-    "A timestamp authority can confirm when the signature was made. tpdf sends it a " +
-    "hash of the new signature — nothing of the document — and writes nothing if " +
-    "no timestamp that checks out comes back.";
-  stamps.append(stampNote);
-  const stamp = (value: string, text: string) => {
-    const radio = document.createElement("input");
-    radio.type = "radio";
-    radio.name = "sign-timestamp";
-    radio.value = value;
-    radio.checked = remembered.server === value;
-    const label = document.createElement("label");
-    label.append(radio, ` ${text}`);
-    stamps.append(label);
-    return radio;
+  const stamps = section("Timestamp");
+  const stampList = document.createElement("select");
+  stampList.name = "sign-timestamp";
+  stampList.setAttribute("aria-label", "Timestamp");
+  const entry = (value: string, text: string) => {
+    const one = document.createElement("option");
+    one.value = value;
+    one.textContent = text;
+    stampList.append(one);
   };
-  const stampRadios = [
-    stamp("none", "No timestamp — the time is your computer's clock"),
-    ...SERVERS.map((server) => stamp(server.name, `Timestamp from ${server.label}`)),
-    stamp("other", "Timestamp from another authority:"),
-  ];
+  entry("none", "No timestamp, the time is your computer's clock");
+  for (const server of SERVERS) entry(server.name, server.label);
+  entry("other", "Another authority\u2026");
+  // After the entries exist: a list's value names one of its entries.
+  stampList.value = remembered.server;
+  const stampNote = paragraph(
+    "tpdf-dialog-hint",
+    "A timestamp authority confirms when the signature was made. tpdf sends it a hash " +
+      "of the new signature, nothing of the document, and writes nothing if no timestamp " +
+      "that checks out comes back.",
+  );
+  // The address, shown only while *another authority* is chosen, with the
+  // line that says what is wrong with it.
+  const other = document.createElement("div");
+  other.className = "tpdf-dialog-stack";
   const otherUrl = document.createElement("input");
   otherUrl.type = "url";
   otherUrl.value = remembered.url;
@@ -610,59 +627,48 @@ export function askIdentity(
   otherUrl.setAttribute("aria-label", "Timestamp authority address");
   const problem = document.createElement("p");
   problem.setAttribute("role", "alert");
-  stamps.append(otherUrl, problem);
+  other.append(otherUrl, problem);
   // Long-term data: a checkbox, ticked only as the reader last left it, and
   // only while an authority is chosen --- it rests on the timestamp.
   const longTerm = document.createElement("input");
   longTerm.type = "checkbox";
   longTerm.name = "sign-long-term";
   longTerm.checked = readLongTerm(storage);
-  const longTermLabel = document.createElement("label");
-  longTermLabel.append(
+  const longTermLabel = option(
     longTerm,
-    " Keep it verifiable after the certificates expire — tpdf also asks the " +
-      "certificate authorities whether the certificates are revoked, adds their " +
-      "answers to the document, and asks the timestamp authority once more for a " +
+    "Keep it verifiable after the certificates expire",
+    "tpdf also asks the certificate authorities whether the certificates are revoked, adds " +
+      "their answers to the document, and asks the timestamp authority once more for a " +
       "timestamp over the whole. Needs a timestamp.",
   );
-  stamps.append(longTermLabel);
-  const noneStamp = stampRadios[0];
-  const syncLongTerm = () => {
-    longTerm.disabled = noneStamp?.checked === true;
+  const syncStamp = () => {
+    longTerm.disabled = stampList.value === "none";
+    other.hidden = stampList.value !== "other";
   };
-  for (const radio of stampRadios) radio.addEventListener("change", syncLongTerm);
-  syncLongTerm();
+  stampList.addEventListener("change", syncStamp);
+  syncStamp();
+  stamps.append(stampList, other, stampNote, longTermLabel);
+
   // The lock, asked about the people: nothing selected, and not remembered
   // (`signlock.ts`).
-  const locks = document.createElement("div");
+  const locks = section(LOCK_QUESTION, true);
   locks.setAttribute("role", "radiogroup");
   locks.setAttribute("aria-label", LOCK_QUESTION);
-  locks.style.cssText = "display:flex;flex-direction:column;gap:6px;margin:12px 0";
-  const lockQuestion = document.createElement("p");
-  lockQuestion.textContent = LOCK_QUESTION;
-  locks.append(lockQuestion);
   const lockRadios = LOCK_ANSWERS.map((answer) => {
     const radio = document.createElement("input");
     radio.type = "radio";
     radio.name = LOCK_NAME;
     radio.value = answer.value;
     radio.checked = false;
-    const label = document.createElement("label");
-    label.append(radio, ` ${answer.text}`);
-    locks.append(label);
+    locks.append(option(radio, answer.text, answer.hint));
     return radio;
   });
   const unanswered = document.createElement("p");
   unanswered.setAttribute("role", "alert");
   locks.append(unanswered);
-  const footer = document.createElement("div");
-  footer.style.cssText = "display:flex;gap:10px;justify-content:flex-end";
-  const cancel = document.createElement("button");
-  cancel.textContent = "Cancel";
-  const next = document.createElement("button");
-  next.textContent = "Sign…";
-  footer.append(cancel, next);
-  dialog.append(heading, help, list, shows, stamps, locks, footer);
+  const cancel = button("Cancel");
+  const next = button("Sign…", true);
+  dialog.append(heading, intro, certificates, appearanceSection, stamps, locks, buttons(cancel, next));
   document.body.append(dialog);
   return new Promise((resolve) => {
     let settled = false;
@@ -690,7 +696,7 @@ export function askIdentity(
       // wrong.
       unanswered.textContent = "";
       const chosenStamp: StampChoice = {
-        server: stampRadios.find((radio) => radio.checked)?.value ?? "none",
+        server: stampList.value || "none",
         url: otherUrl.value,
       };
       // *Other* with an address tpdf would not ask holds the chooser open: a
@@ -779,28 +785,18 @@ interface AfterQuestion {
 function askAfter(question: AfterQuestion): Promise<AfterStamp> {
   const previous = document.activeElement as HTMLElement | null;
   const dialog = document.createElement("dialog");
-  dialog.className = question.className;
+  dialog.className = `${question.className} tpdf-dialog`;
   dialog.setAttribute("aria-label", question.label);
-  dialog.style.cssText =
-    "max-width:560px;padding:22px;border:1px solid #8885;border-radius:12px;" +
-    "font:13px/1.55 system-ui,-apple-system,sans-serif;" +
-    "background:Canvas;color:CanvasText;box-shadow:0 15px 70px #0005";
   const heading = document.createElement("h2");
   heading.textContent = question.heading;
-  const reason = document.createElement("p");
-  reason.textContent = `${question.why}.`;
-  const help = document.createElement("p");
-  help.textContent = question.help;
-  const footer = document.createElement("div");
-  footer.style.cssText = "display:flex;gap:10px;justify-content:flex-end";
-  const cancel = document.createElement("button");
-  cancel.textContent = "Cancel";
-  const without = document.createElement("button");
-  without.textContent = question.without;
-  const retry = document.createElement("button");
-  retry.textContent = "Try again";
-  footer.append(cancel, without, retry);
-  dialog.append(heading, reason, help, footer);
+  const reason = paragraph("", `${question.why}.`);
+  const help = paragraph("tpdf-dialog-intro", question.help);
+  const cancel = button("Cancel");
+  const without = button(question.without);
+  // Try again is the one drawn as the dialog's work; Cancel keeps the focus,
+  // so Enter on a dialog nobody read still writes nothing.
+  const retry = button("Try again", true);
+  dialog.append(heading, reason, help, buttons(cancel, without, retry));
   document.body.append(dialog);
   return new Promise((resolve) => {
     let settled = false;

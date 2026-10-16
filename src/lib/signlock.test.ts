@@ -19,7 +19,7 @@ describe("whether a signing locks the document", () => {
     expect(LOCK_ANSWERS.map((one) => one.value)).toEqual(["others", "last"]);
     const last = LOCK_ANSWERS.find((one) => one.lock)!;
     expect(last.text).toContain("I am the last to sign");
-    expect(last.text).toContain("no further signature can be added");
+    expect(last.hint).toContain("no further signature can be added");
     expect(LOCK_ANSWERS.find((one) => !one.lock)!.text).toContain("leave it open for their signatures");
     expect(LOCK_UNANSWERED).toContain("a locked document takes no further signature");
   });

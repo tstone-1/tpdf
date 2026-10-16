@@ -35,6 +35,7 @@
  */
 
 import type { SignatureImage } from "./signature";
+import { button, footer, option, paragraph, row, section } from "./dialogparts";
 
 /** Which lines are drawn, and the reason and location. Mirrors `sign_prepare::Options`. */
 export interface AppearanceOptions {
@@ -323,19 +324,15 @@ export function askAppearance(shell: AskShell): Promise<Appearance | null> {
   });
 
   const dialog = document.createElement("dialog");
-  dialog.className = "sign-appearance-dialog";
+  dialog.className = "sign-appearance-dialog tpdf-dialog";
   dialog.setAttribute("aria-label", "Signature appearance");
-  dialog.style.cssText =
-    "width:min(560px,90vw);padding:22px;border:1px solid #8885;border-radius:12px;" +
-    "font:13px/1.55 system-ui,-apple-system,sans-serif;" +
-    "background:Canvas;color:CanvasText;box-shadow:0 15px 70px #0005";
   const heading = document.createElement("h2");
   heading.textContent = "Signature appearance";
-  heading.style.margin = "0 0 8px";
-  const help = document.createElement("p");
-  help.textContent =
+  const help = paragraph(
+    "tpdf-dialog-intro",
     "Choose what the signature shows. You place it on a page next; it is laid out again " +
-    "for the rectangle you drag.";
+      "for the rectangle you drag.",
+  );
 
   canvas.setAttribute("role", "img");
   canvas.setAttribute("aria-label", "Preview of the signature");
@@ -343,24 +340,26 @@ export function askAppearance(shell: AskShell): Promise<Appearance | null> {
   canvas.height = PREVIEW_SIZE[1] * 2;
   canvas.style.cssText =
     `width:${PREVIEW_SIZE[0]}px;height:${PREVIEW_SIZE[1]}px;display:block;margin:0 auto;` +
-    "background:white;border:1px solid #999;border-radius:4px";
-  const status = document.createElement("p");
+    "background:white;border:1px solid #999;border-radius:6px;margin-top:14px";
+  const status = paragraph("tpdf-dialog-hint", "");
   status.setAttribute("role", "status");
-  status.style.cssText = "min-height:1.5em;font-size:13px;margin:6px 0";
+  status.style.cssText = "min-height:1.5em;margin:6px 0 0;text-align:center";
 
+  const sets: HTMLDivElement[] = [];
+  /**
+   * A section in `dialog.css`, a group a screen reader names by its label,
+   * with its controls in one row that wraps. Answers the row. Not a fieldset:
+   * WebKit draws a legend into the fieldset's border, which took the line
+   * between sections away and left a gap under each label.
+   */
   const group = (label: string) => {
-    const set = document.createElement("fieldset");
-    set.style.cssText = "border:none;padding:0;margin:10px 0;display:flex;gap:6px 14px;flex-wrap:wrap";
-    const legend = document.createElement("legend");
-    legend.textContent = label;
-    legend.style.cssText = "font-weight:600;margin-bottom:4px";
-    set.append(legend);
-    return set;
-  };
-  const labelled = (input: HTMLInputElement, text: string) => {
-    const label = document.createElement("label");
-    label.append(input, ` ${text}`);
-    return label;
+    const set = section(label);
+    set.setAttribute("role", "group");
+    set.setAttribute("aria-label", label);
+    const controls = row();
+    set.append(controls);
+    sets.push(set);
+    return controls;
   };
 
   // The image.
@@ -370,15 +369,13 @@ export function askAppearance(shell: AskShell): Promise<Appearance | null> {
     input.type = "radio";
     input.name = "sign-appearance-image";
     input.value = value;
-    images.append(labelled(input, text));
+    images.append(option(input, text));
     return input;
   };
   const saved = radio("saved", "Saved signature");
   const drawn = radio("drawn", "The one drawn now");
   const none = radio("none", "No image");
-  const draw = document.createElement("button");
-  draw.type = "button";
-  draw.textContent = "Draw or import…";
+  const draw = button("Draw or import…");
   images.append(draw);
 
   // The lines.
@@ -387,7 +384,7 @@ export function askAppearance(shell: AskShell): Promise<Appearance | null> {
     const input = document.createElement("input");
     input.type = "checkbox";
     input.name = `sign-appearance-${line}`;
-    lines.append(labelled(input, text));
+    lines.append(option(input, text));
     return input;
   };
   const checks: Record<Line, HTMLInputElement> = {
@@ -405,7 +402,6 @@ export function askAppearance(shell: AskShell): Promise<Appearance | null> {
     input.maxLength = MAX_NOTE_CHARS;
     input.placeholder = text;
     input.setAttribute("aria-label", text);
-    input.style.cssText = "flex:1 1 200px;padding:5px";
     notes.append(input);
     return input;
   };
@@ -415,19 +411,13 @@ export function askAppearance(shell: AskShell): Promise<Appearance | null> {
   const remember = document.createElement("input");
   remember.type = "checkbox";
   remember.name = "sign-appearance-remember";
-  const keeping = labelled(remember, "Remember as my default");
+  const keeping = option(remember, "Remember as my default");
+  keeping.style.marginTop = "14px";
 
-  const footer = document.createElement("div");
-  footer.style.cssText = "display:flex;gap:10px;justify-content:flex-end;margin-top:12px";
-  const cancel = document.createElement("button");
-  cancel.type = "button";
-  cancel.textContent = "Cancel";
-  const place = document.createElement("button");
-  place.type = "button";
-  place.textContent = "Place on page…";
-  footer.append(cancel, place);
+  const cancel = button("Cancel");
+  const place = button("Place on page…", true);
 
-  dialog.append(heading, help, canvas, status, images, lines, notes, keeping, footer);
+  dialog.append(heading, help, canvas, status, ...sets, keeping, footer(cancel, place));
   document.body.append(dialog);
 
   /** Puts the state back on the controls. */

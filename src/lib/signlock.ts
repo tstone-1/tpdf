@@ -27,19 +27,24 @@ export const LOCK_NAME = "sign-lock";
 /** The question, as the chooser asks it. */
 export const LOCK_QUESTION = "Does anyone else still need to sign this document?";
 
-/** The two answers: the radio's value, its words, and whether it locks. */
+/**
+ * The two answers: the radio's value, its words, the smaller line under them
+ * (empty for none), and whether it locks. What a lock does stays on screen
+ * beside the answer that makes one, as the line under it.
+ */
 export const LOCK_ANSWERS = [
   {
     value: "others",
-    text: "Yes — leave it open for their signatures",
+    text: "Yes, leave it open for their signatures",
+    hint: "",
     lock: false,
   },
   {
     value: "last",
-    text:
-      "No, I am the last to sign — lock it: the signature then says that nothing may " +
-      "change after it, a program that checks signatures reports any later change, and " +
-      "no further signature can be added",
+    text: "No, I am the last to sign: lock it",
+    hint:
+      "The signature then says that nothing may change after it. A program that checks " +
+      "signatures reports any later change, and no further signature can be added.",
     lock: true,
   },
 ] as const;

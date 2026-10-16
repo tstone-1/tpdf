@@ -1178,3 +1178,29 @@ ROWS += [
         "",
         "offers, with no document, exactly what the window check expects"),
 ]
+
+# --- The signing chooser's layout, 2026-10-16 ------------------------------------------
+ROWS += [
+    Mutation("chooser: the address shown with no other authority chosen", "src/lib/signing.ts",
+        '    other.hidden = stampList.value !== "other";',
+        "    other.hidden = false;",
+        "shows the address only while another authority is chosen"),
+    Mutation("chooser: the appearance's line not following the choice", "src/lib/signing.ts",
+        "  for (const radio of [visible, invisible]) radio.addEventListener(\"change\", syncAppearance);\n",
+        "",
+        "says under the appearance what the chosen one does, and names the field it goes in"),
+    Mutation("chooser: a self-signed certificate named twice", "src/lib/signing.ts",
+        '  const from = choice.issuer === choice.subject ? "Self-signed" : `Issued by ${choice.issuer}`;',
+        "  const from = `Issued by ${choice.issuer}`;",
+        "says under a certificate from whom, until when and how, and self-signed for its own issuer"),
+]
+ROWS += [
+    Mutation("validation data: the address shown with no other authority chosen", "src/lib/validationdata.ts",
+        '    otherUrl.hidden = radios.find((radio) => radio.checked)?.value !== "other";',
+        "    otherUrl.hidden = false;",
+        "opens the address field only for another authority, and as remembered"),
+    Mutation("validation data: the address not following the choice", "src/lib/validationdata.ts",
+        '  for (const radio of radios) radio.addEventListener("change", syncOther);\n',
+        "",
+        "opens the address field only for another authority, and as remembered"),
+]

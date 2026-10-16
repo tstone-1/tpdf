@@ -106,6 +106,18 @@ have the binary.)
 - **The outline in one step.** *Open every entry of the outline*, *Close every entry of the
   outline*, and *Show this page's entry in the outline*.
 
+### Changed
+
+- **The Sign document dialog is easier to read.** It has four labelled sections:
+  certificate, appearance, timestamp, and whether anyone else still signs. Each choice is a
+  short line with its explanation smaller and grey under it, and Sign is a blue button. A
+  self-signed certificate says so instead of printing its name twice. The timestamp
+  authority is a list, and the address field shows only when *Another authority* is chosen.
+  The other signing dialogs (the signature picture, the signature appearance, the warning
+  before saving a signed document, the questions after a timestamp or long-term data did not
+  come, and *Add long-term validation data*) now share the same look. Nothing any of them
+  asks or does has changed.
+
 ### Fixed
 
 - **A page cropped by dragging is drawn cropped.** Its tiles were rendered from the

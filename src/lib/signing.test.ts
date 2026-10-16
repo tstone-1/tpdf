@@ -8,8 +8,9 @@ import {
   UNSAVED,
   afterSigning,
   askIdentity,
-  choiceLabel,
-  chooserHelp,
+  CHOOSER_INTRO,
+  choiceDetail,
+  keyHint,
   nothingToChoose,
   signDocument,
   signedName,
@@ -366,10 +367,13 @@ describe("the words", () => {
     expect(signedName("/docs/notes")).toBe("notes-signed.pdf");
   });
 
-  it("labels a certificate by who, from whom, until when and how", () => {
-    expect(choiceLabel(choice)).toBe(
-      "A. Signer — issued by Example CA, expires 2026-01-01 (ECDSA P-256)",
+  it("says under a certificate from whom, until when and how, and self-signed for its own issuer", () => {
+    expect(choiceDetail(choice)).toBe("Issued by Example CA, expires 2026-01-01 (ECDSA P-256)");
+    expect(choiceDetail({ ...choice, issuer: "A. Signer" })).toBe(
+      "Self-signed, expires 2026-01-01 (ECDSA P-256)",
     );
+    // Only for the same name: one that merely contains it is another issuer.
+    expect(choiceDetail({ ...choice, issuer: "A. Signer CA" })).toContain("Issued by A. Signer CA");
   });
 
   it("names what was found but not offered, and where a picture without a certificate is", () => {
@@ -396,11 +400,11 @@ describe("the words", () => {
   });
 
   it("says who asks for the PIN: the system on macOS and Windows, tpdf on Linux", () => {
-    expect(chooserHelp(false)).toContain("Your operating system may ask for access to the key or for a PIN — tpdf never sees it.");
+    expect(keyHint(false)).toBe("Your operating system may ask for access to the key or for a PIN; tpdf never sees it.");
     // On Linux tpdf shows the prompt itself (pin_prompt.rs), so "never sees it" would be false.
-    expect(chooserHelp(true)).not.toContain("never sees it");
-    expect(chooserHelp(true)).toContain("in a window of its own");
-    for (const linux of [false, true]) expect(chooserHelp(linux)).toMatch(/^Choose the certificate to sign with\. /);
+    expect(keyHint(true)).not.toContain("never sees it");
+    expect(keyHint(true)).toContain("in a window of its own");
+    expect(CHOOSER_INTRO).toBe("The signed document is saved as a new file; the original is not changed.");
   });
 
   it("lists every earlier signature after the new one", () => {
@@ -558,7 +562,13 @@ describe("the chooser", () => {
     const answerLock = (value: "last" | "others") => {
       radio("sign-lock", value).checked = true;
     };
-    return { answer, radio, button, field, alert, alerts, answerLock, done };
+    /** Chooses an entry in the timestamp list, as the browser does: the value, then `change`. */
+    const stamp = (value: string) => {
+      const list = all.find((node) => node.tagName === "select" && node.name === "sign-timestamp")!;
+      list.value = value;
+      list.dispatch("change", {});
+    };
+    return { answer, all, radio, button, field, alert, alerts, answerLock, stamp, done };
   }
 
   // No storage is handed over in this block, and the fake window has none:
@@ -631,11 +641,7 @@ describe("the chooser", () => {
     third.button("Sign…").dispatch("click", {});
     expect(third.alerts()).toContain(LOCK_UNANSWERED);
     third.answerLock("last");
-    for (const value of ["none", "sectigo", "globalsign"]) {
-      const stamp = third.radio("sign-timestamp", value);
-      if (stamp) stamp.checked = false;
-    }
-    third.radio("sign-timestamp", "other").checked = true;
+    third.stamp("other");
     third.field("Timestamp authority address").value = "not an address";
     third.button("Sign…").dispatch("click", {});
     // The control: the chooser is held open by the address this time.
@@ -647,6 +653,34 @@ describe("the chooser", () => {
     const old = open([choice], memory({ "tpdf.signatureLock": "true" }).storage);
     expect(old.radio("sign-lock", "last").checked).toBe(false);
     old.done();
+  });
+
+  it("shows the address only while another authority is chosen", () => {
+    const c = open([choice]);
+    const url = c.field("Timestamp authority address");
+    const holder = c.all.find((node) => node.children.includes(url))! as unknown as { hidden: boolean };
+    expect(holder.hidden).toBe(true);
+    c.stamp("other");
+    expect(holder.hidden).toBe(false);
+    c.stamp("digicert");
+    expect(holder.hidden).toBe(true);
+    c.done();
+  });
+
+  it("says under the appearance what the chosen one does, and names the field it goes in", () => {
+    const hint = (c: ReturnType<typeof open>) =>
+      c.all.find((node) => node.textContent.startsWith("You choose") || node.textContent.startsWith("The signature is in the file"))!
+        .textContent;
+    const c = open([choice]);
+    expect(hint(c)).toBe("You choose what it shows, with a preview, then drag a rectangle on a page.");
+    c.radio("sign-appearance", "visible").checked = false;
+    c.radio("sign-appearance", "invisible").checked = true;
+    c.radio("sign-appearance", "invisible").dispatch("change", {});
+    expect(hint(c)).toBe("The signature is in the file, not on a page.");
+    c.done();
+    const inField = open([choice], undefined, "Approved");
+    expect(hint(inField)).toContain("it is drawn in the field Approved.");
+    inField.done();
   });
 });
 
@@ -860,8 +894,14 @@ describe("the chooser's timestamp", () => {
     const all = nodes(body) as (FakeElement & { checked: boolean; value: string; name: string })[];
     // These tests are about the timestamp: the lock question is answered.
     all.find((node) => node.name === "sign-lock" && node.value === "last")!.checked = true;
-    const stamps = () => all.filter((node) => node.tagName === "input" && node.name === "sign-timestamp");
-    const radio = (value: string) => stamps().find((node) => node.value === value)!;
+    const list = all.find((node) => node.tagName === "select" && node.name === "sign-timestamp")!;
+    /** The entry the timestamp list shows. */
+    const chosen = () => list.value;
+    /** Chooses an entry, as the browser does: the value, then `change`. */
+    const choose = (value: string) => {
+      list.value = value;
+      list.dispatch("change", {});
+    };
     const url = all.find((node) => node.attributes.get("aria-label") === "Timestamp authority address")!;
     const alert = all.find((node) => node.attributes.get("role") === "alert")!;
     const sign = all.find((node) => node.tagName === "button" && node.textContent === "Sign…")!;
@@ -869,13 +909,13 @@ describe("the chooser's timestamp", () => {
       spy.mockRestore();
       dom.restore();
     };
-    return { answer, stamps, radio, url, alert, sign, done };
+    return { answer, chosen, choose, url, alert, sign, done };
   }
 
   it("preselects one authority, by name, for a reader who has never chosen", async () => {
     const { store, storage } = memory();
     const c = open([choice], storage);
-    expect(c.stamps().filter((r) => r.checked).map((r) => r.value)).toEqual(["sectigo"]);
+    expect([c.chosen()]).toEqual(["sectigo"]);
     c.sign.dispatch("click", {});
     expect(await c.answer).toEqual({
       identity: "abc",
@@ -891,14 +931,13 @@ describe("the chooser's timestamp", () => {
   it("asks nobody for a reader who chose none, this time and the next", async () => {
     const { storage } = memory();
     const first = open([choice], storage);
-    first.radio("sectigo").checked = false;
-    first.radio("none").checked = true;
+    first.choose("none");
     first.sign.dispatch("click", {});
     expect((await first.answer)?.timestamp).toBeNull();
     first.done();
 
     const second = open([choice], storage);
-    expect(second.stamps().filter((r) => r.checked).map((r) => r.value)).toEqual(["none"]);
+    expect([second.chosen()]).toEqual(["none"]);
     second.sign.dispatch("click", {});
     expect((await second.answer)?.timestamp).toBeNull();
     second.done();
@@ -910,7 +949,7 @@ describe("the chooser's timestamp", () => {
     };
     for (const storage of [broken as never, memory({ [CHOICE_KEY]: "not json" }).storage]) {
       const c = open([choice], storage);
-      expect(c.stamps().filter((r) => r.checked).map((r) => r.value)).toEqual(["none"]);
+      expect([c.chosen()]).toEqual(["none"]);
       c.done();
     }
   });
@@ -918,8 +957,7 @@ describe("the chooser's timestamp", () => {
   it("remembers the reader's choice and offers it next time", async () => {
     const { store, storage } = memory();
     const first = open([choice], storage);
-    first.radio("sectigo").checked = false;
-    first.radio("globalsign").checked = true;
+    first.choose("globalsign");
     first.sign.dispatch("click", {});
     expect(await first.answer).toEqual({
       identity: "abc",
@@ -932,15 +970,14 @@ describe("the chooser's timestamp", () => {
     expect(JSON.parse(store.get(CHOICE_KEY)!)).toEqual({ server: "globalsign", url: "" });
 
     const second = open([choice], storage);
-    expect(second.stamps().filter((r) => r.checked).map((r) => r.value)).toEqual(["globalsign"]);
+    expect([second.chosen()]).toEqual(["globalsign"]);
     second.done();
   });
 
   it("holds the chooser open on another authority's address it would not ask", async () => {
     const { store, storage } = memory();
     const c = open([choice], storage);
-    c.radio("sectigo").checked = false;
-    c.radio("other").checked = true;
+    c.choose("other");
     c.url.value = "ftp://tsa.example/";
     c.sign.dispatch("click", {});
     expect(c.alert.textContent).toContain("http:// or https://");
@@ -1116,15 +1153,19 @@ describe("the chooser's long-term checkbox", () => {
     })[];
     // These tests are about long-term data: the lock question is answered.
     all.find((n) => n.name === "sign-lock" && n.value === "last")!.checked = true;
-    const radio = (value: string) =>
-      all.find((n) => n.tagName === "input" && n.name === "sign-timestamp" && n.value === value)!;
+    const list = all.find((n) => n.tagName === "select" && n.name === "sign-timestamp")!;
+    /** Chooses an entry in the timestamp list, as the browser does: the value, then `change`. */
+    const choose = (value: string) => {
+      list.value = value;
+      list.dispatch("change", {});
+    };
     const box = all.find((n) => n.tagName === "input" && n.name === "sign-long-term")!;
     const sign = all.find((n) => n.tagName === "button" && n.textContent === "Sign…")!;
     const done = () => {
       spy.mockRestore();
       dom.restore();
     };
-    return { answer, radio, box, sign, done };
+    return { answer, choose, box, sign, done };
   }
 
   it("is unticked, and cannot be ticked while no authority is chosen", async () => {
@@ -1133,9 +1174,7 @@ describe("the chooser's long-term checkbox", () => {
     const c = open(storage);
     expect(c.box.checked).toBe(false);
     expect(c.box.disabled).toBe(true);
-    c.radio("none").checked = false;
-    c.radio("digicert").checked = true;
-    c.radio("digicert").dispatch("change", {});
+    c.choose("digicert");
     expect(c.box.disabled).toBe(false);
     c.sign.dispatch("click", {});
     expect((await c.answer)?.longTerm).toBe(false);
@@ -1161,8 +1200,7 @@ describe("the chooser's long-term checkbox", () => {
     const second = open(storage);
     expect(second.box.checked).toBe(true);
     // Ticked, and no authority: nothing more is asked of anybody.
-    second.radio("sectigo").checked = false;
-    second.radio("none").checked = true;
+    second.choose("none");
     second.sign.dispatch("click", {});
     expect((await second.answer)?.longTerm).toBe(false);
     second.done();

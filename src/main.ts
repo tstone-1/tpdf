@@ -1,6 +1,7 @@
 import { mount } from "svelte";
 import App from "./App.svelte";
 import { UI_LOCALE } from "./lib/i18n";
+import "./lib/dialog.css";
 
 document.documentElement.lang = UI_LOCALE;
 

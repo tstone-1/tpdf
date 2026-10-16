@@ -2,6 +2,7 @@ import { decodeSignature, signatureCanvas, trimSignature, type SignatureImage } 
 
 import { isLinux } from "./keys";
 import { prepareSignatureStorage, loadSignature, rememberSignature, forgetSignature } from "./signaturestore";
+import { button, footer, option, paragraph, row } from "./dialogparts";
 
 /** What the dialog is called and what its accepting button says, for one use of it. */
 export interface SignatureDialogWords { title: string; action: string }
@@ -29,23 +30,19 @@ export class SignatureDialog {
 
   constructor(host: HTMLElement) {
     void prepareSignatureStorage().catch((error: unknown) => { this.message.textContent = String(error); });
-    this.dialog.className = "signature-dialog";
+    this.dialog.className = "signature-dialog tpdf-dialog";
     this.dialog.setAttribute("aria-label", "Place signature image");
-    this.dialog.style.cssText = "width:min(580px,90vw);padding:22px;border:1px solid #8885;font:13px/1.55 system-ui,-apple-system,sans-serif;"
-      + "border-radius:12px;background:Canvas;color:CanvasText;box-shadow:0 15px 70px #0005";
     const heading = this.heading;
     heading.textContent = PLACE_WORDS.title;
-    heading.style.margin = "0 0 8px";
-    const help = document.createElement("p");
-    help.textContent = "Draw your signature or import a PNG or JPEG image.";
-    const notice = document.createElement("p");
-    notice.textContent = "Visual mark only. This does not verify your identity or create a "
-      + "certificate-based digital signature.";
+    const help = paragraph("tpdf-dialog-intro", "Draw your signature or import a PNG or JPEG image.");
+    const notice = paragraph("tpdf-dialog-hint", "Visual mark only. This does not verify your identity or create a "
+      + "certificate-based digital signature.");
+    notice.style.marginTop = "4px";
     this.canvas.width = 1024; this.canvas.height = 400;
     this.canvas.style.cssText = "box-sizing:border-box;width:100%;height:auto;aspect-ratio:1024/400;display:block;"
-      + "background:white;border:1px solid #999;border-radius:6px;touch-action:none;cursor:crosshair";
+      + "background:white;border:1px solid #999;border-radius:6px;touch-action:none;cursor:crosshair;margin-top:14px";
     this.canvas.setAttribute("aria-label", "Draw your signature");
-    const tools = document.createElement("div"); tools.style.cssText = "display:flex;gap:8px;margin:12px 0;flex-wrap:wrap";
+    const tools = row(); tools.style.margin = "12px 0";
     const file = document.createElement("input"); file.type = "file"; file.accept = "image/png,image/jpeg"; file.hidden = true;
     const load = this.button("Import image...", () => { file.value = ""; file.click(); });
     file.addEventListener("change", () => { const chosen = file.files?.[0]; if (chosen) void this.importFile(chosen); });
@@ -57,22 +54,20 @@ export class SignatureDialog {
       this.button("Use saved signature", () => void this.loadSaved()),
       this.button("Forget saved signature", () => void this.forgetSaved()),
     );
-    const options = document.createElement("div"); options.style.cssText = "display:flex;gap:16px;flex-wrap:wrap";
+    const options = row();
     const label = (input: HTMLInputElement, text: string) => {
       input.type = "checkbox";
-      const node = document.createElement("label");
-      node.append(input, ` ${text}`);
-      return node;
+      return option(input, text);
     };
     options.append(label(this.white, "Remove white background"));
     if (keeps) options.append(label(this.remember, "Remember on this device"));
     this.white.checked = true;
     this.white.addEventListener("change", () => { if (this.source) this.render(); });
-    this.message.setAttribute("role", "status"); this.message.style.cssText = "min-height:1.5em;font-size:13px";
-    const footer = document.createElement("div"); footer.style.cssText = "display:flex;gap:8px;justify-content:flex-end";
+    this.message.setAttribute("role", "status"); this.message.style.cssText = "min-height:1.5em;margin:10px 0 0";
     this.place = this.button("Place signature image", () => void this.accept()); this.place.disabled = true;
-    footer.append(this.button("Cancel", () => this.finish(null)), this.place);
-    this.dialog.append(heading, help, notice, this.canvas, tools, options, this.message, footer, file);
+    this.place.className = "primary";
+    this.dialog.append(heading, help, notice, this.canvas, tools, options, this.message,
+      footer(this.button("Cancel", () => this.finish(null)), this.place), file);
     host.append(this.dialog);
     this.dialog.addEventListener("cancel", (event) => { event.preventDefault(); this.finish(null); });
     this.dialog.addEventListener("keydown", (event) => event.stopPropagation());
@@ -110,9 +105,7 @@ export class SignatureDialog {
   dispose(): void { this.finish(null); this.dialog.remove(); }
 
   private button(text: string, action: () => void): HTMLButtonElement {
-    const button = document.createElement("button"); button.type = "button"; button.textContent = text;
-    button.style.cssText = "padding:7px 12px;border:1px solid #8886;border-radius:5px;background:ButtonFace;color:ButtonText;cursor:pointer";
-    button.addEventListener("click", action); return button;
+    const made = button(text); made.addEventListener("click", action); return made;
   }
   private clear(): void {
     this.generation++; this.point = null; this.source = null;

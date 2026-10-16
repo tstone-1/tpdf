@@ -113,12 +113,17 @@ async function steps(
 
   const chooser = () => document.querySelector<HTMLDialogElement>(".sign-identity-dialog[open]");
   const inChooser = <T extends Element>(selector: string) => chooser()?.querySelector<T>(selector) ?? null;
-  const stamp = (value: string) => inChooser<HTMLInputElement>(`input[name="sign-timestamp"][value="${value}"]`);
+  // The timestamp is a list since 2026-10-16, chosen the way a reader's pick
+  // reaches it: the value, then `change`, which is what the chooser listens to.
+  const stampList = () => inChooser<HTMLSelectElement>('select[name="sign-timestamp"]');
+  const chooseStamp = (value: string) => {
+    const list = stampList();
+    if (!list) throw new Error("the chooser has no timestamp list");
+    list.value = value;
+    list.dispatchEvent(new Event("change", { bubbles: true }));
+  };
   const longTerm = () => inChooser<HTMLInputElement>('input[name="sign-long-term"]');
-  const checkedStamps = () =>
-    [...(chooser()?.querySelectorAll<HTMLInputElement>('input[name="sign-timestamp"]') ?? [])]
-      .filter((r) => r.checked)
-      .map((r) => r.value);
+  const checkedStamps = () => (stampList() ? [stampList()!.value] : []);
   const button = (root: Element | null, label: string) =>
     [...(root?.querySelectorAll<HTMLButtonElement>("button") ?? [])].find((b) => b.textContent === label) ?? null;
 
@@ -185,11 +190,11 @@ async function steps(
   //         data; the lock ticked; saved.
   report.check("Sectigo is preselected for a reader who has never chosen",
     JSON.stringify(checkedStamps()) === JSON.stringify(["sectigo"]), checkedStamps().join(","));
-  stamp("none")?.click();
+  chooseStamp("none");
   report.check("long-term data cannot be ticked without a timestamp",
     longTerm()?.disabled === true && longTerm()?.checked === false,
     `disabled=${longTerm()?.disabled} checked=${longTerm()?.checked}`);
-  stamp("digicert")?.click();
+  chooseStamp("digicert");
   report.check("choosing an authority enables long-term data, unticked",
     longTerm()?.disabled === false && longTerm()?.checked === false,
     `disabled=${longTerm()?.disabled} checked=${longTerm()?.checked}`);
@@ -253,7 +258,7 @@ async function steps(
     [...(chooser()?.querySelectorAll<HTMLInputElement>('input[name="sign-lock"]') ?? [])].every((r) => !r.checked),
     "an answer was selected");
   answerLock("last");
-  stamp("sectigo")?.click();
+  chooseStamp("sectigo");
   longTerm()?.click();
   report.check("long-term data is ticked", longTerm()?.checked === true, String(longTerm()?.checked));
   const before2 = sign(at("sectigo.pdf"));

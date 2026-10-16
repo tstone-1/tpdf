@@ -236,6 +236,25 @@ describe("the authority dialog", () => {
     d.done();
   });
 
+  it("opens the address field only for another authority, and as remembered", () => {
+    const { storage } = memory();
+    const d = open(storage);
+    const hidden = () => (d.address as unknown as { hidden: boolean }).hidden;
+    expect(hidden()).toBe(true);
+    d.radio("other").checked = true;
+    d.radio("other").dispatch("change", {});
+    expect(hidden()).toBe(false);
+    d.radio("other").checked = false;
+    d.radio("sectigo").checked = true;
+    d.radio("sectigo").dispatch("change", {});
+    expect(hidden()).toBe(true);
+    d.done();
+    // Remembered as another authority, it opens shown.
+    const again = open(memory({ [AUTHORITY_KEY]: JSON.stringify({ server: "other", url: "https://tsa.example/" }) }).storage);
+    expect((again.address as unknown as { hidden: boolean }).hidden).toBe(false);
+    again.done();
+  });
+
   it("answers null for Cancel and for Escape, and remembers nothing", async () => {
     const { store, storage } = memory();
     const cancelled = open(storage);
