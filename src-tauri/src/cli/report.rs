@@ -36,6 +36,20 @@ pub struct Rendered {
     pub height_px: u32,
 }
 
+/// A document, or some of its pages, sent to a printer.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Printed {
+    pub schema: u32,
+    pub command: String,
+    pub input: String,
+    /// The printer, as it was named.
+    pub printer: String,
+    /// Pages in the job, as the platform's reader counted them.
+    pub pages: u32,
+    /// The print system's number for the job: CUPS gives one, Windows `null`.
+    pub job: Option<u32>,
+}
+
 /// Text that is in a document and not visible on its pages. Page numbers are
 /// one-based.
 ///

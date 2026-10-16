@@ -2213,3 +2213,44 @@ ROWS += [
         "a_message_past_the_limit_is_not_answered",
     ),
 ]
+
+# --- printing from the command line, 2026-10-16 -----------------------------------------
+ROWS += [
+    Mutation(
+        "print: no printer named still runs",
+        "src/cli/print.rs",
+        "    if command.printer.trim().is_empty() {",
+        "    if command.printer.trim().is_empty() && false {",
+        "print_needs_one_document_a_printer_and_pages_that_count_from_one",
+    ),
+    Mutation(
+        "print: two documents taken",
+        "src/cli/print.rs",
+        "    if paths.len() != 1 {",
+        "    if paths.is_empty() {",
+        "print_needs_one_document_a_printer_and_pages_that_count_from_one",
+    ),
+    Mutation(
+        "printer: an unknown printer refused without the names there are",
+        "src/printer.rs",
+        "            \"there is no printer called \\\"{printer}\\\"; this computer has {}\",\n            quoted.join(\", \")",
+        "            \"there is no printer called \\\"{printer}\\\"; this computer has {}\",\n            quoted.len()",
+        "a_printer_nothing_knows_is_refused_with_the_names_there_are",
+    ),
+    Mutation(
+        "printer: a printer nothing knows sent to anyway (macos)",
+        "src/printer.rs",
+        "    if !names.iter().any(|name| name == printer) {",
+        "    if names.is_empty() && !names.iter().any(|name| name == printer) {",
+        "cups_loads_and_answers_a_list_and_a_refusal",
+        only_on="macos",
+    ),
+    Mutation(
+        "printer: a printer nothing knows sent to anyway (linux)",
+        "src/printer.rs",
+        "    if !names.iter().any(|name| name == printer) {",
+        "    if names.is_empty() && !names.iter().any(|name| name == printer) {",
+        "cups_loads_and_answers_a_list_and_a_refusal",
+        only_on="linux",
+    ),
+]

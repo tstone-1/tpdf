@@ -3398,6 +3398,28 @@ Windows and Linux. A new way into the app process, so it is bounded:
 **Not covered.** A process of the same user can make the running window open any file the
 user can read, which starting tpdf with that path already allowed.
 
+#### T6.45 — Printing from the command line, added 2026-10-16
+
+`tpdf print` sends a job to a named printer with no dialog. The job is built and read back
+exactly as the window's Print does (residual risk 18 records the parses), so what is new is only the
+last step and one library:
+
+- **CUPS is loaded by name when a job is sent** (`printer.rs`): `/usr/lib/libcups.2.dylib` on
+  macOS, a path in the system's library cache, and `libcups.so.2` on Linux, found by the
+  dynamic loader as any linked library is. Four functions are taken from it: the printer list,
+  freeing it, `cupsPrintFile`, and the last error. A loader search path the user's environment
+  changes can substitute the library, which is equally true of every library tpdf links.
+- **The job is written to a file only the user can read** before CUPS reads it: in the user's
+  own temporary folder on macOS, `XDG_RUNTIME_DIR` or the temporary folder on Linux, created
+  new (`create_new`, mode 0600) and removed once CUPS has it.
+- **`TPDF_PRINT_OUTPUT`**, read on Windows only, names a file for the driver to write instead
+  of the port, as "Print to file" does. It exists for the checks, with "Microsoft Print to
+  PDF"; it lets whoever sets the environment choose where the printed job is written, which
+  that person could do by printing to a file anyway.
+
+**Not covered.** What CUPS or the printer driver does with the PDF: their parsing is outside
+tpdf, as it is for the window's Print.
+
 ### T9 — The updater
 
 **The threat.** The updater is the only code path in tpdf that fetches bytes and then

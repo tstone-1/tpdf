@@ -566,6 +566,7 @@ fn every_registered_command_is_reached_by_its_name_and_listed_in_help() {
         ("comments", "comments a.pdf --json"),
         ("text-runs", "text-runs a.pdf --page 1 --json"),
         ("render", "render a.pdf -o page.png --json"),
+        ("print", "print a.pdf --printer Office --pages 1-3 --json"),
         ("ocr", "ocr a.pdf -o b.pdf --language de-DE --pages 1-2"),
         ("compress", "compress a.pdf -o b.pdf --pictures screen"),
         ("form", "form a.pdf -o b.pdf --fields fields.json"),
@@ -2449,6 +2450,17 @@ fn samples() -> Vec<(&'static str, String)> {
     };
     vec![
         (
+            "print",
+            pretty(&report::Printed {
+                schema: report::SCHEMA,
+                command: "print".into(),
+                input: "report.pdf".into(),
+                printer: "Office".into(),
+                pages: 3,
+                job: Some(42),
+            }),
+        ),
+        (
             "render",
             pretty(&report::Rendered {
                 schema: report::SCHEMA,
@@ -2791,7 +2803,7 @@ fn the_samples_directory_holds_one_file_per_sample_and_nothing_else() {
         .map(|(name, _)| format!("{name}.json"))
         .collect();
     want.sort();
-    assert_eq!(want.len(), 27, "the sample table itself");
+    assert_eq!(want.len(), 28, "the sample table itself");
     assert_eq!(found, want);
 }
 
@@ -4454,4 +4466,17 @@ fn the_linux_resources_are_beside_the_bin_folder_when_there_are_any() {
     let _ = std::fs::remove_dir_all(&root);
     assert_eq!(installed, lib);
     assert_eq!(built, alone);
+}
+
+#[test]
+fn print_needs_one_document_a_printer_and_pages_that_count_from_one() {
+    assert!(refused("print a.pdf").contains("--printer NAME"));
+    assert!(refused("print a.pdf --printer").contains("--printer"));
+    assert!(refused("print a.pdf b.pdf --printer Office").contains("exactly one document"));
+    assert!(refused("print a.pdf --printer Office --pages 0").contains("count from 1"));
+    assert!(refused("print a.pdf --printer Office --copies 2").contains("--copies"));
+    assert!(matches!(
+        parse(&argv("print a.pdf --printer Office --pages 2-3")),
+        Ok(Line::Run(_))
+    ));
 }

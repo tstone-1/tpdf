@@ -1636,6 +1636,20 @@ report. Identical input and settings are repeatable on the same renderer and
 platform. For portable visual tests compare decoded pixels with a tolerance:
 font fallback and rasterization can differ across OS or PDFium versions.
 
+**Printing.** `tpdf print report.pdf --printer Office --pages 1-3` prints to the
+printer named, with no dialog. Without `--pages` the file goes to the printer as it is;
+with it, a sandboxed worker writes those pages into the job, as *Print* with a page range
+does in the window. The job is read back and its pages counted before anything is sent:
+by the operating system's own PDF reader on macOS and Windows, and by the sandboxed
+renderer on Linux. macOS and Linux hand the PDF to CUPS; Windows draws each page on the
+printer, as the window's Print does there. A printer name nothing knows is refused (exit
+code 3), naming the printers there are on macOS and Linux; on Windows `Get-Printer` lists
+them. A document with a password to open it is not printed.
+
+The JSON report carries `schema`, `command`, `input`, `printer`, `pages` (the pages the
+job holds) and `job`, the print system's number for the job: CUPS gives one, Windows
+`null`.
+
 **Text recognition.** `tpdf ocr scan.pdf -o searchable.pdf` writes a copy of a scanned
 document that can be searched, selected and copied from. Each page that has no text is
 rendered by the sandboxed worker and read by the operating system's own text recogniser,

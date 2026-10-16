@@ -82,6 +82,7 @@ __all__ = [
     "RedactReport",
     "RedactSearch",
     "RedactedPage",
+    "PrintReport",
     "RenderReport",
     "RevocationBasis",
     "RevocationGap",
@@ -364,6 +365,22 @@ class RenderReport(TypedDict):
     dpi: int
     width_px: int
     height_px: int
+
+
+# --- print -----------------------------------------------------------------
+
+
+class PrintReport(TypedDict):
+    """`print --json`: a document, or some of its pages, sent to a printer."""
+
+    schema: int
+    command: str
+    input: str
+    printer: str
+    # Pages in the job, as the platform's reader counted them.
+    pages: int
+    # The print system's number for the job: CUPS gives one, Windows null.
+    job: int | None
 
 
 # --- ocr -------------------------------------------------------------------
@@ -1404,6 +1421,7 @@ REPORTS: dict[str, type] = {
     "protect": ProtectReport,
     "redact": RedactReport,
     "redact-dry-run": RedactReport,
+    "print": PrintReport,
     "render": RenderReport,
     "search": SearchReport,
     "sign": SignReport,

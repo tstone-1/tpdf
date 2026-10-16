@@ -100,6 +100,7 @@ pub mod print_macos;
 pub mod print_other;
 #[cfg(windows)]
 pub mod print_win;
+pub mod printer;
 pub mod progressive;
 pub mod protect;
 mod protocol;

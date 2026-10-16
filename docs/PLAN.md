@@ -18398,6 +18398,22 @@ cold launch (5 of 5) and handed to a running window (6 of 6), the second process
 at once. Not measured: Windows and Linux, where the route is the plugin's and the phases are the
 same.
 
+**Done 2026-10-16: printing from the command line** (`tpdf print FILE --printer NAME [--pages
+LIST]`). The job is the window's: the file byte for byte, or the pages listed written by a
+sandboxed worker (`save::print_range_bytes`), read back by the platform's reader (PDFKit,
+`Windows.Data.Pdf`, PDFium in a worker on Linux) and its pages counted before anything is sent.
+`printer.rs` then hands it to CUPS on macOS and Linux through `cupsPrintFile`, loaded when a job
+is sent so neither the build nor the installers gain a dependency, and on Windows draws it on a
+device context for the printer through the dialog's own `print_win::spool`. A name nothing knows
+is refused, with the names there are on macOS and Linux. Evidence: the CLI integration binary
+refuses an unknown printer after building pages 2 and 4, and a page past the end before any
+printer, on macOS and Windows; on Windows (TEENYWEENY) it prints pages 2 and 4 of `rotated.pdf`
+to "Microsoft Print to PDF" and the file written has 2 pages, and on Ubuntu 24.04 under WSL it
+prints them to cups-pdf's queue and the file named by the CUPS job number has 2 pages. On the
+Mac mini a queue that holds
+its jobs received the whole document as job 1 (`rotated.pdf`, 2 KB) and pages 2 and 4 as job 2,
+read back by PDFKit as 2 pages. Not measured: paper.
+
 #### 7.8 Windows Explorer: thumbnails, preview and search, opt-in
 
 Decided 2026-10-15: built, and **off until the reader turns it on**.

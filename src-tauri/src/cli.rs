@@ -70,6 +70,7 @@ pub mod long_term;
 mod ocr;
 mod pages;
 pub mod path;
+mod print;
 mod protect;
 pub mod redact;
 pub mod regions;
@@ -517,6 +518,7 @@ pub const COMMANDS: &[Registered] = &[
     edit::COMMENTS,
     edit::TEXT_RUNS,
     render::COMMAND,
+    print::COMMAND,
     ocr::COMMAND,
     compress::COMPRESS,
     form::COMMAND,

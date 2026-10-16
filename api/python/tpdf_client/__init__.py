@@ -294,6 +294,15 @@ class Tpdf:
             args.append('--force')
         return self.run('render', *args, '--', source, password=password).typed
 
+    def print(
+        self, source: str | os.PathLike[str], printer: str, *, pages: str | None = None,
+    ) -> reports.PrintReport:
+        """Print a document, or the pages listed, to the named printer, with no dialog."""
+        args = ['--printer', printer]
+        if pages is not None:
+            args += ['--pages', pages]
+        return self.run('print', *args, '--', source).typed
+
     def ocr(
         self, source: str | os.PathLike[str], output: str | os.PathLike[str], *,
         pages: str | None = None, languages: Sequence[str] = (), force: bool = False,

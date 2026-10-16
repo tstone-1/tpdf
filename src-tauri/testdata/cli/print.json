@@ -1,0 +1,8 @@
+{
+  "schema": 1,
+  "command": "print",
+  "input": "report.pdf",
+  "printer": "Office",
+  "pages": 3,
+  "job": 42
+}

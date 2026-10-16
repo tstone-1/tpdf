@@ -54,6 +54,9 @@ have the binary.)
   there. When tpdf is already running the document goes to that window at that place. On
   macOS that is new: a launch with either option goes to the running window, where it used
   to open a second one; a launch without them still does.
+- **`tpdf print`.** Prints a document, or the pages listed with `--pages`, to the printer
+  named with `--printer`, with no dialog. The job is built and read back as the window's
+  Print builds it; a printer name nothing knows is refused with the names there are.
 - **Save an attachment.** Saves a file the document carries to a place you choose; with
   several, the command palette asks which. The properties dialog lists them with the kind
   of file each name claims. A sandboxed worker decodes the file; tpdf never opens it, and

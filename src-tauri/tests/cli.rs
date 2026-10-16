@@ -152,7 +152,7 @@ fn main() {
     run_outside_cargo_deps(&argv);
     // The order is load-bearing: never_maps_pdfium asserts this process has
     // not mapped PDFium, so it must precede the in-process PDFium readers.
-    let checks: [Check; 42] = [
+    let checks: &[Check] = &[
         ("verify agrees with the in-process reader", verify_agrees),
         (
             "verify reports what was appended after each signature",
@@ -173,6 +173,15 @@ fn main() {
         (
             "an attachment is decoded in a worker and saved as the bytes put in",
             attachment_in_a_worker,
+        ),
+        (
+            "print builds and reads back a page range, and refuses a printer nothing knows",
+            print_to_no_printer,
+        ),
+        #[cfg(any(windows, target_os = "linux"))]
+        (
+            "print sends a page range to a printer that writes a PDF",
+            print_to_a_pdf_printer,
         ),
         (
             "sign --text draws its own lines; an invisible signature carries its notes",
@@ -1938,6 +1947,149 @@ fn attachment_in_a_worker(report: &mut Report) {
             && !dir.join("none.csv").exists(),
         &format!("{missing:?}"),
     );
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+fn print_to_no_printer(report: &mut Report) {
+    let Some(rotated) = fixture("rotated.pdf") else {
+        report.check(
+            "the four-page fixture is there",
+            false,
+            "no testdata/rotated.pdf",
+        );
+        return;
+    };
+    let source = rotated.to_string_lossy().into_owned();
+    // The printer is asked for only after a worker has written pages 2 and 4
+    // and the platform's reader has counted them, so this refusal is reached
+    // through the whole build.
+    let (code, out, err) = tool(
+        &[
+            "print",
+            &source,
+            "--printer",
+            "tpdf-no-such-printer",
+            "--pages",
+            "2,4",
+        ],
+        &[],
+    );
+    report.check(
+        "a printer nothing knows is refused with exit code 3, after the job was built",
+        code == 3 && out.is_empty() && err.contains("no printer called \"tpdf-no-such-printer\""),
+        &format!("exit {code}: {err}"),
+    );
+    // A page the document does not have stops the build, before any printer.
+    let (code, _, err) = tool(
+        &[
+            "print",
+            &source,
+            "--printer",
+            "tpdf-no-such-printer",
+            "--pages",
+            "9",
+        ],
+        &[],
+    );
+    report.check(
+        "a page the document does not have is refused before the printer is looked for",
+        code == 3 && !err.contains("no printer called"),
+        &format!("exit {code}: {err}"),
+    );
+}
+
+/// A file that stops growing, polled: a driver or cups-pdf creates the file
+/// and then fills it, so a read on first sight is a PDF cut short.
+#[cfg(any(windows, target_os = "linux"))]
+fn settled_file(path: &Path) -> Option<Vec<u8>> {
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(60);
+    let mut last = None;
+    while std::time::Instant::now() < deadline {
+        let size = std::fs::metadata(path).ok().map(|meta| meta.len());
+        if size.is_some_and(|size| size > 0) && size == last {
+            return std::fs::read(path).ok();
+        }
+        last = size;
+        std::thread::sleep(std::time::Duration::from_millis(500));
+    }
+    None
+}
+
+/// `print` to a printer that writes a PDF, and the pages that come out counted:
+/// "Microsoft Print to PDF" on Windows, with `TPDF_PRINT_OUTPUT` naming its
+/// file, and cups-pdf's queue `PDF` on Linux, which writes to `~/PDF`. Skipped
+/// where neither is installed, which is every CI runner.
+#[cfg(any(windows, target_os = "linux"))]
+fn print_to_a_pdf_printer(report: &mut Report) {
+    let Some(rotated) = fixture("rotated.pdf") else {
+        report.check(
+            "the four-page fixture is there",
+            false,
+            "no testdata/rotated.pdf",
+        );
+        return;
+    };
+    let source = rotated.to_string_lossy().into_owned();
+    let dir = scratch("print-out");
+    #[cfg(windows)]
+    let (printer, output, env) = {
+        let output = dir.join("printed.pdf");
+        let env = vec![(
+            "TPDF_PRINT_OUTPUT".to_string(),
+            output.to_string_lossy().into_owned(),
+        )];
+        ("Microsoft Print to PDF", output, env)
+    };
+    #[cfg(target_os = "linux")]
+    let (printer, env) = ("PDF", Vec::<(String, String)>::new());
+    #[cfg(windows)]
+    let _ = std::fs::remove_file(&output);
+    let env: Vec<(&str, &str)> = env.iter().map(|(k, v)| (k.as_str(), v.as_str())).collect();
+    let (code, out, err) = tool(
+        &[
+            "print",
+            &source,
+            "--printer",
+            printer,
+            "--pages",
+            "2,4",
+            "--json",
+        ],
+        &env,
+    );
+    if code == 3 && err.contains("no printer called") {
+        report.skip(
+            "print to a printer that writes a PDF",
+            &format!("no printer {printer:?} here"),
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+        return;
+    }
+    let said: serde_json::Value = serde_json::from_str(&out).unwrap_or_default();
+    report.check(
+        "print sends the two pages listed and says so",
+        code == 0 && said["pages"] == 2 && said["printer"] == printer,
+        &format!("exit {code}: {out}{err}"),
+    );
+    // cups-pdf names its file after the title without `.pdf` and the job's
+    // number, so the file is found by the number the report gave.
+    #[cfg(target_os = "linux")]
+    let output = std::env::var_os("HOME")
+        .map(PathBuf::from)
+        .unwrap_or_default()
+        .join("PDF")
+        .join(format!("rotated-job_{}.pdf", said["job"]));
+    let printed = settled_file(&output);
+    let pages = printed
+        .as_deref()
+        .and_then(|bytes| lopdf::Document::load_mem(bytes).ok())
+        .map(|doc| doc.get_pages().len());
+    report.check(
+        "what the printer wrote has the two pages",
+        pages == Some(2),
+        &format!("{output:?}: {pages:?}"),
+    );
+    let _ = std::fs::remove_file(&output);
     let _ = std::fs::remove_dir_all(&dir);
 }
 
