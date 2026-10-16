@@ -4720,6 +4720,11 @@ answered all 75 messages at once; the user's classes and preview list read as be
 `Software\Classes\Local Settings`, where the Explorer window the check opens records its view.
 Over ssh, send a file longer than about 24 KB as base64 on standard input: on the command line
 it passes Windows' 32,767-character limit, and the copy fails with only "exec request failed".
+The receiving end matters as much (2026-10-16): in TEENYWEENY's PowerShell 5.1 a 140 KB file
+read through `$input` and joined arrived with its line breaks turned into spaces, and
+`[Console]::In.ReadToEnd()` never returned. What kept the bytes, with no base64 at all, is a
+one-line Python receiver, `open(sys.argv[1], 'wb').write(sys.stdin.buffer.read())`, saved on
+the machine and run as `python recv.py <path>`, then the SHA-256 compared on both sides.
 
 ### The "reopen its windows" dialog
 
@@ -8520,6 +8525,15 @@ starts at 0 and increments within the month.
    loop while one check is being worked on, and its run says that it is not the release's.
    It runs the viewer check on one document. The sweep over every window corpus is
    `scripts/viewer_sweep.py` (*Checking the viewer*), a longer run with its own table.
+
+   **Also before the push of any change that adds, removes or renames a command, a menu
+   entry or a dialog's controls** (2026-10-16), not only before a tag. The checks read
+   menus and dialogs by their words and count their entries, so such a change turns one of
+   them red while every gate stays green, and nothing says so until the next tag. Run it
+   where nobody is working, on the second Mac (below) or on the Windows build machine,
+   which is about ten minutes unattended. The cause: step 7.4 added two entries to the tab
+   menu on 2026-10-15, the `tabs` phase still counted eight, and it was found a day later
+   by the first Windows run since. On 2026-10-09 two checks were found red the same way.
 
    **On a second Mac, as one command** (2026-10-10), so that the machine somebody is
    working at keeps its screen and its keyboard:

@@ -18175,8 +18175,11 @@ screen directly, which tpdf followed. It takes the screen it runs on, so it belo
 machine nobody is working at. The viewer window check runs the two commands through its
 recorder instead, for the same reason.
 
-**Not run yet:** Windows and Linux, including whether WebView2 lets F11 through to the
-page; full screen with two documents side by side.
+**Run in a window on Windows 11**, TEENYWEENY at 1920 x 1080, 2026-10-16: the same phase, 16
+of 16. The phase runs the commands and sends its keys inside the page, so it does not say
+whether WebView2 lets a real F11 through to the page.
+
+**Not run yet:** Linux; a real F11 on Windows; full screen with two documents side by side.
 
 #### 7.4 Navigation and tabs --- done 2026-10-15
 

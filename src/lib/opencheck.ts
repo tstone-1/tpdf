@@ -1364,13 +1364,17 @@ async function run(host: OpenCheckHost, phase: string, expected: string): Promis
       // Four since 26.9.18 added *Close all tabs* after the separator; this
       // phase was not run again until the 26.9.21 release, which found it red.
       // Five since 26.10.2 added *Copy file name* below the path. Eight since
-      // the three moves joined it with the two sides, declared with them.
-      report.check("tab menu offers reveal, copy path, copy name, the three moves, close and close all", tabActions.length === 8 &&
+      // the three moves joined it with the two sides, declared with them. Ten
+      // since 7.4 (2026-10-15) added the close entries that close something:
+      // the clicked tab is the first of two, so *Close other tabs* and *to the
+      // right* are there and *to the left* is not. Found red on the first
+      // Windows run after 7.4, 2026-10-16; this phase had not run since.
+      const wanted = ["Copy file path", "Copy file name", "Move to start", "Move to end", "Move to right side",
+        "Close", "Close other tabs", "Close tabs to the right", "Close all tabs"];
+      report.check("tab menu offers reveal, copy path, copy name, the three moves, and the closes that close something",
+        tabActions.length === 1 + wanted.length &&
         /^Show in (Explorer|Finder)$/.test(tabActions[0]?.textContent ?? "") &&
-        tabActions[1]?.textContent === "Copy file path" && tabActions[2]?.textContent === "Copy file name" &&
-        tabActions[3]?.textContent === "Move to start" && tabActions[4]?.textContent === "Move to end" &&
-        tabActions[5]?.textContent === "Move to right side" &&
-        tabActions[6]?.textContent === "Close" && tabActions[7]?.textContent === "Close all tabs",
+        wanted.every((text, at) => tabActions[at + 1]?.textContent === text),
         tabActions.map((item) => item.textContent).join(" | "));
       check("right-clicking a background tab keeps the active document", host.edits()?.doc === b.id);
       check("the header does not repeat the document filename", !document.querySelector("header .title"));
