@@ -1166,3 +1166,15 @@ ROWS += [
         "",
         "names what would be replaced, one or both"),
 ]
+
+# --- The window check's lists, held by vitest, 2026-10-16 ------------------------------
+ROWS += [
+    Mutation("window lists: a command greyed until it has something, left unlisted", "src/lib/viewercheck/documentneeds.ts",
+        '    "file.saveAttachment.choice",\n',
+        "",
+        "withholds, with one document open, exactly what the window check expects"),
+    Mutation("window lists: a command needing no document, left unlisted", "src/lib/viewercheck/documentneeds.ts",
+        '    "app.enableExplorerIntegration",\n',
+        "",
+        "offers, with no document, exactly what the window check expects"),
+]

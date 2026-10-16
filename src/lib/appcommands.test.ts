@@ -14,6 +14,7 @@
  * here, and runs on every commit.
  */
 
+import { needsMoreThanADocument, needsNoDocument } from "./viewercheck/documentneeds";
 import type { Embedded } from "./attachments";
 import { ARRANGEMENTS } from "./arrange";
 import { describe, expect, it } from "vitest";
@@ -91,6 +92,9 @@ function harness(
   // Null by default for the same reason: no list of attachments is held unless
   // the reader has just asked to save one from a document carrying several.
   attachments: Embedded[] | null = null,
+  // Single actions replaced outright, for a state no flag above describes:
+  // the window check's, in "the window check's lists" below.
+  overrides: Partial<AppActions> = {},
 ) {
   const fired: string[] = [];
   let automatic = update.automatic ?? true;
@@ -290,7 +294,7 @@ function harness(
     showProperties: () => fired.push("showProperties"),
   };
   const registry = new CommandRegistry();
-  registerAppCommands(registry, actions);
+  registerAppCommands(registry, { ...actions, ...overrides });
   return { registry, fired };
 }
 
@@ -915,6 +919,47 @@ describe("the commands a document is needed for", () => {
     const offered = registry.search("").map((ranked) => ranked.command.id);
     expect(offered).toContain("file.open");
     expect(offered.length).toBeGreaterThan(1);
+  });
+});
+
+describe("the window check's lists, held here so vitest sees them", () => {
+  // `viewercheck/commands.ts` compares the live window's palette against these
+  // two lists, and only the Ubuntu CI job runs it, so a new command greyed until
+  // something exists reached `main` unlisted on 2026-10-16. The harness's
+  // default state is the window's at that phase: one document, one tab, nothing
+  // selected, no search, no history, no attachment, no update found. Off Linux,
+  // as the gates run; the Linux variant differs by one command, which moves
+  // between the two lists.
+  // Where the window's state at that phase is not the harness default: an
+  // earlier phase made an edit (undo and redo offered), the corpus has a field
+  // to sign, and the window has one tab and none closed.
+  const theWindows: Partial<AppActions> = {
+    canCloseTabs: () => false,
+    canReopenClosedTab: () => false,
+  };
+  it("withholds, with one document open, exactly what the window check expects", () => {
+    const { registry } = harness(
+      true, { signable: 1 }, { undo: true, redo: true },
+      false, false, false, {}, false, false, false, false, false, false, null, null, null,
+      {
+        ...theWindows,
+        viewer: () => ({
+          canGoBack: false, canGoForward: false, searchScoped: false, hasSelection: false,
+          spread: { columns: 1, coverAlone: false, rightToLeft: false, continuous: true },
+        }) as never,
+      },
+    );
+    const offered = new Set(registry.search("").map((ranked) => ranked.command.id));
+    const withheld = registry.all().map((command) => command.id).filter((id) => !offered.has(id));
+    expect(withheld).toEqual(needsMoreThanADocument(false));
+  });
+
+  it("offers, with no document, exactly what the window check expects", () => {
+    const { registry } = harness(
+      false, {}, {}, false, false, false, {}, false, false, false, false, false, false, null, null, null,
+      theWindows,
+    );
+    expect(registry.search("").map((ranked) => ranked.command.id)).toEqual(needsNoDocument(false));
   });
 });
 
