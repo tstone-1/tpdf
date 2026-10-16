@@ -2190,6 +2190,9 @@ ROWS += [
         "    std::fs::set_permissions(socket, std::fs::Permissions::from_mode(0o600)).ok()?;\n",
         "",
         "a_command_line_reaches_the_running_window_and_is_answered",
+        # `secondlaunch` is compiled on macOS only (lib.rs), so on Windows and
+        # Linux its tests do not exist and the table refused to start.
+        only_on="macos",
     ),
     Mutation(
         "second launch: a live window's socket taken over",
@@ -2197,6 +2200,7 @@ ROWS += [
         "            if UnixStream::connect(socket).is_ok() {\n                return None;\n            }\n",
         "",
         "a_stale_socket_is_replaced_and_a_live_one_is_left_alone",
+        only_on="macos",
     ),
     Mutation(
         "second launch: a message past the limit read",
@@ -2204,6 +2208,7 @@ ROWS += [
         "    if bytes.len() as u64 > MAX_MESSAGE {\n        return;\n    }\n",
         "",
         "a_message_past_the_limit_is_not_answered",
+        only_on="macos",
     ),
     Mutation(
         "second launch: handed over with no answer",
@@ -2211,6 +2216,7 @@ ROWS += [
         "    stream.read_exact(&mut answer).is_ok() && &answer == ACK",
         "    let _ = stream.read_exact(&mut answer);\n    true",
         "a_message_past_the_limit_is_not_answered",
+        only_on="macos",
     ),
 ]
 

@@ -4109,6 +4109,16 @@ same script can already print and save — and it is why the scheme allowlist li
 skips the dialog still cannot open a `javascript:` URL, and still cannot open an address that
 was not in the document.
 
+**Links the reader adds, from 26.10.21, are written under the same kind of rule, and are
+followed only once saved.** *Add a link* keeps the typed target as the mark's note, and the
+save turns it into a `/Link` in `save::marks::link_target`, in Rust: a page number in range,
+or an address starting `http://`, `https://` or `mailto:` (`www.` gains `https://`), printable
+ASCII only and at most `LINK_ADDRESS_MAX` long; anything else refuses the save. That rule
+protects the next reader of the file, whose program may follow `file:` or `javascript:`, and a
+webview that skips the box still cannot write one. Before the save the link is a mark and
+nothing follows it: `open_web_link`'s one caller passes a token `document_links` issued for a
+`/Link` the document file holds, so the argument above covers a saved link unchanged.
+
 **The dialog is itself a surface, and the three rules it follows are in `weblinkdialog.ts`'s
 header.** The short version: the host is shown as punycode because rendering the Unicode form
 is drawing the homoglyph attack on the attacker's behalf; the path is secondary and truncated

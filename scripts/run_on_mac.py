@@ -114,8 +114,12 @@ mkdir -p "$tree/testdata" && rsync -a "$clone/testdata/" "$tree/testdata/" || st
 # checked against the engine before it and nothing said so.
 PATH="/opt/homebrew/bin:$PATH" python3 scripts/fetch_pdfium.py | tail -1
 [ "${{pipestatus[1]}}" = 0 ] || stop "the pinned PDFium could not be installed"
+# Both logs go first, so a failure shows this run's and not the last one's: on
+# 2026-10-16 a build that failed before `npm ci` wrote anything printed the tail
+# of a log eight hours old, which read as a finished build.
+rm -f "$run/npm.log" "$run/build.log"
 {wrap} sh -c 'npm ci >"$0/npm.log" 2>&1 && npm run tauri build -- --config src-tauri/tauri.checks.conf.json --bundles app >"$0/build.log" 2>&1' "$run" \
-  || {{ tail -15 "$run/build.log" 2>/dev/null; stop "the checks build failed; $run/build.log has all of it"; }}
+  || {{ tail -15 "$run/npm.log" "$run/build.log" 2>&1; stop "the checks build failed; $run/npm.log and build.log have all of it"; }}
 app="$tree/{app}"
 [ -x "$app/Contents/MacOS/tpdf" ] || stop "the build left no $app"
 identity=$(codesign -dvv "$app" 2>&1 | sed -n 's/^Authority=//p' | head -1)
@@ -261,22 +265,34 @@ def main() -> int:
             if sent.returncode != 0:
                 print("[FAIL] the tree could not be sent")
                 return 2
+    # Bytes both ways, not text=True. On Windows a text-mode pipe writes every
+    # `\n` as `\r\n`, so zsh read `set -e\r` and stopped at the first line
+    # (2026-10-16, the first run started from a Windows machine); and it decodes
+    # with the console code page, which is not the UTF-8 the Mac prints.
     try:
-        ran = subprocess.run(["ssh", "-T", *quiet, args.host, "zsh", "-s"], input=remote(args, sha),
-                             capture_output=True, text=True, timeout=args.timeout + 3600, check=False)
+        ran = subprocess.run(["ssh", "-T", *quiet, args.host, "zsh", "-s"],
+                             input=remote(args, sha).encode(), capture_output=True,
+                             timeout=args.timeout + 3600, check=False)
     except subprocess.TimeoutExpired:
         print("[FAIL] the run on the other Mac did not return")
         return 2
+    stdout = ran.stdout.decode("utf-8", "replace")
+    stderr = ran.stderr.decode("utf-8", "replace")
     code = None
-    for line in ran.stdout.splitlines():
+    for line in stdout.splitlines():
         if line.startswith(MARKER):
             code = line.split()[-1]
         else:
             print(line)
     if code is None:
-        print(ran.stderr.strip()[-600:])
+        print(stderr.strip()[-600:])
         print("[FAIL] the run printed no exit of its own, so it did not finish")
         return 2
+    if code != "0" and stderr.strip():
+        # What a step wrote to stderr outside its own log, such as the --wrap
+        # command refusing to start, is otherwise lost.
+        print("--- stderr on the other Mac ---")
+        print(stderr.strip()[-1200:])
     if args.pictures:
         args.pictures.mkdir(parents=True, exist_ok=True)
         folder = f"{args.clone}-check-run/pictures"

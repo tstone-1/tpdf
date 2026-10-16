@@ -182,8 +182,8 @@ The feasibility spikes are done and every load-bearing assumption has a measured
 on top of that evidence there is a viewer you can read a PDF in, on macOS arm64, Windows
 and Linux, including documents behind a password. **It edits**: pages can be turned, moved,
 deleted, cropped and extracted, a blank one inserted at the size you name, and the pages of another file inserted; text can be highlighted, underlined, struck out or
-squiggled; and you can draw on a page, put a box, an ellipse, a text box, a stamp or a
-comment on it, move what you put there, erase any of it, rewrite, answer or delete a comment
+squiggled; and you can draw on a page, put a box, an ellipse, a line, an arrow, a polygon, a
+text box, a stamp, a picture, a link or a comment on it, move what you put there, erase any of it, rewrite, answer or delete a comment
 somebody else left, and save — over the open file or to a copy. **It redacts**: mark regions, review them in a list, and remove the words from
 the page's own instructions — over the open file or to a copy — with the result read
 back and reported either way. What is *not* built is the list further down, and

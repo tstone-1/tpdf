@@ -237,7 +237,7 @@ def code_keys() -> dict[str, list[str]]:
     for path in files:
         for n, line in enumerate(path.read_text(encoding="utf-8").split("\n"), 1):
             for key in MARKER.findall(line):
-                found.setdefault(key, []).append(f"{path.relative_to(ROOT)}:{n}")
+                found.setdefault(key, []).append(f"{path.relative_to(ROOT).as_posix()}:{n}")
     return found
 
 
@@ -246,7 +246,7 @@ def check_tree() -> list[str]:
     guards = linux = 0
     for path in sorted(RUST.rglob("*.rs")):
         text = path.read_text(encoding="utf-8")
-        rel = str(path.relative_to(ROOT))
+        rel = path.relative_to(ROOT).as_posix()
         found, g, l = arm_problems(rel, text)
         problems += found
         guards += g
