@@ -41,8 +41,11 @@ you do not need to have diagnosed it.
   Windows, reading a file the user can read and opening a socket are the disclosed ceiling
   above rather than defects, so a report there is valuable when it shows a **write**, a reach
   into the app process, or an escape from the job object.
-- Anything that causes the *application* process, or the `tpdf` command-line tool's own
-  process, to parse or map a PDF engine — the boundary's whole purpose. Note the one documented exception: printing maps the operating
+- Anything that causes the *application* process, the `tpdf` command-line tool's own
+  process, or, on Windows, the Explorer processes that load tpdf's thumbnail and preview
+  handler (`dllhost.exe`, `prevhost.exe`) to parse or map a PDF engine — the boundary's
+  whole purpose. The handler reads no PDF itself and hands the document to tpdf's
+  sandboxed renderer. Note the one documented exception: printing maps the operating
   system's own PDF parser into the app process on macOS and Windows (Linux parses nothing
   there to print), which is stated rather
   than hidden, and is measured by `examples/print_probe.rs`.

@@ -7036,6 +7036,36 @@ read through. **Not run:** the written copy of `tpdf long-term` against a public
 authority (`docs/VERIFICATION.md` has why), the new entry of `mutate_viewer.py` by the
 harness itself, `print-probe` and `redact-reach-probe`.
 
+**26.10.21 verification, 2026-10-16:** the first release prepared and checked from the
+Windows desktop, with the macOS half run on the Mac mini over SSH. All 32 gates passed on
+Windows 11 on the release tree, once `vendor/pdfium` there was brought to the 8078 pin the
+pull had moved (the `pdfium` gate said so first; `test` and `bins` were run again on 8078).
+CI passed all three jobs and `Audit` passed on `1f92ca31`. `Audit` had failed all day before
+it: every `zip` below 9.0.3 was yanked and `tauri-plugin-updater` requires `zip ^4`, so
+`scripts/check_cargo_audit.py` now lets exactly `zip 4.6.1` through (step 1 has the
+`cargo update` that cannot resolve). `scripts/run_on_windows.py --suite all` passed 3,209 unit
+tests and 603 command-line tests with 4 skipped on TEENYWEENY. Every mutation selected
+`--near v26.10.20` on Windows was caught, 172 Rust (6 skipped as macOS- or Linux-only, the
+four second-launch rows among them, which no platform ran this cycle) and 394 frontend, and
+all 38 of `mutate_python.py`. `scripts/run_on_mac.py` on the Mac mini: 13 of 14 window
+checks. **`marks on text` failed there, and the release went out with it red, by decision:**
+its *a page cropped by a drag is rendered under its crop* failed in five of five runs. After
+the drag-crop of the last page of `text-heavy.pdf`, a 60 by 40 pixel region drag inside the
+cropped page made no region and said nothing; the drag reached the crop drag's `end`
+committed, and `boxQuad` refused it because the press mapped to y 78,010 pt on a 492 pt page
+at zoom 0.936. Seconds later the zoom was 1.435, the cropped page fitted, and the same point
+mapped inside the page. Waiting until the page was laid out at the crop's size did not help,
+and a unit test of the same sequence in `viewercrop.test.ts` passed, so the cause is not
+found; `adoptCrops` notes the new size without the re-anchor and refit `learnGeometry` does,
+which is where to look first. The check passed on Windows and on a Mac when the feature
+landed. A reader may find the first drag soon after cropping the last page of a long
+document does nothing; a second works, and the crop itself is right. In one of the five runs
+*and it is recorded on the page it was pressed on* also failed once (slot 10, page 11, the mark
+on 12) and not again. `docs/THREAT-MODEL.md` §T8 gained links the reader adds, `README.md`
+the new marks, `SECURITY.md` the Explorer processes. **Not run:** the window checks on
+Windows on the release tree, `print-probe`, `redact-reach-probe`, `menu_check.py`,
+`save_check.py`, and `check_windows.py` (the Windows tree was compiled by the gates here).
+
 **26.10.20 publication, 2026-10-15:** one rehearsal tag first, because `release.yml` had
 changed (CI's job count, and the glibc check on the packaged binaries). `v26.10.20-rc1`
 passed every job, the Linux leg's glibc check read 2.39 for both binaries, and
