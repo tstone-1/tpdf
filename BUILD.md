@@ -4676,6 +4676,51 @@ a range was refused in a message. That run found the range ignored: GTK keeps a 
 job, where only `GtkPrintOperation`'s drawing reads it, so before the fix `2-3` printed all 12
 (`print_linux.rs`). Not checked: paper.
 
+### Explorer thumbnails and the preview pane, on Windows
+
+*Show PDFs in Explorer with tpdf* registers `tpdf_shell.dll` (`src-tauri/shellext/`) for the
+current user (`explorer.rs`, `docs/THREAT-MODEL.md` §T6.47). The DLL is not a default member of
+the Cargo workspace, so no gate and no plain `tauri build` builds it; an installer that carries
+it is built with the overlay that builds it first and bundles it beside `tpdf.exe`:
+
+```
+npm run tauri build -- --config src-tauri/tauri.explorer.conf.json --bundles nsis
+cargo build --locked --release --manifest-path src-tauri/Cargo.toml -p tpdf-shell --example explorer_probe
+```
+
+`release.yml` passes the same overlay on its Windows leg and checks the DLL's signature with
+the other three files. Then, on a Windows machine where tpdf is not installed, in the
+logged-on session (it opens an Explorer window and reads the screen; over ssh, through an
+`/IT` scheduled task as for `installed_check.py`):
+
+```powershell
+python scripts\explorer_check.py <path>\tpdf_<version>_x64-setup.exe `
+    src-tauri\target\release\examples\explorer_probe.exe --shots <folder>
+```
+
+It installs into a folder of its own, turns the integration on with `tpdf-cli explorer --add
+--replace`, has Windows' thumbnail cache extract a thumbnail of each hostile fixture, a document
+that renders, random bytes and a locked document (`explorer_probe thumbs`, forced extraction,
+so the provider runs in `dllhost.exe` as for a window), hosts the preview handler in
+`prevhost.exe` and turns a page (`explorer_probe preview`), reads which of `dllhost.exe`,
+`prevhost.exe` and `explorer.exe` have `tpdf_shell.dll` and `pdfium.dll` mapped, opens an
+Explorer window on the corpus in large icons and times its answers for 15 s, turns the
+integration off and compares the user's classes with what they were, and uninstalls with it
+on. `--control no-add` and `--control no-remove` break one step each and exit 0 exactly when
+the checks aimed at it failed.
+
+On 2026-10-16 on TEENYWEENY (Windows 11, build 26200): 20 of 20. All 15 hostile fixtures and
+the document got drawn thumbnails, random bytes and the password-protected document got
+Explorer's generic icon, each within 0.25 s; the provider ran in `dllhost.exe` and not in
+`explorer.exe`, and no `dllhost.exe`, `prevhost.exe` or `explorer.exe` had `pdfium.dll` mapped;
+the preview pane showed page 1 (63% of the pane white) and page 2 after Page Down; Explorer
+answered all 75 messages at once; the user's classes and preview list read as before after
+`--remove`, and the uninstaller, run with the integration on, left no key naming the handlers.
+`no-add` failed its 7 checks and `no-remove` its 2, and nothing else. The comparison leaves out
+`Software\Classes\Local Settings`, where the Explorer window the check opens records its view.
+Over ssh, send a file longer than about 24 KB as base64 on standard input: on the command line
+it passes Windows' 32,767-character limit, and the copy fails with only "exec request failed".
+
 ### The "reopen its windows" dialog
 
 A development build is killed constantly — harness timeouts, the deliberate crash probes,

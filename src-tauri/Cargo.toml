@@ -22,6 +22,15 @@ default-run = "tpdf"
 name = "tpdf_lib"
 crate-type = ["staticlib", "cdylib", "rlib"]
 
+# The Explorer handler, `shellext/`, is a member so it shares this lock file,
+# this toolchain and the licence check: `scripts/third_party_notices.py` runs
+# `cargo metadata` here, and the DLL ships in the Windows installer. The
+# default member is still this package alone, so every gate and `tauri build`
+# build what they built before; the DLL is built by name (`npm run
+# build:explorer`). `fuzz/` stays out, by its own `[workspace]`.
+[workspace]
+members = ["shellext"]
+
 [build-dependencies]
 tauri-build = { version = "2", features = [] }
 
@@ -328,6 +337,9 @@ windows-sys = { version = "0.61", features = [
     # children through the OS process table, which are the observables its
     # claims rest on -- see `mapped_images` and `worker_pids` there.
     "Win32_System_Diagnostics_ToolHelp",
+    # `CoTaskMemFree`, for the path `SHGetKnownFolderPath` hands back: the
+    # low-integrity temporary folder `cli::unnamed_file` falls back to.
+    "Win32_System_Com",
     "Win32_System_Console",
     "Win32_System_JobObjects",
     "Win32_System_Memory",
@@ -432,6 +444,9 @@ tauri-plugin-single-instance = "2.4.4"
 # already in the tree (rand 0.8.8, rand_chacha 0.3.1 over rand_core 0.6.4), so
 # this adds no package; nothing here reaches the shipped binary.
 [dev-dependencies]
+# The Explorer handler's class ids, which `explorer.rs` registers and a test
+# holds equal to the DLL's own.
+tpdf-shell = { path = "shellext" }
 rand_chacha = "0.3"
 # The key-usage flags a test certificate states. Already in the tree through
 # `x509-cert`; Apache-2.0.

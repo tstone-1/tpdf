@@ -59,6 +59,7 @@ pub mod args;
 pub mod completions;
 mod compress;
 mod edit;
+pub mod explorer;
 pub mod fields;
 pub mod fill;
 mod form;
@@ -528,6 +529,7 @@ pub const COMMANDS: &[Registered] = &[
     hidden::COMMAND,
     long_term::COMMAND,
     path::COMMAND,
+    explorer::COMMAND,
     completions::COMMAND,
 ];
 
@@ -731,11 +733,54 @@ fn unnamed_file() -> std::io::Result<std::fs::File> {
         std::process::id(),
         NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
     );
-    let path = std::env::temp_dir().join(name);
-    let file = options.open(&path)?;
+    let path = std::env::temp_dir().join(&name);
+    let file = match options.open(&path) {
+        Ok(file) => file,
+        // A low-integrity process may not write to the user's temporary
+        // folder: `prevhost.exe` runs the Explorer preview handler at low
+        // integrity, and `tpdf-cli` it starts inherits that (`shellext/`).
+        // Windows gives such processes `LocalAppDataLow`, so the copy goes
+        // there instead. Measured 2026-10-16: without this every preview
+        // failed with "Access is denied".
+        #[cfg(windows)]
+        Err(e) if e.kind() == std::io::ErrorKind::PermissionDenied => {
+            let low = low_integrity_temp().ok_or(e)?;
+            std::fs::create_dir_all(&low)?;
+            options.open(low.join(&name))?
+        }
+        Err(e) => return Err(e),
+    };
     #[cfg(unix)]
     std::fs::remove_file(&path)?;
     Ok(file)
+}
+
+/// `LocalAppDataLow\Temp`, the folder a low-integrity process can write to.
+#[cfg(windows)]
+fn low_integrity_temp() -> Option<std::path::PathBuf> {
+    use windows_sys::Win32::System::Com::CoTaskMemFree;
+    use windows_sys::Win32::UI::Shell::{FOLDERID_LocalAppDataLow, SHGetKnownFolderPath};
+    let mut raw: windows_sys::core::PWSTR = std::ptr::null_mut();
+    // SAFETY: `raw` receives a string the shell allocates, freed below in
+    // every case, as the function requires.
+    let status = unsafe {
+        SHGetKnownFolderPath(
+            &FOLDERID_LocalAppDataLow,
+            0,
+            std::ptr::null_mut(),
+            &raw mut raw,
+        )
+    };
+    let path = (status == 0 && !raw.is_null()).then(|| {
+        // SAFETY: a NUL-terminated wide string from the shell.
+        let len = (0..).take_while(|&i| unsafe { *raw.add(i) } != 0).count();
+        // SAFETY: `len` characters were just read.
+        let wide = unsafe { std::slice::from_raw_parts(raw, len) };
+        std::path::PathBuf::from(String::from_utf16_lossy(wide)).join("Temp")
+    });
+    // SAFETY: freed once; null is allowed.
+    unsafe { CoTaskMemFree(raw.cast()) };
+    path
 }
 
 /// Opens `path` and returns the handle and its length, refusing an empty file.

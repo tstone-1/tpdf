@@ -18435,6 +18435,35 @@ editor running it, Windows and Linux, and a SyncTeX file from XeTeX or LuaTeX.
 
 Decided 2026-10-15: built, and **off until the reader turns it on**.
 
+**Search left out 2026-10-16, after a measurement.** TEENYWEENY (Windows 11, build 26200)
+already indexes PDF text with Windows' own filter: `.pdf`'s `PersistentHandler` names the
+filter in `C:\Windows\system32\Windows.Data.Pdf.dll`, registered for the machine. A filter of
+tpdf's would replace a working one, would have to be registered for the machine (the indexer
+reads no user's classes), and would be loaded by an indexer that runs as SYSTEM, which would
+then start a `tpdf-cli.exe` from the reader's own writable install folder: a way to raise
+privileges (`docs/THREAT-MODEL.md` §T6.47). The same measurement found Edge's
+`PdfPreviewHandler.dll` registered for the machine as `.pdf`'s preview handler, and no
+thumbnail provider at all.
+
+**Done 2026-10-16: thumbnails and the preview pane** (`app.enableExplorerIntegration`,
+`app.disableExplorerIntegration`, `tpdf explorer [--add [--replace] | --remove]`).
+`src-tauri/shellext/` is a DLL of its own that links only the `windows` crate: it reads
+Explorer's stream (at most 256 MiB), hands it to `tpdf-cli render - -o - --fit WxH` in a job
+object (1 GiB, killed at 10 s for a thumbnail and 20 s for a preview page), and decodes the PNG
+with WIC. The preview shows a page at a time, fitted to the pane, and Page Down, Page Up, the
+arrows, Home and the wheel turn pages. `explorer.rs` registers it under the user's own classes,
+asks before replacing another program's handler (the window asks; the CLI takes `--replace`),
+keeps what it replaced in its own class key and puts it back; the uninstaller runs `--remove`,
+and an update or uninstall first renames a DLL Explorer still has loaded. The installer gets the
+DLL from `tauri.explorer.conf.json`, which `release.yml` passes on its Windows leg. Two defects
+were found by running it, both now `docs/TRAPS.md` entries: the preview window never got a
+posted message because `#[implement]` objects are agile, and `tpdf-cli` at the low integrity
+`prevhost.exe` runs at could not stage standard input in `%TEMP%`. Evidence:
+`scripts/explorer_check.py` on TEENYWEENY with the installer, 20 of 20 (`BUILD.md`), and its two
+controls fail exactly what they aim at. Not measured: a document that runs out the time limit,
+the memory limit, Windows 10, and a reader's own Explorer settings beyond large icons and the
+details view.
+
 SumatraPDF registers a thumbnail provider, a preview handler and a search filter, so Explorer
 shows the first page and Windows Search finds a PDF by its text. All three are COM servers
 that Explorer, `prevhost.exe` or the search indexer load **into their own process**, which

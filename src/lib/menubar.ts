@@ -110,7 +110,7 @@ export const MENU_LAYOUT: LayoutSection[] = [
       // Where a Mac reader looks for it: VS Code and others put their
       // equivalent in the application menu.
       "app.installCommandLineTool", "app.uninstallCommandLineTool", SEPARATOR,
-      "app.makeDefaultPdfApp"],
+      "app.makeDefaultPdfApp", "app.enableExplorerIntegration", "app.disableExplorerIntegration"],
   },
   {
     title: "File",

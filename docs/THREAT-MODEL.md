@@ -3439,6 +3439,70 @@ file is outside input like the PDF, so:
 Inverse search (from the page to the editor) is not built: it would start a program, which tpdf
 has no authority to do (`docs/PLAN.md`, *Not planned*).
 
+#### T6.47 — tpdf inside Explorer, for thumbnails and the preview pane, added 2026-10-16
+
+*Show PDFs in Explorer with tpdf* (Windows only, off until the reader turns it on) registers a
+thumbnail provider and a preview handler for `.pdf`. Two things are new, and both are larger
+than anything before them:
+
+- **tpdf code runs in processes that are not tpdf's.** Explorer loads a thumbnail provider in
+  its COM surrogate (`dllhost.exe`) and a preview handler in `prevhost.exe`, and a crash or a
+  hang there is a crash or a hang in the reader's file manager.
+- **tpdf reads documents the reader never opened.** Every PDF in a folder the reader looks at,
+  including one a browser just downloaded, reaches it without a click.
+
+So the code that runs there is kept to what cannot parse a PDF:
+
+- **The DLL is its own crate, `tpdf-shell`** (`src-tauri/shellext/`), and links only the
+  `windows` crate. It has no PDF code in it and cannot load `pdfium.dll`: it never names it,
+  and the parser lives in `tpdf_lib`, which it does not link.
+- **It hands the bytes to `tpdf-cli` and takes a PNG back.** Explorer gives the handler a
+  stream. The DLL reads at most 256 MiB of it and writes it to the standard input of
+  `tpdf-cli render - -o - --fit WxH`, started from beside the DLL, with no window and no
+  shell. `tpdf-cli` renders through a sandboxed worker exactly as every command does (§6).
+  What comes back is a PNG that tpdf's own encoder wrote from raw tiles; the DLL decodes it
+  with the system's WIC decoder, which Explorer already uses for every PNG it shows.
+- **The document is copied once, to a file only the handle names.** `tpdf-cli` spools
+  standard input to a file opened delete-on-close, as for any `-` input. `prevhost.exe` runs
+  at low integrity and `tpdf-cli` inherits that, and a low-integrity process may not write to
+  the user's temporary folder, so there the file goes to `LocalAppDataLow\Temp`, the folder
+  Windows gives such processes (measured 2026-10-16: without it every preview failed with
+  "Access is denied"). The worker is started as for every command; at low integrity the
+  render was measured to work end to end, in the preview pane.
+- **Every request has limits, and a failed one is an empty answer.** `tpdf-cli` runs in a job
+  object the DLL owns: at most 1 GiB of memory for it and its worker together, killed when the
+  job is closed, and closed after 10 seconds for a thumbnail and 20 for a preview. A PNG larger
+  than 64 MiB, or larger than the size asked for, is refused. Any failure returns an error to
+  Explorer, which then shows its generic icon or an empty pane.
+- **The preview pane does not wait on the renderer.** The handler shows its window at once and
+  paints the page when a background thread has it, so a document that runs out its time leaves
+  the pane empty and `prevhost.exe` answering.
+- **Registration is the user's own and is undone completely.** The keys are written under
+  `HKCU\Software\Classes` and `HKCU\...\PreviewHandlers`, with no administrator rights. A
+  handler another program had registered for the current user is kept and put back when tpdf's
+  is turned off; one registered for the machine is only masked, and shows again. Turning it off
+  removes every key tpdf wrote, and the uninstaller turns it off.
+
+**Search is not built.** Windows already indexes PDF text with its own filter
+(`Windows.Data.Pdf.dll`, registered for the machine; measured on TEENYWEENY, Windows 11 build
+26200). A filter of tpdf's would have to be registered for the machine, and the indexer that
+loads it runs as SYSTEM: it would start a `tpdf-cli.exe` from the reader's own, writable
+install folder as a more privileged user, which is a way to raise privileges, not a feature.
+
+**Measured on TEENYWEENY, 2026-10-16** (`scripts/explorer_check.py`, against the installer):
+every file of the hostile corpus, a document, random bytes and a locked document answered within
+0.25 s, the last two with Explorer's generic icon; the provider was loaded in `dllhost.exe` and
+not in `explorer.exe`; no `dllhost.exe`, `prevhost.exe` or `explorer.exe` had `pdfium.dll` mapped
+during thumbnails or the preview; an Explorer window on the corpus answered every message within a
+second for 15 s; turning it off left the user's classes as they were, and the uninstaller left no
+key naming the handlers. **Not measured:** a document that runs out the 10 or 20 seconds, and the
+job object's memory limit; no fixture makes the renderer take that long.
+
+**Not covered.** The two Windows processes run tpdf's DLL with their own rights, so a defect in
+the DLL itself (not in a PDF parser, which it does not have) is a defect in Explorer's
+surrogate or in `prevhost.exe`. The DLL trusts `tpdf-cli.exe` beside it: whoever can replace
+that file can already replace `tpdf.exe`, which the reader runs.
+
 ### T9 — The updater
 
 **The threat.** The updater is the only code path in tpdf that fetches bytes and then
@@ -5381,6 +5445,12 @@ because the arm it ran was the one written for "any other platform".
     this address (residual 32, which this widens from the reader's own certificate to
     anybody's). Not closed: the request has to be made where the network is, and the gate
     where the request is made.
+38. **With *Show PDFs in Explorer with tpdf* on, every PDF in a folder the reader opens is
+    read without a click** (§T6.47), added 2026-10-16. A downloaded document reaches tpdf's
+    sandboxed worker when its folder is shown, not when the reader decides to open it. Bounded
+    by the integration being off until the reader turns it on, by the worker's sandbox (§6),
+    and by the job object's time and memory limits around each request. Not closed: it is what
+    a thumbnail is.
 
 ## 8. How to re-verify any of this
 

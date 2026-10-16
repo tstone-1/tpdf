@@ -110,6 +110,35 @@ pub async fn command_line_tool_state() -> Result<Option<crate::clitool::ToolStat
         .map_err(|e| format!("the command-line tool could not be looked for: {e}"))?
 }
 
+/// Who answers Explorer for PDF thumbnails and the preview pane: tpdf,
+/// nobody, or another program by name. `None` off Windows, where the two
+/// commands that ask it are greyed. Reads only (`explorer.rs`).
+#[tauri::command]
+pub async fn explorer_state() -> Result<Option<crate::explorer::Handlers>, String> {
+    if !cfg!(windows) {
+        return Ok(None);
+    }
+    tauri::async_runtime::spawn_blocking(|| {
+        crate::explorer::run(None).map(|(_, state)| Some(state))
+    })
+    .await
+    .map_err(|e| format!("Explorer's handlers could not be read: {e}"))?
+}
+
+/// *Show PDFs in Explorer with tpdf* (`on`) and *Stop showing PDFs in Explorer
+/// with tpdf*. `replace` is the reader's answer to replacing another
+/// program's handler; the window asks it from [`explorer_state`]. The DLL
+/// registered is the one beside this executable, never a path the webview
+/// names. The answer is a sentence for the reader.
+#[tauri::command]
+pub async fn explorer_set(on: bool, replace: bool) -> Result<String, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        crate::explorer::run(Some((on, replace))).map(|(said, _)| said)
+    })
+    .await
+    .map_err(|e| format!("Explorer's handlers could not be changed: {e}"))?
+}
+
 /// *Make tpdf the default PDF app*.
 ///
 /// Run only when the reader chooses it; nothing asks at start (`defaultapp.rs`).

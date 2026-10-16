@@ -579,6 +579,7 @@ fn every_registered_command_is_reached_by_its_name_and_listed_in_help() {
             "long-term a.pdf -o b.pdf --timestamp digicert --json",
         ),
         ("path", "path --add"),
+        ("explorer", "explorer --add --replace"),
         ("completions", "completions zsh"),
     ];
     let names: Vec<&str> = COMMANDS.iter().map(|c| c.name).collect();
@@ -4270,12 +4271,15 @@ fn a_reading_command_takes_its_document_from_standard_input() {
         "text - --pages 1",
         "search - --text x",
         "fields -",
+        // Since 2026-10-16, for the Explorer handler (`shellext/`), which has
+        // a stream and no path.
+        "render - -o - --fit 256x256",
     ] {
         assert!(matches!(parse(&argv(line)), Ok(Line::Run(_))), "{line}");
     }
-    // `render` writes a file and compares it with its input by path, so it
-    // is one of the commands that do not.
-    assert!(refused("render - -o page.png").contains("has no option `-`"));
+    // `rotate` writes a copy and compares it with its input by path, so it is
+    // one of the commands that do not.
+    assert!(refused("rotate - --degrees 90 -o b.pdf").contains("`-`"));
 
     use std::io::Read;
     let document = b"%PDF-1.7 not really, and that is not this function's business".to_vec();

@@ -1,0 +1,11 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "build": {
+    "beforeBuildCommand": "npm run build:explorer"
+  },
+  "bundle": {
+    "resources": {
+      "target/release/tpdf_shell.dll": "tpdf_shell.dll"
+    }
+  }
+}

@@ -359,6 +359,15 @@ project conventions.
   macOS the command sets it and says so; Windows lets only you choose, so there it opens
   Settings at Default apps.
   <!-- built: app.makeDefaultPdfApp -->
+- **Show PDFs in Explorer with tpdf**, on Windows: Explorer shows the first page of each PDF
+  as its thumbnail, and the preview pane shows the document a page at a time (Page Down,
+  Page Up and the mouse wheel turn pages). Off until you turn it on; the installer registers
+  nothing. The handler Explorer loads parses nothing itself: it hands the document to the
+  same sandboxed renderer the window uses, with a time limit, and shows Explorer's own icon
+  when that fails. If another program already shows PDF thumbnails or previews, tpdf asks
+  before replacing it, and *Stop showing PDFs in Explorer with tpdf* puts it back. Search
+  is not tpdf's: Windows already indexes the text of PDFs with its own reader.
+  <!-- built: app.enableExplorerIntegration app.disableExplorerIntegration -->
 - Printing through the system print panel, on all three platforms, and every print job is
   read back before the panel opens. On macOS and Windows the operating system's own PDF
   parser reads it, which is independent of the one that wrote the job and the one that drew
@@ -1005,6 +1014,7 @@ both.
 `tpdf crop`, `tpdf edit`, `tpdf comments`, `tpdf text-runs`, `tpdf render`, `tpdf ocr`,
 `tpdf protect`, `tpdf unprotect`, `tpdf compress`, `tpdf form`, `tpdf images` and
 `tpdf hidden` expose document workflows to scripts; `tpdf path` puts the tool on your `PATH` on Windows,
+`tpdf explorer` turns tpdf's Explorer thumbnails and preview pane on or off there,
 and `tpdf completions` prints a completion script for your shell. The commands do what **Sign document…**, **Document
 properties**, the viewer's own text, its form filling, page operations and **Redact and save as…** do in the
 window, with the same code: the document is read only by the same sandboxed worker processes,
@@ -1636,6 +1646,12 @@ or above 16,777,216 pixels total are refused; adjust the DPI explicitly. Existin
 outputs require `--force`; the input is never replaced. Failure before
 publication leaves the destination unchanged. Rendering creates no signature
 or redaction-verification claim and does not alter the PDF.
+
+`--fit WxH` replaces `--dpi`: the page is made as large as fits in a box of W by H
+pixels, each side from 1 to 4096, so `--fit 256x256` makes a thumbnail. `-` as the
+input reads the document from standard input, and `-o -` writes the PNG to standard
+output with nothing else beside it, which cannot be combined with `--json`. That is
+how the Explorer thumbnails are made: `tpdf render - -o - --fit 256x256`.
 
 The JSON report carries `schema`, `command`, `input`, `output`, `page`, `dpi`,
 `width_px` and `height_px`. PNG bytes go to the named file; stdout holds the

@@ -60,6 +60,18 @@ have the binary.)
 - **`tpdf print`.** Prints a document, or the pages listed with `--pages`, to the printer
   named with `--printer`, with no dialog. The job is built and read back as the window's
   Print builds it; a printer name nothing knows is refused with the names there are.
+- **PDF thumbnails and the preview pane in Explorer, on Windows.** *Show PDFs in Explorer
+  with tpdf* makes Explorer show each PDF's first page as its thumbnail and the document a
+  page at a time in the preview pane (Page Down, Page Up and the wheel turn pages). It is
+  off until you turn it on, and is your own setting: no administrator is asked. If another
+  program shows PDF thumbnails or previews, tpdf asks before replacing it, and *Stop showing
+  PDFs in Explorer with tpdf* puts it back; uninstalling turns it off. The handler Explorer
+  loads reads no PDF itself: it hands the document to tpdf's sandboxed renderer with a time
+  limit, and Explorer shows its own icon when that fails. `tpdf explorer --add` and
+  `--remove` do the same from a script.
+- **`tpdf render` makes thumbnails and works in a pipe.** `--fit 256x256` makes the page as
+  large as fits in the box, in place of `--dpi`; `-` reads the document from standard input
+  and `-o -` writes the PNG to standard output.
 - **Save an attachment.** Saves a file the document carries to a place you choose; with
   several, the command palette asks which. The properties dialog lists them with the kind
   of file each name claims. A sandboxed worker decodes the file; tpdf never opens it, and

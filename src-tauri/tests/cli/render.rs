@@ -198,6 +198,72 @@ pub(super) fn renders(report: &mut Report) {
         code == 2 && std::fs::read(&source).unwrap() == original,
         &stderr,
     );
+    // The Explorer handler's route (`shellext/`): the document on standard
+    // input, the PNG alone on standard output, the page fitted into a box.
+    let piped = |args: &[&str]| {
+        use std::io::Write;
+        let mut child = std::process::Command::new(env!("CARGO_BIN_EXE_tpdf-cli"))
+            .args(args)
+            .stdin(std::process::Stdio::piped())
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::piped())
+            .spawn()
+            .expect("the built tool runs");
+        child.stdin.take().unwrap().write_all(&original).unwrap();
+        let out = child.wait_with_output().unwrap();
+        (
+            out.status.code().unwrap_or(-1),
+            out.stdout,
+            String::from_utf8_lossy(&out.stderr).into_owned(),
+        )
+    };
+    for (page, fit, expect) in [
+        ("1", "256x256", (192, 256)),
+        ("2", "256x256", (256, 192)),
+        ("1", "100x40", (30, 40)),
+    ] {
+        let (code, png, stderr) = piped(&["render", "-", "-o", "-", "--page", page, "--fit", fit]);
+        report.check(
+            &format!(
+                "render - -o - --fit {fit} writes page {page} and nothing else to standard output"
+            ),
+            code == 0 && png.starts_with(b"\x89PNG\r\n\x1a\n"),
+            &stderr,
+        );
+        if code != 0 {
+            continue;
+        }
+        let piped_png = dir.join("piped.png");
+        std::fs::write(&piped_png, &png).unwrap();
+        let (w, h, data) = pixels(&piped_png);
+        // Page 1 has red at the bottom left, page 2 (turned 90) at the top left.
+        let colors = if page == "1" {
+            [white, green, red, blue]
+        } else {
+            [red, white, blue, green]
+        };
+        let inside = |x: u32, y: u32| {
+            let quadrant = usize::from(y >= h / 2) * 2 + usize::from(x >= w / 2);
+            let start = ((y * w + x) * 4) as usize;
+            data[start..start + 4] == colors[quadrant]
+        };
+        let (qx, qy) = (w / 4, h / 4);
+        report.check(
+            &format!("--fit {fit} sizes page {page} to the box and paints its quadrants"),
+            (w, h) == expect
+                && inside(qx, qy)
+                && inside(w - qx, qy)
+                && inside(qx, h - qy)
+                && inside(w - qx, h - qy),
+            &format!("{w} x {h}"),
+        );
+    }
+    let (code, png, stderr) = piped(&["render", "-", "-o", "-", "--page", "9", "--fit", "64x64"]);
+    report.check(
+        "a page past the end is refused with exit 3 and nothing on standard output",
+        code == 3 && png.is_empty(),
+        &stderr,
+    );
     report.check(
         "render leaves no staging directories",
         std::fs::read_dir(&dir).unwrap().all(|p| {

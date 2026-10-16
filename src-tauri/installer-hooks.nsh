@@ -53,6 +53,29 @@
     Delete "$INSTDIR\pdfium"
   tpdf_pdfium_ready:
   !insertmacro TPDF_KEEP_PDF_BACKUP
+  !insertmacro TPDF_MOVE_SHELL_DLL
+!macroend
+
+; ---------------------------------------------------------------------------
+; The Explorer handler, which Explorer may have loaded.
+; ---------------------------------------------------------------------------
+;
+; With *Show PDFs in Explorer with tpdf* on, `tpdf_shell.dll` is loaded by
+; Explorer's COM surrogate and by `prevhost.exe` (`explorer.rs`), and Windows
+; does not let a loaded DLL be overwritten or deleted. It does let one be
+; renamed: the process keeps its mapping, and the next load finds the new
+; file under the old name. So before the files are written, and before the
+; uninstaller deletes them, the DLL is moved to a name of its own in the same
+; folder and that name is deleted now or, while it is loaded, at the next
+; start of Windows. Nothing happens when the DLL is not there.
+
+!macro TPDF_MOVE_SHELL_DLL
+  IfFileExists "$INSTDIR\tpdf_shell.dll" 0 tpdf_shell_moved
+    GetTempFileName $R2 "$INSTDIR"
+    Delete "$R2"
+    Rename "$INSTDIR\tpdf_shell.dll" "$R2"
+    Delete /REBOOTOK "$R2"
+  tpdf_shell_moved:
 !macroend
 
 ; ---------------------------------------------------------------------------
@@ -129,10 +152,19 @@
   DetailPrint "tpdf-cli path --add: exit $0"
 !macroend
 
+; Uninstalling turns the Explorer integration off whatever it was, and puts
+; back what it replaced (`tpdf-cli explorer --remove`, which changes nothing
+; when it was never on). An update keeps it: the registration names the DLL by
+; its path in this folder, and the new version installs the DLL there again.
+
 !macro NSIS_HOOK_PREUNINSTALL
   ${If} $UpdateMode <> 1
     nsExec::ExecToLog '"$INSTDIR\tpdf-cli.exe" path --remove'
     Pop $0
     DetailPrint "tpdf-cli path --remove: exit $0"
+    nsExec::ExecToLog '"$INSTDIR\tpdf-cli.exe" explorer --remove'
+    Pop $0
+    DetailPrint "tpdf-cli explorer --remove: exit $0"
   ${EndIf}
+  !insertmacro TPDF_MOVE_SHELL_DLL
 !macroend

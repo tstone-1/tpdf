@@ -5471,6 +5471,7 @@ dependencies = [
  "tauri-plugin-process",
  "tauri-plugin-single-instance",
  "tauri-plugin-updater",
+ "tpdf-shell",
  "ttf-parser",
  "url",
  "windows",
@@ -5480,6 +5481,14 @@ dependencies = [
  "zeroize",
  "zune-core",
  "zune-jpeg",
+]
+
+[[package]]
+name = "tpdf-shell"
+version = "0.0.0"
+dependencies = [
+ "windows",
+ "windows-core",
 ]
 
 [[package]]

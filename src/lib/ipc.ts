@@ -43,6 +43,7 @@
 import { invoke, type InvokeArgs } from "@tauri-apps/api/core";
 
 import type { ToolState } from "./clitoolstate";
+import type { ExplorerState } from "./explorerstate";
 import type { Comments } from "./comments";
 import type { CropGeometry } from "./crop";
 import type { Fill } from "./redactfill";
@@ -560,6 +561,13 @@ export interface Commands {
    * opens Settings where the reader chooses. The reply is the sentence to show.
    */
   default_pdf_app: { args: NoArgs; reply: string };
+  /** Who answers Explorer for PDF thumbnails and previews; `null` off Windows. */
+  explorer_state: { args: NoArgs; reply: ExplorerState | null };
+  /**
+   * Turns tpdf's Explorer handlers on or off (`explorer.rs`); `replace` is the
+   * reader's answer to replacing another program's. The reply is the sentence.
+   */
+  explorer_set: { args: { on: boolean; replace: boolean }; reply: string };
   take_launch_paths: { args: NoArgs; reply: Opening[] };
   synctex_forward: { args: { pdf: string; source: string; line: number }; reply: Forward };
   session_load: { args: NoArgs; reply: Session };

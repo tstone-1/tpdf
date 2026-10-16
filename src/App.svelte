@@ -78,6 +78,7 @@
     type Progress as HiddenProgress,
   } from "./lib/hiddentext";
   import { CommandLineTool } from "./lib/clitoolstate";
+  import { ExplorerIntegration } from "./lib/explorerstate";
   import {
     afterCopy,
     afterRedaction,
@@ -1641,6 +1642,8 @@
     // `clitoolstate.ts` shows it and then asks what is there now.
     commandLineTool: (install) => void commandLineTool.run(install),
     commandLineToolOffered: (install) => commandLineTool.offered(install),
+    explorerIntegration: (on) => void explorer.run(on),
+    explorerOffered: (on) => explorer.offered(on),
     makeDefaultPdfApp: () => {
       void call("default_pdf_app").then(
         (said) => tell(said),
@@ -4113,6 +4116,15 @@
     changed: () => refreshMenu(),
   });
 
+  const explorer = new ExplorerIntegration({
+    read: () => call("explorer_state"),
+    apply: (on, replace) => call("explorer_set", { on, replace }),
+    confirm: (question) =>
+      confirmDialog(question, { title: "Show PDFs in Explorer", kind: "info", okLabel: "Replace", cancelLabel: "Keep it" }),
+    say: (text) => (notice = text),
+    changed: () => refreshMenu(),
+  });
+
   const commands = new CommandRegistry();
   registerAppCommands(commands, appActions);
   /*
@@ -5148,6 +5160,7 @@
       // The link, or the PATH, can be changed from a terminal while tpdf is
       // open, and a greyed command cannot be run to find that out.
       window.addEventListener("focus", () => void commandLineTool.refresh());
+      window.addEventListener("focus", () => void explorer.refresh());
 
       // Reopening the last document is the whole of the feature: a reader that
       // starts empty every morning is not the one someone reaches for. It runs
@@ -5214,6 +5227,7 @@
       // After the document the reader is waiting for has been asked for, and
       // not awaited: until it answers, both of the tool's commands are offered.
       void commandLineTool.refresh();
+      void explorer.refresh();
       // After the first page, not before it: the tabs behind are not what the
       // reader is waiting for, and each one is an open the first page would
       // otherwise queue behind.

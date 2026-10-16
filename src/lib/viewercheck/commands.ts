@@ -438,6 +438,8 @@ export async function appCommandChecks(
     // Not known, which is what a check that asks no backend has: both offered.
     commandLineToolOffered: () => true,
     makeDefaultPdfApp: () => fired.push("makeDefaultPdfApp"),
+    explorerIntegration: (on) => fired.push(`explorerIntegration:${on}`),
+    explorerOffered: () => true,
     automaticUpdates: () => true,
     setAutomaticUpdates: (enabled) => fired.push(`setAutomaticUpdates:${enabled}`),
     applyUpdate: () => fired.push("applyUpdate"),
@@ -1852,6 +1854,12 @@ export async function appCommandChecks(
     // It would change which application opens PDFs on the machine running the
     // check. The sentence is `defaultapp.rs`'s test; the wiring is `appcommands.test.ts`.
     "app.makeDefaultPdfApp": "it changes the machine's default application for PDFs",
+    // Both change which program Explorer loads for every PDF the user looks
+    // at. The registry logic is `explorer.rs`'s tests over a map; the question
+    // and the guards are `explorerstate.test.ts`; Explorer itself is the
+    // Windows check in `BUILD.md`.
+    "app.enableExplorerIntegration": "it registers handlers Explorer loads for every PDF",
+    "app.disableExplorerIntegration": "it changes the handlers Explorer loads for every PDF",
     // Driving either from the palette would time the layout against a chain of
     // two IPC round trips --- measure the ink, then ask what size the page
     // becomes --- and the probe framework's settle is a frame-loop wait, not a
@@ -2220,6 +2228,8 @@ export async function appCommandChecks(
     "app.installCommandLineTool",
     "app.uninstallCommandLineTool",
     "app.makeDefaultPdfApp",
+    "app.enableExplorerIntegration",
+    "app.disableExplorerIntegration",
     "edit.fieldBorderOff",
     // Linux only, and a document is not involved: the file is remembered for
     // every signing after. Missing here from the day it was registered until

@@ -1,0 +1,46 @@
+# The Windows Explorer handler: a thumbnail provider and a preview handler for
+# `.pdf`, loaded by Explorer's COM surrogate and by `prevhost.exe`, never by tpdf.
+#
+# It parses no PDF. It hands the document to `tpdf-cli render` beside it and
+# shows the PNG that comes back (`docs/THREAT-MODEL.md` §T6.47), so it links
+# nothing but the `windows` crate, which the application already ships. Built
+# by `npm run build:explorer`; registered by `explorer.rs` in the application,
+# and only when the reader turns *Show PDFs in Explorer with tpdf* on.
+[package]
+name = "tpdf-shell"
+version = "0.0.0"
+publish = false
+edition = "2021"
+rust-version = "1.86"
+license = "MIT"
+
+[lib]
+name = "tpdf_shell"
+crate-type = ["cdylib", "rlib"]
+
+[target.'cfg(windows)'.dependencies]
+# Both already in `Cargo.lock` through the application and Tauri; MIT OR
+# Apache-2.0. `windows-core` is named for `#[implement]`, whose expansion
+# refers to it by path.
+windows-core = "0.62"
+windows = { version = "0.62", features = [
+    "Win32_Foundation",
+    "Win32_Graphics_Gdi",
+    # WIC, to decode the PNG `tpdf-cli` writes.
+    "Win32_Graphics_Imaging",
+    "Win32_Security",
+    "Win32_System_Com",
+    "Win32_System_Com_StructuredStorage",
+    # Toolhelp, for `examples/explorer_probe.rs` only: which Explorer process
+    # has the DLL and PDFium mapped. A binding, no code in the DLL.
+    "Win32_System_Diagnostics_ToolHelp",
+    "Win32_System_JobObjects",
+    "Win32_System_LibraryLoader",
+    "Win32_System_Ole",
+    "Win32_System_SystemServices",
+    "Win32_System_Threading",
+    "Win32_UI_Input_KeyboardAndMouse",
+    "Win32_UI_Shell",
+    "Win32_UI_Shell_PropertiesSystem",
+    "Win32_UI_WindowsAndMessaging",
+] }

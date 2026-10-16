@@ -8,6 +8,7 @@
     "dev": "vite",
     "build": "vite build",
     "build:checks": "vite build --mode checks",
+    "build:explorer": "vite build && cargo build --locked --release --manifest-path src-tauri/Cargo.toml -p tpdf-shell",
     "preview": "vite preview",
     "check": "tsc --noEmit --project tsconfig.json && svelte-check --tsconfig ./tsconfig.json",
     "tauri": "tauri",

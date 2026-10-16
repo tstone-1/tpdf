@@ -98,7 +98,8 @@ CONTROLS: dict[str, tuple[str, list[str]]] = {
     "no-install": ("the installer is not run", [
         "the installer ends with exit code 0", "tpdf.exe is installed",
         "tpdf-cli.exe is installed", "uninstall.exe is installed",
-        "pdfium/pdfium.dll is installed", "Windows lists tpdf as installed"]),
+        "pdfium/pdfium.dll is installed", "tpdf_shell.dll is installed",
+        "Windows lists tpdf as installed"]),
     "one-install": ("the installer is not run a second time, over the installed copy", [
         "the installer run over the installed copy ends with exit code 0"]),
     "no-uninstall": ("the uninstaller is not run until the checks have been read", [
@@ -303,7 +304,8 @@ class Watch:
 def check_files(checks: Checks, folder: Path, version: str) -> Path | None:
     print("--- what the installer wrote ---")
     cli = folder / "tpdf-cli.exe"
-    for relative in ("tpdf.exe", "tpdf-cli.exe", "uninstall.exe", "pdfium/pdfium.dll"):
+    for relative in ("tpdf.exe", "tpdf-cli.exe", "uninstall.exe", "pdfium/pdfium.dll",
+                     "tpdf_shell.dll"):
         checks.note((folder / relative).is_file(), f"{relative} is installed")
     checks.note(registry(UNINSTALL_KEY) is not None, "Windows lists tpdf as installed")
     if not cli.is_file():

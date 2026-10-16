@@ -1,0 +1,9 @@
+{
+  "thumbnail": {
+    "kind": "tpdf"
+  },
+  "preview": {
+    "kind": "other",
+    "name": "PDF Preview Handler"
+  }
+}

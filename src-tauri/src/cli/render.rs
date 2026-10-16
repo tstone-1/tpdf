@@ -1,6 +1,11 @@
 //! Headless visual assertions use the viewer's contained renderer. The caller
 //! assembles bounded raw tiles and encodes PNG; it never parses PDF or decodes
 //! worker-provided image files. Publication uses the same staging as PDF edits.
+//!
+//! `render - -o - --fit WxH` reads the document from standard input and writes
+//! only the PNG to standard output. That is the Explorer handler's whole route
+//! to a page (`shellext/`, `docs/THREAT-MODEL.md` §T6.47): it gets a stream
+//! from Explorer and must not parse it, so it hands the bytes here.
 
 use std::io::Write;
 use std::path::PathBuf;
@@ -16,8 +21,8 @@ use crate::worker_proto::{Reply, Request};
 
 pub const COMMAND: Registered = Registered {
     name: "render",
-    usage: "render <in.pdf> -o <page.png> [--page N] [--dpi N]\n        [--password-env VAR] [--force] [--json]",
-    summary: "Renders one page to PNG through the viewer's sandboxed renderer.\n            Defaults to page 1 at 144 DPI; respects saved crops and rotations.",
+    usage: "render <in.pdf | -> -o <page.png | -> [--page N] [--dpi N | --fit WxH]\n        [--password-env VAR] [--force] [--json]",
+    summary: "Renders one page to PNG through the viewer's sandboxed renderer.\n            Defaults to page 1 at 144 DPI; respects saved crops and rotations.\n            --fit makes the page as large as fits in W x H pixels; -o - writes\n            the PNG to standard output.",
     parse: |args| parse(args).map(|p| Box::new(p) as Box<dyn Subcommand>),
 };
 
@@ -27,9 +32,30 @@ struct Render {
     output: PathBuf,
     page: u32,
     dpi: u32,
+    /// `--fit`: the box the page is fitted into, in pixels, instead of `dpi`.
+    fit: Option<(u32, u32)>,
     password_env: Option<String>,
     force: bool,
     json: bool,
+}
+
+/// `-o -`: the PNG goes to standard output and nothing else does.
+fn to_stdout(output: &std::path::Path) -> bool {
+    output == std::path::Path::new("-")
+}
+
+/// `--fit`'s value: `WxH`, each side 1 to 4096 pixels, so that any box is
+/// inside the 16777216-pixel bound [`dimensions`] holds every render to.
+fn fit_box(text: &str) -> Result<(u32, u32), String> {
+    let side = |part: &str| part.parse::<u32>().ok().filter(|n| (1..=4096).contains(n));
+    text.split_once(['x', 'X'])
+        .and_then(|(w, h)| Some((side(w)?, side(h)?)))
+        .ok_or_else(|| "--fit needs WxH, each side from 1 to 4096 pixels, as in 256x256".into())
+}
+
+/// The scale at which a page of `size` points is as large as fits in `fit`.
+fn fit_scale(size: PageSize, fit: (u32, u32)) -> f32 {
+    (fit.0 as f32 / size.width_pt).min(fit.1 as f32 / size.height_pt)
 }
 
 fn parse(args: &[String]) -> Result<Render, String> {
@@ -38,6 +64,7 @@ fn parse(args: &[String]) -> Result<Render, String> {
         output: PathBuf::new(),
         page: 1,
         dpi: 144,
+        fit: None,
         password_env: None,
         force: false,
         json: false,
@@ -45,6 +72,7 @@ fn parse(args: &[String]) -> Result<Render, String> {
     let mut paths = Vec::new();
     let mut rest = args.iter();
     let mut positional = false;
+    let mut dpi_given = false;
     while let Some(arg) = rest.next() {
         if positional {
             paths.push(PathBuf::from(arg));
@@ -60,7 +88,9 @@ fn parse(args: &[String]) -> Result<Render, String> {
                     .filter(|n| *n > 0)
                     .ok_or("--page needs a positive integer")?
             }
+            "--fit" => command.fit = Some(fit_box(value(arg, &mut rest)?)?),
             "--dpi" => {
+                dpi_given = true;
                 command.dpi = value(arg, &mut rest)?
                     .parse::<u32>()
                     .ok()
@@ -70,6 +100,7 @@ fn parse(args: &[String]) -> Result<Render, String> {
             "--password-env" => command.password_env = Some(variable(value(arg, &mut rest)?)?),
             "--force" => command.force = true,
             "--json" => command.json = true,
+            "-" => paths.push(arg.into()),
             flag if flag.starts_with('-') => return Err(unknown("render", flag)),
             path => paths.push(path.into()),
         }
@@ -78,6 +109,12 @@ fn parse(args: &[String]) -> Result<Render, String> {
         return Err("render needs exactly one input document and -o <page.png>".into());
     }
     command.input = paths.remove(0);
+    if dpi_given && command.fit.is_some() {
+        return Err("render takes --dpi or --fit, not both".into());
+    }
+    if command.json && to_stdout(&command.output) {
+        return Err("render cannot write --json and the PNG to standard output at once".into());
+    }
     Ok(command)
 }
 
@@ -102,6 +139,16 @@ fn dimensions(size: PageSize, scale: f32) -> Result<(u32, u32), Failure> {
     Ok((width as u32, height as u32))
 }
 
+impl Render {
+    /// `--fit`'s scale for a page of `size`, else `--dpi`'s.
+    fn scale(&self, size: PageSize) -> f32 {
+        match self.fit {
+            Some(fit) => fit_scale(size, fit),
+            None => self.dpi as f32 / 72.0,
+        }
+    }
+}
+
 impl Subcommand for Render {
     fn run(
         &self,
@@ -110,11 +157,28 @@ impl Subcommand for Render {
         _err: &mut dyn Write,
     ) -> Result<Exit, Failure> {
         let inputs = std::slice::from_ref(&self.input);
-        check_target(inputs, &self.output, self.force)?;
+        let stdout = to_stdout(&self.output);
+        let stdin = self.input == std::path::Path::new("-");
+        if !stdout {
+            check_target(inputs, &self.output, self.force)?;
+        }
         let key = password(self.password_env.as_deref())?;
-        let (file, len) = opened(&self.input).map_err(|e| Failure::new(Exit::Refused, e))?;
-        let fingerprint =
-            Fingerprint::of_open(&file, &self.input).map_err(|e| Failure::new(Exit::Refused, e))?;
+        let (file, len) = if stdin {
+            super::opened_or_stdin(&self.input)
+        } else {
+            opened(&self.input)
+        }
+        .map_err(|e| Failure::new(Exit::Refused, e))?;
+        // A document read from standard input is a file only this process can
+        // name, so there is nothing for it to have changed under.
+        let fingerprint = if stdin {
+            None
+        } else {
+            Some(
+                Fingerprint::of_open(&file, &self.input)
+                    .map_err(|e| Failure::new(Exit::Refused, e))?,
+            )
+        };
         let mut session = env
             .worker()
             .session(&file, len, key.as_deref())
@@ -143,8 +207,18 @@ impl Subcommand for Render {
                 "--page names a page past the end of the document",
             )
         })?;
-        let scale = self.dpi as f32 / 72.0;
+        let scale = self.scale(*size);
         let (width, height) = dimensions(*size, scale)?;
+        if let Some((w, h)) = self.fit {
+            // Rounding the other side may not overshoot the box; the page's
+            // own aspect makes one side exact and the other smaller.
+            if width > w || height > h {
+                return Err(Failure::new(
+                    Exit::Internal,
+                    format!("--fit {w}x{h} came out {width} x {height} pixels"),
+                ));
+            }
+        }
         let mut pixels = vec![0; width as usize * height as usize * 4];
         for y in (0..height).step_by(1024) {
             for x in (0..width).step_by(1024) {
@@ -174,9 +248,19 @@ impl Subcommand for Render {
         }
         drop(session);
         drop(file);
-        unchanged(&[(self.input.as_path(), &fingerprint)])?;
+        if let Some(fingerprint) = &fingerprint {
+            unchanged(&[(self.input.as_path(), fingerprint)])?;
+        }
         let png = crate::render::encode_png(&pixels, width, height)
             .map_err(|e| Failure::new(Exit::Internal, e))?;
+        if stdout {
+            out.write_all(&png)
+                .and_then(|()| out.flush())
+                .map_err(|e| {
+                    Failure::new(Exit::Refused, format!("could not write the PNG: {e}"))
+                })?;
+            return Ok(Exit::Ok);
+        }
         let staging = Temporary::beside(&self.output)?;
         let staged = staging.0.join("page.png");
         std::fs::write(&staged, &png).map_err(|e| Failure::new(Exit::Refused, e.to_string()))?;
@@ -188,7 +272,7 @@ impl Subcommand for Render {
             input: self.input.display().to_string(),
             output: self.output.display().to_string(),
             page: self.page,
-            dpi: self.dpi,
+            dpi: (scale * 72.0).round() as u32,
             width_px: width,
             height_px: height,
         };
@@ -203,7 +287,7 @@ impl Subcommand for Render {
                     self.output.display(),
                     width,
                     height,
-                    self.dpi
+                    (scale * 72.0).round()
                 ),
             );
         }
@@ -244,6 +328,12 @@ mod tests {
             "a.pdf -o a.png --dpi 601",
             "a.pdf -o a.png --dpi NaN",
             "a.pdf -o a.png --unknown",
+            "a.pdf -o a.png --fit 256",
+            "a.pdf -o a.png --fit 0x256",
+            "a.pdf -o a.png --fit 256x4097",
+            "a.pdf -o a.png --fit 256x256 --dpi 72",
+            "a.pdf -o a.png --dpi 72 --fit 256x256",
+            "a.pdf -o - --json",
         ] {
             assert!(
                 parse(
@@ -259,5 +349,42 @@ mod tests {
         let command = parse(&["-o", "a.png", "--", "-input.pdf"].map(str::to_owned)).unwrap();
         assert_eq!(command.input, PathBuf::from("-input.pdf"));
         assert_eq!((command.page, command.dpi), (1, 144));
+        let command = parse(&["-", "-o", "-", "--fit", "256X128"].map(str::to_owned)).unwrap();
+        assert_eq!(command.input, PathBuf::from("-"));
+        assert!(to_stdout(&command.output));
+        assert_eq!(command.fit, Some((256, 128)));
+        let letter = PageSize {
+            width_pt: 612.0,
+            height_pt: 792.0,
+        };
+        assert_eq!(
+            dimensions(letter, command.scale(letter)).unwrap(),
+            (99, 128)
+        );
+        let at_dpi = parse(&["a.pdf", "-o", "a.png", "--dpi", "36"].map(str::to_owned)).unwrap();
+        assert_eq!(
+            dimensions(letter, at_dpi.scale(letter)).unwrap(),
+            (306, 396)
+        );
+    }
+    #[test]
+    fn a_fitted_page_fills_one_side_of_the_box_and_stays_inside_the_other() {
+        let size = |width_pt, height_pt| PageSize {
+            width_pt,
+            height_pt,
+        };
+        for (page, fit, expect) in [
+            (size(612.0, 792.0), (256, 256), (198, 256)),
+            (size(792.0, 612.0), (256, 256), (256, 198)),
+            (size(595.0, 842.0), (400, 300), (212, 300)),
+            (size(100.0, 100.0), (1, 1), (1, 1)),
+            (size(612.0, 792.0), (4096, 4096), (3165, 4096)),
+        ] {
+            assert_eq!(
+                dimensions(page, fit_scale(page, fit)).unwrap(),
+                expect,
+                "{fit:?}"
+            );
+        }
     }
 }

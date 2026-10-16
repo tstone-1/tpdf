@@ -857,6 +857,17 @@ fn samples() -> BTreeMap<&'static str, String> {
         },
     );
 
+    // Two of `Owner`'s three arms, one per slot; `Nobody` carries no field.
+    put(
+        "Handlers",
+        &crate::explorer::Handlers {
+            thumbnail: crate::explorer::Owner::Tpdf,
+            preview: crate::explorer::Owner::Other {
+                name: "PDF Preview Handler".into(),
+            },
+        },
+    );
+
     put(
         "Offered",
         &crate::commands::ocr::Offered {

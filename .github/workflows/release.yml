@@ -1341,9 +1341,14 @@ jobs:
           # together here and not in the matrix, where `github.workspace` is
           # empty: `v26.10.11-rc1` asked for `/src-tauri/tauri.signing.conf.json`.
           #
-          # The Linux leg takes neither overlay and names its two formats, since
+          # The third, on Windows too, builds the Explorer handler before the
+          # application and bundles it beside `tpdf.exe`, where Tauri signs it
+          # as it signs `pdfium.dll`. In `tauri.windows.conf.json` it would make
+          # every plain `cargo build` on Windows fail on a DLL nobody built.
+          #
+          # The Linux leg takes none of them and names its two formats, since
           # `bundle.targets` lists the macOS and Windows ones.
-          args: ${{ runner.os == 'Linux' && '--bundles deb,appimage' || format('--config {0}/src-tauri/tauri.updater.conf.json', github.workspace) }} ${{ matrix.signs-windows && format('--config {0}/src-tauri/tauri.signing.conf.json', github.workspace) || '' }}
+          args: ${{ runner.os == 'Linux' && '--bundles deb,appimage' || format('--config {0}/src-tauri/tauri.updater.conf.json', github.workspace) }} ${{ matrix.signs-windows && format('--config {0}/src-tauri/tauri.signing.conf.json', github.workspace) || '' }} ${{ runner.os == 'Windows' && format('--config {0}/src-tauri/tauri.explorer.conf.json', github.workspace) || '' }}
           # The draft is created once, by the `draft` job, and both legs upload
           # into it by id. `tagName` is deliberately absent: the action's create
           # path is guarded by `if (tagName && !releaseId)`, so passing both
@@ -1403,8 +1408,8 @@ jobs:
           if (Test-Path $log) { Get-Content $log | Where-Object { $_ -notmatch 'card ' } } else { Write-Output 'no signing log: the sign command never ran' }
 
       # Nothing in the build reads a signature back, so this step does: the
-      # installer, and then, unpacked from it, the three files tpdf itself
-      # consists of.
+      # installer, and then, unpacked from it, the four files tpdf itself
+      # consists of: the three it runs and the Explorer handler.
       # The installer on the release is this one: the updater signature beside
       # it is over these bytes.
       - name: Verify the Windows build is signed
@@ -1416,7 +1421,7 @@ jobs:
           $unpacked = Join-Path $env:RUNNER_TEMP 'signed-setup'
           7z x -y "-o$unpacked" $setup[0].FullName | Out-Null
           if ($LASTEXITCODE -ne 0) { Write-Output '::error::7z could not unpack the installer'; exit 1 }
-          $inside = foreach ($name in 'tpdf.exe', 'tpdf-cli.exe', 'pdfium.dll') {
+          $inside = foreach ($name in 'tpdf.exe', 'tpdf-cli.exe', 'pdfium.dll', 'tpdf_shell.dll') {
             $found = @(Get-ChildItem $unpacked -Recurse -File -Filter $name)
             if ($found.Count -ne 1) { Write-Output "::error::expected one $name in the installer, found $($found.Count)"; exit 1 }
             $found[0].FullName

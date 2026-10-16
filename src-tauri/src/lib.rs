@@ -33,6 +33,7 @@ pub mod docmodel;
 pub mod document;
 pub mod edits;
 pub mod encoding;
+pub mod explorer;
 pub mod failure;
 pub mod fields;
 pub mod fingerprint;
@@ -1091,6 +1092,8 @@ pub fn run() {
             command_line_tool,
             command_line_tool_state,
             default_pdf_app,
+            explorer_state,
+            explorer_set,
             take_launch_paths,
             synctex_forward,
             session_load,

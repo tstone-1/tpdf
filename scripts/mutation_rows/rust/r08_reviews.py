@@ -2321,3 +2321,93 @@ ROWS += [
         "a_forward_search_source_is_made_absolute_where_the_launch_was_made",
     ),
 ]
+
+# --- Explorer integration and `render --fit`, 2026-10-16 ----------------------
+# `explorer.rs` against the map in its tests: what is replaced only with
+# consent, what is put back, and what is left behind when it is turned off.
+ROWS += [
+    Mutation(
+        "explorer: another program's handler replaced without consent",
+        "src/explorer.rs",
+        "            Owner::Other { name } if !replace => {",
+        "            Owner::Other { name } if !replace && false => {",
+        "a_free_slot_is_taken_and_one_the_machine_owns_is_left_unless_replaced",
+    ),
+    Mutation(
+        "explorer: the user's own handler not written down",
+        "src/explorer.rs",
+        "                registry.set(&class_key(slot.ours()), PREVIOUS, &previous)?;\n",
+        "",
+        "a_handler_the_user_had_is_put_back_after_being_replaced",
+    ),
+    Mutation(
+        "explorer: what was replaced not put back",
+        "src/explorer.rs",
+        "                Some(previous) => registry.set(&slot.key(), \"\", &previous)?,",
+        "                Some(_) => registry.remove_tree(&slot.key())?,",
+        "a_handler_the_user_had_is_put_back_after_being_replaced",
+    ),
+    Mutation(
+        "explorer: the preview list keeps tpdf",
+        "src/explorer.rs",
+        "    registry.remove_value(PREVIEW_LIST, PREVIEW_CLSID)?;\n",
+        "",
+        "turning_it_off_leaves_the_users_hive_as_it_was_before",
+    ),
+    Mutation(
+        "explorer: an emptied ShellEx key left behind",
+        "src/explorer.rs",
+        "    registry.remove_if_empty(SHELLEX)?;\n",
+        "",
+        "turning_it_off_leaves_the_users_hive_as_it_was_before",
+    ),
+    Mutation(
+        "explorer: a moved copy keeps the old DLL path",
+        "src/explorer.rs",
+        "            Owner::Tpdf => write_class(registry, slot, dll)?,",
+        "            Owner::Tpdf => {}",
+        "turning_it_on_twice_keeps_what_the_first_time_replaced",
+    ),
+    Mutation(
+        "explorer: tpdf's own class read as another program's",
+        "src/explorer.rs",
+        "        Some(clsid) if clsid.eq_ignore_ascii_case(slot.ours()) => Owner::Tpdf,",
+        "        Some(clsid) if clsid.eq_ignore_ascii_case(slot.ours()) && false => Owner::Tpdf,",
+        "turning_it_on_twice_keeps_what_the_first_time_replaced",
+    ),
+    Mutation(
+        "explorer: the preview class not sent to prevhost",
+        "src/explorer.rs",
+        "        registry.set(&key, \"AppID\", PREVHOST_APPID)?;\n",
+        "",
+        "a_free_slot_is_taken_and_one_the_machine_owns_is_left_unless_replaced",
+    ),
+    Mutation(
+        "render: --fit ignored for --dpi",
+        "src/cli/render.rs",
+        "            Some(fit) => fit_scale(size, fit),",
+        "            Some(_) => self.dpi as f32 / 72.0,",
+        "render_parser_requires_bounded_resolution_and_one_page",
+    ),
+    Mutation(
+        "render: --fit and --dpi both taken",
+        "src/cli/render.rs",
+        "    if dpi_given && command.fit.is_some() {",
+        "    if dpi_given && command.fit.is_some() && false {",
+        "render_parser_requires_bounded_resolution_and_one_page",
+    ),
+    Mutation(
+        "render: --json beside the PNG on standard output",
+        "src/cli/render.rs",
+        "    if command.json && to_stdout(&command.output) {",
+        "    if command.json && to_stdout(&command.output) && false {",
+        "render_parser_requires_bounded_resolution_and_one_page",
+    ),
+    Mutation(
+        "render: a --fit box past the pixel bound",
+        "src/cli/render.rs",
+        "    let side = |part: &str| part.parse::<u32>().ok().filter(|n| (1..=4096).contains(n));",
+        "    let side = |part: &str| part.parse::<u32>().ok().filter(|n| (1..=8192).contains(n));",
+        "render_parser_requires_bounded_resolution_and_one_page",
+    ),
+]

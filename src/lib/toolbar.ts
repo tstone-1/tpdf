@@ -237,6 +237,7 @@ export const WINDOW_MENU: MenuSection[] = [
       "app.about", "app.checkForUpdates", "app.installUpdate", "app.restartForUpdate",
       "app.disableAutomaticUpdates", "app.enableAutomaticUpdates",
       "app.installCommandLineTool", "app.uninstallCommandLineTool", "app.makeDefaultPdfApp",
+      "app.enableExplorerIntegration", "app.disableExplorerIntegration",
     ],
   },
 ];

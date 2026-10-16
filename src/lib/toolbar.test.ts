@@ -47,6 +47,7 @@ function harness() {
     signableFields: () => 0,
     // What the window menu's guards read, in the state a first launch is in.
     commandLineToolOffered: () => false,
+    explorerOffered: () => false,
     automaticUpdates: () => true,
     updateReady: () => false,
     updateAvailable: () => false,

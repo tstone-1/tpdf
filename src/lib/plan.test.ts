@@ -68,9 +68,7 @@ const ID_SHAPED = /\b(?:app|edit|file|find|nav|view)\.[a-zA-Z][a-zA-Z0-9.]*/g;
  * that is not a stale claim; but an id stays in this list only until it ships,
  * which the last test below holds, so the exclusion cannot outlive the plan.
  */
-const PLANNED = [
-  "app.disableExplorerIntegration", "app.enableExplorerIntegration",
-];
+const PLANNED: string[] = [];
 
 /**
  * Id-shaped strings in the plan that are not claims about a registered command.

@@ -242,6 +242,13 @@ export interface AppActions {
    * that is chosen. Only ever run from this command: tpdf does not ask.
    */
   makeDefaultPdfApp(): void;
+  /**
+   * Turn tpdf's Explorer thumbnails and preview on (`on`) or off, asking first
+   * before another program's handler is replaced (`explorerstate.ts`).
+   */
+  explorerIntegration(on: boolean): void;
+  /** Whether turning it on (`on`) or off has anything to do; never off Windows. */
+  explorerOffered(on: boolean): boolean;
   automaticUpdates(): boolean;
   setAutomaticUpdates(enabled: boolean): void;
   /** Download and apply the update the last check found. */
@@ -1095,6 +1102,22 @@ export function registerAppCommands(
       id: "app.makeDefaultPdfApp",
       title: "Make tpdf the default PDF app",
       run: () => actions.makeDefaultPdfApp(),
+    },
+    {
+      // Windows only, and greyed everywhere else for good: Explorer is the
+      // only file manager it applies to. Off until the reader runs this; the
+      // installer registers nothing (`docs/PLAN.md` 7.8). Each is greyed when
+      // it has nothing to do, from the backend's last answer.
+      id: "app.enableExplorerIntegration",
+      title: "Show PDFs in Explorer with tpdf",
+      enabled: () => actions.explorerOffered(true),
+      run: () => actions.explorerIntegration(true),
+    },
+    {
+      id: "app.disableExplorerIntegration",
+      title: "Stop showing PDFs in Explorer with tpdf",
+      enabled: () => actions.explorerOffered(false),
+      run: () => actions.explorerIntegration(false),
     },
     {
       // Named for what it lists, in a reader's words: "hidden text" would name

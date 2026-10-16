@@ -85,6 +85,8 @@ import HiddenText_ from "../../src-tauri/testdata/replies/HiddenText.json";
 import type { Offered } from "./ocrlanguage";
 import type { ToolState } from "./clitoolstate";
 import ToolState_ from "../../src-tauri/testdata/replies/ToolState.json";
+import type { ExplorerState } from "./explorerstate";
+import Handlers_ from "../../src-tauri/testdata/replies/Handlers.json";
 import Offered_ from "../../src-tauri/testdata/replies/Offered.json";
 import type { Outline } from "./outline";
 import type { ScrollBenchConfig } from "./scrollbench";
@@ -218,6 +220,10 @@ const SCHEMA = {
     installed: ["boolean"],
     occupied: ["boolean"],
   } satisfies Shape<ToolState>,
+  Handlers: {
+    thumbnail: ["object"],
+    preview: ["object"],
+  } satisfies Shape<ExplorerState>,
   CropGeometry: {
     width_pt: ["number"],
     height_pt: ["number"],
@@ -402,6 +408,7 @@ const SAMPLES: Record<keyof typeof SCHEMA, Record<string, unknown>> = {
   HiddenText: HiddenText_ satisfies Widen<HiddenText>,
   Offered: Offered_ satisfies Widen<Offered>,
   ToolState: ToolState_ satisfies Widen<ToolState>,
+  Handlers: Handlers_ satisfies Widen<ExplorerState>,
   CropGeometry: CropGeometry_ satisfies Widen<CropGeometry>,
   DocumentInfo: DocumentInfo_ satisfies Widen<DocumentInfo>,
   PageRuns: PageRuns_ satisfies Widen<TextRuns>,

@@ -102,6 +102,7 @@ const NAMED: Record<string, readonly string[]> = {
   "find.open": ["search"],
   "nav.goToPage": ["go to", "goto", "jump", "page number"],
   "app.installCommandLineTool": ["terminal", "cli", "shell"],
+  "app.enableExplorerIntegration": ["thumbnails", "preview pane", "windows explorer"],
   "app.checkForUpdates": ["upgrade", "version"],
   "app.about": ["version", "licence", "license"],
 };

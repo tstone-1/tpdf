@@ -818,6 +818,9 @@ hop through the index.
 - A process that is exiting refuses a query before its handle says it has exited
 - A module path read from another process can begin with `\\?\`, so a prefix test against a folder finds nothing
 - An installer that backs up what it replaces backs up itself the second time
+- A COM object made with `#[implement]` is agile, so a preview window never got a posted message
+- A low-integrity process cannot write to `%TEMP%`, and a preview handler runs at low integrity
+- A process's first `ShowWindow` takes the show state its parent asked for
 
 ## Fixtures
 - The test fixtures are generated, not committed
@@ -26614,3 +26617,45 @@ mark check's stage "a page cropped by a drag is rendered under its crop" read th
 crop as `[154.49, 504.56, 352.82, 744.65]` and the tile's as `undefined` on both fixtures.
 `Scroller.adoptViews` now takes the pages on the same-order path. The question for any
 branch keyed on "did X move" is what changes without X moving.
+
+### A COM object made with `#[implement]` is agile, so a preview window never got a posted message
+
+The Explorer preview handler (`shellext/src/preview.rs`) made its window in `DoPreview`, as
+Microsoft's samples do, and the window never painted: not the page, not even its grey
+background. A log written from inside `prevhost.exe` showed the window receiving every message
+*sent* to it (create, size, show, and destroy at `Unload`) and none *posted* (`WM_PAINT`, its
+resize timer, the render thread's "done"), while the render itself succeeded. `CoGetApartmentType`
+in `DoPreview` answered the neutral apartment on a thread of the multithreaded apartment, which
+runs no message loop, although the class was registered `ThreadingModel = Apartment`, exactly as
+Edge's handler beside it.
+
+The `windows` crate's `#[implement]` adds `IAgileObject` and the free-threaded marshaler unless
+told `Agile = false` (`windows-implement` 0.60, `lib.rs`), and COM calls an agile object on
+whatever thread the call arrives on, ignoring the registration. With `Agile = false` on the class
+factory and the objects, `DoPreview` ran in a single-threaded apartment and the pane painted
+(0.000 of the pane white before, 0.630 after, `scripts/explorer_check.py`). The thumbnail
+provider worked either way, because it has no window. Any COM object of ours that owns a window
+or relies on its apartment needs `Agile = false`.
+
+### A low-integrity process cannot write to `%TEMP%`, and a preview handler runs at low integrity
+
+`prevhost.exe` runs preview handlers at low integrity, and a program a handler starts inherits
+that. `tpdf-cli render -` spools standard input to a delete-on-close file in the temporary
+folder, and at low integrity that folder refuses it: "could not make a temporary file for the
+document on standard input: Access is denied". The same command at normal integrity succeeded,
+so the thumbnail provider, which runs in `dllhost.exe` at normal integrity, never showed it.
+Reproduced without Explorer by labelling a copy of the executable low (`icacls <exe>
+/setintegritylevel low`), which then starts at low integrity. `cli::unnamed_file` now falls back
+to `LocalAppDataLow\Temp` (`SHGetKnownFolderPath(FOLDERID_LocalAppDataLow)`) on a refusal; the
+labelled copy then wrote the same 6,216-byte PNG as the normal one.
+
+### A process's first `ShowWindow` takes the show state its parent asked for
+
+`explorer_probe preview` made a window, called `ShowWindow(SW_SHOW)` and read the screen, and
+the picture was the desktop. A process's first `ShowWindow` uses the show state in its
+`STARTUPINFO` when the parent set one, and the check runs under a PowerShell started with
+`-WindowStyle Hidden` through a scheduled task, so the first call hid the window. The second call
+is honoured. A window without a background brush made it look worse: an unpainted window shows
+what was on the screen before, so the probe's host window now paints black and an unpainted pane
+reads as black, not as a plausible picture.
+

@@ -175,6 +175,8 @@ function harness(
     commandLineToolOffered: (install) =>
       (install ? update.tool?.install : update.tool?.uninstall) ?? true,
     makeDefaultPdfApp: () => fired.push("makeDefaultPdfApp"),
+    explorerIntegration: (on) => fired.push(`explorerIntegration:${on}`),
+    explorerOffered: () => true,
     automaticUpdates: () => automatic,
     setAutomaticUpdates: (enabled) => { automatic = enabled; fired.push(`setAutomaticUpdates:${enabled}`); },
     applyUpdate: () => fired.push("applyUpdate"),
@@ -708,6 +710,8 @@ describe("the commands a document is needed for", () => {
       "app.installCommandLineTool",
       "app.uninstallCommandLineTool",
       "app.makeDefaultPdfApp",
+      "app.enableExplorerIntegration",
+      "app.disableExplorerIntegration",
       // A preference about fields placed next, on by default, so turning it
       // off is the one of its pair on offer.
       "edit.fieldBorderOff",
@@ -868,6 +872,14 @@ describe("the commands a document is needed for", () => {
     expect(fired).toEqual([]);
     expect(registry.run("app.makeDefaultPdfApp")).toBe(true);
     expect(fired).toEqual(["makeDefaultPdfApp"]);
+  });
+
+  it("turns Explorer's handlers on or off only when a command is run, and greys each by its own answer", () => {
+    const { registry, fired } = harness(false);
+    expect(fired).toEqual([]);
+    expect(registry.run("app.enableExplorerIntegration")).toBe(true);
+    expect(registry.run("app.disableExplorerIntegration")).toBe(true);
+    expect(fired).toEqual(["explorerIntegration:true", "explorerIntegration:false"]);
   });
 
   it("asks the backend to install or remove the command-line tool, and nothing else", () => {
@@ -2007,6 +2019,8 @@ describe("the window shortcuts for editing", () => {
       commandLineTool: (install) => fired.push(`commandLineTool:${install}`),
       commandLineToolOffered: () => true,
       makeDefaultPdfApp: () => fired.push("makeDefaultPdfApp"),
+      explorerIntegration: (on) => fired.push(`explorerIntegration:${on}`),
+      explorerOffered: () => true,
       automaticUpdates: () => true,
       setAutomaticUpdates: (enabled) => fired.push(`setAutomaticUpdates:${enabled}`),
       applyUpdate: () => fired.push("applyUpdate"),

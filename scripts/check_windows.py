@@ -151,6 +151,9 @@ def main() -> int:
         str(ROOT / "src-tauri" / "Cargo.toml"),
         "--target",
         TRIPLE,
+        # The Explorer handler, `shellext/`, is a member whose code is all
+        # `#[cfg(windows)]`, so this is the only place a Mac compiles it.
+        "--workspace",
         # Examples are the point: `print_probe` is an example, and it is what
         # broke. Without this flag the one target that fails is not built.
         "--all-targets",
@@ -160,7 +163,7 @@ def main() -> int:
         "-D",
         "warnings",
     ]
-    print(f"[..] cargo clippy --target {TRIPLE} --all-targets -- -D warnings", flush=True)
+    print(f"[..] cargo clippy --target {TRIPLE} --workspace --all-targets -- -D warnings", flush=True)
     result = subprocess.run(
         argv,
         cwd=ROOT,
