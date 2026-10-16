@@ -24,8 +24,10 @@ yanked crate named, by name and version, in `ALLOWED_YANKED`. An entry that
 matches no lockfile fails too: an exception for a crate that has left the tree
 is the silent kind `.cargo/audit.toml` warns about, and here it is red.
 
-Remove the `zip` entry when a `tauri-plugin-updater` on zip 9 is taken; this
-check then fails until it is removed.
+That last rule is what ended the first entry: `zip 4.6.1` was unyanked the same
+afternoon (4.0.0 to 4.6.0 stayed yanked), this check went red on the next push
+saying so, and the entry was removed. `ALLOWED_YANKED` is empty and stays, as
+the place for the next yank nobody can update past.
 
     scripts/check_cargo_audit.py LOCKFILE [LOCKFILE ...]
     scripts/check_cargo_audit.py --self-test
@@ -41,12 +43,7 @@ import subprocess
 import sys
 
 #: (crate, version) -> why it may be yanked and still pass.
-ALLOWED_YANKED: dict[tuple[str, str], str] = {
-    ("zip", "4.6.1"): (
-        "every zip below 9.0.3 is yanked and tauri-plugin-updater requires zip ^4; "
-        "remove when an updater on zip 9 is taken"
-    ),
-}
+ALLOWED_YANKED: dict[tuple[str, str], str] = {}
 
 
 def findings(report: dict, allowed: dict[tuple[str, str], str]) -> tuple[list[str], set[tuple[str, str]]]:

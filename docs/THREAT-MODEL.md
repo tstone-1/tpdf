@@ -3602,16 +3602,16 @@ and the same call gates the Windows *install*, which ends the process just as su
    this only matters if the signing key is compromised — at which point it is the least of
    the problems. Recorded because the boundary claim elsewhere in this document is about
    *PDFium*, and this is a second parser family that the app process now links.
-   **Since 2026-10-16 that `zip` is a yanked release.** Its maintainers yanked every version
-   below 9.0.3 for security issues, some published and more announced (zip-rs/zip2#1075),
-   and `tauri-plugin-updater` 2.13.3 and 2.14.0 both require `zip ^4`, so the tree holds
-   `zip 4.6.1` until Tauri releases its move to zip 9. Read in the 2.13.3 source: `zip` is
+   **That `zip` is 4.6.1, a version its maintainers count among those with security
+   issues.** On 2026-10-16 they yanked every version below 9.0.3, citing advisories some
+   published and more announced (zip-rs/zip2#1075), and unyanked 4.6.1 the same afternoon.
+   `tauri-plugin-updater` 2.13.3 and 2.14.0 both require `zip ^4`, so the tree holds 4.6.1
+   until Tauri releases its move to zip 9. Read in the 2.13.3 source: `zip` is
    called only on Windows, in `extract_zip`, after `verify_signature`, and only when the
    signed payload's leading bytes are a zip archive (`infer::archive::is_zip`); tpdf's
    Windows payload is the NSIS `-setup.exe`, which goes to `extract_exe`. So the yanked
-   parser is reached only by a zip signed with the updater key, which is residual 1.
-   `scripts/check_cargo_audit.py` lets this one yank through `Audit` and fails once it is
-   gone from the lockfiles.
+   parser is reached only by a zip signed with the updater key, which is residual 1. Take
+   an updater on zip 9 when it is released.
 4. **The unsaved-work question before a restart lives on the webview's side of the
    boundary.** The coordinator does not know whether a tab is dirty — the edit models are
    Rust state, but the settle that makes `dirty` current runs in the frontend — so

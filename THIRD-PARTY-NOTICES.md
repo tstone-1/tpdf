@@ -3095,7 +3095,7 @@ SOFTWARE.
 | yoke-derive | 0.8.4 | Unicode-3.0 |
 | zbus | 5.19.0 | MIT |
 | zbus_macros | 5.19.0 | MIT |
-| zbus_names | 4.3.4 | MIT |
+| zbus_names | 4.3.5 | MIT |
 | zcheapstr | 1.1.0 | MIT |
 | zerocopy | 0.8.63 | BSD-2-Clause OR Apache-2.0 OR MIT |
 | zerofrom | 0.1.8 | Unicode-3.0 |
@@ -3110,8 +3110,8 @@ SOFTWARE.
 | zmij | 1.0.23 | MIT |
 | zune-core | 0.5.3 | MIT OR Apache-2.0 OR Zlib |
 | zune-jpeg | 0.5.15 | MIT OR Apache-2.0 OR Zlib |
-| zvariant | 5.15.0 | MIT |
-| zvariant_derive | 5.15.0 | MIT |
+| zvariant | 5.15.1 | MIT |
+| zvariant_derive | 5.15.1 | MIT |
 | zvariant_utils | 4.2.0 | MIT |
 
 ### Copyright notices

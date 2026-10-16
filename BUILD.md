@@ -7042,8 +7042,9 @@ Windows 11 on the release tree, once `vendor/pdfium` there was brought to the 80
 pull had moved (the `pdfium` gate said so first; `test` and `bins` were run again on 8078).
 CI passed all three jobs and `Audit` passed on `1f92ca31`. `Audit` had failed all day before
 it: every `zip` below 9.0.3 was yanked and `tauri-plugin-updater` requires `zip ^4`, so
-`scripts/check_cargo_audit.py` now lets exactly `zip 4.6.1` through (step 1 has the
-`cargo update` that cannot resolve). `scripts/run_on_windows.py --suite all` passed 3,209 unit
+`scripts/check_cargo_audit.py` let exactly `zip 4.6.1` through, until 4.6.1 was unyanked
+that afternoon and the script, finding its allowance unused, failed the next `Audit` and
+the entry went; four patch updates the resolver could then reach were taken with it. `scripts/run_on_windows.py --suite all` passed 3,209 unit
 tests and 603 command-line tests with 4 skipped on TEENYWEENY. Every mutation selected
 `--near v26.10.20` on Windows was caught, 172 Rust (6 skipped as macOS- or Linux-only, the
 four second-launch rows among them, which no platform ran this cycle) and 394 frontend, and
@@ -8375,13 +8376,14 @@ starts at 0 and increments within the month.
      own crates move, which needs a Mac screen, and that release had the Linux packages to
      land. Take it in a release that runs that test. Held again for 26.10.20, a release of
      fixes cut the day after, and for 26.10.21, prepared on Windows.
-   - **`zip` 4.6.1 is yanked, and `cargo update` with no `-p` cannot resolve** (2026-10-16).
-     Every `zip` below 9.0.3 was yanked for security issues and `tauri-plugin-updater`
-     2.13.3 and 2.14.0 both require `zip ^4`, so the resolver has no version to pick. Update
-     by name instead: every package in `Cargo.lock` except `zip` and `tpdf` as `-p` arguments
-     (`name@version` where a name is locked twice), then `--precise` for anything held.
-     `scripts/check_cargo_audit.py` lets this one yank through `Audit`. When an updater on
-     zip 9 is released, take it, remove the entry there, and delete this bullet.
+   - **`zip` is held at 4.6.1 by the updater** (2026-10-16). Every `zip` below 9.0.3 was
+     yanked for security issues that morning and 4.6.1 unyanked that afternoon;
+     `tauri-plugin-updater` 2.13.3 and 2.14.0 both require `zip ^4`. While every version a
+     requirement allows is yanked, `cargo update` with no `-p` cannot resolve: update by
+     name instead, every package in `Cargo.lock` except the yanked one and `tpdf` as `-p`
+     arguments (`name@version` where a name is locked twice), then `--precise` for
+     anything held. `scripts/check_cargo_audit.py` is where `Audit` allows such a yank.
+     Take an updater on zip 9 when it is released, and delete this bullet.
 2. <a id="release-step-2"></a>Bump **all four** version files so they agree:
    - `package.json`
    - `package-lock.json` (top-level *and* the root package entry — `npm version <v> --no-git-tag-version` does both)
