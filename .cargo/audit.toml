@@ -53,5 +53,8 @@ ignore = [
 
 [output]
 # Unmaintained, unsound and yanked warnings fail the run, as vulnerabilities do.
+# A yank has no id to list above, so `scripts/check_cargo_audit.py`, which CI
+# runs instead of `cargo audit` directly, allows the yanked versions it names
+# (zip 4.6.1 since 2026-10-16) and fails on every other warning.
 deny = ["warnings"]
 quiet = false

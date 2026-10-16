@@ -351,10 +351,14 @@ model came about: [`docs/DETAIL.md`](docs/DETAIL.md) *Quality gates*.
 **So `gh run list --workflow=ci.yml --branch main --limit 1` is now the cheapest first thing to
 do in a session, and it answers a question a handover cannot.** A handover is written before the
 run it triggers finishes, so it is authoritative about the code and structurally stale about the
-build; and on a two-platform repository the machine that files it is the one that cannot compile
-half of what it moved. Establishing green first costs one command, and it converts every later
+build; and on a three-platform repository the machine that files it cannot compile the
+platform-specific code of the other two. Establishing green first costs one command, and it converts every later
 failure into a statement about your own change. Select the workflow rather than taking the newest
 run, and read the job count beside the conclusion — three jobs (macOS, Windows, Ubuntu), not one.
+
+**Ask `--workflow=audit.yml` too.** A release needs both green (`BUILD.md` step 9), and `Audit`
+turns red with no commit of ours: on 2026-10-16 a yank of `zip` made it fail all day while
+`ci.yml` stayed green, and a session that asked only `ci.yml` called the tree ready.
 
 What CI structurally cannot cover, and the reason `BUILD.md` still schedules them by hand:
 `window_checks.py` and `mutate_viewer.py` drive a real window and need an unlocked,
