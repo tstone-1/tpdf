@@ -8344,7 +8344,14 @@ starts at 0 and increments within the month.
      (2026-10-14): step 12 asks for the new updater to be tested before the tag when its
      own crates move, which needs a Mac screen, and that release had the Linux packages to
      land. Take it in a release that runs that test. Held again for 26.10.20, a release of
-     fixes cut the day after.
+     fixes cut the day after, and for 26.10.21, prepared on Windows.
+   - **`zip` 4.6.1 is yanked, and `cargo update` with no `-p` cannot resolve** (2026-10-16).
+     Every `zip` below 9.0.3 was yanked for security issues and `tauri-plugin-updater`
+     2.13.3 and 2.14.0 both require `zip ^4`, so the resolver has no version to pick. Update
+     by name instead: every package in `Cargo.lock` except `zip` and `tpdf` as `-p` arguments
+     (`name@version` where a name is locked twice), then `--precise` for anything held.
+     `scripts/check_cargo_audit.py` lets this one yank through `Audit`. When an updater on
+     zip 9 is released, take it, remove the entry there, and delete this bullet.
 2. <a id="release-step-2"></a>Bump **all four** version files so they agree:
    - `package.json`
    - `package-lock.json` (top-level *and* the root package entry — `npm version <v> --no-git-tag-version` does both)

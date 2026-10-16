@@ -2679,9 +2679,9 @@ SOFTWARE.
 | darling_core | 0.24.1 | MIT |
 | darling_macro | 0.24.1 | MIT |
 | dbus | 0.9.12 | Apache-2.0/MIT |
-| defmt | 1.1.1 | MIT OR Apache-2.0 |
-| defmt-macros | 1.1.1 | MIT OR Apache-2.0 |
-| defmt-parser | 1.0.0 | MIT OR Apache-2.0 |
+| defmt | 1.2.0 | MIT OR Apache-2.0 |
+| defmt-macros | 1.2.0 | MIT OR Apache-2.0 |
+| defmt-parser | 1.1.0 | MIT OR Apache-2.0 |
 | der | 0.7.10 | Apache-2.0 OR MIT |
 | der_derive | 0.7.3 | Apache-2.0 OR MIT |
 | deranged | 0.5.9 | MIT OR Apache-2.0 |

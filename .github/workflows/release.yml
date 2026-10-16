@@ -567,6 +567,24 @@ jobs:
           workers run under Landlock and seccomp. The Linux packages (deb
           and AppImage) do not update themselves: install the new one.
 
+          **New in 26.10.21.** Facing pages, book view, one page or pair
+          at a time, full screen, and a presentation mode on black.
+          Sideways scrolling with a trackpad, a tilt wheel or Shift and
+          the wheel. Close other tabs, close tabs to the left or right,
+          and reopen a closed tab. Pictures from a file or the clipboard
+          go on a page as stamps; a dragged region copies or saves as a
+          PNG. Lines, arrows, polygons, connected lines and links can be
+          drawn, and marks copied, cut and pasted between documents.
+          Favourites, fit height and fit content, the next and previous
+          PDF in the folder, the whole outline opened or closed in one
+          step, and a file the document carries saved to disk. From the command line: `--page`, `--zoom` and LaTeX
+          `--forward-search`, `tpdf print` with no dialog, and `tpdf
+          render --fit` for thumbnails, in a pipe. On Windows, Explorer
+          can show PDF thumbnails and previews through tpdf's sandboxed
+          renderer, when you turn it on. The signing dialogs share a
+          clearer layout. Fixed: a page cropped by dragging is drawn
+          cropped, and on macOS ⌘V pastes into every text field.
+
           **New in 26.10.20.** Signing asks whether anyone else still
           needs to sign, and locks the document only when you answer that
           you are the last; it locked by default before. Text recognition
