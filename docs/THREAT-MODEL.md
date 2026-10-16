@@ -3420,6 +3420,25 @@ last step and one library:
 **Not covered.** What CUPS or the printer driver does with the PDF: their parsing is outside
 tpdf, as it is for the window's Print.
 
+#### T6.46 — A SyncTeX file, read for forward search, added 2026-10-16
+
+`--forward-search file.tex:LINE` reads the `.synctex.gz` beside the PDF (`synctex.rs`). The
+file is outside input like the PDF, so:
+
+- **Its parser is ours, in Rust, in the app process**, and reads text only: no structure it
+  builds grows with the file beyond a stack of open boxes, held to 100,000, and at most 10,000
+  rectangles for the line asked for. It reads at most 64 MiB from disk and 512 MiB once
+  decompressed (`flate2`, already in the tree for `lopdf`), and no line longer than 64 KiB.
+  Every bound is refused with a sentence, and a test reaches the line and depth limits.
+- **Nothing in it is run or opened.** The input paths it names are compared with the source
+  the command line gave, by path or by file name, and never opened; the only file read is the
+  SyncTeX file beside the PDF that was asked for.
+- **What it decides is a page and rectangles**, drawn on the overlay. A hostile file can mark
+  the wrong place, which is the extent of what it can do.
+
+Inverse search (from the page to the editor) is not built: it would start a program, which tpdf
+has no authority to do (`docs/PLAN.md`, *Not planned*).
+
 ### T9 — The updater
 
 **The threat.** The updater is the only code path in tpdf that fetches bytes and then

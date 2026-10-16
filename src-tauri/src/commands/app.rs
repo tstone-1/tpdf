@@ -6,7 +6,7 @@
 //! state a command touches is what makes each of these files readable on its
 //! own.
 
-use crate::launch;
+use crate::{launch, synctex};
 
 /// The event name a document handed over later will arrive on.
 ///
@@ -21,6 +21,29 @@ use crate::launch;
 #[tauri::command]
 pub fn launch_open_event() -> &'static str {
     launch::OPEN_EVENT
+}
+
+/// LaTeX forward search: where `line` of `source` went in `pdf`, by the
+/// SyncTeX file beside it (`synctex.rs`).
+///
+/// On the blocking pool: the file is read and, usually, decompressed, which on
+/// a long book is tens of megabytes. The window gets the page and the boxes,
+/// or a sentence to say.
+#[tauri::command]
+pub async fn synctex_forward(
+    pdf: String,
+    source: String,
+    line: u32,
+) -> Result<synctex::Forward, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        synctex::forward(
+            std::path::Path::new(&pdf),
+            std::path::Path::new(&source),
+            line,
+        )
+    })
+    .await
+    .map_err(|e| format!("the forward search did not finish: {e}"))?
 }
 
 /// The running version, so that a reader can find out which one they have.

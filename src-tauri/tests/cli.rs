@@ -178,6 +178,10 @@ fn main() {
             "print builds and reads back a page range, and refuses a printer nothing knows",
             print_to_no_printer,
         ),
+        (
+            "a SyncTeX box holds the text the renderer finds on that line",
+            synctex_agrees_with_the_text,
+        ),
         #[cfg(any(windows, target_os = "linux"))]
         (
             "print sends a page range to a printer that writes a PDF",
@@ -1948,6 +1952,57 @@ fn attachment_in_a_worker(report: &mut Report) {
         &format!("{missing:?}"),
     );
     let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// Forward search answers from TeX's own map; `search` answers from the
+/// characters PDFium finds in the PDF, in a worker. Two sources that share
+/// nothing, so a box that holds the words its line printed is placed right:
+/// the same page, and the words inside the box with a point to spare, since a
+/// glyph's ink can rise a little above TeX's height for the line.
+fn synctex_agrees_with_the_text(report: &mut Report) {
+    let Some(pdf) = fixture("synctex/main.pdf") else {
+        report.check(
+            "the SyncTeX fixture is there",
+            false,
+            "no testdata/synctex/main.pdf",
+        );
+        return;
+    };
+    let source = |name: &str| root().join("testdata").join("synctex").join(name);
+    for (file, line, words) in [
+        ("chapter.tex", 3, "Another sentence"),
+        ("main.tex", 8, "Second page"),
+    ] {
+        let found = tpdf_lib::synctex::forward(&pdf, &source(file), line);
+        let (code, out, err) = tool(
+            &["search", &pdf.to_string_lossy(), "--text", words, "--json"],
+            &[],
+        );
+        let said: serde_json::Value = serde_json::from_str(&out).unwrap_or_default();
+        let hit = &said["files"][0]["matches"][0]["rects"][0];
+        let page = hit["page"].as_u64();
+        let rect: Vec<f64> = hit["rect"]
+            .as_array()
+            .map(|r| r.iter().filter_map(serde_json::Value::as_f64).collect())
+            .unwrap_or_default();
+        let inside = match (&found, rect.as_slice()) {
+            (Ok(found), [x, top, width, height]) => {
+                Some(u64::from(found.page)) == page
+                    && found.boxes.iter().any(|b| {
+                        *x >= b.x - 1.0
+                            && x + width <= b.x + b.width + 1.0
+                            && *top >= b.top - 1.0
+                            && top + height <= b.top + b.height + 1.0
+                    })
+            }
+            _ => false,
+        };
+        report.check(
+            &format!("{file} line {line}: the box holds \"{words}\" where the renderer finds it"),
+            code == 0 && inside,
+            &format!("synctex {found:?}; search exit {code}, page {page:?}, rect {rect:?} {err}"),
+        );
+    }
 }
 
 fn print_to_no_printer(report: &mut Report) {

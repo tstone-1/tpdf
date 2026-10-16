@@ -1,5 +1,6 @@
 {
   "path": "/tmp/a.pdf",
   "page": "12",
-  "zoom": "fit-width"
+  "zoom": "fit-width",
+  "forward": "/tmp/chapter.tex:3"
 }

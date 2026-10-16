@@ -745,8 +745,8 @@ ROWS += [
         "",
         "turns the page on a press, and selects nothing"),
     Mutation("presenting: Esc is always the viewer's", "src/lib/viewer.ts",
-        "      else if (this.selection) this.clearSelection();\n      // With nothing to dismiss the key is the window's, which leaves full\n      // screen and presentation with it.\n      else return;",
-        "      else this.clearSelection();",
+        "      else if (this.sourceBoxes) this.clearSourceBoxes();\n      // With nothing to dismiss the key is the window's, which leaves full\n      // screen and presentation with it.\n      else return;",
+        "      else this.clearSourceBoxes();",
         "lets Esc through to the window when there is nothing to dismiss"),
 ]
 
@@ -1122,7 +1122,23 @@ ROWS += [
         "",
         "shows what it can and says what it cannot"),
     Mutation("launch place: an option with no value taken as none", "src/lib/launchplace.ts",
-        "  return opening.page !== null || opening.zoom !== null;",
-        "  return Boolean(opening.page) || Boolean(opening.zoom);",
+        "  return opening.page !== null || opening.zoom !== null || opening.forward !== null;",
+        "  return Boolean(opening.page) || Boolean(opening.zoom) || opening.forward !== null;",
         "does nothing for an opening that asks for nothing"),
+]
+
+# --- LaTeX forward search, 2026-10-16 ---------------------------------------------------
+ROWS += [
+    Mutation("forward: split at the first colon", "src/lib/forward.ts",
+        '  const colon = typed.lastIndexOf(":");',
+        '  const colon = typed.indexOf(":");',
+        "is a file and a line, split at the last colon"),
+    Mutation("forward: line 0 taken", "src/lib/forward.ts",
+        "  if (number < 1) return { problem: `${said}, and lines count from 1` };\n",
+        "",
+        "refuses a value that is not a file and a line"),
+    Mutation("forward: the line shown not said when it differs", "src/lib/forward.ts",
+        "  if (found.line === asked) return null;",
+        "  if (found.line >= asked) return null;",
+        "says nothing when the line asked for is the one shown, and which line otherwise"),
 ]

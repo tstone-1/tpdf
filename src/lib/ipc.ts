@@ -51,6 +51,7 @@ import type { HiddenText } from "./hiddentext";
 import type { Offered } from "./ocrlanguage";
 import type { Recognised } from "./recognise";
 import type { Opening } from "./launchplace";
+import type { Forward } from "./forward";
 import type { Links } from "./links";
 import type { MarkColor } from "./markcolors";
 import type { SectionSpec } from "./menubar";
@@ -560,6 +561,7 @@ export interface Commands {
    */
   default_pdf_app: { args: NoArgs; reply: string };
   take_launch_paths: { args: NoArgs; reply: Opening[] };
+  synctex_forward: { args: { pdf: string; source: string; line: number }; reply: Forward };
   session_load: { args: NoArgs; reply: Session };
   session_remember: { args: { place: Place }; reply: void };
   session_set_invert_pages: { args: { invert: boolean }; reply: void };

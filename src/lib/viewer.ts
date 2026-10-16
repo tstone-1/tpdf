@@ -36,6 +36,7 @@ import { forgetPageSurface, inTextField, isMac, matches, namePageSurface, native
 import { drawSignature, fitSignature, rotateSignature, signatureCanvas, validSignature, type SignatureImage } from "./signature";
 import { PictureCache, pictureCanvas, rotatePixels, visible, type PicturePixels } from "./picture";
 import type { TileSource } from "./tiles";
+import type { SourceRect } from "./forward";
 import { CommentPopup } from "./commentpopup";
 import {
   intoCrop,
@@ -1029,6 +1030,10 @@ const BUBBLE_EDGE = "rgba(0, 0, 0, 0.55)";
  */
 const MATCH_FILL = "rgba(255, 214, 0, 0.55)";
 const CURRENT_MATCH_FILL = "rgba(255, 132, 0, 0.75)";
+/** The lines a LaTeX source line made, after a forward search. */
+const SOURCE_FILL = "rgba(0, 140, 255, 0.35)";
+/** Room left above the first source box when the view lands on it, in points. */
+const SOURCE_MARGIN_PT = 36;
 
 /**
  * `PointerEvent.button` for the middle button.
@@ -1218,6 +1223,12 @@ export class Viewer {
   private selection: Selection | null = null;
   /** Where the search may look, or null for the whole document. */
   private searchScope: SearchScope | null = null;
+  /**
+   * The boxes a LaTeX source line made, marked by a forward search
+   * (`synctex.rs`): one page, rectangles in points from the file's displayed
+   * top-left corner. Until Escape or the next forward search.
+   */
+  private sourceBoxes: { page: number; rects: readonly SourceRect[] } | null = null;
   /** Whether a pointer is currently extending the selection. */
   private selecting = false;
   /** Counts clicks, so a double- and triple-click can be told apart. */
@@ -3781,6 +3792,7 @@ export class Viewer {
       else if (this.popup.openId !== null) this.closeComment();
       else if (this.focusedLink) this.clearLinkFocus();
       else if (this.selection) this.clearSelection();
+      else if (this.sourceBoxes) this.clearSourceBoxes();
       // With nothing to dismiss the key is the window's, which leaves full
       // screen and presentation with it.
       else return;
@@ -7138,6 +7150,7 @@ export class Viewer {
     // selection over it rather than under it.
     this.paintMarks(ctx, dpr, visible);
     this.paintMatches(ctx, dpr, visible);
+    this.paintSourceBoxes(ctx, dpr, visible);
     this.paintSelection(ctx, dpr, visible);
     // Over the marks, the hits and the selection, and under the live gesture.
     // A pending redaction is the most consequential thing on the page --- it
@@ -8019,6 +8032,30 @@ export class Viewer {
     void this.goToMatch(index);
   }
 
+  /**
+   * Marks the boxes a LaTeX source line made on `page` and lands on the first,
+   * a little below the top of the window. Through {@link goToDestination}, so
+   * Back returns to where the reader was.
+   */
+  showSourceBoxes(page: number, rects: readonly SourceRect[]): void {
+    const clamped = Math.max(0, Math.min(page, this.opts.pageCount - 1));
+    this.sourceBoxes = { page: clamped, rects };
+    const first = rects[0];
+    this.goToDestination(clamped, first ? Math.max(0, first.top - SOURCE_MARGIN_PT) : null);
+    this.wake();
+  }
+
+  /** Takes the forward search's marks away. */
+  clearSourceBoxes(): void {
+    this.sourceBoxes = null;
+    this.wake();
+  }
+
+  /** The forward search's marks, for the checks. */
+  get sourceMarks(): { page: number; rects: readonly SourceRect[] } | null {
+    return this.sourceBoxes;
+  }
+
   /** Index of the current match in {@link searchMatches}, or -1. */
   get matchIndex(): number {
     return this.currentMatch;
@@ -8145,6 +8182,38 @@ export class Viewer {
           );
         }
       }
+    }
+  }
+
+  /**
+   * The forward search's boxes in CSS pixels on the overlay, where they are
+   * painted: under the crop and every turn, as a mark is.
+   */
+  sourceBoxesOnScreen(): Quad[] {
+    const marked = this.sourceBoxes;
+    if (!marked) return [];
+    const origin = this.scroller.pageOrigin(marked.page);
+    return marked.rects.map((rect) => {
+      const quad = this.viewRectOn(marked.page, [rect.x, rect.top, rect.x + rect.width, rect.top + rect.height]);
+      return {
+        left: origin.left + quad.left * this.zoom,
+        top: origin.top + quad.top * this.zoom - this.scrollTop,
+        right: origin.left + quad.right * this.zoom,
+        bottom: origin.top + quad.bottom * this.zoom - this.scrollTop,
+      };
+    });
+  }
+
+  /** Paints the forward search's boxes, when their page is on screen. */
+  private paintSourceBoxes(
+    ctx: CanvasRenderingContext2D,
+    dpr: number,
+    onScreen: readonly number[],
+  ): void {
+    if (!this.sourceBoxes || !onScreen.includes(this.sourceBoxes.page)) return;
+    ctx.fillStyle = SOURCE_FILL;
+    for (const box of this.sourceBoxesOnScreen()) {
+      ctx.fillRect(box.left * dpr, box.top * dpr, (box.right - box.left) * dpr, (box.bottom - box.top) * dpr);
     }
   }
 

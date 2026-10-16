@@ -210,6 +210,7 @@
   import { ScrollLock } from "./lib/syncscroll";
   import { describeFit, percentOf } from "./lib/zoom";
   import { applyPlace, hasPlace, type Opening } from "./lib/launchplace";
+  import { forwardSaid, parseForward } from "./lib/forward";
 
   /**
    * The window's two page areas. The second is used when two documents are
@@ -5480,6 +5481,26 @@
     if (!hasPlace(opening) || !viewer || openPathName !== opening.path) return;
     const problem = applyPlace(viewer, opening, edits?.state.pages.length ?? openPageCount);
     if (problem !== null) say(problem);
+    if (opening.forward !== null) void searchForward(viewer, opening.path, opening.forward);
+  }
+
+  /**
+   * LaTeX forward search (`forward.ts`, `synctex.rs`): the page and the boxes
+   * the source line made, marked on `shown` unless the reader has moved to
+   * another document by the time the answer comes.
+   */
+  async function searchForward(shown: Viewer, pdf: string, raw: string): Promise<void> {
+    const asked = parseForward(raw);
+    if ("problem" in asked) { say(asked.problem); return; }
+    try {
+      const found = await call("synctex_forward", { pdf, source: asked.source, line: asked.line });
+      if (viewer !== shown) return;
+      shown.showSourceBoxes(found.page - 1, found.boxes);
+      const note = forwardSaid(found, asked.line);
+      if (note !== null) tell(note);
+    } catch (e) {
+      say(`Forward search: ${String(e)}`);
+    }
   }
 
   /** The edit model of a document, whether or not it is the one on screen. */

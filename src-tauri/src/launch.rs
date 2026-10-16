@@ -19,8 +19,8 @@
 //! single step, or a path arriving between the two is lost by the same mechanism
 //! in a smaller window.
 //!
-//! A command line can also say where to show the document: `--page 12` and
-//! `--zoom fit-width` (`Place`). They travel with each path through the same
+//! A command line can also say where to show the document: `--page 12`,
+//! `--zoom fit-width` and `--forward-search file.tex:LINE` (`Place`). They travel with each path through the same
 //! queue, and the window checks each value against the document, because only
 //! the window knows how many pages it has and what a zoom may be.
 
@@ -43,12 +43,33 @@ pub const OPEN_EVENT: &str = "tpdf://open";
 pub struct Place {
     pub page: Option<String>,
     pub zoom: Option<String>,
+    /// `file.tex:LINE`, the file made absolute against the folder the launch
+    /// was made in (`resolved`).
+    pub forward: Option<String>,
 }
 
 impl Place {
     /// Whether the command line asked for anything.
     pub fn is_empty(&self) -> bool {
-        self.page.is_none() && self.zoom.is_none()
+        self.page.is_none() && self.zoom.is_none() && self.forward.is_none()
+    }
+
+    /// The place with `--forward-search`'s file joined to `cwd` when it is
+    /// relative. An editor names the source as it sees it, and a second
+    /// launch's folder is not the running window's. Split at the last colon,
+    /// so a Windows path keeps its drive letter; a value with no colon is left
+    /// for the window to refuse.
+    #[must_use]
+    pub fn resolved(mut self, cwd: &std::path::Path) -> Place {
+        if let Some(value) = &self.forward {
+            if let Some((source, line)) = value.rsplit_once(':') {
+                let path = std::path::Path::new(source);
+                if !source.is_empty() && path.is_relative() {
+                    self.forward = Some(format!("{}:{line}", cwd.join(path).display()));
+                }
+            }
+        }
+        self
     }
 }
 
@@ -127,7 +148,7 @@ impl Launch {
 }
 
 /// The options that say where to show a document, each taking one value.
-const PLACE_OPTIONS: [&str; 2] = ["--page", "--zoom"];
+const PLACE_OPTIONS: [&str; 3] = ["--page", "--zoom", "--forward-search"];
 
 /// Takes [`PLACE_OPTIONS`] and their values out of a command line, leaving the
 /// rest, `argv[0]` included, in order.
@@ -161,7 +182,8 @@ where
         let value = inline.or_else(|| args.next()).unwrap_or_default();
         match name.as_str() {
             "--page" => place.page = Some(value),
-            _ => place.zoom = Some(value),
+            "--zoom" => place.zoom = Some(value),
+            _ => place.forward = Some(value),
         }
     }
     (rest, place)
@@ -170,6 +192,7 @@ where
 /// [`paths_from_launch`] with the command line's place given to each path.
 pub fn openings_from_launch<I, S>(
     args: I,
+    cwd: &std::path::Path,
     is_file: impl Fn(&std::path::Path) -> bool,
 ) -> Vec<Opening>
 where
@@ -177,6 +200,7 @@ where
     S: AsRef<str>,
 {
     let (rest, place) = split_place(args);
+    let place = place.resolved(cwd);
     paths_from_launch(rest, is_file)
         .into_iter()
         .map(|path| Opening {
@@ -197,6 +221,7 @@ where
     S: AsRef<str>,
 {
     let (rest, place) = split_place(args);
+    let place = place.resolved(std::path::Path::new(cwd));
     paths_from_second_launch(rest, cwd, is_file)
         .into_iter()
         .map(|path| Opening {
@@ -535,12 +560,14 @@ mod tests {
         Place {
             page: page.map(str::to_string),
             zoom: zoom.map(str::to_string),
+            forward: None,
         }
     }
 
     #[test]
     fn a_page_number_is_not_a_document() {
-        let openings = openings_from_launch(["tpdf", "a.pdf", "--page", "12"], |_| false);
+        let openings =
+            openings_from_launch(["tpdf", "a.pdf", "--page", "12"], Path::new("/"), |_| false);
         assert_eq!(
             openings,
             vec![Opening {
@@ -596,6 +623,7 @@ mod tests {
                 "-",
                 "Documents/x.pdf",
             ],
+            Path::new("/"),
             |path| path == whole,
         );
         assert_eq!(
@@ -635,7 +663,60 @@ mod tests {
         };
         assert_eq!(
             serde_json::to_value(&opening).expect("json"),
-            serde_json::json!({ "path": "/tmp/a.pdf", "page": "4", "zoom": null })
+            serde_json::json!({ "path": "/tmp/a.pdf", "page": "4", "zoom": null, "forward": null })
+        );
+    }
+
+    #[test]
+    fn a_forward_search_source_is_made_absolute_where_the_launch_was_made() {
+        let forward = |value: &str| Place {
+            forward: Some(value.to_string()),
+            ..Place::default()
+        };
+        #[cfg(unix)]
+        let (cwd, absolute) = ("/work", "/src/a.tex:12");
+        #[cfg(windows)]
+        let (cwd, absolute) = (r"C:\work", r"D:\src\a.tex:12");
+        let joined = forward("ch/a.tex:12").resolved(Path::new(cwd));
+        assert_eq!(
+            joined.forward,
+            Some(format!("{}:12", Path::new(cwd).join("ch/a.tex").display()))
+        );
+        assert_eq!(
+            forward(absolute)
+                .resolved(Path::new(cwd))
+                .forward
+                .as_deref(),
+            Some(absolute)
+        );
+        // No colon, or nothing before it: left for the window to refuse.
+        assert_eq!(
+            forward("a.tex").resolved(Path::new(cwd)).forward.as_deref(),
+            Some("a.tex")
+        );
+        assert_eq!(
+            forward(":12").resolved(Path::new(cwd)).forward.as_deref(),
+            Some(":12")
+        );
+        let (_, read) = split_place(["tpdf", "a.pdf", "--forward-search", "a.tex:3"]);
+        assert_eq!(read.forward.as_deref(), Some("a.tex:3"));
+        assert!(!read.is_empty());
+    }
+
+    #[test]
+    fn a_second_launch_resolves_the_source_in_its_own_folder() {
+        #[cfg(unix)]
+        let cwd = "/work";
+        #[cfg(windows)]
+        let cwd = r"C:\work";
+        let openings = openings_from_second_launch(
+            ["tpdf", "a.pdf", "--forward-search", "a.tex:7"],
+            cwd,
+            |_| false,
+        );
+        assert_eq!(
+            openings[0].place.forward,
+            Some(format!("{}:7", Path::new(cwd).join("a.tex").display()))
         );
     }
 }

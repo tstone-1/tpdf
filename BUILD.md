@@ -5948,6 +5948,7 @@ nothing had.
 | `control` | nothing handed over | the remembered one opens — without this, `beats` passes on an app that ignores the session |
 | `running` | `open -a` on an app already up | the *emit* branch rather than the queue |
 | `argv` with a place | the binary, with `--page 12 --zoom fit-page` | the document comes up at page 12 following fit page, and is still there after the boot |
+| `argv` with a forward search | the binary, with `testdata/synctex/main.pdf --forward-search main.tex:8` | page 2, the line marked there, and the overlay painted over that box |
 | `running` with a place | the binary, with the same, beside an app already up | the same place, and the second process ends with 0 within 15 s; on macOS that is `secondlaunch.rs`, which `open -a` does not reach |
 
 `running` is the only phase that would notice the frontend and the backend disagreeing about

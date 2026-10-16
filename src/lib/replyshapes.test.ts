@@ -77,6 +77,8 @@ import Shrinkage_ from "../../src-tauri/testdata/replies/Shrinkage.json";
 import type { Recognised } from "./recognise";
 import Recognised_ from "../../src-tauri/testdata/replies/Recognised.json";
 import type { Opening } from "./launchplace";
+import type { Forward } from "./forward";
+import Forward_ from "../../src-tauri/testdata/replies/Forward.json";
 import Opening_ from "../../src-tauri/testdata/replies/Opening.json";
 import type { HiddenText } from "./hiddentext";
 import HiddenText_ from "../../src-tauri/testdata/replies/HiddenText.json";
@@ -186,7 +188,13 @@ const SCHEMA = {
     path: ["string"],
     page: ["string", "null"],
     zoom: ["string", "null"],
+    forward: ["string", "null"],
   } satisfies Shape<Opening>,
+  Forward: {
+    page: ["number"],
+    line: ["number"],
+    boxes: ["array"],
+  } satisfies Shape<Forward>,
   Recognised: {
     pages: ["array"],
     alreadyText: ["array"],
@@ -387,6 +395,7 @@ const SAMPLES: Record<keyof typeof SCHEMA, Record<string, unknown>> = {
   Comments: Comments_ satisfies Widen<Comments>,
   Copied: Copied_ satisfies Widen<Copied>,
   Opening: Opening_ satisfies Widen<Opening>,
+  Forward: Forward_ satisfies Widen<Forward>,
   Made: Made_ satisfies Widen<Made>,
   Shrinkage: Shrinkage_ satisfies Widen<Shrinkage>,
   Recognised: Recognised_ satisfies Widen<Recognised>,

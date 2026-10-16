@@ -54,6 +54,9 @@ have the binary.)
   there. When tpdf is already running the document goes to that window at that place. On
   macOS that is new: a launch with either option goes to the running window, where it used
   to open a second one; a launch without them still does.
+- **LaTeX forward search.** `--forward-search chapter.tex:42` after the PDF shows the page
+  that line is on and marks it, from the `.synctex.gz` file beside the PDF; with tpdf
+  running, the window it is in moves there.
 - **`tpdf print`.** Prints a document, or the pages listed with `--pages`, to the printer
   named with `--printer`, with no dialog. The job is built and read back as the window's
   Print builds it; a printer name nothing knows is refused with the names there are.

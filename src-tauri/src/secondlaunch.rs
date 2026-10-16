@@ -177,6 +177,12 @@ mod tests {
     use std::sync::mpsc;
     use std::time::Duration;
 
+    // The waits below are up to ten seconds, polled every 5 ms, and end as
+    // soon as the listener is up. They were one second, and the stale-socket
+    // test failed once in the mutation harness's control run (2026-10-16) and
+    // not in 33 runs after; a listener thread slow to bind under the full
+    // suite is the likely reason, not a proven one.
+
     /// A socket path of its own per test, short enough for `sun_path`.
     fn socket(name: &str) -> PathBuf {
         let path = user_temp_dir()
@@ -244,7 +250,7 @@ mod tests {
             let _ = sent.send((args, cwd));
         });
         // The listener binds on its own thread.
-        for _ in 0..200 {
+        for _ in 0..2000 {
             if path.exists() {
                 break;
             }
@@ -289,7 +295,7 @@ mod tests {
         });
         let line = args(&["tpdf", "b.pdf", "--zoom", "150"]);
         let mut answered = false;
-        for _ in 0..200 {
+        for _ in 0..2000 {
             if hand_over(&path, "/", &line) {
                 answered = true;
                 break;
@@ -324,7 +330,7 @@ mod tests {
         listen(path.clone(), move |args, _| {
             let _ = sent.send(args);
         });
-        for _ in 0..200 {
+        for _ in 0..2000 {
             if path.exists() {
                 break;
             }

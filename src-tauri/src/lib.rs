@@ -143,6 +143,7 @@ pub mod signature_store;
 pub mod startup;
 pub mod structure;
 pub mod sweep;
+pub mod synctex;
 mod sysfont;
 pub mod text;
 pub mod textcache;
@@ -781,7 +782,8 @@ pub fn run() {
     // Queued here for the same reason: on Windows a double-click arrives in
     // `argv`, long before there is a webview to tell about it.
     let launch = launch::Launch::default();
-    for opening in launch::openings_from_launch(std::env::args(), |path| path.is_file()) {
+    let cwd = std::env::current_dir().unwrap_or_default();
+    for opening in launch::openings_from_launch(std::env::args(), &cwd, |path| path.is_file()) {
         launch.deliver(opening);
     }
 
@@ -1090,6 +1092,7 @@ pub fn run() {
             command_line_tool_state,
             default_pdf_app,
             take_launch_paths,
+            synctex_forward,
             session_load,
             session_remember,
             session_set_invert_pages,

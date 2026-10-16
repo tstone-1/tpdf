@@ -264,6 +264,13 @@ project conventions.
   program is `tpdf.exe` on Windows, `tpdf` on Linux, and on macOS the one inside the
   bundle: `/Applications/tpdf.app/Contents/MacOS/tpdf report.pdf --page 12`. A page or a
   zoom tpdf cannot show is said in the window, and the document still opens.
+- **LaTeX forward search**: an editor starts tpdf with `--forward-search chapter.tex:42`
+  after the PDF, and tpdf shows the page that line is on and marks it in blue, until Esc.
+  It reads the `.synctex.gz` file a TeX engine writes beside the PDF when you compile with
+  `-synctex=1`, and finds the source by its path, or by its name when the project was
+  compiled somewhere else. A line that made nothing on the page, such as an `\input`, is
+  answered with the nearest line that did, and tpdf says which. tpdf never starts your
+  editor: the other direction, from the page to the source, is not built.
 - **Links are followable**, and say where they go when the pointer is over them: the page,
   or the web address. So is the way back: Back and Forward walk the jumps you have
   made, and Next link / Previous link reach one without the pointer. Back and Forward grey out

@@ -768,12 +768,27 @@ fn samples() -> BTreeMap<&'static str, String> {
     put("Copied", &save::Copied { changed: true });
 
     put(
+        "Forward",
+        &crate::synctex::Forward {
+            page: 2,
+            line: 8,
+            boxes: vec![crate::synctex::Rect {
+                x: 133.77,
+                top: 127.85,
+                width: 343.71,
+                height: 8.86,
+            }],
+        },
+    );
+
+    put(
         "Opening",
         &crate::launch::Opening {
             path: PathBuf::from("/tmp/a.pdf"),
             place: crate::launch::Place {
                 page: Some("12".into()),
                 zoom: Some("fit-width".into()),
+                forward: Some("/tmp/chapter.tex:3".into()),
             },
         },
     );

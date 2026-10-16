@@ -51,6 +51,7 @@
 *.dll   binary
 *.dylib binary
 *.so    binary
+*.gz    binary
 
 # Shell scripts get their own line for a reason that is not tidiness: a CRLF
 # `.sh` is not merely different, it is unrunnable under WSL bash, which fails at

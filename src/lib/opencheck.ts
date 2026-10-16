@@ -150,10 +150,13 @@ export interface OpenCheckHost {
 
 const report = new Report();
 
-/** A path, and the page and fit a launch asked for when `|` follows it. */
-function placed(target: string): [string, number | null, string | null] {
-  const [path = "", page, fit] = target.split("|");
-  return [path, page === undefined ? null : Number(page), fit ?? null];
+/**
+ * A path, and the page and fit a launch asked for when `|` follows it; a
+ * fourth field, `marked`, when a forward search must have marked that page.
+ */
+function placed(target: string): [string, number | null, string | null, boolean] {
+  const [path = "", page, fit, marked] = target.split("|");
+  return [path, page === undefined ? null : Number(page), fit ?? null, marked === "marked"];
 }
 
 /**
@@ -163,18 +166,51 @@ function placed(target: string): [string, number | null, string | null] {
  * check's launch does not ask for: page 1 and fit width are where a document
  * opens with no session.
  */
-async function placeChecks(report: Report, host: OpenCheckHost, page: number | null, fit: string | null): Promise<void> {
+async function placeChecks(
+  report: Report,
+  host: OpenCheckHost,
+  page: number | null,
+  fit: string | null,
+  marked = false,
+): Promise<void> {
   if (page === null || fit === null) return;
   // The header's page and fit: what the reader is shown.
   const at = () => host.status()?.page ?? 0;
   const there = await settle(() => at() === page, SETTLE_MS);
-  report.check(`it is at page ${page}, as --page asked`, there, `page ${at()}`);
+  report.check(`it is at page ${page}, as the launch asked`, there, `page ${at()}`);
   const fitted = await settle(() => host.status()?.fit === fit, SETTLE_MS);
-  report.check(`it follows fit ${fit}, as --zoom asked`, fitted, `fit ${host.status()?.fit ?? "none"}`);
+  report.check(`it follows fit ${fit}, as the launch asked`, fitted, `fit ${host.status()?.fit ?? "none"}`);
   // Still there once the boot is over: a remembered place or a late fit
   // landing after the launch's would move it away.
   await pause(QUIET_MS);
   report.check("the page is still the one asked for after the boot", at() === page, `page ${at()}`);
+  if (!marked) return;
+  // The forward search's boxes: in the model on that page, and painted on
+  // the overlay where they are, which is what the reader sees.
+  const viewer = host.viewer();
+  const marks = viewer?.sourceMarks ?? null;
+  report.check(
+    `a forward search marked a line on page ${page}`,
+    marks !== null && marks.page === page - 1 && marks.rects.length > 0,
+    marks ? `page ${marks.page + 1}, ${marks.rects.length} box(es)` : "nothing marked",
+  );
+  const box = viewer?.sourceBoxesOnScreen()[0];
+  const canvas = viewer?.overlaySurface;
+  const ctx = canvas?.getContext("2d", { willReadFrequently: true });
+  let share = 0;
+  if (box && canvas && ctx) {
+    await pause(200);
+    const dpr = window.devicePixelRatio || 1;
+    const x0 = Math.max(0, Math.round(box.left * dpr) + 2), y0 = Math.max(0, Math.round(box.top * dpr) + 2);
+    const x1 = Math.min(canvas.width, Math.round(box.right * dpr) - 2), y1 = Math.min(canvas.height, Math.round(box.bottom * dpr) - 2);
+    if (x1 > x0 && y1 > y0) {
+      const { data } = ctx.getImageData(x0, y0, x1 - x0, y1 - y0);
+      let hit = 0;
+      for (let at = 3; at < data.length; at += 4) if ((data[at] ?? 0) > 8) hit++;
+      share = hit / (data.length / 4);
+    }
+  }
+  report.check("the marked line is painted on the page", share > 0.9, `${Math.round(share * 100)}% of the box painted`);
 }
 
 /**
@@ -2056,7 +2092,7 @@ async function run(host: OpenCheckHost, phase: string, expected: string): Promis
       break;
     }
     case "opened": {
-      const [want, page, fit] = placed(expected);
+      const [want, page, fit, marked] = placed(expected);
       const opened = await settle(() => host.path() !== "", SETTLE_MS);
       report.check(
         "a document opened without anyone asking for one",
@@ -2069,12 +2105,12 @@ async function run(host: OpenCheckHost, phase: string, expected: string): Promis
         host.path() === want,
         `${name(host.path())} vs ${name(want)}`,
       );
-      await placeChecks(report, host, page, fit);
+      await placeChecks(report, host, page, fit, marked);
       break;
     }
 
     case "arrives": {
-      const [want, page, fit] = placed(expected);
+      const [want, page, fit, marked] = placed(expected);
       // The control, and it is the whole reason this mode is separate from
       // `opened`. Without it, "a document arrived" is satisfied by one that was
       // handed over at launch --- which is what every other phase produces, so
@@ -2100,7 +2136,7 @@ async function run(host: OpenCheckHost, phase: string, expected: string): Promis
         host.path() === want,
         `${name(host.path())} vs ${name(want)}`,
       );
-      await placeChecks(report, host, page, fit);
+      await placeChecks(report, host, page, fit, marked);
       break;
     }
 

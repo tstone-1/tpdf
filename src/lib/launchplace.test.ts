@@ -12,7 +12,7 @@ function recorder(): Placeable & { calls: string[] } {
   };
 }
 
-const at = (page: string | null, zoom: string | null): Opening => ({ path: "/a.pdf", page, zoom });
+const at = (page: string | null, zoom: string | null, forward: string | null = null): Opening => ({ path: "/a.pdf", page, zoom, forward });
 
 describe("A command line's place", () => {
   it("reads the four fits with a hyphen or a space, in any case", () => {
@@ -71,6 +71,7 @@ describe("A command line's place", () => {
     expect(hasPlace(at(null, null))).toBe(false);
     expect(hasPlace(at("", null))).toBe(true);
     expect(hasPlace(at(null, "150"))).toBe(true);
+    expect(hasPlace(at(null, null, "/a.tex:3"))).toBe(true);
     expect(applyPlace(viewer, at(null, null), 5)).toBeNull();
     expect(viewer.calls).toEqual([]);
   });

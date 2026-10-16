@@ -2254,3 +2254,70 @@ ROWS += [
         only_on="linux",
     ),
 ]
+
+# --- LaTeX forward search, 2026-10-16 ---------------------------------------------------
+ROWS += [
+    Mutation(
+        "synctex: a box's top taken at its baseline",
+        "src/synctex.rs",
+        "            top: self.y(record.y) - self.length(h),",
+        "            top: self.y(record.y),",
+        "a_line_of_the_main_file_is_the_box_its_words_are_in",
+    ),
+    Mutation(
+        "synctex: a point not marked by its hbox",
+        "src/synctex.rs",
+        "                let enclosing = open.iter().rev().find_map(|rect| *rect);",
+        "                let enclosing: Option<Rect> = None;",
+        "a_line_of_the_main_file_is_the_box_its_words_are_in",
+    ),
+    Mutation(
+        "synctex: a farther line replaces a nearer one",
+        "src/synctex.rs",
+        "        after.offer(line, page, rect, |new, held| new < held);",
+        "        after.offer(line, page, rect, |new, held| new > held);",
+        "a_line_that_made_nothing_is_answered_with_the_next_that_did",
+    ),
+    Mutation(
+        "synctex: a later page's boxes kept",
+        "src/synctex.rs",
+        "        if page != self.page || self.boxes.last() == Some(&rect) || self.boxes.len() >= MAX_BOXES {",
+        "        if self.boxes.last() == Some(&rect) || self.boxes.len() >= MAX_BOXES {",
+        "only_the_first_page_with_the_line_is_marked",
+    ),
+    Mutation(
+        "synctex: a name shared by two inputs guessed",
+        "src/synctex.rs",
+        "        1 => Ok(named.iter().map(|(tag, _)| *tag).collect()),",
+        "        _ if !named.is_empty() => Ok(named.iter().map(|(tag, _)| *tag).collect()),",
+        "two_inputs_with_the_source_name_are_refused_not_guessed",
+    ),
+    Mutation(
+        "synctex: a path match not preferred to a name",
+        "src/synctex.rs",
+        "    if !by_path.is_empty() {",
+        "    if !by_path.is_empty() && false {",
+        "two_inputs_with_the_source_name_are_refused_not_guessed",
+    ),
+    Mutation(
+        "synctex: no depth limit",
+        "src/synctex.rs",
+        "                if open.len() >= MAX_DEPTH {",
+        "                if open.len() >= usize::MAX {",
+        "boxes_nested_too_deep_are_refused",
+    ),
+    Mutation(
+        "synctex: no line limit",
+        "src/synctex.rs",
+        "        if buffer.len() as u64 > MAX_LINE {",
+        "        if buffer.len() as u64 > u64::MAX {",
+        "a_line_longer_than_the_limit_is_refused",
+    ),
+    Mutation(
+        "launch: a relative source left relative",
+        "src/launch.rs",
+        "                if !source.is_empty() && path.is_relative() {",
+        "                if !source.is_empty() && path.is_relative() && false {",
+        "a_forward_search_source_is_made_absolute_where_the_launch_was_made",
+    ),
+]

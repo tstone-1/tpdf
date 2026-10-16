@@ -18414,6 +18414,23 @@ Mac mini a queue that holds
 its jobs received the whole document as job 1 (`rotated.pdf`, 2 KB) and pages 2 and 4 as job 2,
 read back by PDFKit as 2 pages. Not measured: paper.
 
+**Done 2026-10-16: LaTeX forward search** (`--forward-search file.tex:LINE`). `synctex.rs` reads
+the `.synctex.gz` (or `.synctex`) beside the PDF with a parser of its own: at most 64 MiB from
+disk and 512 MiB decompressed, lines to 64 KiB, boxes nested to 100,000. A text line is an hbox
+tagged with the line its paragraph *ended* on, while its words carry their own line, so a source
+line is found by its point records and marked by the hbox around them; vboxes are never marked.
+A line that made nothing is answered with the nearest that did, and the window says which. The
+source is the input whose path is the same file, or failing that the only input with its name, so
+a project compiled elsewhere is found and two `intro.tex` are refused. `launch.rs` makes the
+source absolute against the launching folder, and `synctex_forward` answers the window, which
+marks the boxes (`Viewer.showSourceBoxes`, under crop and turn, until Esc) and lands on them
+through `goToDestination`, so Back returns. Evidence: the fixture `testdata/synctex` was compiled
+with `pdflatex -synctex=1` (TeX Live 2023, Ubuntu 24.04) and its unit tests name lines on both
+pages and in an `\input` file; the CLI integration binary holds each box against the rectangle
+`search` finds for that line's words through PDFium, on both pages; `open_check.py` lands on page
+2 from `main.tex:8` with the box painted over 100% of its area on the Mac mini. Not measured: an
+editor running it, Windows and Linux, and a SyncTeX file from XeTeX or LuaTeX.
+
 #### 7.8 Windows Explorer: thumbnails, preview and search, opt-in
 
 Decided 2026-10-15: built, and **off until the reader turns it on**.

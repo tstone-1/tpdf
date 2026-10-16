@@ -18,6 +18,8 @@ export interface Opening {
   page: string | null;
   /** `--zoom`, as typed; `""` when the option had no value. */
   zoom: string | null;
+  /** `--forward-search`, `file.tex:LINE`, the file made absolute (`forward.ts`). */
+  forward: string | null;
 }
 
 /** What a viewer has to offer for a place to be applied. */
@@ -90,5 +92,5 @@ export function applyPlace(viewer: Placeable, opening: Opening, pageCount: numbe
 
 /** Whether the opening asks for a place at all. */
 export function hasPlace(opening: Opening): boolean {
-  return opening.page !== null || opening.zoom !== null;
+  return opening.page !== null || opening.zoom !== null || opening.forward !== null;
 }

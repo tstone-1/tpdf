@@ -85,6 +85,10 @@ PLACED = "|12|page"
 """What `opencheck.ts` is told to expect of [`PLACE`]: the page and the fit."""
 
 PLACED_ARGV = "argv with --page and --zoom"
+FORWARD_ARGV = "argv with --forward-search"
+"""LaTeX forward search on `testdata/synctex`: `main.tex` line 8 is on page 2,
+so the page cannot be satisfied by a document opening where it starts."""
+SYNCTEX = Path(__file__).resolve().parent.parent / "testdata" / "synctex"
 PLACED_RUNNING = "--page and --zoom handed to a running app"
 
 SECOND_EXIT_S = 15
@@ -292,6 +296,16 @@ def main() -> int:
             binary, f"opened:{pdf}{PLACED}", room / "placed.json", [pdf, *PLACE], args.timeout
         )
         ok &= report(out, code, PLACED_ARGV)
+
+        forward_pdf = str(SYNCTEX / "main.pdf")
+        code, out = run_direct(
+            binary,
+            f"opened:{forward_pdf}|2|width|marked",
+            room / "forward.json",
+            [forward_pdf, "--forward-search", f"{SYNCTEX / 'main.tex'}:8"],
+            args.timeout,
+        )
+        ok &= report(out, code, FORWARD_ARGV)
 
         if USES_LAUNCH_SERVICES:
             code, out = run_via_open(
