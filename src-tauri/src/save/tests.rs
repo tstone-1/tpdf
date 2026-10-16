@@ -6016,6 +6016,26 @@ impl Rewriter for FakeWriter {
         Err("a fake writer decodes no picture".into())
     }
 
+    fn attachment(
+        &self,
+        _source: &mut std::fs::File,
+        len: usize,
+        out: &mut std::fs::File,
+        _index: usize,
+        password: Option<&str>,
+    ) -> Result<usize, Refusal> {
+        use std::io::Write as _;
+
+        // `write`'s answer, claim included, so an attachment's save is held to
+        // the same check of the staged file's size.
+        self.asked
+            .borrow_mut()
+            .push((len, password.map(str::to_string)));
+        let bytes = self.answer.clone()?;
+        out.write_all(&bytes).map_err(|e| e.to_string())?;
+        Ok(bytes.len() + self.overstate_by)
+    }
+
     fn merge(
         &self,
         _source: &mut std::fs::File,
@@ -13423,4 +13443,41 @@ fn a_saved_link_is_read_back_as_a_link_by_the_scan_the_viewer_uses() {
             (other, _) => panic!("{note:?} read back as {other:?}"),
         }
     }
+}
+
+/// An attachment whose worker claims more bytes than it wrote is not renamed
+/// into place: the staged file's size is held to the count, as a rewrite's is,
+/// and the file that was at the destination is kept.
+#[test]
+fn an_attachment_claimed_longer_than_written_is_not_saved() {
+    let dir = crate::testutil::TempDir::new("attachment-claim");
+    let source = dir.join("doc.pdf");
+    std::fs::write(&source, b"%PDF-1.7 not parsed by the fake").expect("source");
+    let dest = dir.join("kept.txt");
+    std::fs::write(&dest, b"kept").expect("seed");
+    let mut lying = FakeWriter::writing(Ok(b"four".to_vec()));
+    lying.overstate_by = 1;
+    let refused =
+        crate::attachments::save(&source, 0, &dest, Some("pw"), &lying).expect_err("short");
+    assert!(
+        refused.contains("said 5 bytes and the file holds 4"),
+        "{refused}"
+    );
+    assert_eq!(std::fs::read(&dest).expect("read"), b"kept");
+    assert_eq!(dir.names(), ["doc.pdf", "kept.txt"]);
+    assert_eq!(
+        lying
+            .asked
+            .borrow()
+            .last()
+            .and_then(|asked| asked.1.clone())
+            .as_deref(),
+        Some("pw")
+    );
+    let honest = FakeWriter::writing(Ok(b"four".to_vec()));
+    assert_eq!(
+        crate::attachments::save(&source, 0, &dest, None, &honest),
+        Ok(4)
+    );
+    assert_eq!(std::fs::read(&dest).expect("read"), b"four");
 }

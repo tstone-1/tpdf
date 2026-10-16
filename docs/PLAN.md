@@ -18352,6 +18352,22 @@ only the paste-back fails. It also found that a crop drawn in the window never r
 request (`Scroller.adoptViews`, and the trap *A crop keeps the page order, so a branch on
 whether the order moved never told the renderer*): with the fix removed, only that stage fails.
 
+**Done 2026-10-16: saving an attachment** (`file.saveAttachment`, and
+`file.saveAttachment.choice` when there are several). The worker lists the embedded files with
+the document's properties (`attachments::list`: the name tree walked at most 32 deep and to
+1000 files, each node once), and the properties dialog shows each with the kind of file its
+name claims. The command saves the one file there is, or asks in the palette by number or by
+part of a name. A worker decodes the file within the 64 MiB every stream is held to and writes
+it into a file staged beside the chosen path (`Request::Attachment`), which the app holds to
+the worker's count and renames; the open document itself is refused as a destination. tpdf
+never opens the file, and warns when the name claims a program. The writers gate now reads
+writers outside `save.rs` too, and §3 counts eighteen. Evidence: the CLI integration binary
+saves a compressed attachment through a sandboxed worker and gets the bytes put in;
+`mark_check.py` on `hostile-attachment.pdf` saves its one file through the command with no
+question, and on the other fixtures is told there is none. Not measured: a portfolio
+(`/Collection`), whose files are this same list, and `/FileAttachment` annotations, which the
+comments panel lists and this command does not save.
+
 #### 7.7 Launching and integration
 
 - Launch options for the window: open at a page and a zoom (`tpdf-app file.pdf --page 12

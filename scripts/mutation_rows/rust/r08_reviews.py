@@ -2100,3 +2100,56 @@ ROWS += [
         "a_spec_is_a_path_and_its_query_without_the_origin",
     ),
 ]
+
+# --- a file the document carries, saved, 2026-10-16 ----------------------------------
+ROWS += [
+    Mutation(
+        "attachments: a branching name tree's kids not walked",
+        "src/attachments.rs",
+        "        for kid in kids {\n            walk(document, kid, depth + 1, seen, out);\n        }",
+        "        let _ = (kids, &seen);",
+        "walks_the_kids_of_a_tree_that_branches",
+    ),
+    Mutation(
+        "attachments: a node reached twice walked twice",
+        "src/attachments.rs",
+        "        if !seen.insert(*id) {",
+        "        if !seen.insert(*id) && false {",
+        "a_tree_whose_kid_names_its_parent_ends",
+    ),
+    Mutation(
+        "attachments: a compressed file saved compressed",
+        "src/attachments.rs",
+        "    if stream.dict.has(b\"Filter\") {",
+        "    if false {",
+        "takes_out_the_bytes_as_they_were_put_in_compressed_or_not",
+    ),
+    Mutation(
+        "attachments: the folders kept in a name",
+        "src/attachments.rs",
+        "    let last = raw.rsplit(['/', '\\\\', ':']).next().unwrap_or(raw);",
+        "    let last = raw;",
+        "a_name_keeps_its_last_part_and_nothing_a_file_system_refuses",
+    ),
+    Mutation(
+        "attachments: saved over the document it comes from",
+        "src/attachments.rs",
+        "    if same(source, dest) {",
+        "    if same(source, dest) && false {",
+        "refuses_to_save_over_the_document_it_comes_from",
+    ),
+    Mutation(
+        "attachments: the staged size not held to the count",
+        "src/attachments.rs",
+        "        if held != count as u64 {",
+        "        if held != count as u64 && false {",
+        "an_attachment_claimed_longer_than_written_is_not_saved",
+    ),
+    Mutation(
+        "attachments: a failed save leaves its staged file",
+        "src/attachments.rs",
+        "        let _ = std::fs::remove_file(&staged);\n",
+        "",
+        "a_save_that_fails_leaves_the_old_file_and_no_staged_one",
+    ),
+]

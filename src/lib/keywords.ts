@@ -72,6 +72,7 @@ const NAMED: Record<string, readonly string[]> = {
   "edit.pastePicture": ["image", "photo", "screenshot", "insert"],
   "edit.copyRegionAsPicture": ["snapshot", "image", "png", "area"],
   "file.saveRegionAsPicture": ["snapshot", "image", "png", "export", "area"],
+  "file.saveAttachment": ["embedded", "extract", "file", "portfolio"],
   "edit.erase": ["eraser", "rubber"],
   "edit.removeMark": ["delete mark"],
   "edit.copyMark": ["duplicate annotation", "clipboard"],

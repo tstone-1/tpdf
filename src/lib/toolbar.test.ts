@@ -254,6 +254,7 @@ describe("where there is no menu bar", () => {
     { prefix: "edit.insertPage.", reason: "Insert blank page is in the Pages menu; these choose a paper size for it" },
     { prefix: "edit.insertPages.range", reason: "the question Insert pages from file... asks, while a file waits" },
     { prefix: "file.recogniseTextLanguage.choice", reason: "the question Recognise text: language... asks" },
+    { prefix: "file.saveAttachment.choice", reason: "the question Save an attachment... asks when there are several" },
     { prefix: "view.showOutline", reason: "a tab at the head of the sidebar, which has a button in the header" },
     { prefix: "view.showMarks", reason: "a tab at the head of the sidebar, which has a button in the header" },
     {

@@ -252,6 +252,11 @@ project conventions.
   screen and never under 144 pixels an inch. It is the page as the file draws it, under the
   crop and turn you see: marks you have not saved yet are not in it.
   <!-- built: edit.copyRegionAsPicture file.saveRegionAsPicture -->
+- **Save an attachment** saves a file the document carries to a place you choose; with
+  several, the command palette asks which, by number or by part of its name. The properties
+  dialog lists them with the kind of file each name claims to be. tpdf never opens one, and
+  says so when a name claims a program.
+  <!-- built: file.saveAttachment file.saveAttachment.choice -->
 - **Links are followable**, and say where they go when the pointer is over them: the page,
   or the web address. So is the way back: Back and Forward walk the jumps you have
   made, and Next link / Previous link reach one without the pointer. Back and Forward grey out

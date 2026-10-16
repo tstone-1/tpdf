@@ -72,7 +72,7 @@ Five principals, each trusting only what is below it in the table; the command-l
 
 | Principal | Authority it holds | Authority it does not |
 |---|---|---|
-| **Webview** (Svelte) | Draws, receives tiles, issues commands — sixteen of which write files on its behalf (§T6.1), drives the updater's optional launch check and can ask for the process to be ended and started again once an update is applied (§T9), can ask for a document web link to be opened (§T8), reads signature images explicitly selected through its file input (§T6.17), can ask for a second PDF to be opened for reading so its pages can be inserted (§T6.20), can ask for the command-line tool's link in `/usr/local/bin` to be made or removed (§T6.23) and whether it is there, which changes nothing (§T6.38), and can ask for tpdf to be made the default application for PDFs (§T6.27) | No general filesystem access, no network reach of its own and no PDF parsing. It can name an address only in two ways: a document web link the reader confirms (§T8), and the timestamp authority `sign_document`, `sign_resume` and `add_validation_data` are handed --- any `http` or `https` host without credentials, loopback and private addresses included on purpose (§T10) |
+| **Webview** (Svelte) | Draws, receives tiles, issues commands — eighteen of which write files on its behalf (§T6.1), drives the updater's optional launch check and can ask for the process to be ended and started again once an update is applied (§T9), can ask for a document web link to be opened (§T8), reads signature images explicitly selected through its file input (§T6.17), can ask for a second PDF to be opened for reading so its pages can be inserted (§T6.20), can ask for the command-line tool's link in `/usr/local/bin` to be made or removed (§T6.23) and whether it is there, which changes nothing (§T6.38), and can ask for tpdf to be made the default application for PDFs (§T6.27) | No general filesystem access, no network reach of its own and no PDF parsing. It can name an address only in two ways: a document web link the reader confirms (§T8), and the timestamp authority `sign_document`, `sign_resume` and `add_validation_data` are handed --- any `http` or `https` host without credentials, loopback and private addresses included on purpose (§T10) |
 | **Coordinator** (Rust, the Tauri process) | Opens files the user chose, owns the window, spawns and kills workers, owns every shared mapping; asks the OS key store to sign one digest when the reader signs a document (§T6.21); asks the timestamp authority the reader chose for a token over that signature, when they chose one, and the certificate authorities for revocation data, when they also asked for long-term data (§T10) | Parses no PDF syntax on the *viewing* path — with one exception, printing, described below; holds no private key, and parses no part of a document it signs |
 | **Command-line tool** (`tpdf-cli`, the same crate) | A coordinator without a window, run by the reader's own account: opens the files named on its command line, spawns and kills the same workers, asks the OS key store to sign one digest, writes signed, filled or redacted copies, page-operation outputs or a document's text, and reads a document's password from an environment variable it is told the name of (§T6.23) | The coordinator's limits exactly --- parses no part of a document, holds no private key --- and no webview, no updater, and no network but the timestamp authority `sign --timestamp` names and the certificate authorities `--long-term` asks (§T10) |
 | **Worker** (Rust + PDFium) | Parses and renders whatever bytes it is handed | No path to the document and cannot create a file, on all three platforms; no filesystem and no network on **macOS** — on Windows, no writes, and reads and sockets are the disclosed ceiling; on **Linux**, reads beneath the font folders only and no socket by the `socket` call, io_uring or an x32 number, with what the kernel's Landlock version leaves open in §6a |
@@ -89,10 +89,10 @@ mounts a viewer. Resource limits remain per worker, not an aggregate limit acros
 The dialog permissions open panels and write nothing; the message
 permission provides the image-only redaction confirmation. But it can issue `save_copy`,
 `save_document`, `extract_pages`, `split_document`, `merge_documents`, `print_document`,
-`redact_copy`, `redact_document`, `redact_raster_copy`, `ocr_copy`, `protect_copy`, `images_to_pdf`, `compress_copy`, `sign_document`, `sign_resume` and `add_validation_data`, and all sixteen write a file at the
+`redact_copy`, `redact_document`, `redact_raster_copy`, `ocr_copy`, `protect_copy`, `images_to_pdf`, `compress_copy`, `sign_document`, `sign_resume`, `add_validation_data`, `region_save` and `attachment_save`, and all eighteen write a file at the
 process's authority with a path the caller chose.
-<!-- writers: save_copy save_document extract_pages split_document merge_documents print_document redact_copy redact_document redact_raster_copy ocr_copy protect_copy images_to_pdf compress_copy sign_document sign_resume add_validation_data --> So the accurate statement is that the webview cannot touch the
-filesystem *itself* and can ask for sixteen specific writes; the flat version reads as the
+<!-- writers: save_copy save_document extract_pages split_document merge_documents print_document redact_copy redact_document redact_raster_copy ocr_copy protect_copy images_to_pdf compress_copy sign_document sign_resume add_validation_data region_save attachment_save --> So the accurate statement is that the webview cannot touch the
+filesystem *itself* and can ask for eighteen specific writes; the flat version reads as the
 stronger claim, and a reader who stops at this table gets the wrong answer. §T6.1 has the worked-out version and says why neither path checks its argument
 against the document actually open.
 
@@ -870,7 +870,7 @@ summary going stale, and re-pointing it every time would erase its own evidence.
 **nine** as of 2026-09-07 with `redact_raster_copy`, **ten** as of 2026-09-26 with
 `sign_document` (§T6.21), and **eleven** as of 2026-09-28 with `sign_resume`, which writes the
 signature `sign_document` made and held when its timestamp did not come, to the path that call
-named (§T10), and **twelve** as of 2026-10-03 with `ocr_copy` (§T6.28), and **thirteen** the same day with `protect_copy` (§T6.30), and **fourteen** with `images_to_pdf` (§T6.31), and **fifteen** with `compress_copy` (§T6.32), and **sixteen** as of 2026-10-10 with `add_validation_data`, which writes a signed document with validation data and an archive timestamp appended, to a new path (§T10). It reached eight on 2026-08-30 without anybody adding three of them here or
+named (§T10), and **twelve** as of 2026-10-03 with `ocr_copy` (§T6.28), and **thirteen** the same day with `protect_copy` (§T6.30), and **fourteen** with `images_to_pdf` (§T6.31), and **fifteen** with `compress_copy` (§T6.32), and **sixteen** as of 2026-10-10 with `add_validation_data`, which writes a signed document with validation data and an archive timestamp appended, to a new path (§T10), and **eighteen** as of 2026-10-16 with `region_save` and `attachment_save`, a PNG of part of a page and a file the document carries (§T6.42, §T6.43). Those two write outside `save.rs`, which the gate's scan did not read until the same day, so the count first stayed at sixteen with every gate green. It reached eight on 2026-08-30 without anybody adding three of them here or
 there: `split_document`, `redact_copy` and `redact_document` were each disclosed in their own
 entries and absent from the one place that answers *how many*. That is this paragraph's own
 subject arriving a third time, which is the argument for the mechanical check §3 now names —
@@ -3353,6 +3353,29 @@ PNG. The region is one tile, rendered by a worker as every tile is.
 
 **Not covered.** A PNG written over an existing file replaces it after the save panel has
 asked; the command does not ask again, as *Save a copy* does not.
+
+#### T6.43 — A file the document carries, saved, added 2026-10-16
+
+*Save an attachment* writes one of the document's embedded files (`/Names /EmbeddedFiles`)
+where the reader chooses. An embedded file is the attacker's in the plainest way: any bytes
+under any name.
+
+- **The list is read in the worker** with the document's properties (`attachments::list`): a
+  name tree walked at most 32 levels deep and to 1000 files, each node once, so a tree whose
+  kids name their parent ends. A name keeps its last part only, with no control character and
+  none a file system refuses; it is what the save panel offers, and the reader can change it.
+- **`attachment_save` has a worker decode the file and write it** into a file the app made
+  beside the chosen path (`Request::Attachment`, `Reply::Rewrote`, as a print range is
+  written). The decoding is bounded by `encoding::MAX_DECODE` (64 MiB), as every stream is.
+  The app holds the staged file's size to the worker's count and renames it over the path;
+  a path that is the open document itself is refused. The path is the webview's to name, as
+  for *Save a copy*.
+- **tpdf never opens the file.** It says what kind of file the name claims to be and, for a
+  name that ends like a program or a script, that it should be opened only if the document is
+  trusted. Nothing checks the claim: a program can be named `invoice.pdf`.
+
+**Not covered.** A file larger than 64 MiB decoded is refused rather than saved. What the
+reader does with the saved file is outside tpdf; the warning covers names, not contents.
 
 ### T9 — The updater
 

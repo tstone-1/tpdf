@@ -47,6 +47,7 @@
  */
 
 import { call } from "./ipc";
+import type { Embedded } from "./attachments";
 import { readPicture } from "./picture";
 import { tileUrl, type TileRequest } from "./tiles";
 
@@ -116,6 +117,10 @@ export interface MarkCheckHost {
   lastRegion: () => TileRequest | null;
   /** Queues the path the next save panel answers with, as the panel would. */
   answerSave: (path: string) => void;
+  /** The notice the window shows, if any: what a command that worked said. */
+  told: () => string | null;
+  /** The open document's embedded files, as its properties list them. */
+  attachments: () => Promise<Embedded[]>;
 }
 
 /**
@@ -664,12 +669,12 @@ async function run(host: MarkCheckHost): Promise<void> {
     const copyArmed = host.run("edit.copyRegionAsPicture") && viewer.regionArmed;
     check("the copy-region command arms a drag", copyArmed, `armed: ${viewer.regionArmed}`);
     if (copyArmed) dragRegion();
-    const copiedSaid = await settle(() => host.said()?.startsWith("Copied the region") === true);
+    const copiedSaid = await settle(() => host.told()?.startsWith("Copied the region") === true);
     const copied = host.lastRegion();
     check(
       "a region dragged out is copied, and the window says its size",
-      copiedSaid && sized(host.said(), copied),
-      `said: ${host.said()}; tile ${copied ? `${copied.width}x${copied.height} at ${copied.scale}` : "none"}`,
+      copiedSaid && sized(host.told(), copied),
+      `told: ${host.told()}; said: ${host.said()}; tile ${copied ? `${copied.width}x${copied.height} at ${copied.scale}` : "none"}`,
     );
     if (!isMac() || !copied || !copiedSaid) {
       report.skip("and it pastes back as a picture of the region's pixels",
@@ -700,7 +705,7 @@ async function run(host: MarkCheckHost): Promise<void> {
       host.answerSave(file);
       const saveArmed = host.run("file.saveRegionAsPicture") && viewer.regionArmed;
       if (saveArmed) dragRegion();
-      const savedSaid = await settle(() => host.said()?.startsWith("Saved the region") === true);
+      const savedSaid = await settle(() => host.told()?.startsWith("Saved the region") === true);
       const saved = host.lastRegion();
       const read = savedSaid ? await call("picture_open", { path: file }).then(readPicture).catch((e: unknown) => String(e)) : null;
       const want = saved ? await rawTile(saved).catch(() => new Uint8Array()) : new Uint8Array();
@@ -709,9 +714,9 @@ async function run(host: MarkCheckHost): Promise<void> {
         && read.rgba.length === want.length && read.rgba.every((value, at) => value === want[at]);
       check(
         "a region saved as a picture is a PNG of the region's pixels",
-        savedSaid && sized(host.said(), saved) && same,
-        typeof read === "object" && read !== null ? `${read.width}x${read.height} read back from ${file}; said: ${host.said()}`
-          : `armed: ${saveArmed}; said: ${host.said()}; read: ${read}`,
+        savedSaid && sized(host.told(), saved) && same,
+        typeof read === "object" && read !== null ? `${read.width}x${read.height} read back from ${file}; told: ${host.told()}`
+          : `armed: ${saveArmed}; told: ${host.told()}; said: ${host.said()}; read: ${read}`,
       );
     }
 
@@ -741,6 +746,41 @@ async function run(host: MarkCheckHost): Promise<void> {
         `the model's crop ${JSON.stringify(crop)}; the tile's ${JSON.stringify(carried)}`,
       );
       if (cropped) host.run("edit.undo");
+    }
+  }
+
+  // --- An attachment -------------------------------------------------------
+  //
+  // Through the command. A document with none is told so; one with a single
+  // file saves it with no question, through a worker, and the window names
+  // the file and its size. `window_checks.py` runs this on
+  // `testdata/hostile-attachment.pdf`, which carries one; the bytes saved are
+  // compared with the bytes put in by the CLI integration binary.
+  {
+    const files = await host.attachments().catch(() => null);
+    const scratch = await call("viewercheck_scratch");
+    if (files === null) {
+      check("the document's attachments are listed", false, "its properties could not be read");
+    } else if (files.length === 0) {
+      const ran = host.run("file.saveAttachment");
+      const told = await settle(() => host.told() === "This document carries no attachments.");
+      check("save-attachment on a document with none says so", ran && told, `told: ${host.told()}`);
+    } else if (files.length === 1 && scratch !== null) {
+      const file = scratch.replace(/(\.[^.\\/]*)?$/, "-attachment.txt");
+      host.answerSave(file);
+      const ran = host.run("file.saveAttachment");
+      const name = file.split(/[\\/]/).pop() ?? file;
+      const told = await settle(() => host.told()?.startsWith(`Saved ${files[0]!.name} to ${name}, `) === true);
+      check(
+        "a document's one attachment is saved with no question, and the window names it",
+        ran && told,
+        `told: ${host.told()}; said: ${host.said()}`,
+      );
+    } else {
+      report.skip(
+        "a document's one attachment is saved with no question, and the window names it",
+        scratch === null ? "no scratch path to save to" : `the document carries ${files.length}`,
+      );
     }
   }
 }

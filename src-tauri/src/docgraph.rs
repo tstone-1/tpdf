@@ -465,6 +465,17 @@ impl DocumentGraph {
         crate::save::merge_update(&bytes, plan, inputs, self.password())
     }
 
+    /// The bytes of the embedded file at `index`, decoded, from the one parse
+    /// (`crate::attachments::content`), so an encrypted document's files come
+    /// out with its own password.
+    ///
+    /// # Errors
+    ///
+    /// The document does not parse, or `attachments::content` refuses.
+    pub fn attachment(&self, index: usize) -> Result<Vec<u8>, String> {
+        crate::attachments::content(self.parsed()?, index)
+    }
+
     /// Builds a print job for the page range `job` names.
     ///
     /// [`DocumentGraph::rewrite`]'s counterpart for the print route that carries

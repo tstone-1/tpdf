@@ -46,6 +46,8 @@ CHECKS: list[tuple[str, str, str, list[str]]] = [
     ("viewer", "viewer_check.py", TEXT, ["--signed", SIGNED]),
     ("marks on links", "mark_check.py", "testdata/links.pdf", []),
     ("marks on text", "mark_check.py", TEXT, []),
+    # One embedded file: *Save an attachment* saves it with no question.
+    ("marks on an attachment", "mark_check.py", "testdata/hostile-attachment.pdf", []),
     ("tabs", "tabs_check.py", TEXT, ["--phase", "tabs"]),
     ("tab positions", "tabs_check.py", TEXT, ["--phase", "tabs-position"]),
     ("sides", "tabs_check.py", TEXT, ["--phase", "sides"]),

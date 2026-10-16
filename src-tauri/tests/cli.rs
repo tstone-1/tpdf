@@ -152,7 +152,7 @@ fn main() {
     run_outside_cargo_deps(&argv);
     // The order is load-bearing: never_maps_pdfium asserts this process has
     // not mapped PDFium, so it must precede the in-process PDFium readers.
-    let checks: [Check; 41] = [
+    let checks: [Check; 42] = [
         ("verify agrees with the in-process reader", verify_agrees),
         (
             "verify reports what was appended after each signature",
@@ -169,6 +169,10 @@ fn main() {
         (
             "a picture for a page is decoded in a worker and arrives as decoded here",
             picture_in_a_worker,
+        ),
+        (
+            "an attachment is decoded in a worker and saved as the bytes put in",
+            attachment_in_a_worker,
         ),
         (
             "sign --text draws its own lines; an invisible signature carries its notes",
@@ -1887,6 +1891,54 @@ fn picture_in_a_worker(report: &mut Report) {
             .is_err_and(|why| why.message.contains("PNG or JPEG")),
         &format!("{:?}", refused.map_err(|why| why.message)),
     );
+}
+
+/// *Save an attachment*: an embedded file decoded in a sandboxed worker and
+/// written through the staged file it was handed, compared with the bytes put
+/// in.
+fn attachment_in_a_worker(report: &mut Report) {
+    use lopdf::{dictionary, Object, Stream, StringFormat};
+    let dir = scratch("attachment");
+    let carried = b"name,amount\nwidget,12\n".repeat(50);
+    let mut doc = lopdf::Document::with_version("1.7");
+    let mut stream = Stream::new(dictionary! { "Type" => "EmbeddedFile" }, carried.clone());
+    stream.compress().expect("compress");
+    let file = doc.add_object(stream);
+    let spec = doc.add_object(dictionary! {
+        "Type" => "Filespec",
+        "UF" => Object::String(b"orders.csv".to_vec(), StringFormat::Literal),
+        "EF" => dictionary! { "F" => file },
+    });
+    let tree = doc.add_object(dictionary! {
+        "Names" => vec![Object::String(b"orders".to_vec(), StringFormat::Literal), Object::Reference(spec)],
+    });
+    let names = doc.add_object(dictionary! { "EmbeddedFiles" => tree });
+    let pages = doc.add_object(
+        dictionary! { "Type" => "Pages", "Kids" => Vec::<Object>::new(), "Count" => 0 },
+    );
+    let catalog =
+        doc.add_object(dictionary! { "Type" => "Catalog", "Pages" => pages, "Names" => names });
+    doc.trailer.set("Root", catalog);
+    let source = dir.join("carrier.pdf");
+    doc.save(&source).expect("carrier");
+    let dest = dir.join("orders.csv");
+    let outside = tpdf_lib::save::InWorker::at(library_dir());
+    let saved = tpdf_lib::attachments::save(&source, 0, &dest, None, &outside);
+    report.check(
+        "an attachment saved through a worker holds the bytes that were put in",
+        saved == Ok(carried.len()) && std::fs::read(&dest).ok().as_deref() == Some(&carried[..]),
+        &format!("{saved:?}"),
+    );
+    let missing = tpdf_lib::attachments::save(&source, 3, &dir.join("none.csv"), None, &outside);
+    report.check(
+        "an attachment the document does not have is refused in the reader's words",
+        missing
+            .as_ref()
+            .is_err_and(|why| why.contains("no attachment 4"))
+            && !dir.join("none.csv").exists(),
+        &format!("{missing:?}"),
+    );
+    let _ = std::fs::remove_dir_all(&dir);
 }
 
 fn sign_reads_back(report: &mut Report) {

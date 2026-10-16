@@ -244,6 +244,18 @@
   "tagged": true,
   "language": "en-GB",
   "attachments": 2,
+  "embedded": [
+    {
+      "name": "orders.csv",
+      "description": "the order lines",
+      "size": 1200
+    },
+    {
+      "name": "invoice.xml",
+      "description": "",
+      "size": null
+    }
+  ],
   "xmp": {
     "bytes": 2048,
     "conformance": [

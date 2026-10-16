@@ -14,6 +14,7 @@
  * here, and runs on every commit.
  */
 
+import type { Embedded } from "./attachments";
 import { ARRANGEMENTS } from "./arrange";
 import { describe, expect, it } from "vitest";
 
@@ -87,6 +88,9 @@ function harness(
   // Null by default for the same reason: no list of languages is held unless
   // the reader has just asked to choose one.
   languages: { offered: Offered; current: string | null } | null = null,
+  // Null by default for the same reason: no list of attachments is held unless
+  // the reader has just asked to save one from a document carrying several.
+  attachments: Embedded[] | null = null,
 ) {
   const fired: string[] = [];
   let automatic = update.automatic ?? true;
@@ -263,6 +267,10 @@ function harness(
     findHiddenText: () => fired.push("findHiddenText"),
     chooseRecognitionLanguage: () => fired.push("chooseRecognitionLanguage"),
     recognitionLanguages: () => languages,
+    saveAttachment: () => fired.push("saveAttachment"),
+    attachmentsAsked: () => attachments,
+    pickAttachment: (raw) => fired.push(`pickAttachment:${raw}`),
+    dropAttachments: () => fired.push("dropAttachments"),
     setRecognitionLanguage: (raw) => fired.push(`setRecognitionLanguage:${raw}`),
     dropRecognitionLanguages: () => fired.push("dropRecognitionLanguages"),
     protectCopy: () => fired.push("protectCopy"),
@@ -970,6 +978,8 @@ describe("every registered command", () => {
       { pending: 1, pages: 3, name: "other.pdf" },
       // And a list of languages held, so `file.recogniseTextLanguage.choice` is.
       { offered: { languages: ["en-US"], installable: false }, current: null },
+      // And a list of attachments held, so `file.saveAttachment.choice` is.
+      [{ name: "a.txt", description: "", size: 3 }, { name: "b.csv", description: "", size: null }],
     );
     // Every other argument takes a number; a language is a word.
     const ANSWERS: Record<string, string> = { "file.recogniseTextLanguage.choice": "automatic" };
@@ -1406,6 +1416,49 @@ describe("the page operations", () => {
       const { registry, fired } = asking();
       choice(registry)?.argument?.dismissed?.();
       expect(fired).toEqual(["dropRecognitionLanguages"]);
+    });
+  });
+
+  describe("saving an attachment", () => {
+    const files = [
+      { name: "orders.csv", description: "", size: 1200 },
+      { name: "invoice.xml", description: "", size: null },
+      { name: "orders-2.csv", description: "", size: 10 },
+    ];
+    const asking = () =>
+      harness(
+        true, {}, {}, false, false, false, {}, false, false, false, false, false, false,
+        null, null, files,
+      );
+    const choice = (registry: CommandRegistry) => registry.find("file.saveAttachment.choice");
+
+    it("is offered on a document and reads the list first", () => {
+      const { registry, fired } = harness();
+      expect(registry.find("file.saveAttachment")?.title).toBe("Save an attachment...");
+      expect(registry.run("file.saveAttachment")).toBe(true);
+      expect(fired).toEqual(["saveAttachment"]);
+      expect(harness(false).registry.run("file.saveAttachment")).toBe(false);
+    });
+
+    it("asks which only while a list is held, by number or by part of a name", () => {
+      const without = harness().registry;
+      expect(without.run("file.saveAttachment.choice", "1")).toBe(false);
+      expect(choice(without)?.argument?.problem("1")).toBe("No list of attachments is waiting");
+      const { registry, fired } = asking();
+      const argument = choice(registry)?.argument;
+      expect(argument?.placeholder).toBe("Which attachment: 1 to 3, or part of its name");
+      expect(argument?.preview("xml")).toBe("Saves invoice.xml (an XML file)");
+      expect(argument?.problem("orders")).toContain("2 attachments have");
+      expect(argument?.problem("4")).toBe("There is no attachment 4; there are 3");
+      expect(registry.run("file.saveAttachment.choice", "4")).toBe(false);
+      expect(registry.run("file.saveAttachment.choice", "2")).toBe(true);
+      expect(fired).toEqual(["pickAttachment:2"]);
+    });
+
+    it("drops the list when the question is dismissed", () => {
+      const { registry, fired } = asking();
+      choice(registry)?.argument?.dismissed?.();
+      expect(fired).toEqual(["dropAttachments"]);
     });
   });
 
@@ -2032,6 +2085,10 @@ describe("the window shortcuts for editing", () => {
       recognitionLanguages: () => null,
       setRecognitionLanguage: (raw) => fired.push(`setRecognitionLanguage:${raw}`),
       dropRecognitionLanguages: () => fired.push("dropRecognitionLanguages"),
+      saveAttachment: () => fired.push("saveAttachment"),
+      attachmentsAsked: () => null,
+      pickAttachment: (raw) => fired.push(`pickAttachment:${raw}`),
+      dropAttachments: () => fired.push("dropAttachments"),
       protectCopy: () => fired.push("protectCopy"),
       unprotectCopy: () => fired.push("unprotectCopy"),
       compressCopy: () => fired.push("compressCopy"),

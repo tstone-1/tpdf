@@ -790,9 +790,10 @@ ROWS += [
     # A size is shown by the figure as printed: 9.96 is 10 and not 10.0, and
     # 1023.6 KB is 1.0 MB.
     Mutation("coverage: say everything up to the signature of a range that skips the head", "src/lib/properties.ts", "  if (signature.appended_bytes > 0 && signature.starts_at_zero) {", "  if (signature.appended_bytes > 0) {", "does not say everything up to the signature when the range skips the head and was appended to"),
-    Mutation("sizes: decide the unit before rounding", "src/lib/properties.ts", "  while (Math.round(value) >= 1024 && unit < units.length - 1) {", "  while (value >= 1024 && unit < units.length - 1) {", "moves to the next unit when the figure rounds up to 1024 of this one"),
-    Mutation("sizes: decide the decimal before rounding", "src/lib/properties.ts", "  const rounded = Number(tenths) < 10 ? tenths : Math.round(value).toString();", "  const rounded = value < 10 ? tenths : Math.round(value).toString();", "never prints a decimal on a figure that rounded up to ten"),
-    Mutation("sizes: walk past the last unit", "src/lib/properties.ts", "  while (Math.round(value) >= 1024 && unit < units.length - 1) {", "  while (Math.round(value) >= 1024) {", "keeps the last unit for a size past the end of them"),
+    # Re-aimed 2026-10-16: `formatBytes` moved to `bytes.ts`, which properties.ts re-exports.
+    Mutation("sizes: decide the unit before rounding", "src/lib/bytes.ts", "  while (Math.round(value) >= 1024 && unit < units.length - 1) {", "  while (value >= 1024 && unit < units.length - 1) {", "moves to the next unit when the figure rounds up to 1024 of this one"),
+    Mutation("sizes: decide the decimal before rounding", "src/lib/bytes.ts", "  const rounded = Number(tenths) < 10 ? tenths : Math.round(value).toString();", "  const rounded = value < 10 ? tenths : Math.round(value).toString();", "never prints a decimal on a figure that rounded up to ten"),
+    Mutation("sizes: walk past the last unit", "src/lib/bytes.ts", "  while (Math.round(value) >= 1024 && unit < units.length - 1) {", "  while (Math.round(value) >= 1024) {", "keeps the last unit for a size past the end of them"),
     # Text a removal leaves because it cannot be measured is said in a
     # sentence of its own; the rule for the other kinds printed the backend's
     # name for it.

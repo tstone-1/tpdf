@@ -9,6 +9,7 @@
 //! caller is a shell command in `BUILD.md`.
 
 pub mod annots;
+pub mod attachments;
 pub mod ber;
 #[cfg(target_os = "linux")]
 pub mod certfiles;
@@ -986,6 +987,7 @@ pub fn run() {
             picture_decode,
             region_save,
             region_copy,
+            attachment_save,
             signature_store,
             edit_undo,
             edit_redo,

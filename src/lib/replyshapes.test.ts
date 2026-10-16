@@ -292,6 +292,7 @@ const SCHEMA = {
     tagged: ["boolean"],
     language: ["string"],
     attachments: ["number"],
+    embedded: ["array"],
     xmp: ["object"],
     limits: ["object"],
     scan_ms: ["number"],

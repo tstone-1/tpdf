@@ -168,6 +168,7 @@ PER_WINDOW: dict[str, str] = {
     "menuPushed": "the enablement last pushed to the menu bar",
     "queuedPictures": "what a checks build answers the next open panel with",
     "lastRegion": "the last region a checks build copied or saved, read by the mark check",
+    "attachmentQuestion": "the question Save an attachment asks, carrying the document it is about",
 }
 
 

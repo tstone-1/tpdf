@@ -3042,6 +3042,25 @@ pub trait Rewriter: Send {
     ///
     /// What `decode_picture` refuses.
     fn picture(&self, bytes: &[u8]) -> Result<crate::signature::Image, Refusal>;
+
+    /// Writes the bytes of the embedded file at `index` of the document in
+    /// `source`, decoded, into `out`, and answers how many.
+    ///
+    /// The document is the one the reader opened and its list of files is
+    /// read from its objects, so this is a parse like every other here
+    /// (`crate::attachments::content`).
+    ///
+    /// # Errors
+    ///
+    /// What `attachments::content` refuses, the password, and the write.
+    fn attachment(
+        &self,
+        source: &mut std::fs::File,
+        len: usize,
+        out: &mut std::fs::File,
+        index: usize,
+        password: Option<&str>,
+    ) -> Result<usize, Refusal>;
 }
 
 /// Where a parse of the reader's own document happens.
@@ -3135,6 +3154,25 @@ impl Rewriter for Here {
 
     fn picture(&self, bytes: &[u8]) -> Result<crate::signature::Image, Refusal> {
         Ok(crate::signature_import::decode_picture(bytes)?)
+    }
+
+    fn attachment(
+        &self,
+        source: &mut std::fs::File,
+        len: usize,
+        out: &mut std::fs::File,
+        index: usize,
+        password: Option<&str>,
+    ) -> Result<usize, Refusal> {
+        use std::io::Write as _;
+
+        let original = read_whole(source, len).map_err(|e| e.to_string())?;
+        let document = crate::encoding::load(&original, password)?;
+        let bytes = crate::attachments::content(&document, index)?;
+        out.write_all(&bytes)
+            .and_then(|()| out.flush())
+            .map_err(|e| format!("the attachment could not be written: {e}"))?;
+        Ok(bytes.len())
     }
 }
 

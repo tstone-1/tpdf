@@ -1074,3 +1074,23 @@ ROWS += [
         "      this.regioning = null;\n      void waiting;",
         "keeps waiting through a click, and answers nothing for Escape or another tool"),
 ]
+
+# --- saving an attachment, 2026-10-16 ---------------------------------------------------
+ROWS += [
+    Mutation("attachment: a program's name not called one", "src/lib/attachments.ts",
+        '  if (PROGRAMS.has(end)) return "a program or script";\n',
+        "",
+        "calls a name that ends like a program one, and warns when it is saved"),
+    Mutation("attachment: saved with no warning for a program", "src/lib/attachments.ts",
+        "  const warning = isProgram(file.name)",
+        "  const warning = false && isProgram(file.name)",
+        "calls a name that ends like a program one, and warns when it is saved"),
+    Mutation("attachment: number 0 taken as the first", "src/lib/attachments.ts",
+        "    return number >= 1 && number <= files.length",
+        "    return number <= files.length",
+        "takes a number from 1, and refuses one past the list"),
+    Mutation("attachment: part of several names taken as the first", "src/lib/attachments.ts",
+        "  if (matching.length === 1) return { index: matching[0]! };",
+        "  if (matching.length >= 1) return { index: matching[0]! };",
+        "takes part of exactly one name, ignoring case"),
+]

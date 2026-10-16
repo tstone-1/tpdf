@@ -144,6 +144,8 @@ export const MENU_LAYOUT: LayoutSection[] = [
       "file.compress",
       // A copy of part of a page rather than of the document.
       "file.saveRegionAsPicture",
+      // A file the document carries, written out as it is.
+      "file.saveAttachment",
       "file.protect",
       "file.unprotect",
       // Beside the copy, because it is one --- and after it rather than before,
@@ -525,6 +527,14 @@ export const NOT_IN_MENU: { prefix: string; reason: string }[] = [
       "the question Recognise text: language... asks once this machine's " +
       "languages are listed, offered only while that list is held; the menu " +
       "item before it is the way in",
+  },
+  {
+    // The whole id, for the reason above: `file.saveAttachment` is in the
+    // File menu.
+    prefix: "file.saveAttachment.choice",
+    reason:
+      "the question Save an attachment... asks when a document carries several, " +
+      "offered only while that list is held; the menu item before it is the way in",
   },
 ];
 

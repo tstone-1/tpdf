@@ -530,6 +530,10 @@ export async function appCommandChecks(
     recognitionLanguages: () => null,
     setRecognitionLanguage: (raw) => fired.push(`setRecognitionLanguage:${raw}`),
     dropRecognitionLanguages: () => fired.push("dropRecognitionLanguages"),
+    saveAttachment: () => fired.push("saveAttachment"),
+    attachmentsAsked: () => null,
+    pickAttachment: (raw) => fired.push(`pickAttachment:${raw}`),
+    dropAttachments: () => fired.push("dropAttachments"),
     protectCopy: () => fired.push("protectCopy"),
     unprotectCopy: () => fired.push("unprotectCopy"),
     compressCopy: () => fired.push("compressCopy"),
@@ -1591,6 +1595,11 @@ export async function appCommandChecks(
       read: () => fired.join(","),
     },
     {
+      id: "file.saveAttachment",
+      ...shell("saveAttachment"),
+      read: () => fired.join(","),
+    },
+    {
       id: "file.findHiddenText",
       ...shell("findHiddenText"),
       read: () => fired.join(","),
@@ -1879,6 +1888,11 @@ export async function appCommandChecks(
     // directions, and `ocrlanguage.test.ts` what an answer means.
     "file.recogniseTextLanguage.choice":
       "needs this machine's list of languages to be held; no window phase drives it yet",
+    // Offered only while `file.saveAttachment` holds a document's list of
+    // several files, which these recording actions never read.
+    // `appcommands.test.ts` covers the guard and the argument.
+    "file.saveAttachment.choice":
+      "needs a document's list of several attachments to be held; no window phase drives it yet",
   };
 
   const registered = registry.all().map((command) => command.id);

@@ -495,6 +495,37 @@ pub async fn region_copy(tile: String) -> Result<(), String> {
     Err("The region is copied by the web view on this platform.".into())
 }
 
+/// Saves the embedded file at `index` of the open document to `path`
+/// (*Save an attachment*), and answers how many bytes it holds.
+///
+/// From the file as it is on disk, which is `source`, the frontend's record of
+/// what it opened, as *Save a copy* takes it. A worker decodes it with the
+/// document's password and writes it into a file beside `path`
+/// (`attachments::save`); tpdf never opens it.
+#[tauri::command]
+pub async fn attachment_save(
+    app: tauri::AppHandle,
+    service: tauri::State<'_, crate::render::RenderService>,
+    doc: u32,
+    source: String,
+    index: usize,
+    path: String,
+) -> Result<usize, String> {
+    let password = super::password_for(&service, doc, "attachment_save").await;
+    let outside = super::outside_of(&app, service.backend());
+    tauri::async_runtime::spawn_blocking(move || {
+        crate::attachments::save(
+            std::path::Path::new(&source),
+            index,
+            std::path::Path::new(&path),
+            password.as_deref(),
+            &*outside,
+        )
+    })
+    .await
+    .map_err(|e| format!("The attachment was not saved: {e}"))?
+}
+
 /// A region rendered and PNG-encoded by a worker: one tile, named as the
 /// `tile` scheme names one without the origin, and bounded by that scheme's
 /// parser (`protocol::parse_spec`), so at most the 16 MiB the tile mapping

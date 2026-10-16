@@ -49,6 +49,10 @@ have the binary.)
   menu) and *Save a region as a picture* take the part of a page you drag across, as sharp
   as it is on screen and never under 144 pixels an inch, to the clipboard or to a PNG file.
   A sandboxed worker renders it; marks not yet saved are not in it.
+- **Save an attachment.** Saves a file the document carries to a place you choose; with
+  several, the command palette asks which. The properties dialog lists them with the kind
+  of file each name claims. A sandboxed worker decodes the file; tpdf never opens it, and
+  says so when a name claims a program.
 - **⌘V pastes text in the find field, the palette and every other text field on
   macOS.** It pasted nothing there, because a web view pastes only when a Paste menu item's
   action reaches it and tpdf's menu has no such item; ⌘V now sends that action itself.

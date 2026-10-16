@@ -35,6 +35,7 @@ function blank(): Properties {
     tagged: null,
     language: "",
     attachments: null,
+    embedded: [],
     xmp: null,
     limits: {
       locked: false,

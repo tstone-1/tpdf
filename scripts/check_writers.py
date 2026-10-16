@@ -91,10 +91,21 @@ TERMINAL = [
     "write_signed",
 ]
 
+# Writers outside `save.rs`, by the path a command calls them through and the
+# file that defines them. Added 2026-10-16: *Save a region as a picture* and
+# *Save an attachment* write a file at a path the webview names, and neither
+# goes through `save.rs`, so the scan above did not see them and the §3 count
+# said sixteen while eighteen commands wrote.
+ELSEWHERE = {
+    "region::write_png": "src-tauri/src/region.rs",
+    "attachments::save": "src-tauri/src/attachments.rs",
+}
+
 NUMBERS = {
     2: "two", 3: "three", 4: "four", 5: "five", 6: "six",
     7: "seven", 8: "eight", 9: "nine", 10: "ten", 11: "eleven", 12: "twelve",
     13: "thirteen", 14: "fourteen", 15: "fifteen", 16: "sixteen",
+    17: "seventeen", 18: "eighteen", 19: "nineteen", 20: "twenty",
 }
 
 
@@ -189,6 +200,8 @@ def commands_that_write(source: str) -> set[str]:
     def writes(body: str, depth: int) -> bool:
         if any(f"save::{terminal}" in body for terminal in TERMINAL):
             return True
+        if any(path in body for path in ELSEWHERE):
+            return True
         if depth == 0:
             return False
         return any(
@@ -242,6 +255,10 @@ def main() -> int:
     # The control, first: a renamed terminal makes every set below empty, and two
     # empty sets agree.
     missing = [t for t in TERMINAL if f"fn {t}" not in save]
+    missing += [
+        path for path, file in ELSEWHERE.items()
+        if f"fn {path.split('::')[-1]}" not in (ROOT / file).read_text(encoding="utf-8")
+    ]
     ok &= say(
         not missing,
         f"all {len(TERMINAL)} terminal writers still exist across {len(save_files)}"

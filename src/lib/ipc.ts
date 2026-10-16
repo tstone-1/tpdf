@@ -365,6 +365,8 @@ export interface Commands {
   region_save: { args: { tile: string; path: string }; reply: void };
   /** A region rendered by a worker and put on the clipboard as a PNG; macOS only. */
   region_copy: { args: { tile: string }; reply: void };
+  /** An embedded file decoded in a worker and saved; the reply is its size in bytes. */
+  attachment_save: { args: { doc: DocHandle; source: string; index: number; path: string }; reply: number };
   signature_store: { args: { action: { kind: "load" } | { kind: "save"; image: import("./signature").SignatureImage } | { kind: "forget" } }; reply: import("./signature").SignatureImage | null };
   edit_undo: { args: { doc: DocHandle }; reply: EditState };
   edit_redo: { args: { doc: DocHandle }; reply: EditState };

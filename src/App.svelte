@@ -118,6 +118,7 @@
   import { EXTENSIONS as PICTURE_EXTENSIONS, afterPictures, suggestedName as pictureName } from "./lib/pictures";
   import { pastedPicture, readPicture, type PicturePixels } from "./lib/picture";
   import { regionName, regionRequest, regionSaid } from "./lib/regionshot";
+  import { pick as pickAttachmentIn, saved as attachmentSaved, type Embedded } from "./lib/attachments";
   import { fetchTilePng, tileSpec, type TileRequest } from "./lib/tiles";
   import { afterProtect, suggestedName as protectedName } from "./lib/protect";
   import { afterCompress, suggestedName as smallerName } from "./lib/compress";
@@ -1216,6 +1217,13 @@
   let queuedPictures: string[] | null = null;
   /** The last region copied or saved, so the mark check can render it again. Checks builds only. */
   let lastRegion: TileRequest | null = null;
+  /**
+   * The embedded files *Save an attachment* is asking about, with the document
+   * they are in, or null when nothing is asked. The document travels with the
+   * list, so an answer given after a tab changed still saves from the
+   * document the question was about.
+   */
+  let attachmentQuestion: { doc: number; source: string; files: Embedded[] } | null = null;
   let propertiesDialog: PropertiesDialog | null = null;
   let passwordDialog: PasswordDialog | null = null;
   let newPasswordDialog: NewPasswordDialog | null = null;
@@ -1727,6 +1735,10 @@
     pastePicture: () => void pastePicture(),
     copyRegion: () => void copyRegion(),
     saveRegion: () => void saveRegion(),
+    saveAttachment: () => void saveAttachment(),
+    attachmentsAsked: () => attachmentQuestion?.files ?? null,
+    pickAttachment: (raw) => void pickAttachment(raw),
+    dropAttachments: () => { attachmentQuestion = null; },
     pasteKey: () => {
       if (!isMac()) return false;
       call("paste").catch((e: unknown) => say(String(e)));
@@ -2079,7 +2091,7 @@
     try {
       if (isMac()) await call("region_copy", { tile: tileSpec(request) });
       else await navigator.clipboard.write([new ClipboardItem({ "image/png": fetchTilePng(request) })]);
-      say(regionSaid(request));
+      tell(regionSaid(request));
     } catch (e) {
       say(`The region was not copied: ${e instanceof Error ? e.message : String(e)}`);
     }
@@ -2107,7 +2119,61 @@
       const chosen = __TPDF_CHECKS__ && signSaves ? await signSaves.ask(suggested, panel) : await panel();
       if (!chosen) return;
       await call("region_save", { tile: tileSpec(request), path: chosen });
-      say(regionSaid(request, basename(chosen)));
+      tell(regionSaid(request, basename(chosen)));
+    } catch (e) {
+      say(String(e));
+    }
+  }
+
+  /**
+   * *Save an attachment*: reads the document's embedded files, saves the one
+   * there is, and asks which in the palette when there are several. The list
+   * comes with the document's properties, read in a worker.
+   */
+  async function saveAttachment(): Promise<void> {
+    const doc = openDoc, source = openPathName;
+    if (doc < 0 || !source) return;
+    try {
+      const files = (await call("document_properties", { doc })).embedded ?? [];
+      if (files.length === 0) {
+        tell("This document carries no attachments.");
+        return;
+      }
+      const asked = { doc, source, files };
+      if (files.length === 1) {
+        await saveAttachmentAt(asked, 0);
+        return;
+      }
+      attachmentQuestion = asked;
+      palette?.askFor("file.saveAttachment.choice");
+    } catch (e) {
+      say(String(e));
+    }
+  }
+
+  /** Takes the palette's answer to *Save an attachment*'s question. */
+  async function pickAttachment(raw: string): Promise<void> {
+    const asked = attachmentQuestion;
+    attachmentQuestion = null;
+    if (!asked) return;
+    const picked = pickAttachmentIn(raw, asked.files);
+    if ("index" in picked) await saveAttachmentAt(asked, picked.index);
+  }
+
+  /**
+   * Asks where, and has a worker decode the file and write it there
+   * (`attachment_save`). The file is never opened; the window says what kind
+   * its name claims, and warns when that is a program.
+   */
+  async function saveAttachmentAt(asked: { doc: number; source: string; files: Embedded[] }, index: number): Promise<void> {
+    const file = asked.files[index];
+    if (!file) return;
+    const panel = () => saveDialog({ title: "Save an attachment", defaultPath: file.name });
+    try {
+      const chosen = __TPDF_CHECKS__ && signSaves ? await signSaves.ask(file.name, panel) : await panel();
+      if (!chosen) return;
+      const bytes = await call("attachment_save", { doc: asked.doc, source: asked.source, index, path: chosen });
+      tell(attachmentSaved(file, bytes, basename(chosen)));
     } catch (e) {
       say(String(e));
     }
@@ -5216,6 +5282,11 @@
           said: () => error,
           lastRegion: () => lastRegion,
           answerSave: (path) => signSaves?.queue(path),
+          told: () => notice,
+          attachments: async () => {
+            const doc = openDoc;
+            return doc < 0 ? [] : (await call("document_properties", { doc })).embedded ?? [];
+          },
         })
       )
         return;

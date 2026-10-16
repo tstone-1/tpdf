@@ -2164,9 +2164,11 @@ ROWS += [
         # Count a name tree's entries rather than its pairs. `/Names` interleaves
         # key and value, so this reports twice as many attachments as there are.
         "docinfo: count a name tree's entries rather than its pairs",
-        "src/docinfo.rs",
-        "        .map_or(0, |array| array.len() / 2)",
-        "        .map_or(0, std::vec::Vec::len)",
+        # Re-aimed 2026-10-16: the count is the length of `attachments::list`,
+        # which reads the tree's `/Names` in pairs.
+        "src/attachments.rs",
+        "        for pair in pairs.chunks(2) {",
+        "        for pair in pairs.chunks(1) {",
         "attachments_are_counted_as_pairs_because_a_name_tree_interleaves_them",
     ),
     Mutation(

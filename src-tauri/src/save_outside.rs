@@ -994,6 +994,26 @@ impl Rewriter for InWorker {
         answer
     }
 
+    fn attachment(
+        &self,
+        source: &mut std::fs::File,
+        len: usize,
+        out: &mut std::fs::File,
+        index: usize,
+        password: Option<&str>,
+    ) -> Result<usize, Refusal> {
+        // `write_range`'s route: a worker spawned for this one answer, with the
+        // staged file's descriptor, asked on a thread.
+        let mapped = Shm::map_open_file(source, len)?;
+        let worker = Worker::spawn_writing(std::sync::Arc::new(mapped), out, &self.library_dir)?;
+        let pid = worker.pid();
+        let password = password.map(str::to_string);
+        let rx = asked_on_a_thread(worker, move |worker| {
+            Self::ask_attachment(worker, index, password.as_deref())
+        });
+        awaited(&rx, DEFAULT_DEADLINE, pid)?
+    }
+
     fn write_range(
         &self,
         source: &mut std::fs::File,
@@ -1129,6 +1149,42 @@ impl InWorker {
     /// refuses an encrypted document whether or not the key is held, so sending
     /// a password would buy a decrypted copy of a document somebody encrypted
     /// deliberately and nothing else.
+    /// The unlock, when the document has a password, and the attachment's
+    /// request: [`InWorker::ask_rewrite`]'s pair.
+    fn ask_attachment(
+        worker: &mut Worker,
+        index: usize,
+        password: Option<&str>,
+    ) -> Result<usize, Refusal> {
+        if let Some(password) = password {
+            let answered = worker.call(&Request::Unlock {
+                password: password.to_string(),
+            })?;
+            if !answered.ok {
+                return Err(format!(
+                    "the worker could not take the document's password: {}",
+                    answered.error
+                )
+                .into());
+            }
+        }
+        let answered = worker.call(&Request::Attachment { index })?;
+        if !answered.ok {
+            return Err(Refusal::from(answered.error));
+        }
+        match answered.reply {
+            Some(Reply::Rewrote(bytes)) => Ok(bytes),
+            other => Err(format!(
+                "the worker answered the attachment with {}",
+                other.map_or_else(
+                    || "no payload at all".to_string(),
+                    |reply| reply.described()
+                )
+            )
+            .into()),
+        }
+    }
+
     fn ask_print_range(worker: &mut Worker, job: &crate::print::Job) -> Result<usize, Refusal> {
         let answered = worker.call(&Request::PrintRange { job: job.clone() })?;
         if !answered.ok {

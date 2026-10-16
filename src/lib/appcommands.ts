@@ -30,6 +30,12 @@
  * is not claimed to be. The wiring is the half that was covered by nothing.
  */
 
+import {
+  pick as pickAttachment,
+  placeholder as attachmentPlaceholder,
+  preview as attachmentPreview,
+  type Embedded,
+} from "./attachments";
 import type { CommandRegistry } from "./commands";
 import { attachKeywords } from "./keywords";
 import { BINDINGS, copyInterfaceText, inTextField, isLinux, label, matches, type BoundCommand } from "./keys";
@@ -498,6 +504,17 @@ export interface AppActions {
   copyRegion(): void;
   /** Arm a drag over a page; the region it covers is saved as a PNG file. */
   saveRegion(): void;
+  /**
+   * Read the document's embedded files: save the one there is, or ask which
+   * with {@link attachmentsAsked}'s list. See `attachments.ts`.
+   */
+  saveAttachment(): void;
+  /** The embedded files being asked about, or null when nothing is asked. */
+  attachmentsAsked(): readonly Embedded[] | null;
+  /** Save the file the reader's answer names. */
+  pickAttachment(raw: string): void;
+  /** The question was dismissed. */
+  dropAttachments(): void;
   /**
    * Sends the platform's paste for ⌘V, where the web view needs it sent:
    * macOS, whose web view pastes only on a Paste menu item's action
@@ -2334,6 +2351,37 @@ export function registerAppCommands(
       title: "Save a region as a picture...",
       enabled: withDocument,
       run: () => actions.saveRegion(),
+    },
+    {
+      // A file the document carries, saved where the reader chooses and never
+      // opened. With one there is no question; with several the palette asks
+      // which, below, once the list is read. Offered on every document: one
+      // with none is told so, which a missing command would not say.
+      id: "file.saveAttachment",
+      title: "Save an attachment...",
+      enabled: withDocument,
+      run: () => actions.saveAttachment(),
+    },
+    {
+      // The question `file.saveAttachment` asks when there are several.
+      // Enabled only while that list is held, so it is not listed otherwise.
+      id: "file.saveAttachment.choice",
+      title: "Save which attachment",
+      enabled: () => actions.attachmentsAsked() !== null,
+      argument: {
+        get placeholder() {
+          return attachmentPlaceholder(actions.attachmentsAsked() ?? []);
+        },
+        problem: (raw: string) => {
+          const files = actions.attachmentsAsked();
+          if (!files) return "No list of attachments is waiting";
+          const picked = pickAttachment(raw, files);
+          return "problem" in picked ? picked.problem : null;
+        },
+        preview: (raw: string) => attachmentPreview(raw, actions.attachmentsAsked() ?? []),
+        run: (raw: string) => actions.pickAttachment(raw),
+        dismissed: () => actions.dropAttachments(),
+      },
     },
     {
       // Copies, like every command that changes what a file is: the open

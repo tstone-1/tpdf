@@ -746,6 +746,7 @@ fn handle(
             incoming,
         } => rewrite(document, out, inputs, plan, *job, incoming),
         Request::PrintRange { job } => print_range(document, out, job),
+        Request::Attachment { index } => attachment(document, out, *index),
         Request::Merge { plan, incoming } => merge(document, out, inputs, plan, incoming),
         Request::Images { incoming, options } => images(out, inputs, incoming, *options),
         Request::Reread => match render::run_reread(document) {
@@ -949,6 +950,24 @@ fn print_range(
     match out.write_all(&bytes).and_then(|()| out.flush()) {
         Ok(()) => Response::reply(Reply::Rewrote(bytes.len())),
         Err(e) => Response::err(format!("the print job could not be written: {e}")),
+    }
+}
+
+/// Writes one embedded file's bytes down the output channel: [`print_range`]'s
+/// shape. See [`crate::worker_proto::Request::Attachment`].
+fn attachment(document: &OpenDocument, out: Option<&mut std::fs::File>, index: usize) -> Response {
+    let Some(out) = out else {
+        return Response::err(
+            "this worker was not started with anywhere to write, so it cannot save an attachment",
+        );
+    };
+    let bytes = match document.graph().attachment(index) {
+        Ok(bytes) => bytes,
+        Err(why) => return Response::err(why),
+    };
+    match out.write_all(&bytes).and_then(|()| out.flush()) {
+        Ok(()) => Response::reply(Reply::Rewrote(bytes.len())),
+        Err(e) => Response::err(format!("the attachment could not be written: {e}")),
     }
 }
 

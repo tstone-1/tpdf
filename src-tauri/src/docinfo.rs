@@ -611,6 +611,11 @@ pub struct Properties {
     pub language: String,
     /// How many files are embedded in it, where that could be counted.
     pub attachments: Option<usize>,
+    /// The embedded files themselves, in the document's order, for *Save an
+    /// attachment* (`crate::attachments::list`). Defaulted so a reply written
+    /// before the list existed still parses.
+    #[serde(default)]
+    pub embedded: Vec<crate::attachments::Embedded>,
     /// The XMP metadata packet, when the document carries one.
     ///
     /// `None` is a document with no `/Metadata`, which is a fact about it;
@@ -787,6 +792,7 @@ fn scan_judged(
     } else {
         None
     };
+    let embedded = catalog.map_or_else(Vec::new, |_| crate::attachments::list(document));
     let language = catalog
         .and_then(|c| c.get(b"Lang").ok())
         .and_then(|o| resolve(document, o).as_str().ok())
@@ -803,7 +809,8 @@ fn scan_judged(
         signatures,
         tagged: catalog.map(|c| c.has(b"StructTreeRoot")),
         language,
-        attachments: catalog.map(|_| count_attachments(document)),
+        attachments: catalog.map(|_| embedded.len()),
+        embedded,
         xmp: catalog.and_then(|c| read_xmp(document, c)),
         limits,
         scan_ms: started.elapsed().as_secs_f64() * 1000.0,
@@ -1219,37 +1226,6 @@ fn format_date(raw: &str) -> String {
     }
 
     out
-}
-
-/// Counts the files embedded in a document, at the two places they may hang.
-///
-/// `/Names /EmbeddedFiles` is the document-level list; a `/FileAttachment`
-/// annotation is the per-page one, and a document may use either. Only the
-/// first is counted here, which is what "how many attachments does this file
-/// carry" means to a reader --- the annotation form already appears in the
-/// comments panel, where it belongs.
-fn count_attachments(document: &Document) -> usize {
-    let Ok(catalog) = document.catalog() else {
-        return 0;
-    };
-    let names = catalog
-        .get(b"Names")
-        .ok()
-        .and_then(|o| resolve(document, o).as_dict().ok());
-    let Some(tree) = names
-        .and_then(|n| n.get(b"EmbeddedFiles").ok())
-        .and_then(|o| resolve(document, o).as_dict().ok())
-    else {
-        return 0;
-    };
-    // A name tree's leaf holds `/Names [key value key value ...]`, so the count
-    // is half the array. An interior node holds `/Kids`, which is not walked:
-    // the tree only branches past several hundred entries, and reporting "some"
-    // as zero would be worse than reporting the leaf's own count.
-    tree.get(b"Names")
-        .ok()
-        .and_then(|o| resolve(document, o).as_array().ok())
-        .map_or(0, |array| array.len() / 2)
 }
 
 /// Reads every signature field the form declares.

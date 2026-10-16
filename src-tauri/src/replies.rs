@@ -314,6 +314,18 @@ fn samples() -> BTreeMap<&'static str, String> {
             tagged: Some(true),
             language: "en-GB".into(),
             attachments: Some(2),
+            embedded: vec![
+                crate::attachments::Embedded {
+                    name: "orders.csv".into(),
+                    description: "the order lines".into(),
+                    size: Some(1200),
+                },
+                crate::attachments::Embedded {
+                    name: "invoice.xml".into(),
+                    description: String::new(),
+                    size: None,
+                },
+            ],
             xmp: Some(xmp::Xmp {
                 bytes: 2048,
                 conformance: vec!["PDF/A-2b".into()],

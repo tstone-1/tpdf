@@ -51,6 +51,7 @@ export const TOOL_GROUPS: ToolGroup[] = [
       { id: "file.recogniseText", label: message("recogniseText") },
       { id: "file.compress", label: "Save a smaller copy..." },
       { id: "file.saveRegionAsPicture", label: "Save a region as a picture..." },
+      { id: "file.saveAttachment", label: "Save an attachment..." },
       { id: "file.protect", label: "Save a copy with a password..." },
       { id: "file.unprotect", label: "Save a copy without its password..." },
       { id: "file.signField", label: "Sign in the signature field...", rule: true },

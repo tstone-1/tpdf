@@ -395,6 +395,19 @@ pub enum Request {
         /// Which pages, and the reader's own view rotation. Never a path.
         job: crate::print::Job,
     },
+    /// Write one embedded file's bytes, decoded, into the handed-over file
+    /// (*Save an attachment*).
+    ///
+    /// [`Request::PrintRange`]'s shape and its answer, [`Reply::Rewrote`]: an
+    /// attachment may be larger than a reply line holds, and the coordinator
+    /// compares the count with the staged file's size. The bytes are decoded
+    /// within `encoding::MAX_DECODE` (`crate::attachments::content`) and never
+    /// opened.
+    Attachment {
+        /// Its place in the document's list of embedded files, from 0. Never a
+        /// name or a path.
+        index: usize,
+    },
     /// Merge the mapped document with the files on [`crate::worker::IN_FD`].
     ///
     /// **The last coordinator-side parse, and the widest one.** Every other
@@ -1030,6 +1043,11 @@ mod tests {
                 "asked by `save::InWorker` of a worker spawned with the print job's \
                  scratch descriptor, for the same reason `Rewrite` is: no pooled worker \
                  has one",
+            ),
+            (
+                "Attachment",
+                "asked by `save::InWorker` of a worker spawned with the staged file's \
+                 descriptor, for the reason `PrintRange` is: no pooled worker has one",
             ),
             (
                 "Merge",

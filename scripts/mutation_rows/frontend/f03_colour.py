@@ -1576,7 +1576,8 @@ ROWS += [
         # Round every size, including the ones below a kilobyte. "0.9 KB (923
         # bytes)" is two numbers for a quantity nobody needs rounded.
         "properties: put a rounded size beside a count of a few hundred bytes",
-        "src/lib/properties.ts",
+        # Re-aimed 2026-10-16: `formatBytes` moved to `bytes.ts`.
+        "src/lib/bytes.ts",
         "  if (bytes < 1024) return exact;",
         "  if (bytes < 0) return exact;",
         "gives a plain count below a kilobyte, with no rounded size beside it",
@@ -1585,7 +1586,7 @@ ROWS += [
         # Let a size that is not a number through. `NaN bytes` reads as a
         # measurement of the file rather than as the absence of one.
         "properties: format a size that is not a number as though it were",
-        "src/lib/properties.ts",
+        "src/lib/bytes.ts",
         "  if (!Number.isFinite(bytes) || bytes < 0) return \"unknown\";",
         "  if (bytes < -1) return \"unknown\";",
         "says so rather than printing NaN for a size it was not given",

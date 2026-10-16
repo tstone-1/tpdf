@@ -39,6 +39,10 @@
  * read as a verdict about the signer.
  */
 
+import { attachmentRows, type Embedded } from "./attachments";
+import { formatBytes } from "./bytes";
+
+export { formatBytes };
 import {
   authorityRow,
   padesRow,
@@ -232,6 +236,8 @@ export interface Properties {
   tagged: boolean | null;
   language: string;
   attachments: number | null;
+  /** The embedded files, in the document's order: `attachments::Embedded`. */
+  embedded: Embedded[];
   xmp: Xmp | null;
   limits: Limits;
   scan_ms: number;
@@ -309,29 +315,6 @@ export const NOT_CHECKED =
  * identity rather than by pattern.
  */
 export const VERDICT_WORDS = ["valid", "verified", "authentic", "genuine"];
-
-/** A byte count, with a rounded size beside it once it is worth having. */
-export function formatBytes(bytes: number): string {
-  if (!Number.isFinite(bytes) || bytes < 0) return "unknown";
-  const exact = `${Math.round(bytes).toLocaleString("en-US")} bytes`;
-  if (bytes < 1024) return exact;
-  const units = ["KB", "MB", "GB", "TB"];
-  let value = bytes / 1024;
-  let unit = 0;
-  // On the figure as it will be printed and not as it is: 1023.6 KB prints as
-  // 1024 KB, which is 1.0 MB. The last unit has nowhere to go and keeps it.
-  while (Math.round(value) >= 1024 && unit < units.length - 1) {
-    value /= 1024;
-    unit += 1;
-  }
-  // One decimal below ten, none above: 8.7 MB is worth the digit and 873 KB is
-  // not, and "873.4 KB" beside an exact byte count is two spurious digits.
-  // Decided on the rounded figure for the same reason as above: 9.96 with one
-  // decimal is 10.0, which is not below ten.
-  const tenths = value.toFixed(1);
-  const rounded = Number(tenths) < 10 ? tenths : Math.round(value).toString();
-  return `${rounded} ${units[unit]} (${exact})`;
-}
 
 /**
  * What a DocMDP level permits, in the specification's own terms.
@@ -1011,8 +994,9 @@ export function sections(properties: Properties): Section[] {
   if (properties.attachments !== null && properties.attachments > 0) {
     rows.push({
       name: "Attachments",
-      value: `${properties.attachments} embedded file${properties.attachments === 1 ? "" : "s"}`,
+      value: `${properties.attachments} embedded file${properties.attachments === 1 ? "" : "s"}; Save an attachment saves one`,
     });
+    rows.push(...attachmentRows(properties.embedded ?? []));
   }
   rows.push(...conformanceRows(properties.xmp));
   const file: Section = { title: "File", rows };
