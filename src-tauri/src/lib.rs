@@ -74,6 +74,8 @@ pub mod pin_prompt;
 pub mod pkcs11;
 #[cfg(target_os = "linux")]
 pub mod pkcs12;
+#[cfg(target_os = "macos")]
+pub mod secondlaunch;
 pub mod taborder;
 pub mod textedit;
 pub mod textview;
@@ -658,6 +660,48 @@ fn start_watchdog() {
         .expect("failed to spawn watchdog thread");
 }
 
+/// A second launch's command line, handed over by the single-instance plugin
+/// on Windows and Linux, or by `secondlaunch.rs` on macOS: the window comes
+/// forward and each document goes through the same queue as every other route.
+fn receive_second_launch<R: tauri::Runtime>(
+    app: &tauri::AppHandle<R>,
+    argv: Vec<String>,
+    cwd: &str,
+) {
+    use tauri::{Emitter, Manager};
+    // `try_state`, for the same reason the macOS arm gives: a panic inside a
+    // plugin callback is invisible, and the degradation is one document not
+    // opening rather than a window with nothing in it.
+    let Some(launch) = app.try_state::<launch::Launch>() else {
+        return;
+    };
+    // Raising the window is the visible half. A handover that silently
+    // loaded the document behind whatever the reader was looking at would
+    // read as "the double-click did nothing", which is the failure this
+    // whole path exists to avoid.
+    if let Some(window) = app.get_webview_window("main") {
+        let _ = window.unminimize();
+        let _ = window.set_focus();
+    }
+    for opening in launch::openings_from_second_launch(argv, cwd, |path| path.is_file()) {
+        if let launch::Delivery::Emit(opening) = launch.deliver(opening) {
+            let _ = app.emit(launch::OPEN_EVENT, opening);
+        }
+    }
+}
+
+/// Where this executable's window listens for a second launch, or `None` when
+/// the system will not name the user's temporary folder or the executable.
+#[cfg(target_os = "macos")]
+fn second_launch_socket() -> Option<std::path::PathBuf> {
+    let exe = std::env::current_exe().ok()?;
+    let exe = exe.canonicalize().unwrap_or(exe);
+    Some(secondlaunch::socket_path(
+        &secondlaunch::user_temp_dir()?,
+        &exe,
+    ))
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     startup::mark_process_start();
@@ -697,6 +741,25 @@ pub fn run() {
         std::process::exit(2);
     }
 
+    // A launch asking for a page or a zoom goes to the window already running,
+    // and this process ends here having started nothing. Before the watchdog,
+    // which would otherwise outlive the decision by a thread. `secondlaunch.rs`
+    // says why only such a launch, and why macOS needs this at all.
+    #[cfg(target_os = "macos")]
+    let second_launch_socket = second_launch_socket();
+    #[cfg(target_os = "macos")]
+    if let Some(socket) = &second_launch_socket {
+        if !launch::split_place(&args).1.is_empty() {
+            let cwd = std::env::current_dir()
+                .unwrap_or_default()
+                .to_string_lossy()
+                .into_owned();
+            if secondlaunch::hand_over(socket, &cwd, &args) {
+                return;
+            }
+        }
+    }
+
     start_watchdog();
     let mode = ShellMode::from_env();
 
@@ -717,8 +780,8 @@ pub fn run() {
     // Queued here for the same reason: on Windows a double-click arrives in
     // `argv`, long before there is a webview to tell about it.
     let launch = launch::Launch::default();
-    for path in launch::paths_from_launch(std::env::args(), |path| path.is_file()) {
-        launch.deliver(path);
+    for opening in launch::openings_from_launch(std::env::args(), |path| path.is_file()) {
+        launch.deliver(opening);
     }
 
     let mut builder = tauri::Builder::default()
@@ -804,26 +867,7 @@ pub fn run() {
     #[cfg(any(windows, target_os = "linux"))]
     {
         builder = builder.plugin(tauri_plugin_single_instance::init(|app, argv, cwd| {
-            use tauri::{Emitter, Manager};
-            // `try_state`, for the same reason the macOS arm gives: a panic inside a
-            // plugin callback is invisible, and the degradation is one document not
-            // opening rather than a window with nothing in it.
-            let Some(launch) = app.try_state::<launch::Launch>() else {
-                return;
-            };
-            // Raising the window is the visible half. A handover that silently
-            // loaded the document behind whatever the reader was looking at would
-            // read as "the double-click did nothing", which is the failure this
-            // whole path exists to avoid.
-            if let Some(window) = app.get_webview_window("main") {
-                let _ = window.unminimize();
-                let _ = window.set_focus();
-            }
-            for path in launch::paths_from_second_launch(argv, &cwd, |path| path.is_file()) {
-                if let launch::Delivery::Emit(path) = launch.deliver(path) {
-                    let _ = app.emit(launch::OPEN_EVENT, path.to_string_lossy().into_owned());
-                }
-            }
+            receive_second_launch(app, argv, &cwd);
         }));
     }
     if std::env::var_os("TPDF_EMPTY_MENU").is_some() {
@@ -859,6 +903,16 @@ pub fn run() {
                 app.manage(pending);
             }
             app.manage(service);
+            // The macOS counterpart of the single-instance plugin, for a launch
+            // that asks for a place. A thread that waits on a socket; it costs
+            // the start nothing it waits for.
+            #[cfg(target_os = "macos")]
+            if let Some(socket) = second_launch_socket.clone() {
+                let handle = app.handle().clone();
+                secondlaunch::listen(socket, move |argv, cwd| {
+                    receive_second_launch(&handle, argv, &cwd);
+                });
+            }
             // Linux signs through PKCS#11, where tpdf asks for a token's PIN
             // itself; a native dialog, so the PIN never reaches the webview.
             #[cfg(target_os = "linux")]
@@ -1107,8 +1161,8 @@ pub fn run() {
                 let Some(path) = launch::path_from_url(url) else {
                     continue;
                 };
-                if let launch::Delivery::Emit(path) = launch.deliver(path) {
-                    let _ = _handle.emit(launch::OPEN_EVENT, path.to_string_lossy().into_owned());
+                if let launch::Delivery::Emit(opening) = launch.deliver(path) {
+                    let _ = _handle.emit(launch::OPEN_EVENT, opening);
                 }
             }
         }

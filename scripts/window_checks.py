@@ -59,6 +59,8 @@ CHECKS: list[tuple[str, str, str, list[str]]] = [
      ["--phase", "import", "--other", "testdata/links.pdf"]),
     ("fit", "tabs_check.py", "testdata/comments.pdf", ["--phase", "fit"]),
     ("session", "session_check.py", TEXT, []),
+    # Every route a document arrives by, and `--page` with `--zoom` on two of them.
+    ("open", "open_check.py", TEXT, ["--other", "testdata/outline-simple.pdf"]),
 ]
 
 

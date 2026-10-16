@@ -5924,18 +5924,16 @@ python scripts/open_check.py src-tauri/target/release/tpdf.exe \
     testdata/outline-simple.pdf --other testdata/rotated-90.pdf
 ```
 
-Four of the six phases run there and pass — `argv`, `beats`, `control`, and all four launches
-of `race`. The two that cannot print `[SKIP]` **with the reason**, so the phase-name list is the
-same on both platforms and a reader can diff it:
+Every phase but one runs there. `double-click` prints `[SKIP]` **with the reason**, so the
+phase-name list is the same on both platforms and a reader can diff it: an Explorer
+double-click hands the path over in argv, which `argv` already covers, and there is no Launch
+Services layer to go through. The two `running` phases go through
+`tauri-plugin-single-instance`, which forwards a second launch's argv to the first process.
+This paragraph said until 2026-10-16 that `running` had no route on Windows; that was true
+before the plugin was linked.
 
-- `double-click` has no second mechanism to test. An Explorer double-click hands the path over
-  in argv, which `argv` already covers; there is no Launch Services layer to go through.
-- `running` has no route at all. `RunEvent::Opened` is `#[cfg(target_os = "macos")]` and no
-  single-instance plugin is linked, so **a second launch is a second process** — measured, not
-  inferred: two launches leave two `tpdf.exe` processes with two windows and two worker pools,
-  where macOS produces one app that swaps documents. Whether that is the behaviour to want is a
-  product decision; what is certain is that the *emit* branch this phase exists to exercise is
-  unreachable there, and that was previously unstated in either direction.
+`window_checks.py` runs this check as `open`, with the executable inside `tpdf Checks.app`;
+the script finds the bundle three folders up.
 
 `HANDS_OVER_TO_RUNNING` is the single place that distinction lives, and each of the two
 branching phase names is a constant rather than a literal at both call sites — a name written
@@ -5949,6 +5947,8 @@ nothing had.
 | `beats` | argv, with a different document remembered | a handed-over document wins |
 | `control` | nothing handed over | the remembered one opens — without this, `beats` passes on an app that ignores the session |
 | `running` | `open -a` on an app already up | the *emit* branch rather than the queue |
+| `argv` with a place | the binary, with `--page 12 --zoom fit-page` | the document comes up at page 12 following fit page, and is still there after the boot |
+| `running` with a place | the binary, with the same, beside an app already up | the same place, and the second process ends with 0 within 15 s; on macOS that is `secondlaunch.rs`, which `open -a` does not reach |
 
 `running` is the only phase that would notice the frontend and the backend disagreeing about
 the event's name, and it carries its own control: nothing may be open before the document

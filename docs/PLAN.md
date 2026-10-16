@@ -18381,6 +18381,23 @@ comments panel lists and this command does not save.
   code. Inverse search is left out; see *Not planned*.
 - Commands: the launch and CLI options only.
 
+**Done 2026-10-16: a page and a zoom on the command line.** `--page N` and `--zoom VALUE`
+(`--page=N` too) after the file. `launch::split_place` takes them out of the command line
+before anything looks for paths, so `12` is never opened as a document, and each path carries
+them as an `Opening` through the same queue and `OPEN_EVENT` as every other route. The window
+checks the values (`launchplace.ts`): a page from 1 to the document's count, and a zoom that is
+one of the four fits or a percentage by the palette's own rule. A value it refuses is said in
+the window and the document still opens. The zoom is applied before the page, as a zoom keeps
+the middle of the window; fit content after it, as it lands on the page in front. A running
+window takes a second launch's place on Windows and Linux through the single-instance plugin,
+and on macOS through `secondlaunch.rs`: a launch with a place, and only one with a place, hands
+its command line over a socket in the user's own temporary folder and ends, or starts on its
+own if no window answers within two seconds (`docs/THREAT-MODEL.md` §T6.44). Evidence:
+`open_check.py`, run in `window_checks.py` as `open`, on the Mac mini: page 12 at fit page from a
+cold launch (5 of 5) and handed to a running window (6 of 6), the second process ending with 0
+at once. Not measured: Windows and Linux, where the route is the plugin's and the phases are the
+same.
+
 #### 7.8 Windows Explorer: thumbnails, preview and search, opt-in
 
 Decided 2026-10-15: built, and **off until the reader turns it on**.

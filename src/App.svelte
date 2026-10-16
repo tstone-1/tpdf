@@ -209,6 +209,7 @@
   import { NO_VIEW, ViewIds, viewOf, type ViewId } from "./lib/views";
   import { ScrollLock } from "./lib/syncscroll";
   import { describeFit, percentOf } from "./lib/zoom";
+  import { applyPlace, hasPlace, type Opening } from "./lib/launchplace";
 
   /**
    * The window's two page areas. The second is used when two documents are
@@ -5169,7 +5170,7 @@
       appVersion = await call("app_version");
 
       const openEvent = await call("launch_open_event");
-      await listen<string>(openEvent, (event) => void openPath(event.payload));
+      await listen<Opening>(openEvent, (event) => void openFromOutside(event.payload));
       // Guarded, because an event can land after the command has answered and
       // would otherwise leave its line on screen with nothing running.
       await listen<Progress>(PROGRESS_EVENT, (event) => {
@@ -5200,11 +5201,15 @@
       offerFavourites();
       recognitionLanguage.restore(session.ocr_language);
       restoreTabs = session.restore_tabs ?? false;
-      const plan = launchPlan(session, handed);
+      const plan = launchPlan(session, handed.map((opening) => opening.path));
       // Held until the last tab is back, so that quitting halfway through does
       // not record the half that had opened as the whole list.
       if (plan.behind.length) tabRecorder.hold();
-      for (const path of plan.show) await openPath(path, plan.resuming);
+      for (const path of plan.show) {
+        await openPath(path, plan.resuming);
+        const opening = handed.find((each) => each.path === path);
+        if (opening) placeOpened(opening);
+      }
       // After the document the reader is waiting for has been asked for, and
       // not awaited: until it answers, both of the tool's commands are offered.
       void commandLineTool.refresh();
@@ -5455,6 +5460,26 @@
         finally { opening = false; refreshMenu(); }
       }
     }));
+  }
+
+  /**
+   * A document handed over from outside while the window is running: a
+   * double-click, an Apple Event, or a second launch with `--page` or `--zoom`.
+   */
+  async function openFromOutside(opening: Opening): Promise<void> {
+    await openPath(opening.path);
+    placeOpened(opening);
+  }
+
+  /**
+   * Shows the page and zoom a command line asked for (`launchplace.ts`), once
+   * the document is the one in front. Nothing when it asked for none, or when
+   * the open failed and something else is in front.
+   */
+  function placeOpened(opening: Opening): void {
+    if (!hasPlace(opening) || !viewer || openPathName !== opening.path) return;
+    const problem = applyPlace(viewer, opening, edits?.state.pages.length ?? openPageCount);
+    if (problem !== null) say(problem);
   }
 
   /** The edit model of a document, whether or not it is the one on screen. */

@@ -18,6 +18,11 @@
 //! happens under one lock: draining the queue and setting the flag have to be a
 //! single step, or a path arriving between the two is lost by the same mechanism
 //! in a smaller window.
+//!
+//! A command line can also say where to show the document: `--page 12` and
+//! `--zoom fit-width` (`Place`). They travel with each path through the same
+//! queue, and the window checks each value against the document, because only
+//! the window knows how many pages it has and what a zoom may be.
 
 use std::path::PathBuf;
 
@@ -26,10 +31,55 @@ use parking_lot::Mutex;
 /// The event a path is delivered on once the frontend is listening.
 pub const OPEN_EVENT: &str = "tpdf://open";
 
+/// Where a command line asked for a document to be shown, as typed.
+///
+/// The values are not checked here. A page number means nothing until the
+/// document says how many pages it has, and the zoom's rules are the window's
+/// (`launchplace.ts`); a value refused there is reported in the window, which
+/// is the only place a reader who started tpdf from an editor can see it. An
+/// option given with no value is `Some("")`, so that it is reported rather than
+/// dropped.
+#[derive(Debug, Clone, Default, PartialEq, Eq, serde::Serialize)]
+pub struct Place {
+    pub page: Option<String>,
+    pub zoom: Option<String>,
+}
+
+impl Place {
+    /// Whether the command line asked for anything.
+    pub fn is_empty(&self) -> bool {
+        self.page.is_none() && self.zoom.is_none()
+    }
+}
+
+/// A document handed over from outside, and where to show it.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
+pub struct Opening {
+    #[serde(serialize_with = "lossy")]
+    pub path: PathBuf,
+    #[serde(flatten)]
+    pub place: Place,
+}
+
+impl From<PathBuf> for Opening {
+    fn from(path: PathBuf) -> Self {
+        Opening {
+            path,
+            place: Place::default(),
+        }
+    }
+}
+
+/// A path as the window takes it: a string, with any byte that is not UTF-8
+/// replaced, as every other route into the window has always sent it.
+fn lossy<S: serde::Serializer>(path: &std::path::Path, serializer: S) -> Result<S::Ok, S::Error> {
+    serializer.serialize_str(&path.to_string_lossy())
+}
+
 /// Paths waiting for a frontend, and whether one has arrived.
 #[derive(Default)]
 struct State {
-    queued: Vec<PathBuf>,
+    queued: Vec<Opening>,
     listening: bool,
 }
 
@@ -43,7 +93,7 @@ pub struct Launch {
 #[derive(Debug, PartialEq, Eq)]
 pub enum Delivery {
     /// The frontend is listening; emit it.
-    Emit(PathBuf),
+    Emit(Opening),
     /// Nothing can show it yet; it is queued.
     Queued,
 }
@@ -53,12 +103,13 @@ impl Launch {
     ///
     /// The decision is returned rather than acted on so that this module needs
     /// no `AppHandle` and can be tested without a running application.
-    pub fn deliver(&self, path: PathBuf) -> Delivery {
+    pub fn deliver(&self, opening: impl Into<Opening>) -> Delivery {
+        let opening = opening.into();
         let mut state = self.state.lock();
         if state.listening {
-            Delivery::Emit(path)
+            Delivery::Emit(opening)
         } else {
-            state.queued.push(path);
+            state.queued.push(opening);
             Delivery::Queued
         }
     }
@@ -68,11 +119,91 @@ impl Launch {
     /// One lock for both halves. Draining and then separately setting the flag
     /// leaves a window in which a path is queued into a vector nobody will read
     /// again --- the same lost document as before, only harder to reproduce.
-    pub fn take(&self) -> Vec<PathBuf> {
+    pub fn take(&self) -> Vec<Opening> {
         let mut state = self.state.lock();
         state.listening = true;
         std::mem::take(&mut state.queued)
     }
+}
+
+/// The options that say where to show a document, each taking one value.
+const PLACE_OPTIONS: [&str; 2] = ["--page", "--zoom"];
+
+/// Takes [`PLACE_OPTIONS`] and their values out of a command line, leaving the
+/// rest, `argv[0]` included, in order.
+///
+/// Before anything looks for paths, because the value is a separate argument:
+/// left in, `--page 12` would open a document called `12`. Both `--page 12` and
+/// `--page=12` are read. An option repeated keeps its last value, as a later
+/// argument usually overrides an earlier one. An option with nothing after it
+/// is `Some("")`. Any other argument beginning with `-` is left for
+/// [`paths_from_args`] to skip, as it always was.
+pub fn split_place<I, S>(args: I) -> (Vec<String>, Place)
+where
+    I: IntoIterator<Item = S>,
+    S: AsRef<str>,
+{
+    let mut rest = Vec::new();
+    let mut place = Place::default();
+    let mut args = args.into_iter().map(|arg| arg.as_ref().to_string());
+    if let Some(first) = args.next() {
+        rest.push(first);
+    }
+    while let Some(arg) = args.next() {
+        let (name, inline) = match arg.split_once('=') {
+            Some((name, value)) => (name.to_string(), Some(value.to_string())),
+            None => (arg.clone(), None),
+        };
+        if !PLACE_OPTIONS.contains(&name.as_str()) {
+            rest.push(arg);
+            continue;
+        }
+        let value = inline.or_else(|| args.next()).unwrap_or_default();
+        match name.as_str() {
+            "--page" => place.page = Some(value),
+            _ => place.zoom = Some(value),
+        }
+    }
+    (rest, place)
+}
+
+/// [`paths_from_launch`] with the command line's place given to each path.
+pub fn openings_from_launch<I, S>(
+    args: I,
+    is_file: impl Fn(&std::path::Path) -> bool,
+) -> Vec<Opening>
+where
+    I: IntoIterator<Item = S>,
+    S: AsRef<str>,
+{
+    let (rest, place) = split_place(args);
+    paths_from_launch(rest, is_file)
+        .into_iter()
+        .map(|path| Opening {
+            path,
+            place: place.clone(),
+        })
+        .collect()
+}
+
+/// [`paths_from_second_launch`] with the command line's place given to each path.
+pub fn openings_from_second_launch<I, S>(
+    args: I,
+    cwd: &str,
+    is_file: impl Fn(&std::path::Path) -> bool,
+) -> Vec<Opening>
+where
+    I: IntoIterator<Item = S>,
+    S: AsRef<str>,
+{
+    let (rest, place) = split_place(args);
+    paths_from_second_launch(rest, cwd, is_file)
+        .into_iter()
+        .map(|path| Opening {
+            path,
+            place: place.clone(),
+        })
+        .collect()
 }
 
 /// Paths named on the command line.
@@ -187,8 +318,8 @@ pub fn path_from_url(url: &tauri::Url) -> Option<PathBuf> {
 #[cfg(test)]
 mod tests {
     use super::{
-        path_from_url, paths_from_args, paths_from_launch, paths_from_second_launch, Delivery,
-        Launch,
+        openings_from_launch, openings_from_second_launch, path_from_url, paths_from_args,
+        paths_from_launch, paths_from_second_launch, split_place, Delivery, Launch, Opening, Place,
     };
     use std::path::{Path, PathBuf};
 
@@ -360,7 +491,10 @@ mod tests {
             launch.deliver(PathBuf::from("/tmp/a.pdf")),
             Delivery::Queued
         );
-        assert_eq!(launch.take(), vec![PathBuf::from("/tmp/a.pdf")]);
+        assert_eq!(
+            launch.take(),
+            vec![Opening::from(PathBuf::from("/tmp/a.pdf"))]
+        );
     }
 
     #[test]
@@ -369,7 +503,7 @@ mod tests {
         assert!(launch.take().is_empty());
         assert_eq!(
             launch.deliver(PathBuf::from("/tmp/a.pdf")),
-            Delivery::Emit(PathBuf::from("/tmp/a.pdf"))
+            Delivery::Emit(Opening::from(PathBuf::from("/tmp/a.pdf")))
         );
     }
 
@@ -390,7 +524,118 @@ mod tests {
         launch.deliver(PathBuf::from("/tmp/b.pdf"));
         assert_eq!(
             launch.take(),
-            vec![PathBuf::from("/tmp/a.pdf"), PathBuf::from("/tmp/b.pdf")]
+            vec![
+                Opening::from(PathBuf::from("/tmp/a.pdf")),
+                Opening::from(PathBuf::from("/tmp/b.pdf"))
+            ]
+        );
+    }
+
+    fn place(page: Option<&str>, zoom: Option<&str>) -> Place {
+        Place {
+            page: page.map(str::to_string),
+            zoom: zoom.map(str::to_string),
+        }
+    }
+
+    #[test]
+    fn a_page_number_is_not_a_document() {
+        let openings = openings_from_launch(["tpdf", "a.pdf", "--page", "12"], |_| false);
+        assert_eq!(
+            openings,
+            vec![Opening {
+                path: PathBuf::from("a.pdf"),
+                place: place(Some("12"), None)
+            }]
+        );
+    }
+
+    #[test]
+    fn both_spellings_of_an_option_are_read_and_the_last_one_wins() {
+        let (rest, read) = split_place([
+            "tpdf",
+            "--zoom=fit-width",
+            "--page",
+            "2",
+            "a.pdf",
+            "--zoom",
+            "150",
+        ]);
+        assert_eq!(rest, vec!["tpdf", "a.pdf"]);
+        assert_eq!(read, place(Some("2"), Some("150")));
+    }
+
+    #[test]
+    fn an_option_with_nothing_after_it_is_kept_to_be_reported() {
+        let (rest, read) = split_place(["tpdf", "a.pdf", "--page"]);
+        assert_eq!(rest, vec!["tpdf", "a.pdf"]);
+        assert_eq!(read, place(Some(""), None));
+        assert!(!read.is_empty());
+        assert!(split_place(["tpdf", "a.pdf", "--other", "x"]).1.is_empty());
+    }
+
+    #[test]
+    fn the_executable_is_never_taken_as_an_option() {
+        // `argv[0]` is skipped by name, so a binary renamed `--page` still
+        // leaves the first argument as a document.
+        let (rest, read) = split_place(["--page", "a.pdf"]);
+        assert_eq!(rest, vec!["--page", "a.pdf"]);
+        assert!(read.is_empty());
+    }
+
+    #[test]
+    fn a_split_path_is_put_back_together_around_the_options() {
+        let whole = PathBuf::from("Team Site - Documents/x.pdf");
+        let openings = openings_from_launch(
+            [
+                "tpdf",
+                "--page",
+                "3",
+                "Team",
+                "Site",
+                "-",
+                "Documents/x.pdf",
+            ],
+            |path| path == whole,
+        );
+        assert_eq!(
+            openings,
+            vec![Opening {
+                path: whole.clone(),
+                place: place(Some("3"), None)
+            }]
+        );
+    }
+
+    #[test]
+    fn a_second_launch_carries_its_place() {
+        #[cfg(windows)]
+        let cwd = r"C:\work";
+        #[cfg(unix)]
+        let cwd = "/work";
+        let here = std::path::Path::new(cwd).join("a.pdf");
+        let openings =
+            openings_from_second_launch(["tpdf", "a.pdf", "--zoom", "fit-page"], cwd, |path| {
+                path == here
+            });
+        assert_eq!(
+            openings,
+            vec![Opening {
+                path: here.clone(),
+                place: place(None, Some("fit-page"))
+            }]
+        );
+    }
+
+    #[test]
+    fn an_opening_reaches_the_window_as_a_path_and_two_values() {
+        let opening = Opening {
+            path: PathBuf::from("/tmp/a.pdf"),
+            place: place(Some("4"), None),
+        };
+        assert_eq!(
+            serde_json::to_value(&opening).expect("json"),
+            serde_json::json!({ "path": "/tmp/a.pdf", "page": "4", "zoom": null })
         );
     }
 }

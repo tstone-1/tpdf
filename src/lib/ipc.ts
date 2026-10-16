@@ -50,6 +50,7 @@ import type { Applied, Copied, EditState, Merged, Split } from "./edits";
 import type { HiddenText } from "./hiddentext";
 import type { Offered } from "./ocrlanguage";
 import type { Recognised } from "./recognise";
+import type { Opening } from "./launchplace";
 import type { Links } from "./links";
 import type { MarkColor } from "./markcolors";
 import type { SectionSpec } from "./menubar";
@@ -558,7 +559,7 @@ export interface Commands {
    * opens Settings where the reader chooses. The reply is the sentence to show.
    */
   default_pdf_app: { args: NoArgs; reply: string };
-  take_launch_paths: { args: NoArgs; reply: string[] };
+  take_launch_paths: { args: NoArgs; reply: Opening[] };
   session_load: { args: NoArgs; reply: Session };
   session_remember: { args: { place: Place }; reply: void };
   session_set_invert_pages: { args: { invert: boolean }; reply: void };

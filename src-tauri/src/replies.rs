@@ -767,6 +767,17 @@ fn samples() -> BTreeMap<&'static str, String> {
 
     put("Copied", &save::Copied { changed: true });
 
+    put(
+        "Opening",
+        &crate::launch::Opening {
+            path: PathBuf::from("/tmp/a.pdf"),
+            place: crate::launch::Place {
+                page: Some("12".into()),
+                zoom: Some("fit-width".into()),
+            },
+        },
+    );
+
     put("Made", &save::Made { pages: 3 });
 
     put(

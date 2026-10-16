@@ -3377,6 +3377,27 @@ under any name.
 **Not covered.** A file larger than 64 MiB decoded is refused rather than saved. What the
 reader does with the saved file is outside tpdf; the warning covers names, not contents.
 
+#### T6.44 — A second launch on macOS, handed to the running window, added 2026-10-16
+
+A launch with `--page` or `--zoom` (`launch::Place`) hands its command line to a running
+window over a Unix socket (`secondlaunch.rs`), as `tauri-plugin-single-instance` does on
+Windows and Linux. A new way into the app process, so it is bounded:
+
+- **Only the same user reaches it.** The socket is in the folder the system names as the
+  user's own temporary folder (`_CS_DARWIN_USER_TEMP_DIR`, mode 0700, owned by the user,
+  which a test asserts), not `TMPDIR`, which whoever starts tpdf can set; the socket itself
+  is made 0600. Its name is a hash of the executable's path, so a build under test and the
+  installed app never reach each other.
+- **What arrives is a command line, read as one.** At most 64 KiB, two seconds to arrive,
+  then the parser every second launch goes through (`openings_from_second_launch`): paths
+  to open, a page and a zoom as text. The window checks the two values; a path goes through
+  the same open as a double-click. Nothing in the message runs anything.
+- **The same authority as before.** Any process of the same user could already start tpdf
+  with a path; the socket lets it choose the running window instead of a new one.
+
+**Not covered.** A process of the same user can make the running window open any file the
+user can read, which starting tpdf with that path already allowed.
+
 ### T9 — The updater
 
 **The threat.** The updater is the only code path in tpdf that fetches bytes and then

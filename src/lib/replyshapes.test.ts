@@ -76,6 +76,8 @@ import type { Shrinkage } from "./compress";
 import Shrinkage_ from "../../src-tauri/testdata/replies/Shrinkage.json";
 import type { Recognised } from "./recognise";
 import Recognised_ from "../../src-tauri/testdata/replies/Recognised.json";
+import type { Opening } from "./launchplace";
+import Opening_ from "../../src-tauri/testdata/replies/Opening.json";
 import type { HiddenText } from "./hiddentext";
 import HiddenText_ from "../../src-tauri/testdata/replies/HiddenText.json";
 import type { Offered } from "./ocrlanguage";
@@ -180,6 +182,11 @@ const SCHEMA = {
   Copied: {
     changed: ["boolean"],
   } satisfies Shape<Copied>,
+  Opening: {
+    path: ["string"],
+    page: ["string", "null"],
+    zoom: ["string", "null"],
+  } satisfies Shape<Opening>,
   Recognised: {
     pages: ["array"],
     alreadyText: ["array"],
@@ -379,6 +386,7 @@ const SAMPLES: Record<keyof typeof SCHEMA, Record<string, unknown>> = {
   Applied: Applied_ satisfies Widen<Applied>,
   Comments: Comments_ satisfies Widen<Comments>,
   Copied: Copied_ satisfies Widen<Copied>,
+  Opening: Opening_ satisfies Widen<Opening>,
   Made: Made_ satisfies Widen<Made>,
   Shrinkage: Shrinkage_ satisfies Widen<Shrinkage>,
   Recognised: Recognised_ satisfies Widen<Recognised>,

@@ -21,6 +21,10 @@
  *   document arrives and it is that one. The first half is not decoration: it is
  *   what stops "the document arrived" being satisfied by one that was already
  *   there, which is precisely what the cold routes above produce.
+ *
+ * Either may name a place as well, `<path>|<page>|<fit>`, for a launch with
+ * `--page` and `--zoom`: the document must then come up at that page, counted
+ * from 1, and following that fit (`launchplace.ts`).
  */
 
 import { call } from "./ipc";
@@ -145,6 +149,33 @@ export interface OpenCheckHost {
 }
 
 const report = new Report();
+
+/** A path, and the page and fit a launch asked for when `|` follows it. */
+function placed(target: string): [string, number | null, string | null] {
+  const [path = "", page, fit] = target.split("|");
+  return [path, page === undefined ? null : Number(page), fit ?? null];
+}
+
+/**
+ * The document came up at the page and following the fit the launch asked
+ * for. Settled rather than read once, because the place is applied after the
+ * open and a resize can arrive with the window. Each starting value is one the
+ * check's launch does not ask for: page 1 and fit width are where a document
+ * opens with no session.
+ */
+async function placeChecks(report: Report, host: OpenCheckHost, page: number | null, fit: string | null): Promise<void> {
+  if (page === null || fit === null) return;
+  // The header's page and fit: what the reader is shown.
+  const at = () => host.status()?.page ?? 0;
+  const there = await settle(() => at() === page, SETTLE_MS);
+  report.check(`it is at page ${page}, as --page asked`, there, `page ${at()}`);
+  const fitted = await settle(() => host.status()?.fit === fit, SETTLE_MS);
+  report.check(`it follows fit ${fit}, as --zoom asked`, fitted, `fit ${host.status()?.fit ?? "none"}`);
+  // Still there once the boot is over: a remembered place or a late fit
+  // landing after the launch's would move it away.
+  await pause(QUIET_MS);
+  report.check("the page is still the one asked for after the boot", at() === page, `page ${at()}`);
+}
 
 /**
  * Runs the check if `TPDF_OPENCHECK` is set, then exits the process.
@@ -2025,6 +2056,7 @@ async function run(host: OpenCheckHost, phase: string, expected: string): Promis
       break;
     }
     case "opened": {
+      const [want, page, fit] = placed(expected);
       const opened = await settle(() => host.path() !== "", SETTLE_MS);
       report.check(
         "a document opened without anyone asking for one",
@@ -2034,13 +2066,15 @@ async function run(host: OpenCheckHost, phase: string, expected: string): Promis
       if (!opened) return;
       report.check(
         "it is the document that was handed over",
-        host.path() === expected,
-        `${name(host.path())} vs ${name(expected)}`,
+        host.path() === want,
+        `${name(host.path())} vs ${name(want)}`,
       );
+      await placeChecks(report, host, page, fit);
       break;
     }
 
     case "arrives": {
+      const [want, page, fit] = placed(expected);
       // The control, and it is the whole reason this mode is separate from
       // `opened`. Without it, "a document arrived" is satisfied by one that was
       // handed over at launch --- which is what every other phase produces, so
@@ -2063,9 +2097,10 @@ async function run(host: OpenCheckHost, phase: string, expected: string): Promis
       if (!arrived) return;
       report.check(
         "it is the document that was handed over",
-        host.path() === expected,
-        `${name(host.path())} vs ${name(expected)}`,
+        host.path() === want,
+        `${name(host.path())} vs ${name(want)}`,
       );
+      await placeChecks(report, host, page, fit);
       break;
     }
 

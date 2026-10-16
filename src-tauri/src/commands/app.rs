@@ -49,12 +49,8 @@ pub fn app_version() -> &'static str {
 /// a double-click that launched the app, a path on the command line --- comes
 /// back here; anything arriving afterwards is emitted on `launch::OPEN_EVENT`.
 #[tauri::command]
-pub fn take_launch_paths(launch: tauri::State<'_, launch::Launch>) -> Vec<String> {
-    launch
-        .take()
-        .into_iter()
-        .map(|path| path.to_string_lossy().into_owned())
-        .collect()
+pub fn take_launch_paths(launch: tauri::State<'_, launch::Launch>) -> Vec<launch::Opening> {
+    launch.take()
 }
 
 /// *Install command-line tool…* (`install`) and *Uninstall command-line tool…*.

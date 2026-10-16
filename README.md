@@ -257,6 +257,13 @@ project conventions.
   dialog lists them with the kind of file each name claims to be. tpdf never opens one, and
   says so when a name claims a program.
   <!-- built: file.saveAttachment file.saveAttachment.choice -->
+- **Open at a page and a zoom** from a terminal, a script or an editor: start the
+  application with `--page 12` and `--zoom fit-width` after the file (`fit-page`,
+  `fit-height`, `fit-content`, or a percentage such as `150`). With tpdf already running,
+  the document opens in that window, at that place, rather than in a second one. The
+  program is `tpdf.exe` on Windows, `tpdf` on Linux, and on macOS the one inside the
+  bundle: `/Applications/tpdf.app/Contents/MacOS/tpdf report.pdf --page 12`. A page or a
+  zoom tpdf cannot show is said in the window, and the document still opens.
 - **Links are followable**, and say where they go when the pointer is over them: the page,
   or the web address. So is the way back: Back and Forward walk the jumps you have
   made, and Next link / Previous link reach one without the pointer. Back and Forward grey out

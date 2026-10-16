@@ -76,6 +76,21 @@ then show a check that had vanished on one platform when nothing had.
 RUNNING_HANDOVER = "a document handed to a running app"
 """The running-handover phase's name. See [`COLD_CLICK`]."""
 
+PLACE = ["--page", "12", "--zoom", "fit-page"]
+"""A place on the command line (`launch.rs`, `launchplace.ts`). Page 12 and fit
+page because a document with no session opens at page 1 and fit width, so
+neither can be satisfied by doing nothing. The document needs 12 pages."""
+
+PLACED = "|12|page"
+"""What `opencheck.ts` is told to expect of [`PLACE`]: the page and the fit."""
+
+PLACED_ARGV = "argv with --page and --zoom"
+PLACED_RUNNING = "--page and --zoom handed to a running app"
+
+SECOND_EXIT_S = 15
+"""How long a second launch that hands over may take to end. On macOS one that
+found no window to take it would start a window of its own and never end."""
+
 USES_LAUNCH_SERVICES = sys.platform == "darwin"
 """Whether launching goes through Launch Services and an `.app` bundle.
 
@@ -231,6 +246,11 @@ def main() -> int:
 
     bundle = Path(args.bundle).resolve()
     binary = executable(bundle)
+    # The executable inside a bundle, as `window_checks.py` passes it: the
+    # bundle is three folders up, and the executable is the one given, whose
+    # name need not be the bundle's (`tpdf Checks.app` holds `tpdf`).
+    if bundle.parent.name == "MacOS" and bundle.parents[2].suffix == ".app":
+        binary, bundle = bundle, bundle.parents[2]
     # See `stray`. This harness is the one that *depends* on the single-instance
     # forwarding for its handover phase, which makes it the one a leftover instance
     # misleads most: the handover would appear to work while going to the wrong
@@ -268,6 +288,11 @@ def main() -> int:
         code, out = run_direct(binary, f"opened:{pdf}", room / "argv.json", [pdf], args.timeout)
         ok &= report(out, code, "argv")
 
+        code, out = run_direct(
+            binary, f"opened:{pdf}{PLACED}", room / "placed.json", [pdf, *PLACE], args.timeout
+        )
+        ok &= report(out, code, PLACED_ARGV)
+
         if USES_LAUNCH_SERVICES:
             code, out = run_via_open(
                 bundle, f"opened:{pdf}", room / "click.json", pdf, args.timeout, room
@@ -298,6 +323,7 @@ def main() -> int:
             print("[SKIP] needs --other, a second document to race against")
 
         ok &= running_phase(binary, bundle, pdf, room, args.timeout)
+        ok &= running_phase(binary, bundle, pdf, room, args.timeout, place=True)
 
     print()
     print("[OK] file associations verified" if ok else "[FAIL] file associations are not verified")
@@ -321,17 +347,24 @@ def wait_for_control(log: Path, app: subprocess.Popen, timeout: float) -> None:
         time.sleep(0.2)
 
 
-def running_phase(binary: Path, bundle: Path, pdf: str, room: Path, timeout: float) -> bool:
+def running_phase(
+    binary: Path, bundle: Path, pdf: str, room: Path, timeout: float, place: bool = False
+) -> bool:
     """Hands a document to an app that is already up.
 
     The only phase that exercises the *emit* branch rather than the queue, so it
     is the only one that would notice the frontend and the backend disagreeing
     about the event's name. Started with no document so the check's own control
     -- nothing open before one is handed over -- can hold.
+
+    With `place`, the second launch carries [`PLACE`] and is the executable on
+    every platform: on macOS that is `secondlaunch.rs`'s route, which `open -a`
+    does not take. The second process must also end, and with 0.
     """
+    phase = PLACED_RUNNING if place else RUNNING_HANDOVER
     if not HANDS_OVER_TO_RUNNING:
         return skip(
-            RUNNING_HANDOVER,
+            phase,
             "this platform has no route for delivering a document to an app already "
             "running, so a second launch is a second process with its own window and its "
             "own worker pool, and the emit branch this phase tests is unreachable. macOS "
@@ -340,7 +373,8 @@ def running_phase(binary: Path, bundle: Path, pdf: str, room: Path, timeout: flo
             "this phase can mean anything",
         )
 
-    env = dict(os.environ, TPDF_OPENCHECK=f"arrives:{pdf}", TPDF_SESSION_FILE=str(room / "run.json"))
+    expect = f"arrives:{pdf}{PLACED if place else ''}"
+    env = dict(os.environ, TPDF_OPENCHECK=expect, TPDF_SESSION_FILE=str(room / f"run-{place}.json"))
     # **A file, not a pipe, and this is the one phase where that matters.** tpdf's
     # render workers are re-execs of the same binary and **inherit the app's stdout**,
     # so a pipe reaches EOF only once every worker has also gone. `communicate()` waits
@@ -350,7 +384,9 @@ def running_phase(binary: Path, bundle: Path, pdf: str, room: Path, timeout: flo
     # distinction from the Rust side; this is the same hazard from the harness side.
     #
     # A file has no EOF to wait for: the process is waited on, then the file is read.
-    log = room / "running.log"
+    log = room / f"running-{place}.log"
+    second_ended: "str | None" = None
+    second_failed: "str | None" = None
     handle = log.open("w", encoding="utf-8", errors="replace")
     app = subprocess.Popen([str(binary)], env=env, stdout=handle, stderr=subprocess.STDOUT)
     try:
@@ -368,18 +404,26 @@ def running_phase(binary: Path, bundle: Path, pdf: str, room: Path, timeout: flo
         # handover. Running the second process without waiting for it is deliberate:
         # on Windows it terminates on its own, and blocking on it would be waiting for
         # the process whose job is to disappear.
-        if sys.platform == "darwin":
+        if sys.platform == "darwin" and not place:
             subprocess.run(["open", "-a", str(bundle), pdf], capture_output=True, timeout=30)
         else:
             second = subprocess.Popen(
-                [str(binary), pdf],
+                [str(binary), pdf, *(PLACE if place else [])],
                 stdout=subprocess.DEVNULL,
                 stderr=subprocess.DEVNULL,
             )
+            started = time.monotonic()
             try:
-                second.wait(timeout=30)
+                code = second.wait(timeout=SECOND_EXIT_S if place else 30)
+                second_ended = f"ended with {code} after {time.monotonic() - started:.1f} s"
+                if code != 0:
+                    second_failed = f"the second launch {second_ended}"
             except subprocess.TimeoutExpired:
                 second.kill()
+                second_failed = (
+                    f"the second launch was still running after "
+                    f"{SECOND_EXIT_S if place else 30} s, so it opened a window of its own"
+                )
         code = app.wait(timeout=timeout)
         handle.close()
         out = log.read_text(encoding="utf-8", errors="replace")
@@ -395,7 +439,11 @@ def running_phase(binary: Path, bundle: Path, pdf: str, room: Path, timeout: flo
         out = log.read_text(encoding="utf-8", errors="replace")
         out += f"[FAIL] run timed out after {timeout:.0f} s\n"
         code = 1
-    return report(out, code, RUNNING_HANDOVER)
+    if place and second_ended is not None and second_failed is None:
+        out += f"the second launch {second_ended}\n"
+    # Only the place's phase holds the second launch to ending: the plain
+    # phase's second launch is `open -a` on macOS, which has nothing to wait for.
+    return report(out, code, phase, extra=lambda _out: second_failed if place else None)
 
 
 if __name__ == "__main__":

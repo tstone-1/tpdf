@@ -49,6 +49,11 @@ have the binary.)
   menu) and *Save a region as a picture* take the part of a page you drag across, as sharp
   as it is on screen and never under 144 pixels an inch, to the clipboard or to a PNG file.
   A sandboxed worker renders it; marks not yet saved are not in it.
+- **Open at a page and a zoom from a command line.** `--page 12` and `--zoom fit-width`
+  (or `fit-page`, `fit-height`, `fit-content`, or a percentage) after the file open it
+  there. When tpdf is already running the document goes to that window at that place. On
+  macOS that is new: a launch with either option goes to the running window, where it used
+  to open a second one; a launch without them still does.
 - **Save an attachment.** Saves a file the document carries to a place you choose; with
   several, the command palette asks which. The properties dialog lists them with the kind
   of file each name claims. A sandboxed worker decodes the file; tpdf never opens it, and

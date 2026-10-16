@@ -2153,3 +2153,63 @@ ROWS += [
         "a_save_that_fails_leaves_the_old_file_and_no_staged_one",
     ),
 ]
+
+# --- a page and a zoom on the command line, 2026-10-16 ----------------------------------
+ROWS += [
+    Mutation(
+        "launch: an option's value left as a path",
+        "src/launch.rs",
+        "        let value = inline.or_else(|| args.next()).unwrap_or_default();",
+        "        let value = inline.unwrap_or_default();",
+        "a_page_number_is_not_a_document",
+    ),
+    Mutation(
+        "launch: --page=N not read",
+        "src/launch.rs",
+        "        let (name, inline) = match arg.split_once('=') {",
+        "        let (name, inline) = match None::<(&str, &str)> {",
+        "both_spellings_of_an_option_are_read_and_the_last_one_wins",
+    ),
+    Mutation(
+        "launch: argv[0] read as an option",
+        "src/launch.rs",
+        "    if let Some(first) = args.next() {\n        rest.push(first);\n    }\n",
+        "",
+        "the_executable_is_never_taken_as_an_option",
+    ),
+    Mutation(
+        "launch: the place dropped on a second launch",
+        "src/launch.rs",
+        "    paths_from_second_launch(rest, cwd, is_file)\n        .into_iter()\n        .map(|path| Opening {\n            path,\n            place: place.clone(),\n        })",
+        "    paths_from_second_launch(rest, cwd, is_file)\n        .into_iter()\n        .map(|path| Opening {\n            path,\n            place: Place::default(),\n        })",
+        "a_second_launch_carries_its_place",
+    ),
+    Mutation(
+        "second launch: the socket left open to others",
+        "src/secondlaunch.rs",
+        "    std::fs::set_permissions(socket, std::fs::Permissions::from_mode(0o600)).ok()?;\n",
+        "",
+        "a_command_line_reaches_the_running_window_and_is_answered",
+    ),
+    Mutation(
+        "second launch: a live window's socket taken over",
+        "src/secondlaunch.rs",
+        "            if UnixStream::connect(socket).is_ok() {\n                return None;\n            }\n",
+        "",
+        "a_stale_socket_is_replaced_and_a_live_one_is_left_alone",
+    ),
+    Mutation(
+        "second launch: a message past the limit read",
+        "src/secondlaunch.rs",
+        "    if bytes.len() as u64 > MAX_MESSAGE {\n        return;\n    }\n",
+        "",
+        "a_message_past_the_limit_is_not_answered",
+    ),
+    Mutation(
+        "second launch: handed over with no answer",
+        "src/secondlaunch.rs",
+        "    stream.read_exact(&mut answer).is_ok() && &answer == ACK",
+        "    let _ = stream.read_exact(&mut answer);\n    true",
+        "a_message_past_the_limit_is_not_answered",
+    ),
+]
