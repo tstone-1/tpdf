@@ -34,7 +34,7 @@ pub struct Sent {
 ///
 /// No printer by that name, the print system not reachable, or it refusing
 /// the job.
-#[cfg(unix)]
+#[cfg(any(target_os = "macos", target_os = "linux"))]
 pub fn send(printer: &str, bytes: &[u8], title: &str, _pages: u32) -> Result<Sent, String> {
     let cups = cups::Cups::load()?;
     let names = cups.printers();
@@ -84,18 +84,8 @@ pub fn send(printer: &str, bytes: &[u8], title: &str, pages: u32) -> Result<Sent
     spooled.map(|_| Sent { job: None })
 }
 
-/// Not a platform tpdf prints on.
-///
-/// # Errors
-///
-/// Always.
-#[cfg(not(any(unix, windows)))]
-pub fn send(_printer: &str, _bytes: &[u8], _title: &str, _pages: u32) -> Result<Sent, String> {
-    Err("printing without a dialog is not built for this platform".into())
-}
-
 /// The refusal for a printer nothing knows, naming the ones there are.
-#[cfg_attr(not(unix), allow(dead_code))]
+#[cfg_attr(windows, allow(dead_code))]
 fn unknown(printer: &str, names: &[String]) -> String {
     if names.is_empty() {
         format!("there is no printer called \"{printer}\", and this computer has none")
@@ -147,7 +137,7 @@ fn stage(bytes: &[u8]) -> Result<(std::path::PathBuf, std::fs::File), String> {
 }
 
 /// CUPS, loaded by name when a job is sent.
-#[cfg(unix)]
+#[cfg(any(target_os = "macos", target_os = "linux"))]
 mod cups {
     use std::ffi::{c_char, c_int, c_void, CStr, CString};
     use std::path::Path;
@@ -178,7 +168,7 @@ mod cups {
     /// Where the library is: a fixed path on macOS, the soname on Linux.
     #[cfg(target_os = "macos")]
     const LIBRARY: &CStr = c"/usr/lib/libcups.2.dylib";
-    #[cfg(not(target_os = "macos"))]
+    #[cfg(target_os = "linux")]
     const LIBRARY: &CStr = c"libcups.so.2";
 
     /// The library and the four functions used. The handle is never closed:
@@ -319,7 +309,7 @@ mod tests {
         );
     }
 
-    #[cfg(unix)]
+    #[cfg(any(target_os = "macos", target_os = "linux"))]
     #[test]
     fn cups_loads_and_answers_a_list_and_a_refusal() {
         // Every machine the tests run on has CUPS: macOS always, Ubuntu with

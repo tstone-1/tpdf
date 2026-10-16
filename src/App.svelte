@@ -5492,9 +5492,10 @@
   async function searchForward(shown: Viewer, pdf: string, raw: string): Promise<void> {
     const asked = parseForward(raw);
     if ("problem" in asked) { say(asked.problem); return; }
+    const view = openView, model = edits;
     try {
       const found = await call("synctex_forward", { pdf, source: asked.source, line: asked.line });
-      if (viewer !== shown) return;
+      if (!stillIn(view, model, shown)) return;
       shown.showSourceBoxes(found.page - 1, found.boxes);
       const note = forwardSaid(found, asked.line);
       if (note !== null) tell(note);

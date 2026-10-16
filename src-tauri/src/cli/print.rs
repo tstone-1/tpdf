@@ -162,9 +162,4 @@ fn read_back(env: &Env<'_>, bytes: &[u8]) -> Result<usize, Failure> {
         let _ = std::fs::remove_file(&path);
         counted.map_err(|_| unread())
     }
-    #[cfg(not(any(target_os = "macos", windows, target_os = "linux")))]
-    {
-        let _ = (env, bytes);
-        Err(unread())
-    }
 }
