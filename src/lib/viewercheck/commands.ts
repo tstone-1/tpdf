@@ -2176,6 +2176,10 @@ export async function appCommandChecks(
     // Declared with the command, one place too early: the
     // registry lists it after `file.save`, and this list is compared in order.
     "file.recogniseTextLanguage.choice",
+    // Guarded on the document carrying an attached file, and the corpora carry
+    // none. Missing here from 2026-10-16, when it was registered, until the
+    // Ubuntu job's run of this check the same day.
+    "file.saveAttachment.choice",
     // Guarded on the jump history rather than on a document, which is why the
     // phase clears it below: both are correct to offer after a jump, and this
     // check is about what an open document alone earns. `nav.forward` joined
