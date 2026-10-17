@@ -99,7 +99,8 @@ CONTROLS: dict[str, tuple[str, list[str]]] = {
         "the installer ends with exit code 0", "tpdf.exe is installed",
         "tpdf-cli.exe is installed", "uninstall.exe is installed",
         "pdfium/pdfium.dll is installed", "tpdf_shell.dll is installed",
-        "Windows lists tpdf as installed"]),
+        "Windows lists tpdf as installed",
+        "Windows has a silent uninstall command for it"]),
     "one-install": ("the installer is not run a second time, over the installed copy", [
         "the installer run over the installed copy ends with exit code 0"]),
     "no-uninstall": ("the uninstaller is not run until the checks have been read", [
@@ -307,7 +308,16 @@ def check_files(checks: Checks, folder: Path, version: str) -> Path | None:
     for relative in ("tpdf.exe", "tpdf-cli.exe", "uninstall.exe", "pdfium/pdfium.dll",
                      "tpdf_shell.dll"):
         checks.note((folder / relative).is_file(), f"{relative} is installed")
-    checks.note(registry(UNINSTALL_KEY) is not None, "Windows lists tpdf as installed")
+    listed = registry(UNINSTALL_KEY)
+    checks.note(listed is not None, "Windows lists tpdf as installed")
+    # What `winget uninstall --silent` runs. Without it winget ran the bare
+    # `UninstallString`, which opens the uninstaller's window, and reported
+    # "Successfully uninstalled" at once with tpdf still there (2026-10-17).
+    quiet = next((line.split("REG_SZ", 1)[1].strip() for line in (listed or "").splitlines()
+                  if line.strip().startswith("QuietUninstallString")), None)
+    want = f'"{folder / "uninstall.exe"}" /S'
+    checks.note(quiet is not None and quiet.lower() == want.lower(),
+                "Windows has a silent uninstall command for it", f"{quiet!r}, wanted {want!r}")
     if not cli.is_file():
         return None
     said = tool(cli, "--version")

@@ -145,7 +145,13 @@
 ; changed is still an install, and *Install command-line tool...* in the
 ; application does the same thing later.
 
+; `QuietUninstallString` is what `winget uninstall --silent` runs; Tauri writes
+; only `UninstallString`. Without it winget ran that, which opens the
+; uninstaller's window and returns at once, and winget reported "Successfully
+; uninstalled" with tpdf still installed (2026-10-17, winget 1.29.380).
+; Tauri writes the uninstall key before this hook runs.
 !macro NSIS_HOOK_POSTINSTALL
+  WriteRegStr SHCTX "${UNINSTKEY}" "QuietUninstallString" "$\"$INSTDIR\uninstall.exe$\" /S"
   !insertmacro TPDF_RESTORE_PDF_BACKUP
   nsExec::ExecToLog '"$INSTDIR\tpdf-cli.exe" path --add'
   Pop $0

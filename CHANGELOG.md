@@ -31,6 +31,9 @@ have the binary.)
   `HKEY_CURRENT_USER\Software\Classes\.pdf` with an empty value, which can hide the
   computer's own choice of program for PDF files. A program you had chosen before tpdf is
   still put back.
+- **Windows: `winget uninstall` removes tpdf without asking.** The installer now records a
+  silent uninstall command. Without it, winget opened tpdf's uninstaller window, even when
+  told to be silent, and reported tpdf as uninstalled before anything had been removed.
 - **Cropping a page of a long document keeps you on it.** Cropping a page changed where every
   page not yet shown was placed, and the view stayed at the old position. After cropping
   the last page of a long document, the next drag on it could do nothing; cropping a page
