@@ -7036,6 +7036,39 @@ read through. **Not run:** the written copy of `tpdf long-term` against a public
 authority (`docs/VERIFICATION.md` has why), the new entry of `mutate_viewer.py` by the
 harness itself, `print-probe` and `redact-reach-probe`.
 
+**26.10.22 verification and publication, 2026-10-17:** prepared on the Windows desktop. Step 1
+moved `libc` and `unicode-normalization` a patch each; `tauri-plugin-updater` 2.14.0 was held
+again with its npm half. All 33 gates passed on the release tree. `window_checks.py` passed 14 of
+14 on the Mac mini through `run_on_mac.py` and 14 of 14 on TEENYWEENY on a `--no-bundle` checks
+build. Step 7: `mutate_python.py` 38/38, `mutate_frontend.py --near v26.10.21` 10/10;
+`mutate_rust.py --near v26.10.21` selected none, which it refuses as a pass, and `--since
+v26.10.21` caught 5 of 5. On TEENYWEENY the NSIS bundle passed `installed_check.py` 25/25, and
+`print-probe` through Microsoft Print to PDF passed 9/9 on `vector-multi.pdf` and 10/10 on
+`rotated.pdf`. Run from the desktop's own build, `cargo run --example print-probe` failed in the
+interactive scheduled task at `resource path ..\vendor\pdfium\bin\pdfium.dll doesn't exist` and
+built from the ssh session; the probe binary ran in the task. `redact-reach-probe` over 174
+documents in the desktop's Downloads: 14,780 regions, 92.3% taken whole; the gate read back
+13,425 on 380 pages, none still read as text, 7,915 not shown unreadable and 5,510 shown
+unreadable, in 86.8 s. Run from `src-tauri` instead of the repository root, the same probe
+refused all 174 documents (*could not load its PDF engine*) and still exited 0. No rehearsal tag:
+`release.yml` changed only in its notes. CI passed all three jobs on `d6d1f51d` and `Audit`
+passed (run 39061175640); release run 39063139652 skipped its gates and left a draft of eight
+files whose `latest.json` offered 26.10.22 for the four macOS and Windows entries.
+`publish_release.py v26.10.22 --publish` published it; without authentication `releases/latest`
+is v26.10.22 and all eight files answer 200. An installed 26.10.21 updated itself:
+`update_check_mac.py` 12/12 on the Mac mini, its `no-press` control failing its seven checks and
+nothing else; `update_check.py` 17/17 on TEENYWEENY, and `winarm.yml` 25/25 and 17/17 on both
+`windows-11-arm` (ARM64) and `windows-2025` (AMD64). TEENYWEENY's `no-press` control failed its
+seven and one more, *the .pdf class reads as it did before the install*: that control never
+updates, so 26.10.21's uninstaller ran and left the empty key 26.10.22 fixes; from 26.10.22 on
+the control uninstalls a version that does not. The cask went to 26.10.22 with the `.dmg`'s
+SHA-256 equal to GitHub's digest; `brew audit --cask --online` was clean and `brew livecheck`
+reads 26.10.22. The winget pull request moved to 26.10.22 with `ProductCode` and
+`AppsAndFeaturesEntries`; on TEENYWEENY `winget install --manifest` installed it after
+SmartScreen's prompt was answered, and `winget uninstall --manifest --silent` removed it in two
+seconds with no window. **Not run:** `menu_check.py` and `save_check.py` on a macOS bundle, and
+the two Linux-only mutation rows.
+
 **26.10.21 publication, 2026-10-17:** one rehearsal tag first, because `release.yml` had
 changed since 26.10.20. `v26.10.21-rc1` passed every job; `installed_check.py` passed 24/24
 on its signed installer on TEENYWEENY, in the desktop session through an interactive
@@ -9646,9 +9679,10 @@ starts at 0 and increments within the month.
     a failed draft that way.
 
     **Count the assets before publishing, and count them with GraphQL.** A complete release
-    is **6** files: the `.dmg`, `tpdf_aarch64.app.tar.gz` and its `.sig`, the
-    `-setup.exe` and its `.sig`, and `latest.json`. It was 8 up to 26.10.10, which was the
-    last release with an `.msi`. Fewer than that is half a
+    is **8** files: the `.dmg`, `tpdf_aarch64.app.tar.gz` and its `.sig`, the
+    `-setup.exe` and its `.sig`, `latest.json`, and since 26.10.19 the `.deb` and the
+    AppImage. It was 8 up to 26.10.10, the last release with an `.msi`, and 6 from 26.10.11
+    to 26.10.18. Fewer than that is half a
     release, and the two instruments that look right for this both fail: `gh release view
     <tag>` returns *a* release for the tag with no way to say which, so with two drafts it
     reports one of them as though it were the release; and `gh api
