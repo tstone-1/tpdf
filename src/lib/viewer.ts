@@ -6976,10 +6976,26 @@ export class Viewer {
       if (this.pages !== pages) return;
       if (!at) continue;
       this.crops.set(view.id, at);
-      this.scroller.notePageSize(slot, {
-        width_pt: at.width_pt,
-        height_pt: at.height_pt,
-      });
+      // Re-anchored and refitted as `learnGeometry` and `setPageTurns` are. On a
+      // lazily opened document the pages not yet read are laid out at the mean
+      // of the known sizes, so this one size moves all of them: cropping the
+      // last page of a 200-page document left the offset 42,000 px past the
+      // end, and the next drag mapped below the page and made nothing.
+      const reading = this.currentPage();
+      const pitch = this.scroller.pagePitchOf(reading);
+      const through =
+        pitch > 0 ? (this.scrollTop - this.scroller.pageTopOf(reading)) / pitch : 0;
+      const size = { width_pt: at.width_pt, height_pt: at.height_pt };
+      if (this.scroller.notePageSize(slot, size)) {
+        this.applyFit(false, reading);
+        this.scrollTop = Math.max(
+          0,
+          Math.min(
+            this.scroller.pageTopOf(reading) + through * this.scroller.pagePitchOf(reading),
+            this.scroller.maxScroll,
+          ),
+        );
+      }
       this.scroller.invalidatePage(slot);
     }
     // A page that has gone takes its geometry with it, or the map grows for the

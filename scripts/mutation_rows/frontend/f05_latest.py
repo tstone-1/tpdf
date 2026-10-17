@@ -1204,3 +1204,14 @@ ROWS += [
         "",
         "opens the address field only for another authority, and as remembered"),
 ]
+# --- A crop on a long, lazily opened document, 2026-10-17 ------------------------------
+ROWS += [
+    Mutation("crop: the offset not put back after the crop's size moves the pages", "src/lib/viewer.ts",
+        "        this.applyFit(false, reading);\n        this.scrollTop = Math.max(",
+        "        this.applyFit(false, reading);\n        if (through < 0) this.scrollTop = Math.max(",
+        "keeps the reader on a cropped page in the middle, where the end cannot catch them"),
+    Mutation("crop: neither refitted nor re-anchored, as before 26.10.22", "src/lib/viewer.ts",
+        "        this.applyFit(false, reading);\n        this.scrollTop = Math.max(",
+        "        if (through < 0) this.scrollTop = Math.max(",
+        "keeps the reader on the cropped page, and the next drag on it"),
+]

@@ -654,8 +654,18 @@ describe("right-clicking a region a reader dragged out", () => {
     viewer.setPages(pages(true));
     await settle();
 
+    // In the cropped page's own points, because the crop refits the zoom.
+    const inner = viewer as unknown as {
+      scroller: { pageOrigin(slot: number): { left: number; top: number } };
+      zoom: number;
+      scrollTop: number;
+    };
+    const on = (x: number, y: number) => {
+      const origin = inner.scroller.pageOrigin(0);
+      return { x: origin.left + x * inner.zoom, y: origin.top + y * inner.zoom - inner.scrollTop };
+    };
     viewer.armRedact();
-    drag({ x: 120, y: 140 }, { x: 320, y: 340 });
+    drag(on(-20, 20), on(150, 220));
     const area = redacted[0]?.rect;
     expect(area).toBeDefined();
     // The drag starts left of the crop and is clamped to it, so this lands on
@@ -665,8 +675,10 @@ describe("right-clicking a region a reader dragged out", () => {
     expect(area?.[0]).toBe(GEOMETRY.left);
     viewer.setRedactions([{ id: 5, page: pageId(1), area: area as [number, number, number, number] }]);
 
-    expect(viewer.redactionAt({ clientX: 220, clientY: 240 })).toBe(5);
-    expect(viewer.redactionAt({ clientX: 420, clientY: 440 })).toBeNull();
+    const inside = on(70, 90);
+    const outside = on(250, 330);
+    expect(viewer.redactionAt({ clientX: inside.x, clientY: inside.y })).toBe(5);
+    expect(viewer.redactionAt({ clientX: outside.x, clientY: outside.y })).toBeNull();
     viewer.destroy();
   });
 
@@ -908,6 +920,85 @@ describe("a region to copy or save shares the crop's drag and nothing else", () 
     await settle();
     expect(again).toEqual([null]);
     expect(cropped).toEqual([]);
+    viewer.destroy();
+  });
+});
+
+describe("a crop on a long document whose other pages are still estimated", () => {
+  it("keeps the reader on the cropped page, and the next drag on it", async () => {
+    // A lazy open knows page 1's size and lays every other page out at the mean
+    // of the known sizes. The crop's size is the second one known, so learning
+    // it moves every estimated page, by tens of thousands of pixels on a long
+    // document. On the Mac mini on 2026-10-16 a region dragged just after
+    // cropping the last page of text-heavy.pdf mapped to y 78,010 pt on a 492 pt
+    // page and made nothing: the offset had been left where the old layout put
+    // it.
+    const count = 200;
+    const last = count - 1;
+    const viewer = new Viewer(dom.root as unknown as HTMLElement, {
+      doc: 1,
+      pageCount: count,
+      pages: [PAGE],
+    });
+    await settle();
+    viewer.goToEnd();
+    await settle();
+    expect(viewer.position.page).toBe(last);
+
+    viewer.setPages(
+      Array.from({ length: count }, (_, at): PageView => ({
+        id: pageId(at + 1),
+        source: { baseline: at },
+        turns: 0,
+        ...(at === last ? { crop: CROP } : {}),
+      })),
+    );
+    await settle();
+    expect(viewer.pageSizeOf(last)).toEqual({
+      width_pt: GEOMETRY.width_pt,
+      height_pt: GEOMETRY.height_pt,
+    });
+    expect(viewer.position.page).toBe(last);
+    expect(viewer.offset).toBeLessThanOrEqual(viewer.maxOffset);
+
+    // What the reader does next, and what the window check does.
+    const answers: (Region | null)[] = [];
+    void viewer.armRegion().then((region) => answers.push(region));
+    drag({ x: 400, y: 300 }, { x: 460, y: 340 });
+    await settle();
+    expect(answers).toHaveLength(1);
+    expect(answers[0]?.source.page).toBe(last);
+    expect(answers[0]?.source.crop).toEqual(CROP);
+    viewer.destroy();
+  });
+
+  it("keeps the reader on a cropped page in the middle, where the end cannot catch them", async () => {
+    // The last page is the case the window check found, and the end of the
+    // document clamps a lost offset back onto it. A page in the middle has no
+    // such backstop: the reader stays on it only if the offset is put back.
+    const count = 200;
+    const middle = 100;
+    const viewer = new Viewer(dom.root as unknown as HTMLElement, {
+      doc: 1,
+      pageCount: count,
+      pages: [PAGE],
+    });
+    await settle();
+    viewer.goToPage(middle);
+    await settle();
+    expect(viewer.position.page).toBe(middle);
+
+    viewer.setPages(
+      Array.from({ length: count }, (_, at): PageView => ({
+        id: pageId(at + 1),
+        source: { baseline: at },
+        turns: 0,
+        ...(at === middle ? { crop: CROP } : {}),
+      })),
+    );
+    await settle();
+    expect(viewer.pageSizeOf(middle).height_pt).toBe(GEOMETRY.height_pt);
+    expect(viewer.position.page).toBe(middle);
     viewer.destroy();
   });
 });

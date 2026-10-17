@@ -2159,8 +2159,8 @@ ROWS += [
         # page and transposed at every quarter turn.
         "viewer: lay a cropped page out without asking how big it is",
         "src/lib/viewer.ts",
-        "      this.scroller.notePageSize(slot, {\n        width_pt: at.width_pt,\n        height_pt: at.height_pt,\n      });",
-        "",
+        "      if (this.scroller.notePageSize(slot, size)) {",
+        "      if (false) {",
         "lays the page out at the size the backend reported",
     ),
     Mutation(

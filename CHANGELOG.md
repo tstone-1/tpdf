@@ -31,6 +31,11 @@ have the binary.)
   `HKEY_CURRENT_USER\Software\Classes\.pdf` with an empty value, which can hide the
   computer's own choice of program for PDF files. A program you had chosen before tpdf is
   still put back.
+- **Cropping a page of a long document keeps you on it.** Cropping a page changed where every
+  page not yet shown was placed, and the view stayed at the old position. After cropping
+  the last page of a long document, the next drag on it could do nothing; cropping a page
+  in the middle could move you about twenty pages on. The view now stays on the page you
+  cropped and fits it at once.
 
 ## [26.10.21] - 2026-10-16
 

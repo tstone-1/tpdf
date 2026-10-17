@@ -599,6 +599,7 @@ hop through the index.
 - A change made after a locking signature has to be one that only the lock forbids, and two that looked right were not
 - A mutant the bundler removes as unused never runs, and the check it was aimed at passed
 - A crop keeps the page order, so a branch on whether the order moved never told the renderer
+- A two-page fixture with every size known cannot show a size that moves every other page
 ## Harnesses: running checks and reading what they print
 - A mutation harness needs the same control as the thing it is testing
 - A timeout that discards the transcript recreates the failure it was added to diagnose
@@ -26717,3 +26718,24 @@ whatever its verdict` as SURVIVED.
   onto the parent node turns it red. Running `cargo test --lib -- --nocapture` and reading the
   `[SKIP]` lines is the measurement; on a machine with every fixture, what remains are the skips a
   test explains.
+
+### A two-page fixture with every size known cannot show a size that moves every other page
+
+The window check *a page cropped by a drag is rendered under its crop* failed on the Mac mini
+in five of five runs for 26.10.21, which shipped with it red, while a unit test of the same
+sequence in `viewercrop.test.ts` passed. The unit test opened two pages with both sizes known;
+the window check cropped the last page of `text-heavy.pdf`, a long document opened lazily, where
+only the pages already shown have a known size and the rest are laid out at the mean of the
+known ones (`scroller.ts`, `notePageSize`). The crop's size is one more known size, so it moved
+every estimated page. `adoptCrops` recorded it without putting the offset back, as
+`learnGeometry` and `setPageTurns` do: on a 200-page document the offset was left 42,000 px past
+the end, and the next press mapped to the last page far below its bottom, which is the y of
+78,010 pt on a 492 pt page the check recorded. On the Mac something refitted a second later,
+which is why a second drag worked.
+
+The tests that now fail without the fix open 200 pages with one size known. Cropping the last
+page alone is not enough, because the end of the document clamps a lost offset back onto the
+last page; a crop in the middle left the reader on page 123 instead of 100. `applyFit` also
+re-anchors whenever the zoom changes, so a mutation that removed only the explicit re-anchor
+survived the last-page test. Fixed 2026-10-17 for 26.10.22; the window check passed on the Mac
+mini that day.
