@@ -3611,7 +3611,13 @@ and the same call gates the Windows *install*, which ends the process just as su
    signed payload's leading bytes are a zip archive (`infer::archive::is_zip`); tpdf's
    Windows payload is the NSIS `-setup.exe`, which goes to `extract_exe`. So the yanked
    parser is reached only by a zip signed with the updater key, which is residual 1. Take
-   an updater on zip 9 when it is released.
+   an updater on zip 9 when it is released. Three of the advisories turned `Audit` red on
+   2026-10-17 (RustSec dates them 2026-10-09 and -10), all fixed only in zip 9 and all in `ZipArchive::extract`, which
+   `extract_zip` calls: RUSTSEC-2026-0367 (setuid and setgid bits kept), -0368 (symbolic
+   links pointing outside the destination) and -0369 (Unix permissions applied through
+   symbolic links). The first and third are Unix permissions, which a Windows extraction
+   does not apply; the second is reached by the same signed zip as the rest. They are
+   listed in `.cargo/audit.toml` for that reason, and leave it with the move to zip 9.
 4. **The unsaved-work question before a restart lives on the webview's side of the
    boundary.** The coordinator does not know whether a tab is dirty — the edit models are
    Rust state, but the settle that makes `dirty` current runs in the frontend — so

@@ -2793,7 +2793,7 @@ SOFTWARE.
 | indexmap | 2.14.2 | Apache-2.0 OR MIT |
 | infer | 0.22.0 | MIT |
 | inout | 0.1.4 | MIT OR Apache-2.0 |
-| inout | 0.2.3 | MIT OR Apache-2.0 |
+| inout | 0.2.4 | MIT OR Apache-2.0 |
 | ipnet | 2.12.2 | MIT OR Apache-2.0 |
 | itertools | 0.15.0 | MIT OR Apache-2.0 |
 | itoa | 1.0.18 | MIT OR Apache-2.0 |
