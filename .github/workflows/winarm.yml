@@ -1,0 +1,90 @@
+name: Windows on ARM
+
+# Runs the published x64 installer on a Windows 11 ARM64 runner, where Windows
+# runs it under x64 emulation. tpdf ships no ARM64 build; the question is
+# whether the x64 one works there as it is: the installer, the worker sandbox
+# (a low-integrity token in a job object), PDFium mapped in the workers and not
+# in the application, and the updater, which asks for `windows-x86_64` because
+# that is the platform the binary was built for.
+#
+# It builds nothing and publishes nothing. `installed_check.py` and
+# `update_check.py` are the scripts a release runs on a Windows computer
+# (`BUILD.md`, steps 8 and 12).
+#
+# Python is x64 on purpose: `win_modules.py` reads another process's modules
+# through Toolhelp, which sees only a process of its own architecture, so an
+# ARM64 interpreter would read nothing from the emulated application and the
+# check would fail (it never passes on an empty list).
+#
+# Start it by hand:
+#   gh workflow run winarm.yml --ref main -f release=v26.10.21 -f previous=v26.10.20
+#   gh run list --workflow winarm.yml --limit 1
+
+on:
+  workflow_dispatch:
+    inputs:
+      release:
+        description: Published release whose installer is checked
+        required: true
+        default: v26.10.21
+      previous:
+        description: Published release the update check starts from
+        required: true
+        default: v26.10.20
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    name: x64 installer under emulation
+    runs-on: windows-11-arm
+    timeout-minutes: 40
+    env:
+      RELEASE: ${{ inputs.release }}
+      PREVIOUS: ${{ inputs.previous }}
+      PYTHONIOENCODING: utf-8
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7 (v7.0.0)
+        with:
+          python-version: '3.13'
+          architecture: x64
+
+      - name: The machine, and the interpreter's view of it
+        shell: pwsh
+        run: |
+          "PROCESSOR_ARCHITECTURE (pwsh): $env:PROCESSOR_ARCHITECTURE"
+          (Get-CimInstance Win32_Processor).Name
+          (Get-CimInstance Win32_OperatingSystem) | ForEach-Object { "$($_.Caption) $($_.Version) $($_.OSArchitecture)" }
+          python -c "import platform, sys; print('python', sys.version.split()[0], platform.machine())"
+          if ($env:PROCESSOR_ARCHITECTURE -ne 'ARM64') { throw "not an ARM64 machine" }
+
+      - name: Download the two installers
+        shell: pwsh
+        run: |
+          $ProgressPreference = 'SilentlyContinue'
+          New-Item -ItemType Directory -Force "$env:RUNNER_TEMP\setup" | Out-Null
+          foreach ($tag in $env:RELEASE, $env:PREVIOUS) {
+            $v = $tag.TrimStart('v')
+            $name = "tpdf_${v}_x64-setup.exe"
+            Invoke-WebRequest -UseBasicParsing "https://github.com/tstone-1/tpdf/releases/download/$tag/$name" -OutFile "$env:RUNNER_TEMP\setup\$name"
+            $s = Get-AuthenticodeSignature "$env:RUNNER_TEMP\setup\$name"
+            "$name $($s.Status) $((Get-FileHash "$env:RUNNER_TEMP\setup\$name").Hash)"
+          }
+
+      - name: Install, use and remove the release (installed_check.py)
+        shell: pwsh
+        run: |
+          $v = $env:RELEASE.TrimStart('v')
+          python scripts/installed_check.py "$env:RUNNER_TEMP\setup\tpdf_${v}_x64-setup.exe" testdata/text-wide.pdf --word Ledger
+
+      - name: Update from the previous release (update_check.py)
+        if: always()
+        shell: pwsh
+        run: |
+          $v = $env:PREVIOUS.TrimStart('v')
+          python scripts/update_check.py "$env:RUNNER_TEMP\setup\tpdf_${v}_x64-setup.exe" testdata/text-wide.pdf
