@@ -60,6 +60,16 @@ ignore = [
     "RUSTSEC-2026-0367",
     "RUSTSEC-2026-0368",
     "RUSTSEC-2026-0369",
+    # zvariant, zbus_names, zvariant_derive: unmaintained as standalone crates,
+    # merged into zbus 6.0.0 (2026-10-16). The advisories report no defect.
+    # Linux only: `tauri-plugin-single-instance` 2.5.4, the newest, requires
+    # `zbus ^5.9` for its D-Bus second-launch handoff, and `cargo tree -i
+    # zvariant` prints nothing for aarch64-apple-darwin or
+    # x86_64-pc-windows-msvc. Recorded 2026-10-17; remove all three when the
+    # plugin moves to zbus 6.
+    "RUSTSEC-2026-0370", # zvariant
+    "RUSTSEC-2026-0371", # zbus_names
+    "RUSTSEC-2026-0372", # zvariant_derive
 ]
 
 [output]
