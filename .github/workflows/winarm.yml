@@ -63,6 +63,11 @@ jobs:
           python -c "import platform, sys; print('python', sys.version.split()[0], platform.machine())"
           if ($env:PROCESSOR_ARCHITECTURE -ne 'ARM64') { throw "not an ARM64 machine" }
 
+      # `testdata/*.pdf` is gitignored and generated; this one needs only the
+      # standard library (`scripts/ci_fixtures.py` names the same command).
+      - name: Generate the document
+        run: python testdata/make_wide_pdf.py testdata
+
       - name: Download the two installers
         shell: pwsh
         run: |
