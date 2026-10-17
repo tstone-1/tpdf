@@ -31,14 +31,20 @@ on:
         description: Published release the update check starts from
         required: true
         default: v26.10.20
+      # The x64 runner is the control: a finding on both is not about ARM.
+      runner:
+        description: Runner image
+        type: choice
+        options: [windows-11-arm, windows-2025]
+        default: windows-11-arm
 
 permissions:
   contents: read
 
 jobs:
   check:
-    name: x64 installer under emulation
-    runs-on: windows-11-arm
+    name: x64 installer on ${{ inputs.runner }}
+    runs-on: ${{ inputs.runner }}
     timeout-minutes: 40
     env:
       RELEASE: ${{ inputs.release }}
@@ -61,7 +67,8 @@ jobs:
           (Get-CimInstance Win32_Processor).Name
           (Get-CimInstance Win32_OperatingSystem) | ForEach-Object { "$($_.Caption) $($_.Version) $($_.OSArchitecture)" }
           python -c "import platform, sys; print('python', sys.version.split()[0], platform.machine())"
-          if ($env:PROCESSOR_ARCHITECTURE -ne 'ARM64') { throw "not an ARM64 machine" }
+          $want = if ('${{ inputs.runner }}' -eq 'windows-11-arm') { 'ARM64' } else { 'AMD64' }
+          if ($env:PROCESSOR_ARCHITECTURE -ne $want) { throw "expected $want" }
 
       # `testdata/*.pdf` is gitignored and generated; this one needs only the
       # standard library (`scripts/ci_fixtures.py` names the same command).
