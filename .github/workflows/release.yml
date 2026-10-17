@@ -567,6 +567,13 @@ jobs:
           workers run under Landlock and seccomp. The Linux packages (deb
           and AppImage) do not update themselves: install the new one.
 
+          **New in 26.10.22.** Fixes. On Windows, the print dialog no
+          longer says "This app doesn't support print preview", `winget
+          uninstall` removes tpdf without opening a window, and
+          uninstalling no longer leaves an empty entry for PDF files.
+          Cropping a page of a long document keeps you on that page, and
+          the next drag on it works.
+
           **New in 26.10.21.** Facing pages, book view, one page or pair
           at a time, full screen, and a presentation mode on black.
           Sideways scrolling with a trackpad, a tilt wheel or Shift and

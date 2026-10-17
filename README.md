@@ -22,7 +22,9 @@ Take the file for your computer from the
 | Linux, x86-64: any other distribution with glibc 2.39 or newer (Fedora 40 or newer, for example) | `tpdf_<version>_amd64.AppImage` | `chmod +x` it and run it; nothing is installed |
 
 The `.sig`, `.tar.gz` and `latest.json` files beside them belong to the built-in updater;
-you do not need them. There is no build for Intel Macs, Windows on ARM or ARM Linux.
+you do not need them. There is no build for Intel Macs, Windows on ARM or ARM Linux. On
+Windows on ARM the 64-bit Windows installer works under Windows' own emulation: it was
+installed, opened a document and updated itself on an ARM64 Windows 11 machine.
 
 **On Linux, four things differ from the other two.**
 
