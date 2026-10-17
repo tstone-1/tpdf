@@ -7055,8 +7055,15 @@ under the tag, and `latest.json` offers 26.10.21. The Homebrew cask went from 26
 and nothing else. The winget pull request (445804, still a new package awaiting a moderator)
 moved to 26.10.21 and passed `winget validate`; the published installer had the manifest's
 SHA-256, a valid timestamped signature, installed with `/S` and showed in `winget list` as
-`tpdf 26.10.21`, and uninstalled with `/S`. **Not yet run:** step 7's pass after the
-release, `--since v26.10.20 --resume`, and the four second-launch rows on a Mac.
+`tpdf 26.10.21`, and uninstalled with `/S`. Step 7's pass after the release, `--since
+v26.10.20 --resume`: the four second-launch rows on a Mac caught 4 of 4; Python 38 of 38;
+frontend 958 of 959, and the row it missed (Escape leaving the strokes of a drawing behind)
+is now red in its own ink test. Rust on the Windows desktop, resumed after a stop for low
+memory: 767 of 768, 13 skipped as not runnable there. The one survivor, `docinfo: call a
+document timestamp's time attested whatever its verdict`, survived because that machine had never
+generated `incr-doc-timestamped.pdf`, so its test skipped; with the fixture it is red, there and
+on the Mac mini. The Mac mini ran the five macOS-only save rows: 5 of 5. The two Linux-only
+reveal rows did not run. The `hosted` gate came out of this.
 
 **26.10.21 verification, 2026-10-16:** the first release prepared and checked from the
 Windows desktop, with the macOS half run on the Mac mini over SSH. All 32 gates passed on

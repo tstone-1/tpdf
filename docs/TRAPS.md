@@ -862,6 +862,7 @@ hop through the index.
 - A fake server that answers once encodes how many requests the code makes
 - An empty Private DICT reads the same wherever its offset points
 - A fixture written through the library spells a value the library's way, and the branch for the other spelling is never read
+- A test that skips on an absent fixture passes on every machine where nobody wrote it
 
 ## Documents as controls
 - A mitigation present and disclaimed is quieter than one claimed and absent
@@ -26695,3 +26696,24 @@ backs up what it replaces backs up itself the second time* happening again. A fr
 ARM64 and x64 (`winarm.yml`, 2026-10-17), had no key and failed it. `installer-hooks.nsh` now
 removes an empty class, the backup value and an empty key after an uninstall that is not an
 update. A check that compares a machine with itself needs a machine that has never run the thing.
+
+### A test that skips on an absent fixture passes on every machine where nobody wrote it
+
+The Rust tests read generated fixtures and return early when one is absent, which is right for
+a fixture a runner cannot build. It also hid two things at once, found on 2026-10-17 when a
+mutation pass on the Windows desktop reported `docinfo: call a document timestamp's time attested
+whatever its verdict` as SURVIVED.
+
+- **A stale set.** `incr-doc-timestamped.pdf` and `incr-lt.pdf` were added to
+  `scripts/ci_fixtures.py` on 2026-09-28. The desktop's fixtures were older, so the tests reading
+  them had skipped there for three weeks, every local gate green, and the mutation survived a
+  test that CI runs. The Mac mini was missing eight, because its `python3` had no pyhanko and
+  the generator skips those rather than failing. The `hosted` gate now runs
+  `ci_fixtures.py --check --signed --hostile` before `test`. For pyhanko, use
+  `uv run --no-project --with-requirements scripts/fixture-tools.txt python scripts/ci_fixtures.py --signed --hostile`.
+- **A name nothing writes.** `a_crop_reaches_the_file_it_was_planned_for` read `text.pdf` from
+  2026-08-18, a file no script in the repository has ever written, so it skipped on every machine
+  and in CI and had never run. It reads `vector-multi.pdf` now, and the mutation that writes a crop
+  onto the parent node turns it red. Running `cargo test --lib -- --nocapture` and reading the
+  `[SKIP]` lines is the measurement; on a machine with every fixture, what remains are the skips a
+  test explains.

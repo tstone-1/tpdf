@@ -1255,8 +1255,11 @@ fn plan_cropping(n: usize, at: usize, box_pt: [f64; 4]) -> Plan {
 /// A crop in the plan reaches the written file, on that page and no other.
 #[test]
 fn a_crop_reaches_the_file_it_was_planned_for() {
-    let Some(path) = fixture("text.pdf") else {
-        println!("[SKIP] text.pdf not generated");
+    // `vector-multi.pdf`, twelve pages that `ci_fixtures.py` builds on every
+    // runner. This read `text.pdf` from 2026-08-18 to 2026-10-17, a name no
+    // script writes, so it skipped everywhere and no run ever executed it.
+    let Some(path) = fixture("vector-multi.pdf") else {
+        println!("[SKIP] vector-multi.pdf not generated");
         return;
     };
     let scratch = Scratch::new("crop");

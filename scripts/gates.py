@@ -291,6 +291,18 @@ def gates() -> "list[tuple[str, list[str], str]]":
             "clippy found a lint (warnings are denied)",
         ),
         (
+            # Before `test`, because a test whose fixture is absent skips and
+            # passes. On 2026-10-17 the Windows desktop had generated its
+            # fixtures before two were added on 2026-09-28, so their tests had
+            # skipped there for three weeks and a mutation survived that CI
+            # would have caught. The workflows generate with these same flags
+            # before they run the gates.
+            "hosted",
+            [sys.executable, str(ROOT / "scripts" / "ci_fixtures.py"), "--check", "--signed", "--hostile"],
+            "a fixture every runner generates is absent here, so the tests that read it "
+            "would skip and pass: run scripts/ci_fixtures.py --signed --hostile",
+        ),
+        (
             "test",
             ["cargo", "test", "--manifest-path", CARGO_MANIFEST, "--locked"],
             "a test failed, or Cargo.lock is stale",
