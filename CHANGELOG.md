@@ -17,6 +17,21 @@ as *downloadable*, while the release sat as a draft that GitHub showed to nobody
 are given now because they are different facts, and only the second one means a reader can
 have the binary.)
 
+## [26.10.22] - Unreleased
+
+### Fixed
+
+- **Windows: the print dialog no longer says "This app doesn't support print preview".**
+  Windows 11 showed its newer print dialog for tpdf, and that dialog cannot show pages from
+  a program that prints the way tpdf does, so its preview pane carried that sentence. tpdf
+  now asks for the classic print dialog, which has no preview pane and offers the same
+  printer, pages, copies and printer properties.
+- **Windows: uninstalling no longer leaves an empty `.pdf` entry behind.** On an account
+  that had no program of its own for PDF files, the uninstaller left
+  `HKEY_CURRENT_USER\Software\Classes\.pdf` with an empty value, which can hide the
+  computer's own choice of program for PDF files. A program you had chosen before tpdf is
+  still put back.
+
 ## [26.10.21] - 2026-10-16
 
 ### Added

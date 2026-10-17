@@ -1069,6 +1069,20 @@ describe("drawing freehand", () => {
     expect(drawn).toEqual([]);
     expect(viewer.drawArmed).toBe(null);
     expect(viewer.drawnStrokes).toBe(null);
+
+    // The harm is the next drawing, so that is where it is read. `drawnStrokes`
+    // answers null whenever ink is not armed, so the line above cannot see
+    // strokes Escape left behind; armed again, the next drawing has to start
+    // empty and finish with only its own stroke.
+    viewer.armDraw("ink");
+    expect(viewer.drawnStrokes).toBe(0);
+    scribble([
+      { x: 100, y: 500 },
+      { x: 300, y: 520 },
+    ]);
+    enter();
+    expect(drawn).toHaveLength(1);
+    expect(drawn[0]?.shape.strokes).toHaveLength(1);
     viewer.destroy();
   });
 

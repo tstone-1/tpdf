@@ -41,13 +41,14 @@ use windows::Data::Pdf::{PdfDocument, PdfPage, PdfPageRenderOptions, PdfPageRota
 use windows::Graphics::Imaging::BitmapEncoder;
 use windows::Storage::Streams::{DataWriter, IOutputStream, InMemoryRandomAccessStream};
 use windows::Win32::Foundation::HWND;
+use windows::Win32::Foundation::{LPARAM, WPARAM};
 use windows::Win32::Graphics::Gdi::{
     DeleteDC, GetDeviceCaps, StretchDIBits, BITMAPINFO, DIB_RGB_COLORS, HDC, HORZRES, LOGPIXELSX,
     LOGPIXELSY, SRCCOPY, VERTRES,
 };
 use windows::Win32::UI::Controls::Dialogs::{
-    CommDlgExtendedError, PrintDlgW, PD_ALLPAGES, PD_NOSELECTION, PD_PAGENUMS, PD_RETURNDC,
-    PRINTDLGW,
+    CommDlgExtendedError, PrintDlgW, PD_ALLPAGES, PD_ENABLEPRINTHOOK, PD_NOSELECTION, PD_PAGENUMS,
+    PD_RETURNDC, PRINTDLGW,
 };
 
 /// The resolution pages are rasterised at, in dots per inch.
@@ -921,6 +922,24 @@ impl Drop for OpenDocument {
     }
 }
 
+/// A print hook that does nothing, installed so Windows shows the classic dialog.
+///
+/// Windows 11 answers `PrintDlgW` with an owner window by showing its newer print
+/// dialog, whose preview pane reads *This app doesn't support print preview* for
+/// every program that prints this way: it can only show pages an app hands it
+/// through the WinRT print API, and `spool` draws on a device context instead. A
+/// reader takes that sentence as a defect of tpdf. The newer dialog cannot host a
+/// hook, so with one installed Windows shows the classic dialog, which has no
+/// preview pane and offers the same printer, page range, copies and printer
+/// properties. Measured 2026-10-17 on Windows 11 25H2 and 26H2 with `PrintDlgW`
+/// from a script: no owner gives the classic dialog, an owner gives the newer
+/// one, an owner and a hook give the classic one again.
+///
+/// Returning zero lets the dialog handle every message itself.
+unsafe extern "system" fn classic_dialog(_: HWND, _: u32, _: WPARAM, _: LPARAM) -> usize {
+    0
+}
+
 /// Opens the system print dialog for these bytes and prints what it returns.
 ///
 /// Returns whether a job was sent. `false` is Cancel, and it is distinguished from
@@ -978,7 +997,10 @@ pub fn present(bytes: &[u8], title: &str, owner: Option<HWND>) -> Result<bool, S
         // for the printer the reader chose, which is what `spool` needs.
         // `PD_NOSELECTION` because there is no selection to print --- offering the
         // radio button and then ignoring it would be worse than not offering it.
-        Flags: PD_RETURNDC | PD_ALLPAGES | PD_NOSELECTION,
+        // `PD_ENABLEPRINTHOOK` for the dialog it selects, not for the hook: see
+        // [`classic_dialog`].
+        Flags: PD_RETURNDC | PD_ALLPAGES | PD_NOSELECTION | PD_ENABLEPRINTHOOK,
+        lpfnPrintHook: Some(classic_dialog),
         nCopies: 1,
         // Equal bounds disable the field, which is the right answer for a
         // one-page job and for a document the OS parser could not count --- there

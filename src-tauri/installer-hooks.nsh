@@ -157,6 +157,27 @@
 ; when it was never on). An update keeps it: the registration names the DLL by
 ; its path in this folder, and the new version installs the DLL there again.
 
+; Tauri's `APP_UNASSOCIATE` writes the backup back as the class and leaves the
+; key, the backup value included. On a profile that had no `.pdf` key before
+; tpdf, both are written back empty, and an empty class in the user's key hides
+; the machine's. Found 2026-10-17 by `installed_check.py` on fresh GitHub
+; runners (ARM64 and x64): "before no key; now ... PDF document_backup ...
+; (Default)". A machine that had a `.pdf` class never shows it. So, outside an
+; update, an empty class and the backup value go, and the key goes when nothing
+; else is left in it. A reader who had a class keeps it: only an empty one is
+; removed.
+
+!macro NSIS_HOOK_POSTUNINSTALL
+  ${If} $UpdateMode <> 1
+    ReadRegStr $R0 SHCTX "Software\Classes\.pdf" ""
+    ${If} $R0 == ""
+      DeleteRegValue SHCTX "Software\Classes\.pdf" ""
+    ${EndIf}
+    DeleteRegValue SHCTX "Software\Classes\.pdf" "PDF document_backup"
+    DeleteRegKey /ifempty SHCTX "Software\Classes\.pdf"
+  ${EndIf}
+!macroend
+
 !macro NSIS_HOOK_PREUNINSTALL
   ${If} $UpdateMode <> 1
     nsExec::ExecToLog '"$INSTDIR\tpdf-cli.exe" path --remove'

@@ -821,6 +821,8 @@ hop through the index.
 - A COM object made with `#[implement]` is agile, so a preview window never got a posted message
 - A low-integrity process cannot write to `%TEMP%`, and a preview handler runs at low integrity
 - A process's first `ShowWindow` takes the show state its parent asked for
+- `PrintDlgW` with an owner window gets Windows 11's newer dialog, and it tells the reader the app has no preview
+- An uninstaller that restores what it backed up writes an empty class where there was no key
 
 ## Fixtures
 - The test fixtures are generated, not committed
@@ -26659,3 +26661,37 @@ is honoured. A window without a background brush made it look worse: an unpainte
 what was on the screen before, so the probe's host window now paints black and an unpainted pane
 reads as black, not as a plausible picture.
 
+
+### `PrintDlgW` with an owner window gets Windows 11's newer dialog, and it tells the reader the app has no preview
+
+Windows 11 answers a `PrintDlgW` call that names an owner window with its newer print dialog
+(an `ApplicationFrameWindow` hosted by `explorer.exe`), not the classic `#32770` one. That
+dialog has a preview pane it can fill only from the WinRT print API, so for a program that
+prints onto a device context, as `print_win::spool` does, the pane reads *This app doesn't
+support print preview*. Readers took that as a tpdf defect. Measured 2026-10-17 with a script
+calling `PrintDlgW` on Windows 11 25H2 and 26H2: no owner gives the classic dialog, an owner
+gives the newer one, and an owner plus `PD_ENABLEPRINTHOOK` with a hook that returns 0 gives the
+classic one again, because the newer dialog cannot host a hook. COM apartment, DPI awareness and
+the Common Controls 6 manifest made no difference.
+
+The trap is in testing it: a probe written the obvious way, with no owner, shows the classic
+dialog and reports nothing wrong. tpdf passes its window as the owner (`commands/print.rs`), so
+only the probe that copied that saw what readers saw. `print_win::present` installs the hook.
+A real preview in the newer dialog means printing through `PrintManager` with pages drawn as DXGI
+surfaces, which replaces the GDI path.
+
+### An uninstaller that restores what it backed up writes an empty class where there was no key
+
+Tauri's `APP_UNASSOCIATE` writes the value `PDF document_backup` back as the class of `.pdf` and
+deletes nothing else. On an account with no `HKCU\Software\Classes\.pdf` before tpdf, the backup
+is empty, so the uninstall leaves the key with an empty class and an empty backup value. In the
+merged view of `HKEY_CLASSES_ROOT` a key in `HKCU` takes the place of the machine's. Every release
+up to 26.10.21 did it.
+
+`installed_check.py` compares the key before and after, and it passed on the Windows build
+computer for a week, because an earlier tpdf install had left that same empty key there: the
+comparison read residue against residue, which is the closing paragraph of *An installer that
+backs up what it replaces backs up itself the second time* happening again. A fresh GitHub runner,
+ARM64 and x64 (`winarm.yml`, 2026-10-17), had no key and failed it. `installer-hooks.nsh` now
+removes an empty class, the backup value and an empty key after an uninstall that is not an
+update. A check that compares a machine with itself needs a machine that has never run the thing.
