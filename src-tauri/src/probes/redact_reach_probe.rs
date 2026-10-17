@@ -409,6 +409,16 @@ pub fn main() {
         );
     }
     report(&tally, started.elapsed().as_secs_f32());
+    // A run that opened nothing measured nothing. On 2026-10-17 a run started
+    // from `src-tauri` could not load PDFium, refused all 174 documents and
+    // exited 0 with every count at zero.
+    if tally.opened == 0 {
+        eprintln!(
+            "[ERROR] no document was opened ({} refused), so nothing was measured",
+            tally.refused
+        );
+        std::process::exit(1);
+    }
 }
 
 /// Every PDF under the given paths, small enough to rewrite.

@@ -4539,6 +4539,13 @@ cargo run --release --example print-probe -- testdata/rotated.pdf
 cargo run --release --example print-probe -- testdata/vector-multi.pdf "Microsoft Print to PDF"
 ```
 
+**Over ssh, build it in the ssh session and run only the binary in the desktop session.** On
+2026-10-17 on TEENYWEENY, `cargo run --example print-probe` inside an interactive scheduled task
+failed in tpdf's build script at `resource path ..\vendor\pdfium\bin\pdfium.dll doesn't exist`,
+with the file there; the same build from the ssh session passed, and
+`target\release\examples\print-probe.exe` then ran in the task (9/9 and 10/10). Why the task's
+build cannot see the file is not known.
+
 Ten checks, and four of them are the ones worth understanding:
 
 - **Ink, not the page count.** A wrong `BITMAPINFO`, a DC in the wrong mapping mode and a bad
