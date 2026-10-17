@@ -7036,6 +7036,28 @@ read through. **Not run:** the written copy of `tpdf long-term` against a public
 authority (`docs/VERIFICATION.md` has why), the new entry of `mutate_viewer.py` by the
 harness itself, `print-probe` and `redact-reach-probe`.
 
+**26.10.21 publication, 2026-10-17:** one rehearsal tag first, because `release.yml` had
+changed since 26.10.20. `v26.10.21-rc1` passed every job; `installed_check.py` passed 24/24
+on its signed installer on TEENYWEENY, in the desktop session through an interactive
+scheduled task, and its `.dmg` was accepted by Gatekeeper as Notarized Developer ID,
+stapled, with a `tpdf-cli` inside that answered `--version` with 26.10.21 and verified
+`testdata/incr-signed.pdf`. The rc draft and tag were deleted by id. On the release commit
+`bfca4137` CI passed all three jobs and `Audit` passed (run 38939032978); the release run
+38950710725 passed every job and left a draft of eight files with the 26.10.21 paragraph in
+its body and a `latest.json` offering 26.10.21 for `darwin-aarch64`, `darwin-aarch64-app`,
+`windows-x86_64` and `windows-x86_64-nsis`. `scripts/publish_release.py v26.10.21 --publish`
+published it. Without authentication `releases/latest` is v26.10.21, all eight files answer
+under the tag, and `latest.json` offers 26.10.21. The Homebrew cask went from 26.10.20 to
+26.10.21 with the `.dmg`'s SHA-256 equal to the digest GitHub records for it; `brew audit
+--cask --online` printed no finding and `brew livecheck` reads 26.10.21. An installed
+26.10.20 updated itself: `update_check_mac.py` 12/12 over SSH on the Mac mini and
+`update_check.py` 17/17 on TEENYWEENY, and each `--control no-press` failed its seven checks
+and nothing else. The winget pull request (445804, still a new package awaiting a moderator)
+moved to 26.10.21 and passed `winget validate`; the published installer had the manifest's
+SHA-256, a valid timestamped signature, installed with `/S` and showed in `winget list` as
+`tpdf 26.10.21`, and uninstalled with `/S`. **Not yet run:** step 7's pass after the
+release, `--since v26.10.20 --resume`, and the four second-launch rows on a Mac.
+
 **26.10.21 verification, 2026-10-16:** the first release prepared and checked from the
 Windows desktop, with the macOS half run on the Mac mini over SSH. All 32 gates passed on
 Windows 11 on the release tree, once `vendor/pdfium` there was brought to the 8078 pin the
