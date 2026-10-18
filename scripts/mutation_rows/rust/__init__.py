@@ -16,6 +16,7 @@ from . import (
     r06_signing,
     r07_long_term,
     r08_reviews,
+    r09_added_text,
 )
 
 #: Every part, in the order its rows run.
@@ -28,6 +29,7 @@ PARTS = (
     r06_signing,
     r07_long_term,
     r08_reviews,
+    r09_added_text,
 )
 
 ROWS = [row for part in PARTS for row in part.ROWS]

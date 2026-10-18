@@ -47,6 +47,7 @@ describe("judge", () => {
       [{ text: "Page\u0007{page}" }, "control character"],
       [{ text: "Seite {seite}" }, "{seite} is not a field"],
       [{ text: "Page {page" }, "not closed"],
+      [{ text: "x".repeat(201) }, "longer than 200 characters"],
       [{ size: "2" }, "from 4 to 300"],
       [{ extra: "1.5" }, "whole number"],
       [{ pages: "9" }, "This document has 4 pages"],
@@ -55,6 +56,7 @@ describe("judge", () => {
       expect(typeof got === "string" && got.includes(said), `${JSON.stringify(over)}: ${String(got)}`).toBe(true);
     }
     expect(judge("watermark", typed({ extra: "0" }), 1)).toContain("opacity");
+    expect(judge("watermark", typed({ text: "x".repeat(200) }), 1)).toMatchObject({ text: "x".repeat(200) });
   });
 
   it("writes German text, which Latin-1 has", () => {

@@ -13,6 +13,7 @@ from . import (
     f03_colour,
     f04_inserting,
     f05_latest,
+    f06_compare_addtext,
 )
 
 #: Every part, in the order its rows run.
@@ -22,6 +23,7 @@ PARTS = (
     f03_colour,
     f04_inserting,
     f05_latest,
+    f06_compare_addtext,
 )
 
 ROWS = [row for part in PARTS for row in part.ROWS]

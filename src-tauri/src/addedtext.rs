@@ -801,6 +801,36 @@ mod tests {
     }
 
     #[test]
+    fn the_other_corners_and_sides_sit_inside_the_margin() {
+        let at = |position: Position| {
+            let mut doc = document(1, 0, b"");
+            let line = AddedText {
+                position,
+                ..AddedText::page_numbers()
+            };
+            write(&mut doc, &[line]).expect("writes");
+            matrix(&doc, 0)
+        };
+        let width = crate::textbox::advance("Page 1 of 1", 10.0);
+        // The right column ends at the margin, the top row's capitals hang
+        // from it.
+        let m = at(Position::TopRight);
+        assert!((m[4] - (595.0 - 36.0 - width)).abs() < 1e-3, "{m:?}");
+        assert!(
+            (m[5] - (842.0 - 36.0 - 10.0 * CAP_HEIGHT)).abs() < 1e-3,
+            "{m:?}"
+        );
+        // The left column starts at the margin, the middle row's capitals are
+        // centred on the page's middle.
+        let m = at(Position::MiddleLeft);
+        assert!((m[4] - 36.0).abs() < 1e-3, "{m:?}");
+        assert!(
+            (m[5] - (421.0 - 10.0 * CAP_HEIGHT / 2.0)).abs() < 1e-3,
+            "{m:?}"
+        );
+    }
+
+    #[test]
     fn a_turned_page_gets_its_number_at_the_bottom_it_displays() {
         // `/Rotate 90` turns the sheet clockwise, so the displayed bottom is
         // the sheet's right edge, and the text runs up the sheet so that it
@@ -936,6 +966,17 @@ mod tests {
         refused(&|l| l.text = "  ".into(), "is empty");
         refused(&|l| l.size = 1.0, "font size");
         refused(&|l| l.opacity = 0.0, "opacity");
+        refused(&|l| l.color = [0.0, 1.5, 0.0], "a colour is");
+        refused(&|l| l.angle = 361.0, "the angle is in degrees");
+        refused(&|l| l.margin = MAX_MARGIN + 1.0, "the margin is from");
+        refused(
+            &|l| l.first_number = MAX_FIRST + 1,
+            "the first number is at most",
+        );
+        refused(
+            &|l| l.text = "x".repeat(MAX_CHARS + 1),
+            "longer than 200 characters",
+        );
         refused(
             &|l| l.pages = Some(vec![2]),
             "page 3, and the document has 2",

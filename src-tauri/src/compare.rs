@@ -650,6 +650,15 @@ mod tests {
     }
 
     #[test]
+    fn a_word_repeated_on_the_older_side_is_not_an_anchor() {
+        // `the` is on the left twice and on the right once. Paired as an
+        // anchor, its last left `the` would hold the right one, out of order
+        // with `B`, and `B` would read as removed and added again.
+        let c = run(&[(0, "Z the B the Q")], &[(0, "W the B R")]);
+        assert_eq!((c.removed_words, c.added_words), (3, 2));
+    }
+
+    #[test]
     fn a_moved_paragraph_is_a_removal_and_an_addition() {
         let c = run(&[(0, "A1 A2 B1 B2 C1")], &[(0, "B1 B2 A1 A2 C1")]);
         let removed: usize = c.removed_words as usize;

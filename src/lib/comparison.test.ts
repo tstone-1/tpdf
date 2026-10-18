@@ -138,6 +138,8 @@ describe("rows and places", () => {
       { page: 0, start: 1, end: 2, change: 1 },
       { page: 1, start: 0, end: 3, change: 1 },
     ]);
+    const moved = result({ changes: [change({ right: [{ page: 2, start: 5, end: 9 }] })] });
+    expect(paintedOn(moved, "right")).toEqual([{ page: 2, start: 5, end: 9, change: 0 }]);
   });
 
   it("steps through the changes and wraps", () => {
@@ -207,6 +209,15 @@ describe("ComparisonState", () => {
     expect(state.paintFor(7)).toBeNull();
     // The rows are kept: the reader can still go to a change.
     expect(state.count).toBe(2);
+  });
+
+  it("counts and picks only the rows it draws", () => {
+    const state = new ComparisonState<number>();
+    const many = Array.from({ length: MAX_ROWS + 1 }, () => change());
+    state.start(7, 9, compared({ changes: many, total_changes: MAX_ROWS + 1 }));
+    expect(state.count).toBe(MAX_ROWS);
+    expect(state.pick(MAX_ROWS)).toBe(false);
+    expect(state.step(-1)).toBe(MAX_ROWS - 1);
   });
 
   it("ends when either view is closed, and not for another", () => {

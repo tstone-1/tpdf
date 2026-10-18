@@ -1,6 +1,11 @@
 //! `compare` on documents built here, so the words each one holds are known:
 //! the same words laid out on different lines and pages compare equal, and an
 //! edit is found on the page and at the place it was made.
+//!
+//! Proved by hand, since `tests/cli.rs` is not selectable by `mutate_rust.py`
+//! (2026-10-18): `cli/compare.rs` `Ok(if report.total_changes == 0 {` made
+//! `Ok(if true {` turns 2 of the 6 `compare` cases red.
+//! Run with `cargo test --test cli -- --filter compare`.
 use super::{scratch, tool, Report};
 use lopdf::{dictionary, Document, Object, Stream};
 use std::path::Path;
