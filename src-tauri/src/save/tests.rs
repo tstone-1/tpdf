@@ -92,6 +92,51 @@ fn written_atomically(out: &Path, bytes: &[u8]) {
     commit(&staged, out).expect("commit");
 }
 
+/// A target held open without delete sharing, as a scanner holds a file it is
+/// reading, refuses the rename; released within the retries, the replacement
+/// lands. The control holds it past them and gets the refusal.
+#[cfg(windows)]
+#[test]
+fn a_target_held_open_briefly_is_still_replaced() {
+    use std::os::windows::fs::OpenOptionsExt as _;
+    const FILE_SHARE_READ: u32 = 1;
+    let dir = Scratch::new("commit-held");
+    let out = dir.join("out.txt");
+    let held = |for_ms: u64| {
+        std::fs::write(&out, b"old").expect("the old file");
+        let file = std::fs::OpenOptions::new()
+            .read(true)
+            .share_mode(FILE_SHARE_READ)
+            .open(&out)
+            .expect("hold it");
+        std::thread::spawn(move || {
+            std::thread::sleep(std::time::Duration::from_millis(for_ms));
+            drop(file);
+        })
+    };
+    let stage_new = || {
+        stage(&out, |file| {
+            use std::io::Write as _;
+            file.write_all(b"new")
+                .map_err(|e| Refusal::from(format!("could not write: {e}")))
+        })
+        .expect("stage")
+    };
+
+    let release = held(150);
+    commit(&stage_new(), &out).expect("replaced once the holder lets go");
+    release.join().unwrap();
+    assert_eq!(std::fs::read(&out).unwrap(), b"new");
+
+    let release = held(3000);
+    let staged = stage_new();
+    let why = commit(&staged, &out).expect_err("held past every retry");
+    release.join().unwrap();
+    assert!(why.contains("in place"), "{why}");
+    assert!(!staged.exists(), "the staged file is removed");
+    assert_eq!(std::fs::read(&out).unwrap(), b"old");
+}
+
 /// [`write_split`] with the in-process writer. [`copy_here`]'s counterpart,
 /// for the same reason.
 fn split_here(
@@ -168,6 +213,7 @@ fn plan_of(turns: &[u8]) -> Plan {
         forms: Vec::new(),
         text_edits: Vec::new(),
         text_layers: Vec::new(),
+        added_text: Vec::new(),
         protection: Default::default(),
         compress: Default::default(),
         new_fields: Vec::new(),
@@ -201,6 +247,7 @@ fn keeping(baseline: u32, kept: &[(u32, u8)]) -> Plan {
         forms: Vec::new(),
         text_edits: Vec::new(),
         text_layers: Vec::new(),
+        added_text: Vec::new(),
         protection: Default::default(),
         compress: Default::default(),
         new_fields: Vec::new(),
@@ -772,7 +819,7 @@ fn a_third_parser_sees_the_turn_on_the_page_it_was_applied_to() {
     let mut examined = 0;
     for name in ["rotated.pdf", "text-heavy.pdf", "mixed.pdf", "links.pdf"] {
         let Some(path) = fixture(name) else {
-            println!("[SKIP] {name}: fixture not generated");
+            crate::fixtures::missing(&format!("[SKIP] {name}: fixture not generated"));
             continue;
         };
         let source = std::fs::read(&path).expect("read source");
@@ -1259,7 +1306,7 @@ fn a_crop_reaches_the_file_it_was_planned_for() {
     // runner. This read `text.pdf` from 2026-08-18 to 2026-10-17, a name no
     // script writes, so it skipped everywhere and no run ever executed it.
     let Some(path) = fixture("vector-multi.pdf") else {
-        println!("[SKIP] vector-multi.pdf not generated");
+        crate::fixtures::missing("[SKIP] vector-multi.pdf not generated");
         return;
     };
     let scratch = Scratch::new("crop");
@@ -1320,7 +1367,7 @@ fn a_plan_with_no_crop_writes_no_crop_box() {
 #[test]
 fn a_turn_composes_with_the_rotation_the_page_already_had() {
     let Some(path) = fixture("rotated.pdf") else {
-        println!("[SKIP] rotated.pdf not generated");
+        crate::fixtures::missing("[SKIP] rotated.pdf not generated");
         return;
     };
     let scratch = Scratch::new("compose");
@@ -1366,7 +1413,7 @@ fn a_turn_composes_with_the_rotation_the_page_already_had() {
 #[test]
 fn a_turn_past_the_documented_range_is_reduced_rather_than_added() {
     let Some(path) = fixture("rotated.pdf") else {
-        println!("[SKIP] rotated.pdf not generated");
+        crate::fixtures::missing("[SKIP] rotated.pdf not generated");
         return;
     };
     let original = std::fs::read(&path).expect("read the fixture");
@@ -1667,7 +1714,7 @@ fn a_third_parser_sees_the_pages_that_were_kept_and_not_the_one_that_was_not() {
         return;
     }
     let Some(path) = fixture("rotated.pdf") else {
-        println!("[SKIP] rotated.pdf not generated");
+        crate::fixtures::missing("[SKIP] rotated.pdf not generated");
         return;
     };
     let source = std::fs::read(&path).expect("read source");
@@ -1724,7 +1771,7 @@ fn a_third_parser_sees_the_pages_that_were_kept_and_not_the_one_that_was_not() {
 #[test]
 fn a_turn_on_a_page_after_the_deleted_one_lands_where_it_was_aimed() {
     let Some(path) = fixture("rotated.pdf") else {
-        println!("[SKIP] rotated.pdf not generated");
+        crate::fixtures::missing("[SKIP] rotated.pdf not generated");
         return;
     };
     let scratch = Scratch::new("delete-turn");
@@ -1759,7 +1806,7 @@ fn a_turn_on_a_page_after_the_deleted_one_lands_where_it_was_aimed() {
 #[test]
 fn deleting_a_page_keeps_the_bookmarks_of_the_pages_that_stay() {
     let Some(path) = fixture("outline-simple.pdf") else {
-        println!("[SKIP] outline-simple.pdf not generated");
+        crate::fixtures::missing("[SKIP] outline-simple.pdf not generated");
         return;
     };
     let scratch = Scratch::new("outline");
@@ -1912,7 +1959,7 @@ fn content_streams(doc: &Document) -> Vec<(u32, ObjectId)> {
 #[test]
 fn extracting_a_page_leaves_the_other_pages_out_of_the_file() {
     let Some(path) = fixture("links.pdf") else {
-        println!("[SKIP] links.pdf not generated");
+        crate::fixtures::missing("[SKIP] links.pdf not generated");
         return;
     };
     let scratch = Scratch::new("extract-sweep");
@@ -1953,7 +2000,7 @@ fn extracting_a_page_leaves_the_other_pages_out_of_the_file() {
 #[test]
 fn deleting_a_page_leaves_its_content_out_of_the_file() {
     let Some(path) = fixture("links.pdf") else {
-        println!("[SKIP] links.pdf not generated");
+        crate::fixtures::missing("[SKIP] links.pdf not generated");
         return;
     };
     let scratch = Scratch::new("delete-sweep");
@@ -2003,7 +2050,7 @@ fn deleting_a_page_leaves_its_content_out_of_the_file() {
 #[test]
 fn a_copy_that_drops_nothing_keeps_the_orphans_it_was_given() {
     let Some(path) = fixture("hostile-orphan.pdf") else {
-        println!("[SKIP] hostile-orphan.pdf not generated");
+        crate::fixtures::missing("[SKIP] hostile-orphan.pdf not generated");
         return;
     };
     let scratch = Scratch::new("orphan-copy");
@@ -2139,7 +2186,7 @@ fn every_rewritten_fixture_is_structurally_sound() {
 #[test]
 fn a_serialised_document_reports_the_size_its_objects_justify() {
     let Some(path) = fixture("links.pdf") else {
-        println!("[SKIP] links.pdf not generated");
+        crate::fixtures::missing("[SKIP] links.pdf not generated");
         return;
     };
     let mut doc = Document::load(&path).expect("load");
@@ -2174,7 +2221,7 @@ fn a_serialised_document_reports_the_size_its_objects_justify() {
 #[test]
 fn no_object_is_written_at_or_past_the_size_that_was_declared() {
     let Some(path) = fixture("comments.pdf") else {
-        println!("[SKIP] comments.pdf not generated");
+        crate::fixtures::missing("[SKIP] comments.pdf not generated");
         return;
     };
     let count = page_count(&path);
@@ -2308,7 +2355,7 @@ fn a_plan_whose_pages_have_moved_comes_out_in_the_order_the_reader_put_them() {
         return;
     }
     let Some(path) = fixture("rotated.pdf") else {
-        println!("[SKIP] rotated.pdf not generated");
+        crate::fixtures::missing("[SKIP] rotated.pdf not generated");
         return;
     };
     let source = std::fs::read(&path).expect("read source");
@@ -2381,7 +2428,7 @@ fn a_plan_whose_pages_have_moved_comes_out_in_the_order_the_reader_put_them() {
 #[test]
 fn a_page_that_moved_carries_its_turn_to_where_it_landed() {
     let Some(path) = fixture("rotated.pdf") else {
-        println!("[SKIP] rotated.pdf not generated");
+        crate::fixtures::missing("[SKIP] rotated.pdf not generated");
         return;
     };
     let scratch = Scratch::new("move-delete-turn");
@@ -2625,7 +2672,7 @@ fn nested_document() -> Vec<u8> {
 #[test]
 fn a_reorder_keeps_the_outline_that_a_deletion_would_have_dropped() {
     let Some(path) = fixture("outline-simple.pdf") else {
-        println!("[SKIP] outline-simple.pdf not generated");
+        crate::fixtures::missing("[SKIP] outline-simple.pdf not generated");
         return;
     };
     let scratch = Scratch::new("outline-move");
@@ -2648,7 +2695,7 @@ fn a_reorder_keeps_the_outline_that_a_deletion_would_have_dropped() {
 #[test]
 fn a_plan_naming_a_page_the_file_does_not_have_is_refused() {
     let Some(path) = fixture("rotated.pdf") else {
-        println!("[SKIP] rotated.pdf not generated");
+        crate::fixtures::missing("[SKIP] rotated.pdf not generated");
         return;
     };
     let scratch = Scratch::new("past-end");
@@ -2741,7 +2788,7 @@ fn a_really_encrypted_document_keeps_its_encryption_or_names_its_lock() {
         );
         std::fs::remove_file(&out).expect("clean up");
     } else {
-        println!("[SKIP] incr-encrypted-open.pdf: fixture not generated");
+        crate::fixtures::missing("[SKIP] incr-encrypted-open.pdf: fixture not generated");
     }
 
     // Behind a real password, and none was supplied. Still refused, and the
@@ -2765,7 +2812,7 @@ fn a_really_encrypted_document_keeps_its_encryption_or_names_its_lock() {
             "incr-encrypted-pw.pdf: not even a temporary"
         );
     } else {
-        println!("[SKIP] incr-encrypted-pw.pdf: fixture not generated");
+        crate::fixtures::missing("[SKIP] incr-encrypted-pw.pdf: fixture not generated");
     }
     assert!(
         examined > 0,
@@ -2823,7 +2870,7 @@ fn encrypted_document() -> Vec<u8> {
 #[test]
 fn a_plan_that_does_not_match_the_file_on_disk_is_refused() {
     let Some(path) = fixture("rotated.pdf") else {
-        println!("[SKIP] rotated.pdf not generated");
+        crate::fixtures::missing("[SKIP] rotated.pdf not generated");
         return;
     };
     let scratch = Scratch::new("count");
@@ -2866,7 +2913,7 @@ fn an_empty_plan_is_refused() {
 #[test]
 fn saving_over_the_open_document_is_refused() {
     let Some(path) = fixture("rotated.pdf") else {
-        println!("[SKIP] rotated.pdf not generated");
+        crate::fixtures::missing("[SKIP] rotated.pdf not generated");
         return;
     };
     let scratch = Scratch::new("inplace");
@@ -2902,7 +2949,7 @@ fn saving_over_the_open_document_is_refused() {
 #[test]
 fn staging_a_save_in_place_writes_beside_the_source_and_leaves_it_alone() {
     let Some(path) = fixture("rotated.pdf") else {
-        println!("[SKIP] rotated.pdf not generated");
+        crate::fixtures::missing("[SKIP] rotated.pdf not generated");
         return;
     };
     let scratch = Scratch::new("stage");
@@ -2939,7 +2986,7 @@ fn staging_a_save_in_place_writes_beside_the_source_and_leaves_it_alone() {
 #[cfg(unix)]
 fn saving_in_place_through_a_symlink_edits_the_document_the_link_names() {
     let Some(path) = fixture("rotated.pdf") else {
-        println!("[SKIP] rotated.pdf not generated");
+        crate::fixtures::missing("[SKIP] rotated.pdf not generated");
         return;
     };
     // **The link and the document live in different directories, and that is
@@ -3008,7 +3055,7 @@ fn a_rewrite_keeps_the_documents_mode() {
     use std::os::unix::fs::PermissionsExt as _;
 
     let Some(path) = fixture("rotated.pdf") else {
-        println!("[SKIP] rotated.pdf not generated");
+        crate::fixtures::missing("[SKIP] rotated.pdf not generated");
         return;
     };
     let scratch = Scratch::new("stage-mode");
@@ -3056,7 +3103,7 @@ fn a_rewrite_keeps_the_documents_mode() {
 #[test]
 fn a_save_in_place_is_refused_when_the_file_changed_under_it() {
     let Some(path) = fixture("rotated.pdf") else {
-        println!("[SKIP] rotated.pdf not generated");
+        crate::fixtures::missing("[SKIP] rotated.pdf not generated");
         return;
     };
     let scratch = Scratch::new("changed");
@@ -3108,7 +3155,7 @@ fn a_save_in_place_is_refused_when_the_file_changed_under_it() {
 #[test]
 fn an_unchanged_file_still_stages() {
     let Some(path) = fixture("rotated.pdf") else {
-        println!("[SKIP] rotated.pdf not generated");
+        crate::fixtures::missing("[SKIP] rotated.pdf not generated");
         return;
     };
     let scratch = Scratch::new("unchanged");
@@ -3130,7 +3177,7 @@ fn an_unchanged_file_still_stages() {
 #[test]
 fn a_save_in_place_with_no_fingerprint_is_refused_and_points_at_save_a_copy() {
     let Some(path) = fixture("rotated.pdf") else {
-        println!("[SKIP] rotated.pdf not generated");
+        crate::fixtures::missing("[SKIP] rotated.pdf not generated");
         return;
     };
     let scratch = Scratch::new("noprint");
@@ -3159,7 +3206,7 @@ fn a_save_in_place_with_no_fingerprint_is_refused_and_points_at_save_a_copy() {
 #[test]
 fn the_last_look_before_the_rename_refuses_a_source_that_moved() {
     let Some(path) = fixture("rotated.pdf") else {
-        println!("[SKIP] rotated.pdf not generated");
+        crate::fixtures::missing("[SKIP] rotated.pdf not generated");
         return;
     };
     let scratch = Scratch::new("last-look");
@@ -3212,7 +3259,7 @@ fn the_last_look_before_the_rename_refuses_a_source_that_moved() {
 #[test]
 fn the_last_look_lets_an_untouched_source_through() {
     let Some(path) = fixture("rotated.pdf") else {
-        println!("[SKIP] rotated.pdf not generated");
+        crate::fixtures::missing("[SKIP] rotated.pdf not generated");
         return;
     };
     let scratch = Scratch::new("last-look-ok");
@@ -3237,7 +3284,7 @@ fn the_last_look_lets_an_untouched_source_through() {
 #[test]
 fn a_copy_is_written_even_when_no_fingerprint_was_taken() {
     let Some(path) = fixture("rotated.pdf") else {
-        println!("[SKIP] rotated.pdf not generated");
+        crate::fixtures::missing("[SKIP] rotated.pdf not generated");
         return;
     };
     let scratch = Scratch::new("copy-noprint");
@@ -3266,7 +3313,7 @@ fn a_copy_is_written_even_when_no_fingerprint_was_taken() {
 #[test]
 fn a_copy_is_written_when_the_source_changed_and_reports_it() {
     let Some(path) = fixture("rotated.pdf") else {
-        println!("[SKIP] rotated.pdf not generated");
+        crate::fixtures::missing("[SKIP] rotated.pdf not generated");
         return;
     };
     let scratch = Scratch::new("copy-changed");
@@ -3299,7 +3346,7 @@ fn a_copy_is_written_when_the_source_changed_and_reports_it() {
 #[test]
 fn a_copy_from_an_untouched_source_does_not_claim_it_changed() {
     let Some(path) = fixture("rotated.pdf") else {
-        println!("[SKIP] rotated.pdf not generated");
+        crate::fixtures::missing("[SKIP] rotated.pdf not generated");
         return;
     };
     let scratch = Scratch::new("copy-unchanged");
@@ -3322,7 +3369,7 @@ fn a_copy_from_an_untouched_source_does_not_claim_it_changed() {
 #[test]
 fn a_copy_is_refused_when_the_changed_source_has_a_different_page_count() {
     let Some(path) = fixture("rotated.pdf") else {
-        println!("[SKIP] rotated.pdf not generated");
+        crate::fixtures::missing("[SKIP] rotated.pdf not generated");
         return;
     };
     let scratch = Scratch::new("copy-reshaped");
@@ -3333,7 +3380,7 @@ fn a_copy_is_refused_when_the_changed_source_has_a_different_page_count() {
 
     // A different document entirely, at the same path.
     let Some(other) = fixture("outline-simple.pdf") else {
-        println!("[SKIP] outline-simple.pdf not generated");
+        crate::fixtures::missing("[SKIP] outline-simple.pdf not generated");
         return;
     };
     std::fs::copy(&other, &open).expect("replace the source");
@@ -3356,7 +3403,7 @@ fn a_copy_is_refused_when_the_changed_source_has_a_different_page_count() {
 #[test]
 fn committing_a_staged_save_puts_the_edits_in_the_file_the_reader_opened() {
     let Some(path) = fixture("rotated.pdf") else {
-        println!("[SKIP] rotated.pdf not generated");
+        crate::fixtures::missing("[SKIP] rotated.pdf not generated");
         return;
     };
     let scratch = Scratch::new("commit");
@@ -3397,7 +3444,7 @@ fn committing_a_staged_save_puts_the_edits_in_the_file_the_reader_opened() {
 #[test]
 fn a_refused_save_in_place_stages_nothing() {
     let Some(path) = fixture("rotated.pdf") else {
-        println!("[SKIP] rotated.pdf not generated");
+        crate::fixtures::missing("[SKIP] rotated.pdf not generated");
         return;
     };
     let scratch = Scratch::new("refused");
@@ -3439,7 +3486,7 @@ fn a_refused_save_in_place_stages_nothing() {
 #[test]
 fn a_destination_that_does_not_exist_yet_is_not_mistaken_for_the_source() {
     let Some(path) = fixture("rotated.pdf") else {
-        println!("[SKIP] rotated.pdf not generated");
+        crate::fixtures::missing("[SKIP] rotated.pdf not generated");
         return;
     };
     let scratch = Scratch::new("fresh");
@@ -3547,7 +3594,7 @@ fn staging_does_not_follow_a_symlink_left_at_its_name() {
 #[test]
 fn nothing_of_the_partial_file_survives_a_successful_write() {
     let Some(path) = fixture("rotated.pdf") else {
-        println!("[SKIP] rotated.pdf not generated");
+        crate::fixtures::missing("[SKIP] rotated.pdf not generated");
         return;
     };
     let scratch = Scratch::new("partial");
@@ -3571,7 +3618,7 @@ fn nothing_of_the_partial_file_survives_a_successful_write() {
 #[test]
 fn the_destination_is_replaced_whole_rather_than_written_through() {
     let Some(path) = fixture("rotated.pdf") else {
-        println!("[SKIP] rotated.pdf not generated");
+        crate::fixtures::missing("[SKIP] rotated.pdf not generated");
         return;
     };
     let scratch = Scratch::new("replace");
@@ -3731,6 +3778,7 @@ fn plan_of_kind(kind: MarkKind, quads: Vec<crate::docmodel::Quad>) -> Plan {
         forms: Vec::new(),
         text_edits: Vec::new(),
         text_layers: Vec::new(),
+        added_text: Vec::new(),
         protection: Default::default(),
         compress: Default::default(),
         new_fields: Vec::new(),
@@ -3835,6 +3883,7 @@ fn a_comment_out_of_the_file_is_overridden_by_its_object() {
         forms: Vec::new(),
         text_edits: Vec::new(),
         text_layers: Vec::new(),
+        added_text: Vec::new(),
         protection: Default::default(),
         compress: Default::default(),
         new_fields: Vec::new(),
@@ -5325,7 +5374,7 @@ fn an_append_leaves_every_byte_of_the_previous_revision_where_it_was() {
     // not merely a faster rewrite.
     let scratch = Scratch::new("append-prefix");
     let Some((at, plan)) = appendable(&scratch, "comments.pdf") else {
-        println!("[SKIP] comments.pdf: fixture not generated");
+        crate::fixtures::missing("[SKIP] comments.pdf: fixture not generated");
         return;
     };
     let before = std::fs::read(&at).expect("read before");
@@ -5385,7 +5434,7 @@ fn an_encrypted_document_can_be_appended_to_and_stays_encrypted() {
         ("incr-encrypted-pw.pdf", "swordfish"),
     ] {
         let Some((at, plan)) = appendable_with(&scratch, name, Some(password)) else {
-            println!("[SKIP] {name}: fixture not generated");
+            crate::fixtures::missing(&format!("[SKIP] {name}: fixture not generated"));
             continue;
         };
         examined += 1;
@@ -5447,7 +5496,7 @@ fn an_append_to_a_document_nobody_unlocked_is_refused() {
     let scratch = Scratch::new("append-locked");
     let Some((at, plan)) = appendable_with(&scratch, "incr-encrypted-pw.pdf", Some("swordfish"))
     else {
-        println!("[SKIP] incr-encrypted-pw.pdf: fixture not generated");
+        crate::fixtures::missing("[SKIP] incr-encrypted-pw.pdf: fixture not generated");
         return;
     };
     let before = std::fs::read(&at).expect("read before");
@@ -5487,7 +5536,7 @@ fn an_appended_mark_is_listed_by_the_page_it_was_made_on() {
     // like that". Annotation-free is the control, not a preference.
     let scratch = Scratch::new("append-mark");
     let Some((at, plan)) = appendable(&scratch, "rotated.pdf") else {
-        println!("[SKIP] rotated.pdf: fixture not generated");
+        crate::fixtures::missing("[SKIP] rotated.pdf: fixture not generated");
         return;
     };
     let pages = page_count(&at);
@@ -5517,7 +5566,7 @@ fn an_append_to_a_file_that_changed_length_is_refused_and_writes_nothing() {
     // opens and is wrong, which is the worst of the three outcomes.
     let scratch = Scratch::new("append-moved");
     let Some((at, plan)) = appendable(&scratch, "comments.pdf") else {
-        println!("[SKIP] comments.pdf: fixture not generated");
+        crate::fixtures::missing("[SKIP] comments.pdf: fixture not generated");
         return;
     };
     let appended = append_bytes(&at, &plan, None).expect("build the update");
@@ -5596,7 +5645,7 @@ fn an_update_built_against_a_different_length_is_refused() {
     // detecting later.
     let scratch = Scratch::new("append-mismatch");
     let Some((at, plan)) = appendable(&scratch, "comments.pdf") else {
-        println!("[SKIP] comments.pdf: fixture not generated");
+        crate::fixtures::missing("[SKIP] comments.pdf: fixture not generated");
         return;
     };
     let original = std::fs::read(&at).expect("read");
@@ -5651,7 +5700,7 @@ fn a_plan_that_crosses_the_worker_boundary_leaves_its_fingerprint_behind() {
     // The control is the rest of the plan: if serialisation dropped
     // everything the assertion would pass for the wrong reason.
     let Some(path) = fixture("text-heavy.pdf") else {
-        println!("[SKIP] text-heavy.pdf: fixture not generated");
+        crate::fixtures::missing("[SKIP] text-heavy.pdf: fixture not generated");
         return;
     };
     let plan = plan_opened_as(&[0], &path);
@@ -5691,7 +5740,7 @@ fn an_append_refuses_a_replacement_that_kept_the_length() {
     // sibling above covers the other half, where the length moves.
     let scratch = Scratch::new("append-swapped");
     let Some((at, plan)) = appendable(&scratch, "comments.pdf") else {
-        println!("[SKIP] comments.pdf: fixture not generated");
+        crate::fixtures::missing("[SKIP] comments.pdf: fixture not generated");
         return;
     };
     let appended = append_bytes(&at, &plan, None).expect("build the update");
@@ -5756,7 +5805,7 @@ fn an_append_writes_through_its_handle_and_says_so_when_the_name_moves() {
     //    rather than reporting success.
     let scratch = Scratch::new("append-renamed");
     let Some((at, plan)) = appendable(&scratch, "comments.pdf") else {
-        println!("[SKIP] comments.pdf: fixture not generated");
+        crate::fixtures::missing("[SKIP] comments.pdf: fixture not generated");
         return;
     };
     let appended = append_bytes(&at, &plan, None).expect("build the update");
@@ -5819,7 +5868,7 @@ fn an_append_that_cannot_be_read_back_puts_the_file_back_as_it_was() {
     // its previous length and content.
     let scratch = Scratch::new("append-rollback");
     let Some((at, plan)) = appendable(&scratch, "comments.pdf") else {
-        println!("[SKIP] comments.pdf: fixture not generated");
+        crate::fixtures::missing("[SKIP] comments.pdf: fixture not generated");
         return;
     };
     let before = std::fs::read(&at).expect("read before");
@@ -5887,7 +5936,7 @@ fn the_coordinator_does_not_parse_the_file_it_wrote() {
     // both answer --- so the thing to assert is *who was asked*.
     let scratch = Scratch::new("append-delegates");
     let Some((at, plan)) = appendable(&scratch, "comments.pdf") else {
-        println!("[SKIP] comments.pdf: fixture not generated");
+        crate::fixtures::missing("[SKIP] comments.pdf: fixture not generated");
         return;
     };
     let mut appended = append_bytes(&at, &plan, None).expect("build the update");
@@ -7206,7 +7255,7 @@ fn the_re_read_is_asked_for_the_length_the_save_produced() {
     // shrug it off.
     let scratch = Scratch::new("append-asks-for-length");
     let Some((at, plan)) = appendable(&scratch, "comments.pdf") else {
-        println!("[SKIP] comments.pdf: fixture not generated");
+        crate::fixtures::missing("[SKIP] comments.pdf: fixture not generated");
         return;
     };
     let appended = append_bytes(&at, &plan, None).expect("build the update");
@@ -7243,7 +7292,7 @@ fn an_append_that_parses_and_has_lost_pages_is_also_put_back() {
     // refusing: a file that opens, and is empty.
     let scratch = Scratch::new("append-empty");
     let Some((at, plan)) = appendable(&scratch, "comments.pdf") else {
-        println!("[SKIP] comments.pdf: fixture not generated");
+        crate::fixtures::missing("[SKIP] comments.pdf: fixture not generated");
         return;
     };
     let before = std::fs::read(&at).expect("read before");
@@ -7301,7 +7350,7 @@ fn an_append_is_refused_for_a_plan_that_needs_a_rewrite() {
     // cannot express.
     let scratch = Scratch::new("append-wrong-mode");
     let Some((at, mut plan)) = appendable(&scratch, "comments.pdf") else {
-        println!("[SKIP] comments.pdf: fixture not generated");
+        crate::fixtures::missing("[SKIP] comments.pdf: fixture not generated");
         return;
     };
     let before = std::fs::read(&at).expect("read before");
@@ -7327,7 +7376,7 @@ fn an_append_is_refused_when_the_file_changed_since_it_was_opened() {
     // refusal on one of them.
     let scratch = Scratch::new("append-changed");
     let Some((at, plan)) = appendable(&scratch, "comments.pdf") else {
-        println!("[SKIP] comments.pdf: fixture not generated");
+        crate::fixtures::missing("[SKIP] comments.pdf: fixture not generated");
         return;
     };
     {
@@ -7369,7 +7418,7 @@ fn a_third_parser_reads_an_appended_document() {
     let mut examined = 0;
     for name in ["text-heavy.pdf", "rotated.pdf", "links.pdf", "mixed.pdf"] {
         let Some((at, plan)) = appendable(&scratch, name) else {
-            println!("[SKIP] {name}: fixture not generated");
+            crate::fixtures::missing(&format!("[SKIP] {name}: fixture not generated"));
             continue;
         };
         let source = std::fs::read(&at).expect("read source");
@@ -7422,7 +7471,7 @@ fn bench_rewrite_footprint() {
     let me = std::process::id();
     for name in ["text-heavy.pdf", "incr-scan-5p.pdf", "incr-scan-40p.pdf"] {
         let Some(path) = fixture(name) else {
-            println!("[SKIP] {name}: fixture not generated");
+            crate::fixtures::missing(&format!("[SKIP] {name}: fixture not generated"));
             continue;
         };
         let bytes = std::fs::metadata(&path).map(|m| m.len()).unwrap_or(0);
@@ -7536,7 +7585,7 @@ fn bench_append_against_rewrite() {
     ] {
         let scratch = Scratch::new("bench");
         let Some((at, plan)) = appendable(&scratch, name) else {
-            println!("[SKIP] {name}: fixture not generated");
+            crate::fixtures::missing(&format!("[SKIP] {name}: fixture not generated"));
             continue;
         };
         let size = std::fs::metadata(&at).expect("stat").len();
@@ -7830,6 +7879,7 @@ fn a_mark_on_a_page_two_numbers_share_is_refused() {
         forms: Vec::new(),
         text_edits: Vec::new(),
         text_layers: Vec::new(),
+        added_text: Vec::new(),
         protection: Default::default(),
         compress: Default::default(),
         new_fields: Vec::new(),
@@ -7894,6 +7944,7 @@ fn a_mark_on_an_unshared_page_of_a_document_that_has_a_shared_one_is_written() {
         forms: Vec::new(),
         text_edits: Vec::new(),
         text_layers: Vec::new(),
+        added_text: Vec::new(),
         protection: Default::default(),
         compress: Default::default(),
         new_fields: Vec::new(),
@@ -7963,6 +8014,7 @@ fn a_plan_carrying_a_mark_is_not_the_file_on_disk() {
         forms: Vec::new(),
         text_edits: Vec::new(),
         text_layers: Vec::new(),
+        added_text: Vec::new(),
         protection: Default::default(),
         compress: Default::default(),
         new_fields: Vec::new(),
@@ -8007,6 +8059,7 @@ fn a_plan_that_only_redacts_is_neither_the_file_nor_an_append() {
         forms: Vec::new(),
         text_edits: Vec::new(),
         text_layers: Vec::new(),
+        added_text: Vec::new(),
         protection: Default::default(),
         compress: Default::default(),
         new_fields: Vec::new(),

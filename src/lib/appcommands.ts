@@ -661,6 +661,15 @@ export interface AppActions {
   recogniseText(): void;
   /** Compare the saved file's text with its pages and list what is not shown. */
   findHiddenText(): void;
+  /**
+   * Show the other document at `index` of `sides().others` beside this one,
+   * compare their words and list the changes. This document is the older.
+   */
+  compareWith(index: number): void;
+  /** How many changes the comparison on screen lists; 0 with none. */
+  changeCount(): number;
+  /** Go to the next (1) or previous (-1) change, on both sides. */
+  stepChange(direction: 1 | -1): void;
   /** Fetch the languages this machine offers and ask which to recognise in. */
   chooseRecognitionLanguage(): void;
   /**
@@ -676,6 +685,8 @@ export interface AppActions {
   protectCopy(): void;
   /** Ask for a name and write a copy that opens without the password. */
   unprotectCopy(): void;
+  /** Ask what to write, then where, and write a copy with page numbers or a watermark. */
+  addText(kind: "numbers" | "watermark"): void;
   /** Offer the ways to make a copy smaller, ask for a name and write it. */
   compressCopy(): void;
   /**
@@ -1128,6 +1139,33 @@ export function registerAppCommands(
       title: "Find text the pages do not show",
       enabled: withDocument,
       run: () => actions.findHiddenText(),
+    },
+    {
+      // Asks for the other document by name, as "Show side by side with..."
+      // does, and shows it there: the two documents are read beside each
+      // other, and the one the reader is in is taken as the older. A document
+      // not yet open is opened first, which is what makes it a choice here.
+      id: "file.compareWith",
+      title: "Compare with...",
+      enabled: () => withDocument() && actions.sides().others.length > 0,
+      argument: {
+        get placeholder() {
+          return partnerPlaceholder(actions.sides().others);
+        },
+        problem: (raw: string) => {
+          const picked = pickPartner(raw, actions.sides().others);
+          return "problem" in picked ? picked.problem : null;
+        },
+        preview: (raw: string) => {
+          const others = actions.sides().others;
+          const picked = pickPartner(raw, others);
+          return "index" in picked ? (others[picked.index] ?? "") : "";
+        },
+        run: (raw: string) => {
+          const picked = pickPartner(raw, actions.sides().others);
+          if ("index" in picked) actions.compareWith(picked.index);
+        },
+      },
     },
     {
       id: "file.properties",
@@ -2424,6 +2462,21 @@ export function registerAppCommands(
       run: () => actions.unprotectCopy(),
     },
     {
+      // A copy rather than an edit of the open document, as the password and
+      // the smaller copy are: the numbers count the pages of the file written,
+      // and a reader keeps an unnumbered original.
+      id: "file.addPageNumbers",
+      title: "Save a copy with page numbers...",
+      enabled: withDocument,
+      run: () => actions.addText("numbers"),
+    },
+    {
+      id: "file.addWatermark",
+      title: "Save a copy with a watermark...",
+      enabled: withDocument,
+      run: () => actions.addText("watermark"),
+    },
+    {
       // A separate fallback rather than a mode of `file.redactCopy`: the result
       // has a different capability contract, and the title must say so before a
       // reader chooses it. The confirmation and destination dialog live at the
@@ -2659,6 +2712,21 @@ export function registerAppCommands(
       run: () => {
         actions.viewer()?.stepMark(-1);
       },
+    },
+    {
+      // On both sides at once: a change is a place in each document, and
+      // stepping one side alone would leave the other showing the change
+      // before.
+      id: "nav.nextChange",
+      title: "Next change",
+      enabled: () => withDocument() && actions.changeCount() > 0,
+      run: () => actions.stepChange(1),
+    },
+    {
+      id: "nav.previousChange",
+      title: "Previous change",
+      enabled: () => withDocument() && actions.changeCount() > 0,
+      run: () => actions.stepChange(-1),
     },
     {
       id: "nav.firstPage",

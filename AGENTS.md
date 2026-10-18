@@ -185,6 +185,8 @@ touching `src-tauri/src/textedit/`. Its topics, in order:
 - A text layer over a scanned page.
 - Drawings under a redaction.
 - A signature image from a file.
+- Comparing two documents.
+- Text on every page.
 
 **The command-line tool** is `cli/` and a second binary, `bin/tpdf-cli.rs`, in `src-tauri/src/`.
 A subcommand is one module and one line in `COMMANDS` (`cli.rs`, *Adding a command*). Every

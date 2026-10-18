@@ -54,11 +54,14 @@ export const TOOL_GROUPS: ToolGroup[] = [
       { id: "file.saveAttachment", label: "Save an attachment..." },
       { id: "file.protect", label: "Save a copy with a password..." },
       { id: "file.unprotect", label: "Save a copy without its password..." },
+      { id: "file.addPageNumbers", label: "Save a copy with page numbers..." },
+      { id: "file.addWatermark", label: "Save a copy with a watermark..." },
       { id: "file.signField", label: "Sign in the signature field...", rule: true },
       { id: "file.addValidationData", label: "Add long-term validation data..." },
       { id: "file.print", label: "Print...", rule: true },
       { id: "file.properties", label: "Document properties", rule: true },
       { id: "file.findHiddenText", label: "Find text the pages do not show" },
+      { id: "file.compareWith", label: "Compare with..." },
     ],
   },
   {
@@ -219,7 +222,7 @@ export const WINDOW_MENU: MenuSection[] = [
     label: "Side by side",
     items: [
       "view.sideBySide", "view.moveToOtherSide", "view.bothSides", "view.switchSides",
-      "view.focusOtherSide", "view.syncScrolling",
+      "view.focusOtherSide", "view.syncScrolling", "nav.nextChange", "nav.previousChange",
     ],
   },
   {

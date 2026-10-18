@@ -136,6 +136,7 @@ pub(super) fn restricts(rights: i64) -> bool {
     rights & !0x108 != 0
 }
 
+pub(super) mod added;
 pub(super) mod fallback;
 mod fallback_subset;
 pub(super) mod installed;

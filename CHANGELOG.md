@@ -17,6 +17,49 @@ as *downloadable*, while the release sat as a draft that GitHub showed to nobody
 are given now because they are different facts, and only the second one means a reader can
 have the binary.)
 
+## [26.10.23] - Unreleased
+
+### Added
+
+- **Compare two documents.** *Compare with…* puts another open document beside the one you
+  are in and lists every change in the words between them, in a new *Changes* tab of the
+  sidebar on both sides. Removed words are washed red on the older document and added
+  words green on the newer one; choosing a change, or *Next change* and *Previous change*,
+  moves both documents to it. Only the words are compared, so text that moved to another
+  line or page is no change, and the tab says that pictures, drawings and formatting were
+  not compared. After an edit to either document the tab says the comparison is out of
+  date.
+- **`tpdf compare old.pdf new.pdf`** prints the same changes, one line per change in
+  `wdiff`'s notation, or as JSON with `--json`, and exits 1 when the words differ. The
+  Python client has `compare()`.
+- **Page numbers, headers, footers and watermarks.** *Save a copy with page numbers…*
+  writes *Page 1 of 3* at the bottom center of every page unless you change it: the text,
+  with `{page}` and `{pages}` in it, one of nine positions, the size, the first number and
+  which pages. *Save a copy with a watermark…* writes a line of text across every page, grey,
+  at 45 degrees and a third opaque. A page shown turned gets its text upright as displayed.
+  Latin text is set in Helvetica, which adds nothing to the file. Greek, Cyrillic, Chinese,
+  Japanese and Korean are set in the Noto Sans fonts tpdf carries, with only the letters
+  used embedded, about 10 KB for a mixed line. Scripts whose letters join or change order,
+  such as Arabic, Hebrew, Hindi and Thai, are refused rather than drawn wrong. The text is
+  marked as a page artifact, so screen readers skip it. Each copy
+  is read back and kept only when every page holds its line.
+- **`tpdf page-numbers`** and **`tpdf watermark`** do the same from the command line, and
+  the Python client has `page_numbers()` and `watermark()`.
+
+### Fixed
+
+- **Text set at an angle no longer scrambles the page's reading order.** A watermark turned
+  across a page, from tpdf or any other program, used to join the body lines it crossed
+  into one, so copying the text, *tpdf text* and the screen reader got merged lines with
+  the watermark's letters mixed in. Text turned more than ten degrees from upright or
+  sideways is now read on its own, after the rest of the page.
+- **Saving over a file on Windows waits briefly for a virus scanner.** When a scanner or
+  the search indexer was reading the file being replaced, the save failed with *Access is
+  denied*; tpdf now tries again for up to about a second and a half.
+- **Copy a region as a picture on Linux no longer depends on the web view.** WebKitGTK
+  refused the web view's clipboard write in testing; tpdf now puts the picture on the
+  clipboard itself, as on macOS.
+
 ## [26.10.22] - 2026-10-17
 
 ### Fixed

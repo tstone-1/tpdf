@@ -1,0 +1,39 @@
+{
+  "left_words": 412,
+  "right_words": 398,
+  "removed_words": 16,
+  "added_words": 2,
+  "changes": [
+    {
+      "kind": "replaced",
+      "left": [
+        {
+          "page": 0,
+          "start": 12,
+          "end": 14
+        }
+      ],
+      "right": [
+        {
+          "page": 0,
+          "start": 12,
+          "end": 14
+        }
+      ],
+      "left_at": {
+        "page": 0,
+        "index": 12
+      },
+      "right_at": {
+        "page": 0,
+        "index": 12
+      },
+      "removed": "30",
+      "added": "45",
+      "before": "Payment is due within",
+      "after": "days of the invoice"
+    }
+  ],
+  "total_changes": 3,
+  "unaligned": 0
+}

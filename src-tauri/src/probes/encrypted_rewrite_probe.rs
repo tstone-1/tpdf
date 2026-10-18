@@ -71,6 +71,12 @@ impl Report {
             self.passed + self.failed,
             self.skipped
         );
+        // A run in which nothing passed measured nothing, whatever it skipped
+        // (`redact-reach-probe`'s fix, accffc98, for the same shape).
+        if self.passed == 0 {
+            println!("[FAIL] no check passed, so this run measured nothing");
+            std::process::exit(1);
+        }
         std::process::exit(i32::from(self.failed != 0));
     }
 }
@@ -124,6 +130,7 @@ fn dropping_last(pages: usize) -> Plan {
         forms: Vec::new(),
         text_edits: Vec::new(),
         text_layers: Vec::new(),
+        added_text: Vec::new(),
         protection: Default::default(),
         compress: Default::default(),
         new_fields: Vec::new(),

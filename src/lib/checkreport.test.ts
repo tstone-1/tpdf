@@ -79,6 +79,30 @@ beforeEach(() => {
   core.invoke.mockReset();
 });
 
+describe("the exit a run asks for", () => {
+  it("fails a run in which every check was not applicable", async () => {
+    const report = new Report();
+    report.skip("a check", "there is no second page");
+    report.skip("another", "the document is not signed");
+    await report.finish();
+    expect(exitCode()).toBe(1);
+    expect(lines()).toContain("[FAIL] no check passed, so this run measured nothing");
+  });
+
+  it("fails a run that recorded nothing", async () => {
+    await new Report().finish();
+    expect(exitCode()).toBe(1);
+  });
+
+  it("passes one check that passed beside any number not applicable", async () => {
+    const report = new Report();
+    report.check("a check that passed", true, "detail");
+    report.skip("a check", "there is no second page");
+    await report.finish();
+    expect(exitCode()).toBe(0);
+  });
+});
+
 describe("the line a result is printed as", () => {
   it("begins with the marker every harness splits on", async () => {
     const report = new Report();

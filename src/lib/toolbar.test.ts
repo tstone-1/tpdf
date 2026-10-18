@@ -59,6 +59,7 @@ function harness() {
     sides: () => ({ split: false, focused: "left" as const, others: [] }),
     recentDocuments: () => 0,
     tabsToReopen: () => 0,
+    changeCount: () => 0,
   } satisfies Partial<AppActions> as unknown as AppActions;
   const registry = new CommandRegistry();
   registerAppCommands(registry, actions);

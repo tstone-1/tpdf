@@ -77,6 +77,15 @@
     type Passage,
     type Progress as HiddenProgress,
   } from "./lib/hiddentext";
+  import { afterAdding, suggestedName as addedTextName, type Kind as AddTextKind } from "./lib/addtext";
+  import { AddTextDialog } from "./lib/addtextdialog";
+  import {
+    COMPARING,
+    ComparisonState,
+    gather,
+    placeOf,
+    STARTING as COMPARE_STARTING,
+  } from "./lib/comparison";
   import { CommandLineTool } from "./lib/clitoolstate";
   import { ExplorerIntegration } from "./lib/explorerstate";
   import {
@@ -977,6 +986,7 @@
           `Discard unsaved changes to ${basename(tab.path)}?`,
           { title: "Close tab", kind: "warning", okLabel: "Discard changes", cancelLabel: "Keep open" },
         )) return;
+        endComparison(id);
         if (id === openView) clearActiveDocument();
         panes.closed(id, tabs.all.map((entry) => entry.view));
         tabs.remove(id);
@@ -1020,6 +1030,7 @@
         bodyHeld = false;
         setSyncScroll(false);
         clearActiveDocument();
+        for (const id of ids) comparisons.end(id);
         for (const id of ids) tabs.remove(id);
         panes.cleared();
         refreshTabs();
@@ -1074,6 +1085,8 @@
   // `hiddenRuns`'; the flag is its `running`, held here so the header redraws.
   const hiddenRuns = new HiddenRuns();
   let findingHidden = $state(false);
+  /** The comparison on screen, about two views; see `comparison.ts`. */
+  const comparisons = new ComparisonState<ViewId>();
   /**
    * The open document's page edits, or null when there is none.
    *
@@ -1230,6 +1243,7 @@
   let propertiesDialog: PropertiesDialog | null = null;
   let passwordDialog: PasswordDialog | null = null;
   let newPasswordDialog: NewPasswordDialog | null = null;
+  let addTextDialog: AddTextDialog | null = null;
   let fieldPropertiesDialog: FieldPropertiesDialog | null = null;
   let compressDialog: CompressDialog | null = null;
   let webLinkDialog: WebLinkDialog | null = null;
@@ -1776,6 +1790,9 @@
     redactRasterCopy: () => void redactRasterCopy(),
     recogniseText: () => void recogniseText(),
     findHiddenText: () => void findHiddenText(),
+    compareWith: (index) => void compareWith(index),
+    changeCount: () => comparisons.count,
+    stepChange: (direction) => { if (comparisons.step(direction) >= 0) void goToChange(); },
     chooseRecognitionLanguage: () => void chooseRecognitionLanguage(),
     recognitionLanguages: () => {
       const offered = recognitionLanguage.question();
@@ -1785,6 +1802,7 @@
     dropRecognitionLanguages: () => recognitionLanguage.drop(),
     protectCopy: () => void protectCopy(true),
     unprotectCopy: () => void protectCopy(false),
+    addText: (kind) => void addTextCopy(kind),
     compressCopy: () => void compressCopy(),
     redactDocument: () => redactDocument(),
     extractPages: (slots) => void extractPages(slots),
@@ -2079,12 +2097,12 @@
    * *Copy a region as a picture*: arms a drag, and the region it covers goes to
    * the clipboard as a PNG a worker rendered (`regionshot.ts`).
    *
-   * On macOS the backend puts it on the pasteboard (`region_copy`), because
-   * WebKit refuses a page's `ClipboardItem` outside a user gesture. Elsewhere
-   * the web view writes it, handed the PNG as a promise so the write starts at
-   * the drag's end, where the reader's gesture is; neither WebView2 nor
-   * WebKitGTK is measured, and where one refuses the window says what it
-   * refused.
+   * On macOS and Linux the backend puts it on the clipboard (`region_copy`),
+   * because WebKit and WebKitGTK refuse a page's `ClipboardItem` outside a user
+   * gesture. On Windows the web view writes it, handed the PNG as a promise so
+   * the write starts at the drag's end, where the reader's gesture is; WebView2
+   * took the window checks' synthetic drag, and where it refuses the window
+   * says what it refused.
    */
   async function copyRegion(): Promise<void> {
     const target = viewer;
@@ -2094,7 +2112,7 @@
     const request = regionRequest(region.source, region.quad, region.screenScale);
     if (__TPDF_CHECKS__) lastRegion = request;
     try {
-      if (isMac()) await call("region_copy", { tile: tileSpec(request) });
+      if (isMac() || isLinux()) await call("region_copy", { tile: tileSpec(request) });
       else await navigator.clipboard.write([new ClipboardItem({ "image/png": fetchTilePng(request) })]);
       tell(regionSaid(request));
     } catch (e) {
@@ -2820,6 +2838,10 @@
       for (const twin of tabs.all) {
         if (twin.edits === model && twin.view !== id) asDocument(twin.view, () => adoptEdit(model, after));
       }
+      // A comparison names characters an edit can have moved, in any view of
+      // the document. See `ComparisonState`.
+      const touched = tabs.all.filter((tab) => tab.edits === model).map((tab) => tab.view);
+      if (touched.map((view) => comparisons.invalidate(view)).some(Boolean)) refreshComparison();
       return adopted ? after : null;
     } catch (e) {
       // Shown rather than logged. A refusal here is about the document --- a page
@@ -3442,6 +3464,52 @@
   }
 
   /**
+   * Writes a copy with page numbers or a watermark, asked for in the dialog.
+   *
+   * `protectCopy`'s shape: the dialog first, then the save panel, then the
+   * copy, and the open document is left as it was. The pages the dialog names
+   * are slots, which are the pages of the copy in its order.
+   */
+  async function addTextCopy(kind: AddTextKind): Promise<void> {
+    if (opening) return;
+    return documentTasks.run(async () => {
+      if (!edits || !openPathName || copyTaskBusy) return;
+      const settled = settleDrafts();
+      copyTaskBusy = true;
+      refreshMenu();
+      try {
+        await settled;
+        if (!edits || !openPathName) return;
+        const source = openPathName;
+        const added = await addTextDialog?.ask(kind, viewer?.slotCount ?? openPageCount) ?? null;
+        if (added === null) return;
+        const suggested = addedTextName(source, kind);
+        const panel = () =>
+          saveDialog({
+            title: kind === "numbers" ? "Save a copy with page numbers" : "Save a copy with a watermark",
+            defaultPath: suggested,
+            filters: [{ name: "PDF", extensions: ["pdf"] }],
+          });
+        // The checks build answers the panel; see `saveanswer.ts`.
+        const chosen = __TPDF_CHECKS__ && signSaves
+          ? await signSaves.ask(suggested, panel)
+          : await panel();
+        if (!chosen || !edits) return;
+        blockingTask = "Saving the copy...";
+        await tick();
+        say(afterAdding(await edits.addTextCopy(source, chosen, [added]), chosen, kind));
+      } catch (e) {
+        if (e instanceof SaveCancelled) return;
+        say(String(e));
+      } finally {
+        blockingTask = null;
+        copyTaskBusy = false;
+        refreshMenu();
+      }
+    });
+  }
+
+  /**
    * Writes a copy in which the scanned pages can be searched, and opens it.
    *
    * `redactRasterCopy`'s shape: the task blocks document commands, because the
@@ -3573,6 +3641,121 @@
         refreshMenu();
       }
     });
+  }
+
+  /**
+   * Shows the other document at `index` of the partners beside this one,
+   * compares the words of the two and lists the changes in both sidebars.
+   *
+   * The document the reader is in is taken as the older: what it has and the
+   * other does not is "removed". Both are read through their viewers, page by
+   * page as each shows them, so a document with pages moved or inserted is
+   * compared as it is on screen. Unsaved changes are part of it for the same
+   * reason: the text is the view's. The task blocks document commands while
+   * it reads, as the check for hidden text does.
+   */
+  async function compareWith(index: number): Promise<void> {
+    const partner = besidePartners()[index];
+    if (!partner || opening) return;
+    const older = openView, newer = partner.tab.view;
+    await moveTab(newer, otherSide(panes.focused));
+    // Moving a tab takes the reader with it; they asked to compare from the
+    // document they were in, so they are put back there.
+    const home = panes.sideOf(older);
+    if (home !== panes.focused) focusSide(home);
+    await documentTasks.run(async () => {
+      const left = asDocument(older, () => viewer), right = asDocument(newer, () => viewer);
+      const names = { left: basename(tabs.find(older)?.path ?? ""), right: basename(tabs.find(newer)?.path ?? "") };
+      if (!left || !right || copyTaskBusy) return;
+      copyTaskBusy = true;
+      blockingTask = COMPARE_STARTING;
+      refreshMenu();
+      try {
+        const [a, b] = await Promise.all([
+          gather(left.slotCount, (slot) => left.loadText(slot)),
+          gather(right.slotCount, (slot) => right.loadText(slot)),
+        ]);
+        blockingTask = COMPARING;
+        const result = await call("compare_texts", { left: a.pages, right: b.pages });
+        // Either side may have been closed or replaced inside the wait.
+        if (asDocument(older, () => viewer) !== left || asDocument(newer, () => viewer) !== right) return;
+        // A comparison already on screen is replaced; the documents it was
+        // about and this one is not are cleared of it.
+        const before = comparisons.views;
+        comparisons.start(older, newer, { result, names, withoutText: { left: a.withoutText, right: b.withoutText } });
+        for (const view of before ? [before.left, before.right] : []) {
+          if (view !== older && view !== newer) asDocument(view, () => showComparisonHere());
+        }
+        refreshComparison();
+        for (const view of [older, newer]) asDocument(view, () => sidebar?.selectTab("changes"));
+        if (!sidebarShown) toggleSidebar();
+        if (comparisons.step(1) >= 0) void goToChange();
+      } catch (e) {
+        say(String(e));
+      } finally {
+        blockingTask = null;
+        copyTaskBusy = false;
+        refreshMenu();
+      }
+    });
+  }
+
+  /**
+   * Gives the mounted document's viewer and sidebar what the comparison says
+   * about it: its side's paint and the rows, or nothing when it is not part of
+   * one. Runs as the document.
+   */
+  function showComparisonHere(): void {
+    const paint = comparisons.paintFor(openView);
+    if (paint) {
+      viewer?.setDifferences(paint.spans, paint.side);
+      viewer?.setCurrentDifference(paint.current);
+    } else {
+      viewer?.clearDifferences();
+    }
+    const part = comparisons.sideOf(openView) !== null;
+    sidebar?.setCompared(part ? comparisons.compared : null);
+    if (part && comparisons.stale) sidebar?.changes.setOutOfDate();
+    if (part && comparisons.current >= 0) sidebar?.changes.setCurrent(comparisons.current);
+  }
+
+  /** {@link showComparisonHere} for both documents of the comparison. */
+  function refreshComparison(): void {
+    const views = comparisons.views;
+    if (!views) return;
+    for (const view of [views.left, views.right]) asDocument(view, () => showComparisonHere());
+  }
+
+  /** Ends the comparison when it is about `view`, and clears the other document of it. */
+  function endComparison(view: ViewId): void {
+    const views = comparisons.end(view);
+    if (!views) return;
+    for (const other of [views.left, views.right]) {
+      if (other !== view) asDocument(other, () => showComparisonHere());
+    }
+  }
+
+  /**
+   * Shows the current change on both sides: the row in each sidebar, the
+   * stronger paint, and each document scrolled to it --- for a change one side
+   * has no words of, to where its words would stand. With scrolling together
+   * on, the two are locked again where they land.
+   */
+  async function goToChange(): Promise<void> {
+    const views = comparisons.views, current = comparisons.current;
+    const change = comparisons.compared?.result.changes[current];
+    if (!views || !change) return;
+    const moves: Promise<void>[] = [];
+    for (const side of ["left", "right"] as const) {
+      asDocument(views[side], () => {
+        viewer?.setCurrentDifference(current);
+        sidebar?.changes.setCurrent(current);
+        const at = placeOf(change, side);
+        if (viewer) moves.push(viewer.showText(at.page, at.index));
+      });
+    }
+    await Promise.all(moves);
+    if (syncScroll) lockSides();
   }
 
   /**
@@ -4993,6 +5176,7 @@
       // `passworddialog.ts`.
       passwordDialog = new PasswordDialog(document.body);
       newPasswordDialog = new NewPasswordDialog(document.body);
+      addTextDialog = new AddTextDialog(document.body);
       fieldPropertiesDialog = new FieldPropertiesDialog(document.body);
       compressDialog = new CompressDialog(document.body);
 
@@ -5702,6 +5886,7 @@
         planFor: (id) => redactionPlans.get(id),
       },
       hidden: { onPick: (passage) => showHidden(passage) },
+      changes: { onPick: (index) => { if (comparisons.pick(index)) void goToChange(); } },
       pages: {
         doc: doc.id,
         pageCount: doc.page_count,
@@ -6383,6 +6568,8 @@
       panes.mounted(view, slot);
       showModel(viewer, sidebar, opening, resume, retained ? kept : null);
       readAfterFirstPaint(view, doc.id, viewer);
+      // A document compared before it was last unmounted shows it again.
+      showComparisonHere();
     } catch (e) {
       abandonOpen(acquired, replaced, twins);
       const said = openFailure(e, resuming);

@@ -200,6 +200,7 @@ async function run(path: string): Promise<void> {
     // Not driven by any phase yet: the check behind it needs the application's
     // command, and `hiddenlist.test.ts` presses the rows.
     hidden: { onPick: () => {} },
+    changes: { onPick: () => {} },
     pages: {
       doc: doc.id,
       pageCount: doc.page_count,

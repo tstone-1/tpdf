@@ -49,6 +49,17 @@ panel, which no phase can answer, and both report through the same sentence.
   uv run scripts/tabs_check.py <app> testdata/redact-pages.pdf --phase redact-pages
 --saved-copy keeps the first pass's redacted output, which is a real redacted
 file an independent reader can be pointed at.
+--phase compare opens the PDF and --other, compares the first with the second through
+Compare with..., and reads both viewers and both sidebars: removed words painted on the
+first, added words on the second, both on the first change, Next and Previous change moving
+both, an edit taking the paint off and saying the list is out of date, and closing the
+second ending it. --other must differ from the PDF in at least two places in its words:
+  uv run scripts/tabs_check.py <app> testdata/text-base14.pdf --phase compare --other testdata/links.pdf
+--phase add-text runs Save a copy with page numbers and Save a copy with a watermark through
+their dialog: a field that is not one is refused with the dialog left open, Escape asks for
+no name, Greek page numbers are written in the embedded font, and the three copies are read
+back by the tool afterwards. It needs a PDF of two or more pages:
+  uv run scripts/tabs_check.py <app> testdata/links.pdf --phase add-text
 --phase closing opens three documents and closes to the right of the middle one, reopens
 it, closes to the left, closes the others, and reopens the one closed last, reading the
 window's own tab list after each:
@@ -127,7 +138,7 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("binary", type=Path)
     parser.add_argument("pdf", type=Path)
-    parser.add_argument("--phase", choices=("tabs", "sides", "views", "answers", "form-beside", "tabs-position", "tabs-rotation", "forms", "signatures", "textedit", "textedit-dash", "textedit-cff-unicode", "textedit-cff-ligatures", "textedit-passport", "textedit-agenda", "textedit-agenda-page2", "textedit-factsheet", "textedit-factsheet-body", "textedit-w3c", "textedit-latin1", "textedit-cid-latin1", "textedit-overhang", "textedit-multipage", "textedit-wrapped", "textedit-wide-spacing", "textedit-list-child", "textedit-grow", "textedit-push", "textedit-w9", "textedit-centred", "import", "redact-pages", "sign", "recognise", "protect", "pictures", "compress", "fields", "fields-turned", "screen", "closing", "fit"), default="tabs")
+    parser.add_argument("--phase", choices=("tabs", "sides", "views", "answers", "form-beside", "tabs-position", "tabs-rotation", "forms", "signatures", "textedit", "textedit-dash", "textedit-cff-unicode", "textedit-cff-ligatures", "textedit-passport", "textedit-agenda", "textedit-agenda-page2", "textedit-factsheet", "textedit-factsheet-body", "textedit-w3c", "textedit-latin1", "textedit-cid-latin1", "textedit-overhang", "textedit-multipage", "textedit-wrapped", "textedit-wide-spacing", "textedit-list-child", "textedit-grow", "textedit-push", "textedit-w9", "textedit-centred", "import", "redact-pages", "compare", "add-text", "sign", "recognise", "protect", "pictures", "compress", "fields", "fields-turned", "screen", "closing", "fit"), default="tabs")
     parser.add_argument("--other", type=Path, help="The second file --phase import and --phase answers read")
     parser.add_argument("--identity", help="--phase sign only: the SHA-256 of the signing certificate")
     # 90 s by default; the signing phase waits on a person answering the
@@ -148,7 +159,9 @@ def main() -> int:
         copies = [first, second]
         if args.phase == "answers" and not args.other:
             parser.error("--phase answers needs --other, a PDF with comments and a link")
-        if args.phase in ("import", "answers"):
+        if args.phase == "compare" and not args.other:
+            parser.error("--phase compare needs --other, a second PDF whose words differ from the first's")
+        if args.phase in ("import", "answers", "compare"):
             if not args.other:
                 parser.error("--phase import needs --other, a second PDF of three or more pages with different text")
             # A copy as well, so a save that went wrong could not touch the input.
@@ -185,7 +198,7 @@ def main() -> int:
             scan.write_bytes(scan_pdf(picture.read_bytes(), 200, 1))
             long.write_bytes(scan_pdf(picture.read_bytes(), 200, 6))
             copies = [scan, long, copied]
-        if args.phase == "protect":
+        if args.phase in ("protect", "add-text"):
             copied = room / "copies"
             copied.mkdir()
             copies = [first, copied]
@@ -269,6 +282,8 @@ def main() -> int:
             passed = recognised_files(room / "copies") and passed
         if args.phase == "protect":
             passed = protected_files(room / "copies", args.binary) and passed
+        if args.phase == "add-text":
+            passed = text_added_files(room / "copies", args.binary) and passed
         if args.phase == "pictures":
             passed = picture_files(room / "copies", args.binary) and passed
         if args.phase == "compress":
@@ -572,6 +587,60 @@ def protected_files(directory: Path, binary: Path) -> bool:
     else:
         checks = [("locked.pdf and open.pdf were written", False)]
     extra = sorted(p.name for p in directory.iterdir() if p.name not in ("locked.pdf", "open.pdf"))
+    checks.append((f"nothing else is left in the directory: {extra}", not extra))
+    for what, good in checks:
+        print(f"[{'OK' if good else 'FAIL'}]   {what}")
+    return all(good for _, good in checks)
+
+
+# What `addtextcheck.ts` writes, in the order it writes them.
+ADDED_TEXT_FILES = ("numbered.pdf", "watermarked.pdf", "greek.pdf")
+
+
+def text_added_files(directory: Path, binary: Path) -> bool:
+    """What the page-number and watermark phase left on disk, read by the tool.
+
+    `numbered.pdf` must read "Seite 1 von N" on its first page and "Seite N von
+    N" on its last, the text typed in the dialog with its fields filled in;
+    `watermarked.pdf` must read DRAFT on page 1 and nowhere else, after the
+    page's own lines; and `greek.pdf` must read its Greek page number, set in
+    the embedded Noto Sans. The dismissed copy was never written.
+
+    Read as UTF-8 whatever the console's code page: the tool writes UTF-8, and
+    the Greek is the point. The labels printed stay ASCII.
+    """
+    tool = binary.resolve().parent / ("tpdf-cli.exe" if os.name == "nt" else "tpdf-cli")
+
+    def pages(path: Path) -> list[str]:
+        done = subprocess.run([str(tool), "text", str(path), "--json"],
+                              capture_output=True, text=True, encoding="utf-8", timeout=120, check=False)
+        if done.returncode != 0:
+            return []
+        return [" ".join(page.get("text", "").split()) for page in json.loads(done.stdout).get("pages", [])]
+
+    numbered, marked, greek = (directory / name for name in ADDED_TEXT_FILES)
+    checks = []
+    if numbered.is_file() and marked.is_file() and greek.is_file():
+        read = pages(numbered)
+        last = len(read)
+        checks += [
+            ("numbered.pdf reads its first page's number", bool(read) and "Seite 1 von" in read[0]),
+            (f"and its last page's, Seite {last} von {last}", bool(read) and f"Seite {last} von {last}" in read[-1]),
+        ]
+        # Through `text`, the reading order: the turned watermark is read as a
+        # line of its own after the page's (docs/TRAPS.md, *A watermark turned
+        # across the page merged the lines it crossed*).
+        read = pages(marked)
+        drafts = [at + 1 for at, text in enumerate(read) if "DRAFT" in text]
+        checks.append((f"watermarked.pdf reads DRAFT on page 1 alone: {drafts}", drafts == [1]))
+        checks.append(("and reads it after the page's own text",
+                       bool(read) and read[0].endswith("DRAFT")))
+        read = pages(greek)
+        checks.append(("greek.pdf reads its first page's Greek number",
+                       bool(read) and "\u03a3\u03b5\u03bb\u03af\u03b4\u03b1 1 \u03b1\u03c0\u03cc" in read[0]))
+    else:
+        checks.append((f"{', '.join(ADDED_TEXT_FILES)} were written", False))
+    extra = sorted(p.name for p in directory.iterdir() if p.name not in ADDED_TEXT_FILES)
     checks.append((f"nothing else is left in the directory: {extra}", not extra))
     for what, good in checks:
         print(f"[{'OK' if good else 'FAIL'}]   {what}")

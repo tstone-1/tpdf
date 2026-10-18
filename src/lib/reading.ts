@@ -61,6 +61,7 @@
 
 import { quarterTurns } from "./pages";
 import {
+  OBLIQUE_TURN,
   SHORT_MARK_HEIGHT,
   charQuad,
   characterTurns,
@@ -84,6 +85,21 @@ const CUT_CHARS = 3;
 
 /** How deep the recursion may go before a block is taken as it is. */
 const MAX_DEPTH = 12;
+
+/**
+ * The direction group of characters turned well between quarter turns: a
+ * watermark at 45 degrees, a heading set at an angle. No line runs that way,
+ * and each character's box is the box around a turned glyph, taller than the
+ * lines it crosses; banded with them, it joined three body lines into one
+ * (`docs/TRAPS.md`, *A watermark turned across the page*). So such text is
+ * read in the order the file draws it, one line per run, after the page.
+ */
+const OBLIQUE = OBLIQUE_TURN;
+
+/** A character's direction group: its displayed turn, or {@link OBLIQUE}. */
+function directionOf(text: PageText, index: number): number {
+  return text.char_turns?.[index] === OBLIQUE_TURN ? OBLIQUE : characterTurns(text, index);
+}
 
 /** A run of characters read consecutively, and where it sits. */
 export interface Fragment {
@@ -400,13 +416,17 @@ export function fragmentsOf(text: PageText, axes: Axes, gap: number): Fragment[]
   const groups = new Map<number, number[]>();
   let direction = text.quarter_turns;
   for (let index = 0; index < text.codes.length; index++) {
-    if (placed(charQuad(text, index))) direction = characterTurns(text, index);
+    if (placed(charQuad(text, index))) direction = directionOf(text, index);
     const indices = groups.get(direction) ?? [];
     indices.push(index);
     groups.set(direction, indices);
   }
   const fragments: Fragment[] = [];
   for (const [turns, indices] of groups) {
+    if (turns === OBLIQUE) {
+      fragments.push(...obliqueFragments(text, indices));
+      continue;
+    }
     const group: PageText = {
       codes: indices.map((index) => text.codes[index] ?? 0),
       boxes: indices.flatMap((index) => text.boxes.slice(index * 4, index * 4 + 4)),
@@ -423,6 +443,33 @@ export function fragmentsOf(text: PageText, axes: Axes, gap: number): Fragment[]
     }
   }
   return fragments;
+}
+
+/** One fragment per run of consecutive characters, in the order the file draws them. */
+function obliqueFragments(text: PageText, indices: readonly number[]): Fragment[] {
+  const runs: number[][] = [];
+  for (const index of indices) {
+    const run = runs[runs.length - 1];
+    if (run && run[run.length - 1] === index - 1) run.push(index);
+    else runs.push([index]);
+  }
+  return runs.map((run) => {
+    let box: Quad | null = null;
+    for (const index of run) {
+      const at = charQuad(text, index);
+      if (!placed(at)) continue;
+      if (box) absorb(box, at);
+      else box = { ...at };
+    }
+    return { ranges: rangesOf(run), box: box ?? emptyBox(), turns: OBLIQUE };
+  });
+}
+
+/** Each oblique fragment as a line of its own, in file order. */
+function obliqueLines(fragments: readonly Fragment[]): ReadingLine[] {
+  return [...fragments]
+    .sort((a, b) => (a.ranges[0]?.from ?? 0) - (b.ranges[0]?.from ?? 0))
+    .map((fragment) => ({ ranges: fragment.ranges, box: fragment.box }));
 }
 
 function alignedFragments(text: PageText, axes: Axes, gap: number): Fragment[] {
@@ -715,6 +762,7 @@ export function readingBlocks(text: PageText): ReadingBlock[] {
   }
   if (text.char_turns?.length) {
     return directionGroups(fragments, axes).flatMap(({ turns, fragments }) => {
+      if (turns === OBLIQUE) return [{ tag: null, lines: obliqueLines(fragments) }];
       const ownAxes = axesFor(turns);
       return blocksOf(fragments, ownAxes, gap).map((block) => ({
         tag: null, lines: linesOf(text, block, ownAxes),
@@ -746,8 +794,11 @@ function directionGroups(block: readonly Fragment[], axes: Axes): { turns: numbe
     for (const fragment of fragments) absorb(box, fragment.box);
     return { turns, fragments, box };
   }).sort((a, b) => {
+    // Oblique text last: its box crosses the page's lines, so where it starts
+    // says nothing about where it is read.
+    const oblique = Number(a.turns === OBLIQUE) - Number(b.turns === OBLIQUE);
     const [ea, eb] = [extentsOf(a.box, axes), extentsOf(b.box, axes)];
-    return ea.crossStart - eb.crossStart || ea.alongStart - eb.alongStart;
+    return oblique || ea.crossStart - eb.crossStart || ea.alongStart - eb.alongStart;
   });
 }
 
@@ -770,7 +821,8 @@ function directionGroups(block: readonly Fragment[], axes: Axes): { turns: numbe
  */
 function linesOf(text: PageText, block: readonly Fragment[], axes: Axes): ReadingLine[] {
   if (block.some((fragment) => fragment.turns !== undefined)) {
-    return directionGroups(block, axes).flatMap(({ turns, fragments }) => linesOf(text, fragments, axesFor(turns)));
+    return directionGroups(block, axes).flatMap(({ turns, fragments }) =>
+      turns === OBLIQUE ? obliqueLines(fragments) : linesOf(text, fragments, axesFor(turns)));
   }
   const ordered = [...block].sort((a, b) => {
     const [ea, eb] = [extentsOf(a.box, axes), extentsOf(b.box, axes)];

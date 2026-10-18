@@ -18,7 +18,7 @@ import { describe, expect, it } from "vitest";
 
 import reading from "../../src-tauri/testdata/cli/reading.json";
 import { readingLines, readingOrder, usableRuns } from "./reading";
-import type { PageText } from "./text";
+import { OBLIQUE_TURN, type PageText } from "./text";
 
 interface Case {
   name: string;
@@ -32,7 +32,7 @@ const cases = reading.cases as unknown as Case[];
 
 describe("the command-line tool's reading order", () => {
   it("covers both routes, every rotation and the degenerate pages", () => {
-    expect(cases.length).toBe(24);
+    expect(cases.length).toBe(25);
     // A line in two halves: by the tags, by the geometry, right to left, with
     // one word written the other way, with a combining mark in it, and beside
     // type of another size.
@@ -41,6 +41,8 @@ describe("the command-line tool's reading order", () => {
     expect([...routes].sort()).toEqual(["geometric", "tagged"]);
     expect(new Set(cases.map((c) => c.text.quarter_turns)).size).toBe(4);
     expect(cases.some((c) => (c.text.char_turns?.length ?? 0) > 0)).toBe(true);
+    // A watermark turned between quarter turns.
+    expect(cases.some((c) => c.text.char_turns?.includes(OBLIQUE_TURN))).toBe(true);
     expect(cases.some((c) => c.text.codes.length === 0)).toBe(true);
   });
 

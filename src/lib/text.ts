@@ -74,6 +74,13 @@ export function linesRunSideways(text: PageText): boolean {
   return text.quarter_turns % 2 === 1;
 }
 
+/**
+ * The `char_turns` value of a character turned well between quarter turns,
+ * `text::OBLIQUE_TURN`. {@link characterTurns} makes it upright; only reading
+ * order treats it apart.
+ */
+export const OBLIQUE_TURN = 4;
+
 /** The displayed direction of one character, including page and view turns. */
 export function characterTurns(text: PageText, index: number): number {
   return quarterTurns(text.quarter_turns + (text.char_turns?.[index] ?? 0));

@@ -239,6 +239,7 @@ fn keeping(baseline: u32, kept: Vec<u32>) -> Plan {
         forms: Vec::new(),
         text_edits: Vec::new(),
         text_layers: Vec::new(),
+        added_text: Vec::new(),
         protection: Default::default(),
         compress: Default::default(),
         new_fields: Vec::new(),

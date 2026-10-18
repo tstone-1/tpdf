@@ -404,6 +404,7 @@ fn mark_plan(at: &Path, pages: usize) -> Result<Plan, String> {
         forms: Vec::new(),
         text_edits: Vec::new(),
         text_layers: Vec::new(),
+        added_text: Vec::new(),
         protection: Default::default(),
         compress: Default::default(),
         new_fields: Vec::new(),
@@ -635,6 +636,12 @@ impl Report {
             "\n{} checks, {} failed, {} skipped",
             self.checks, self.failures, self.skipped
         );
+        // A run in which nothing passed measured nothing, whatever it skipped
+        // (`redact-reach-probe`'s fix, accffc98, for the same shape).
+        if self.checks - self.failures - self.skipped == 0 {
+            println!("[FAIL] no check passed, so this run measured nothing");
+            std::process::exit(1);
+        }
         if self.failures > 0 {
             std::process::exit(1);
         }

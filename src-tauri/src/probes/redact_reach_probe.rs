@@ -979,6 +979,7 @@ fn run_gate(
         forms: Vec::new(),
         text_edits: Vec::new(),
         text_layers: Vec::new(),
+        added_text: Vec::new(),
         protection: Default::default(),
         compress: Default::default(),
         new_fields: Vec::new(),

@@ -229,10 +229,10 @@ fn warming_holds(present: &[PathBuf], warm: &[Vec<f64>]) -> bool {
     };
     let (Some(base14), Some(embedded)) = (find("text-base14.pdf"), find("text-heavy.pdf")) else {
         println!(
-            "\n[SKIP] a warmed worker does not pay the font walk  \
-             needs both text-base14.pdf and text-heavy.pdf"
+            "\n[FAIL] a warmed worker does not pay the font walk  \
+             needs both text-base14.pdf and text-heavy.pdf, so it was not measured"
         );
-        return true;
+        return false;
     };
 
     let gap = base14 - embedded;

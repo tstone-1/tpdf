@@ -881,6 +881,16 @@ export class Edits {
   }
 
   /**
+   * Writes a copy with lines of text on its pages: page numbers, a header, a
+   * watermark. {@link saveCopy} with the text added, so the open document and
+   * {@link dirty} are untouched and a signed document is asked about first.
+   */
+  async addTextCopy(source: string, path: string, added: import("./addtext").AddedText[]): Promise<Copied> {
+    await this.beforeWrite();
+    return await call("add_text_copy", { doc: this.doc, source, path, added });
+  }
+
+  /**
    * What a smaller copy of the file this document was opened from would come
    * to. Nothing is written, so no consent is asked for.
    */

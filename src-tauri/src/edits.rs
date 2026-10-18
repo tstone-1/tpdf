@@ -2385,6 +2385,7 @@ impl Edits {
             text_edits: planned_text(model, &pages),
             forms: model.form_changes(),
             text_layers: Vec::new(),
+            added_text: Vec::new(),
             protection: Default::default(),
             compress: Default::default(),
             new_fields: Vec::new(),
@@ -2536,6 +2537,7 @@ impl Edits {
             text_edits: planned_text(model, &pages),
             forms: model.form_changes(),
             text_layers: Vec::new(),
+            added_text: Vec::new(),
             protection: Default::default(),
             compress: Default::default(),
             new_fields: Vec::new(),
@@ -2827,6 +2829,13 @@ pub struct Plan {
     /// none.
     #[serde(default)]
     pub text_layers: Vec<crate::textlayer::Layer>,
+    /// Lines of text to write on pages of the written file --- page numbers, a
+    /// header, a footer, a watermark --- by page of that file, in its order.
+    ///
+    /// **Always empty out of the model**, as [`Plan::text_layers`] is: only the
+    /// two commands that add text set it. See `addedtext.rs`.
+    #[serde(default)]
+    pub added_text: Vec<crate::addedtext::AddedText>,
     /// What the written file's password is: the source's, none, or a new one.
     ///
     /// **Always [`Protection::Keep`] out of the model**, as [`Plan::text_layers`]
@@ -3243,6 +3252,11 @@ impl Plan {
         if !self.forms.is_empty() || !self.text_edits.is_empty() || !self.text_layers.is_empty() {
             return false;
         }
+        // Text written on pages is a rewrite of their content, never the
+        // file's own bytes and never an append. See `addedtext.rs`.
+        if !self.added_text.is_empty() {
+            return false;
+        }
         if self.protection != crate::protect::Protection::Keep {
             return false;
         }
@@ -3273,6 +3287,11 @@ impl Plan {
     #[must_use]
     pub fn is_appendable(&self) -> bool {
         if !self.forms.is_empty() || !self.text_edits.is_empty() || !self.text_layers.is_empty() {
+            return false;
+        }
+        // Text written on pages is a rewrite of their content, never the
+        // file's own bytes and never an append. See `addedtext.rs`.
+        if !self.added_text.is_empty() {
             return false;
         }
         // **Renamed from `only_adds_marks` when note edits landed, and the name
@@ -6561,6 +6580,29 @@ mod tests {
         assert!(edits
             .annotate(7, a_field(page, "Fresh", Kind::Text), stamped())
             .is_ok());
+    }
+
+    #[test]
+    fn text_on_its_pages_makes_a_plan_neither_the_file_nor_an_append() {
+        let edits = opened();
+        let mut plan = edits.plan(7).expect("a plan");
+        assert!(plan.is_identity(), "the control");
+        plan.added_text = vec![crate::addedtext::AddedText::page_numbers()];
+        assert!(
+            !plan.is_identity(),
+            "a copy with page numbers is not the file's bytes"
+        );
+        // Beside a mark, which alone could be appended: what stops the append
+        // is the text and nothing else.
+        let page = edits.state(7).expect("state").pages[0].id;
+        edits.annotate(7, a_mark(page), stamped()).expect("marked");
+        let mut marked = edits.plan(7).expect("a plan");
+        assert!(marked.is_appendable(), "the control");
+        marked.added_text = plan.added_text;
+        assert!(
+            !marked.is_appendable(),
+            "text on a page rewrites its content"
+        );
     }
 
     #[test]

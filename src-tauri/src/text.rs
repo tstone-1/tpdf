@@ -180,9 +180,11 @@ pub struct PageText {
     /// character per line on a page read top-to-bottom, which is what `/Rotate
     /// 90` produces. See `src/lib/text.ts`.
     pub quarter_turns: u8,
-    /// One clockwise orientation per scalar, relative to the unrotated page.
-    /// Empty when every character is upright. View/page turns are added by
-    /// consumers, so rotating cached boxes does not rewrite this array.
+    /// One clockwise orientation per scalar, relative to the unrotated page:
+    /// 0 to 3 quarter turns, or [`OBLIQUE_TURN`] for a character turned well
+    /// between them. Empty when every character is upright. View/page turns
+    /// are added by consumers, so rotating cached boxes does not rewrite this
+    /// array.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub char_turns: Vec<u8>,
     /// Time spent inside PDFium extracting this, in milliseconds.
@@ -205,11 +207,31 @@ pub struct PageText {
     pub runs: Vec<crate::structure::TaggedRun>,
 }
 
+/// The `char_turns` value of a character turned well away from every quarter
+/// turn: a watermark at 45 degrees, a heading set at an angle.
+///
+/// Every consumer that wants a direction takes the value `% 4`, which makes it
+/// upright, as it was before the value existed. Reading order alone treats it
+/// apart, because such a character's box is the box around a turned glyph and
+/// spans lines it is not part of (`reading.rs`).
+pub const OBLIQUE_TURN: u8 = 4;
+
+/// How far from a quarter turn a character must be to count as oblique.
+/// Nearer than this, its box is close to the glyph's own, and it reads as
+/// upright text, as a slightly skewed scan's text layer should.
+const OBLIQUE_DEGREES: f32 = 10.0;
+
 fn orthogonal_turn(angle: f32) -> u8 {
     let turns = angle / std::f32::consts::FRAC_PI_2;
+    if !angle.is_finite() || angle < 0. {
+        return 0;
+    }
     // Tolerate only PDFium's float rounding, not arbitrary angled baselines.
-    if angle.is_finite() && angle >= 0. && (turns - turns.round()).abs() < 0.0001 {
-        turns.round().rem_euclid(4.) as u8
+    if (turns - turns.round()).abs() < 0.0001 {
+        return turns.round().rem_euclid(4.) as u8;
+    }
+    if (turns - turns.round()).abs() * 90.0 > OBLIQUE_DEGREES {
+        OBLIQUE_TURN
     } else {
         0
     }
@@ -508,8 +530,24 @@ mod tests {
             assert_eq!(super::orthogonal_turn(angle), turns % 4);
             assert_eq!(super::orthogonal_turn(angle + 0.00001), turns % 4);
         }
-        for angle in [-1., f32::NAN, f32::INFINITY, 0.3, 1.5, 3.2, 4.8] {
-            assert_eq!(super::orthogonal_turn(angle), 0);
+        // Within ten degrees of a quarter turn, skew stays upright.
+        for angle in [
+            -1.,
+            f32::NAN,
+            f32::INFINITY,
+            1.5,
+            3.2,
+            4.8,
+            9f32.to_radians(),
+        ] {
+            assert_eq!(super::orthogonal_turn(angle), 0, "{angle}");
+        }
+        for angle in [0.3, std::f32::consts::FRAC_PI_4, 11f32.to_radians(), 5.5] {
+            assert_eq!(
+                super::orthogonal_turn(angle),
+                super::OBLIQUE_TURN,
+                "{angle}"
+            );
         }
     }
 

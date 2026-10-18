@@ -37,6 +37,7 @@ import { drawSignature, fitSignature, rotateSignature, signatureCanvas, validSig
 import { PictureCache, pictureCanvas, rotatePixels, visible, type PicturePixels } from "./picture";
 import type { TileSource } from "./tiles";
 import type { SourceRect } from "./forward";
+import type { Painted } from "./comparison";
 import { CommentPopup } from "./commentpopup";
 import {
   intoCrop,
@@ -1032,6 +1033,15 @@ const MATCH_FILL = "rgba(255, 214, 0, 0.55)";
 const CURRENT_MATCH_FILL = "rgba(255, 132, 0, 0.75)";
 /** The lines a LaTeX source line made, after a forward search. */
 const SOURCE_FILL = "rgba(0, 140, 255, 0.35)";
+/**
+ * The words a comparison found changed: red on the side they were removed
+ * from, green on the side they were added to, and stronger for the change the
+ * reader is on. `changelist.ts` washes the same words in the same hues.
+ */
+const REMOVED_FILL = "rgba(230, 60, 60, 0.3)";
+const CURRENT_REMOVED_FILL = "rgba(230, 60, 60, 0.6)";
+const ADDED_FILL = "rgba(40, 170, 70, 0.3)";
+const CURRENT_ADDED_FILL = "rgba(40, 170, 70, 0.6)";
 /** Room left above the first source box when the view lands on it, in points. */
 const SOURCE_MARGIN_PT = 36;
 
@@ -1229,6 +1239,11 @@ export class Viewer {
    * top-left corner. Until Escape or the next forward search.
    */
   private sourceBoxes: { page: number; rects: readonly SourceRect[] } | null = null;
+  /**
+   * The changed words on this side of a comparison, in slots, and which change
+   * the reader is on. See `comparison.ts`.
+   */
+  private differences: { spans: readonly Painted[]; side: "removed" | "added"; current: number } | null = null;
   /** Whether a pointer is currently extending the selection. */
   private selecting = false;
   /** Counts clicks, so a double- and triple-click can be told apart. */
@@ -7165,6 +7180,7 @@ export class Viewer {
     // washes, and a reader dragging across a struck-out line has to see the
     // selection over it rather than under it.
     this.paintMarks(ctx, dpr, visible);
+    this.paintDifferences(ctx, dpr, visible);
     this.paintMatches(ctx, dpr, visible);
     this.paintSourceBoxes(ctx, dpr, visible);
     this.paintSelection(ctx, dpr, visible);
@@ -8061,6 +8077,65 @@ export class Viewer {
     this.wake();
   }
 
+  /**
+   * Paints the words a comparison found changed on this side: `removed` on the
+   * older document, `added` on the newer. `spans` are slots and character
+   * indices of the text {@link loadText} gave, as `compare.rs` handed them back.
+   */
+  setDifferences(spans: readonly Painted[], side: "removed" | "added"): void {
+    this.differences = { spans, side, current: -1 };
+    this.wake();
+  }
+
+  /** Makes change `index` the one painted as current, or none with -1. */
+  setCurrentDifference(index: number): void {
+    if (!this.differences) return;
+    this.differences = { ...this.differences, current: index };
+    this.wake();
+  }
+
+  /** Takes a comparison's paint away. */
+  clearDifferences(): void {
+    this.differences = null;
+    this.wake();
+  }
+
+  /** The comparison's spans and the current change, for the checks. */
+  get differenceMarks(): { spans: readonly Painted[]; side: "removed" | "added"; current: number } | null {
+    return this.differences;
+  }
+
+  /** How many pages the document shows now, inserted and deleted ones counted. */
+  get slotCount(): number {
+    return this.pages.length;
+  }
+
+  /**
+   * A page's text as the view shows it, fetched when it is not here; `null`
+   * for a page tpdf made, which has none. What a comparison is made from.
+   */
+  loadText(slot: number): Promise<PageText | null> {
+    return this.loadOn(slot);
+  }
+
+  /**
+   * Scrolls character `index` of `slot` a third of the way down the window,
+   * where a search hit is put, through {@link goToDestination} so Back returns.
+   * The page's top when its text has no box for that character.
+   */
+  async showText(slot: number, index: number): Promise<void> {
+    const clamped = Math.max(0, Math.min(slot, this.pages.length - 1));
+    const text = await this.loadOn(clamped);
+    // The load outlives a document being closed; see `goToMatch`.
+    if (this.life.ended) return;
+    const length = text?.codes.length ?? 0;
+    const at = Math.max(0, Math.min(index, length - 1));
+    const [first] = text && length > 0 ? runsFor(text, at, at + 1) : [];
+    const third = this.viewportSize().height / 3 / this.zoom;
+    this.goToDestination(clamped, first ? Math.max(0, first.top - third) : null);
+    this.wake();
+  }
+
   /** Takes the forward search's marks away. */
   clearSourceBoxes(): void {
     this.sourceBoxes = null;
@@ -8197,6 +8272,40 @@ export class Viewer {
             (quad.bottom - quad.top) * this.zoom * dpr,
           );
         }
+      }
+    }
+  }
+
+  /**
+   * Paints a comparison's changed words on the visible pages, as
+   * {@link paintMatches} paints hits: one rectangle per run of a span's
+   * characters on a line, through `runsFor`.
+   */
+  private paintDifferences(
+    ctx: CanvasRenderingContext2D,
+    dpr: number,
+    onScreen: readonly number[],
+  ): void {
+    const shown = this.differences;
+    if (!shown || shown.spans.length === 0) return;
+    const visible = new Set(onScreen);
+    const [fill, current] = shown.side === "removed"
+      ? [REMOVED_FILL, CURRENT_REMOVED_FILL]
+      : [ADDED_FILL, CURRENT_ADDED_FILL];
+    for (const span of shown.spans) {
+      if (!visible.has(span.page)) continue;
+      // Not requested if missing, for `paintMatches`' reason.
+      const text = this.textOn(span.page);
+      if (!text) continue;
+      ctx.fillStyle = span.change === shown.current ? current : fill;
+      const origin = this.scroller.pageOrigin(span.page);
+      for (const quad of runsFor(text, span.start, span.end)) {
+        ctx.fillRect(
+          (origin.left + quad.left * this.zoom) * dpr,
+          (origin.top + quad.top * this.zoom - this.scrollTop) * dpr,
+          (quad.right - quad.left) * this.zoom * dpr,
+          (quad.bottom - quad.top) * this.zoom * dpr,
+        );
       }
     }
   }

@@ -28,6 +28,10 @@ __all__ = [
     "CommentKind",
     "CommentLimits",
     "CommentsReport",
+    "CompareChange",
+    "CompareKind",
+    "CompareReport",
+    "ComparedFile",
     "CommandError",
     "CommandErrorKind",
     "Conformance",
@@ -94,6 +98,8 @@ __all__ = [
     "SearchKind",
     "SearchQuery",
     "SearchReport",
+    "TextAddedReport",
+    "TextPosition",
     "SearchedFile",
     "SignReport",
     "Signature",
@@ -445,6 +451,33 @@ class ProtectReport(TypedDict):
     protected: bool
     # Whether the source was encrypted.
     was_protected: bool
+    signatures_invalidated: int
+    signatures_unknown: bool
+
+
+TextPosition = Literal[
+    "top-left", "top-center", "top-right",
+    "middle-left", "center", "middle-right",
+    "bottom-left", "bottom-center", "bottom-right",
+]
+
+
+class TextAddedReport(TypedDict):
+    """`page-numbers --json` and `watermark --json`: a copy with text on its pages."""
+
+    schema: int
+    command: str
+    input: str
+    output: str
+    # Pages the copy has.
+    pages: int
+    # The pages the text went on, counted from 1, each read back holding its line.
+    written: list[int]
+    # The text as given, with {page} and {pages} in it.
+    text: str
+    position: TextPosition
+    # The first page's line with its fields filled in.
+    first: str
     signatures_invalidated: int
     signatures_unknown: bool
 
@@ -1398,6 +1431,60 @@ class SearchReport(TypedDict):
     files: list[SearchedFile]
 
 
+CompareKind = Literal["removed", "added", "replaced"]
+
+
+class ComparedFile(TypedDict):
+    """One of the two documents `compare` was given."""
+
+    # The path as given on the command line.
+    path: str
+    # Pages read.
+    pages: int
+    # Pages, counted from 1, that held no text at all.
+    pages_without_text: list[int]
+    # Words read.
+    words: int
+
+
+class CompareChange(TypedDict):
+    """One change in the words, from `old` to `new`."""
+
+    kind: CompareKind
+    # The page of `old` the change is on, counted from 1, or where added words would stand.
+    old_page: int
+    # The page of `new`, likewise.
+    new_page: int
+    # The words of `old`, joined by single spaces; empty for an addition.
+    removed: str
+    # The words of `new`; empty for a removal.
+    added: str
+    # Up to four words before the change that both documents have.
+    before: str
+    # Up to four after it.
+    after: str
+    # Where the removed words are on `old`'s pages.
+    old_rects: list[HitRect]
+    # Where the added words are on `new`'s.
+    new_rects: list[HitRect]
+
+
+class CompareReport(TypedDict):
+    """`compare --json`. Text only: no changes means the same words, not the same document."""
+
+    schema: int
+    command: str
+    old: ComparedFile
+    new: ComparedFile
+    removed_words: int
+    added_words: int
+    # More than len(changes) only when the list was cut at 10,000.
+    total_changes: int
+    # Stretches too far apart to align word by word, each listed as one replacement.
+    unaligned: int
+    changes: list[CompareChange]
+
+
 # --- Sample file stem -> the report it holds -------------------------------
 
 # Keyed by the stems of `src-tauri/testdata/cli/*.json`. `help --json` has no
@@ -1405,6 +1492,7 @@ class SearchReport(TypedDict):
 REPORTS: dict[str, type] = {
     "command-error": ErrorReport,
     "comments": CommentsReport,
+    "compare": CompareReport,
     "edit": EditReport,
     "fields": FieldsReport,
     "fill": FillReport,
@@ -1419,6 +1507,8 @@ REPORTS: dict[str, type] = {
     "ocr": OcrReport,
     "pages": PagesReport,
     "protect": ProtectReport,
+    "page-numbers": TextAddedReport,
+    "watermark": TextAddedReport,
     "redact": RedactReport,
     "redact-dry-run": RedactReport,
     "print": PrintReport,

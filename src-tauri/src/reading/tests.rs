@@ -232,6 +232,37 @@ pub(crate) fn cases() -> Vec<Case> {
         text: mixed,
     });
 
+    // A watermark turned 45 degrees across four body lines: each letter's box
+    // is taller than two of them, and the letters climb as they go right.
+    let mut marked = page(
+        ["line one", "line two", "line three", "line four"]
+            .iter()
+            .enumerate()
+            .map(|(at, words)| {
+                let mut line = word(words, 72.0, 100.0 + at as f32 * 14.1);
+                line.extend(crlf());
+                line
+            })
+            .collect(),
+    );
+    let body = marked.codes.len();
+    for (at, ch) in "DRAFT".chars().enumerate() {
+        let (left, top) = (100.0 + at as f32 * 25.3, 130.7 - at as f32 * 12.1);
+        marked.codes.push(ch as u32);
+        marked
+            .boxes
+            .extend_from_slice(&[left, top, left + 30.2, top + 34.6]);
+    }
+    marked.char_turns = vec![0; body];
+    marked.char_turns.extend(std::iter::repeat_n(
+        crate::text::OBLIQUE_TURN,
+        marked.codes.len() - body,
+    ));
+    out.push(Case {
+        name: "oblique-watermark",
+        text: marked,
+    });
+
     // A combining acute above the x-height, touching no band: it joins the `e`.
     let mut accent = word("resume", 72.0, 100.0);
     accent.push((0x301, [94.0, 96.0, 97.5, 98.6]));
@@ -460,6 +491,17 @@ fn every_order_is_a_permutation_of_the_page() {
         let all: Vec<usize> = (0..case.text.codes.len()).collect();
         assert_eq!(order, all, "{}", case.name);
     }
+}
+
+#[test]
+fn an_oblique_watermark_is_read_after_the_lines_it_crosses() {
+    let text = case("oblique-watermark");
+    let reading = read(&text);
+    assert_eq!(reading.route, Route::Geometric);
+    assert_eq!(
+        text_of(&text, &reading.lines),
+        ["line one", "line two", "line three", "line four", "DRAFT"]
+    );
 }
 
 #[test]

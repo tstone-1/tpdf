@@ -4383,6 +4383,14 @@ fn rewrite(plan: &Plan, checked: Checked, job: Job) -> Result<Vec<u8>, Refusal> 
         sweep::collect(&mut doc)?;
     }
 
+    // **After the redactions and the sweep, and both are load-bearing.** A page
+    // number counts the pages of the file being written, which only exist in
+    // their order after `materialise`; and a redaction addresses a page's
+    // content by the position of its streams, which the stream this puts in
+    // front of them would move. Before the encryption, which has to see every
+    // stream added. See `addedtext.rs`.
+    crate::addedtext::write(&mut doc, &plan.added_text)?;
+
     // **Before the encryption, after everything that adds or removes.** A
     // smaller copy deflates and re-encodes streams, which have to be in the
     // clear for that and have to be the ones that are written.
@@ -5383,12 +5391,38 @@ fn stage(
     )))
 }
 
+/// How many times a refused rename is tried again on Windows, the waits
+/// doubling from 50 ms, so at most about 1.5 s in all.
+const COMMIT_RETRIES: u32 = 5;
+
 /// Renames a staged file over `out`, removing it if that fails.
+///
+/// **On Windows a refused rename is tried again, briefly.** A process that has
+/// `out` open without delete sharing --- a virus scanner or the search indexer
+/// reading a file just written --- makes the rename fail with *Access is
+/// denied* for as long as it holds it. The command-line suite's `-o --force`
+/// check failed that way once in a full run and passed six times alone
+/// (2026-10-18); a reader saving over a file the scanner was reading would get
+/// the same refusal. Any other error, and the last refusal, is reported at once.
 fn commit(staged: &Path, out: &Path) -> Result<(), String> {
-    std::fs::rename(staged, out).map_err(|e| {
-        let _ = std::fs::remove_file(staged);
-        format!("could not put {out:?} in place: {e}")
-    })
+    let mut attempt = 0;
+    loop {
+        match std::fs::rename(staged, out) {
+            Ok(()) => return Ok(()),
+            Err(e)
+                if cfg!(windows)
+                    && e.kind() == std::io::ErrorKind::PermissionDenied
+                    && attempt < COMMIT_RETRIES =>
+            {
+                std::thread::sleep(std::time::Duration::from_millis(50 << attempt));
+                attempt += 1;
+            }
+            Err(e) => {
+                let _ = std::fs::remove_file(staged);
+                return Err(format!("could not put {out:?} in place: {e}"));
+            }
+        }
+    }
 }
 
 /// Whether two paths name the same file.

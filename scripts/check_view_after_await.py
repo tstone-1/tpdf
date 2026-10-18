@@ -154,6 +154,7 @@ PER_WINDOW: dict[str, str] = {
     "propertiesDialog": "a dialog on `document.body`; the answer it shows is the slot `properties`",
     "passwordDialog": "a dialog on `document.body`",
     "newPasswordDialog": "a dialog on `document.body`",
+    "addTextDialog": "a dialog on `document.body`",
     "fieldPropertiesDialog": "a dialog on `document.body`",
     "compressDialog": "a dialog on `document.body`",
     "webLinkDialog": "a dialog on `document.body`",

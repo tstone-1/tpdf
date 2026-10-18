@@ -94,6 +94,10 @@ fn main() {
         }
     }
     println!("documents opened {opened}, skipped {skipped}");
+    if opened == 0 {
+        println!("[FAIL] no document was opened, so nothing was measured");
+        std::process::exit(1);
+    }
     #[allow(clippy::cast_precision_loss)]
     let mb = |bytes: u64| bytes as f64 / 1e6;
     println!("before {:>24.1} MB", mb(before));

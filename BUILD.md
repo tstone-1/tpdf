@@ -14,7 +14,12 @@ build script refuses to build while one is missing. OCR also needs the system's 
 (`libtesseract5` on Ubuntu), which tpdf opens at run time in the OCR worker only.
 The window checks need no monitor there: `xvfb-run -a -s "-screen 0 1280x800x24" scripts/window_checks.py src-tauri/target/release/tpdf`
 passed 11 of 11 on Ubuntu 24.04 under WSL on 2026-10-14, with `WAYLAND_DISPLAY` unset and
-`GDK_BACKEND=x11` so WebKitGTK draws into Xvfb rather than into WSLg. `open_check.py` runs the
+`GDK_BACKEND=x11` so WebKitGTK draws into Xvfb rather than into WSLg. On 2026-10-18 all 16
+passed the same way from a checkout in the WSL home (`~/tpdf-linux`), fed uncommitted work as
+`run_on_mac.py` feeds it: `git stash create` here, `git update-ref refs/tpdf-check/linux <sha>`,
+and in WSL `git fetch /mnt/c/<the Windows clone> refs/tpdf-check/linux` and a detached checkout,
+then `npm ci`, `fetch_pdfium.py` and `fetch_tessdata.py` there. Building in `/mnt/c` instead
+would share `node_modules`, `vendor` and `target` with the Windows tree. `open_check.py` runs the
 same way and passed every phase there, the running handover included; the cold double-click
 skips, as on Windows. Add `--debug` for a
 development build in `src-tauri/target/debug/`. It has a separate application identifier;
@@ -2362,6 +2367,14 @@ does.
 
 `testdata/*.pdf` is gitignored and generated. Nothing it produces may be committed or
 redistributed — `make_text_pdf.py` embeds a system font.
+
+**Off CI, a missing fixture fails its test.** `scripts/gates.py` sets
+`TPDF_REQUIRE_FIXTURES=1` unless `CI` is set, and a unit test whose fixture is absent then
+fails through `src-tauri/src/fixtures.rs` instead of printing `[SKIP]` and passing. A runner
+still skips the ones `ci_fixtures.py` cannot make. Run `cargo test` by hand with the variable
+set to get the same rule, and without it to let a fixture you have not generated skip.
+`text-heavy.pdf` is supplied by hand and no script writes it, so a machine without it fails
+the gate's `test` until it is copied in.
 
 ```
 uv run --with fonttools testdata/make_text_pdf.py testdata

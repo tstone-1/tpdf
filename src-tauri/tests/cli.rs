@@ -91,6 +91,10 @@ use x509_cert::time::{Time, Validity};
 
 // `fields` and `fill`. Under `tests/cli/` and named by path, because a file
 // directly in `tests/` would be a test target of its own to cargo.
+#[path = "cli/addtext.rs"]
+mod addtext;
+#[path = "cli/compare.rs"]
+mod compare;
 #[path = "cli/compress.rs"]
 mod compress;
 #[path = "cli/edit.rs"]
@@ -245,6 +249,14 @@ fn main() {
             protect::sets_and_removes_a_password,
         ),
         (
+            "page-numbers and watermark write text on every page, upright as displayed",
+            addtext::adds_text_to_every_page,
+        ),
+        (
+            "compare finds what changed in the words, and nothing in text that moved",
+            compare::finds_what_changed_in_the_words,
+        ),
+        (
             "compress writes a smaller copy and says what one would come to",
             compress::writes_a_smaller_copy,
         ),
@@ -395,7 +407,17 @@ impl Report {
             println!("[FAIL] {what}: {detail}");
         }
     }
+    /// A check that could not run. One for want of a generated fixture, which
+    /// every such reason says ("not generated"), fails instead when
+    /// `TPDF_REQUIRE_FIXTURES` is set, as `scripts/gates.py` sets it off CI: a
+    /// runner cannot make them all, a developer's machine is where they are
+    /// covered (`src-tauri/src/fixtures.rs`).
     fn skip(&mut self, what: &str, why: &str) {
+        if why.contains("generated") && std::env::var_os("TPDF_REQUIRE_FIXTURES").is_some() {
+            self.failed += 1;
+            println!("[FAIL] {what}: {why}, and TPDF_REQUIRE_FIXTURES is set");
+            return;
+        }
         self.skipped += 1;
         println!("[SKIP] {what}: {why}");
     }
@@ -612,8 +634,8 @@ fn verify_agrees(report: &mut Report) {
         );
         return;
     }
-    if !missing.is_empty() {
-        println!("(not generated, left out: {missing:?})");
+    for name in &missing {
+        report.skip(&format!("verify of {name}"), "not generated");
     }
     let mut args = vec!["verify", "--json"];
     let shown: Vec<String> = present.iter().map(|p| p.display().to_string()).collect();

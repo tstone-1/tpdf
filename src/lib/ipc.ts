@@ -45,6 +45,7 @@ import { invoke, type InvokeArgs } from "@tauri-apps/api/core";
 import type { ToolState } from "./clitoolstate";
 import type { ExplorerState } from "./explorerstate";
 import type { Comments } from "./comments";
+import type { Comparison, PageCodes } from "./comparison";
 import type { CropGeometry } from "./crop";
 import type { Fill } from "./redactfill";
 import type { Applied, Copied, EditState, Merged, Split } from "./edits";
@@ -383,6 +384,10 @@ export interface Commands {
     args: { doc: DocHandle; source: string; path: string; password: string | null };
     reply: Copied;
   };
+  add_text_copy: {
+    args: { doc: DocHandle; source: string; path: string; added: import("./addtext").AddedText[] };
+    reply: Copied;
+  };
   compress_estimate: {
     args: { doc: DocHandle; source: string; pictures: import("./compress").Pictures | null };
     reply: import("./compress").Shrinkage;
@@ -519,6 +524,11 @@ export interface Commands {
       carry?: Carry | undefined;
     };
     reply: PageMatches;
+  };
+  /** Pure: the words of two documents the caller read, compared. See `compare.rs`. */
+  compare_texts: {
+    args: { left: PageCodes[]; right: PageCodes[] };
+    reply: Comparison;
   };
   document_outline: { args: { doc: DocHandle }; reply: Outline };
   document_text_runs: { args: { doc: DocHandle; page: number; change?: import("./textedit").TextChange }; reply: import("./textedit").TextRuns };

@@ -58,6 +58,10 @@ CHECKS: list[tuple[str, str, str, list[str]]] = [
     ("import", "tabs_check.py", "testdata/text-base14.pdf",
      ["--phase", "import", "--other", "testdata/links.pdf"]),
     ("fit", "tabs_check.py", "testdata/comments.pdf", ["--phase", "fit"]),
+    ("compare", "tabs_check.py", "testdata/text-base14.pdf",
+     ["--phase", "compare", "--other", "testdata/links.pdf"]),
+    # Page numbers, a watermark and Greek page numbers, read back from disk.
+    ("add text", "tabs_check.py", "testdata/links.pdf", ["--phase", "add-text"]),
     ("session", "session_check.py", TEXT, []),
     # Every route a document arrives by, and `--page` with `--zoom` on two of them.
     ("open", "open_check.py", TEXT, ["--other", "testdata/outline-simple.pdf"]),
@@ -92,6 +96,11 @@ def main() -> int:
     if not args.binary:
         parser.error("the checks binary is required")
 
+    # Absolute, because three of the checks start the binary as they are given
+    # it, and on Windows a relative path written with forward slashes, the form
+    # BUILD.md shows, is not found by CreateProcess (Python 3.15, 2026-10-18):
+    # viewer, marks and session failed in a second while the rest passed.
+    binary = str(Path(args.binary).resolve())
     results: list[tuple[str, bool, str]] = []
     for name, script, fixture, extra in chosen:
         print(f"=== {name}: {script} {fixture} {' '.join(extra)}".rstrip())
@@ -104,7 +113,7 @@ def main() -> int:
         started = time.monotonic()
         try:
             code = subprocess.run(
-                [sys.executable, str(ROOT / "scripts" / script), args.binary, fixture, *extra],
+                [sys.executable, str(ROOT / "scripts" / script), binary, fixture, *extra],
                 cwd=ROOT, check=False,
             ).returncode
         except OSError as e:

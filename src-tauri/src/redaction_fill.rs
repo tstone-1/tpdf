@@ -155,6 +155,7 @@ pub(crate) fn output_plan(original: &Plan) -> Result<Plan, Refusal> {
         tab_order: false,
         compress: crate::compress::Compress::No,
         text_layers: Vec::new(),
+        added_text: Vec::new(),
         // What the file the first pass wrote has, put back: that pass set or
         // removed the password, and this one writes the same file again.
         protection: crate::protect::Protection::Keep,
@@ -329,6 +330,7 @@ mod tests {
                 baseline: 2,
                 opened_as: None,
                 text_layers: Vec::new(),
+                added_text: Vec::new(),
                 protection: Default::default(),
                 compress: Default::default(),
                 new_fields: Vec::new(),
@@ -482,6 +484,7 @@ mod tests {
             forms: Vec::new(),
             text_edits: Vec::new(),
             text_layers: Vec::new(),
+            added_text: Vec::new(),
             protection: Default::default(),
             compress: Default::default(),
             new_fields: Vec::new(),

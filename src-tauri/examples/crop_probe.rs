@@ -80,7 +80,10 @@ fn main() {
     };
     let (ran, passed) = (RAN.load(Ordering::Relaxed), PASSED.load(Ordering::Relaxed));
     println!("{passed}/{ran} checks passed");
-    std::process::exit(if ok && passed == ran { 0 } else { 1 });
+    if ran == 0 {
+        println!("[FAIL] no check ran, so this run measured nothing");
+    }
+    std::process::exit(if ok && ran > 0 && passed == ran { 0 } else { 1 });
 }
 
 fn bind(library: &Path) -> progressive::Bindings {

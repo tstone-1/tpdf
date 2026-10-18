@@ -11,8 +11,9 @@
  * cannot be edited in place and still be called Lucide's, and a vendored file
  * nothing draws is a finding.
  *
- * The two with `source: null` are drawn here. Lucide has no picture for a
- * redaction and none for a line weight.
+ * Those with `source: null` are drawn here. Lucide has no picture for a
+ * redaction, for text a page does not show, for a line weight or for two
+ * pages compared.
  *
  * ## Shapes as data, because the frontend parses no markup
  *
@@ -261,6 +262,18 @@ export const ICONS = {
       { d: "M4 5h16" },
       { rect: [4, 9.5, 12, 5, 1] },
       { d: "M4 19h10" },
+    ],
+  },
+  // Two pages side by side, the second with a line the first lacks: what
+  // changed between two documents.
+  compare: {
+    source: null,
+    parts: [
+      { rect: [3, 4, 7, 16, 1] },
+      { rect: [14, 4, 7, 16, 1] },
+      { d: "M5 9h3" },
+      { d: "M16 9h3" },
+      { d: "M16 13h3" },
     ],
   },
   // Three rules, thin to thick.

@@ -144,8 +144,8 @@ Checked on 2026-10-07 against each project's own pages. Prices are the vendors' 
 | Windows | Yes | Yes | Yes | Yes | Yes |
 | Edits documents | Yes | Annotations only: highlights, notes, ink, shapes and stamps | In the paid versions | Yes | Yes |
 
-Acrobat sells redaction, text recognition and document comparison only in Pro. tpdf has the
-first two and no comparison yet. SumatraPDF's installer is 10.6 MB and tpdf's Windows
+Acrobat sells redaction, text recognition and document comparison only in Pro. tpdf has all
+three; its comparison is of the words, where Acrobat's also compares pictures and formatting. SumatraPDF's installer is 10.6 MB and tpdf's Windows
 installer is 40 MB, so SumatraPDF remains the smaller program; Stirling-PDF's desktop
 installers are 310 to 458 MB.
 
@@ -320,6 +320,18 @@ project conventions.
   views can be edited, a change made in one is drawn in the other at once, and closing
   one of them leaves the document open in the other.
   <!-- built: view.sideBySide view.moveToOtherSide view.bothSides view.switchSides view.focusOtherSide view.syncScrolling -->
+- **Compare with…** puts another open document beside the one you are in and lists what
+  changed in the words from this one to that one, in a sidebar tab on both sides. Words
+  the other document no longer has are washed red on this side, words it added are washed
+  green on its side, and choosing a change in the list, or *Next change* and *Previous
+  change*, moves both documents to it. Only the words are compared: pictures, drawings,
+  colours, fonts and where a line sits are not, and the tab says so under every result.
+  Text that only moved to another line or page is therefore no change, and a change of
+  case is one. Each document is compared as the window shows it, with your unsaved
+  changes and your page order; after an edit to either, the tab says the comparison is
+  out of date and the colours go. A scanned page with no text is named rather than
+  passed over. It is `tpdf compare` in the window, and lists the same changes.
+  <!-- built: file.compareWith nav.nextChange nav.previousChange -->
 - Notices when another program rewrites the open file. By default it says so and offers
   a reload; *When the file changes on disk: reload automatically* reloads at once, keeping
   your page and zoom, which suits a document a build regenerates. *…: do nothing* turns the
@@ -894,6 +906,21 @@ measured the Windows render constants come out 1.5–1.8x worse.
   you have not saved yet, and the sizes shown are worked out from the file as it is on
   disk. Text and line drawings are never made coarser: only pictures are.
   <!-- built: file.compress -->
+- **Save a copy with page numbers** writes a copy with a number on every page, *Page 1 of
+  3* at the bottom center unless you change it. The dialog takes the text, with `{page}`
+  for each page's number and `{pages}` for how many are numbered, so words around them
+  make a header or a footer; one of nine positions; the size; the first number; and which
+  pages, so a cover can be left out and is then not counted. **Save a copy with a
+  watermark** writes a line of text across every page, grey, turned 45 degrees and a third
+  opaque, over what is on the page. Text in English, German, French and the like is set
+  in Helvetica, which every PDF reader has; Greek, Cyrillic, Chinese, Japanese and Korean
+  are set in the Noto Sans fonts tpdf carries, of which only the letters used are embedded.
+  Scripts whose letters join or change order, such as Arabic, Hebrew, Hindi and Thai, are
+  refused rather than drawn wrong. A page shown turned gets
+  its text upright as you see it. tpdf reads the copy back and keeps it only when every
+  page holds its line. The open document and its file are left as they were, and the copy
+  includes changes you have not saved yet.
+  <!-- built: file.addPageNumbers file.addWatermark -->
 - **New document from pictures** makes a PDF from PNG and JPEG files, one page for each,
   in the order the panel returns them, and opens it. A page is the picture's own size at
   the resolution its file states, or one point a pixel when it states none. A photograph
@@ -1011,10 +1038,10 @@ both.
 
 ## Command-line tool
 
-`tpdf sign`, `tpdf verify`, `tpdf identities`, `tpdf info`, `tpdf text`, `tpdf search`, `tpdf fields`,
+`tpdf sign`, `tpdf verify`, `tpdf identities`, `tpdf info`, `tpdf text`, `tpdf search`, `tpdf compare`, `tpdf fields`,
 `tpdf fill`, `tpdf redact`, `tpdf long-term`, `tpdf merge`, `tpdf extract`, `tpdf split`, `tpdf rotate`,
 `tpdf crop`, `tpdf edit`, `tpdf comments`, `tpdf text-runs`, `tpdf render`, `tpdf ocr`,
-`tpdf protect`, `tpdf unprotect`, `tpdf compress`, `tpdf form`, `tpdf images` and
+`tpdf protect`, `tpdf unprotect`, `tpdf page-numbers`, `tpdf watermark`, `tpdf compress`, `tpdf form`, `tpdf images` and
 `tpdf hidden` expose document workflows to scripts; `tpdf path` puts the tool on your `PATH` on Windows,
 `tpdf explorer` turns tpdf's Explorer thumbnails and preview pane on or off there,
 and `tpdf completions` prints a completion script for your shell. The commands do what **Sign document…**, **Document
@@ -1089,6 +1116,9 @@ tpdf text report.pdf --pages 1-3,7 -o report.txt
 tpdf text --json report.pdf
 tpdf search report.pdf --text "North Pier"
 tpdf search *.pdf --pattern '\d+\.\d\d m' --whole-word --json
+tpdf compare contract-v1.pdf contract-v2.pdf
+tpdf page-numbers report.pdf -o numbered.pdf --pages 2-12
+tpdf watermark report.pdf -o draft.pdf --text DRAFT
 tpdf fields --json application.pdf
 tpdf fill application.pdf -o filled.pdf --values answers.json
 some-script | tpdf fill application.pdf -o filled.pdf --values - --json
@@ -1112,6 +1142,38 @@ a scan — is named on stderr, because nothing can match there and silence would
 "not in the document". It exits 1 when nothing matched, so `tpdf search … && …` works in a
 shell, and stops with a refusal past 10,000 matches in one document.
 
+`tpdf compare <old.pdf> <new.pdf>` prints what changed in the words from the first document
+to the second, one line per change, in `wdiff`'s notation: the page each side is on, a few
+words both share, then the first document's words in `[-…-]` and the second's in `{+…+}`:
+
+```
+1 -> 1: Payment is due within [-30-]{+45+} days of the invoice
+2 -> 2: carries interest at the [-statutory-] rate.
+```
+
+It compares what the window's **Compare with** compares and lists the same changes. Only the
+words are compared — pictures, drawings, colours, fonts and the position of a line are not,
+and stderr says so on every run — so text that only moved to another line or page is no
+change, and a change of case is one. A page with no text is named on stderr. It exits 1 when
+the words differ, as `diff` does, and 0 when they are the same. Past 10,000 changes the list
+is cut and stderr says how many there were.
+
+`tpdf page-numbers <in.pdf> -o <out.pdf>` writes a copy with *Page 1 of 3* at the bottom
+center of every page, and `tpdf watermark <in.pdf> -o <out.pdf> --text DRAFT` one with the
+text across every page, grey, at 45 degrees and a third opaque. They are the window's two
+*Save a copy with...* commands and the same writer, with different starting values; every
+option changes either. `--text` takes `{page}` and `{pages}`, so `--text "Confidential -
+{page}" --position top-right` is a header. `--position` is one of `top-left`, `top-center`,
+`top-right`, `middle-left`, `center`, `middle-right`, `bottom-left`, `bottom-center` and
+`bottom-right`; `--size` is in points, `--margin` the distance from the edges in points,
+`--color` red, green and blue from 0 to 1; `page-numbers` takes `--start`, the first
+number, and `watermark` takes `--angle` in degrees and `--opacity` from 0 to 1. `--pages`
+chooses the pages, and `{page}` and `{pages}` count only those. Latin-1 text is set in
+Helvetica; Greek, Cyrillic, Chinese, Japanese and Korean in subsets of the bundled Noto Sans
+fonts. Arabic, Hebrew, the Indic scripts, Thai and the like are refused with nothing written.
+Each page written to is
+read back from the staged copy and must hold its line, or nothing is published.
+
 **Marking what a search finds.** `--annotate highlight` (or `underline`, `strikeout`,
 `squiggly`) prints an edit plan with one mark per match in place of the list, and `edit`
 applies it, so highlighting every occurrence of a phrase is one line:
@@ -1126,7 +1188,7 @@ The plan is for one document, and holds at most 1,000 marks. Nothing is printed 
 nothing matched, and a match whose characters have no position on the page stops the plan
 with a refusal, since it would otherwise be left unmarked with nothing said.
 
-**Reading from a pipe.** `info`, `verify`, `text`, `search` and `fields` take `-` for the
+**Reading from a pipe.** `info`, `verify`, `text`, `search`, `compare` and `fields` take `-` for the
 document and read it from standard input: `curl -s https://example.org/a.pdf | tpdf text -`.
 The commands that write a file do not, because each compares its output with its input by
 path.
@@ -1507,7 +1569,7 @@ assert image["width_px"] > 0 and image["height_px"] > 0
 ```
 
 `help()`, `info()`, `text()`, `text_runs()`, `fields()`, `comments()`, `fill()`,
-`edit()`, `render()`, `ocr()`, `images()`, `compress()`, `add_fields()`, `protect()`, `unprotect()`, `verify()`, `merge()`, `extract()`, `split()`, `rotate()` and
+`edit()`, `render()`, `ocr()`, `images()`, `compress()`, `add_fields()`, `protect()`, `unprotect()`, `page_numbers()`, `watermark()`, `verify()`, `merge()`, `extract()`, `split()`, `rotate()` and
 `crop()`, `redact()`, `identities()` and `sign()` return parsed reports. `search()` and `mark_matches()` are described below. Page helpers accept `force=`, `password=` and
 `invalidate_signatures=`; page ranges count from 1 and select pages once in document
 order. Cropping hides content and is not redaction.
@@ -1535,6 +1597,14 @@ Finding nothing is an empty list, not an error:
 ```python
 for file in pdf.search("a.pdf", "b.pdf", texts=["PRIVATE-731"])["files"]:
     print(file["path"], [(match["page"], match["hit"]) for match in file["matches"]])
+```
+
+`compare()` takes two documents, the older first, and returns what changed in their words.
+Differing is not an error: an empty `changes` means the words are the same.
+
+```python
+for change in pdf.compare("contract-v1.pdf", "contract-v2.pdf")["changes"]:
+    print(change["old_page"], change["kind"], change["removed"], "->", change["added"])
 ```
 
 `mark_matches()` takes the same terms and writes a copy in which every match is marked.
@@ -1862,7 +1932,7 @@ never replaced. The JSON report carries `schema`, `command`, `input`, `output`, 
 the copy), `fields_before`, `fields_after`, `signatures_invalidated` and
 `signatures_unknown`.
 
-**Passwords.** `form`, `protect`, `unprotect`, `compress`, `ocr`, `render`, `hidden`, `info`, `text`, `search`, `text-runs`, `comments`, `edit`, `fields`, `fill`, `redact` and the five page operations read a password-protected document when given
+**Passwords.** `form`, `protect`, `unprotect`, `compress`, `ocr`, `render`, `hidden`, `info`, `text`, `search`, `compare`, `page-numbers`, `watermark`, `text-runs`, `comments`, `edit`, `fields`, `fill`, `redact` and the five page operations read a password-protected document when given
 `--password-env VAR`, the *name* of an environment variable holding the password. The
 password itself is never an argument, because arguments are visible to every process on the
 computer and are kept in the shell's history. It reaches the worker the way the window's
@@ -1886,7 +1956,7 @@ built.
 | Code | Meaning |
 |---|---|
 | 0 | Done. For `verify`, every document was read, whatever the verdicts. |
-| 1 | `verify --strict`: a document with no signature, or a signature that is not both intact and trusted, or pages rewritten after the last signature. `redact`: the copy was written and could not be proved clean — it is kept, and every reason is reported. `search`: every document was read and nothing matched. `hidden`: text was found that a page does not show. `sign`: the copy was written, and its new signature — intact when tpdf checked it before writing — was not checked again in the written file, because the document's signatures together cover more data than tpdf checks at once (1 GiB for one document); the summary says so. |
+| 1 | `verify --strict`: a document with no signature, or a signature that is not both intact and trusted, or pages rewritten after the last signature. `redact`: the copy was written and could not be proved clean — it is kept, and every reason is reported. `search`: every document was read and nothing matched. `compare`: the words of the two documents differ. `hidden`: text was found that a page does not show. `sign`: the copy was written, and its new signature — intact when tpdf checked it before writing — was not checked again in the written file, because the document's signatures together cover more data than tpdf checks at once (1 GiB for one document); the summary says so. |
 | 2 | The command line is malformed: a missing `-o` or `--values`, an output that names the input or the answers or regions file, a bad `--rect` or `--pages`, a `--timestamp` that is not a listed authority or an `http`/`https` address without a password in it, `--long-term` without `--timestamp`, `long-term` without `--timestamp`, nothing for `redact` to remove or `search` to find, a `--pattern` that does not compile or a query that can match nothing, an unknown option, or a `--password-env` naming a variable that is not set. |
 | 3 | Refused: an identity that is unknown, ambiguous or cannot sign; a document that cannot be read or signed; for `text`, `search`, `fields` and `fill`, a locked document; for `search`, more than 10,000 matches in one document; for `text`, a page past its end; for `fields` and `fill`, an XFA form; for `fill`, a signed document or answers it cannot write, with nothing written; for `sign --timestamp`, an authority that could not be reached, did not answer in time, declined, or answered with a timestamp that does not check out, with nothing written; for `sign --long-term`, a timestamp authority this computer does not trust, or revocation data or an archive timestamp that could not be had, does not check out, or says a certificate is revoked, with nothing written; for `long-term`, a document with no signature, an encrypted or certified-against-change document, one that already carries as much validation data as tpdf reads, a signature that does not verify, a signer or timestamp authority this computer does not trust, or revocation data or an archive timestamp that could not be had, does not check out, or says a certificate is revoked, with nothing written; for `redact`, a signed document without `--invalidate-signatures`, an XFA form, a regions file it cannot read, a page it cannot read, more than 500 matches, matches it cannot mark, or a document the removal cannot rewrite, with nothing written; an output that exists; a key the system would not use, or a prompt that was cancelled. |
 | 4 | tpdf failed: a worker died or did not answer, the certificate store could not be searched, or the written file did not read back as written — for `sign --long-term`, also the validation data tpdf built not reading back as it must, with nothing written; for `long-term`, the same, and a written copy that does not read back as built, which is named and not to be relied on; for `fill`, the copy is then removed; for `redact`, a copy that could not be read back or finished is removed. |
@@ -1976,6 +2046,19 @@ it with `[Console]::OutputEncoding = [Text.Encoding]::UTF8` set if a name may ca
   the form `edit`'s `annotate` and `redact --regions` take. `rects` is empty for a match
   whose characters have no position. Matches are in page order, then in the order they
   start.
+- `page-numbers` and `watermark`: `input`, `output`, `pages` (how many the copy has),
+  `written` (the pages the text went on, counted from 1, each read back holding its line),
+  `text` (as given, with its fields), `position`, `first` (the first page's line with its
+  fields filled in), `signatures_invalidated` and `signatures_unknown`.
+- `compare`: `old` and `new`, the two documents, each with `path`, `pages`,
+  `pages_without_text` (counted from 1) and `words`; `removed_words` and `added_words`;
+  `total_changes`, which is more than `changes` holds only past 10,000; `unaligned`, the
+  stretches that share no word occurring once on each side and are too long to align word by
+  word, each listed as one replacement; and `changes`, in reading order. Each change has
+  `kind` (`removed`, `added` or `replaced`), `old_page` and `new_page` (counted from 1: where
+  the change is on each side, or where words added or removed would stand), `removed` and
+  `added` (the words, joined by single spaces), `before` and `after` (up to four shared words
+  either side, from `old`), and `old_rects` and `new_rects` in `search`'s `{page, rect}` form.
 - `text`: `path` and `pages`, one per page read in document order, each with `page`
   (counted from 1), `order` — `tagged` (the document's own tags), `geometric` (recovered from
   the layout, as the viewer recovers it) or `none` (a page with no text) — `encoding` —

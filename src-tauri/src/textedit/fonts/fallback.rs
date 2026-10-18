@@ -69,9 +69,23 @@ impl Font {
         style: u8,
         text: &str,
     ) -> Result<(Self, super::Metrics), String> {
+        Self::bundled(style, text, style >= 4)
+    }
+
+    /// [`Font::new`], with the program always a subset: for text written once
+    /// across a document (`added.rs`), where the whole of Noto Sans would be
+    /// 431 KB for a page number.
+    pub(in crate::textedit) fn subset(
+        style: u8,
+        text: &str,
+    ) -> Result<(Self, super::Metrics), String> {
+        Self::bundled(style, text, true)
+    }
+
+    fn bundled(style: u8, text: &str, subset: bool) -> Result<(Self, super::Metrics), String> {
         let face = super::face(data(style), false).map_err(|e| format!("Bundled font: {e}"))?;
         let (mut font, metrics) = Self::measure(&face, style, text, false)?;
-        if style >= 4 {
+        if subset {
             font.program_key = font.glyphs.clone();
             let (program, glyphs) = super::fallback_subset::build(data(style), &font.glyphs)
                 .map_err(|e| format!("Bundled font subset: {e}"))?;

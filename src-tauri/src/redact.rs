@@ -7522,7 +7522,7 @@ mod tests {
     fn a_balanced_parent_tree_is_walked_through_its_kids() {
         let path = std::path::Path::new("../testdata/text-marked.pdf");
         let Ok(doc) = Document::load(path) else {
-            println!("[SKIP] text-marked.pdf: not generated");
+            crate::fixtures::missing("[SKIP] text-marked.pdf: not generated");
             return;
         };
         let page = *doc.get_pages().get(&1).expect("the fixture has a page 1");

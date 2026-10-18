@@ -140,10 +140,10 @@ fn run(library: &Path) -> Result<bool, String> {
     let source = root.join("testdata").join(FILE);
     if !source.exists() {
         println!(
-            "[SKIP] {} is not built; run scripts/make_fixtures.sh",
+            "[FAIL] {} is not built, so nothing was checked; run scripts/make_fixtures.sh",
             source.display()
         );
-        return Ok(true);
+        return Ok(false);
     }
     let bindings = bind(library)?;
     let document = OpenDocument::open(bindings, &source, None).map_err(|why| why.reason)?;
@@ -996,6 +996,7 @@ fn form_plan(
         forms: Vec::new(),
         text_edits: Vec::new(),
         text_layers: Vec::new(),
+        added_text: Vec::new(),
         protection: Default::default(),
         compress: Default::default(),
         new_fields: Vec::new(),
@@ -1064,6 +1065,7 @@ fn plan_for(pages: u32, region: &redact::RegionPlan) -> Plan {
         forms: Vec::new(),
         text_edits: Vec::new(),
         text_layers: Vec::new(),
+        added_text: Vec::new(),
         protection: Default::default(),
         compress: Default::default(),
         new_fields: Vec::new(),

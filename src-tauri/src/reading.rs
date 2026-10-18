@@ -221,6 +221,19 @@ fn character_turns(view: &View, index: usize) -> u32 {
     quarter(view.quarter_turns + u32::from(view.char_turns.get(index).copied().unwrap_or(0)))
 }
 
+/// `OBLIQUE`: the direction group of characters turned well between quarter
+/// turns, which is not a direction any line runs in.
+const OBLIQUE: u32 = crate::text::OBLIQUE_TURN as u32;
+
+/// `directionOf`.
+fn direction_of(view: &View, index: usize) -> u32 {
+    if view.char_turns.get(index) == Some(&crate::text::OBLIQUE_TURN) {
+        OBLIQUE
+    } else {
+        character_turns(view, index)
+    }
+}
+
 /// `placed`.
 fn placed(q: Quad) -> bool {
     q.right > q.left || q.bottom > q.top
@@ -339,7 +352,7 @@ fn fragments_of(view: &View, axes: Axes, gap: f64) -> Vec<Fragment> {
     let mut direction = view.quarter_turns;
     for index in 0..view.len() {
         if placed(char_quad(view, index)) {
-            direction = character_turns(view, index);
+            direction = direction_of(view, index);
         }
         match groups.iter_mut().find(|(turns, _)| *turns == direction) {
             Some((_, indices)) => indices.push(index),
@@ -348,6 +361,10 @@ fn fragments_of(view: &View, axes: Axes, gap: f64) -> Vec<Fragment> {
     }
     let mut fragments = Vec::new();
     for (turns, indices) in groups {
+        if turns == OBLIQUE {
+            fragments.extend(oblique_fragments(view, &indices));
+            continue;
+        }
         let group = View {
             codes: indices
                 .iter()
@@ -379,6 +396,45 @@ fn fragments_of(view: &View, axes: Axes, gap: f64) -> Vec<Fragment> {
         }
     }
     fragments
+}
+
+/// `obliqueFragments`: one fragment per run of consecutive characters, in the
+/// order the file draws them. Their boxes are boxes around turned glyphs, so
+/// banding them by overlap would join lines they only cross.
+fn oblique_fragments(view: &View, indices: &[usize]) -> Vec<Fragment> {
+    let mut runs: Vec<Vec<usize>> = Vec::new();
+    for &index in indices {
+        match runs.last_mut() {
+            Some(run) if run.last().is_some_and(|last| last + 1 == index) => run.push(index),
+            _ => runs.push(vec![index]),
+        }
+    }
+    runs.into_iter()
+        .map(|run| {
+            let mut bounds: Option<Quad> = None;
+            for &index in &run {
+                let q = char_quad(view, index);
+                if !placed(q) {
+                    continue;
+                }
+                match bounds.as_mut() {
+                    Some(b) => absorb(b, q),
+                    None => bounds = Some(q),
+                }
+            }
+            Fragment {
+                ranges: ranges_of(run),
+                bounds: bounds.unwrap_or_else(empty_box),
+                turns: Some(OBLIQUE),
+            }
+        })
+        .collect()
+}
+
+/// `obliqueLines`: each oblique fragment is a line of its own, in file order.
+fn oblique_lines(mut fragments: Vec<Fragment>) -> Vec<Vec<Range>> {
+    fragments.sort_by_key(|f| f.ranges.first().map_or(0, |r| r.from));
+    fragments.into_iter().map(|f| f.ranges).collect()
 }
 
 /// `alignedFragments`.
@@ -641,12 +697,15 @@ pub fn read(text: &PageText) -> Reading {
     } else {
         direction_groups(&fragments, axes)
             .into_iter()
-            .flat_map(|(turns, group)| {
+            .flat_map(|(turns, group)| -> Vec<Vec<Range>> {
+                if turns == OBLIQUE {
+                    return oblique_lines(group);
+                }
                 let own = axes_for(turns);
-                let view = &view;
                 blocks_of(group, own, gap, 0)
                     .into_iter()
-                    .flat_map(move |block| lines_of(view, block, own))
+                    .flat_map(|block| lines_of(&view, block, own))
+                    .collect()
             })
             .collect()
     };
@@ -681,9 +740,14 @@ fn direction_groups(block: &[Fragment], axes: Axes) -> Vec<(u32, Vec<Fragment>)>
             (turns, fragments, bounds)
         })
         .collect();
+    // Oblique text last: its box crosses the page's lines, so where it starts
+    // says nothing about where it is read.
     boxed.sort_by(|a, b| {
         let (ea, eb) = (extents_of(a.2, axes), extents_of(b.2, axes));
-        by(ea.cross_start, eb.cross_start).then(by(ea.along_start, eb.along_start))
+        (a.0 == OBLIQUE)
+            .cmp(&(b.0 == OBLIQUE))
+            .then(by(ea.cross_start, eb.cross_start))
+            .then(by(ea.along_start, eb.along_start))
     });
     boxed.into_iter().map(|(t, f, _)| (t, f)).collect()
 }
@@ -693,7 +757,13 @@ fn lines_of(view: &View, block: Vec<Fragment>, axes: Axes) -> Vec<Vec<Range>> {
     if block.iter().any(|f| f.turns.is_some()) {
         return direction_groups(&block, axes)
             .into_iter()
-            .flat_map(|(turns, group)| lines_of(view, group, axes_for(turns)))
+            .flat_map(|(turns, group)| {
+                if turns == OBLIQUE {
+                    oblique_lines(group)
+                } else {
+                    lines_of(view, group, axes_for(turns))
+                }
+            })
             .collect();
     }
     let mut ordered = block;

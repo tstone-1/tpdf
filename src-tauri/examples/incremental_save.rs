@@ -43,6 +43,7 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::{Command, ExitCode};
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Instant;
 
 use lopdf::{
@@ -974,6 +975,7 @@ fn mode_append(args: &Args, pdfium: &Pdfium) -> bool {
             println!("[SKIP] {name}: not present");
             continue;
         }
+        PRESENT.fetch_add(1, Ordering::Relaxed);
         let original = match fs::read(&path) {
             Ok(bytes) => bytes,
             Err(e) => {
@@ -1132,6 +1134,7 @@ fn mode_speed(args: &Args) -> bool {
         if !path.exists() {
             continue;
         }
+        PRESENT.fetch_add(1, Ordering::Relaxed);
         let original = match fs::read(&path) {
             Ok(b) => b,
             Err(e) => {
@@ -1223,6 +1226,7 @@ fn speed_to_disk(args: &Args, candidates: &[&str]) -> bool {
         if !path.exists() {
             continue;
         }
+        PRESENT.fetch_add(1, Ordering::Relaxed);
         let Ok(original) = fs::read(&path) else {
             continue;
         };
@@ -1372,6 +1376,7 @@ fn mode_signed(args: &Args) -> bool {
             println!("[SKIP] {name}: not present (needs pyhanko)");
             continue;
         }
+        PRESENT.fetch_add(1, Ordering::Relaxed);
         let original = fs::read(&path).unwrap_or_default();
         println!("-- {name} ({what})");
         match validate_signature(args, &path) {
@@ -1472,6 +1477,7 @@ fn mode_encrypted(args: &Args, pdfium: &Pdfium) -> bool {
             println!("[SKIP] {name}: not present");
             continue;
         }
+        PRESENT.fetch_add(1, Ordering::Relaxed);
         let original = fs::read(&path).unwrap_or_default();
         println!("-- {name} ({what})");
 
@@ -1587,6 +1593,10 @@ fn status(ok: bool) -> &'static str {
     }
 }
 
+/// Fixtures a mode found and read. A run that found none, every fixture missing
+/// or `--only` matching nothing, measured nothing and is refused.
+static PRESENT: AtomicUsize = AtomicUsize::new(0);
+
 fn main() -> ExitCode {
     let args = parse_args();
     if let Err(e) = fs::create_dir_all(&args.outdir) {
@@ -1619,6 +1629,11 @@ fn main() -> ExitCode {
         ok &= mode_encrypted(&args, &pdfium);
     }
 
+    let read = PRESENT.load(Ordering::Relaxed) > 0;
+    if !read {
+        println!("[FAIL] no fixture was present, so nothing was measured");
+    }
+    let ok = ok && read;
     println!(
         "{}",
         if ok {

@@ -1,0 +1,97 @@
+{
+  "schema": 1,
+  "command": "compare",
+  "old": {
+    "path": "survey-v1.pdf",
+    "pages": 3,
+    "pages_without_text": [
+      3
+    ],
+    "words": 412
+  },
+  "new": {
+    "path": "survey-v2.pdf",
+    "pages": 2,
+    "pages_without_text": [],
+    "words": 398
+  },
+  "removed_words": 16,
+  "added_words": 2,
+  "total_changes": 3,
+  "unaligned": 0,
+  "changes": [
+    {
+      "kind": "replaced",
+      "old_page": 1,
+      "new_page": 1,
+      "removed": "4.82",
+      "added": "4.91",
+      "before": "The highest water was",
+      "after": "m at the North",
+      "old_rects": [
+        {
+          "page": 1,
+          "rect": [
+            72.0,
+            96.5,
+            18.5,
+            13.0
+          ]
+        }
+      ],
+      "new_rects": [
+        {
+          "page": 1,
+          "rect": [
+            72.0,
+            96.5,
+            18.5,
+            13.0
+          ]
+        }
+      ]
+    },
+    {
+      "kind": "added",
+      "old_page": 1,
+      "new_page": 1,
+      "removed": "",
+      "added": "South",
+      "before": "at the",
+      "after": "Pier, which is 0.31",
+      "old_rects": [],
+      "new_rects": [
+        {
+          "page": 1,
+          "rect": [
+            72.0,
+            96.5,
+            18.5,
+            13.0
+          ]
+        }
+      ]
+    },
+    {
+      "kind": "removed",
+      "old_page": 2,
+      "new_page": 2,
+      "removed": "Highest water by month",
+      "added": "",
+      "before": "0.52 m 2.61 m",
+      "after": "Method Each station carried",
+      "old_rects": [
+        {
+          "page": 2,
+          "rect": [
+            72.0,
+            96.5,
+            18.5,
+            13.0
+          ]
+        }
+      ],
+      "new_rects": []
+    }
+  ]
+}

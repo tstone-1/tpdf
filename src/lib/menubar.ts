@@ -148,6 +148,8 @@ export const MENU_LAYOUT: LayoutSection[] = [
       "file.saveAttachment",
       "file.protect",
       "file.unprotect",
+      "file.addPageNumbers",
+      "file.addWatermark",
       // Beside the copy, because it is one --- and after it rather than before,
       // because the reader reaching for this group most often wants the
       // ordinary one and a destructive item above it is a slip waiting to be
@@ -182,6 +184,9 @@ export const MENU_LAYOUT: LayoutSection[] = [
       // The other item that only reports: it reads the saved file and lists
       // what its pages do not show.
       "file.findHiddenText",
+      // And the third: it lists what changed in the words between this
+      // document and another.
+      "file.compareWith",
     ],
   },
   {
@@ -470,6 +475,9 @@ export const MENU_LAYOUT: LayoutSection[] = [
       SEPARATOR,
       "nav.nextMark",
       "nav.previousMark",
+      SEPARATOR,
+      "nav.nextChange",
+      "nav.previousChange",
     ],
   },
   {

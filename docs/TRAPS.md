@@ -56,6 +56,7 @@ hop through the index.
 - Removing an operator removes everything it did, not only what it drew
 
 ## PDFium: text, coordinates and outlines
+- A watermark turned across the page merged the lines it crossed in the reading order
 - A byte scan cannot verify a document with a Type0 font
 - The page break is whitespace, and concatenating two pages loses it
 - A pattern over folded text has no lines, so `^` means the page
@@ -111,6 +112,7 @@ hop through the index.
 - A change predicted to fix three things fixed two, and the third was never the same problem
 - PDFium normalises ligatures too, so the cost of case folding was smaller than stated
 - A body's newlines live below the table that decodes it
+- Neither bundled font holds a line of Greek beside Chinese, so a font chosen per line refused it
 
 ## The worker boundary, the sandbox and the pool
 - macOS Vision cannot run in the parser worker's sandbox, and it aborts rather than refusing
@@ -600,6 +602,8 @@ hop through the index.
 - A mutant the bundler removes as unused never runs, and the check it was aimed at passed
 - A crop keeps the page order, so a branch on whether the order moved never told the renderer
 - A two-page fixture with every size known cannot show a size that moves every other page
+- A test that skips on a missing fixture passes unseen, because test output is captured
+
 ## Harnesses: running checks and reading what they print
 - A mutation harness needs the same control as the thing it is testing
 - A timeout that discards the transcript recreates the failure it was added to diagnose
@@ -742,6 +746,8 @@ hop through the index.
 - Restoring a mutated source does not restore the binary built from it
 - Two readers each changed their reading of text that had only moved, and comparing whole readings blamed the edit
 - A press aimed with a rectangle measured from the viewer's corner missed its mark once the window grew a toolbar
+- A file added with `git add -N` cannot be stashed, so `run_on_mac.py` sent nothing
+- A new window phase is not run at a release until `window_checks.py` lists it
 
 ## Windows and portability
 - The gates had never run on the platform where they fail
@@ -824,6 +830,7 @@ hop through the index.
 - A process's first `ShowWindow` takes the show state its parent asked for
 - `PrintDlgW` with an owner window gets Windows 11's newer dialog, and it tells the reader the app has no preview
 - An uninstaller that restores what it backed up writes an empty class where there was no key
+- A relative binary path with forward slashes is not found on Windows, so three window checks failed in a second
 
 ## Fixtures
 - The test fixtures are generated, not committed
@@ -26739,3 +26746,93 @@ last page; a crop in the middle left the reader on page 123 instead of 100. `app
 re-anchors whenever the zoom changes, so a mutation that removed only the explicit re-anchor
 survived the last-page test. Fixed 2026-10-17 for 26.10.22; the window check passed on the Mac
 mini that day.
+
+### A watermark turned across the page merged the lines it crossed in the reading order
+
+Found 2026-10-18 by `tabs_check.py --phase add-text`, whose disk check read the watermarked
+copy with `tpdf text` and did not find the word. `tpdf watermark links.pdf --text DRAFT`
+(60 pt, 45 degrees) and `tpdf text` on the result: page 1 read 31 lines instead of 37, nine
+body lines joined three by three into one, and DRAFT nowhere in the output. `tpdf search
+--text DRAFT` on the same file finds it at once.
+
+The writer is not the cause. `reading.rs` (and `reading.ts`, held to it) groups an untagged
+page's characters into lines by how much their boxes overlap vertically, and a 60 pt glyph
+turned 45 degrees has a box taller than three 12 pt lines; it joins them, and its own letters
+are scattered among theirs. A watermark from any other program, or a large heading set at an
+angle, does the same. What reads the extraction directly --- search, selection, `verify::scan`,
+`tpdf compare` --- is unaffected; what reads the reconstructed order --- `tpdf text`, the
+screen-reader layer --- is. So a read-back of added text goes through `search`, and the
+reading order with large turned text is an open question for `reading.rs`, not a fact about
+the file.
+
+Closed the same day. `text::orthogonal_turn` now marks a character more than ten degrees from
+every quarter turn as `OBLIQUE_TURN` (4) in `char_turns`; every consumer that wants a direction
+takes it `% 4`, so only reading order sees the difference. `reading.rs` and `reading.ts` put
+oblique characters in a direction group of their own, one line per run in the order the file
+draws them, read after the rest of the page. The same `links.pdf` with the same watermark now
+reads its 37 lines unchanged and DRAFT as a 38th; the shared case `oblique-watermark` holds the
+two languages together, and a mutation that dropped the group in `reading.ts` turned
+`clireading.test.ts` red. Ten degrees is a judgement, not a measurement: a skewed scan's text
+layer stays upright below it, and a heading at twelve degrees is read on its own line.
+
+### Neither bundled font holds a line of Greek beside Chinese, so a font chosen per line refused it
+
+Found 2026-10-18 while widening added text past Latin-1. The first version chose one bundled
+font per line, Noto Sans when it had every character and Noto Sans CJK SC otherwise, as the
+text editor's `fallback::automatic` does, and `Σελίδα 1 · 第1页` was refused with a message
+saying tpdf writes Greek and Chinese. Measured with `fontTools` over both programs: Noto Sans
+has no ideograph, and Noto Sans CJK SC lacks `ά` (U+03AC) and `ί` (U+03AF), so no single font
+holds the line. `textedit/fonts/added.rs` now chooses per character, Noto Sans first, and a
+line switches `Tf` where its characters change font, and the test
+`a_line_neither_font_holds_alone_switches_font_where_its_characters_do`
+pins the four switches. The text editor still chooses per run,
+and a replacement mixing the two would meet the same refusal there.
+
+### A file added with `git add -N` cannot be stashed, so `run_on_mac.py` sent nothing
+
+Found 2026-10-18. Both `run_on_mac.py` and `run_on_windows.py` send the tree as `git stash
+create`, and the new files of that day's work had been added with `git add -N` so that `git
+diff` would show them. `stash create` refuses such an entry (*Entry '...' not uptodate. Cannot
+merge.*), the script retried five times for an index lock that was not the cause, and ended in
+a Python traceback after under a second, which a background run reports as finished. Both
+scripts now print git's words and the fix, `git add` the file, and exit 2. The header already
+said to stage new files; it did not say that `-N` is not staging.
+
+### A new window phase is not run at a release until `window_checks.py` lists it
+
+Found 2026-10-18. `tabs_check.py --phase compare` and `--phase add-text` were written and passed
+on Windows, and `window_checks.py`, the list release step 5 runs on each platform, named
+neither, so the two features would have shipped with their window checks run once, on one
+platform. The list is kept by hand on purpose (most phases need a fixture made first), so
+adding a phase that needs only `testdata` means adding its row there in the same change. Both
+rows were added the same day.
+
+### A relative binary path with forward slashes is not found on Windows, so three window checks failed in a second
+
+Found 2026-10-18. `uv run scripts/window_checks.py src-tauri/target/release/tpdf.exe`, the
+form `BUILD.md` shows, failed `viewer`, the three `marks` checks and `session` in 0 to 1 s each
+with `FileNotFoundError: [WinError 2]`, and passed the eleven `tabs_check.py` and `open_check.py`
+rows. Those two resolve the path themselves; the other three hand it to `subprocess.Popen` as
+given. Measured outside the harness with `tpdf-cli.exe` under the same Python (3.15, uv's):
+`src-tauri/target/release/tpdf-cli.exe` raises `FileNotFoundError` whether the environment is
+inherited or copied, and `src-tauri\target\release\tpdf-cli.exe` runs. The same relative
+path worked on Linux. `window_checks.py` now resolves the binary once and passes every check an
+absolute path; the five then passed, 372/372 in the viewer check. A check that fails in under a
+second did not start, whatever its summary line says.
+
+### A test that skips on a missing fixture passes unseen, because test output is captured
+
+Found 2026-10-18, from an outside audit's point that a successful exit is not coverage. 103
+unit tests in nine files print `[SKIP] <fixture>: not generated` and return when a generated
+fixture is absent. That is the documented contract (`ci_fixtures.py`: skipped on a runner,
+covered locally), but `cargo test` captures a passing test's output, so on a machine missing a
+fixture every one of them reported `ok` and nothing printed the skip. The local half had
+nothing behind it. Measured on the Windows desktop with `--nocapture`: two skips, both by
+design, so the coverage there was real; nothing would have said so on a machine where it was
+not. The sites now call `fixtures::missing`, which fails the test when
+`TPDF_REQUIRE_FIXTURES` is set, and `gates.py` sets it unless `CI` is. Moving
+`text-marked.pdf` away failed its test with the variable and skipped it without. The same audit
+found the probes' reports exiting 0 when every check skipped (`redact-gate-probe`,
+`ocr-worker-probe`, five more), `incremental-save` and `compress-probe` passing over an empty
+directory, and `checkreport.ts` exiting 0 on a run of nothing but *not applicable*; each now
+refuses a run in which nothing passed.

@@ -55,7 +55,9 @@
 //! whenever the exit code is 0 or 1, and for `verify` also when it is 3 or 4,
 //! since other documents in the same run may have been read.
 
+mod addtext;
 pub mod args;
+mod compare;
 pub mod completions;
 mod compress;
 mod edit;
@@ -507,6 +509,7 @@ pub const COMMANDS: &[Registered] = &[
     info::COMMAND,
     text::COMMAND,
     search::COMMAND,
+    compare::COMMAND,
     fields::COMMAND,
     fill::COMMAND,
     redact::COMMAND,
@@ -525,6 +528,8 @@ pub const COMMANDS: &[Registered] = &[
     form::COMMAND,
     protect::PROTECT,
     protect::UNPROTECT,
+    addtext::PAGE_NUMBERS,
+    addtext::WATERMARK,
     images::COMMAND,
     hidden::COMMAND,
     long_term::COMMAND,

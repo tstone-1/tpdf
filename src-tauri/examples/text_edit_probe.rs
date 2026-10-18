@@ -372,6 +372,7 @@ fn run() -> Result<(), String> {
         field_edits: Vec::new(),
         tab_order: false,
         text_layers: Vec::new(),
+        added_text: Vec::new(),
         protection: Default::default(),
         compress: Default::default(),
         new_fields: Vec::new(),

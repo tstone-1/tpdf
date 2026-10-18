@@ -545,6 +545,7 @@ pub fn plan(pages: u32, answers: &[Resolved], opened_as: crate::fingerprint::Fin
         tab_order: false,
         text_edits: Vec::new(),
         text_layers: Vec::new(),
+        added_text: Vec::new(),
         protection: Default::default(),
         compress: Default::default(),
         new_fields: Vec::new(),

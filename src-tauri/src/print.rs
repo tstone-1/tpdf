@@ -474,7 +474,7 @@ mod tests {
         for name in ["incr-encrypted-open.pdf", "incr-encrypted-pw.pdf"] {
             let path = std::path::Path::new("../testdata").join(name);
             if !path.exists() {
-                println!("[SKIP] {name}: fixture not generated");
+                crate::fixtures::missing(&format!("[SKIP] {name}: fixture not generated"));
                 continue;
             }
             examined += 1;
@@ -532,7 +532,7 @@ mod tests {
     fn an_unencrypted_document_still_prints_a_selection() {
         let path = std::path::Path::new("../testdata/rotated.pdf");
         if !path.exists() {
-            println!("[SKIP] rotated.pdf: fixture not generated");
+            crate::fixtures::missing("[SKIP] rotated.pdf: fixture not generated");
             return;
         }
         let built = build(
@@ -697,7 +697,7 @@ mod tests {
         // writer asked what it wrote agrees with itself.
         let path = Path::new("../testdata/rotated.pdf");
         if !path.exists() {
-            println!("[SKIP] rotated.pdf: fixture not generated");
+            crate::fixtures::missing("[SKIP] rotated.pdf: fixture not generated");
             return;
         }
         let source = std::fs::read(path).expect("read");
@@ -767,7 +767,7 @@ mod tests {
         // lands is `save.rs`'s own tests and `annot-probe`'s pixels.
         let path = Path::new("../testdata/text-heavy.pdf");
         if !path.exists() {
-            println!("[SKIP] text-heavy.pdf: fixture not generated");
+            crate::fixtures::missing("[SKIP] text-heavy.pdf: fixture not generated");
             return;
         }
         let edits = crate::edits::Edits::default();
@@ -1851,7 +1851,7 @@ mod tests {
         }
         let path = Path::new("../testdata/rotated.pdf");
         if !path.exists() {
-            println!("[SKIP] rotated.pdf not generated");
+            crate::fixtures::missing("[SKIP] rotated.pdf not generated");
             return;
         }
         let source = std::fs::read(path).expect("read source");
@@ -1956,7 +1956,7 @@ mod tests {
         ] {
             let path = Path::new("../testdata").join(name);
             if !path.exists() {
-                println!("[SKIP] {name}: fixture not generated");
+                crate::fixtures::missing(&format!("[SKIP] {name}: fixture not generated"));
                 continue;
             }
             let source = std::fs::read(&path).expect("read source");
@@ -2188,7 +2188,7 @@ mod tests {
             if path.exists() {
                 cases.push((name.into(), path));
             } else {
-                println!("[SKIP] {name}: fixture not generated");
+                crate::fixtures::missing(&format!("[SKIP] {name}: fixture not generated"));
             }
         }
 

@@ -967,7 +967,7 @@ fn dss_certificates_are_offered_within_their_own_bound() {
     // Up to MAX_CERTIFICATES extras, each under the size bound, duplicates
     // once; an oversized one is left out rather than refusing the lot.
     let Ok(bytes) = std::fs::read("../testdata/incr-signed.pdf") else {
-        println!("[SKIP] incr-signed.pdf: not generated");
+        crate::fixtures::missing("[SKIP] incr-signed.pdf: not generated");
         return;
     };
     let raw = blob_of_any(&bytes);

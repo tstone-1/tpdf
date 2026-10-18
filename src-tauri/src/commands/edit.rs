@@ -486,9 +486,51 @@ pub async fn region_copy(
     })
 }
 
-/// The Windows and Linux answer: the web view copies the region itself, with
+/// The Linux answer: [`region_save`]'s render, put on GTK's clipboard on the
+/// main thread.
+///
+/// For the macOS arm's reason. WebKitGTK refused the web view's
+/// `ClipboardItem` in the window checks, whose drag is synthetic, with *The
+/// request is not allowed by the user agent or the platform* (Ubuntu 24.04
+/// under Xvfb, 2026-10-18), so the check could not see what a reader's real
+/// drag gets. GTK's clipboard asks for no gesture. The PNG is decoded here by
+/// gdk-pixbuf, which `set_image` needs; it is the worker's own encoding of a
+/// rendered tile, not bytes from the document.
+#[cfg(target_os = "linux")]
+#[tauri::command]
+pub async fn region_copy(
+    app: tauri::AppHandle,
+    service: tauri::State<'_, crate::render::RenderService>,
+    tile: String,
+) -> Result<(), String> {
+    let png = region_png(&service, &tile)
+        .await
+        .map_err(|why| format!("The region was not copied: {why}"))?;
+    let (sent, answer) = std::sync::mpsc::channel::<Result<(), String>>();
+    app.run_on_main_thread(move || {
+        use gtk::gdk_pixbuf::prelude::*;
+        let copied = (|| {
+            let loader =
+                gtk::gdk_pixbuf::PixbufLoader::with_type("png").map_err(|e| e.to_string())?;
+            loader.write(&png).map_err(|e| e.to_string())?;
+            loader.close().map_err(|e| e.to_string())?;
+            let picture = loader.pixbuf().ok_or("the picture could not be read")?;
+            gtk::Clipboard::get(&gtk::gdk::SELECTION_CLIPBOARD).set_image(&picture);
+            Ok(())
+        })();
+        let _ = sent.send(copied);
+    })
+    .map_err(|e| format!("The region was not copied: {e}"))?;
+    tauri::async_runtime::spawn_blocking(move || answer.recv())
+        .await
+        .map_err(|e| format!("The region was not copied: {e}"))?
+        .map_err(|_| "The region was not copied: the main thread did not answer.".to_string())?
+        .map_err(|why| format!("The region was not copied: {why}"))
+}
+
+/// The Windows answer: the web view copies the region itself, with
 /// `ClipboardItem`. See the macOS arm.
-#[cfg(any(windows, target_os = "linux"))]
+#[cfg(windows)]
 #[tauri::command]
 pub async fn region_copy(tile: String) -> Result<(), String> {
     let _ = tile;

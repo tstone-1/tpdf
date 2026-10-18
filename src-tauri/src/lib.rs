@@ -8,6 +8,8 @@
 //! `AGENTS.md` is reproduced. Do not delete one because nothing calls it: the
 //! caller is a shell command in `BUILD.md`.
 
+/// Text written onto every page: page numbers, headers, footers, watermarks.
+pub mod addedtext;
 pub mod annots;
 pub mod attachments;
 pub mod ber;
@@ -23,6 +25,8 @@ pub mod clitool;
 /// Every `#[tauri::command]` this crate registers, grouped by the state it
 /// touches. The registry below stays here; the bodies do not.
 mod commands;
+/// What changed between two documents' words: *Compare with* and `tpdf compare`.
+pub mod compare;
 pub mod compress;
 pub mod content;
 pub mod defaultapp;
@@ -37,6 +41,8 @@ pub mod explorer;
 pub mod failure;
 pub mod fields;
 pub mod fingerprint;
+#[cfg(test)]
+pub(crate) mod fixtures;
 pub mod formedit;
 pub mod formfields;
 pub mod forms;
@@ -196,8 +202,8 @@ use tauri::Manager;
 // moved and what decides which file a new one goes in.
 use commands::document::start_eager_open;
 use commands::{
-    app::*, compress::*, document::*, edit::*, hidden::*, menubar::*, ocr::*, print::*, protect::*,
-    read::*, redact::*, save::*, session::*, sign::*, spike::*, validation::*,
+    addtext::*, app::*, compress::*, document::*, edit::*, hidden::*, menubar::*, ocr::*, print::*,
+    protect::*, read::*, redact::*, save::*, session::*, sign::*, spike::*, validation::*,
 };
 
 /// The window's *Redact and save as*, without the window.
@@ -1053,6 +1059,7 @@ pub fn run() {
             save_document,
             save_copy,
             protect_copy,
+            add_text_copy,
             compress_estimate,
             compress_copy,
             extract_pages,
@@ -1077,6 +1084,7 @@ pub fn run() {
             release_documents,
             page_text,
             search_page,
+            compare_texts,
             document_outline,
             document_text_runs,
             text_replace,
@@ -1519,6 +1527,7 @@ mod tests {
             forms: Vec::new(),
             text_edits: Vec::new(),
             text_layers: Vec::new(),
+            added_text: Vec::new(),
             protection: Default::default(),
             compress: Default::default(),
             new_fields: Vec::new(),

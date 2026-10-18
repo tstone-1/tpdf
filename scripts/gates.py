@@ -464,6 +464,16 @@ def main() -> int:
         if "CARGO_BUILD_JOBS" in os.environ:
             print(f"[INFO] Cargo build jobs: {os.environ['CARGO_BUILD_JOBS']}", flush=True)
 
+    # Off CI, a test whose generated fixture is absent fails rather than
+    # skipping (`src-tauri/src/fixtures.rs`). A runner cannot generate them all
+    # (`ci_fixtures.py` says which), so there it still skips; GitHub Actions
+    # sets `CI`. The contract was "skipped on a runner, covered locally", and
+    # until 2026-10-18 nothing checked the second half: test output is captured,
+    # so a machine missing a fixture passed those tests unseen.
+    if not os.environ.get("CI"):
+        os.environ.setdefault("TPDF_REQUIRE_FIXTURES", "1")
+        print("[INFO] a missing test fixture fails (TPDF_REQUIRE_FIXTURES)", flush=True)
+
     results = [(name, *run(name, argv), reason) for name, argv, reason in selected]
 
     width = max(len(name) for name, _, _, _, _ in results)

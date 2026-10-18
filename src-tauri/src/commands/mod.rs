@@ -24,6 +24,7 @@
 //! reply channel, the wait on it, the password lookup and the choice of where a
 //! parse happens.
 
+pub mod addtext;
 pub mod app;
 pub mod compress;
 pub mod document;

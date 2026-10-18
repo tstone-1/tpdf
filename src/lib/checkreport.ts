@@ -107,10 +107,14 @@ export class Report {
       `\n${ran - failed}/${ran} checks passed` +
         (skipped ? `, ${skipped} not applicable` : ""),
     );
+    // A run in which no check passed measured nothing, however many were not
+    // applicable: the exit says so, as the probes' reports do since 2026-10-18.
+    const measured = ran - failed > 0;
+    if (!measured) this.emit("[FAIL] no check passed, so this run measured nothing");
     // The lines went out one at a time; this is where the last is known to have
     // landed. `spike_exit` really does set the exit code --- see AGENTS.md.
     await this.printing;
-    await call("spike_exit", { code: failed === 0 ? 0 : 1 });
+    await call("spike_exit", { code: failed === 0 && measured ? 0 : 1 });
   }
 }
 

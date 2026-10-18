@@ -127,6 +127,7 @@ fn plan_with(baseline: u32, pages: Vec<PageView>, other: &Path) -> Plan {
         tab_order: false,
         text_edits: Vec::new(),
         text_layers: Vec::new(),
+        added_text: Vec::new(),
         protection: Default::default(),
         compress: Default::default(),
         new_fields: Vec::new(),
@@ -441,7 +442,7 @@ fn a_source_an_empty_password_opens_is_refused_rather_than_decrypted() {
     let Some(encrypted) =
         Some(Path::new("../testdata/incr-encrypted-open.pdf")).filter(|path| path.exists())
     else {
-        println!("[SKIP] incr-encrypted-open.pdf not generated (BUILD.md)");
+        crate::fixtures::missing("[SKIP] incr-encrypted-open.pdf not generated (BUILD.md)");
         return;
     };
     let scratch = Scratch::new("encrypted");

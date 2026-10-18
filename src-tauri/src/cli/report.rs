@@ -1276,6 +1276,94 @@ pub struct HitRect {
     pub rect: [f32; 4],
 }
 
+/// `tpdf page-numbers --json` and `tpdf watermark --json`. Page numbers are
+/// one-based.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct TextAdded {
+    /// Always [`SCHEMA`].
+    pub schema: u32,
+    /// `"page-numbers"` or `"watermark"`.
+    pub command: String,
+    pub input: String,
+    pub output: String,
+    /// Pages the copy has.
+    pub pages: u32,
+    /// The pages the text was written on, each read back holding its line.
+    pub written: Vec<u32>,
+    /// The text as given, with its fields.
+    pub text: String,
+    pub position: crate::addedtext::Position,
+    /// The first page's line, with its fields filled in.
+    pub first: String,
+    pub signatures_invalidated: usize,
+    pub signatures_unknown: bool,
+}
+
+/// `tpdf compare --json`: the changes in the words from `old` to `new`. Page
+/// numbers are one-based.
+///
+/// Text only: an empty `changes` says the two documents have the same words,
+/// not that they are the same document.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct Compared {
+    /// Always [`SCHEMA`].
+    pub schema: u32,
+    /// Always `"compare"`.
+    pub command: String,
+    /// The first document.
+    pub old: ComparedFile,
+    /// The second.
+    pub new: ComparedFile,
+    /// Words `old` has that `new` does not, counting those replaced.
+    pub removed_words: u32,
+    /// Words `new` has that `old` does not, counting replacements.
+    pub added_words: u32,
+    /// How many changes there are; more than `changes` lists only when the
+    /// list was cut at `compare::MAX_CHANGES`.
+    pub total_changes: u32,
+    /// Stretches too far apart to align word by word, each listed as one
+    /// replacement.
+    pub unaligned: u32,
+    /// The changes, in reading order.
+    pub changes: Vec<ComparedChange>,
+}
+
+/// One side of a [`Compared`].
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ComparedFile {
+    /// The path as given.
+    pub path: String,
+    /// Pages read.
+    pub pages: u32,
+    /// Pages that held no characters.
+    pub pages_without_text: Vec<u32>,
+    /// Words read.
+    pub words: u32,
+}
+
+/// One change of a [`Compared`].
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ComparedChange {
+    /// `removed`, `added` or `replaced`, from `old` to `new`.
+    pub kind: crate::compare::Kind,
+    /// The page of `old` the change is on, or where the added words would be.
+    pub old_page: u32,
+    /// The page of `new`, likewise.
+    pub new_page: u32,
+    /// The words of `old`, joined by single spaces; empty for an addition.
+    pub removed: String,
+    /// The words of `new`; empty for a removal.
+    pub added: String,
+    /// Up to four words before the change that both documents have.
+    pub before: String,
+    /// Up to four after it.
+    pub after: String,
+    /// Where the removed words are on `old`'s pages.
+    pub old_rects: Vec<HitRect>,
+    /// Where the added words are on `new`'s.
+    pub new_rects: Vec<HitRect>,
+}
+
 /// [`Search::kind`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]

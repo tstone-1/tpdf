@@ -20,8 +20,10 @@ import { MULTI_CLICK_SLOP_PX } from "../clicks";
  * nothing runs this harness automatically and the mutation table is the only
  * thing that runs its baseline. Five: the tab for text the pages do not show
  * made it seven, and the number was changed with the tab, without a window run.
+ * Six: the changes tab of *Compare with* made it eight, and the number was not
+ * changed with the tab; a window run on a second Mac found it the same day.
  */
-export const SIDEBAR_TABS = 7;
+export const SIDEBAR_TABS = 8;
 
 /** Size of the surface the check mounts, in CSS pixels. */
 export const WIDTH = 900;

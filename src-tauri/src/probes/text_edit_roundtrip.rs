@@ -138,6 +138,7 @@ pub(super) fn run(source: &Path, requests: &Path, directory: &Path) -> Result<()
         // Every request file names pages of the document the probe opened.
         text_edits: changes.into_iter().map(textedit::Edit::opened).collect(),
         text_layers: Vec::new(),
+        added_text: Vec::new(),
         protection: Default::default(),
         compress: Default::default(),
         new_fields: Vec::new(),

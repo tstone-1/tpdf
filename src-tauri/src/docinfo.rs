@@ -3430,7 +3430,7 @@ mod tests {
         ] {
             let path = std::path::Path::new("../testdata").join(name);
             let Ok(bytes) = std::fs::read(&path) else {
-                println!("[SKIP] {name}: fixture not generated");
+                crate::fixtures::missing(&format!("[SKIP] {name}: fixture not generated"));
                 continue;
             };
             examined += 1;
@@ -3467,7 +3467,7 @@ mod tests {
     fn a_document_with_no_encryption_reports_none() {
         let path = std::path::Path::new("../testdata/comments.pdf");
         let Ok(bytes) = std::fs::read(path) else {
-            println!("[SKIP] comments.pdf: fixture not generated");
+            crate::fixtures::missing("[SKIP] comments.pdf: fixture not generated");
             return;
         };
         let properties = scan(&bytes, 4, None).expect("must parse");
@@ -3643,7 +3643,7 @@ mod tests {
         for (name, level) in cases {
             let path = std::path::Path::new("../testdata").join(name);
             let Ok(bytes) = std::fs::read(&path) else {
-                println!("[SKIP] {name}: not generated");
+                crate::fixtures::missing(&format!("[SKIP] {name}: not generated"));
                 continue;
             };
 
@@ -3675,7 +3675,9 @@ mod tests {
 
         let names: Vec<&str> = cases.iter().map(|case| case.0).collect();
         if none_generated(&names) {
-            println!("[SKIP] no signed fixture is generated here (BUILD.md, Test fixtures)");
+            crate::fixtures::missing(
+                "[SKIP] no signed fixture is generated here (BUILD.md, Test fixtures)",
+            );
             return;
         }
         // Five SKIP lines and a pass look identical, and this is the check that
@@ -3698,7 +3700,7 @@ mod tests {
     fn appending_to_a_signed_document_stops_the_signature_covering_it() {
         let path = std::path::Path::new("../testdata/incr-certified-1.pdf");
         let Ok(bytes) = std::fs::read(path) else {
-            println!("[SKIP] incr-certified-1.pdf: not generated");
+            crate::fixtures::missing("[SKIP] incr-certified-1.pdf: not generated");
             return;
         };
 
@@ -3876,7 +3878,7 @@ mod tests {
     fn a_second_signature_is_reported_as_a_signature_rather_than_as_a_size() {
         let path = std::path::Path::new("../testdata/incr-two-signers.pdf");
         let Ok(bytes) = std::fs::read(path) else {
-            println!("[SKIP] incr-two-signers.pdf: not generated");
+            crate::fixtures::missing("[SKIP] incr-two-signers.pdf: not generated");
             return;
         };
 
@@ -3943,7 +3945,7 @@ mod tests {
     fn a_signature_with_nothing_after_it_has_no_appendix() {
         let path = std::path::Path::new("../testdata/incr-signed.pdf");
         let Ok(bytes) = std::fs::read(path) else {
-            println!("[SKIP] incr-signed.pdf: not generated");
+            crate::fixtures::missing("[SKIP] incr-signed.pdf: not generated");
             return;
         };
         let properties = scan(&bytes, 1, None).expect("must parse");
@@ -3973,7 +3975,7 @@ mod tests {
     fn an_appendix_whose_signed_prefix_is_unparseable_is_reported_as_unread() {
         let path = std::path::Path::new("../testdata/incr-two-signers.pdf");
         let Ok(bytes) = std::fs::read(path) else {
-            println!("[SKIP] incr-two-signers.pdf: not generated");
+            crate::fixtures::missing("[SKIP] incr-two-signers.pdf: not generated");
             return;
         };
 
@@ -4035,7 +4037,7 @@ mod tests {
     fn a_document_that_needs_a_password_says_so_rather_than_reporting_nothing() {
         let path = std::path::Path::new("../testdata/incr-encrypted-pw.pdf");
         let Ok(bytes) = std::fs::read(path) else {
-            println!("[SKIP] incr-encrypted-pw.pdf: not generated");
+            crate::fixtures::missing("[SKIP] incr-encrypted-pw.pdf: not generated");
             return;
         };
 
@@ -4889,7 +4891,7 @@ mod tests {
         // thirty-two signatures over a large file costs thirty-two hashes of it.
         let Ok(bytes) = std::fs::read(std::path::Path::new("../testdata/incr-two-signers.pdf"))
         else {
-            println!("[SKIP] incr-two-signers.pdf: not generated");
+            crate::fixtures::missing("[SKIP] incr-two-signers.pdf: not generated");
             return;
         };
         let whole = scan(&bytes, 1, None).expect("parses");
@@ -4920,7 +4922,7 @@ mod tests {
         // be computed over an array a non-integer was dropped from --- which
         // with the element anywhere else shifts every pair after it.
         let Ok(bytes) = std::fs::read(std::path::Path::new("../testdata/incr-signed.pdf")) else {
-            println!("[SKIP] incr-signed.pdf: not generated");
+            crate::fixtures::missing("[SKIP] incr-signed.pdf: not generated");
             return;
         };
         let at = bytes
@@ -5034,7 +5036,7 @@ mod tests {
             "signed-nested-field.pdf",
         ] {
             let Ok(bytes) = std::fs::read(std::path::Path::new("../testdata").join(name)) else {
-                println!("[SKIP] {name}: not generated");
+                crate::fixtures::missing(&format!("[SKIP] {name}: not generated"));
                 continue;
             };
             for signature in scan(&bytes, 1, None).expect("parses").signatures {
@@ -5099,7 +5101,7 @@ mod tests {
     #[test]
     fn a_signature_with_no_typed_name_still_names_its_signer() {
         let Ok(bytes) = std::fs::read("../testdata/incr-signed.pdf") else {
-            println!("[SKIP] incr-signed.pdf: not generated");
+            crate::fixtures::missing("[SKIP] incr-signed.pdf: not generated");
             return;
         };
         let properties = scan(&bytes, 1, None).expect("a signed fixture must parse");
@@ -5211,7 +5213,7 @@ mod tests {
         let mut serials = std::collections::BTreeSet::new();
         for name in cases {
             let Ok(bytes) = std::fs::read(std::path::Path::new("../testdata").join(name)) else {
-                println!("[SKIP] {name}: not generated");
+                crate::fixtures::missing(&format!("[SKIP] {name}: not generated"));
                 continue;
             };
             let properties = scan(&bytes, 1, None).expect("a signed fixture must parse");
@@ -5259,7 +5261,9 @@ mod tests {
         }
 
         if none_generated(&cases) {
-            println!("[SKIP] no signed fixture is generated here (BUILD.md, Test fixtures)");
+            crate::fixtures::missing(
+                "[SKIP] no signed fixture is generated here (BUILD.md, Test fixtures)",
+            );
             return;
         }
         // Five SKIP lines and a pass look identical without this.
@@ -5451,7 +5455,7 @@ mod tests {
     #[test]
     fn a_bound_a_valid_blob_exceeds_refuses_it_rather_than_parsing_it() {
         let Some(raw) = signature_blob("incr-signed.pdf") else {
-            println!("[SKIP] incr-signed.pdf: not generated");
+            crate::fixtures::missing("[SKIP] incr-signed.pdf: not generated");
             return;
         };
         let document = Document::with_version("1.7");
@@ -5719,7 +5723,7 @@ mod tests {
     #[test]
     fn two_signers_are_told_apart_and_neither_is_reported_as_the_authority() {
         let Ok(bytes) = std::fs::read("../testdata/incr-two-signers.pdf") else {
-            println!("[SKIP] incr-two-signers.pdf: not generated");
+            crate::fixtures::missing("[SKIP] incr-two-signers.pdf: not generated");
             return;
         };
         let properties = scan(&bytes, 2, None).expect("a signed fixture must parse");
@@ -5800,7 +5804,7 @@ mod tests {
     #[test]
     fn a_signature_field_under_kids_is_found_rather_than_walked_past() {
         let Ok(bytes) = std::fs::read("../testdata/signed-nested-field.pdf") else {
-            println!("[SKIP] signed-nested-field.pdf: not generated");
+            crate::fixtures::missing("[SKIP] signed-nested-field.pdf: not generated");
             return;
         };
         let properties = scan(&bytes, 1, None).expect("the fixture must parse");
@@ -6154,7 +6158,7 @@ mod tests {
     #[test]
     fn the_usage_a_real_certificate_states_is_the_usage_openssl_reads() {
         let Ok(bytes) = std::fs::read("../testdata/incr-signed.pdf") else {
-            println!("[SKIP] incr-signed.pdf: not generated");
+            crate::fixtures::missing("[SKIP] incr-signed.pdf: not generated");
             return;
         };
         let properties = scan(&bytes, 1, None).expect("the fixture must parse");
@@ -6191,7 +6195,7 @@ mod tests {
     #[test]
     fn the_time_a_timestamp_authority_attested_is_read() {
         let Ok(bytes) = std::fs::read("../testdata/incr-timestamped.pdf") else {
-            println!("[SKIP] incr-timestamped.pdf: not generated");
+            crate::fixtures::missing("[SKIP] incr-timestamped.pdf: not generated");
             return;
         };
         let properties = scan(&bytes, 2, None).expect("the fixture must parse");
@@ -6247,7 +6251,7 @@ mod tests {
     #[test]
     fn the_attested_time_is_not_the_clock_the_signer_wrote() {
         let Ok(bytes) = std::fs::read("../testdata/incr-timestamped.pdf") else {
-            println!("[SKIP] incr-timestamped.pdf: not generated");
+            crate::fixtures::missing("[SKIP] incr-timestamped.pdf: not generated");
             return;
         };
         let signature = &scan(&bytes, 2, None).expect("must parse").signatures[0];
@@ -6269,7 +6273,7 @@ mod tests {
     #[test]
     fn a_signature_with_no_token_reports_no_timestamp_and_no_failure() {
         let Ok(bytes) = std::fs::read("../testdata/incr-signed.pdf") else {
-            println!("[SKIP] incr-signed.pdf: not generated");
+            crate::fixtures::missing("[SKIP] incr-signed.pdf: not generated");
             return;
         };
         let properties = scan(&bytes, 1, None).expect("must parse");
@@ -6293,7 +6297,7 @@ mod tests {
     #[test]
     fn an_ordinary_signature_blob_is_not_read_as_a_timestamp_token() {
         let Ok(bytes) = std::fs::read("../testdata/incr-signed.pdf") else {
-            println!("[SKIP] incr-signed.pdf: not generated");
+            crate::fixtures::missing("[SKIP] incr-signed.pdf: not generated");
             return;
         };
         let document = Document::load_mem(&bytes).expect("must parse");
@@ -6342,7 +6346,7 @@ mod tests {
     #[test]
     fn a_token_relabelled_as_something_else_is_not_read_as_a_timestamp() {
         let Ok(bytes) = std::fs::read("../testdata/incr-timestamped.pdf") else {
-            println!("[SKIP] incr-timestamped.pdf: not generated");
+            crate::fixtures::missing("[SKIP] incr-timestamped.pdf: not generated");
             return;
         };
         let token = timestamp_token_of(&timestamped_blob(&bytes));
@@ -6415,7 +6419,7 @@ mod tests {
     #[test]
     fn a_timestamp_attribute_carrying_more_than_one_value_is_refused() {
         let Ok(bytes) = std::fs::read("../testdata/incr-timestamped.pdf") else {
-            println!("[SKIP] incr-timestamped.pdf: not generated");
+            crate::fixtures::missing("[SKIP] incr-timestamped.pdf: not generated");
             return;
         };
         let blob = timestamped_blob(&bytes);
@@ -6441,7 +6445,7 @@ mod tests {
     #[test]
     fn a_token_that_will_not_parse_is_counted_rather_than_read_as_absent() {
         let Ok(bytes) = std::fs::read("../testdata/incr-timestamped.pdf") else {
-            println!("[SKIP] incr-timestamped.pdf: not generated");
+            crate::fixtures::missing("[SKIP] incr-timestamped.pdf: not generated");
             return;
         };
         let blob = timestamped_blob(&bytes);
@@ -6500,7 +6504,7 @@ mod tests {
     fn stamped(faults: &crate::integrity::test_tsa::Faults) -> Option<Timestamp> {
         use crate::integrity::test_tsa::{mint_with, Imprint, TestTsa};
         let Ok(bytes) = std::fs::read("../testdata/incr-timestamped.pdf") else {
-            println!("[SKIP] incr-timestamped.pdf: not generated");
+            crate::fixtures::missing("[SKIP] incr-timestamped.pdf: not generated");
             return None;
         };
         let blob = timestamped_blob(&bytes);
@@ -6595,7 +6599,7 @@ mod tests {
             return;
         }
         let Ok(bytes) = std::fs::read("../testdata/incr-timestamped.pdf") else {
-            println!("[SKIP] incr-timestamped.pdf: not generated");
+            crate::fixtures::missing("[SKIP] incr-timestamped.pdf: not generated");
             return;
         };
         let blob = timestamped_blob(&bytes);
@@ -6634,7 +6638,7 @@ mod tests {
         // pyHanko's document timestamp: the field's own verdict is the token's,
         // and the timestamp carries the same verdict and the time, attested.
         let Ok(bytes) = std::fs::read("../testdata/incr-doc-timestamped.pdf") else {
-            println!("[SKIP] incr-doc-timestamped.pdf: not generated");
+            crate::fixtures::missing("[SKIP] incr-doc-timestamped.pdf: not generated");
             return;
         };
         let properties = scan(&bytes, 2, None).expect("the fixture must parse");
@@ -6667,7 +6671,7 @@ mod tests {
         // is sound and is of different bytes, so the time is not attested and
         // its authority is not asked about.
         let Ok(mut bytes) = std::fs::read("../testdata/incr-doc-timestamped.pdf") else {
-            println!("[SKIP] incr-doc-timestamped.pdf: not generated");
+            crate::fixtures::missing("[SKIP] incr-doc-timestamped.pdf: not generated");
             return;
         };
         // The header's comment line, covered and read by nothing else.
@@ -7033,7 +7037,7 @@ mod tests {
     #[test]
     fn the_fixture_with_a_real_packet_is_read_and_claims_nothing() {
         let Ok(bytes) = std::fs::read("../testdata/hostile-metadata.pdf") else {
-            println!("[SKIP] hostile-metadata.pdf: not generated");
+            crate::fixtures::missing("[SKIP] hostile-metadata.pdf: not generated");
             return;
         };
         let properties = scan(&bytes, 1, None).expect("the fixture must parse");
@@ -7308,7 +7312,7 @@ mod tests {
             std::fs::read("../testdata/incr-signed.pdf"),
             std::fs::read("../testdata/incr-ber.pdf"),
         ) else {
-            println!("[SKIP] incr-signed.pdf / incr-ber.pdf: not generated");
+            crate::fixtures::missing("[SKIP] incr-signed.pdf / incr-ber.pdf: not generated");
             return;
         };
         assert_ne!(der, ber, "the fixtures must differ, or this tests nothing");
@@ -7327,7 +7331,7 @@ mod tests {
             scan(&bytes, 1, None).ok()
         };
         let (Some(der), Some(ber)) = (read("incr-signed.pdf"), read("incr-ber.pdf")) else {
-            println!("[SKIP] incr-signed.pdf / incr-ber.pdf: not generated");
+            crate::fixtures::missing("[SKIP] incr-signed.pdf / incr-ber.pdf: not generated");
             return;
         };
         let named = |properties: &Properties| {
@@ -7438,7 +7442,9 @@ mod tests {
             }
         }
         if none_generated(&names) {
-            println!("[SKIP] no signed fixture is generated here (BUILD.md, Test fixtures)");
+            crate::fixtures::missing(
+                "[SKIP] no signed fixture is generated here (BUILD.md, Test fixtures)",
+            );
             return;
         }
         assert_eq!(

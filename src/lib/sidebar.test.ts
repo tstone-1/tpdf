@@ -65,6 +65,7 @@ describe("Sidebar keyboard activation", () => {
         planFor: () => undefined,
       },
       hidden: { onPick: () => {} },
+      changes: { onPick: () => {} },
       onTab: (tab) => tabs.push(tab),
       pages: {
         doc: 1,
@@ -237,6 +238,7 @@ describe("Sidebar keyboard activation", () => {
         planFor: () => undefined,
       },
       hidden: { onPick: () => {} },
+      changes: { onPick: () => {} },
       onTab: () => {},
       pages: {
         doc: 1,

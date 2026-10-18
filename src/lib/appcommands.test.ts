@@ -56,6 +56,9 @@ function harness(
     // The window's two sides. One document and one side by default.
     sides?: { split: boolean; focused: "left" | "right"; others: string[] };
     syncScrolling?: boolean;
+    // How many changes the comparison on screen lists. None by default: a
+    // window opens with nothing compared.
+    changes?: number;
   } = {},
   journal: { undo?: boolean; redo?: boolean } = {},
   selected = false,
@@ -271,6 +274,9 @@ function harness(
     redactRasterCopy: () => fired.push("redactRasterCopy"),
     recogniseText: () => fired.push("recogniseText"),
     findHiddenText: () => fired.push("findHiddenText"),
+    compareWith: (index) => fired.push(`compareWith:${index}`),
+    changeCount: () => update.changes ?? 0,
+    stepChange: (direction) => fired.push(`stepChange:${direction}`),
     chooseRecognitionLanguage: () => fired.push("chooseRecognitionLanguage"),
     recognitionLanguages: () => languages,
     saveAttachment: () => fired.push("saveAttachment"),
@@ -281,6 +287,7 @@ function harness(
     dropRecognitionLanguages: () => fired.push("dropRecognitionLanguages"),
     protectCopy: () => fired.push("protectCopy"),
     unprotectCopy: () => fired.push("unprotectCopy"),
+    addText: (kind) => fired.push(`addText:${kind}`),
     compressCopy: () => fired.push("compressCopy"),
     redactDocument: () => fired.push("redactDocument"),
     extractPages: (slots: number[]) => fired.push(`extractPages:${slots.join("+")}`),
@@ -1006,6 +1013,7 @@ describe("every registered command", () => {
     const built = (update: {
       available?: boolean; ready?: boolean; disk?: DiskChangeMode;
       restoreTabs?: boolean; reopenable?: number; recents?: number; fieldBorder?: boolean; picked?: number; fieldPicked?: boolean; formEditing?: boolean; savedFields?: number; canOrderTabs?: boolean; signable?: number;
+      sides?: { split: boolean; focused: "left" | "right"; others: string[] };
     }) => harness(
       true,
       update,
@@ -1039,13 +1047,21 @@ describe("every registered command", () => {
       [{ name: "a.txt", description: "", size: 3 }, { name: "b.csv", description: "", size: null }],
     );
     // Every other argument takes a number; a language is a word.
-    const ANSWERS: Record<string, string> = { "file.recogniseTextLanguage.choice": "automatic" };
+    // A partner is named by part of its file name.
+    const ANSWERS: Record<string, string> = {
+      "file.recogniseTextLanguage.choice": "automatic",
+      "file.compareWith": "other",
+    };
     // With tabs from last time to reopen, or that command is withheld in both.
     // And three marks picked, so every arrangement is allowed to run.
     // And a form with fields, so changing them is on offer.
     // And an empty signature field, so signing in it is.
     // And a remembered document, so clearing the list has something to clear.
-    const found = built({ available: true, reopenable: 1, recents: 1, picked: 3, savedFields: 2, signable: 1 });
+    // And a second document open, so comparing with it is on offer.
+    const found = built({
+      available: true, reopenable: 1, recents: 1, picked: 3, savedFields: 2, signable: 1,
+      sides: { split: false, focused: "left", others: ["other.pdf"] },
+    });
     // The second state also holds the other disk-change mode, for the reason
     // the update pair needs two: each `file.onDiskChange.*` command is withheld
     // while its mode is the current one, so no single state offers all three.
@@ -2140,6 +2156,9 @@ describe("the window shortcuts for editing", () => {
       redactRasterCopy: () => fired.push("redactRasterCopy"),
       recogniseText: () => fired.push("recogniseText"),
     findHiddenText: () => fired.push("findHiddenText"),
+    compareWith: (index) => fired.push(`compareWith:${index}`),
+    changeCount: () => 0,
+    stepChange: (direction) => fired.push(`stepChange:${direction}`),
       chooseRecognitionLanguage: () => fired.push("chooseRecognitionLanguage"),
       recognitionLanguages: () => null,
       setRecognitionLanguage: (raw) => fired.push(`setRecognitionLanguage:${raw}`),
@@ -2150,6 +2169,7 @@ describe("the window shortcuts for editing", () => {
       dropAttachments: () => fired.push("dropAttachments"),
       protectCopy: () => fired.push("protectCopy"),
       unprotectCopy: () => fired.push("unprotectCopy"),
+    addText: (kind) => fired.push(`addText:${kind}`),
       compressCopy: () => fired.push("compressCopy"),
     redactDocument: () => fired.push("redactDocument"),
     extractPages: (slots: number[]) => fired.push(`extractPages:${slots.join("+")}`),
@@ -2553,6 +2573,29 @@ describe("two documents side by side", () => {
     registry.run("view.focusOtherSide");
     registry.run("view.syncScrolling");
     expect(fired).toEqual(["moveToOtherSide", "switchSides", "focusOtherSide", "toggleSyncScrolling"]);
+  });
+
+  it("compares with the document the reader named, only once there is a second one", () => {
+    expect(offers(harness(true, { sides: one }).registry, "file.compareWith")).toBe(false);
+    expect(offers(harness(false, { sides: two }).registry, "file.compareWith")).toBe(false);
+    const { registry, fired } = harness(true, { sides: two });
+    expect(registry.find("file.compareWith")?.title).toBe("Compare with...");
+    expect(registry.find("file.compareWith")?.argument?.problem?.("report")).toBe(
+      "2 open documents match. Type more of the name",
+    );
+    expect(registry.run("file.compareWith", "draft")).toBe(true);
+    expect(fired).toEqual(["compareWith:1"]);
+  });
+
+  it("steps through the changes only while a comparison lists some", () => {
+    const none = harness(true, { changes: 0 }).registry;
+    expect(offers(none, "nav.nextChange")).toBe(false);
+    expect(offers(none, "nav.previousChange")).toBe(false);
+    const { registry, fired } = harness(true, { changes: 3 });
+    registry.run("nav.nextChange");
+    registry.run("nav.previousChange");
+    expect(fired).toEqual(["stepChange:1", "stepChange:-1"]);
+    expect(offers(harness(false, { changes: 3 }).registry, "nav.nextChange")).toBe(false);
   });
 
   it("shows a document on both sides with no other document open", () => {

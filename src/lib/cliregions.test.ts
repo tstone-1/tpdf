@@ -49,7 +49,7 @@ function narrowed(areas: readonly (readonly number[])[]): number[][] {
 
 describe("the command-line tool's regions", () => {
   it("asks about every reading case four ways, and some of them mark something", () => {
-    expect(runs.length).toBe(18 * 4);
+    expect(runs.length).toBe(19 * 4);
     expect(runs.filter((c) => c.areas.length > 0).length).toBeGreaterThan(30);
     expect(runs.some((c) => c.to === null)).toBe(true);
     expect(rawAreas.length).toBe(6);

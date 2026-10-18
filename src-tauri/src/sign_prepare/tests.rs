@@ -11,7 +11,7 @@ fn fixture(name: &str) -> Option<Vec<u8>> {
     match std::fs::read(std::path::Path::new("../testdata").join(name)) {
         Ok(bytes) => Some(bytes),
         Err(_) => {
-            println!("[SKIP] {name}: not generated");
+            crate::fixtures::missing(&format!("[SKIP] {name}: not generated"));
             None
         }
     }

@@ -1,0 +1,18 @@
+{
+  "schema": 1,
+  "command": "watermark",
+  "input": "report.pdf",
+  "output": "draft.pdf",
+  "pages": 4,
+  "written": [
+    1,
+    2,
+    3,
+    4
+  ],
+  "text": "DRAFT",
+  "position": "center",
+  "first": "DRAFT",
+  "signatures_invalidated": 0,
+  "signatures_unknown": false
+}

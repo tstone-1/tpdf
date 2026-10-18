@@ -41,6 +41,9 @@ export function needsMoreThanADocument(linux: boolean): string[] {
     // be in: nothing here installs one. In registry order, immediately after
     // the install it follows.
     "app.restartForUpdate",
+    // Needs a second open document to compare with, as the side-by-side
+    // commands do. Declared with the command.
+    "file.compareWith",
     "find.inSelection",
     // A document opens one page to a row and scrolling continuously, so those
     // two are the choices not offered, and right to left needs two pages to a
@@ -149,6 +152,10 @@ export function needsMoreThanADocument(linux: boolean): string[] {
     // else later.
     "nav.back",
     "nav.forward",
+    // Nothing has been compared, so there are no changes to step through.
+    // Declared with the commands.
+    "nav.nextChange",
+    "nav.previousChange",
   ];
 }
 

@@ -112,6 +112,7 @@ pub struct Preview {
     pub installed: Option<Installed>,
 }
 
+pub(crate) use fonts::added::AddedFont;
 pub(crate) use fonts::installed::{valid_postscript_name, MAX_BYTES as MAX_INSTALLED};
 
 /// An installed copy of a document's own font, by exact PostScript name.

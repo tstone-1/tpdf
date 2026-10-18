@@ -554,6 +554,7 @@ fn every_registered_command_is_reached_by_its_name_and_listed_in_help() {
             "search",
             "search a.pdf b.pdf --text invoice --pattern '\\d+' --whole-word --json",
         ),
+        ("compare", "compare old.pdf new.pdf --json"),
         ("fields", "fields a.pdf --json"),
         ("fill", "fill a.pdf -o b.pdf --values answers.json"),
         ("redact", "redact a.pdf -o b.pdf --text Secret"),
@@ -572,6 +573,11 @@ fn every_registered_command_is_reached_by_its_name_and_listed_in_help() {
         ("form", "form a.pdf -o b.pdf --fields fields.json"),
         ("protect", "protect a.pdf -o b.pdf --new-password-env NEW"),
         ("unprotect", "unprotect a.pdf -o b.pdf --password-env OLD"),
+        (
+            "page-numbers",
+            "page-numbers a.pdf -o b.pdf --pages 2-4 --json",
+        ),
+        ("watermark", "watermark a.pdf -o b.pdf --text DRAFT --json"),
         ("images", "images a.png b.jpg -o c.pdf --paper a4"),
         ("hidden", "hidden a.pdf --pages 1-2 --json"),
         (
@@ -600,7 +606,7 @@ fn every_registered_command_is_reached_by_its_name_and_listed_in_help() {
     }
     let why = refused("encrypt a.pdf");
     assert!(
-        why.contains("sign, verify, identities, info, text, search, fields, fill, redact"),
+        why.contains("sign, verify, identities, info, text, search, compare, fields, fill, redact"),
         "{why}"
     );
 }
@@ -2723,6 +2729,9 @@ fn samples() -> Vec<(&'static str, String)> {
         ("info", pretty(&info_sample())),
         ("text", pretty(&text_sample())),
         ("search", pretty(&search_sample())),
+        ("compare", pretty(&compare_sample())),
+        ("page-numbers", pretty(&text_added_sample(false))),
+        ("watermark", pretty(&text_added_sample(true))),
         ("reading", pretty(&reading_sample())),
         ("fields", pretty(&super::form_tests::fields_sample())),
         ("fill", pretty(&super::form_tests::fill_samples().0)),
@@ -2804,7 +2813,7 @@ fn the_samples_directory_holds_one_file_per_sample_and_nothing_else() {
         .map(|(name, _)| format!("{name}.json"))
         .collect();
     want.sort();
-    assert_eq!(want.len(), 28, "the sample table itself");
+    assert_eq!(want.len(), 31, "the sample table itself");
     assert_eq!(found, want);
 }
 
@@ -4090,6 +4099,153 @@ fn search_sample() -> report::Searched {
             },
         ],
     }
+}
+
+fn text_added_sample(watermark: bool) -> report::TextAdded {
+    report::TextAdded {
+        schema: report::SCHEMA,
+        command: if watermark {
+            "watermark"
+        } else {
+            "page-numbers"
+        }
+        .into(),
+        input: "report.pdf".into(),
+        output: if watermark {
+            "draft.pdf"
+        } else {
+            "numbered.pdf"
+        }
+        .into(),
+        pages: 4,
+        written: if watermark {
+            vec![1, 2, 3, 4]
+        } else {
+            vec![2, 3, 4]
+        },
+        text: if watermark {
+            "DRAFT"
+        } else {
+            "Page {page} of {pages}"
+        }
+        .into(),
+        position: if watermark {
+            crate::addedtext::Position::Center
+        } else {
+            crate::addedtext::Position::BottomCenter
+        },
+        first: if watermark { "DRAFT" } else { "Page 1 of 3" }.into(),
+        signatures_invalidated: 0,
+        signatures_unknown: false,
+    }
+}
+
+fn compare_sample() -> report::Compared {
+    let rect = |page| report::HitRect {
+        page,
+        rect: [72.0, 96.5, 18.5, 13.0],
+    };
+    let change = |kind, pages: (u32, u32), removed: &str, added: &str, context: (&str, &str)| {
+        report::ComparedChange {
+            kind,
+            old_page: pages.0,
+            new_page: pages.1,
+            removed: removed.into(),
+            added: added.into(),
+            before: context.0.into(),
+            after: context.1.into(),
+            old_rects: if removed.is_empty() {
+                Vec::new()
+            } else {
+                vec![rect(pages.0)]
+            },
+            new_rects: if added.is_empty() {
+                Vec::new()
+            } else {
+                vec![rect(pages.1)]
+            },
+        }
+    };
+    use crate::compare::Kind;
+    report::Compared {
+        schema: report::SCHEMA,
+        command: "compare".into(),
+        old: report::ComparedFile {
+            path: "survey-v1.pdf".into(),
+            pages: 3,
+            pages_without_text: vec![3],
+            words: 412,
+        },
+        new: report::ComparedFile {
+            path: "survey-v2.pdf".into(),
+            pages: 2,
+            pages_without_text: Vec::new(),
+            words: 398,
+        },
+        removed_words: 16,
+        added_words: 2,
+        total_changes: 3,
+        unaligned: 0,
+        changes: vec![
+            change(
+                Kind::Replaced,
+                (1, 1),
+                "4.82",
+                "4.91",
+                ("The highest water was", "m at the North"),
+            ),
+            change(
+                Kind::Added,
+                (1, 1),
+                "",
+                "South",
+                ("at the", "Pier, which is 0.31"),
+            ),
+            change(
+                Kind::Removed,
+                (2, 2),
+                "Highest water by month",
+                "",
+                ("0.52 m 2.61 m", "Method Each station carried"),
+            ),
+        ],
+    }
+}
+
+#[test]
+fn compare_reads_two_documents_and_refuses_any_other_number() {
+    use super::compare::{parse, plain, Compare};
+    assert_eq!(
+        parse(&argv("old.pdf new.pdf --password-env PW --json")).expect("compare"),
+        Compare {
+            old: PathBuf::from("old.pdf"),
+            new: PathBuf::from("new.pdf"),
+            password_env: Some("PW".into()),
+            json: true,
+        }
+    );
+    // One may come from standard input, as every other command's input may.
+    assert_eq!(
+        parse(&argv("- new.pdf")).expect("stdin").old,
+        PathBuf::from("-")
+    );
+    for (line, said) in [
+        ("old.pdf", "was given 1"),
+        ("a.pdf b.pdf c.pdf", "was given 3"),
+        ("- -", "only one of the two"),
+        ("a.pdf b.pdf --pages 1", "--pages"),
+    ] {
+        let why = parse(&argv(line)).expect_err(line);
+        assert!(why.contains(said), "{line}: {why}");
+    }
+
+    // wdiff's notation, the older document's context around each change.
+    assert_eq!(
+        plain(&compare_sample()),
+        "1 -> 1: The highest water was [-4.82-]{+4.91+} m at the North\n\
+         1 -> 1: at the {+South+} Pier, which is 0.31\n\
+         2 -> 2: 0.52 m 2.61 m [-Highest water by month-] Method Each station carried\n"
+    );
 }
 
 #[test]

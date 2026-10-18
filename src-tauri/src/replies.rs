@@ -796,6 +796,37 @@ fn samples() -> BTreeMap<&'static str, String> {
     put("Made", &save::Made { pages: 3 });
 
     put(
+        "Comparison",
+        &crate::compare::Comparison {
+            left_words: 412,
+            right_words: 398,
+            removed_words: 16,
+            added_words: 2,
+            changes: vec![crate::compare::Change {
+                kind: crate::compare::Kind::Replaced,
+                left: vec![crate::compare::Span {
+                    page: 0,
+                    start: 12,
+                    end: 14,
+                }],
+                right: vec![crate::compare::Span {
+                    page: 0,
+                    start: 12,
+                    end: 14,
+                }],
+                left_at: crate::compare::Place { page: 0, index: 12 },
+                right_at: crate::compare::Place { page: 0, index: 12 },
+                removed: "30".into(),
+                added: "45".into(),
+                before: "Payment is due within".into(),
+                after: "days of the invoice".into(),
+            }],
+            total_changes: 3,
+            unaligned: 0,
+        },
+    );
+
+    put(
         "Shrinkage",
         &crate::commands::compress::Shrinkage {
             bytes_before: 8_412_330,

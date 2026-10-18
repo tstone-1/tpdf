@@ -703,3 +703,69 @@ share `headers.json`.
 written to `/Reason` and `/Location` and left out of the appearance's lines
 (`Options::drawn_reason`). Both default to off on the wire, so the application and every
 earlier request draw what they drew.
+
+## Comparing two documents (`tpdf compare`, *Compare with*)
+
+`compare.rs` is the comparison, and both callers run it on the same input: each page's
+characters from the one text extraction (`text.rs`), in the order the pages are shown. The
+window reads them through each viewer (`Viewer::loadText`, by slot, so a page tpdf made is an
+empty page rather than a missing one) and sends the codes to `compare_texts`, which opens no
+document and parses nothing: it is arithmetic over integers in the app process, on a blocking
+thread. `tpdf compare` reads every page through a worker session. A change comes back as
+character spans on the slots or pages it was given, which the viewer paints with `runsFor`,
+the routine that paints search hits, and the command line turns into rectangles with
+`cli/regions.rs`, the routine `search` uses.
+
+Words are runs between whitespace; a soft hyphen is left out of the word and kept inside its
+span. The diff is patience over interned word ids: words unique to both sides anchor, common
+words at either end of a stretch are taken off, and a stretch with no unique word in common is
+aligned by an LCS table up to `MAX_TABLE_CELLS`, past which it is one replacement and counted
+in `unaligned`. Bounds: `MAX_WORDS` a side (refused), `MAX_CHANGES` listed (the total is
+kept), and a recursion depth. Every caller says that only the words were compared.
+
+In the window `comparison.ts` holds the state (`ComparisonState`): which two views, the
+current change, and whether either document has been edited since, which takes the paint off
+both sides and marks the rows out of date. Closing either view ends it. The window check is
+`tabs_check.py --phase compare`.
+
+## Text on every page (`tpdf page-numbers`, `tpdf watermark`, the two *Save a copy with* commands)
+
+`addedtext.rs` writes one line of text on each page it is given, with `{page}` and `{pages}`
+filled in. A line Helvetica with `/WinAnsiEncoding` can draw is set in it, not embedded, so a
+Latin-1 page number adds no font program. Any other line is set in subsets of the bundled Noto
+Sans and Noto Sans CJK SC (`textedit/fonts/added.rs`), through the text editor's fallback-font
+writer: Type0, `/Identity-H`, `/ToUnicode`, one subset per font for the whole write. The font is
+chosen per character, Noto Sans first, because neither font holds every line alone: the CJK font
+has no accented Greek and Noto Sans no ideographs, measured with `fontTools` over both programs.
+The same measurement found neither font with a single glyph of Arabic, Hebrew, Syriac, Thaana,
+N'Ko, the Indic scripts, Sinhala, Thai, Lao, Tibetan, Myanmar, Khmer, Mongolian, Ethiopic,
+Armenian or Cherokee, so `AddedFont::covers` refusing what no font holds refuses every script
+that needs shaping. Two gaps it does not close: conjoining Hangul jamo (U+1100 to U+11FF) are in
+the CJK font and are drawn one by one rather than as syllables, and a combining mark is drawn at
+its glyph's default offset rather than positioned on its base. Korean and accented letters are
+usually typed precomposed, which is drawn correctly; the decomposed forms are untested. It runs in `save::rewrite` after the page
+surgery, so the fields count the pages of the file written, and after the redactions and the
+sweep, because a redaction addresses content streams by position and a stream added in front
+would move them. It is `Plan::added_text`, empty out of the model like `text_layers`, and
+`Plan::is_identity` and `is_appendable` both treat a plan carrying it as a change.
+
+The text is drawn over the content. A stream holding `q` goes in front of the page's own
+streams, and the new stream after them begins with one `Q` for it and one for each `q` the
+content left open, counted by decoding it within `MAX_CONTENT_BYTES`; an undecodable content
+is taken as balanced. The position is one of nine anchors on the page as displayed, through
+`save::Upright`, so a `/Rotate 90` page gets its number at its displayed bottom, upright. The
+font and one `/ExtGState` per line (the watermark's opacity) go into the page's own copy of
+its resources, under names it does not already use.
+
+Each line is a marked-content sequence `/Artifact <</Type /Pagination ...>> BDC ... EMC`
+(ISO 32000-1 §14.8.2.2), `/Subtype /Header` in the top row, `/Footer` in the bottom and none
+in the middle, so a screen reader and a PDF/UA check on a tagged document skip it. PDFium
+does not skip artifacts when it extracts text: tpdf's own search, copy and the read-back
+below still find the line. A watermark's turned letters are read after the page's own lines
+(`reading.rs`, `OBLIQUE`).
+
+`tpdf page-numbers` and `watermark` read every written page back from the staged copy and
+refuse to publish unless each holds its line. `tests/cli/addtext.rs` checks the position
+through `search`'s rectangles on an upright and a turned page; a mutation that closed only
+one `q` moved both numbers and turned those two checks red. The window check is
+`tabs_check.py --phase add-text`.

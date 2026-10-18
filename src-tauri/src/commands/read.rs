@@ -10,7 +10,7 @@
 use super::{await_reply, reply_channel};
 use crate::render::RenderService;
 use crate::webopen::{Registry, Source};
-use crate::{annots, docinfo, encoding, links, opener, outline, search, text};
+use crate::{annots, compare, docinfo, encoding, links, opener, outline, search, text};
 
 /// Extracts one page's characters and their positions.
 ///
@@ -71,6 +71,25 @@ pub async fn search_page(
         .unwrap_or_else(|| vec![page]);
     service.search(doc, run, query, options, carry, reply);
     await_reply("search_page", rx).await
+}
+
+/// Compares the words of two documents, page by page as the caller read them.
+///
+/// **No document is opened here.** The window already holds each page's
+/// characters --- `page_text`, the extraction everything else reads --- and
+/// sends them in its own page order, which is what lets a comparison of a
+/// document with pages moved or inserted be painted on the pages the reader
+/// sees. So this is arithmetic over integers, in the app process, with no
+/// parse in it. On a blocking thread rather than the async runtime's: two long
+/// documents are a second of work that would otherwise hold a runtime thread.
+#[tauri::command]
+pub async fn compare_texts(
+    left: Vec<compare::PageCodes>,
+    right: Vec<compare::PageCodes>,
+) -> Result<compare::Comparison, String> {
+    tauri::async_runtime::spawn_blocking(move || compare::compare(&left, &right))
+        .await
+        .map_err(|e| format!("the comparison stopped: {e}"))?
 }
 
 /// Reads a document's outline --- its bookmarks --- as a bounded tree.

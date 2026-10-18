@@ -248,8 +248,11 @@ describe("buildMenu", () => {
       "separator",
       // Save, Save a copy, Recognise text and its language, the smaller copy,
       // a region as a picture, an attachment, the copy with a password and the
-      // one without, Image-only redaction, Redact and save as, Redact and save,
-      // Extract, Split, Merge.
+      // one without, the copies with page numbers and with a watermark,
+      // Image-only redaction, Redact and save as, Redact and save, Extract,
+      // Split, Merge.
+      "command",
+      "command",
       "command",
       "command",
       "command",
@@ -274,8 +277,9 @@ describe("buildMenu", () => {
       "separator",
       "command",
       "separator",
-      // Document properties, and Find text the pages do not show: the two
-      // that only report.
+      // Document properties, Find text the pages do not show and Compare
+      // with: the three that only report.
+      "command",
       "command",
       "command",
     ]);

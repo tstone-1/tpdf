@@ -262,6 +262,25 @@ class Tpdf:
         """Inspect original text runs and the revision required for replacement."""
         return self.run('text-runs', '--page', str(page), '--', path, password=password).typed
 
+    def compare(
+        self, old: str | os.PathLike[str], new: str | os.PathLike[str], *,
+        password: str | None = None,
+    ) -> reports.CompareReport:
+        """List what changed in the words from `old` to `new`.
+
+        Each entry of report['changes'] has its kind (removed, added or
+        replaced), the words on each side, the page each is on and where.
+        Only the words are compared: an empty list means the two documents have
+        the same words, not that they are the same document.
+
+        Differing is an answer, not an error: the CLI's exit 1 is returned as a
+        report whose changes are not empty.
+        """
+        result = self.run('compare', '--', old, new, password=password, check=False)
+        if result.exit_code not in (0, 1):
+            raise CommandError(result)
+        return result.typed
+
     def hidden(
         self, path: str | os.PathLike[str], *, pages: str | None = None, password: str | None = None,
     ) -> reports.HiddenReport:
@@ -363,6 +382,46 @@ class Tpdf:
         return self.run(
             'protect', *args, '--', source, password=password, new_password=new_password,
         ).typed
+
+    def page_numbers(
+        self, source: str | os.PathLike[str], output: str | os.PathLike[str], *,
+        text: str | None = None, position: str | None = None, size: float | None = None,
+        start: int | None = None, pages: str | None = None, force: bool = False,
+        invalidate_signatures: bool = False, password: str | None = None,
+    ) -> reports.TextAddedReport:
+        """Write a copy with a page number on every page, `Page 1 of 3` at the bottom center.
+
+        `text` may hold {page} and {pages}; `pages="2-10"` numbers those pages
+        alone, and {page} and {pages} then count only them.
+        """
+        args = ['-o', os.fspath(output)]
+        for flag, value in [('--text', text), ('--position', position), ('--size', size),
+                            ('--start', start), ('--pages', pages)]:
+            if value is not None:
+                args += [flag, str(value)]
+        if force:
+            args.append('--force')
+        if invalidate_signatures:
+            args.append('--invalidate-signatures')
+        return self.run('page-numbers', *args, '--', source, password=password).typed
+
+    def watermark(
+        self, source: str | os.PathLike[str], output: str | os.PathLike[str], text: str, *,
+        position: str | None = None, size: float | None = None, angle: float | None = None,
+        opacity: float | None = None, pages: str | None = None, force: bool = False,
+        invalidate_signatures: bool = False, password: str | None = None,
+    ) -> reports.TextAddedReport:
+        """Write a copy with `text` across every page: grey, at 45 degrees, a third opaque."""
+        args = ['-o', os.fspath(output), '--text', text]
+        for flag, value in [('--position', position), ('--size', size), ('--angle', angle),
+                            ('--opacity', opacity), ('--pages', pages)]:
+            if value is not None:
+                args += [flag, str(value)]
+        if force:
+            args.append('--force')
+        if invalidate_signatures:
+            args.append('--invalidate-signatures')
+        return self.run('watermark', *args, '--', source, password=password).typed
 
     def compress(
         self, source: str | os.PathLike[str], output: str | os.PathLike[str] | None = None, *,

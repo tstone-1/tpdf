@@ -1,0 +1,17 @@
+{
+  "schema": 1,
+  "command": "page-numbers",
+  "input": "report.pdf",
+  "output": "numbered.pdf",
+  "pages": 4,
+  "written": [
+    2,
+    3,
+    4
+  ],
+  "text": "Page {page} of {pages}",
+  "position": "bottom-center",
+  "first": "Page 1 of 3",
+  "signatures_invalidated": 0,
+  "signatures_unknown": false
+}

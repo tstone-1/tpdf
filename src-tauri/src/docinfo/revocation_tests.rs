@@ -643,7 +643,7 @@ fn a_b_lt_document_pyhanko_wrote_reads_good_at_the_attested_time() {
     // Its root is carried in the /DSS and anchored here, as a reader who
     // trusted it would have it; through the system store it is a stranger.
     let Ok(bytes) = std::fs::read("../testdata/incr-lt.pdf") else {
-        println!("[SKIP] incr-lt.pdf: not generated");
+        crate::fixtures::missing("[SKIP] incr-lt.pdf: not generated");
         return;
     };
     let material = read_dss(&crate::encoding::load(&bytes, None).expect("loads"));

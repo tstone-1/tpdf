@@ -176,9 +176,13 @@ def tracked_tree() -> str:
     for attempt in range(5):
         try:
             return git("stash", "create")
-        except subprocess.CalledProcessError:
+        except subprocess.CalledProcessError as error:
             if attempt == 4:
-                raise
+                # A file added with `git add -N` is the other cause, and retrying
+                # cannot help: `stash create` refuses it as "not uptodate".
+                print(f"[FAIL] git stash create: {(error.stderr or '').strip()}")
+                print("[FAIL] a file added with `git add -N` cannot be stashed; stage it with `git add`")
+                raise SystemExit(2) from error
             time.sleep(1)
     return ""
 

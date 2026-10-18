@@ -37,6 +37,7 @@ import { compressCheck } from "./compresscheck";
 import { fieldCheck, turnedFieldCheck } from "./fieldcheck";
 import { picturesCheck } from "./picturescheck";
 import { protectCheck } from "./protectcheck";
+import { addTextCheck } from "./addtextcheck";
 import { recogniseCheck } from "./recognisecheck";
 import { signingCheck } from "./signingcheck";
 import { screenshotCheck } from "./screenshotcheck";
@@ -46,7 +47,7 @@ import { fitCheck } from "./fitcheck";
 
 import { pause, Report, settle } from "./checkreport";
 import { basename } from "./paths";
-import { isMac } from "./keys";
+import { isLinux, isMac } from "./keys";
 import { SIDEBAR_CLASS } from "./sidebar";
 import type { Viewer, ViewerStatus } from "./viewer";
 import type { Edits, EditState } from "./edits";
@@ -1228,6 +1229,7 @@ async function run(host: OpenCheckHost, phase: string, expected: string): Promis
     case "sign": await signingCheck(host, expected, report); break;
     case "recognise": await recogniseCheck(host, expected, report); break;
     case "protect": await protectCheck(host, expected, report); break;
+    case "add-text": await addTextCheck(host, expected, report); break;
     case "pictures": await picturesCheck(host, expected, report); break;
     case "compress": await compressCheck(host, expected, report); break;
     case "fields": await fieldCheck(host, expected, report); break;
@@ -1369,11 +1371,14 @@ async function run(host: OpenCheckHost, phase: string, expected: string): Promis
       // the clicked tab is the first of two, so *Close other tabs* and *to the
       // right* are there and *to the left* is not. Found red on the first
       // Windows run after 7.4, 2026-10-16; this phase had not run since.
+      // The reveal entry is named per platform, spelled here rather than read
+      // from `revealTitle`; Linux's "Show in Folder" was missing from this
+      // check until its first Linux run, 2026-10-18.
       const wanted = ["Copy file path", "Copy file name", "Move to start", "Move to end", "Move to right side",
         "Close", "Close other tabs", "Close tabs to the right", "Close all tabs"];
       report.check("tab menu offers reveal, copy path, copy name, the three moves, and the closes that close something",
         tabActions.length === 1 + wanted.length &&
-        /^Show in (Explorer|Finder)$/.test(tabActions[0]?.textContent ?? "") &&
+        tabActions[0]?.textContent === (isMac() ? "Show in Finder" : isLinux() ? "Show in Folder" : "Show in Explorer") &&
         wanted.every((text, at) => tabActions[at + 1]?.textContent === text),
         tabActions.map((item) => item.textContent).join(" | "));
       check("right-clicking a background tab keeps the active document", host.edits()?.doc === b.id);
@@ -1426,6 +1431,65 @@ async function run(host: OpenCheckHost, phase: string, expected: string): Promis
       await host.open(second);
       check("opening after the last close still works", host.tabs().length === 1 && host.hasViewer());
       check("only one sidebar is mounted", sidebars() === 1);
+      break;
+    }
+    case "compare": {
+      // *Compare with*, driven through the palette's command with the partner
+      // named as a reader types it, and read off both viewers and both
+      // sidebars: what is under test is the join in `App.svelte` between the
+      // comparison, the two documents and the panes. The two fixtures differ
+      // in their words; which words is `compare.rs`'s, tested there and
+      // through `tpdf compare`.
+      const [older, newer] = expected.split("|");
+      if (!older || !newer) throw new Error("two fixture paths required");
+      const { split, check, settled } = sideProbe(host);
+      const rowsIn = () => Array.from(document.querySelectorAll<HTMLElement>(
+        '[id="tpdf-panel-changes"] button[data-index]'));
+      const said = () => Array.from(document.querySelectorAll<HTMLElement>(
+        '[id="tpdf-panel-changes"] [role="status"]')).map((status) => status.textContent ?? "").join(" | ");
+
+      report.emit("[compare] opening two documents");
+      await host.open(older); await host.open(newer);
+      const [a, b] = host.tabs();
+      if (!a || !b) throw new Error("the two documents did not open");
+      await host.activate(a.id); await host.idle();
+      check("the older document is the one the reader is in", host.edits()?.doc === a.id);
+
+      report.emit("[compare] comparing with the other by name");
+      host.run("file.compareWith", name(newer).replace(/\.pdf$/, ""));
+      await settled("the comparison", () => split() && host.viewer()?.differenceMarks != null &&
+        host.beside()?.differenceMarks != null);
+      const left = host.viewer()!.differenceMarks!, right = host.beside()!.differenceMarks!;
+      check("the two documents are side by side, the older still in front", split() && host.edits()?.doc === a.id);
+      check("the older side is painted as removed and the newer as added",
+        left.side === "removed" && right.side === "added");
+      check("both sides have words painted", left.spans.length > 0 && right.spans.length > 0);
+      check("both sides are on the first change", left.current === 0 && right.current === 0);
+      const rows = rowsIn().length;
+      check("both sidebars list the changes, the same rows on each", rows > 0 && rows % 2 === 0);
+      report.check("the list says only the words were compared",
+        said().includes("Only the words were compared."), said().slice(0, 300));
+
+      report.emit("[compare] stepping to the next change");
+      host.run("nav.nextChange");
+      await settled("the step", () => host.viewer()?.differenceMarks?.current === 1);
+      check("next change moves both sides", host.beside()?.differenceMarks?.current === 1);
+      host.run("nav.previousChange");
+      await settled("the step back", () => host.viewer()?.differenceMarks?.current === 0);
+
+      report.emit("[compare] editing the older document");
+      host.run("edit.rotatePageClockwise");
+      await settled("the rotation", () => host.edits()?.state.dirty === true);
+      check("an edit takes the paint off both sides",
+        host.viewer()?.differenceMarks === null && host.beside()?.differenceMarks === null);
+      report.check("and the list says it is out of date",
+        said().includes("has changed since it was compared"), said().slice(0, 300));
+      check("the rows stay", rowsIn().length === rows);
+
+      report.emit("[compare] closing the newer document");
+      await host.close(b.id); await host.idle();
+      check("closing one ends the comparison in the other", rowsIn().length === 0 &&
+        host.viewer()?.differenceMarks === null);
       break;
     }
     case "sides": {

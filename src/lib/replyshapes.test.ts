@@ -72,6 +72,8 @@ import type { RegionPlan } from "./pages";
 import type { Properties } from "./properties";
 import type { Made } from "./pictures";
 import Made_ from "../../src-tauri/testdata/replies/Made.json";
+import type { Comparison } from "./comparison";
+import Comparison_ from "../../src-tauri/testdata/replies/Comparison.json";
 import type { Shrinkage } from "./compress";
 import Shrinkage_ from "../../src-tauri/testdata/replies/Shrinkage.json";
 import type { Recognised } from "./recognise";
@@ -261,6 +263,15 @@ const SCHEMA = {
   Made: {
     pages: ["number"],
   } satisfies Shape<Made>,
+  Comparison: {
+    left_words: ["number"],
+    right_words: ["number"],
+    removed_words: ["number"],
+    added_words: ["number"],
+    changes: ["array"],
+    total_changes: ["number"],
+    unaligned: ["number"],
+  } satisfies Shape<Comparison>,
   Shrinkage: {
     bytesBefore: ["number"],
     bytesAfter: ["number"],
@@ -403,6 +414,7 @@ const SAMPLES: Record<keyof typeof SCHEMA, Record<string, unknown>> = {
   Opening: Opening_ satisfies Widen<Opening>,
   Forward: Forward_ satisfies Widen<Forward>,
   Made: Made_ satisfies Widen<Made>,
+  Comparison: Comparison_ satisfies Widen<Comparison>,
   Shrinkage: Shrinkage_ satisfies Widen<Shrinkage>,
   Recognised: Recognised_ satisfies Widen<Recognised>,
   HiddenText: HiddenText_ satisfies Widen<HiddenText>,

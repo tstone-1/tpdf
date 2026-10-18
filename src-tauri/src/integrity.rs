@@ -930,7 +930,7 @@ mod tests {
         match std::fs::read(&path) {
             Ok(bytes) => Some(bytes),
             Err(_) => {
-                println!("[SKIP] {name}: not generated");
+                crate::fixtures::missing(&format!("[SKIP] {name}: not generated"));
                 None
             }
         }

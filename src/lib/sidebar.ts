@@ -6,7 +6,7 @@
  * one for exactly this reason: the *second* tab is otherwise the one that has to
  * introduce it, by which point something else is positioned against its absence.
  *
- * There are seven. The fifth lists the reader's *own* marks, and it is not one of
+ * There are eight. The fifth lists the reader's *own* marks, and it is not one of
  * the four because when they were specified the reader could not make any; see
  * `marklist.ts` for why it is not the comments panel with a different source.
  * The sixth lists the regions marked for removal, and it is `docs/PLAN.md` §6
@@ -14,7 +14,8 @@
  * subject from what the reader has drawn on the page and a different type all
  * the way down; see `redactlist.ts`. The seventh lists text that is in the
  * file and that its pages do not show, which a check the reader asks for finds;
- * see `hiddenlist.ts`.
+ * see `hiddenlist.ts`. The eighth lists what changed in the words between this
+ * document and another one, which *Compare with* finds; see `changelist.ts`.
  *
  * ## The tabs are not equals, and the code says so
  *
@@ -67,6 +68,8 @@ import {
   type Row,
   type WebTarget,
 } from "./outline";
+import { ChangeList, type ChangeListOptions } from "./changelist";
+import type { Compared } from "./comparison";
 import { CommentList, type CommentListOptions } from "./commentlist";
 import { HiddenList, type HiddenListOptions } from "./hiddenlist";
 import type { HiddenText } from "./hiddentext";
@@ -91,7 +94,8 @@ export type Tab =
   | "comments"
   | "marks"
   | "redactions"
-  | "hidden";
+  | "hidden"
+  | "changes";
 
 export interface SidebarOptions {
   /** Called when a row is activated. `top` is points from the page's top. */
@@ -130,6 +134,8 @@ export interface SidebarOptions {
   redactions: RedactListOptions;
   /** What the tab listing text the pages do not show needs. */
   hidden: HiddenListOptions;
+  /** What the tab listing the changes from a comparison needs. */
+  changes: ChangeListOptions;
   /**
    * What the page strip needs, or absent for no strip at all.
    *
@@ -164,6 +170,7 @@ export class Sidebar {
   private readonly mine: MarkList;
   private readonly pending: RedactList;
   private readonly unshown: HiddenList;
+  private readonly differences: ChangeList;
   private showing: Tab = "outline";
   private visibleNow = true;
 
@@ -212,11 +219,13 @@ export class Sidebar {
     this.tablist = document.createElement("div");
     this.tablist.setAttribute("role", "tablist");
     this.tablist.setAttribute("aria-label", "Sidebar");
-    // **Six pictures in one row, each named by its `aria-label` and `title`.**
+    // **Eight pictures in one row, each named by its `aria-label` and `title`.**
     // They were words until 2026-10-02, and the words did not fit: measured in a
     // real window on 2026-08-25 with five tabs, the buttons wanted 318 px
     // against 247 available, so the row wrapped to two and took the list's
-    // space. An icon is 16 px, so six fit with room.
+    // space. An icon is 16 px; with 0.3rem either side a tab is 25.6 px, and
+    // eight with their gaps are 227 px of the 246 the row has. At 0.4rem, which
+    // was the padding with seven, the eighth wrapped by arithmetic (254 px).
     //
     // `flex-wrap` stays, because it is correct at every width: a tab that does
     // not fit goes to a second row, where without it the host's
@@ -282,6 +291,10 @@ export class Sidebar {
     this.host.appendChild(hiddenPanel);
     this.unshown = new HiddenList(hiddenPanel, opts.hidden);
 
+    const changesPanel = this.panel("changes", "Changes", "compare");
+    this.host.appendChild(changesPanel);
+    this.differences = new ChangeList(changesPanel, opts.changes);
+
     root.appendChild(this.host);
     this.selectTab("outline");
   }
@@ -299,7 +312,7 @@ export class Sidebar {
     button.appendChild(iconElement(icon));
     button.style.cssText =
       "font:inherit;flex:1;display:flex;justify-content:center;align-items:center;" +
-      "padding:0.35rem 0.4rem;border:0;background:none;" +
+      "padding:0.35rem 0.3rem;border:0;background:none;" +
       "color:inherit;cursor:default;border-radius:4px;";
     button.addEventListener("click", () => this.selectTab(tab));
     this.tablist.appendChild(button);
@@ -375,6 +388,16 @@ export class Sidebar {
   /** Shows a check's result, or with `null` that none has been run. */
   setHiddenText(checked: HiddenText | null): void {
     this.unshown.setChecked(checked);
+  }
+
+  /** The panel listing the changes from a comparison. */
+  get changes(): ChangeList {
+    return this.differences;
+  }
+
+  /** Shows a comparison, or with `null` that none has been made. */
+  setCompared(compared: Compared | null): void {
+    this.differences.setCompared(compared);
   }
 
   /**

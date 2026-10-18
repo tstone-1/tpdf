@@ -1740,8 +1740,8 @@ ROWS += [
         # end there rather than one.
         "save: write straight to the destination rather than renaming into it",
         "src/save.rs",
-        "    std::fs::rename(staged, out).map_err(|e| {",
-        "    std::fs::copy(staged, out).map(|_| ()).map_err(|e| {",
+        "        match std::fs::rename(staged, out) {",
+        "        match std::fs::copy(staged, out).map(|_| ()) {",
         "the_destination_is_replaced_whole_rather_than_written_through",
     ),
     Mutation(
