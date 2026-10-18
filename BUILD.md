@@ -36,6 +36,20 @@ The build
 gate verifies both profiles and leaves normal assets ready for packaging. Smoke-test
 the normal bundle separately before release.
 
+**PDFium 8078-tpdf.2 (2026-10-18).** The weekly check found one commit on `chromium/8078`
+after the pin, `2f22dfe` *[M156] Guard against re-entrant destruction of the CJS_Runtime*,
+and `Audit` went red. The automatic path worked as written: `pdfium-bump` started
+[run 39150711792](https://github.com/tstone-1/tpdf/actions/runs/39150711792) at `61a474a6`
+and opened issue #4; all three platforms built and passed 63 upstream text tests (62 on
+Windows). The fix is in the JavaScript runtime, which this build does not compile: `nm` on
+the macOS library finds only `CJS_RuntimeStub`. **The compiled code did not move.** Against
+`8078-tpdf.1`, the macOS and Linux libraries are byte-identical, and the Windows DLL has the
+same `.text` section and differs in 12 bytes of `.rdata` and `.rsrc`. So the compatibility
+probes were not re-run: a probe of identical code measures nothing new. The gates passed on
+the installed engine. This is the first bump to settle the probe question by comparing
+binaries, and it is worth doing first on the next one too: when the code sections differ,
+run the full list below.
+
 **PDFium 8078-tpdf.1 (2026-10-10).** The pin moved from `chromium/8066` to the head of
 `chromium/8078` (`bdbf237`), the branch Chrome 156 ships. Nobody had looked since the pin
 was set: Chrome stable had moved on, and the day before, upstream had merged *Correctly
