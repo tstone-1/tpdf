@@ -567,6 +567,14 @@ jobs:
           workers run under Landlock and seccomp. The Linux packages (deb
           and AppImage) do not update themselves: install the new one.
 
+          **New in 26.10.23.** Compare with... lists every change in the
+          words between two open documents, washed red and green on both,
+          and `tpdf compare` prints the same. Save a copy with page numbers
+          or with a watermark, in Latin, Greek, Cyrillic, Chinese, Japanese
+          or Korean; `tpdf page-numbers` and `tpdf watermark` do it from the
+          command line. Text set at an angle no longer scrambles the
+          reading order of the lines it crosses.
+
           **New in 26.10.22.** Fixes. On Windows, the print dialog no
           longer says "This app doesn't support print preview", `winget
           uninstall` removes tpdf without opening a window, and

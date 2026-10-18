@@ -7070,6 +7070,33 @@ read through. **Not run:** the written copy of `tpdf long-term` against a public
 authority (`docs/VERIFICATION.md` has why), the new entry of `mutate_viewer.py` by the
 harness itself, `print-probe` and `redact-reach-probe`.
 
+**26.10.23 verification, 2026-10-18:** prepared on the MacBook, with the macOS window checks
+on the Mac mini and the Windows half on TEENYWEENY and the Windows desktop over ssh. Step 1
+moved nothing: the lockfiles already held what `cargo update` and `npm update` reach, and
+`tauri-plugin-updater` stays at 2.13.3 in both Cargo lockfiles and npm. The engine is
+`pdfium-8078-tpdf.2`, whose code is that of `.1` (near the top of this file). All 33 gates
+passed on the release tree and `check_windows.py` type-checked the Windows tree, once the
+Windows `pdfium.dll` was placed in `vendor/pdfium/bin` as its message says. `window_checks.py`
+16 of 16 on the Mac mini through `run_on_mac.py`, `compare` and `add text` among them, and 16
+of 16 on TEENYWEENY on a `--no-bundle` checks build. Step 7, in the mutation worktree:
+`mutate_rust.py --near v26.10.22` 164 of 164, `mutate_frontend.py --near v26.10.22` 61 of 61,
+`mutate_python.py` 38 of 38; the new rows for compare and added text had found twelve test
+gaps the day before (`75ec7e23`). `run_on_windows.py --suite all` on TEENYWEENY: 3,252 unit
+tests and 618 command-line checks, 4 skipped. The normal macOS bundle with the development
+engine hidden: `tpdf-cli --version` 26.10.23, `verify`, `text`, `page-numbers`, a Greek and
+Chinese `watermark`, and `compare` exiting 1 and 0; the app opened a document with all seven
+workers mapping the bundle's PDFium and the app process none. On TEENYWEENY the NSIS bundle
+passed `installed_check.py` 25/25, once built with `tauri.explorer.conf.json` as `release.yml`
+builds it (without the overlay, `tpdf_shell.dll is installed` fails, 24/25). `redact-reach-probe`
+over 175 documents in the desktop's Downloads: 14,867 regions, 92.3% taken whole; the gate read
+back 13,507 on 383 pages, none still read as text, 7,997 not shown unreadable and 5,510 shown
+unreadable, in 90.2 s. **`print-probe` on `vector-multi.pdf` hung at the range print** on
+TEENYWEENY, its job left *Spooling* with 0 pages, twice; `rotated.pdf` passed 10/10. The
+26.10.22 probe, whose `print_win.rs` and probe are the same, hangs the same way there today,
+and a spooler restart did not clear it, so the machine changed and the code did not; the
+range print on that fixture is unverified on Windows for this release. A reboot of TEENYWEENY
+is the next thing to try. No rehearsal tag: `release.yml` changed only in its notes.
+
 **26.10.22 verification and publication, 2026-10-17:** prepared on the Windows desktop. Step 1
 moved `libc` and `unicode-normalization` a patch each; `tauri-plugin-updater` 2.14.0 was held
 again with its npm half. All 33 gates passed on the release tree. `window_checks.py` passed 14 of
