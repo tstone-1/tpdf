@@ -271,6 +271,8 @@ const SCHEMA = {
     changes: ["array"],
     total_changes: ["number"],
     unaligned: ["number"],
+    left_unread: ["number"],
+    right_unread: ["number"],
   } satisfies Shape<Comparison>,
   Shrinkage: {
     bytesBefore: ["number"],

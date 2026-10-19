@@ -1440,8 +1440,8 @@ async function run(host: OpenCheckHost, phase: string, expected: string): Promis
       // comparison, the two documents and the panes. The two fixtures differ
       // in their words; which words is `compare.rs`'s, tested there and
       // through `tpdf compare`.
-      const [older, newer] = expected.split("|");
-      if (!older || !newer) throw new Error("two fixture paths required");
+      const [older, newer, scan] = expected.split("|");
+      if (!older || !newer || !scan) throw new Error("two fixture paths and a scan required");
       const { split, check, settled } = sideProbe(host);
       const rowsIn = () => Array.from(document.querySelectorAll<HTMLElement>(
         '[id="tpdf-panel-changes"] button[data-index]'));
@@ -1490,6 +1490,21 @@ async function run(host: OpenCheckHost, phase: string, expected: string): Promis
       await host.close(b.id); await host.idle();
       check("closing one ends the comparison in the other", rowsIn().length === 0 &&
         host.viewer()?.differenceMarks === null);
+
+      // A picture of a page and no text: `refusal` in `comparison.ts` turns it
+      // away, and what is under test is that `App.svelte` asks it and says its
+      // answer before any comparison is drawn.
+      report.emit("[compare] comparing with a scan");
+      const shown = () => document.querySelector('[data-testid="problem"]')?.textContent ?? "";
+      await host.open(scan); await host.idle();
+      await host.activate(a.id); await host.idle();
+      report.check("the message area is clear before comparing with the scan", shown() === "", shown().slice(0, 120));
+      host.run("file.compareWith", name(scan).replace(/\.pdf$/, ""));
+      const refused = await settle(() => shown().includes("none of its pages has text"), SETTLE_MS);
+      report.check("a document with no text on any page is refused, named, with the reason",
+        refused && shown().includes(name(scan)), shown().slice(0, 200));
+      check("and nothing is compared: no rows, no paint on either side", rowsIn().length === 0 &&
+        host.viewer()?.differenceMarks == null && host.beside()?.differenceMarks == null);
       break;
     }
     case "sides": {

@@ -6779,3 +6779,35 @@ a certificate has expired, a look-alike issuer offered in the signature, the tok
 alone, written as `1` or `1.0`. The instrument's files were written again with the changed
 writer: `qpdf --check` and the pyHanko script above read them as the table says, row for row.
 
+
+### Printing on Windows: progress, failures, and a stuck queue — measured 2026-10-19
+
+On the Windows desktop, a checks build printed the first two pages of `vector-multi.pdf` (cut
+with `qpdf --pages . 1-2`) through the classic dialog to Microsoft Print to PDF, driven with UI
+Automation (`pywinauto`): Ctrl+P, OK, then the file name in *Save Print Output As*. The toolbar's
+line, read from the window's accessibility tree, said *Printing page 1 of 2...* 3 s after OK,
+*Printing page 2 of 2...* at 134 s and *Sent 2 pages to the printer.* at 262 s, and the printed
+file existed, 6,157,182 bytes. The other tools stayed enabled throughout. Each page took over two
+minutes to rasterise through `Windows.Data.Pdf`, and the stall watchdog stayed quiet, because
+that time is tpdf's own (`Beat::ours`).
+
+`print-probe` on the whole fixture passed 9 of 9 in 8.5 minutes, about 2.5 minutes a sheet, with
+the queue showing the job *Spooling*, 0 pages, the whole time (`docs/TRAPS.md`). The watchdog's
+unit test went red under each of six hand mutations: the deadline test, the call that reports,
+the pause for tpdf's own work, the reset after a sheet, the reset after tpdf's own work, and
+the end of the work. The message shown when a print fails after Print was pressed, and the one
+for a stuck queue, were not seen on screen: neither fault could be produced on demand.
+
+### Words beside a scanned page are not compared — measured 2026-10-19
+
+The user-test kit's inspection report (`compare.rs`, *A page with no text is not a page with no
+words*): the draft is digital, the final version's page 2 a scan whose words say the result
+changed from *passed* to *failed*. Before the change `tpdf compare` listed the draft's page 2 as
+one removal and exited 1. After it, on a checks build on the Windows desktop, `tpdf compare`
+listed no change, said on stderr that 113 words of the draft stand where the final version has a
+page with no text and were not compared, and exited 1; *Compare with*, run from the palette and
+read through the accessibility tree, began *Incomplete: no change in the words that were read*,
+named the page with no text, and gave the same 113 words. The two digital pairs of the kit
+listed the same changes as before. Eight hand mutations of the rule each failed the unit tests:
+either side's test removed, either bound of the page range, either default at the ends of a
+side, the pages counted as read, and the count of words not compared.

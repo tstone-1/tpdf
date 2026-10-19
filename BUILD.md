@@ -7096,7 +7096,11 @@ TEENYWEENY, its job left *Spooling* with 0 pages, twice; `rotated.pdf` passed 10
 and a spooler restart did not clear it, so the machine changed and the code did not; the
 range print on that fixture was unverified on Windows at the tag. After a reboot of TEENYWEENY
 on 2026-10-19 the same probe binary passed 9/9 on `vector-multi.pdf`, the range print
-included, so the hang was the machine's state. No rehearsal tag: `release.yml` changed only in its notes.
+included, so the hang was the machine's state. That was the reading at the time; on 2026-10-19
+the desktop showed the same *Spooling*, 0 pages, while the probe spent 2.5 minutes rasterising
+each sheet and then passed 9/9, so the "hang" was more likely tpdf's own render, very slow in
+some machine state (`docs/TRAPS.md`, *A print job *Spooling* with 0 pages was tpdf rasterising,
+not a stuck spooler*). No rehearsal tag: `release.yml` changed only in its notes.
 Publication, 2026-10-19: on `cc8611c1` CI passed all three jobs and `Audit` passed (run
 39165274780); release run 39167261266 left a draft of eight files whose `latest.json` offered
 26.10.23 for the four macOS and Windows entries, with a `.dmg` Gatekeeper accepts as Notarized

@@ -723,6 +723,14 @@ aligned by an LCS table up to `MAX_TABLE_CELLS`, past which it is one replacemen
 in `unaligned`. Bounds: `MAX_WORDS` a side (refused), `MAX_CHANGES` listed (the total is
 kept), and a recursion depth. Every caller says that only the words were compared.
 
+A page with no words may hold any of the other side's words, so a stretch with no match is not
+a change when the other side has such a page where the stretch would stand: between the pages
+of the shared words just before and after it, both included. Its words are counted in
+`left_unread` and `right_unread` and listed nowhere. Before 2026-10-19 they were listed as
+removed, and the user-test kit's inspection report, whose final page 2 is a scan, read as
+"1 change: the whole of page 2 removed" with the real change, *passed* to *failed*, invisible.
+A document with no text on any page is refused before this by both callers.
+
 In the window `comparison.ts` holds the state (`ComparisonState`): which two views, the
 current change, and whether either document has been edited since, which takes the paint off
 both sides and marks the rows out of date. Closing either view ends it. The window check is

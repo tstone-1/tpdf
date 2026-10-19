@@ -11,7 +11,10 @@
 //!
 //! **Exit 1 means the words differ**, as `diff` and `cmp` use it, so `tpdf
 //! compare a.pdf b.pdf && ...` works in a shell. A document that cannot be read
-//! outranks it.
+//! outranks it, and so does one with no text on any page (exit 3): two scans
+//! have no words to differ in, and exit 0 would read as "the same". Words left
+//! uncompared because they face a page with no text also exit 1: what changed
+//! may be on that page.
 //!
 //! Plain output is one line per change, `wdiff`'s notation: the words the first
 //! document has in `[-...-]`, the second's in `{+...+}`, with a few shared
@@ -34,7 +37,7 @@ use crate::worker_proto::{Reply, Request};
 pub const COMMAND: Registered = Registered {
     name: "compare",
     usage: "compare <old.pdf> <new.pdf> [--password-env VAR] [--json]",
-    summary: "Prints every change in the words from the first document to the\n            second, one line per change, as the window's Compare with lists\n            them. Text only: pictures, drawings, formatting and layout are\n            not compared. Exit 1 when the words differ.",
+    summary: "Prints every change in the words from the first document to the\n            second, one line per change, as the window's Compare with lists\n            them. Text only: pictures, drawings, formatting and layout are\n            not compared. Exit 1 when the words differ or some could not be\n            compared beside a page with no text, 3 when a document has no\n            text on any page.",
     parse: boxed,
 };
 
@@ -183,6 +186,18 @@ impl Subcommand for Compare {
         let password = password(self.password_env.as_deref())?;
         let old = read(env, &self.old, password.as_deref())?;
         let new = read(env, &self.new, password.as_deref())?;
+        for side in [&old, &new] {
+            if side.without_text.len() == side.texts.len() {
+                return Err(Failure::new(
+                    Exit::Refused,
+                    format!(
+                        "{}: none of its pages has text, so there are no words to compare --- \
+                         a scan has to be read by OCR first",
+                        side.shown
+                    ),
+                ));
+            }
+        }
         let codes = |side: &Read| -> Vec<PageCodes> {
             side.texts
                 .iter()
@@ -239,23 +254,38 @@ impl Subcommand for Compare {
                 let _ = out.flush();
             }
         }
-        Ok(if report.total_changes == 0 {
-            Exit::Ok
-        } else {
-            Exit::Strict
-        })
+        for (side, other) in [(&report.old, &report.new), (&report.new, &report.old)] {
+            if side.words_not_compared > 0 {
+                say(
+                    err,
+                    &format!(
+                        "{}: {}: {} words stand where {} has a page with no text, and were not \
+                         compared",
+                        env.program, side.path, side.words_not_compared, other.path
+                    ),
+                );
+            }
+        }
+        // 0 only when everything was read and nothing changed: words left
+        // uncompared beside a scan may be exactly where the change is.
+        Ok(
+            if report.total_changes == 0
+                && report.old.words_not_compared == 0
+                && report.new.words_not_compared == 0
+            {
+                Exit::Ok
+            } else {
+                Exit::Strict
+            },
+        )
     }
 }
 
-/// The sentence for a document some of whose pages held no characters.
+/// The sentence for a document some of whose pages held no characters. One
+/// with none on any page was refused in `run` before the comparison.
 fn textless(side: &Read) -> Option<String> {
     match side.without_text.as_slice() {
         [] => None,
-        all if all.len() == side.texts.len() => Some(format!(
-            "{}: none of its pages has text, so there are no words to compare --- a scan has \
-             to be read by OCR first",
-            side.shown
-        )),
         [one] => Some(format!("{}: page {one} has no text", side.shown)),
         many => Some(format!("{}: {} pages have no text", side.shown, many.len())),
     }
@@ -263,17 +293,18 @@ fn textless(side: &Read) -> Option<String> {
 
 /// The report for `comparison` of `old` against `new`.
 fn compared(old: &Read, new: &Read, comparison: &Comparison) -> report::Compared {
-    let file = |side: &Read, words: u32| report::ComparedFile {
+    let file = |side: &Read, words: u32, unread: u32| report::ComparedFile {
         path: side.shown.clone(),
         pages: u32::try_from(side.texts.len()).unwrap_or(u32::MAX),
         pages_without_text: side.without_text.clone(),
         words,
+        words_not_compared: unread,
     };
     report::Compared {
         schema: SCHEMA,
         command: "compare".into(),
-        old: file(old, comparison.left_words),
-        new: file(new, comparison.right_words),
+        old: file(old, comparison.left_words, comparison.left_unread),
+        new: file(new, comparison.right_words, comparison.right_unread),
         removed_words: comparison.removed_words,
         added_words: comparison.added_words,
         total_changes: comparison.total_changes,

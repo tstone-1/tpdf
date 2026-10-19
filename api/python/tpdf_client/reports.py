@@ -1445,6 +1445,9 @@ class ComparedFile(TypedDict):
     pages_without_text: list[int]
     # Words read.
     words: int
+    # Words not compared: they stand where the other document has a page with
+    # no text, which may hold them.
+    words_not_compared: int
 
 
 class CompareChange(TypedDict):

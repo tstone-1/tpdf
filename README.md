@@ -330,7 +330,11 @@ project conventions.
   case is one. Each document is compared as the window shows it, with your unsaved
   changes and your page order; after an edit to either, the tab says the comparison is
   out of date and the colours go. A scanned page with no text is named rather than
-  passed over. It is `tpdf compare` in the window, and lists the same changes.
+  passed over, and while one is unread the tab never says the two have the same words:
+  it says the comparison is incomplete. Words that stand where the other document has a
+  page with no text are not listed as removed or added: the tab says how many were not
+  compared, since the change may be on that page. A document with no text on any page is
+  not compared at all, and the window says why. It is `tpdf compare` in the window, and lists the same changes.
   <!-- built: file.compareWith nav.nextChange nav.previousChange -->
 - Notices when another program rewrites the open file. By default it says so and offers
   a reload; *When the file changes on disk: reload automatically* reloads at once, keeping
@@ -390,6 +394,9 @@ project conventions.
   check proves the job is readable but is not an independent second reading. macOS and
   Linux print vectors (Linux hands the PDF to CUPS); Windows has no in-box "print this PDF"
   API at any layer, so it rasterises at 300 dpi like every other Windows PDF viewer does.
+  That can take minutes a page for a dense drawing, so on Windows the toolbar says which
+  page is being printed, a failure is shown in a message, and a print queue that takes no
+  page for a minute is reported as possibly stuck.
   <!-- built: file.print -->
 - A compact toolbar exposes the editing tools, with grouped menus and contextual
   colour and width controls. Every command is also reachable from the command palette,
@@ -1155,8 +1162,12 @@ It compares what the window's **Compare with** compares and lists the same chang
 words are compared — pictures, drawings, colours, fonts and the position of a line are not,
 and stderr says so on every run — so text that only moved to another line or page is no
 change, and a change of case is one. A page with no text is named on stderr. It exits 1 when
-the words differ, as `diff` does, and 0 when they are the same. Past 10,000 changes the list
-is cut and stderr says how many there were.
+the words differ, as `diff` does, and 0 when they are the same. A document with no text on
+any page, such as a scan, has no words to compare, and is refused with exit 3 rather than
+reported as the same. Where only some pages are scans, the words that stand where the other
+document has such a page are not compared, since the page may hold them: stderr says how many,
+`--json` gives `words_not_compared` for each document, and the run exits 1, because the change
+may be on that page. Past 10,000 changes the list is cut and stderr says how many there were.
 
 `tpdf page-numbers <in.pdf> -o <out.pdf>` writes a copy with *Page 1 of 3* at the bottom
 center of every page, and `tpdf watermark <in.pdf> -o <out.pdf> --text DRAFT` one with the

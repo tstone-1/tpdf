@@ -560,13 +560,16 @@ mod imp {
 
         let dc = open_printer(printer)?;
         let every: Vec<u32> = (0..u32::try_from(expected).unwrap_or(0)).collect();
-        let spooled = print_win::spool(
-            dc,
-            &bytes,
-            "tpdf print probe",
-            Some(&out.to_string_lossy()),
-            &every,
-        );
+        let spooled = stuck_fails(|beat| {
+            print_win::spool(
+                dc,
+                &bytes,
+                "tpdf print probe",
+                Some(&out.to_string_lossy()),
+                &every,
+                Some(beat),
+            )
+        });
         // SAFETY: the DC `open_printer` created, released once, on both paths.
         let _ = unsafe { DeleteDC(dc) };
         let spooled = spooled.map_err(|e| format!("spooling: {e}"))?;
@@ -709,13 +712,16 @@ mod imp {
             std::env::temp_dir().join(format!("tpdf-print-probe-range-{}.pdf", std::process::id()));
         let _ = std::fs::remove_file(&out);
         let dc = open_printer(printer)?;
-        let spooled = print_win::spool(
-            dc,
-            bytes,
-            "tpdf print probe (range)",
-            Some(&out.to_string_lossy()),
-            &sheets,
-        );
+        let spooled = stuck_fails(|beat| {
+            print_win::spool(
+                dc,
+                bytes,
+                "tpdf print probe (range)",
+                Some(&out.to_string_lossy()),
+                &sheets,
+                Some(beat),
+            )
+        });
         // SAFETY: the DC `open_printer` created, released once, on both paths.
         let _ = unsafe { DeleteDC(dc) };
         let spooled = spooled.map_err(|e| format!("spooling the range: {e}"))?;
@@ -910,6 +916,25 @@ mod imp {
             ));
         }
         Ok(dc)
+    }
+
+    /// Runs a spool under `print::STALL`, and ends the probe with a verdict
+    /// when the spooler takes no page for that long: a stuck queue blocks
+    /// inside GDI, and until 2026-10-19 the probe waited there until killed.
+    fn stuck_fails<T>(work: impl FnOnce(&print::Beat<'_>) -> T) -> T {
+        print::watched(
+            print::STALL,
+            |_| (),
+            work,
+            |sent| {
+                println!(
+                    "[FAIL] the spooler took no page for {} s, after {sent} sheet(s): {}",
+                    print::STALL.as_secs(),
+                    print::stalled_message(sent)
+                );
+                std::process::exit(1);
+            },
+        )
     }
 
     /// Waits for the spooler to finish writing, and returns the bytes.

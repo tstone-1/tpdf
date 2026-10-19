@@ -53,7 +53,8 @@ file an independent reader can be pointed at.
 Compare with..., and reads both viewers and both sidebars: removed words painted on the
 first, added words on the second, both on the first change, Next and Previous change moving
 both, an edit taking the paint off and saying the list is out of date, and closing the
-second ending it. --other must differ from the PDF in at least two places in its words:
+second ending it; then a picture of the first page, made here, has to be refused with the
+reason and nothing compared. --other must differ from the PDF in at least two places in its words:
   uv run scripts/tabs_check.py <app> testdata/text-base14.pdf --phase compare --other testdata/links.pdf
 --phase add-text runs Save a copy with page numbers and Save a copy with a watermark through
 their dialog: a field that is not one is refused with the dialog left open, Escape asks for
@@ -175,6 +176,18 @@ def main() -> int:
             # moves, and so that a middle tab has one on each side.
             shutil.copyfile(args.pdf, room / "third.pdf")
             copies.append(room / "third.pdf")
+        if args.phase == "compare":
+            # A picture of the fixture's first page, with no text: the window
+            # has to refuse to compare with it, as `tpdf compare` does.
+            scan, picture = room / "scan.pdf", room / "page.png"
+            tool = args.binary.resolve().parent / ("tpdf-cli.exe" if os.name == "nt" else "tpdf-cli")
+            made = subprocess.run([str(tool), "render", str(first), "-o", str(picture), "--dpi", "100"],
+                                  capture_output=True, text=True, timeout=120, check=False)
+            if made.returncode != 0:
+                print(f"[FAIL] {tool} could not render the fixture: {made.stderr.strip()}")
+                return 1
+            scan.write_bytes(scan_pdf(picture.read_bytes(), 100, 1))
+            copies.append(scan)
         if args.phase == "redact-pages":
             # A third and a fourth, because a redaction spends the file it is
             # applied to and the phase makes four of them. Each case needs a

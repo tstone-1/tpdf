@@ -17,6 +17,42 @@ as *downloadable*, while the release sat as a draft that GitHub showed to nobody
 are given now because they are different facts, and only the second one means a reader can
 have the binary.)
 
+## [26.10.24] - Unreleased
+
+### Changed
+
+- **A comparison with unread pages no longer opens with "the same words".** When a page of
+  either document has no text and no word changed, the *Changes* tab now begins "Incomplete:
+  no change in the words that were read", and two documents with no text at all begin
+  "Neither document has any text, so nothing was compared." Two scans used to open with
+  "The two documents have the same words", with the pages that were not compared named only
+  below it.
+- **Words beside a scanned page are not compared, rather than listed as removed.** When one
+  document has a page with no text, the other document's words that stand in its place used
+  to be listed as removed or added, although the scan may hold every one of them, and the
+  real change on that page went unmentioned. They are now counted as not compared: the
+  *Changes* tab says how many and that the change may be on that page, and `tpdf compare`
+  says so on stderr, reports `words_not_compared` for each document in `--json`, and exits 1.
+- **`tpdf compare` refuses a document with no text on any page**, with exit 3. It exited 0,
+  which a script reads as "the same words", for two scans. The Python client's `compare()`
+  raises `CommandError` for it. *Compare with…* refuses the same pair and says why, where it
+  used to list every word of the other document as removed or added.
+
+- **Printing on Windows shows how far it has got.** tpdf draws each page itself before the
+  printer gets it, and a dense drawing can take minutes a page, with nothing on screen
+  meanwhile. The toolbar now says *Printing page 2 of 5...* and then *Sent 5 pages to the
+  printer.*, and you can go on working while it prints.
+
+### Fixed
+
+- **Printing on Windows says when it failed.** A job the printer refused after you pressed
+  Print was written only to tpdf's log, and nothing appeared; now a message says the
+  document was not printed, and why, as on Linux.
+- **A stuck print queue on Windows is reported instead of waited on in silence.** When no
+  page has reached the printer for a minute, tpdf says the queue may be stuck and where to
+  look; the job still prints if the queue starts again. Time tpdf spends drawing a page is
+  not counted, so a slow page does not set it off. `tpdf print` says the same on stderr.
+
 ## [26.10.23] - 2026-10-18
 
 ### Added

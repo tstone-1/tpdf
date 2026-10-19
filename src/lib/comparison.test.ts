@@ -15,8 +15,11 @@ import {
   ComparisonState,
   gather,
   MAX_ROWS,
+  NOTHING_COMPARED,
   paintedOn,
+  SAME_AS_FAR_AS_READ,
   placeOf,
+  refusal,
   rowLabel,
   sentences,
   step,
@@ -51,6 +54,8 @@ function result(over: Partial<Comparison> = {}): Comparison {
     changes: [change()],
     total_changes: 1,
     unaligned: 0,
+    left_unread: 0,
+    right_unread: 0,
     ...over,
   };
 }
@@ -97,6 +102,32 @@ describe("sentences", () => {
     expect(said).toContain(TEXT_ONLY);
   });
 
+  it("does not say the same words when a page was not read", () => {
+    const none = { changes: [], total_changes: 0, removed_words: 0, added_words: 0 };
+    const partly = sentences(compared(none, { left: 0, right: 1 }));
+    expect(partly[0]).toBe(SAME_AS_FAR_AS_READ);
+    expect(partly).toContain("v2.pdf has 1 page with no text, which was not compared. A scanned page has to be recognised first.");
+    expect(partly).not.toContain("The two documents have the same words.");
+    const scans = sentences(compared({ ...none, left_words: 0, right_words: 0 }, { left: 3, right: 3 }));
+    expect(scans[0]).toBe(NOTHING_COMPARED);
+    expect(scans).not.toContain("The two documents have the same words.");
+    // Words on neither side is nothing compared, even with no page counted as empty.
+    expect(sentences(compared({ ...none, left_words: 0, right_words: 0 }))[0]).toBe(NOTHING_COMPARED);
+  });
+
+  it("says which words were not compared because they face a page with no text", () => {
+    const none = { changes: [], total_changes: 0, removed_words: 0, added_words: 0 };
+    const said = sentences(compared({ ...none, left_unread: 12 }, { left: 0, right: 1 }));
+    expect(said[0]).toBe(SAME_AS_FAR_AS_READ);
+    expect(said).toContain(
+      "12 words of v1.pdf stand where v2.pdf has a page with no text, and were not compared: the change may be on that page.",
+    );
+    expect(sentences(compared({ ...none, right_unread: 1 }, { left: 1, right: 0 }))).toContain(
+      "1 word of v2.pdf stands where v1.pdf has a page with no text, and was not compared: the change may be on that page.",
+    );
+    expect(sentences(compared()).some((line) => line.includes("not compared:"))).toBe(false);
+  });
+
   it("says when the rows were cut, and how many there were", () => {
     const many = Array.from({ length: MAX_ROWS + 1 }, () => change());
     const said = sentences(compared({ changes: many, total_changes: 12_000 }));
@@ -114,6 +145,24 @@ describe("sentences", () => {
     expect(sentences(compared({}, { left: 0, right: 2 }))).toContain(
       "v2.pdf has 2 pages with no text, which were not compared. A scanned page has to be recognised first.",
     );
+  });
+});
+
+describe("refusal", () => {
+  const names = { left: "v1.pdf", right: "scan.pdf" };
+  const text = { pages: [{ page: 0, codes: [97] }, { page: 1, codes: [] }], withoutText: 1 };
+  const scan = { pages: [{ page: 0, codes: [] }, { page: 1, codes: [] }], withoutText: 2 };
+
+  it("refuses a side none of whose pages has text", () => {
+    const said = refusal(names, { left: text, right: scan });
+    expect(said).toBe(
+      "scan.pdf: none of its pages has text, so there are no words to compare. A scan has to be recognised first.",
+    );
+    expect(refusal(names, { left: scan, right: text })).toMatch(/^v1\.pdf: none of its pages has text/);
+  });
+
+  it("compares when every side has text on some page", () => {
+    expect(refusal(names, { left: text, right: text })).toBeNull();
   });
 });
 

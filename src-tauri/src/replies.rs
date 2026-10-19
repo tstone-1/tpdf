@@ -823,6 +823,8 @@ fn samples() -> BTreeMap<&'static str, String> {
             }],
             total_changes: 3,
             unaligned: 0,
+            left_unread: 0,
+            right_unread: 7,
         },
     );
 

@@ -4,7 +4,9 @@
 //!
 //! Proved by hand, since `tests/cli.rs` is not selectable by `mutate_rust.py`
 //! (2026-10-18): `cli/compare.rs` `Ok(if report.total_changes == 0 {` made
-//! `Ok(if true {` turns 2 of the 6 `compare` cases red.
+//! `Ok(if true {` turns 2 of the 6 `compare` cases red; and (2026-10-19)
+//! `if side.without_text.len() == side.texts.len() {` made `if false {` turns
+//! the two exit-3 cases red.
 //! Run with `cargo test --test cli -- --filter compare`.
 use super::{scratch, tool, Report};
 use lopdf::{dictionary, Document, Object, Stream};
@@ -154,6 +156,49 @@ pub(super) fn finds_what_changed_in_the_words(report: &mut Report) {
                 == "1 -> 1: Payment is due within [-30-]{+45+} days of the invoice\n\
                     2 -> 2: carries interest at the [-statutory-] rate.\n",
         &out,
+    );
+
+    // A scan: pages with no text at all. Exit 0 would say "the same words".
+    let scan = dir.join("scan.pdf");
+    let partly = dir.join("partly.pdf");
+    document(&scan, &[&[], &[]]);
+    document(&partly, &[&["Payment is due within 30 days"], &[]]);
+    let (scan, partly) = (scan.display().to_string(), partly.display().to_string());
+    let (code, out, err) = tool(&["compare", &scan, &scan], &[]);
+    report.check(
+        "compare: a document with no text on any page is refused, exit 3",
+        code == 3 && out.is_empty() && err.contains("none of its pages has text"),
+        &format!("exit {code}: {out} {err}"),
+    );
+    let (code, _, err) = tool(&["compare", &old, &scan], &[]);
+    report.check(
+        "compare: either side with no text is refused, exit 3",
+        code == 3 && err.contains("scan.pdf: none of its pages has text"),
+        &format!("exit {code}: {err}"),
+    );
+    // The old document's second page against a page with no text: those words
+    // are not compared rather than removed, and the run exits 1, since the
+    // change may be on that page.
+    let (code, out, err) = tool(&["compare", &old, &partly, "--json"], &[]);
+    let facing: serde_json::Value = serde_json::from_str(&out).unwrap_or_default();
+    report.check(
+        "compare: words facing a page with no text are not compared, not removed, exit 1",
+        // All 12 after "30 days": the end of page 1 has no match either, and
+        // stands next to the scanned page, so it may be on it.
+        code == 1
+            && facing["total_changes"] == 0
+            && facing["old"]["words_not_compared"] == 12
+            && facing["new"]["words_not_compared"] == 0
+            && err.contains("old.pdf: 12 words stand where")
+            && err.contains("has a page with no text, and were not compared"),
+        &format!("exit {code}: {out} {err}"),
+    );
+
+    let (code, _, err) = tool(&["compare", &partly, &partly], &[]);
+    report.check(
+        "compare: a page with no text is named on stderr, and the rest is compared",
+        code == 0 && err.contains("page 2 has no text"),
+        &format!("exit {code}: {err}"),
     );
 
     let (code, _, err) = tool(&["compare", &old], &[]);

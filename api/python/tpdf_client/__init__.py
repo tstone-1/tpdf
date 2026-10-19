@@ -274,7 +274,11 @@ class Tpdf:
         the same words, not that they are the same document.
 
         Differing is an answer, not an error: the CLI's exit 1 is returned as a
-        report whose changes are not empty.
+        report whose changes are not empty. A document with no text on any page,
+        such as a scan, has no words to compare and raises CommandError (exit 3).
+        Words beside a page with no text on the other side are not compared;
+        each document's 'words_not_compared' says how many, and an empty list
+        with either above zero does not mean the words are the same.
         """
         result = self.run('compare', '--', old, new, password=password, check=False)
         if result.exit_code not in (0, 1):

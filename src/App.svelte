@@ -77,6 +77,7 @@
     type Passage,
     type Progress as HiddenProgress,
   } from "./lib/hiddentext";
+  import { PROGRESS_EVENT as PRINT_PROGRESS_EVENT, printingLine, type Printing } from "./lib/printing";
   import { afterAdding, suggestedName as addedTextName, type Kind as AddTextKind } from "./lib/addtext";
   import { AddTextDialog } from "./lib/addtextdialog";
   import {
@@ -84,6 +85,7 @@
     ComparisonState,
     gather,
     placeOf,
+    refusal,
     STARTING as COMPARE_STARTING,
   } from "./lib/comparison";
   import { CommandLineTool } from "./lib/clitoolstate";
@@ -3675,6 +3677,11 @@
           gather(left.slotCount, (slot) => left.loadText(slot)),
           gather(right.slotCount, (slot) => right.loadText(slot)),
         ]);
+        const refused = refusal(names, { left: a, right: b });
+        if (refused) {
+          say(refused);
+          return;
+        }
         blockingTask = COMPARING;
         const result = await call("compare_texts", { left: a.pages, right: b.pages });
         // Either side may have been closed or replaced inside the wait.
@@ -5378,6 +5385,9 @@
       await listen<HiddenProgress>(HIDDEN_PROGRESS_EVENT, (event) => {
         hiddenRuns.report(event.payload, (line) => { blockingTask = line; });
       });
+      // Windows only, and not blocking: the job is the backend's own copy, so
+      // the reader can go on working while it prints.
+      await listen<Printing>(PRINT_PROGRESS_EVENT, (event) => tell(printingLine(event.payload)));
       // Together rather than one after the other. Neither answer feeds the
       // other --- one is what the launcher handed over, the other is what was on
       // disk from last time --- and both are round trips on the path between the

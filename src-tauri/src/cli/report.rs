@@ -1339,6 +1339,9 @@ pub struct ComparedFile {
     pub pages_without_text: Vec<u32>,
     /// Words read.
     pub words: u32,
+    /// Words of this document not compared, because they stand where the
+    /// other document has a page with no text, which may hold them.
+    pub words_not_compared: u32,
 }
 
 /// One change of a [`Compared`].

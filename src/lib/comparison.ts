@@ -64,6 +64,10 @@ export interface Comparison {
   changes: Change[];
   total_changes: number;
   unaligned: number;
+  /** Left words not compared: they stand where the right has a page with no text. */
+  left_unread: number;
+  /** Right words not compared, against a page of the left. */
+  right_unread: number;
 }
 
 /** Which of the two documents. The left is the older: what was removed is on it. */
@@ -122,21 +126,56 @@ export async function gather(
   return { pages, withoutText };
 }
 
+/**
+ * Why the two documents are not compared, or `null` when they are: a document
+ * none of whose pages has text has no words to compare, and comparing it would
+ * list every word of the other as removed or added. `tpdf compare` refuses the
+ * same pair with exit 3.
+ */
+export function refusal(
+  names: Record<Side, string>,
+  gathered: Record<Side, { pages: PageCodes[]; withoutText: number }>,
+): string | null {
+  for (const side of ["left", "right"] as const) {
+    if (gathered[side].withoutText === gathered[side].pages.length) {
+      return `${names[side]}: none of its pages has text, so there are no words to compare. A scan has to be recognised first.`;
+    }
+  }
+  return null;
+}
+
 function plural(count: number, one: string, many: string): string {
   return `${count.toLocaleString("en-US")} ${count === 1 ? one : many}`;
 }
+
+/** The first line when neither document has a word to compare. */
+export const NOTHING_COMPARED = "Neither document has any text, so nothing was compared.";
+
+/** The first line when no word changed but some pages were not read. */
+export const SAME_AS_FAR_AS_READ =
+  "Incomplete: no change in the words that were read, but some pages have no text and were not compared.";
 
 /**
  * What the panel says above its rows, a sentence to a line.
  *
  * The count first, then which document is which, then the bounds that were
  * reached, then pages with no words, and last, always, {@link TEXT_ONLY}.
+ *
+ * "The same words" is said only when every page of both had text. With a page
+ * of either unread, a result with no changes leads with that instead, so two
+ * scans never open with a sentence a reader takes for "identical".
  */
 export function sentences(compared: Compared): string[] {
   const { result, names, withoutText } = compared;
   const said: string[] = [];
   if (result.total_changes === 0) {
-    said.push("The two documents have the same words.");
+    if (result.left_words === 0 && result.right_words === 0) {
+      said.push(NOTHING_COMPARED);
+    } else if (withoutText.left + withoutText.right > 0) {
+      said.push(SAME_AS_FAR_AS_READ);
+    } else {
+      said.push("The two documents have the same words.");
+    }
   } else {
     said.push(
       `${plural(result.total_changes, "change", "changes")}: ` +
@@ -161,6 +200,16 @@ export function sentences(compared: Compared): string[] {
       said.push(
         `${names[side]} has ${plural(empty, "page", "pages")} with no text, which ` +
           `${empty === 1 ? "was" : "were"} not compared. A scanned page has to be recognised first.`,
+      );
+    }
+  }
+  for (const [side, other] of [["left", "right"], ["right", "left"]] as const) {
+    const unread = side === "left" ? result.left_unread : result.right_unread;
+    if (unread > 0) {
+      said.push(
+        `${plural(unread, "word", "words")} of ${names[side]} ${unread === 1 ? "stands" : "stand"} where ` +
+          `${names[other]} has a page with no text, and ${unread === 1 ? "was" : "were"} not compared: ` +
+          "the change may be on that page.",
       );
     }
   }

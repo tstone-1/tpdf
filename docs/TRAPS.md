@@ -832,6 +832,7 @@ hop through the index.
 - `PrintDlgW` with an owner window gets Windows 11's newer dialog, and it tells the reader the app has no preview
 - An uninstaller that restores what it backed up writes an empty class where there was no key
 - A relative binary path with forward slashes is not found on Windows, so three window checks failed in a second
+- A print job *Spooling* with 0 pages was tpdf rasterising, not a stuck spooler
 
 ## Fixtures
 - The test fixtures are generated, not committed
@@ -26854,3 +26855,22 @@ output, and passes with `FORCE_COLOR=1`. The earlier runs of this harness came f
 which vitest chose no colour, which is why nothing had shown it. What makes vitest colour a
 piped run inside tmux was not pinned down; the fix does not depend on it. Any script that reads
 a tool's human output should strip colour first, or ask for a machine format.
+
+### A print job *Spooling* with 0 pages was tpdf rasterising, not a stuck spooler
+
+For the 26.10.23 release, `print-probe` on `vector-multi.pdf` was recorded as hanging on
+TEENYWEENY with its job left *Spooling*, 0 pages, and a reboot was taken to have cleared a stuck
+spooler. On 2026-10-19 the Windows desktop showed the same state: `Get-PrintJob` listed the job
+*Spooling*, 0 pages, 0 bytes, for minutes. The probe was not blocked, though. It had used 440 s
+of CPU, and it finished 9 of 9 after 8.5 minutes, about 2.5 minutes for each sheet. `spool` opens
+the job with `StartDocW` and only then rasterises the page through `Windows.Data.Pdf`, at 300 dpi.
+On this fixture that render is what takes minutes, so for that whole time the queue shows a job
+with nothing in it. Two days earlier the same probe passed on the same desktop at a speed nobody
+recorded as slow, so the render time depends on the machine's state. What state was not pinned
+down.
+
+Check the process's CPU before calling a print hang the spooler's. The watchdog added the same
+day (`print::watched`) first counted that render as waiting, and told the reader their print queue
+was stuck; it now stops its clock while tpdf parses or rasterises (`Beat::ours`). The cost on a
+dense vector page is real and is still there: a reader printing one waits minutes per sheet with
+nothing on screen to say so.

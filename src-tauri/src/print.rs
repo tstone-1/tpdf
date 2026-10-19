@@ -423,6 +423,153 @@ pub fn sheets(range: Option<(u32, u32)>, count: u32) -> Result<Vec<u32>, String>
     Ok((first - 1..last).collect())
 }
 
+/// How long a print may go with no sheet reaching the printer before the reader
+/// is told its queue looks stuck.
+///
+/// A stuck spooler does not fail a GDI call, it never returns from one, and
+/// nothing in the API reports that state, so a clock is the only way to notice
+/// it. The clock counts only time spent in the print system: tpdf's own
+/// rasterising can take minutes a page (`Beat::ours`, and `docs/TRAPS.md`,
+/// *A print job *Spooling* with 0 pages was tpdf rasterising, not a stuck
+/// spooler*). A minute in the spooler is far past what handing over one page
+/// takes, and short enough that a reader is still at the printer.
+pub const STALL: std::time::Duration = std::time::Duration::from_secs(60);
+
+/// What [`watched`] and the work it watches share.
+struct Watch {
+    /// When the spooler last showed progress, or tpdf's own work last ended.
+    last: std::time::Instant,
+    /// How many [`Beat::ours`] are running; the clock stands still meanwhile.
+    ours: u32,
+    /// Sheets handed to the printer.
+    sheets: u32,
+    done: bool,
+}
+
+/// How work under [`watched`] says it is still moving.
+pub struct Beat<'a> {
+    state: std::sync::Arc<(std::sync::Mutex<Watch>, std::sync::Condvar)>,
+    /// Told the count after each sheet: the window's progress line.
+    sent: &'a dyn Fn(u32),
+}
+
+impl Beat<'_> {
+    /// A sheet reached the printer.
+    pub fn sheet(&self) {
+        let mut sent = 0;
+        self.with(|watch| {
+            watch.sheets += 1;
+            watch.last = std::time::Instant::now();
+            sent = watch.sheets;
+        });
+        (self.sent)(sent);
+    }
+
+    /// Runs `work`, tpdf's own (reading the job, rasterising a page), with
+    /// the clock stopped: only time spent waiting on the print system counts.
+    ///
+    /// On 2026-10-19 the Windows desktop took over a minute to rasterise one
+    /// page of `vector-multi.pdf` through `Windows.Data.Pdf`, and a clock that
+    /// counted it told the reader their print queue was stuck.
+    pub fn ours<R>(&self, work: impl FnOnce() -> R) -> R {
+        self.with(|watch| watch.ours += 1);
+        let out = work();
+        self.with(|watch| {
+            watch.ours -= 1;
+            watch.last = std::time::Instant::now();
+        });
+        out
+    }
+
+    fn with(&self, change: impl FnOnce(&mut Watch)) {
+        let (lock, wake) = &*self.state;
+        change(
+            &mut lock
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner),
+        );
+        wake.notify_all();
+    }
+}
+
+/// Runs `work`, and calls `stalled` once, on another thread, with the sheets
+/// sent so far, if `bound` passes with no sheet sent while it runs, not
+/// counting the time inside [`Beat::ours`]. `sent` hears the count after each
+/// sheet, on `work`'s thread.
+///
+/// `work` is not interrupted: a GDI call blocked in the spooler cannot be, and
+/// a job the queue later takes still prints. What this adds is that the reader
+/// hears about it rather than waiting on nothing. `stalled` runs at most once
+/// and is not waited for, so it may show a modal message.
+pub fn watched<T>(
+    bound: std::time::Duration,
+    sent: impl Fn(u32),
+    work: impl FnOnce(&Beat) -> T,
+    stalled: impl FnOnce(u32) + Send + 'static,
+) -> T {
+    use std::sync::{Arc, Condvar, Mutex, PoisonError};
+    use std::time::Instant;
+
+    let state = Arc::new((
+        Mutex::new(Watch {
+            last: Instant::now(),
+            ours: 0,
+            sheets: 0,
+            done: false,
+        }),
+        Condvar::new(),
+    ));
+    let watching = Arc::clone(&state);
+    std::thread::spawn(move || {
+        let (lock, wake) = &*watching;
+        let mut watch = lock.lock().unwrap_or_else(PoisonError::into_inner);
+        loop {
+            if watch.done {
+                return;
+            }
+            if watch.ours > 0 {
+                watch = wake.wait(watch).unwrap_or_else(PoisonError::into_inner);
+                continue;
+            }
+            let due = watch.last + bound;
+            let now = Instant::now();
+            if now >= due {
+                let sheets = watch.sheets;
+                drop(watch);
+                stalled(sheets);
+                return;
+            }
+            watch = wake
+                .wait_timeout(watch, due - now)
+                .unwrap_or_else(PoisonError::into_inner)
+                .0;
+        }
+    });
+    let out = work(&Beat {
+        state: Arc::clone(&state),
+        sent: &sent,
+    });
+    let (lock, wake) = &*state;
+    lock.lock().unwrap_or_else(PoisonError::into_inner).done = true;
+    wake.notify_all();
+    out
+}
+
+/// What the reader is told when [`watched`] finds a print stalled.
+#[must_use]
+pub fn stalled_message(sheets: u32) -> String {
+    let sent = match sheets {
+        0 => "No page has reached the printer".to_string(),
+        1 => "1 page reached the printer, and none since".to_string(),
+        many => format!("{many} pages reached the printer, and none since"),
+    };
+    format!(
+        "{sent} for a minute. The print queue may be stuck: open Settings, Printers & scanners, \
+         choose the printer and open its print queue. If the queue starts again, the rest \
+         will print."
+    )
+}
+
 /// The pages to keep, validated against what the document has.
 fn resolve(pages: &Pages, present: &[u32]) -> Result<Vec<PagePlan>, String> {
     match pages {
@@ -2281,5 +2428,98 @@ mod tests {
             .expect("page")
             .set("Parent", Object::Reference(page));
         assert_eq!(effective_rotation(&doc, page), 0);
+    }
+
+    /// The watchdog around a print: told once, with the sheets sent, when the
+    /// work stops beating; never told while it beats or after it has finished.
+    ///
+    /// The bounds are wide on purpose. A loaded CI runner can delay a thread by
+    /// tens of milliseconds, and each case is far from its threshold: beats
+    /// every 20 ms under a 400 ms bound, a 1.5 s stop over a 100 ms one.
+    #[test]
+    fn a_print_that_stops_moving_is_reported_once_and_one_that_moves_is_not() {
+        use super::{stalled_message, watched};
+        use std::sync::mpsc;
+        use std::time::Duration;
+
+        let (told, heard) = mpsc::channel();
+        let counted = std::cell::RefCell::new(Vec::new());
+        let answer = watched(
+            Duration::from_millis(100),
+            |sent| counted.borrow_mut().push(sent),
+            |beat| {
+                beat.sheet();
+                beat.sheet();
+                std::thread::sleep(Duration::from_millis(1500));
+                "done"
+            },
+            move |sheets| told.send(sheets).expect("send"),
+        );
+        assert_eq!(answer, "done", "the work's own answer comes back");
+        assert_eq!(
+            counted.into_inner(),
+            [1, 2],
+            "each sheet is counted as it is sent"
+        );
+        assert_eq!(
+            heard.recv_timeout(Duration::from_secs(1)),
+            Ok(2),
+            "told, with two sheets sent"
+        );
+        assert!(
+            heard.recv_timeout(Duration::from_millis(300)).is_err(),
+            "told once"
+        );
+
+        let (told, heard) = mpsc::channel();
+        watched(
+            Duration::from_millis(400),
+            |_| (),
+            |beat| {
+                for _ in 0..40 {
+                    std::thread::sleep(Duration::from_millis(20));
+                    beat.sheet();
+                }
+            },
+            move |sheets| told.send(sheets).expect("send"),
+        );
+        assert!(
+            heard.recv_timeout(Duration::from_millis(800)).is_err(),
+            "work that beats for 800 ms under a 400 ms bound is never reported"
+        );
+
+        // tpdf's own work longer than the bound is not the printer stalling,
+        // and the clock starts again from when it ended: 200 ms after a
+        // 600 ms render is inside a 400 ms bound.
+        let (told, heard) = mpsc::channel();
+        watched(
+            Duration::from_millis(400),
+            |_| (),
+            |beat| {
+                beat.ours(|| std::thread::sleep(Duration::from_millis(600)));
+                std::thread::sleep(Duration::from_millis(200));
+            },
+            move |sheets| told.send(sheets).expect("send"),
+        );
+        assert!(
+            heard.recv_timeout(Duration::from_millis(600)).is_err(),
+            "a render longer than the bound is not reported"
+        );
+
+        let (told, heard) = mpsc::channel();
+        watched(
+            Duration::from_millis(100),
+            |_| (),
+            |_| (),
+            move |sheets| told.send(sheets).expect("send"),
+        );
+        assert!(
+            heard.recv_timeout(Duration::from_millis(400)).is_err(),
+            "finished work is not reported when the bound passes later"
+        );
+
+        assert!(stalled_message(0).starts_with("No page has reached the printer for a minute."));
+        assert!(stalled_message(1).starts_with("1 page reached the printer, and none since"));
+        assert!(stalled_message(3).starts_with("3 pages reached"));
     }
 }

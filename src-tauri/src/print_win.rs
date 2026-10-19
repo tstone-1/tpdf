@@ -777,6 +777,11 @@ fn paper_dpi(page: &PdfPage, sheet: (i32, i32), dc_dpi: (i32, i32), device_dpi: 
 /// already validated it: a bad range is refused before a document is opened on
 /// the spooler, rather than half-printed and then abandoned.
 ///
+/// `beat`, when given, hears each sheet handed over, and stops its clock while
+/// tpdf reads the job and rasterises a page. Every caller runs it under
+/// `print::watched`, because a stuck queue blocks a call here forever rather
+/// than failing it.
+///
 /// # Errors
 ///
 /// The OS parser refusing the job, a sheet outside it, a page failing to render,
@@ -787,10 +792,12 @@ pub fn spool(
     title: &str,
     output: Option<&str>,
     sheets: &[u32],
+    beat: Option<&crate::print::Beat<'_>>,
 ) -> Result<u32, String> {
     use windows::Win32::Storage::Xps::{EndPage, StartDocW, StartPage, DOCINFOW};
 
-    let document = parse(bytes).ok_or("the OS parser could not read the print job")?;
+    let document =
+        ours(beat, || parse(bytes)).ok_or("the OS parser could not read the print job")?;
     let count = document
         .PageCount()
         .map_err(|e| format!("page count: {e}"))?;
@@ -849,7 +856,7 @@ pub fn spool(
             .GetPage(index)
             .map_err(|e| format!("page {index}: {e}"))?;
         let dpi = paper_dpi(&page, sheet, (dpi_x, dpi_y), device_dpi);
-        let bmp = render_page_of(&page, dpi)?;
+        let bmp = ours(beat, || render_page_of(&page, dpi))?;
         // SAFETY: a live DC inside an open document.
         if unsafe { StartPage(dc) } <= 0 {
             return Err(format!(
@@ -865,6 +872,9 @@ pub fn spool(
                 std::io::Error::last_os_error()
             ));
         }
+        if let Some(beat) = beat {
+            beat.sheet();
+        }
     }
 
     open.end()?;
@@ -872,6 +882,15 @@ pub fn spool(
     // of forty should see two here, and the caller compares this against the
     // request rather than against the document.
     Ok(u32::try_from(sheets.len()).unwrap_or(u32::MAX))
+}
+
+/// Runs tpdf's own part of a spool with the watchdog's clock stopped, when
+/// there is one (`print::Beat::ours`).
+fn ours<R>(beat: Option<&crate::print::Beat<'_>>, work: impl FnOnce() -> R) -> R {
+    match beat {
+        Some(beat) => beat.ours(work),
+        None => work(),
+    }
 }
 
 /// A print document between `StartDocW` and whichever call closes it.
@@ -922,6 +941,30 @@ impl Drop for OpenDocument {
     }
 }
 
+/// Tells the reader why a print they asked for did not happen, in a modal
+/// message over `owner`: after the dialog closed, nothing else would. The
+/// Windows half of `print_linux::tell`.
+pub fn tell(owner: Option<HWND>, why: &str) {
+    message(
+        owner,
+        &format!("The document was not printed.\n\n{why}"),
+        true,
+    );
+}
+
+/// A modal message box over `owner`, an error or a warning. It blocks the
+/// calling thread, which is never the window's: printing runs on its own.
+fn message(owner: Option<HWND>, text: &str, error: bool) {
+    use windows::Win32::UI::WindowsAndMessaging::{
+        MessageBoxW, MB_ICONERROR, MB_ICONWARNING, MB_OK,
+    };
+    let text = HSTRING::from(text);
+    let caption = HSTRING::from("tpdf");
+    let icon = if error { MB_ICONERROR } else { MB_ICONWARNING };
+    // SAFETY: two wide strings that outlive the call; a null owner is allowed.
+    let _ = unsafe { MessageBoxW(owner, &text, &caption, MB_OK | icon) };
+}
+
 /// A print hook that does nothing, installed so Windows shows the classic dialog.
 ///
 /// Windows 11 answers `PrintDlgW` with an owner window by showing its newer print
@@ -961,11 +1004,20 @@ unsafe extern "system" fn classic_dialog(_: HWND, _: u32, _: WPARAM, _: LPARAM) 
 /// without reading `PD_PAGENUMS` back would break exactly that rule on the
 /// noisier control.
 ///
+/// `progress` hears `(sent, of)` once the reader has pressed Print, with 0 sent,
+/// and again after each sheet: rasterising a dense page takes minutes, and
+/// Windows shows nothing while it does (`print::Beat::ours`). Not on Cancel.
+///
 /// # Errors
 ///
 /// The dialog failing for a reason other than Cancel, a range naming sheets the
 /// job does not have, or the job failing to spool.
-pub fn present(bytes: &[u8], title: &str, owner: Option<HWND>) -> Result<bool, String> {
+pub fn present(
+    bytes: &[u8],
+    title: &str,
+    owner: Option<HWND>,
+    progress: &dyn Fn(u32, u32),
+) -> Result<bool, String> {
     // Parsed here only to bound the dialog, and it is a second parse of bytes
     // `spool` parses again below. Worth stating rather than hiding: the count has
     // to be known *before* the panel opens, and `spool` has to own its own
@@ -1047,7 +1099,21 @@ pub fn present(bytes: &[u8], title: &str, owner: Option<HWND>) -> Result<bool, S
         if sheets.is_empty() {
             return Err("this print job has no pages in it".into());
         }
-        spool(dc, bytes, title, None, &sheets)
+        // A stuck queue blocks `spool` inside GDI and reports nothing, so the
+        // reader is told from another thread instead (`print::STALL`). The
+        // owner crosses as an integer, as it crossed into this thread.
+        let shown = owner.map(|h| h.0 as isize);
+        let of = u32::try_from(sheets.len()).unwrap_or(u32::MAX);
+        progress(0, of);
+        crate::print::watched(
+            crate::print::STALL,
+            |sent| progress(sent, of),
+            |beat| spool(dc, bytes, title, None, &sheets, Some(beat)),
+            move |sent| {
+                let owner = shown.map(|h| HWND(h as *mut std::ffi::c_void));
+                message(owner, &crate::print::stalled_message(sent), false);
+            },
+        )
     });
     // SAFETY: the DC `PD_RETURNDC` handed over; the caller owns and must free it,
     // on every path including the failing one.

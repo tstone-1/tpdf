@@ -115,7 +115,8 @@ pub enum Exit {
     Usage = 2,
     /// tpdf, or the OS, refused: an identity that is unknown, ambiguous or
     /// cannot sign; a document that cannot be signed or read; an output that
-    /// already exists; a key the OS would not use.
+    /// already exists; a key the OS would not use; for `compare`, a document
+    /// with no text on any page.
     Refused = 3,
     /// tpdf's own failure: a worker that died or did not answer, a store that
     /// could not be searched, a written file whose read-back disagreed.

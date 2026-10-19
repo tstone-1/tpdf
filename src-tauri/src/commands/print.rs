@@ -272,13 +272,54 @@ fn present_job(
             .map(|h| h.0 as isize)
     };
 
+    let app = app.clone();
     std::thread::spawn(move || {
+        use tauri::Emitter;
         let owner = owner.map(|h| windows::Win32::Foundation::HWND(h as *mut std::ffi::c_void));
-        if let Err(e) = print_win::present(&bytes, &title, owner) {
-            diag::note(&format!("[print] {e}"));
+        let last = std::cell::Cell::new((0, 0));
+        let report = |sent, of, state| {
+            let _ = app.emit(PROGRESS_EVENT, Printing { sent, of, state });
+        };
+        let printed = print_win::present(&bytes, &title, owner, &|sent, of| {
+            last.set((sent, of));
+            report(sent, of, "printing");
+        });
+        let (sent, of) = last.get();
+        match printed {
+            Ok(true) => report(sent, of, "sent"),
+            // Cancel: no line was shown, so there is none to clear.
+            Ok(false) => {}
+            Err(e) => {
+                report(sent, of, "failed");
+                diag::note(&format!("[print] {e}"));
+                // Said in the window too, as on Linux: the dialog has closed, and
+                // until 26.10.24 a refused job on Windows was only this log line.
+                print_win::tell(owner, &e);
+            }
         }
     });
     Ok(())
+}
+
+/// The event that says how far a Windows print has got. `PROGRESS_EVENT` in
+/// `printing.ts`, whose test holds the two spellings together.
+///
+/// Windows only: there tpdf rasterises every sheet itself, which takes minutes
+/// on a dense page, and the system shows nothing meanwhile. macOS and Linux
+/// hand the PDF to a print system that shows its own progress.
+#[cfg_attr(any(target_os = "macos", target_os = "linux"), allow(dead_code))]
+pub const PROGRESS_EVENT: &str = "tpdf://print-progress";
+
+/// What [`PROGRESS_EVENT`] carries. `Printing` in `printing.ts`.
+#[cfg(windows)]
+#[derive(serde::Serialize, Clone)]
+struct Printing {
+    /// Sheets handed to the printer so far.
+    sent: u32,
+    /// Sheets in the job.
+    of: u32,
+    /// `printing`, `sent` or `failed`.
+    state: &'static str,
 }
 
 /// Hands built bytes to GTK's print dialog on Linux, having first read them back.

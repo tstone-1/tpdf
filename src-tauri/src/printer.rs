@@ -78,7 +78,14 @@ pub fn send(printer: &str, bytes: &[u8], title: &str, pages: u32) -> Result<Sent
         ));
     }
     let output = std::env::var("TPDF_PRINT_OUTPUT").ok();
-    let spooled = crate::print_win::spool(dc, bytes, title, output.as_deref(), &sheets);
+    // A stuck queue blocks inside GDI and reports nothing; stderr says so
+    // rather than leaving a script waiting on silence (`print::STALL`).
+    let spooled = crate::print::watched(
+        crate::print::STALL,
+        |_| (),
+        |beat| crate::print_win::spool(dc, bytes, title, output.as_deref(), &sheets, Some(beat)),
+        |sent| eprintln!("tpdf: {}", crate::print::stalled_message(sent)),
+    );
     // SAFETY: the DC `CreateDCW` returned above, released once.
     let _ = unsafe { DeleteDC(dc) };
     spooled.map(|_| Sent { job: None })

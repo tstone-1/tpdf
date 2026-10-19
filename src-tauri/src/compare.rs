@@ -13,6 +13,11 @@
 //! the same text. A soft hyphen is a hint about where a word may break and is
 //! left out of the word, as search leaves it out.
 //!
+//! **A page with no text is not a page with no words.** A scan holds words
+//! nobody has read, so unmatched words standing where the other side has such
+//! a page are not compared, rather than listed as removed or added
+//! ([`Comparison::left_unread`]).
+//!
 //! **The words are compared exactly.** Case is a change: `Euro` against `euro`
 //! is something a reader checking a contract wants to see.
 //!
@@ -173,6 +178,12 @@ pub struct Comparison {
     /// Stretches too large to align word by word, each reported as one
     /// replacement. Zero for any two versions of one text.
     pub unaligned: u32,
+    /// Left words not compared: they stand where the right document has a page
+    /// with no text, so whether that page holds them cannot be known. Not in
+    /// `changes`, `removed_words` or `added_words`.
+    pub left_unread: u32,
+    /// Right words not compared, likewise against a page of the left.
+    pub right_unread: u32,
 }
 
 /// Compares the words of two documents.
@@ -183,6 +194,8 @@ pub struct Comparison {
 pub fn compare(left: &[PageCodes], right: &[PageCodes]) -> Result<Comparison, String> {
     let left_words = words(left, "first")?;
     let right_words = words(right, "second")?;
+    let left_pages = Pages::new(left, &left_words);
+    let right_pages = Pages::new(right, &right_words);
 
     // Interned, so the diff compares integers and the table holds `u32`.
     let mut ids: HashMap<&str, u32> = HashMap::new();
@@ -207,12 +220,22 @@ pub fn compare(left: &[PageCodes], right: &[PageCodes]) -> Result<Comparison, St
     let mut total = 0usize;
     let mut removed_words = 0usize;
     let mut added_words = 0usize;
+    let mut left_unread = 0usize;
+    let mut right_unread = 0usize;
     // Walk the pairs, with a sentinel past both ends so the tail is one more gap.
     let mut ai = 0usize;
     let mut bi = 0usize;
     let end = (a.len(), b.len());
     for (pa, pb) in pairs.iter().copied().chain(std::iter::once(end)) {
-        if pa > ai || pb > bi {
+        // Words with no match, where the other side has a page with no text
+        // in the same place, may be on that page: they are not compared, and
+        // listing them as removed or added would say something nobody read.
+        let facing_unread = (pa > ai && right_pages.unread_between(&right_words, bi, pb))
+            || (pb > bi && left_pages.unread_between(&left_words, ai, pa));
+        if facing_unread {
+            left_unread += pa - ai;
+            right_unread += pb - bi;
+        } else if pa > ai || pb > bi {
             removed_words += pa - ai;
             added_words += pb - bi;
             total += 1;
@@ -233,7 +256,60 @@ pub fn compare(left: &[PageCodes], right: &[PageCodes]) -> Result<Comparison, St
         changes,
         total_changes: count(total),
         unaligned,
+        left_unread: count(left_unread),
+        right_unread: count(right_unread),
     })
+}
+
+/// One side's pages in the order given, and which of them have no words.
+struct Pages {
+    /// Each page number's position in the order given.
+    position: HashMap<u32, usize>,
+    /// The positions of pages with no words, ascending.
+    unread: Vec<usize>,
+    count: usize,
+}
+
+impl Pages {
+    fn new(pages: &[PageCodes], words: &[Word]) -> Self {
+        let position: HashMap<u32, usize> = pages
+            .iter()
+            .enumerate()
+            .map(|(at, page)| (page.page, at))
+            .collect();
+        let mut read = vec![false; pages.len()];
+        for word in words {
+            if let Some(&at) = position.get(&word.page) {
+                read[at] = true;
+            }
+        }
+        Pages {
+            unread: (0..pages.len()).filter(|&at| !read[at]).collect(),
+            position,
+            count: pages.len(),
+        }
+    }
+
+    /// Whether a page with no words lies between word `first - 1` and word
+    /// `next` of `words`, both pages included: the stretch of this side where
+    /// the other side's unmatched words would stand. The start of the side
+    /// and its end stand in for a word that is not there.
+    fn unread_between(&self, words: &[Word], first: usize, next: usize) -> bool {
+        if self.unread.is_empty() {
+            return false;
+        }
+        let at = |word: &Word| self.position.get(&word.page).copied();
+        let from = first
+            .checked_sub(1)
+            .and_then(|i| words.get(i))
+            .and_then(at)
+            .unwrap_or(0);
+        let to = words
+            .get(next)
+            .and_then(at)
+            .unwrap_or(self.count.saturating_sub(1));
+        self.unread.iter().any(|&page| from <= page && page <= to)
+    }
 }
 
 /// Each word's id, the same id for the same characters on either side.
@@ -714,8 +790,13 @@ mod tests {
     }
 
     #[test]
-    fn an_empty_side_is_one_change_of_everything() {
+    fn a_side_with_no_text_compares_nothing_and_a_side_with_no_pages_is_one_change() {
+        // A page with no text may hold every word of the other side.
         let c = run(&[(0, "")], &[(0, "new text")]);
+        assert!(c.changes.is_empty(), "{:?}", summary(&c));
+        assert_eq!((c.left_unread, c.right_unread), (0, 2));
+        // No page at all holds nothing, so everything on the other side is added.
+        let c = run(&[], &[(0, "new text")]);
         assert_eq!(summary(&c), vec![(Kind::Added, "", "new text")]);
         assert_eq!(c.changes[0].left_at, Place { page: 0, index: 0 });
     }
@@ -731,5 +812,78 @@ mod tests {
     fn longest_increasing_keeps_the_longest_ordered_run() {
         let pairs = [(0, 3), (1, 1), (2, 2), (3, 0), (4, 4)];
         assert_eq!(longest_increasing(&pairs), vec![(1, 1), (2, 2), (4, 4)]);
+    }
+
+    /// The inspection report of the user-test kit: the final version's second
+    /// page is a scan, and its words, which say the result changed, cannot be
+    /// read. The draft's second page is not "removed": it is not compared.
+    #[test]
+    fn words_facing_a_page_with_no_text_are_not_compared() {
+        let c = run(
+            &[
+                (0, "Sample of 32 parts drawn at random"),
+                (1, "Result passed released to stock"),
+            ],
+            &[(0, "Sample of 32 parts drawn at random"), (1, "")],
+        );
+        assert!(c.changes.is_empty(), "{:?}", summary(&c));
+        assert_eq!((c.total_changes, c.removed_words, c.added_words), (0, 0, 0));
+        assert_eq!((c.left_unread, c.right_unread), (5, 0));
+
+        // The other way round: an older scan, a newer digital page.
+        let c = run(
+            &[(0, "Sample of 32 parts"), (1, "")],
+            &[(0, "Sample of 32 parts"), (1, "Result failed blocked")],
+        );
+        assert!(c.changes.is_empty(), "{:?}", summary(&c));
+        assert_eq!((c.left_unread, c.right_unread), (0, 3));
+
+        // A scanned page in the middle, between two read ones.
+        let c = run(
+            &[(0, "alpha beta"), (1, "gamma delta"), (2, "epsilon zeta")],
+            &[(0, "alpha beta"), (1, ""), (2, "epsilon zeta")],
+        );
+        assert!(c.changes.is_empty(), "{:?}", summary(&c));
+        assert_eq!(c.left_unread, 2);
+    }
+
+    /// The controls: a change on read pages is still a change when the other
+    /// document has a page with no text elsewhere, and with no such page
+    /// nothing is held back.
+    #[test]
+    fn a_change_away_from_a_page_with_no_text_is_still_listed() {
+        let c = run(
+            &[
+                (0, "The term is 30 days net"),
+                (1, "Signed by both parties"),
+                (2, "Annex"),
+            ],
+            &[
+                (0, "The term is 45 days net"),
+                (1, "Signed by both parties"),
+                (2, ""),
+            ],
+        );
+        assert_eq!(summary(&c), vec![(Kind::Replaced, "30", "45")]);
+        assert_eq!(
+            (c.left_unread, c.right_unread),
+            (1, 0),
+            "only Annex faces the scan"
+        );
+
+        let c = run(
+            &[(0, "Result passed released to stock")],
+            &[(0, "Result failed released to stock")],
+        );
+        assert_eq!(summary(&c), vec![(Kind::Replaced, "passed", "failed")]);
+        assert_eq!((c.left_unread, c.right_unread), (0, 0));
+
+        // A blank page on both sides holds back nothing either.
+        let c = run(
+            &[(0, "one two"), (1, ""), (2, "three")],
+            &[(0, "one two"), (1, ""), (2, "three four")],
+        );
+        assert_eq!(summary(&c), vec![(Kind::Added, "", "four")]);
+        assert_eq!((c.left_unread, c.right_unread), (0, 0));
     }
 }
