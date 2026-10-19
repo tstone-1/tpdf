@@ -147,6 +147,14 @@ SUMMARY = re.compile(r"^\s*Tests\s+(?=.*(?:failed|passed))(.+)$", re.M)
 #: The failing count inside that line, absent when everything passed.
 SUMMARY_FAILED = re.compile(r"(\d+) failed")
 
+#: vitest colours its output whenever its environment says a terminal is there,
+#: pipe or not, and every regex above is anchored on plain text. Run inside tmux
+#: on 2026-10-19, the summary line began `\x1b[2m      Tests`, `SUMMARY` matched
+#: nothing, and the control reported "no summary line" for a green suite of 3,152
+#: tests; `FORCE_COLOR=1` reproduces it anywhere. The codes are removed before
+#: anything is read.
+ANSI = re.compile(r"\x1b\[[0-9;]*m")
+
 
 def npx() -> str:
     """Resolves npx, which is `npx.cmd` on Windows and not on PATH as `npx`."""
@@ -188,7 +196,7 @@ def run_tests(files: list[str] | None = None) -> tuple[set[str], int | None, int
         errors="replace",
         timeout=300,
     )
-    out = done.stdout + done.stderr
+    out = ANSI.sub("", done.stdout + done.stderr)
     # Split on the marker and take the rest of the line -- never a fixed column.
     lines = [m.strip() for m in FAILED_TEST.findall(out) if m.strip()]
     names = set(lines)
@@ -219,7 +227,7 @@ def all_test_names() -> dict[str, list[str]]:
         errors="replace",
         timeout=300,
     )
-    out = done.stdout + done.stderr
+    out = ANSI.sub("", done.stdout + done.stderr)
     # `✓ src/lib/x.test.ts > describe > name 3ms` -- split on the marker and take
     # the rest, never a fixed column. The file comes back too: it is printed
     # right there, and deriving it beats a second table that can drift from the

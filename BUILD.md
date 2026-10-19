@@ -7094,8 +7094,26 @@ unreadable, in 90.2 s. **`print-probe` on `vector-multi.pdf` hung at the range p
 TEENYWEENY, its job left *Spooling* with 0 pages, twice; `rotated.pdf` passed 10/10. The
 26.10.22 probe, whose `print_win.rs` and probe are the same, hangs the same way there today,
 and a spooler restart did not clear it, so the machine changed and the code did not; the
-range print on that fixture is unverified on Windows for this release. A reboot of TEENYWEENY
-is the next thing to try. No rehearsal tag: `release.yml` changed only in its notes.
+range print on that fixture was unverified on Windows at the tag. After a reboot of TEENYWEENY
+on 2026-10-19 the same probe binary passed 9/9 on `vector-multi.pdf`, the range print
+included, so the hang was the machine's state. No rehearsal tag: `release.yml` changed only in its notes.
+Publication, 2026-10-19: on `cc8611c1` CI passed all three jobs and `Audit` passed (run
+39165274780); release run 39167261266 left a draft of eight files whose `latest.json` offered
+26.10.23 for the four macOS and Windows entries, with a `.dmg` Gatekeeper accepts as Notarized
+Developer ID. `publish_release.py v26.10.23 --publish` published it; without authentication
+`releases/latest` is v26.10.23 and all eight files answer 200. An installed 26.10.22 updated
+itself: `update_check_mac.py` 12/12 on the Mac mini and `update_check.py` 17/17 on
+TEENYWEENY, and each `no-press` control failed its seven checks and nothing else. The cask
+went to 26.10.23 with the `.dmg`'s SHA-256 equal to GitHub's digest; `brew audit --cask
+--online` was clean and `brew livecheck` reads 26.10.23. The winget pull request moved to
+26.10.23 and passed `winget validate`; the published installer had the manifest's SHA-256,
+installed with `/S`, showed in `winget list` as `tpdf 26.10.23` and uninstalled with `/S`.
+`winget install --manifest` itself stopped at SmartScreen (step 12's winget paragraph).
+Step 7's pass after the release, `--since v26.10.22 --resume`, on the Mac mini on `cc8611c1`:
+Python 38 of 38, Rust 1,006 of 1,006, frontend 593 of 593. The frontend harness first stopped
+at its control with *no summary line*: vitest coloured its output inside tmux (`docs/TRAPS.md`,
+*vitest coloured its output inside tmux*); the harness now strips colour codes, and the run
+was repeated with it.
 
 **26.10.22 verification and publication, 2026-10-17:** prepared on the Windows desktop. Step 1
 moved `libc` and `unicode-normalization` a patch each; `tauri-plugin-updater` 2.14.0 was held
@@ -9850,7 +9868,19 @@ starts at 0 and increments within the month.
     `Update: tstone-1.tpdf to <version>`. Run `winget validate --manifest <folder>` first.
     `winget install --manifest` needs local manifests enabled by an administrator; without
     that, run the downloaded `setup.exe /S` and read `winget list tpdf`. The installer is
-    `nullsoft`, user scope.
+    `nullsoft`, user scope. Over ssh, `winget install --manifest` downloads the installer,
+    marks it as from the internet, starts it and then waits for good: SmartScreen holds the
+    start, and no window of that session can be answered (winget's log under
+    `DiagOutputDir` ends at `Starting: ... '/S'`). A `curl.exe` download has no such mark
+    and `/S` runs at once. The installer goes into the folder the last install on that
+    machine used, so after `update_check.py` it is `%LOCALAPPDATA%\tpdf-update-check`;
+    read `InstallLocation` from the uninstall key instead of assuming `%LOCALAPPDATA%\tpdf`.
+    TEENYWEENY had `LocalManifestFiles` off again on 2026-10-19, two days after it was on;
+    `winget settings --enable LocalManifestFiles` from the ssh session turned it back on.
+    `git mv` of the version folder stages only the rename: edit the files after it, then
+    `git add` them, and read `git show HEAD:<file>` before pushing. On 2026-10-19 the commit
+    carried a `26.10.23` folder holding `PackageVersion: 26.10.22`, and the pull request's
+    validation caught it, not anything here.
 
 12. <a id="release-step-12"></a>**Apply the update from the previous release: `scripts/update_check.py` on Windows, `scripts/update_check_mac.py` on a Mac.** This is the only end-to-end
     proof the updater works, and no gate, harness or unit test can stand in for it:

@@ -665,6 +665,7 @@ hop through the index.
 - A measured string transcribed off a terminal loses what the terminal does not draw
 - A mutation aimed at one branch when the fixture only reaches the other
 - A delivery counter cannot say WHICH delivery, and the guard was satisfied by the event it excluded
+- vitest coloured its output inside tmux, and the harness read a green suite as no summary at all
 - A snapshot taken after the first mutation restores the mutation, and verifies itself clean
 - A `|` in the data split my own mutation in half, and the run reported a pass
 - Three near-copies of a command made an existing mutation's anchor ambiguous
@@ -26836,3 +26837,20 @@ found the probes' reports exiting 0 when every check skipped (`redact-gate-probe
 `ocr-worker-probe`, five more), `incremental-save` and `compress-probe` passing over an empty
 directory, and `checkreport.ts` exiting 0 on a run of nothing but *not applicable*; each now
 refuses a run in which nothing passed.
+
+### vitest coloured its output inside tmux, and the harness read a green suite as no summary at all
+
+On 2026-10-19 the release's `mutate_frontend.py --since v26.10.22` pass ran in a tmux session on
+the Mac mini and stopped at its control: *the control run produced no summary line*. By hand,
+the same tree passed 148 files and 3,152 tests. vitest had coloured its output although the
+harness reads it through a pipe, so the summary began `\x1b[2m      Tests` and `SUMMARY`, anchored
+on `^\s*Tests`, matched nothing. The harness printed the last 2,000 characters of stdout and
+stderr joined, which were the tests' stderr noise, so the log showed coloured stderr and no
+summary, and read like a run that died.
+
+`FORCE_COLOR=1` reproduces it from any shell: the control failed with it and passed without
+it, on the same worktree. The harness now removes colour codes before any regex reads the
+output, and passes with `FORCE_COLOR=1`. The earlier runs of this harness came from shells in
+which vitest chose no colour, which is why nothing had shown it. What makes vitest colour a
+piped run inside tmux was not pinned down; the fix does not depend on it. Any script that reads
+a tool's human output should strip colour first, or ask for a machine format.
