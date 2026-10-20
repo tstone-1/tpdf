@@ -25,7 +25,9 @@
  */
 
 import { pause, settle, type Report } from "./checkreport";
+import { isMac } from "./keys";
 import type { OpenCheckHost } from "./opencheck";
+import { DIALOG_CLASS as PRINT_PREVIEW } from "./printpreviewdialog";
 
 /** How long each state stays on screen for the capture. */
 const HOLD_MS = 1200;
@@ -177,6 +179,8 @@ function openDialog(): HTMLElement | undefined {
  *
  * A command that answers with a message and no dialog is recorded with what
  * it said, and passes: which of the two it does is what is being looked at.
+ * `ready` is what the dialog must show before it is photographed, for one
+ * whose content arrives after it opens.
  */
 async function photographDialog(
   host: OpenCheckHost,
@@ -184,6 +188,7 @@ async function photographDialog(
   shot: (name: string) => Promise<void>,
   id: string,
   name: string,
+  ready?: () => boolean,
 ): Promise<void> {
   host.run(id);
   const shown = await settle(() => openDialog() !== undefined, 6000);
@@ -193,6 +198,7 @@ async function photographDialog(
     dialog ? `dialog: ${(dialog.getAttribute("aria-label") ?? dialog.textContent ?? "").trim().slice(0, 60)}`
       : `no dialog; said: ${said.slice(0, 80)}`);
   if (!shown || !dialog) return;
+  if (ready) report.check(`the ${name} dialog showed what it is for`, await settle(ready, SETTLE_MS), "");
   await pause(300);
   measureControls(report, `the ${name} dialog`);
   await shot(`more-${name}`);
@@ -312,6 +318,12 @@ async function moreStates(
   // at the end, of a document with nothing unsaved, since it refuses this one.
   await photographDialog(host, report, shot, "file.compress", "compress");
   await photographDialog(host, report, shot, "file.protect", "password");
+  // The print preview, with the marks above on its first sheet. Not on macOS,
+  // where Print opens the system panel, which nothing here can close.
+  if (!isMac()) {
+    await photographDialog(host, report, shot, "file.print", "print", () =>
+      document.querySelector(`.${PRINT_PREVIEW} img[src]`) !== null);
+  }
 
   // A command that asks a question in the palette before it can run.
   // Reached as a reader reaches it: `host.run` refuses a command that wants
