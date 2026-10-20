@@ -1,7 +1,7 @@
 # AGENTS.md — tpdf
 
 Canonical, portable project knowledge for any coding agent working in this repository.
-Claude loads it via the thin `CLAUDE.md` (`@AGENTS.md`); Codex auto-loads it.
+Claude Code and Codex both load it directly; there is no `CLAUDE.md`.
 
 Personal cross-repo policy (git workflow, account enforcement, quality gates, per-OS
 notes) lives in `tstone-1/agent-memory` and is **not** repeated here. This file records
