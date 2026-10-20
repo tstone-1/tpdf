@@ -600,6 +600,25 @@ export interface Commands {
     };
     reply: void;
   };
+  /**
+   * Builds the job `print_document` would print and holds it for the preview
+   * (`commands::print::Previews`). The reply is camelCase: `Preview` carries
+   * `rename_all`.
+   */
+  print_prepare: {
+    args: {
+      path: string;
+      doc?: DocHandle | null;
+      pages: number[] | null;
+      turns: number;
+    };
+    reply: { job: number; pages: PageSize[] };
+  };
+  /** One sheet of the held job as a PNG `data:` URL. */
+  print_preview_page: { args: { job: number; index: number; width: number }; reply: string };
+  /** Reads the held job back and opens the platform's print dialog for it. */
+  print_confirm: { args: { job: number }; reply: void };
+  print_discard: { args: { job: number }; reply: void };
   process_elapsed_ms: { args: NoArgs; reply: number };
   autobench_path: { args: NoArgs; reply: string | null };
   viewercheck_path: { args: NoArgs; reply: string | null };

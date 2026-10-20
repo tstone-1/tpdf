@@ -135,6 +135,7 @@
   import { afterProtect, suggestedName as protectedName } from "./lib/protect";
   import { afterCompress, suggestedName as smallerName } from "./lib/compress";
   import { CompressDialog } from "./lib/compressdialog";
+  import { PrintPreviewDialog } from "./lib/printpreviewdialog";
   import {
     WebLinkDialog,
     confirmAndOpen,
@@ -1248,6 +1249,7 @@
   let addTextDialog: AddTextDialog | null = null;
   let fieldPropertiesDialog: FieldPropertiesDialog | null = null;
   let compressDialog: CompressDialog | null = null;
+  let printPreviewDialog: PrintPreviewDialog | null = null;
   let webLinkDialog: WebLinkDialog | null = null;
 
   /**
@@ -4604,17 +4606,29 @@
     if (opening) return;
     return documentTasks.run(async () => {
       if (!openPathName || !viewer) return;
+      const job = {
+        path: openPathName,
+        // The edits go with it: which pages are left, and how each is turned.
+        // Read from the model rather than sent from here --- the frontend's copy
+        // is a cache, and a print job built from a stale one would put a page on
+        // paper that the reader has deleted.
+        doc: openDoc,
+        pages: null,
+        turns: viewer.rotation,
+      };
       try {
-        await call("print_document", {
-          path: openPathName,
-          // The edits go with it: which pages are left, and how each is turned.
-          // Read from the model rather than sent from here --- the frontend's copy
-          // is a cache, and a print job built from a stale one would put a page on
-          // paper that the reader has deleted.
-          doc: openDoc,
-          pages: null,
-          turns: viewer.rotation,
-        });
+        // macOS's print panel draws the job itself. Windows' and GTK's do not,
+        // so there the job is shown first (`printpreviewdialog.ts`).
+        if (isMac() || !printPreviewDialog) {
+          await call("print_document", job);
+          return;
+        }
+        const preview = await call("print_prepare", job);
+        const print = await printPreviewDialog.ask(basename(openPathName), preview.pages, (index, width) =>
+          call("print_preview_page", { job: preview.job, index, width }),
+        );
+        if (print) await call("print_confirm", { job: preview.job });
+        else await call("print_discard", { job: preview.job });
     } catch (e) {
       // Shown, unlike a failed place write. This one the reader is standing
       // there waiting for: a print command that silently does nothing reads as
@@ -5186,6 +5200,7 @@
       addTextDialog = new AddTextDialog(document.body);
       fieldPropertiesDialog = new FieldPropertiesDialog(document.body);
       compressDialog = new CompressDialog(document.body);
+      printPreviewDialog = new PrintPreviewDialog(document.body);
 
       // And beside that. A web link is asked about rather than followed, and
       // the dialog is the whole of the confirmation --- see

@@ -4544,9 +4544,11 @@ end-to-end again.
 ### Printing on Windows, and how to check it without paper
 
 `print_win.rs` reads a job back with `Windows.Data.Pdf` — the OS's own PDF stack, the PDFKit
-counterpart — then rasterises each page onto a printer DC. Windows has no in-box PDF print
-API, so rasterising is what every Windows PDF viewer does; the output is **raster at 300 dpi**
-where macOS is vector.
+counterpart — then has PDFium draw each page in a sandboxed worker started over the job, and
+copies the pixels onto a printer DC. Windows has no in-box PDF print API, so rasterising is what
+every Windows PDF viewer does; the output is **raster at 300 dpi** where macOS is vector. The
+worker is this executable started again, so the probe answers the worker marker before anything
+else, as the CLI does.
 
 `present` opens a modal dialog, so that last step is the one thing no automatic check can
 reach — and since 2026-08-23 there is something behind it worth stating rather than leaving
@@ -4624,11 +4626,11 @@ Reference run, `testdata/rotated.pdf`, pages 1--2 with a quarter turn:
 so the predicted extent is 0.72x0.47 instead of 0.27x0.27 and a wrong *fit* would show where a
 wrong *scale* does not. Also 8/8.
 
-**Do not run it on `vector-heavy.pdf` or `vector-multi.pdf` casually.** One A0 page of 200,000
-vector operations takes **2m51s** end to end, essentially all of it inside
-`Windows.Data.Pdf`'s rasteriser and largely independent of resolution. That is a real property of
-a raster print path and not a defect — see the trap *"the OS's PDF rasteriser is not fast"* —
-but it makes those fixtures unsuitable for a quick check.
+**`vector-multi.pdf` is not a quick check.** One A0 page of 200,000 vector operations takes
+PDFium about 25 s to draw for an A4 sheet, so the probe's run, with its own checking renders and
+the range job, took 117 s on 2026-10-20. Before that day `Windows.Data.Pdf` drew the pages and
+one sheet took **2m51s** — see the trap *"the OS's PDF rasteriser is not fast"* and
+`docs/VERIFICATION.md`, *How long Windows takes to rasterise a page for printing*.
 
 Beyond the probe, `cargo test --lib print::` runs **18** checks on Windows where it ran 14, because
 three of the four third-parser checks are no longer macOS-only. The fourth asserts the page count

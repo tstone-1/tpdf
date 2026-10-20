@@ -19,6 +19,15 @@ have the binary.)
 
 ## [26.10.24] - Unreleased
 
+### Added
+
+- **Print preview on Windows and Linux.** *Print* first shows every page as it will be
+  printed, with your marks, crops, deleted pages and turns, and the paper each page is on;
+  *Print...* then opens the system print dialog, and *Cancel* prints nothing. The pages are
+  drawn as you scroll to them. The print dialogs on Windows and Linux show no preview, so
+  until now the first picture of a print job was on paper. macOS is unchanged: its print
+  panel already shows the pages.
+
 ### Changed
 
 - **A comparison with unread pages no longer opens with "the same words".** When a page of
@@ -42,6 +51,10 @@ have the binary.)
   printer gets it, and a dense drawing can take minutes a page, with nothing on screen
   meanwhile. The toolbar now says *Printing page 2 of 5...* and then *Sent 5 pages to the
   printer.*, and you can go on working while it prints.
+- **Printing a dense drawing on Windows is about six times faster.** tpdf now draws each page
+  with the same engine that shows it on screen, in the protected process every other page is
+  drawn in, where it used Windows' own PDF reader before. One A0 sheet of 200,000 lines took
+  148 s to prepare and now takes 25 s; ordinary documents take the same time as before.
 
 ### Fixed
 

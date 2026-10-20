@@ -157,6 +157,7 @@ PER_WINDOW: dict[str, str] = {
     "addTextDialog": "a dialog on `document.body`",
     "fieldPropertiesDialog": "a dialog on `document.body`",
     "compressDialog": "a dialog on `document.body`",
+    "printPreviewDialog": "a dialog on `document.body`",
     "webLinkDialog": "a dialog on `document.body`",
     "contextMenu": "the one right-click menu",
     # The application.

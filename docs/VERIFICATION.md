@@ -6798,6 +6798,134 @@ the pause for tpdf's own work, the reset after a sheet, the reset after tpdf's o
 the end of the work. The message shown when a print fails after Print was pressed, and the one
 for a stuck queue, were not seen on screen: neither fault could be produced on demand.
 
+### How long Windows takes to rasterise a page for printing — measured 2026-10-20
+
+The 262 s above is `vector-multi.pdf`, which `testdata/make_vector_pdf.py` builds to be hostile:
+an A0 page of 200,000 stroked segments over a 7-point hatch grid, the same content on all twelve
+pages. It is not what an office document costs. A temporary example timed
+`RenderWithOptionsToStreamAsync` alone on the Windows desktop, release build, at the resolution
+`paper_dpi` picks for an A4 sheet at 300 dpi, over the first ten pages of each of the 30 public
+samples in `scratch/prototype`, `scratch/prototype2` and `scratch/textedit-public` (agendas,
+minutes, invoices, tax forms, brochures, slides, budgets, arXiv papers, manuals) and
+`text-heavy.pdf` and `incr-scan-5p.pdf`: the slowest page took 0.30 s (`arxiv-2003.pdf` page 5),
+the slowest document averaged 0.12 s a page, and most pages took 0.01 to 0.03 s. `print-probe`
+on `arxiv-2003.pdf` and `arcadia-agenda.pdf`, two sheets each through Microsoft Print to PDF
+with every check it makes, took 2.5 s and 2.0 s of wall clock.
+
+On page 1 of `vector-multi.pdf` the time grows faster than the pixel count: 0.58 s at 10 dpi,
+2.54 s at 20, 8.0 s at 30, 28.4 s at 40 and 161.5 s at 75, the resolution the job used (A0
+fitted to A4). It is not the encoder: PNG and BMP took 8.4 s and 8.0 s at 30 dpi, 29.1 s and
+28.4 s at 40. It is not the bitmap's size either: the same 75 dpi page in 16 horizontal bands
+through `SourceRect` took 166.2 s, and at 40 dpi 4 bands took 28.2 s and 16 bands 40.3 s, so
+banding repeats the content walk rather than dividing it. PDFium is not the way out: `tile-bench
+--mode single` on the same page and machine took 32.9 s for the whole page at scale 1.04 (75 dpi)
+and 10.1 s at 0.42 (30 dpi), five times faster than `Windows.Data.Pdf` at the print resolution
+and slower at the lower one. A dense CAD drawing printed on Windows therefore takes minutes a
+sheet, with progress shown; an ordinary page takes well under a second.
+
+**Vector printing through PDFium, a spike on the same day.** PDFium's Windows-only
+`FPDF_RenderPage` with `FPDF_SetPrintMode(0)` (EMF) draws a page as GDI vector commands. A
+temporary example recorded one EMF per page with no reference printer, as a worker would, from an
+executable labelled low integrity (the control: the same executable was refused writing a
+medium-integrity folder), and a second process replayed them with `PlayEnhMetaFile` onto
+Microsoft Print to PDF at 600 dpi. It needs `pdfium-render`'s `pdfium_use_win32` feature, which
+adds one dependency edge to the `windows` crate already in the tree and no package; the shipped
+`pdfium.dll` exports both functions. The output is vector: `vector-multi.pdf` came out with no
+image and 54,636 stroke operators, the arXiv paper with its text as 73,887 filled glyph outlines
+and no font, so text is still not selectable. Rendered beside the source, the pages match, but an
+image goes through at a lower resolution: the arXiv paper's figure 9, 8,541 bars, arrived 409
+pixels wide and its bars ran together. Whole documents, `print_win::spool` today against record
+plus replay, wall clock:
+
+| Document | Pages | Bitmap | Vector | EMF |
+|---|---|---|---|---|
+| `vector-multi.pdf` | 2 | 262 s | 5.7 s | 19 MB |
+| `arxiv-2003.pdf` | 11 | 4.0 s | 13.5 s | 58 MB |
+| `arcadia-agenda.pdf` | 127 | 30.9 s | 68.9 s | 2.78 GB |
+| `highmark-brochure.pdf` | 52 | 12.7 s | 14.0 s | 42 MB |
+| `healdsburg-slides.pdf` | 29 | 4.1 s | 3.9 s | 192 MB |
+| `consumer-factsheet.pdf` | 6 | 1.8 s | 3.4 s | 168 MB |
+
+Most of the vector time is Microsoft Print to PDF converting glyph outlines to PDF.
+
+**On a physical printer the vector job was worse.** A Brother MFC-L3760CDW on the Microsoft IPP
+Class Driver (A4, 600 dpi, over WSD), timed from the start until the queue reported the job done:
+two arXiv pages took 39.1 s as a bitmap and 34.7 s as vectors, nearly all of it the printer
+receiving the job. The first page of `vector-multi.pdf` took 177.2 s as a bitmap (148.5 s of it
+rasterising) and, as vectors, spooled in 2 s and then sat at *Printing* until 603 s, when the queue
+reported *Error, Complete* with one page printed; a second run did the same, 11:00:15 to 11:10:18.
+The two identical ten-minute times look like a timeout in the driver or the printer rather than
+work done. A dense vector page is cheap for tpdf to send and expensive for whatever has to draw it
+at the other end, so vector output moves the cost to the printer rather than removing it. The
+spike was not kept.
+
+**What shipped instead: PDFium draws the page in a worker.** `print_win::spool` starts a worker
+over the job (`InWorker::session_over`), asks it for every page's size, and has it draw each page
+in full-width bands that fit the 16 MiB tile mapping, three for an A4 sheet at 300 dpi, each
+allowed ten minutes rather than the usual 30 s. On the Windows desktop, a release `tpdf print` to
+Microsoft Print to PDF, wall clock including the CLI's own read-back, against the bitmap column
+of the table above (the old `spool`, called directly):
+
+| Document | Pages | `Windows.Data.Pdf` | PDFium in a worker |
+|---|---|---|---|
+| `vector-multi.pdf`, page 1 | 1 | 148.5 s | 25.3 s |
+| `vector-multi.pdf`, pages 1-2 | 2 | 262 s (window) | 49.3 s |
+| `arxiv-2003.pdf` | 11 | 4.0 s | 3.5 s |
+| `arcadia-agenda.pdf` | 127 | 30.9 s | 30.6 s |
+| `highmark-brochure.pdf` | 52 | 12.7 s | 12.5 s |
+| `healdsburg-slides.pdf` | 29 | 4.1 s | 4.2 s |
+| `consumer-factsheet.pdf` | 6 | 1.8 s | 2.5 s |
+
+`print-probe` passed 10 of 10 on `rotated.pdf` (ink extent within 1% of the prediction, a quarter
+turn included) and on `arxiv-2003.pdf`, and 9 of 9 with one skip on `vector-multi.pdf`, whose
+sheets measure alike; it still finds 81 modules in the printing process and none named pdfium.
+
+## Printing against Acrobat Reader and Edge — measured 2026-10-20
+
+Windows desktop, all three to one print-to-file printer on the Microsoft Print To PDF driver,
+from launch until the output file stopped growing and the queue was empty; median of three runs.
+tpdf is the release `tpdf-cli print` with PDFium drawing in a worker; Acrobat Reader 26.2.22031.0
+by `Acrobat.exe /t`, cold each run; Edge 155.0.4283.62 with `--kiosk-printing`, printing through
+`window.print()` over the DevTools protocol, because Ctrl+P cannot reach a locked session.
+
+| Document | tpdf | Acrobat Reader | Edge |
+|---|---|---|---|
+| `vector-multi.pdf`, page 1 | 28.5 s, 6.2 MB | 5.3 s, 2.9 MB | 75.0 s, 3.6 MB |
+| `vector-multi.pdf`, pages 1-2 | 74.6 s, 6.2 MB | 10.0 s, 5.8 MB | 98.3 s, 7.2 MB |
+| `arxiv-2003.pdf`, 11 pages | 3.7 s, 16.5 MB | 15.0 s, 7.6 MB | 20.0 s, 11.7 MB |
+| `arcadia-agenda.pdf`, 127 pages | 32.7 s, 107 MB | 21.6 s, 11.7 MB | 75.5 s, 54.7 MB |
+| `highmark-brochure.pdf`, 52 pages | 13.2 s, 38.9 MB | 10.3 s, 17.8 MB | 16.6 s, 4.9 MB |
+| `consumer-factsheet.pdf`, 6 pages | 2.9 s, 4.4 MB | 4.7 s, 1.5 MB | 6.4 s, 1.8 MB |
+
+- **Acrobat sends vectors and is five times faster than tpdf on the dense drawing**, with every
+  line present at high magnification. Edge also sends vectors and is the slowest on it. tpdf's
+  output is one picture per page, which is why its files are the largest.
+- **What the printer then does with vectors is not in this table.** The same day the Brother
+  laser took ten minutes over PDFium's vector page and ended in an error (above), so a fast
+  print-to-file time for vectors is not a fast sheet of paper. No paper was printed here.
+- tpdf's two-page time varied (74.6, 75.9 and 49.3 s), the last matching the earlier
+  measurement; a compile in another session during some runs is the likely cause and was not
+  proved. Edge took 337 s once and once produced nothing in 900 s.
+
+## The print preview — verified 2026-10-20
+
+Windows desktop, screen locked, so the dialog was not seen in the application itself.
+
+- **The commands, in the application.** `viewer_check.py` on a debug checks build: page 1 of
+  `links.pdf` prepared with a quarter turn comes back as one sheet of 842x595 for a page of
+  595x842, its picture at width 200 is 200x141, and after `print_discard` a further picture is
+  refused with *this print preview has been closed*. 391 of 391 checks passed. On `rotated.pdf`
+  the same three passed and three unrelated checks failed (the fixture's reading manifest, fit
+  width and facing pages), which `links.pdf` does not reproduce.
+- **The dialog**, bundled on its own and drawn in headless Chromium at 1280x900, light and dark,
+  with pages from `tpdf render`: portrait and landscape sheets, a sheet whose picture failed, and
+  the list scrolled to its end. The first picture showed the browser's broken-image icon on every
+  sheet not yet drawn; the picture is now hidden until it has a source.
+- **The rules about the held job** (`commands::print` tests): Print takes the job once, a call
+  for an earlier preview gets neither its job nor the newer preview's worker, and a worker that
+  finishes a picture after Print or Cancel is not kept. Each of those three guards was removed
+  in turn and a test went red each time; so did removing the clamp at `PREVIEW_MAX_WIDTH`.
+
 ### Words beside a scanned page are not compared — measured 2026-10-19
 
 The user-test kit's inspection report (`compare.rs`, *A page with no text is not a page with no

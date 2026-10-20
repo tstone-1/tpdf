@@ -393,6 +393,11 @@ mod linux {
 
 #[cfg(windows)]
 fn main() {
+    // The pages are drawn by a worker, which is this executable started again.
+    let args: Vec<String> = std::env::args().collect();
+    if args.iter().any(|arg| arg == tpdf_lib::worker::WORKER_ARGV) {
+        tpdf_lib::worker_child::main(&args);
+    }
     imp::main();
 }
 
@@ -417,6 +422,18 @@ mod imp {
     /// Low on purpose: this counts ink, and counting it at 300 dpi would mean
     /// twelve megapixels per page to answer a question a thumbnail settles.
     const CHECK_DPI: f32 = 36.0;
+
+    /// Where the worker that draws the pages finds `pdfium.dll`.
+    fn library() -> PathBuf {
+        Path::new(env!("CARGO_MANIFEST_DIR"))
+            .parent()
+            .map(|root| {
+                root.join("vendor")
+                    .join("pdfium")
+                    .join(tpdf_lib::PDFIUM_SUBDIR)
+            })
+            .unwrap_or_else(|| PathBuf::from("."))
+    }
 
     /// A check and its outcome, printed as it lands.
     struct Report {
@@ -568,6 +585,7 @@ mod imp {
                 Some(&out.to_string_lossy()),
                 &every,
                 Some(beat),
+                &library(),
             )
         });
         // SAFETY: the DC `open_printer` created, released once, on both paths.
@@ -720,6 +738,7 @@ mod imp {
                 Some(&out.to_string_lossy()),
                 &sheets,
                 Some(beat),
+                &library(),
             )
         });
         // SAFETY: the DC `open_printer` created, released once, on both paths.

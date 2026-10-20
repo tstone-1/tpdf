@@ -518,6 +518,27 @@ impl InWorker {
         }
         Ok(session)
     }
+
+    /// Starts a worker holding `bytes`, which have no file behind them.
+    ///
+    /// The Windows print job (`print_win::spool`): built in memory by the
+    /// rewrite or read from the reader's file, and drawn here rather than in the
+    /// app process. Copied into a fresh mapping, as [`Verifier::validation`]
+    /// hands over a document that has no handle yet.
+    ///
+    /// # Errors
+    ///
+    /// The mapping could not be made or the worker started.
+    pub fn session_over(&self, bytes: &[u8]) -> Result<Session, String> {
+        let mut mapped = Shm::create(bytes.len())?;
+        mapped.as_mut_slice().copy_from_slice(bytes);
+        let worker = Worker::spawn_shared(std::sync::Arc::new(mapped), &self.library_dir)?;
+        let pid = worker.pid();
+        Ok(Session {
+            worker: Some(worker),
+            pid,
+        })
+    }
 }
 
 impl Session {
@@ -537,7 +558,21 @@ impl Session {
         &mut self,
         request: crate::render::TileRequest,
     ) -> Result<Vec<u8>, Declined> {
-        self.exchange(move |worker| {
+        self.tile_within(request, DEFAULT_DEADLINE)
+    }
+
+    /// [`Session::tile`] with a deadline of the caller's own.
+    ///
+    /// For printing, where a band of a dense drawing takes PDFium tens of
+    /// seconds (`docs/VERIFICATION.md`, *How long Windows takes to rasterise a
+    /// page for printing*): there a slow page is still a page to print, and
+    /// the reader is shown progress meanwhile.
+    pub(crate) fn tile_within(
+        &mut self,
+        request: crate::render::TileRequest,
+        within: std::time::Duration,
+    ) -> Result<Vec<u8>, Declined> {
+        self.exchange_within(within, move |worker| {
             let response = worker
                 .call(&Request::Tile {
                     rid: 0,
@@ -572,6 +607,14 @@ impl Session {
         &mut self,
         action: impl FnOnce(&mut Worker) -> Result<T, Declined> + Send + 'static,
     ) -> Result<T, Declined> {
+        self.exchange_within(DEFAULT_DEADLINE, action)
+    }
+
+    fn exchange_within<T: Send + 'static>(
+        &mut self,
+        deadline: std::time::Duration,
+        action: impl FnOnce(&mut Worker) -> Result<T, Declined> + Send + 'static,
+    ) -> Result<T, Declined> {
         let Some(worker) = self.worker.take() else {
             return Err(Declined::Failed(
                 "the worker holding this document is gone".into(),
@@ -583,7 +626,7 @@ impl Session {
             let answer = action(&mut worker);
             let _ = tx.send((worker, answer));
         });
-        match rx.recv_timeout(DEFAULT_DEADLINE) {
+        match rx.recv_timeout(deadline) {
             Ok((worker, answer)) => {
                 self.worker = Some(worker);
                 answer
@@ -592,7 +635,7 @@ impl Session {
                 kill_pid(self.pid);
                 Err(Declined::Failed(format!(
                     "the worker reading the document did not answer within {:.0} s",
-                    DEFAULT_DEADLINE.as_secs_f64()
+                    deadline.as_secs_f64()
                 )))
             }
         }

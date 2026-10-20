@@ -100,7 +100,8 @@ impl Subcommand for Print {
             |name| name.to_string_lossy().into_owned(),
         );
         let pages = u32::try_from(found).unwrap_or(u32::MAX);
-        let sent = printer::send(&self.printer, &bytes, &title, pages).map_err(refused)?;
+        let sent = printer::send(&self.printer, &bytes, &title, pages, &env.library_dir)
+            .map_err(refused)?;
         let report = report::Printed {
             schema: SCHEMA,
             command: "print".into(),

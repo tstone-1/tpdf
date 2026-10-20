@@ -62,6 +62,46 @@ pub async fn print_document(
     pages: Option<Vec<u32>>,
     turns: u8,
 ) -> Result<(), save::Refusal> {
+    let built = build_job(&app, &edits, &service, path, doc, pages, turns).await?;
+    present_built(&app, built).await
+}
+
+/// A print job built and not yet handed to the platform.
+struct Built {
+    bytes: Vec<u8>,
+    title: String,
+    /// How many pages the read-back should find; `None` for every page.
+    expected: Option<usize>,
+}
+
+/// Reads the job back and opens the platform's dialog for it, off the thread
+/// the webview draws on.
+async fn present_built(app: &tauri::AppHandle, built: Built) -> Result<(), save::Refusal> {
+    // On the blocking pool: every platform reads the job back before the
+    // panel, and on Linux that read waits on a worker.
+    let presenting = app.clone();
+    let Built {
+        bytes,
+        title,
+        expected,
+    } = built;
+    tauri::async_runtime::spawn_blocking(move || present_job(&presenting, bytes, title, expected))
+        .await
+        .map_err(|e| save::Refusal::from(format!("the print panel could not be shown: {e}")))?
+        .map_err(save::Refusal::from)
+}
+
+/// Builds the bytes `print_document` and `print_prepare` print, with the page
+/// count the read-back is held to.
+async fn build_job(
+    app: &tauri::AppHandle,
+    edits: &edits::Edits,
+    service: &RenderService,
+    path: String,
+    doc: Option<u32>,
+    pages: Option<Vec<u32>>,
+    turns: u8,
+) -> Result<Built, save::Refusal> {
     let source = PathBuf::from(&path);
     // Read here rather than inside the chooser, so that what decides the shape of
     // the job is a pure function of the plan and the range --- and lives in the
@@ -110,7 +150,7 @@ pub async fn print_document(
     // password it is already open with. See `print_bytes`, which carries the
     // reasoning. `None` for the passthrough and the range, which do not rewrite.
     let password = match doc {
-        Some(doc) => password_for(&service, doc, "print_document").await,
+        Some(doc) => password_for(service, doc, "print_document").await,
         None => None,
     };
     // **Who parses the reader's document**, chosen the same way every other
@@ -119,7 +159,7 @@ pub async fn print_document(
     // where a save is and not here --- and the passthrough hands the file over
     // byte for byte and parses nothing. `docs/THREAT-MODEL.md` residual risk 18
     // is where the parses that left this process are recorded.
-    let writing = outside_of(&app, service.backend());
+    let writing = outside_of(app, service.backend());
     let build = move || {
         print_job(
             &source,
@@ -133,13 +173,322 @@ pub async fn print_document(
     let bytes = tauri::async_runtime::spawn_blocking(build)
         .await
         .map_err(|e| save::Refusal::from(format!("the print job could not be built: {e}")))??;
-    // On the blocking pool too: every platform reads the job back before the
-    // panel, and on Linux that read waits on a worker.
-    let presenting = app.clone();
-    tauri::async_runtime::spawn_blocking(move || present_job(&presenting, bytes, title, expected))
-        .await
-        .map_err(|e| save::Refusal::from(format!("the print panel could not be shown: {e}")))?
-        .map_err(save::Refusal::from)
+    Ok(Built {
+        bytes,
+        title,
+        expected,
+    })
+}
+
+/// The print job the preview shows, held until the reader prints or closes it.
+///
+/// One at a time: the preview is modal, and a second `print_prepare` replaces
+/// the first, whose worker is ended when it is dropped. The worker holds the
+/// job's bytes, not the reader's file, so the pictures are of exactly what is
+/// handed to the dialog afterwards.
+/// Generic over the worker so its tests can hold a stand-in: a real one is a
+/// process, and the rules about when one is handed back are what they test.
+pub struct Previews<D = Drawer>(std::sync::Mutex<Shown<D>>);
+
+impl<D> Default for Previews<D> {
+    fn default() -> Self {
+        Self(std::sync::Mutex::new(Shown {
+            job: None,
+            last: 0,
+            built: None,
+            drawer: None,
+        }))
+    }
+}
+
+/// The preview on screen, if any.
+///
+/// The job and the worker are held apart because a picture is drawn with the
+/// worker taken out of the lock, and Print must still find the job while one
+/// is being drawn.
+struct Shown<D> {
+    /// Names the preview on screen, so a late call for an earlier one is
+    /// refused rather than answered from the job that replaced it. `None`
+    /// once it is printed or closed.
+    job: Option<u32>,
+    /// The last number handed out; counts on across closes.
+    last: u32,
+    built: Option<Built>,
+    /// The worker over the job's bytes and every sheet's size; `None` while a
+    /// picture is being drawn.
+    drawer: Option<D>,
+}
+
+pub struct Drawer {
+    session: crate::save_outside::Session,
+    sizes: Vec<crate::render::PageSize>,
+}
+
+impl<D> Previews<D> {
+    fn lock(&self) -> Result<std::sync::MutexGuard<'_, Shown<D>>, String> {
+        self.0
+            .lock()
+            .map_err(|_| "the print preview is unavailable".to_owned())
+    }
+
+    /// Takes the worker out to draw with, if `job` is the preview on screen.
+    fn take_drawer(&self, job: u32) -> Result<D, String> {
+        let mut shown = self.lock()?;
+        if shown.job != Some(job) {
+            return Err(CLOSED.into());
+        }
+        shown
+            .drawer
+            .take()
+            .ok_or_else(|| "another page of this preview is being drawn".into())
+    }
+
+    /// Gives the worker back, unless the preview was printed, closed or
+    /// replaced meanwhile, in which case the worker ends here.
+    fn give_back(&self, job: u32, drawer: D) {
+        if let Ok(mut shown) = self.lock() {
+            if shown.job == Some(job) && shown.drawer.is_none() {
+                shown.drawer = Some(drawer);
+            }
+        }
+    }
+
+    /// Ends the preview `job`, returning its job when it was the one on
+    /// screen. The worker ends with it, or when its picture is finished.
+    fn end(&self, job: u32) -> Result<Built, String> {
+        let mut shown = self.lock()?;
+        if shown.job != Some(job) {
+            return Err(CLOSED.into());
+        }
+        shown.job = None;
+        shown.drawer = None;
+        shown.built.take().ok_or_else(|| CLOSED.into())
+    }
+}
+
+const CLOSED: &str = "this print preview has been closed";
+
+/// What the preview needs to lay out its pages before any is drawn.
+#[derive(serde::Serialize, Clone, Debug)]
+#[serde(rename_all = "camelCase")]
+pub struct Preview {
+    pub job: u32,
+    /// Each sheet's size in points, after its rotation.
+    pub pages: Vec<crate::render::PageSize>,
+}
+
+/// The widest picture of a sheet the preview asks for, in pixels.
+///
+/// Twice the preview's widest page on a large screen. Asked for more, the
+/// backend draws this much: a picture is for looking at, and the time PDFium
+/// takes grows with its area (`docs/VERIFICATION.md`, *How long Windows takes
+/// to rasterise a page for printing*).
+pub const PREVIEW_MAX_WIDTH: u32 = 1600;
+
+/// How long one sheet's picture may take. Longer than a viewer tile's: the
+/// dense A0 drawing takes PDFium about 2 s at this size, and a page ten times
+/// denser is still a page the reader is about to print.
+const PREVIEW_DEADLINE: std::time::Duration = std::time::Duration::from_secs(120);
+
+/// Builds the print job and holds it for the preview.
+///
+/// The job is the one `print_document` would print, built the same way, and
+/// a worker is started over its bytes and asked for every sheet's size. The
+/// platform's own read-back is not done here: it is done when the reader
+/// presses Print, in `print_confirm`, as `print_document` does it.
+///
+/// # Errors
+///
+/// As `print_document`; or the worker could not read the job, or found a
+/// different number of pages from the one asked for.
+// The lint attribute goes first: `check_writers.py` and `ipc.test.ts` find a
+// command by `#[tauri::command]` standing directly on its `fn`.
+#[allow(clippy::too_many_arguments)]
+#[tauri::command]
+pub async fn print_prepare(
+    app: tauri::AppHandle,
+    edits: tauri::State<'_, edits::Edits>,
+    service: tauri::State<'_, RenderService>,
+    previews: tauri::State<'_, Previews>,
+    path: String,
+    doc: Option<u32>,
+    pages: Option<Vec<u32>>,
+    turns: u8,
+) -> Result<Preview, save::Refusal> {
+    let built = build_job(&app, &edits, &service, path, doc, pages, turns).await?;
+    let library = crate::pdfium_library_dir(&app);
+    let (built, session, sizes) =
+        tauri::async_runtime::spawn_blocking(move || open_preview(built, &library))
+            .await
+            .map_err(|e| save::Refusal::from(format!("the print preview could not start: {e}")))?
+            .map_err(save::Refusal::from)?;
+    let mut shown = previews.lock().map_err(save::Refusal::from)?;
+    shown.last = shown.last.wrapping_add(1).max(1);
+    let job = shown.last;
+    let preview = Preview {
+        job,
+        pages: sizes.clone(),
+    };
+    shown.job = Some(job);
+    shown.built = Some(built);
+    shown.drawer = Some(Drawer { session, sizes });
+    Ok(preview)
+}
+
+/// Starts a worker over the job and reads every sheet's size.
+fn open_preview(
+    built: Built,
+    library: &Path,
+) -> Result<
+    (
+        Built,
+        crate::save_outside::Session,
+        Vec<crate::render::PageSize>,
+    ),
+    String,
+> {
+    let mut session = save::InWorker::at(library.to_path_buf()).session_over(&built.bytes)?;
+    let reply = session
+        .ask(crate::worker_proto::Request::Open {
+            lazy_geometry: false,
+        })
+        .map_err(|e| format!("the print job could not be read: {}", e.message()))?;
+    let crate::worker_proto::Reply::Open {
+        pages, page_count, ..
+    } = reply
+    else {
+        return Err(format!(
+            "the worker answered the print job with {}",
+            reply.described()
+        ));
+    };
+    if pages.len() != page_count {
+        return Err("the worker returned incomplete page sizes for the print job".into());
+    }
+    print::expect_pages(page_count, built.expected)?;
+    Ok((built, session, pages))
+}
+
+/// One sheet of the held job as a PNG `data:` URL, `width` pixels wide at
+/// most and never wider than [`PREVIEW_MAX_WIDTH`].
+///
+/// # Errors
+///
+/// `job` is not the preview held now, the sheet is not in it, or the worker
+/// could not draw it. A worker that ran out of time is ended, so every later
+/// sheet of this preview fails too, and says so.
+#[tauri::command]
+pub async fn print_preview_page(
+    previews: tauri::State<'_, Previews>,
+    job: u32,
+    index: u32,
+    width: u32,
+) -> Result<String, String> {
+    // Taken out of the state while it draws, so the lock is not held for the
+    // seconds a dense sheet takes, and Print still finds the job meanwhile.
+    let mut drawer = previews.take_drawer(job)?;
+    let (drawer, drawn) = tauri::async_runtime::spawn_blocking(move || {
+        let drawn = draw_sheet(&mut drawer, index, width);
+        (drawer, drawn)
+    })
+    .await
+    .map_err(|e| format!("the page could not be drawn: {e}"))?;
+    previews.give_back(job, drawer);
+    drawn
+}
+
+/// Draws one sheet of the held job, tiled as `tpdf render` tiles a page.
+fn draw_sheet(held: &mut Drawer, index: u32, width: u32) -> Result<String, String> {
+    let size = *held
+        .sizes
+        .get(index as usize)
+        .ok_or("that page is not in the print job")?;
+    let (scale, wide, high) = preview_scale(size, width)?;
+    let mut pixels = vec![0_u8; wide as usize * high as usize * 4];
+    for y in (0..high).step_by(1024) {
+        for x in (0..wide).step_by(1024) {
+            let tile_width = (wide - x).min(1024);
+            let tile_height = (high - y).min(1024);
+            let tile = held
+                .session
+                .tile_within(
+                    crate::render::TileRequest {
+                        rid: 0,
+                        doc: 0,
+                        page: index,
+                        scale,
+                        turns: 0,
+                        invert: false,
+                        crop: None,
+                        x: i32::try_from(x).map_err(|_| "the page is too wide")?,
+                        y: i32::try_from(y).map_err(|_| "the page is too tall")?,
+                        width: u16::try_from(tile_width).map_err(|_| "a tile is too wide")?,
+                        height: u16::try_from(tile_height).map_err(|_| "a tile is too tall")?,
+                        format: crate::render::TileFormat::Raw,
+                    },
+                    PREVIEW_DEADLINE,
+                )
+                .map_err(|e| format!("the page could not be drawn: {}", e.message()))?;
+            let stride = tile_width as usize * 4;
+            for row in 0..tile_height as usize {
+                let start = ((y as usize + row) * wide as usize + x as usize) * 4;
+                pixels[start..start + stride]
+                    .copy_from_slice(&tile[row * stride..(row + 1) * stride]);
+            }
+        }
+    }
+    let png = crate::render::encode_png(&pixels, wide, high)?;
+    Ok(format!(
+        "data:image/png;base64,{}",
+        base64::Engine::encode(&base64::engine::general_purpose::STANDARD, png)
+    ))
+}
+
+/// The scale that draws `size` at `width` pixels, clamped to
+/// [`PREVIEW_MAX_WIDTH`], with the picture's pixel size.
+///
+/// # Errors
+///
+/// A width of zero, or a page with no area.
+fn preview_scale(size: crate::render::PageSize, width: u32) -> Result<(f32, u32, u32), String> {
+    let width = width.min(PREVIEW_MAX_WIDTH);
+    if width == 0 || !(size.width_pt > 0.0 && size.height_pt > 0.0) {
+        return Err("the page has no size to draw".into());
+    }
+    #[allow(clippy::cast_precision_loss)]
+    let scale = width as f32 / size.width_pt;
+    #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+    let high = (size.height_pt * scale).round().max(1.0) as u32;
+    // A very narrow, very tall page: bounded the same way on its long side.
+    if high > PREVIEW_MAX_WIDTH * 4 {
+        return Err("the page is too tall to preview".into());
+    }
+    Ok((scale, width, high))
+}
+
+/// Prints the held job: the platform's read-back, then its dialog, as
+/// `print_document` does. The preview is released whatever the outcome.
+///
+/// # Errors
+///
+/// `job` is not the preview held now, or anything `print_document` refuses
+/// once the job is built.
+#[tauri::command]
+pub async fn print_confirm(
+    app: tauri::AppHandle,
+    previews: tauri::State<'_, Previews>,
+    job: u32,
+) -> Result<(), save::Refusal> {
+    // The worker ends here, or when the picture it is drawing is finished,
+    // before the dialog: Windows starts its own over the same bytes to print.
+    let built = previews.end(job).map_err(save::Refusal::from)?;
+    present_built(&app, built).await
+}
+
+/// Closes the preview without printing, ending its worker.
+#[tauri::command]
+pub fn print_discard(previews: tauri::State<'_, Previews>, job: u32) {
+    let _ = previews.end(job);
 }
 
 /// The bytes of a print job, whichever route the reader's document takes.
@@ -272,6 +621,7 @@ fn present_job(
             .map(|h| h.0 as isize)
     };
 
+    let library = crate::pdfium_library_dir(app);
     let app = app.clone();
     std::thread::spawn(move || {
         use tauri::Emitter;
@@ -280,10 +630,16 @@ fn present_job(
         let report = |sent, of, state| {
             let _ = app.emit(PROGRESS_EVENT, Printing { sent, of, state });
         };
-        let printed = print_win::present(&bytes, &title, owner, &|sent, of| {
-            last.set((sent, of));
-            report(sent, of, "printing");
-        });
+        let printed = print_win::present(
+            &bytes,
+            &title,
+            owner,
+            &|sent, of| {
+                last.set((sent, of));
+                report(sent, of, "printing");
+            },
+            &library,
+        );
         let (sent, of) = last.get();
         match printed {
             Ok(true) => report(sent, of, "sent"),
@@ -370,4 +726,116 @@ fn present_job(
         let _ = std::fs::remove_file(&path);
         format!("the print panel could not be shown on the main thread: {e}")
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{preview_scale, Built, Previews, PREVIEW_MAX_WIDTH};
+    use crate::render::PageSize;
+
+    const A4: PageSize = PageSize {
+        width_pt: 595.0,
+        height_pt: 842.0,
+    };
+
+    /// The picture is the width asked for, with the page's own proportions.
+    #[test]
+    fn a_sheet_is_drawn_at_the_width_asked_for() {
+        let (scale, wide, high) = preview_scale(A4, 400).expect("a size");
+        assert_eq!(wide, 400);
+        assert_eq!(high, 566);
+        assert!((scale - 400.0 / 595.0).abs() < 1e-6);
+    }
+
+    /// Asked for more than the limit, the backend draws the limit.
+    #[test]
+    fn a_picture_wider_than_the_limit_is_drawn_at_the_limit() {
+        let (_, wide, _) = preview_scale(A4, 100_000).expect("a size");
+        assert_eq!(wide, PREVIEW_MAX_WIDTH);
+    }
+
+    /// Nothing to draw is an answer, not a picture of nothing.
+    #[test]
+    fn a_page_with_no_size_or_no_width_is_refused() {
+        assert!(preview_scale(A4, 0).is_err());
+        let flat = PageSize {
+            width_pt: 595.0,
+            height_pt: 0.0,
+        };
+        assert!(preview_scale(flat, 400).is_err());
+        let sliver = PageSize {
+            width_pt: 1.0,
+            height_pt: 10_000.0,
+        };
+        assert!(preview_scale(sliver, 400).is_err());
+    }
+
+    /// A preview on screen as `job`, holding a stand-in worker numbered `job`.
+    fn held(previews: &Previews<u32>, job: u32) {
+        let mut shown = previews.lock().expect("a lock");
+        shown.last = job;
+        shown.job = Some(job);
+        shown.built = Some(Built {
+            bytes: b"the job".to_vec(),
+            title: "job.pdf".into(),
+            expected: None,
+        });
+        shown.drawer = Some(job);
+    }
+
+    /// Print takes the job on screen once; a second Print, a close or a late
+    /// call for an earlier preview gets nothing.
+    #[test]
+    fn a_preview_is_printed_once_and_only_while_it_is_on_screen() {
+        let previews = Previews::<u32>::default();
+        held(&previews, 7);
+        assert!(
+            previews.end(6).is_err(),
+            "an earlier preview is not this one"
+        );
+        let built = previews.end(7).expect("the preview on screen");
+        assert_eq!(built.bytes, b"the job");
+        assert!(previews.end(7).is_err(), "printed already");
+    }
+
+    /// A call for an earlier preview does not get the worker of the one that
+    /// replaced it, which holds a different job.
+    #[test]
+    fn an_earlier_preview_does_not_draw_with_the_current_ones_worker() {
+        let previews = Previews::<u32>::default();
+        held(&previews, 8);
+        assert!(previews.take_drawer(7).is_err());
+        assert_eq!(previews.take_drawer(8), Ok(8));
+    }
+
+    /// While a picture is drawn the worker is out of the state, and Print
+    /// must still find the job; the worker coming back afterwards is not
+    /// kept, so it ends rather than outliving the preview.
+    #[test]
+    fn print_finds_the_job_while_a_picture_is_being_drawn() {
+        let previews = Previews::<u32>::default();
+        held(&previews, 3);
+        let drawer = previews.take_drawer(3).expect("the worker");
+        let why = previews
+            .take_drawer(3)
+            .expect_err("no worker to take while one is drawing");
+        assert!(why.contains("being drawn"), "{why}");
+        assert!(previews.end(3).is_ok());
+        previews.give_back(3, drawer);
+        assert!(
+            previews.lock().expect("a lock").drawer.is_none(),
+            "kept after Print"
+        );
+    }
+
+    /// A picture finished while the preview is still on screen gives the
+    /// worker back for the next one.
+    #[test]
+    fn a_worker_comes_back_to_the_preview_it_drew_for() {
+        let previews = Previews::<u32>::default();
+        held(&previews, 4);
+        let drawer = previews.take_drawer(4).expect("the worker");
+        previews.give_back(4, drawer);
+        assert_eq!(previews.take_drawer(4), Ok(4));
+    }
 }

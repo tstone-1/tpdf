@@ -440,6 +440,79 @@ export async function printChecks(path: string, doc: DocumentInfo): Promise<void
     turned.length > 0 && !turned.includes("is not in this document"),
     turned ? preview(turned) : "it accepted 4096 quarter-turns",
   );
+
+  await printPreviewChecks(path, doc);
+}
+
+/**
+ * The print preview's commands, short of the dialog: a job of page 1 turned a
+ * quarter, one sheet drawn, then closed. The turn is what makes the sizes a
+ * reading of the *job* rather than of the open document: the sheet comes back
+ * with page 1's width and height exchanged, and its picture with them.
+ */
+async function printPreviewChecks(path: string, doc: DocumentInfo): Promise<void> {
+  const page = doc.pages[0];
+  let job: number | null = null;
+  try {
+    const prepared = await call("print_prepare", { path, pages: [1], turns: 1 });
+    job = prepared.job;
+    const sheet = prepared.pages[0];
+    const turned =
+      prepared.pages.length === 1 &&
+      page !== undefined &&
+      sheet !== undefined &&
+      Math.abs(sheet.width_pt - page.height_pt) < 0.5 &&
+      Math.abs(sheet.height_pt - page.width_pt) < 0.5;
+    check(
+      "the print preview reads the job's sheets, turned as they print",
+      turned,
+      `${prepared.pages.length} sheet(s), first ${sheet?.width_pt}x${sheet?.height_pt} for page ${page?.width_pt}x${page?.height_pt}`,
+    );
+
+    const url = await call("print_preview_page", { job, index: 0, width: 200 });
+    const size = pictureSize(url);
+    const wanted = sheet ? Math.round((200 * sheet.height_pt) / sheet.width_pt) : -1;
+    check(
+      "the print preview draws a sheet at the width asked for",
+      size !== null && size.width === 200 && Math.abs(size.height - wanted) <= 1,
+      size ? `${size.width}x${size.height}, wanted 200x${wanted}` : preview(url),
+    );
+  } catch (e) {
+    check("the print preview reads the job's sheets, turned as they print", false, preview(describeThrown(e)));
+  }
+  if (job === null) return;
+  await call("print_discard", { job });
+  let after = "";
+  try {
+    await call("print_preview_page", { job, index: 0, width: 200 });
+  } catch (e) {
+    after = describeThrown(e);
+  }
+  check(
+    "a closed print preview draws nothing more",
+    after.includes("has been closed"),
+    after ? preview(after) : "it drew a sheet of a closed preview",
+  );
+}
+
+/**
+ * The pixel size of a PNG `data:` URL, read from its header, or `null` when it
+ * is not one. Read rather than loaded into an image, which would be a sink.
+ */
+function pictureSize(url: string): { width: number; height: number } | null {
+  const prefix = "data:image/png;base64,";
+  if (!url.startsWith(prefix)) return null;
+  let head: string;
+  try {
+    // The signature and the IHDR chunk's width and height: 24 bytes.
+    head = atob(url.slice(prefix.length, prefix.length + 32));
+  } catch {
+    return null;
+  }
+  if (head.length < 24 || head.slice(1, 4) !== "PNG" || head.slice(12, 16) !== "IHDR") return null;
+  const word = (at: number) =>
+    ((head.charCodeAt(at) << 24) | (head.charCodeAt(at + 1) << 16) | (head.charCodeAt(at + 2) << 8) | head.charCodeAt(at + 3)) >>> 0;
+  return { width: word(16), height: word(20) };
 }
 
 /** What this phase reports, so a run that cannot start still prints the names. */

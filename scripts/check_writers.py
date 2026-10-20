@@ -191,8 +191,10 @@ def commands_that_write(source: str) -> set[str]:
     """Every `#[tauri::command]` function that reaches a terminal writer.
 
     *Reaches*, not *contains*: comments are stripped first, and a call to a free
-    function in the same file is followed one level. Both are corrections made
-    2026-09-01 --- see the module docstring for what each one was hiding.
+    function in the same file is followed two levels. Both are corrections made
+    2026-09-01 --- see the module docstring for what each one was hiding. The
+    second level since 2026-10-20, when `print_document` came to reach its
+    writer through `build_job` and then `print_job`, and dropped out of the set.
     """
     source = without_comments(source)
     helpers = free_functions(source)
@@ -211,7 +213,7 @@ def commands_that_write(source: str) -> set[str]:
 
     found = set()
     for match in re.finditer(r"#\[tauri::command\]\s*(?:pub\s+)?(?:async\s+)?fn\s+(\w+)", source):
-        if writes(body_of(source, match.end()), 1):
+        if writes(body_of(source, match.end()), 2):
             found.add(match.group(1))
     return found
 

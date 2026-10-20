@@ -13,8 +13,9 @@
 //!   macOS dialog sends it (`print.rs`): any conversion is CUPS's own.
 //! - **Windows** opens a device context for the printer by name and draws each
 //!   page on it, through the same `print_win::spool` the dialog's Print button
-//!   reaches; only the dialog is skipped. That is a picture of each page, as the
-//!   window prints on Windows (`print_win.rs` says why).
+//!   reaches; only the dialog is skipped. That is a picture of each page, drawn
+//!   by PDFium in a worker, as the window prints on Windows (`print_win.rs` says
+//!   why).
 //!
 //! A printer name nothing knows is refused with the names there are, so a
 //! script's author can correct it from the message alone.
@@ -35,7 +36,13 @@ pub struct Sent {
 /// No printer by that name, the print system not reachable, or it refusing
 /// the job.
 #[cfg(any(target_os = "macos", target_os = "linux"))]
-pub fn send(printer: &str, bytes: &[u8], title: &str, _pages: u32) -> Result<Sent, String> {
+pub fn send(
+    printer: &str,
+    bytes: &[u8],
+    title: &str,
+    _pages: u32,
+    _library_dir: &std::path::Path,
+) -> Result<Sent, String> {
     let cups = cups::Cups::load()?;
     let names = cups.printers();
     if !names.iter().any(|name| name == printer) {
@@ -54,13 +61,21 @@ pub fn send(printer: &str, bytes: &[u8], title: &str, _pages: u32) -> Result<Sen
 /// `output` names a file for the driver to write instead of the port, as a
 /// "Print to file" does; only the checks use it, through
 /// `TPDF_PRINT_OUTPUT`, with "Microsoft Print to PDF", which otherwise asks
-/// where to save.
+/// where to save. The pages are drawn by PDFium in a worker started from
+/// `library_dir`.
 ///
 /// # Errors
 ///
-/// No printer by that name, or GDI or the driver refusing a page.
+/// No printer by that name, the worker refusing the job, or GDI or the driver
+/// refusing a page.
 #[cfg(windows)]
-pub fn send(printer: &str, bytes: &[u8], title: &str, pages: u32) -> Result<Sent, String> {
+pub fn send(
+    printer: &str,
+    bytes: &[u8],
+    title: &str,
+    pages: u32,
+    library_dir: &std::path::Path,
+) -> Result<Sent, String> {
     use windows::core::HSTRING;
     use windows::Win32::Graphics::Gdi::{CreateDCW, DeleteDC};
 
@@ -83,7 +98,17 @@ pub fn send(printer: &str, bytes: &[u8], title: &str, pages: u32) -> Result<Sent
     let spooled = crate::print::watched(
         crate::print::STALL,
         |_| (),
-        |beat| crate::print_win::spool(dc, bytes, title, output.as_deref(), &sheets, Some(beat)),
+        |beat| {
+            crate::print_win::spool(
+                dc,
+                bytes,
+                title,
+                output.as_deref(),
+                &sheets,
+                Some(beat),
+                library_dir,
+            )
+        },
         |sent| eprintln!("tpdf: {}", crate::print::stalled_message(sent)),
     );
     // SAFETY: the DC `CreateDCW` returned above, released once.
@@ -323,7 +348,14 @@ mod tests {
         // the desktop. The list may be empty; the call must answer.
         let cups = super::cups::Cups::load().expect("CUPS");
         let _ = cups.printers();
-        let refused = super::send("tpdf-no-such-printer", b"%PDF-1.4", "t", 1).unwrap_err();
+        let refused = super::send(
+            "tpdf-no-such-printer",
+            b"%PDF-1.4",
+            "t",
+            1,
+            std::path::Path::new("."),
+        )
+        .unwrap_err();
         assert!(
             refused.starts_with("there is no printer called \"tpdf-no-such-printer\""),
             "{refused}"

@@ -4957,7 +4957,8 @@ the platform's own stack is the only such parser available. What the boundary ac
 narrower than the sentence suggests, and worth stating in exactly these terms: the process
 holding the print job never maps **our** PDFium, so a PDFium bug reachable from a crafted
 document is not reachable through printing, and the parser that *is* mapped is patched by
-Windows Update rather than pinned in our `Cargo.lock`.
+Windows Update rather than pinned in our `Cargo.lock`. Since 2026-10-20 PDFium does draw the
+Windows print job, in a worker, as every other render; the app process still maps it nowhere.
 
 Measured rather than asserted, since a containment claim that nobody checked is the thing this
 file exists to prevent: `print-probe` reads its own module table after parsing, rendering and
@@ -5004,6 +5005,17 @@ Windows takes minutes and macOS does not.** The route out is not a faster raster
 rasterisation — `IPrintDocumentPackageTarget` and the XPS pipeline can hand PDF to a printer
 that understands it directly, which GDI cannot express. That is a real piece of work and is not
 started.
+
+**Corrected 2026-10-20: two of the claims above were wrong, and the conclusion with them.** The
+cost is not independent of resolution: page 1 of `vector-multi.pdf` took `Windows.Data.Pdf` 0.58 s
+at 10 dpi, 8.0 s at 30 and 161.5 s at 75. And the two engines are not the same order at the
+resolution printing uses: `tile-bench` gave PDFium 32.9 s for that page at 75 dpi on the same
+machine, five times faster (they are level at 30 dpi, 10.1 s against 8.0 s). The entry had both
+numbers, 35.1 s at 1x against minutes at ~75 dpi, and called a factor of five the same order.
+Avoiding rasterisation was tried the same day and was worse: PDFium's EMF output sent as vectors
+spooled in 2 s and then held a Brother laser printer at *Printing* for ten minutes, ending in an
+error. So `spool` now has PDFium draw the pages in a worker, and the sheet takes 25 s instead of
+148 s (`docs/VERIFICATION.md`, *How long Windows takes to rasterise a page for printing*).
 
 ### A page count read too early is 0, and 0 is not a count
 

@@ -806,6 +806,8 @@ pub fn run() {
         .manage(commands::sign::Pending::default())
         .manage(commands::ocr::Cancel::default())
         .manage(commands::hidden::Cancel::default())
+        // A print job built for the preview and not yet printed or closed.
+        .manage(commands::print::Previews::<commands::print::Drawer>::default())
         // The addresses behind a document's web links, which the webview is
         // given a token for and never receives. Managed on the builder for the
         // same reason the edit models are: it needs nothing from the app, and a
@@ -1114,6 +1116,10 @@ pub fn run() {
             session_forget,
             session_clear_places,
             print_document,
+            print_prepare,
+            print_preview_page,
+            print_confirm,
+            print_discard,
             process_elapsed_ms,
             autobench_path,
             viewercheck_path,

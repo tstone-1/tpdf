@@ -18,20 +18,31 @@
 //! prints them as vectors. Windows has no in-box "print this PDF" API at any layer
 //! --- not Win32, not WinRT --- so every Windows PDF viewer, SumatraPDF included,
 //! rasterises each page onto a printer device context itself. That is what happens
-//! here: the OS's own rasteriser draws the page, and GDI moves the bitmap to the
-//! spooler. The consequence to state plainly is that Windows output is **raster at
-//! a chosen DPI** where macOS output is vector, so text is not selectable in a
-//! print-to-PDF result and very fine hairlines depend on [`PRINT_DPI`].
+//! here: PDFium draws each page in a sandboxed worker started over the job
+//! ([`spool`]), and GDI moves the bitmap to the spooler. The consequence to state
+//! plainly is that Windows output is **raster at a chosen DPI** where macOS output
+//! is vector, so text is not selectable in a print-to-PDF result and very fine
+//! hairlines depend on [`PRINT_DPI`].
 //!
-//! **No PDFium in this process.** That is deliberate and it is what keeps the
-//! Windows print path inside the boundary the rest of the app now holds: the app
-//! process still never maps `pdfium.dll`, because the parsing and rasterising here
-//! are done by a Microsoft component in its own right. It is the same argument
-//! macOS makes for using PDFKit rather than PDFium to read a job back.
+//! **Drawn in a worker, not by the OS, since 2026-10-20.** `Windows.Data.Pdf` drew
+//! the pages here before that, in this process, and took over two minutes a sheet
+//! on a dense drawing where PDFium takes about half a minute (`docs/VERIFICATION.md`,
+//! *How long Windows takes to rasterise a page for printing*). Sending the printer
+//! vectors instead was measured and rejected on the same page: the printer took ten
+//! minutes and reported an error. So the page is still a picture, drawn by the
+//! engine that drew what the reader saw, inside the boundary every other render
+//! holds; this process only reads the job back with `Windows.Data.Pdf` before the
+//! dialog ([`read`]) and copies pixels to the printer.
 //!
-//! **What is verified, and what needs paper.** [`read`] and [`render_page`] are
-//! covered by tests below and by the four checks in `print.rs` that now run on both
-//! platforms. `present` opening a real panel and a real printer consuming the
+//! **No PDFium in this process.** The worker maps `pdfium.dll`; the app process
+//! still never does. Reading the job back with a Microsoft component is the same
+//! argument macOS makes for using PDFKit rather than PDFium to read a job back.
+//!
+//! **What is verified, and what needs paper.** [`read`], [`render_page`] and the
+//! band arithmetic are covered by tests below and by the four checks in `print.rs`
+//! that now run on both platforms. [`render_page`] is `Windows.Data.Pdf`'s own
+//! drawing, kept for the probe, which uses it as an independent eye on what was
+//! sent and what came out. `present` opening a real panel and a real printer consuming the
 //! result is not covered by anything automatic --- the same honest gap
 //! `print_macos.rs` records --- though `examples/print_probe.rs` drives everything up to
 //! and including the spooler by opening a printer DC directly.
@@ -81,6 +92,18 @@ pub const PRINT_DPI: f32 = 300.0;
 /// pixel dimensions at two different resolutions, which is a check on the units
 /// rather than on the picture.
 const WINRT_DPI: f32 = 96.0;
+
+/// The units a PDF page, and so the worker's page size, is measured in.
+const POINTS_PER_INCH: f32 = 72.0;
+
+/// How long the worker may take to draw one band of a page for printing.
+///
+/// Not [`crate::workers::DEFAULT_DEADLINE`]'s 30 s: PDFium took 33 s for the
+/// whole first page of `vector-multi.pdf` at the resolution an A4 sheet asks for
+/// (`docs/VERIFICATION.md`), and a slow page is a page to print, with progress
+/// shown meanwhile, not a failure. Still a bound, so a worker that hangs ends
+/// the job rather than holding it for ever.
+const BAND_DEADLINE: std::time::Duration = std::time::Duration::from_secs(600);
 
 /// What the OS parser makes of one page.
 ///
@@ -742,16 +765,24 @@ fn dc_dpi(dc: HDC) -> (i32, i32) {
 /// a page twice the sheet's size renders at half, and lands on paper at exactly the
 /// same density as one that fits. Never scaled up, matching `draw_bmp`, since
 /// enlarging a render is strictly worse than placing it at its own size.
-fn paper_dpi(page: &PdfPage, sheet: (i32, i32), dc_dpi: (i32, i32), device_dpi: f32) -> f32 {
-    let Ok(size) = page.Size() else {
-        return device_dpi;
-    };
+///
+/// `size` is the page as the worker reports it, in PDF points and after its
+/// `/Rotate`.
+fn paper_dpi(
+    size: crate::render::PageSize,
+    sheet: (i32, i32),
+    dc_dpi: (i32, i32),
+    device_dpi: f32,
+) -> f32 {
     #[allow(clippy::cast_precision_loss)]
     let (sheet_w_in, sheet_h_in) = (
         sheet.0 as f32 / dc_dpi.0.max(1) as f32,
         sheet.1 as f32 / dc_dpi.1.max(1) as f32,
     );
-    let (page_w_in, page_h_in) = (size.Width / WINRT_DPI, size.Height / WINRT_DPI);
+    let (page_w_in, page_h_in) = (
+        size.width_pt / POINTS_PER_INCH,
+        size.height_pt / POINTS_PER_INCH,
+    );
     if page_w_in <= 0.0 || page_h_in <= 0.0 {
         return device_dpi;
     }
@@ -764,12 +795,149 @@ fn paper_dpi(page: &PdfPage, sheet: (i32, i32), dc_dpi: (i32, i32), device_dpi: 
     (device_dpi * fit).max(72.0).min(device_dpi)
 }
 
+/// The rows of a page drawn in one request, so that each fits the worker's tile
+/// mapping (`worker::TILE_CAPACITY`) and a tile's `u16` height.
+///
+/// Full-width bands rather than square tiles, because PDFium walks a page's
+/// whole content for every request whatever its size (`examples/tile_bench.rs`):
+/// the fewer the requests, the fewer the walks. An A4 sheet at 300 dpi is three.
+///
+/// # Errors
+///
+/// A row wider than the mapping holds, which no page fitted to a sheet is.
+fn band_rows(width: u32) -> Result<u32, String> {
+    let row = u64::from(width) * 4;
+    let rows = (crate::worker::TILE_CAPACITY as u64 / row.max(1)).min(u64::from(u16::MAX));
+    if width == 0 || width > u32::from(u16::MAX) || rows == 0 {
+        return Err(format!("a page {width} pixels wide is too wide to print"));
+    }
+    Ok(u32::try_from(rows).unwrap_or(u32::from(u16::MAX)))
+}
+
+/// A BMP header for a top-down 32-bit image of `width` by `height` pixels.
+///
+/// Built here so the worker's pixels reach GDI through [`parse_bmp`] and
+/// [`draw_bmp`], the checks every page already passed when the OS drew it,
+/// rather than through a second, unchecked route to `StretchDIBits`.
+fn bmp_header(width: u32, height: u32) -> Result<Vec<u8>, String> {
+    let pixels = u64::from(width) * u64::from(height) * 4;
+    let total = u32::try_from(pixels + (BMP_FILE_HEADER + DIB_HEADER_MIN) as u64)
+        .map_err(|_| format!("a {width}x{height} page is too large to print"))?;
+    let (w, h) = (
+        i32::try_from(width).map_err(|_| "page too wide")?,
+        i32::try_from(height).map_err(|_| "page too tall")?,
+    );
+    let mut out = Vec::with_capacity(total as usize);
+    out.extend_from_slice(b"BM");
+    out.extend_from_slice(&total.to_le_bytes());
+    out.extend_from_slice(&[0; 4]);
+    out.extend_from_slice(&((BMP_FILE_HEADER + DIB_HEADER_MIN) as u32).to_le_bytes());
+    out.extend_from_slice(&(DIB_HEADER_MIN as u32).to_le_bytes());
+    out.extend_from_slice(&w.to_le_bytes());
+    // Negative: rows run top to bottom, the order the bands arrive in.
+    out.extend_from_slice(&(-h).to_le_bytes());
+    out.extend_from_slice(&1u16.to_le_bytes());
+    out.extend_from_slice(&32u16.to_le_bytes());
+    out.extend_from_slice(&BI_RGB.to_le_bytes());
+    out.extend_from_slice(&u32::try_from(pixels).unwrap_or(0).to_le_bytes());
+    // Resolution, colours used, colours important: unused by GDI here.
+    out.extend_from_slice(&[0; 16]);
+    Ok(out)
+}
+
+/// Appends the worker's RGBA pixels to `bmp` as BGRA, the order a 32-bit DIB
+/// stores. Swapped colours would pass every ink count the probe makes, so the
+/// order has a test of its own.
+fn append_bgra(bmp: &mut Vec<u8>, rgba: &[u8]) {
+    for pixel in rgba.chunks_exact(4) {
+        bmp.extend_from_slice(&[pixel[2], pixel[1], pixel[0], pixel[3]]);
+    }
+}
+
+/// A sandboxed worker holding the print job, which draws its pages.
+struct Painter {
+    session: crate::save_outside::Session,
+    /// Each page's size in points, after its `/Rotate`.
+    sizes: Vec<crate::render::PageSize>,
+}
+
+impl Painter {
+    /// Starts a worker over `bytes` and asks it for every page's size.
+    fn start(bytes: &[u8], library_dir: &std::path::Path) -> Result<Self, String> {
+        use crate::worker_proto::{Reply, Request};
+        let mut session =
+            crate::save::InWorker::at(library_dir.to_path_buf()).session_over(bytes)?;
+        let reply = session
+            .ask(Request::Open {
+                lazy_geometry: false,
+            })
+            .map_err(|e| format!("the worker could not open the print job: {}", e.message()))?;
+        match reply {
+            Reply::Open {
+                pages, page_count, ..
+            } if pages.len() == page_count => Ok(Self {
+                session,
+                sizes: pages,
+            }),
+            Reply::Open { .. } => Err("the worker returned incomplete page sizes".into()),
+            other => Err(format!(
+                "the worker answered the print job's sizes with {}",
+                other.described()
+            )),
+        }
+    }
+
+    /// Page `index` at `dpi`, as a top-down 32-bit BMP for [`draw_bmp`].
+    fn paint(&mut self, index: u32, dpi: f32) -> Result<Vec<u8>, String> {
+        let size = self.sizes[index as usize];
+        let scale = dpi / POINTS_PER_INCH;
+        // Rounded away from zero, for the reason `render_page_of` gives.
+        #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+        let (width, height) = (
+            ((size.width_pt * scale).round() as u32).max(1),
+            ((size.height_pt * scale).round() as u32).max(1),
+        );
+        let rows = band_rows(width)?;
+        let mut bmp = bmp_header(width, height)?;
+        let mut y = 0;
+        while y < height {
+            let band = rows.min(height - y);
+            let rgba = self
+                .session
+                .tile_within(
+                    crate::render::TileRequest {
+                        rid: 0,
+                        doc: 0,
+                        page: index,
+                        scale,
+                        turns: 0,
+                        invert: false,
+                        x: 0,
+                        y: i32::try_from(y).map_err(|_| "page too tall")?,
+                        width: u16::try_from(width).map_err(|_| "page too wide")?,
+                        height: u16::try_from(band).map_err(|_| "band too tall")?,
+                        format: crate::render::TileFormat::Raw,
+                        crop: None,
+                    },
+                    BAND_DEADLINE,
+                )
+                .map_err(|e| format!("page {}: {}", index + 1, e.message()))?;
+            append_bgra(&mut bmp, &rgba);
+            y += band;
+        }
+        Ok(bmp)
+    }
+}
+
 /// Renders every page of a job onto an open printer device context.
 ///
 /// Split out from [`present`] so that the whole pipeline --- parse, rasterise,
 /// spool --- can be exercised against a printer DC opened directly, with no dialog
 /// and no user. That is what `examples/print_probe.rs` does, and it is the only way any
 /// of this is verifiable without paper.
+///
+/// The pages are drawn by PDFium in a worker started over `bytes`, from the
+/// library in `library_dir`; see the module note for why not by the OS.
 ///
 /// `sheets` names which of the job's pages to send, zero-based and in the order
 /// they should print --- `crate::print::sheets` builds it from whatever range the
@@ -784,7 +952,7 @@ fn paper_dpi(page: &PdfPage, sheet: (i32, i32), dc_dpi: (i32, i32), device_dpi: 
 ///
 /// # Errors
 ///
-/// The OS parser refusing the job, a sheet outside it, a page failing to render,
+/// The worker refusing the job, a sheet outside it, a page failing to render,
 /// or GDI refusing a page or the document.
 pub fn spool(
     dc: HDC,
@@ -793,14 +961,12 @@ pub fn spool(
     output: Option<&str>,
     sheets: &[u32],
     beat: Option<&crate::print::Beat<'_>>,
+    library_dir: &std::path::Path,
 ) -> Result<u32, String> {
     use windows::Win32::Storage::Xps::{EndPage, StartDocW, StartPage, DOCINFOW};
 
-    let document =
-        ours(beat, || parse(bytes)).ok_or("the OS parser could not read the print job")?;
-    let count = document
-        .PageCount()
-        .map_err(|e| format!("page count: {e}"))?;
+    let mut painter = ours(beat, || Painter::start(bytes, library_dir))?;
+    let count = u32::try_from(painter.sizes.len()).unwrap_or(u32::MAX);
 
     // Both `HSTRING`s are bound to locals rather than built inline, because
     // `DOCINFOW` holds borrowed pointers and a temporary would be dropped at the
@@ -852,11 +1018,9 @@ pub fn spool(
                 "sheet {index} is not in this job, which has {count}"
             ));
         }
-        let page = document
-            .GetPage(index)
-            .map_err(|e| format!("page {index}: {e}"))?;
-        let dpi = paper_dpi(&page, sheet, (dpi_x, dpi_y), device_dpi);
-        let bmp = ours(beat, || render_page_of(&page, dpi))?;
+        let size = painter.sizes[index as usize];
+        let dpi = paper_dpi(size, sheet, (dpi_x, dpi_y), device_dpi);
+        let bmp = ours(beat, || painter.paint(index, dpi))?;
         // SAFETY: a live DC inside an open document.
         if unsafe { StartPage(dc) } <= 0 {
             return Err(format!(
@@ -1017,6 +1181,7 @@ pub fn present(
     title: &str,
     owner: Option<HWND>,
     progress: &dyn Fn(u32, u32),
+    library_dir: &std::path::Path,
 ) -> Result<bool, String> {
     // Parsed here only to bound the dialog, and it is a second parse of bytes
     // `spool` parses again below. Worth stating rather than hiding: the count has
@@ -1108,7 +1273,7 @@ pub fn present(
         crate::print::watched(
             crate::print::STALL,
             |sent| progress(sent, of),
-            |beat| spool(dc, bytes, title, None, &sheets, Some(beat)),
+            |beat| spool(dc, bytes, title, None, &sheets, Some(beat), library_dir),
             move |sent| {
                 let owner = shown.map(|h| HWND(h as *mut std::ffi::c_void));
                 message(owner, &crate::print::stalled_message(sent), false);
@@ -1124,8 +1289,98 @@ pub fn present(
 #[cfg(test)]
 mod tests {
     use super::{
-        header_bytes, parse_bmp, pixel_bytes, read, render_page, Raster, BI_BITFIELDS, BI_RGB,
+        append_bgra, band_rows, bmp_header, header_bytes, paper_dpi, parse_bmp, pixel_bytes, read,
+        render_page, Raster, BI_BITFIELDS, BI_RGB,
     };
+
+    /// The worker's red reaches GDI as red: RGBA in, BGRA out.
+    #[test]
+    fn worker_pixels_are_reordered_for_the_dib() {
+        let mut bmp = bmp_header(2, 1).expect("a header");
+        append_bgra(&mut bmp, &[255, 0, 0, 255, 0, 0, 255, 255]);
+        let raster = Raster::of(&bmp).expect("pixels");
+        // `Raster::pixel` answers `[b, g, r]`.
+        assert_eq!(raster.pixel(0, 0), [0, 0, 255], "red");
+        assert_eq!(raster.pixel(1, 0), [255, 0, 0], "blue");
+    }
+    use crate::render::PageSize;
+    use crate::worker::TILE_CAPACITY;
+
+    /// A band is as many whole rows as the worker's mapping holds, and no more.
+    #[test]
+    fn a_band_fills_the_tile_mapping_without_overflowing_it() {
+        // An A4 page at 300 dpi, the common case: three bands.
+        let rows = band_rows(2480).expect("an A4 row fits");
+        assert!(rows as usize * 2480 * 4 <= TILE_CAPACITY);
+        assert!((rows as usize + 1) * 2480 * 4 > TILE_CAPACITY);
+        assert_eq!(3508_u32.div_ceil(rows), 3);
+        // A narrow page is bounded by the tile's `u16` height, not the mapping.
+        assert_eq!(band_rows(1).expect("one pixel wide"), u32::from(u16::MAX));
+        // Nothing to draw, and wider than a tile can say.
+        assert!(band_rows(0).is_err());
+        assert!(band_rows(u32::from(u16::MAX) + 1).is_err());
+    }
+
+    /// The worker's pixels reach GDI through `parse_bmp`, top row first.
+    #[test]
+    fn a_painted_page_is_a_top_down_bmp_that_parse_bmp_accepts() {
+        let mut bmp = bmp_header(2, 2).expect("a header");
+        // BGRA, top row first: red, green / blue, black.
+        for pixel in [
+            [0, 0, 255, 255],
+            [0, 255, 0, 255],
+            [255, 0, 0, 255],
+            [0, 0, 0, 255],
+        ] {
+            bmp.extend_from_slice(&pixel);
+        }
+        let dib = parse_bmp(&bmp).expect("parse_bmp accepts what bmp_header writes");
+        assert_eq!((dib.width, dib.height, dib.bpp), (2, 2, 32));
+        assert!(dib.top_down);
+        let raster = Raster::of(&bmp).expect("pixels");
+        assert_eq!(raster.pixel(0, 0), [0, 0, 255]);
+        assert_eq!(raster.pixel(1, 0), [0, 255, 0]);
+        assert_eq!(raster.pixel(0, 1), [255, 0, 0]);
+        // A header with its pixels missing is refused, not read past.
+        let short = bmp_header(2, 2).expect("a header");
+        assert!(parse_bmp(&short).is_err());
+    }
+
+    /// The worker reports points; a page that fits prints at the device's
+    /// resolution, and a larger one at what lands as that resolution on paper.
+    #[test]
+    fn paper_dpi_reads_the_workers_size_in_points() {
+        let a4 = PageSize {
+            width_pt: 595.0,
+            height_pt: 842.0,
+        };
+        let a0 = PageSize {
+            width_pt: 2384.0,
+            height_pt: 3370.0,
+        };
+        let card = PageSize {
+            width_pt: 200.0,
+            height_pt: 100.0,
+        };
+        // A Brother's A4 sheet: 4757x6812 device units at 600 dpi, its
+        // printable area and so narrower than A4 paper.
+        let sheet = (4757, 6812);
+        let card_dpi = paper_dpi(card, sheet, (600, 600), 300.0);
+        assert!((card_dpi - 300.0).abs() < 0.01, "{card_dpi}");
+        // An A4 page is fitted to the printable width: 4757 / 600 inches of
+        // sheet over 595 / 72 of page.
+        let a4_dpi = paper_dpi(a4, sheet, (600, 600), 300.0);
+        let want = 300.0 * (4757.0 / 600.0) / (595.0 / 72.0);
+        assert!((a4_dpi - want).abs() < 0.5, "{a4_dpi} against {want}");
+        let a0_dpi = paper_dpi(a0, sheet, (600, 600), 300.0);
+        // The tighter of the two axes, here the width again.
+        let want = 300.0
+            * f32::min(
+                (4757.0 / 600.0) / (2384.0 / 72.0),
+                (6812.0 / 600.0) / (3370.0 / 72.0),
+            );
+        assert!((a0_dpi - want).abs() < 0.5, "{a0_dpi} against {want}");
+    }
 
     /// A minimal one-page PDF, assembled here rather than by `lopdf`.
     ///

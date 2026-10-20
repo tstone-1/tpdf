@@ -92,11 +92,17 @@ The half that does **not** correspond is the printing itself, and it is not a sh
 hands PDF bytes to `NSPrintOperation` and the OS paginates and prints them as vectors. Windows
 has no in-box "print this PDF" API at any layer — not Win32, not WinRT — so every Windows PDF
 viewer, SumatraPDF included, rasterises each page onto a printer device context itself, and that
-is what `print_win.rs` does. Two consequences to state rather than discover: Windows output is
-**raster at 300 dpi** where macOS is vector, so text is not selectable in a print-to-PDF result;
-and `Windows.Data.Pdf` reports page sizes in **DIPs at 96 to the inch**, not PDF points, which is
-a trap with an entry because getting it wrong renders every page 1.33x too large and still looks
-fine.
+is what `print_win.rs` does: since 2026-10-20 PDFium draws each page in a sandboxed worker
+started over the job, where `Windows.Data.Pdf` drew it in the app process before, at up to six
+times the cost on a dense drawing (`docs/VERIFICATION.md`). Since the same day Windows and Linux
+show tpdf's own preview of the job before the system dialog (`printpreviewdialog.ts`,
+`commands::print::Previews`), because neither system dialog has one; the pictures are drawn by a
+worker over the job's bytes, so they are of what is printed, not of the open document. Two
+consequences to state rather than
+discover: Windows output is **raster at 300 dpi** where macOS is vector, so text is not selectable
+in a print-to-PDF result; and `Windows.Data.Pdf`, which `render_page` and the probe still use,
+reports page sizes in **DIPs at 96 to the inch**, not PDF points, which is a trap with an entry
+because getting it wrong renders every page 1.33x too large and still looks fine.
 
 **Printing maps a PDF parser into the app process, on macOS and Windows** (on Linux it
 does not: GTK copies the job's bytes to CUPS), which is the
