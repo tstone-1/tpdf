@@ -835,6 +835,7 @@ hop through the index.
 - An uninstaller that restores what it backed up writes an empty class where there was no key
 - A relative binary path with forward slashes is not found on Windows, so three window checks failed in a second
 - A print job *Spooling* with 0 pages was tpdf rasterising, not a stuck spooler
+- A helper whose callers all became Windows-only passed every gate on Windows and failed on the other two
 
 ## Fixtures
 - The test fixtures are generated, not committed
@@ -26909,3 +26910,15 @@ turned correctly: with the job's quarter turn it is a landscape page, and its te
 on it, so turning the page laid the text across. The layout turns by the page's box, and a check
 of it has to as well. The check now swaps the source page's measured spans and holds the print to
 the same `predict` the extent check uses, which a page left unturned misses by about 60%.
+
+
+### A helper whose callers all became Windows-only passed every gate on Windows and failed on the other two
+
+`commands::print::chosen_pages` was shared code until the 2026-10-20 print preview moved both of
+its callers behind `#[cfg(windows)]`. The full gate suite passed on the Windows desktop, 33 of 33,
+and CI then failed on macOS and Ubuntu with `function chosen_pages is never used`: on those two
+the function still compiled and nothing called it, and `-D warnings` makes that an error. Windows
+was the one platform where the code was live. `check_windows.py` exists for the other direction,
+a Mac change that breaks Windows, and nothing run from Windows compiles the macOS or Linux tree.
+When a change puts callers behind a platform `cfg`, search for every function they were the last
+callers of and give it the same `cfg`, and read `ci.yml`'s three jobs before calling the push done.

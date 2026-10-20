@@ -539,6 +539,7 @@ fn apply(
 /// # Errors
 ///
 /// No page at all, which is nothing to print.
+#[cfg(windows)]
 fn chosen_pages(
     settings: &crate::print_layout::Settings,
     count: usize,
