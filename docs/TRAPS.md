@@ -26920,5 +26920,6 @@ and CI then failed on macOS and Ubuntu with `function chosen_pages is never used
 the function still compiled and nothing called it, and `-D warnings` makes that an error. Windows
 was the one platform where the code was live. `check_windows.py` exists for the other direction,
 a Mac change that breaks Windows, and nothing run from Windows compiles the macOS or Linux tree.
-When a change puts callers behind a platform `cfg`, search for every function they were the last
-callers of and give it the same `cfg`, and read `ci.yml`'s three jobs before calling the push done.
+`scripts/check_linux.py` now runs the `clippy` gate on the Linux tree under WSL from Windows; with
+the `cfg` removed again it failed on the same line as CI. When a change puts callers behind a
+platform `cfg`, run it, and read `ci.yml`'s three jobs before calling the push done.

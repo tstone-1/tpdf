@@ -8617,6 +8617,15 @@ starts at 0 and increments within the month.
    turned both runner legs red. That leg reported *four* failures, since clippy, test and
    bins all stop at the same `error[E0308]`.
 
+   **On Windows, the mirror is `scripts/check_linux.py`**, before a push that adds, moves or
+   removes a platform `cfg`, and before a tag. It sends the tree as it is to `~/tpdf-linux` in
+   WSL (Ubuntu 24.04, set up as *Linux* near the top of this file says) and runs the `clippy`
+   gate there. On 2026-10-20 the gates passed 33 of 33 on the Windows desktop while both other
+   runners failed on `function chosen_pages is never used`: its callers had all moved behind
+   `#[cfg(windows)]`. The script, with that defect put back, fails on the same line; warm it
+   takes under a minute. It compiles Linux, not macOS, so a `target_os = "macos"`-only line
+   is still the macOS runner's to find.
+
    **And `scripts/run_on_windows.py` before a push that touches redaction, OCR, printing or
    any `#[cfg(windows)]` behaviour** (2026-10-03). `check_windows.py` compiles and runs
    nothing, so what only Windows does is otherwise first run by CI, after the push:

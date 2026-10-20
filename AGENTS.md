@@ -331,9 +331,9 @@ scripts/gates.py --list
 
 **What each gate guards, and why it exists, is indexed in [`docs/DETAIL.md`](docs/DETAIL.md)**
 *Quality gates*, together with the ordering (`toolchain` first, `notices` last), the `save.rs`
-directory split, and the README and reply-shape checks. Every gate can be green on a Mac while
-the Windows tree does not compile: run `scripts/check_windows.py` before pushing anything that
-touches a Windows-only file and before a tag (`BUILD.md` step 5 has the setup). `scripts/run_on_windows.py` runs tests.
+directory split, and the README and reply-shape checks. Gates on one platform never compile another's `cfg` lines: before pushing a change
+that touches one, and before a tag, run `scripts/check_windows.py` on a Mac or `scripts/check_linux.py`
+on Windows (`BUILD.md` step 5). `scripts/run_on_windows.py` runs tests.
 
 **`App.svelte` is the layer no gate reaches, so state is born outside it rather than extracted
 from it later.** Anything shaped like a walk, a set, a cache or a map — anything holding state
