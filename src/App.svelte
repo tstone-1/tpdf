@@ -77,7 +77,7 @@
     type Passage,
     type Progress as HiddenProgress,
   } from "./lib/hiddentext";
-  import { PROGRESS_EVENT as PRINT_PROGRESS_EVENT, printingLine, type Printing } from "./lib/printing";
+  import { PROGRESS_EVENT as PRINT_PROGRESS_EVENT, printingLine, stoppable, type Printing } from "./lib/printing";
   import { afterAdding, suggestedName as addedTextName, type Kind as AddTextKind } from "./lib/addtext";
   import { AddTextDialog } from "./lib/addtextdialog";
   import {
@@ -105,7 +105,7 @@
     plainly,
   } from "./lib/recovery";
   import { releaseOrphans } from "./lib/orphans";
-  import type { DocumentInfo, PageSize } from "./lib/ipc";
+  import type { DocumentInfo, PageSize, PrintSettings } from "./lib/ipc";
   import { call } from "./lib/ipc";
   import * as signing from "./lib/signing";
   import * as validationData from "./lib/validationdata";
@@ -4257,6 +4257,8 @@
    * it is never something that arrived on its own. See `updateNotice`.
    */
   let notice = $state<string | null>(null);
+  /** A Windows print is being drawn, so the notice line offers Stop. */
+  let printStoppable = $state(false);
 
   /**
    * Puts the answer to something the reader asked in front of them, where
@@ -4618,16 +4620,30 @@
       };
       try {
         // macOS's print panel draws the job itself. Windows' and GTK's do not,
-        // so there the job is shown first (`printpreviewdialog.ts`).
+        // so there the job is shown first (`printpreviewdialog.ts`), and on
+        // Windows the preview is the print dialog: GTK's offers a scale and
+        // pages to a sheet, Windows' classic one neither.
         if (isMac() || !printPreviewDialog) {
           await call("print_document", job);
           return;
         }
         const preview = await call("print_prepare", job);
-        const print = await printPreviewDialog.ask(basename(openPathName), preview.pages, (index, width) =>
-          call("print_preview_page", { job: preview.job, index, width }),
+        const chooser = isLinux()
+          ? null
+          : {
+              setup: (settings: PrintSettings) => call("print_setup", { job: preview.job, settings }),
+              driver: (settings: PrintSettings) => call("print_printer_settings", { job: preview.job, settings }),
+            };
+        const answer = await printPreviewDialog.ask(
+          basename(openPathName),
+          preview.pages,
+          (index, width, marks) => call("print_preview_page", { job: preview.job, index, width, marks }),
+          chooser,
+          // The job's pages are the document's, in order: the page shown is
+          // the job's page of the same number.
+          status ? status.page - 1 : -1,
         );
-        if (print) await call("print_confirm", { job: preview.job });
+        if (answer.print) await call("print_confirm", { job: preview.job, settings: answer.settings });
         else await call("print_discard", { job: preview.job });
     } catch (e) {
       // Shown, unlike a failed place write. This one the reader is standing
@@ -5402,7 +5418,10 @@
       });
       // Windows only, and not blocking: the job is the backend's own copy, so
       // the reader can go on working while it prints.
-      await listen<Printing>(PRINT_PROGRESS_EVENT, (event) => tell(printingLine(event.payload)));
+      await listen<Printing>(PRINT_PROGRESS_EVENT, (event) => {
+        printStoppable = stoppable(event.payload);
+        tell(printingLine(event.payload));
+      });
       // Together rather than one after the other. Neither answer feeds the
       // other --- one is what the launcher handed over, the other is what was on
       // disk from last time --- and both are round trips on the path between the
@@ -6646,7 +6665,9 @@
           onclick={() => void call("ocr_cancel", { run: recognitionRun })}>Stop</button>{/if}
         {#if findingHidden}<button data-testid="stop-hidden-text" title="Stop comparing text with the pages"
           onclick={() => hiddenRuns.stop((run) => void call("hidden_text_cancel", { run }))}>Stop</button>{/if}
-      {:else if notice}<span class="notice" data-testid="notice">{notice}</span>{/if}
+      {:else if notice}<span class="notice" data-testid="notice">{notice}</span>
+        {#if printStoppable}<button data-testid="stop-printing" title="Stop printing; sheets already on the printer still print"
+          onclick={() => void call("print_cancel")}>Stop</button>{/if}{/if}
     </span>
     {#if status}
       <div class="navigation" aria-label="Page navigation">

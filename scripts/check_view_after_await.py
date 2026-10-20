@@ -158,6 +158,7 @@ PER_WINDOW: dict[str, str] = {
     "fieldPropertiesDialog": "a dialog on `document.body`",
     "compressDialog": "a dialog on `document.body`",
     "printPreviewDialog": "a dialog on `document.body`",
+    "printStoppable": "the one print the window is drawing, whichever document it came from",
     "webLinkDialog": "a dialog on `document.body`",
     "contextMenu": "the one right-click menu",
     # The application.

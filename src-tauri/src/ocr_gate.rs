@@ -1092,6 +1092,7 @@ fn strip(
         format!("this area is {rows} px tall at scale {scale}, too tall to render as one strip")
     })?;
     let request = crate::render::TileRequest {
+        annotations: true,
         rid: 0,
         doc,
         page,

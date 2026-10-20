@@ -92,6 +92,79 @@ export interface PageSize {
   height_pt: number;
 }
 
+/** How a page with a sheet to itself is drawn. `print_layout::Scale`. */
+export type PrintScale =
+  | { kind: "shrink" }
+  | { kind: "fit" }
+  | { kind: "actual" }
+  | { kind: "percent"; percent: number }
+  | { kind: "poster"; percent: number };
+
+/** Both sides of the paper, and the edge it turns on. `print_layout::TwoSided`. */
+export type TwoSided = "off" | "long" | "short";
+
+/** What the print preview's controls say. `print_layout::Settings`. */
+export interface PrintSettings {
+  printer: string | null;
+  paper: number | null;
+  landscape: boolean | null;
+  copies: number;
+  twoSided: TwoSided | null;
+  colour: boolean | null;
+  perSheet: number;
+  scale: PrintScale;
+  /** Whether a page turns a quarter to fit the way its space runs. */
+  rotate: boolean;
+  /** Whether the comments, highlights, stamps and drawings print. */
+  marks: boolean;
+  /** The job's pages, zero based and in order; every page when `null`. */
+  pages: number[] | null;
+}
+
+/**
+ * A page placed on a sheet, in points from the printable area's corner.
+ * `turned` is a quarter turn anticlockwise; `width` and `height` are then of
+ * the turned page as it lands.
+ */
+export interface PrintPlacement {
+  page: number;
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+  turned: boolean;
+}
+
+/** The paper, in points. `print_layout::Paper`. */
+export interface PrintPaper {
+  width: number;
+  height: number;
+  left: number;
+  top: number;
+  printableWidth: number;
+  printableHeight: number;
+}
+
+/** A printer as set up for this print. `print_layout::Device`. */
+export interface PrintDevice {
+  printer: string;
+  papers: { id: number; name: string }[];
+  paper: number;
+  landscape: boolean;
+  copies: number;
+  mostCopies: number;
+  twoSided: TwoSided | null;
+  colour: boolean | null;
+}
+
+/** `commands::print::Setup`. */
+export interface PrintSetup {
+  printers: string[];
+  device: PrintDevice;
+  paper: PrintPaper;
+  sheets: PrintPlacement[][];
+}
+
 /**
  * Why `open_document` refused, when it did.
  *
@@ -615,10 +688,19 @@ export interface Commands {
     reply: { job: number; pages: PageSize[] };
   };
   /** One sheet of the held job as a PNG `data:` URL. */
-  print_preview_page: { args: { job: number; index: number; width: number }; reply: string };
-  /** Reads the held job back and opens the platform's print dialog for it. */
-  print_confirm: { args: { job: number }; reply: void };
+  print_preview_page: { args: { job: number; index: number; width: number; marks?: boolean }; reply: string };
+  /**
+   * Prints the held job. With `settings` (Windows) on the printer the preview
+   * chose, laid out as it showed; without, through the platform's dialog.
+   */
+  print_confirm: { args: { job: number; settings?: PrintSettings | null }; reply: void };
   print_discard: { args: { job: number }; reply: void };
+  /** Windows: sets the preview's printer up and lays the job out on its paper. */
+  print_setup: { args: { job: number; settings: PrintSettings }; reply: PrintSetup };
+  /** Windows: the driver's own settings dialog, then as `print_setup`. */
+  print_printer_settings: { args: { job: number; settings: PrintSettings }; reply: PrintSetup };
+  /** Windows: stops the print being drawn. Does nothing elsewhere. */
+  print_cancel: { args: NoArgs; reply: void };
   process_elapsed_ms: { args: NoArgs; reply: number };
   autobench_path: { args: NoArgs; reply: string | null };
   viewercheck_path: { args: NoArgs; reply: string | null };

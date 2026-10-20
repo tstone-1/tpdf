@@ -222,6 +222,7 @@ fn main() {
 
     // ------------------------------------------------------------ the pixels
     let request = Request::Tile {
+        annotations: true,
         crop: None,
         rid: 1,
         page: 0,
@@ -306,6 +307,7 @@ fn main() {
     // the withdrawal arrives. The margin is the first tile's render time
     // (printed below) against three pipe writes, which is microseconds.
     let tile_at = |rid: u64| Request::Tile {
+        annotations: true,
         crop: None,
         rid,
         page: 0,

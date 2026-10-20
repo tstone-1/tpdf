@@ -66,7 +66,7 @@ import Form_ from "../../src-tauri/testdata/replies/Form.json";
 import type { Comments } from "./comments";
 import type { CropGeometry } from "./crop";
 import type { Applied, Copied, EditState, Merged, Split } from "./edits";
-import type { DocumentInfo } from "./ipc";
+import type { DocumentInfo, PrintSetup } from "./ipc";
 import type { Links } from "./links";
 import type { RegionPlan } from "./pages";
 import type { Properties } from "./properties";
@@ -78,6 +78,7 @@ import type { Shrinkage } from "./compress";
 import Shrinkage_ from "../../src-tauri/testdata/replies/Shrinkage.json";
 import type { Recognised } from "./recognise";
 import Recognised_ from "../../src-tauri/testdata/replies/Recognised.json";
+import Setup_ from "../../src-tauri/testdata/replies/Setup.json";
 import type { Opening } from "./launchplace";
 import type { Forward } from "./forward";
 import Forward_ from "../../src-tauri/testdata/replies/Forward.json";
@@ -208,6 +209,7 @@ const SCHEMA = {
     engine: ["string"],
     languageUnavailable: ["string"],
   } satisfies Shape<Recognised>,
+  Setup: { printers: ["array"], device: ["object"], paper: ["object"], sheets: ["array"] } satisfies Shape<PrintSetup>,
   HiddenText: {
     found: ["array"],
     summary: ["string"],
@@ -419,6 +421,7 @@ const SAMPLES: Record<keyof typeof SCHEMA, Record<string, unknown>> = {
   Comparison: Comparison_ satisfies Widen<Comparison>,
   Shrinkage: Shrinkage_ satisfies Widen<Shrinkage>,
   Recognised: Recognised_ satisfies Widen<Recognised>,
+  Setup: Setup_ satisfies Widen<PrintSetup>,
   HiddenText: HiddenText_ satisfies Widen<HiddenText>,
   Offered: Offered_ satisfies Widen<Offered>,
   ToolState: ToolState_ satisfies Widen<ToolState>,

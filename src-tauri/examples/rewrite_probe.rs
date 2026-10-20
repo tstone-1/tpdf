@@ -612,6 +612,7 @@ fn judge_service(checks: &mut Checks, fixture: &Path, work: &Path, library_dir: 
         let t0 = Instant::now();
         service.tile(
             TileRequest {
+                annotations: true,
                 crop: None,
                 rid: 0,
                 doc: opened.id,
@@ -855,6 +856,7 @@ fn settle(worker: &mut Worker) -> String {
 /// Renders one page's top-left tile, returning its pixels.
 fn tile(worker: &mut Worker, page: u32) -> Result<Vec<u8>, String> {
     let request = Request::Tile {
+        annotations: true,
         crop: None,
         rid: 0,
         page,

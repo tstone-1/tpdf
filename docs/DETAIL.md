@@ -97,7 +97,11 @@ started over the job, where `Windows.Data.Pdf` drew it in the app process before
 times the cost on a dense drawing (`docs/VERIFICATION.md`). Since the same day Windows and Linux
 show tpdf's own preview of the job before the system dialog (`printpreviewdialog.ts`,
 `commands::print::Previews`), because neither system dialog has one; the pictures are drawn by a
-worker over the job's bytes, so they are of what is printed, not of the open document. Two
+worker over the job's bytes, so they are of what is printed, not of the open document. On
+Windows the preview is the dialog: it chooses the printer and its settings (`printers_win.rs`,
+through the driver's own `DEVMODE`), lays the job out on that paper's printable area with a scale
+and pages to a sheet (`print_layout.rs`), and `print_win::spool_laid_out` draws exactly that
+layout, so the sheets on screen are the sheets that come out. Two
 consequences to state rather than
 discover: Windows output is **raster at 300 dpi** where macOS is vector, so text is not selectable
 in a print-to-PDF result; and `Windows.Data.Pdf`, which `render_page` and the probe still use,

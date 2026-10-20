@@ -4550,6 +4550,30 @@ every Windows PDF viewer does; the output is **raster at 300 dpi** where macOS i
 worker is this executable started again, so the probe answers the worker marker before anything
 else, as the CLI does.
 
+**In the app, tpdf's print preview is the print dialog** (since 2026-10-20). `printers_win.rs`
+lists the printers and changes the public fields of the chosen one's `DEVMODE` (paper,
+orientation, copies, two-sided, colour) through `DocumentProperties`, which keeps the driver's
+private settings and corrects what the driver cannot do; *Printer settings...* hands the same
+record to the driver's own dialog. `print_layout.rs` lays the job out on the printable area that
+`GetDeviceCaps` reports for those settings, and `print_win::spool_laid_out` draws that layout,
+rendering only the part of each page that lands on the paper. `PrintDlgW` is left only behind
+`print_document`, which the Windows app no longer reaches. Copies past the driver's own `DC_COPIES` are
+made by sending the pages again. What is tested without paper: the layout
+(`cargo test --lib print_layout`), the cut of a page to the paper (`print_win`), and every
+printer on the machine opened, described and turned (`cargo test --lib printers_win -- --nocapture`
+prints one line per printer). What is not: whether a driver acts on `dmDuplex`, `dmColor` and
+`dmCopies` on paper, and the driver's dialog itself.
+
+The preview's other choices are all decided before the spooler: pages turned to fit
+(`Layout::rotate`, drawn by PDFium a quarter turn anticlockwise, `turns: 3`), posters
+(`Scale::Poster`, one page over up to `MOST_POSTER_SHEETS` sheets overlapping by
+`POSTER_OVERLAP`), and comments left out, which is PDFium rendering without `FPDF_ANNOT` while
+`FPDF_FFLDraw` still draws the form fields (`TileRequest::annotations`). Odd, even, reversed and
+current pages are only the page list the window sends. **Stop** (`print_cancel`) sets a flag
+`spool_planned` reads before each sheet and each band of one; the open document's guard then
+calls `AbortDoc`. The settings kept between prints are in the window's `localStorage`
+(`tpdf.print-settings`, `printpreview.ts`).
+
 `present` opens a modal dialog, so that last step is the one thing no automatic check can
 reach — and since 2026-08-23 there is something behind it worth stating rather than leaving
 implied. The panel's **Pages** field was disabled until then (`nMinPage == nMaxPage`, both zero
@@ -4575,7 +4599,7 @@ with the file there; the same build from the ssh session passed, and
 `target\release\examples\print-probe.exe` then ran in the task (9/9 and 10/10). Why the task's
 build cannot see the file is not known.
 
-Ten checks, and four of them are the ones worth understanding:
+Fifteen checks, and these are the ones worth understanding:
 
 - **Ink, not the page count.** A wrong `BITMAPINFO`, a DC in the wrong mapping mode and a bad
   `StretchDIBits` rectangle all produce the right number of perfectly blank sheets. Proved
@@ -4602,8 +4626,26 @@ Ten checks, and four of them are the ones worth understanding:
   the same reason. On a fixture whose first and last sheets measure alike it prints a `[SKIP]`
   saying so, rather than passing on a comparison that cannot fail; `rotated.pdf` is a fixture
   where they differ.
+- **Four to a sheet is read by quarter, not by sheet count.** The ink in each quarter of the
+  printed sheet must match the pages laid there, and the quarters with no page must be white:
+  `[1802, 2840, 0, 0]` for two pages. A layout that drew every page over the first cell would
+  print one inked sheet too.
+- **A turned page against the turned geometry, not against its ink's direction.** The first
+  version expected every sheet's ink to run tall on portrait A4 and failed on `rotated.pdf`,
+  whose first page is landscape after the job's quarter turn while its text block runs tall: the
+  page turned correctly and its ink came out wide. The check now swaps the source page's spans
+  and holds the print to `predict`, which an unturned page misses by about 60% across.
+- **Marks left out, pixel by pixel, with the form as the control.** Comments are about a
+  twentieth of `comments.pdf`'s ink, so a ratio of totals read 0.945 with every comment gone.
+  The check counts the pixels only the sheet with marks has (1451) and the ones only the other
+  has (0). `form.pdf`'s field value has no appearance stream and only `FPDF_FFLDraw` draws it,
+  so it must survive unchanged: 0 pixels gone.
+- **Stop on a live job.** Another thread presses Stop every millisecond while the print runs,
+  since a print clears a Stop pressed before it began; the print must end as stopped and the
+  printer must write no file, which is the guard's `AbortDoc` and not an `EndDoc`.
 
-Reference run, `testdata/rotated.pdf`, pages 1--2 with a quarter turn:
+Reference run, `testdata/rotated.pdf`, pages 1--2 with a quarter turn (the first ten lines; the
+five laid-out checks follow them):
 
 ```
   pages    : 4 in the source, printing [1, 2] with a quarter turn

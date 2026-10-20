@@ -158,6 +158,10 @@ pub struct TileRequest {
     /// a page holding the last one is the state `RawDocument::page` exists to
     /// make unreachable.
     pub crop: Option<[f32; 4]>,
+    /// Whether to draw the page's annotations: comments, highlights, stamps
+    /// and drawings. Form fields are drawn either way. Always set but for a
+    /// print that leaves the comments out (`print_layout::Settings::marks`).
+    pub annotations: bool,
 }
 
 /// A rendered tile plus the timings that make spike 0.1 answerable.
@@ -1841,7 +1845,15 @@ pub(crate) fn render_tile_into(
     // No slice: the pause callback returns "stop" the moment the token is set,
     // so cancellation costs one poll interval either way, and slicing measured a
     // 1--2% overhead for nothing this path needs.
-    let progress = progressive::render_tile_into(bindings, &page, spec, pixels, None, cancel)?;
+    let progress = progressive::render_tile_into_with(
+        bindings,
+        &page,
+        spec,
+        pixels,
+        None,
+        cancel,
+        req.annotations,
+    )?;
     let render_us = t0.elapsed().as_micros() as u64;
 
     match progress.outcome {
@@ -1963,6 +1975,7 @@ pub(crate) fn text_edit_runs(
                 .min(1024. / (rect[2] - rect[0]).max(1.))
                 .min(512. / (rect[3] - rect[1]).max(1.));
             let request = TileRequest {
+                annotations: true,
                 rid: 0,
                 doc: 0,
                 page,
@@ -2699,6 +2712,7 @@ pub fn run_signature_preview(
         )
     };
     let request = TileRequest {
+        annotations: true,
         rid: 0,
         doc: 0,
         page: 0,
@@ -2868,6 +2882,7 @@ fn page_sample(
         (height_pt * scale).floor().clamp(1.0, SAMPLE_PAGE_SIDE) as u16,
     );
     let request = TileRequest {
+        annotations: true,
         rid: 0,
         doc: 0,
         page: focus.page,

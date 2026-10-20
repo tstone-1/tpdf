@@ -1,0 +1,41 @@
+{
+  "printers": [
+    "Brother",
+    "Microsoft Print to PDF"
+  ],
+  "device": {
+    "printer": "Brother",
+    "papers": [
+      {
+        "id": 9,
+        "name": "A4"
+      }
+    ],
+    "paper": 9,
+    "landscape": false,
+    "copies": 1,
+    "mostCopies": 999,
+    "twoSided": "long",
+    "colour": true
+  },
+  "paper": {
+    "width": 595.0,
+    "height": 842.0,
+    "left": 12.0,
+    "top": 12.0,
+    "printableWidth": 571.0,
+    "printableHeight": 818.0
+  },
+  "sheets": [
+    [
+      {
+        "page": 0,
+        "x": 0.0,
+        "y": 0.0,
+        "width": 571.0,
+        "height": 818.0,
+        "turned": true
+      }
+    ]
+  ]
+}

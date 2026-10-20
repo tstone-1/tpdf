@@ -99,6 +99,7 @@ pub mod pagetree;
 pub mod pathcut;
 pub mod picture;
 pub mod print;
+pub mod print_layout;
 #[cfg(target_os = "linux")]
 pub mod print_linux;
 #[cfg(target_os = "macos")]
@@ -108,6 +109,8 @@ pub mod print_other;
 #[cfg(windows)]
 pub mod print_win;
 pub mod printer;
+#[cfg(windows)]
+pub mod printers_win;
 pub mod progressive;
 pub mod protect;
 mod protocol;
@@ -1120,6 +1123,9 @@ pub fn run() {
             print_preview_page,
             print_confirm,
             print_discard,
+            print_setup,
+            print_printer_settings,
+            print_cancel,
             process_elapsed_ms,
             autobench_path,
             viewercheck_path,

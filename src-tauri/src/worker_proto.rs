@@ -65,6 +65,11 @@ pub enum Request {
         /// Defaulted for the reason [`Request::Text`]'s is.
         #[serde(default)]
         crop: Option<[f32; 4]>,
+        /// Whether to draw the page's annotations; form fields are drawn
+        /// either way. Defaulted to drawing them, which every request but a
+        /// print without its comments wants.
+        #[serde(default = "drawn")]
+        annotations: bool,
     },
     /// Abandon a tile request, whether or not it has started.
     ///
@@ -722,6 +727,11 @@ impl Reply {
 
 /// A size in the unit a reader thinks in: `412 bytes of JSON`, `about 3 MB of
 /// JSON`.
+/// A tile request's `annotations` when the sender predates it: drawn.
+const fn drawn() -> bool {
+    true
+}
+
 fn about_bytes(bytes: usize) -> String {
     match bytes {
         0..=9_999 => format!("{bytes} bytes of JSON"),
@@ -1215,6 +1225,7 @@ mod tests {
     #[test]
     fn text_view_keeps_tile_cancellation_identity_and_rejects_nesting() {
         let tile = Request::Tile {
+            annotations: true,
             rid: 19,
             page: 0,
             scale: 1.0,
@@ -1278,6 +1289,7 @@ mod tests {
                 lazy_geometry: true,
             },
             Request::Tile {
+                annotations: true,
                 rid: 7,
                 page: 3,
                 scale: 1.5,

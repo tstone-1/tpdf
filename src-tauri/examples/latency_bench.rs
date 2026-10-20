@@ -345,6 +345,7 @@ fn run(document: &Path, rounds: usize, reps: usize, page: u32, scale: f32) -> Re
                     tile => {
                         let png = tile == "png";
                         let response = worker.call(&Request::Tile {
+                            annotations: true,
                             crop: None,
                             rid: RID,
                             page,

@@ -575,6 +575,7 @@ impl Session {
         self.exchange_within(within, move |worker| {
             let response = worker
                 .call(&Request::Tile {
+                    annotations: request.annotations,
                     rid: 0,
                     page: request.page,
                     scale: request.scale,

@@ -197,6 +197,9 @@ impl<D> Default for Previews<D> {
             last: 0,
             built: None,
             drawer: None,
+            sizes: Vec::new(),
+            #[cfg(windows)]
+            printer: None,
         }))
     }
 }
@@ -217,6 +220,13 @@ struct Shown<D> {
     /// The worker over the job's bytes and every sheet's size; `None` while a
     /// picture is being drawn.
     drawer: Option<D>,
+    /// Each page of the job's size in points, which the layout needs while
+    /// the worker is out drawing.
+    sizes: Vec<crate::render::PageSize>,
+    /// The printer the preview has chosen, with its settings; `None` until
+    /// the preview asks, and while the driver is being asked something.
+    #[cfg(windows)]
+    printer: Option<crate::printers_win::Printer>,
 }
 
 pub struct Drawer {
@@ -262,7 +272,42 @@ impl<D> Previews<D> {
         }
         shown.job = None;
         shown.drawer = None;
+        shown.sizes = Vec::new();
+        #[cfg(windows)]
+        {
+            shown.printer = None;
+        }
         shown.built.take().ok_or_else(|| CLOSED.into())
+    }
+
+    /// The job's page sizes and its printer, taken out to ask the driver
+    /// with, if `job` is the preview on screen.
+    #[cfg(windows)]
+    fn take_printer(
+        &self,
+        job: u32,
+    ) -> Result<
+        (
+            Vec<crate::render::PageSize>,
+            Option<crate::printers_win::Printer>,
+        ),
+        String,
+    > {
+        let mut shown = self.lock()?;
+        if shown.job != Some(job) {
+            return Err(CLOSED.into());
+        }
+        Ok((shown.sizes.clone(), shown.printer.take()))
+    }
+
+    /// Gives the printer back, unless the preview has gone meanwhile.
+    #[cfg(windows)]
+    fn give_printer(&self, job: u32, printer: Option<crate::printers_win::Printer>) {
+        if let Ok(mut shown) = self.lock() {
+            if shown.job == Some(job) {
+                shown.printer = printer;
+            }
+        }
     }
 }
 
@@ -331,8 +376,181 @@ pub async fn print_prepare(
     };
     shown.job = Some(job);
     shown.built = Some(built);
+    shown.sizes = sizes.clone();
+    #[cfg(windows)]
+    {
+        shown.printer = None;
+    }
     shown.drawer = Some(Drawer { session, sizes });
     Ok(preview)
+}
+
+/// The printer and paper a preview prints on, and its sheets laid out.
+#[derive(serde::Serialize, Clone, Debug)]
+#[serde(rename_all = "camelCase")]
+pub struct Setup {
+    pub printers: Vec<String>,
+    pub device: crate::print_layout::Device,
+    pub paper: crate::print_layout::Paper,
+    /// Each sheet's pages, placed in points from the printable area's corner.
+    pub sheets: Vec<Vec<crate::print_layout::Placement>>,
+}
+
+/// Applies the preview's settings to its printer and lays the job out on the
+/// paper that gives. The default printer when none is named.
+///
+/// Windows only: macOS and Linux choose these in their own print dialogs.
+///
+/// # Errors
+///
+/// `job` is not the preview held now, no printer is installed, the driver
+/// refuses the settings, or the layout is refused.
+#[tauri::command]
+pub async fn print_setup(
+    app: tauri::AppHandle,
+    previews: tauri::State<'_, Previews>,
+    job: u32,
+    settings: crate::print_layout::Settings,
+) -> Result<Setup, String> {
+    set_up(&app, &previews, job, settings, false).await
+}
+
+/// Opens the printer driver's own settings dialog, then lays the job out on
+/// the paper it leaves chosen. The settings are those `print_setup` took.
+///
+/// # Errors
+///
+/// As `print_setup`, and the driver failing to show its dialog.
+#[tauri::command]
+pub async fn print_printer_settings(
+    app: tauri::AppHandle,
+    previews: tauri::State<'_, Previews>,
+    job: u32,
+    settings: crate::print_layout::Settings,
+) -> Result<Setup, String> {
+    set_up(&app, &previews, job, settings, true).await
+}
+
+#[cfg(any(target_os = "macos", target_os = "linux"))]
+#[allow(clippy::unused_async)]
+async fn set_up(
+    _app: &tauri::AppHandle,
+    _previews: &Previews,
+    _job: u32,
+    _settings: crate::print_layout::Settings,
+    _prompt: bool,
+) -> Result<Setup, String> {
+    Err("the printer is chosen in the system's print dialog here".into())
+}
+
+#[cfg(windows)]
+async fn set_up(
+    app: &tauri::AppHandle,
+    previews: &Previews,
+    job: u32,
+    settings: crate::print_layout::Settings,
+    prompt: bool,
+) -> Result<Setup, String> {
+    let owner = prompt.then(|| owner_of(app)).flatten();
+    let (sizes, held) = previews.take_printer(job)?;
+    let (printer, setup) = tauri::async_runtime::spawn_blocking(move || {
+        let owner = owner.map(|h| windows::Win32::Foundation::HWND(h as *mut std::ffi::c_void));
+        apply(held, &sizes, &settings, prompt, owner)
+    })
+    .await
+    .map_err(|e| format!("the printer could not be asked: {e}"))?;
+    previews.give_printer(job, printer);
+    setup
+}
+
+/// The window's handle as an integer, to cross onto another thread; see
+/// `present_job` for why that is sound.
+#[cfg(windows)]
+fn owner_of(app: &tauri::AppHandle) -> Option<isize> {
+    use tauri::Manager;
+    app.get_webview_window("main")
+        .and_then(|w| w.hwnd().ok())
+        .map(|h| h.0 as isize)
+}
+
+/// Opens the printer the settings name, unless it is the one held, sets it
+/// up, and lays the job out. The printer is handed back whatever happens, so
+/// a refused setting does not lose the reader's earlier ones.
+#[cfg(windows)]
+fn apply(
+    held: Option<crate::printers_win::Printer>,
+    sizes: &[crate::render::PageSize],
+    settings: &crate::print_layout::Settings,
+    prompt: bool,
+    owner: Option<windows::Win32::Foundation::HWND>,
+) -> (Option<crate::printers_win::Printer>, Result<Setup, String>) {
+    use crate::printers_win::{default_name, list, Printer};
+    let printers = match list() {
+        Ok(printers) => printers,
+        Err(e) => return (held, Err(e)),
+    };
+    let wanted = settings
+        .printer
+        .clone()
+        .or_else(|| held.as_ref().map(|p| p.name().to_owned()))
+        .or_else(default_name)
+        .or_else(|| printers.first().cloned());
+    let Some(wanted) = wanted else {
+        return (held, Err("no printer is installed".into()));
+    };
+    let mut printer = match held {
+        Some(printer) if printer.name() == wanted => printer,
+        other => match Printer::open(&wanted) {
+            Ok(printer) => printer,
+            Err(e) => return (other, Err(e)),
+        },
+    };
+    let chosen = if prompt {
+        printer.prompt(owner).map(|_| ())
+    } else {
+        printer.choose(
+            settings.paper,
+            settings.landscape,
+            settings.copies,
+            settings.two_sided,
+            settings.colour,
+        )
+    };
+    let setup = chosen.and_then(|()| {
+        let paper = printer.paper()?;
+        let sheets = crate::print_layout::lay_out(
+            sizes,
+            &chosen_pages(settings, sizes.len())?,
+            &paper,
+            settings.layout(),
+        )?;
+        Ok(Setup {
+            printers,
+            device: printer.describe(),
+            paper,
+            sheets,
+        })
+    });
+    (Some(printer), setup)
+}
+
+/// The pages the settings name, or every page of a job of `count`.
+///
+/// # Errors
+///
+/// No page at all, which is nothing to print.
+fn chosen_pages(
+    settings: &crate::print_layout::Settings,
+    count: usize,
+) -> Result<Vec<u32>, String> {
+    let pages = settings
+        .pages
+        .clone()
+        .unwrap_or_else(|| (0..u32::try_from(count).unwrap_or(u32::MAX)).collect());
+    if pages.is_empty() {
+        return Err("no page is chosen to print".into());
+    }
+    Ok(pages)
 }
 
 /// Starts a worker over the job and reads every sheet's size.
@@ -370,7 +588,8 @@ fn open_preview(
 }
 
 /// One sheet of the held job as a PNG `data:` URL, `width` pixels wide at
-/// most and never wider than [`PREVIEW_MAX_WIDTH`].
+/// most and never wider than [`PREVIEW_MAX_WIDTH`], with its comments and
+/// other marks only when `marks` is set.
 ///
 /// # Errors
 ///
@@ -383,12 +602,13 @@ pub async fn print_preview_page(
     job: u32,
     index: u32,
     width: u32,
+    marks: Option<bool>,
 ) -> Result<String, String> {
     // Taken out of the state while it draws, so the lock is not held for the
     // seconds a dense sheet takes, and Print still finds the job meanwhile.
     let mut drawer = previews.take_drawer(job)?;
     let (drawer, drawn) = tauri::async_runtime::spawn_blocking(move || {
-        let drawn = draw_sheet(&mut drawer, index, width);
+        let drawn = draw_sheet(&mut drawer, index, width, marks.unwrap_or(true));
         (drawer, drawn)
     })
     .await
@@ -398,7 +618,7 @@ pub async fn print_preview_page(
 }
 
 /// Draws one sheet of the held job, tiled as `tpdf render` tiles a page.
-fn draw_sheet(held: &mut Drawer, index: u32, width: u32) -> Result<String, String> {
+fn draw_sheet(held: &mut Drawer, index: u32, width: u32, marks: bool) -> Result<String, String> {
     let size = *held
         .sizes
         .get(index as usize)
@@ -413,6 +633,7 @@ fn draw_sheet(held: &mut Drawer, index: u32, width: u32) -> Result<String, Strin
                 .session
                 .tile_within(
                     crate::render::TileRequest {
+                        annotations: marks,
                         rid: 0,
                         doc: 0,
                         page: index,
@@ -466,8 +687,11 @@ fn preview_scale(size: crate::render::PageSize, width: u32) -> Result<(f32, u32,
     Ok((scale, width, high))
 }
 
-/// Prints the held job: the platform's read-back, then its dialog, as
-/// `print_document` does. The preview is released whatever the outcome.
+/// Prints the held job. The preview is released whatever the outcome.
+///
+/// With `settings`, which only Windows sends, the job goes to the printer the
+/// preview chose, laid out as it showed, with no further dialog. Without, the
+/// platform's read-back and then its dialog, as `print_document` does.
 ///
 /// # Errors
 ///
@@ -478,11 +702,127 @@ pub async fn print_confirm(
     app: tauri::AppHandle,
     previews: tauri::State<'_, Previews>,
     job: u32,
+    settings: Option<crate::print_layout::Settings>,
 ) -> Result<(), save::Refusal> {
+    #[cfg(windows)]
+    if let Some(settings) = settings {
+        let (sizes, printer) = previews.take_printer(job).map_err(save::Refusal::from)?;
+        let built = previews.end(job).map_err(save::Refusal::from)?;
+        let printer = printer.ok_or("no printer has been chosen for this print")?;
+        let app = app.clone();
+        return tauri::async_runtime::spawn_blocking(move || {
+            print_chosen(&app, built, printer, &sizes, &settings)
+        })
+        .await
+        .map_err(|e| save::Refusal::from(format!("the print could not start: {e}")))?
+        .map_err(save::Refusal::from);
+    }
+    // Only Windows sends settings; the system dialogs choose them elsewhere.
+    #[cfg(any(target_os = "macos", target_os = "linux"))]
+    let _ = settings;
     // The worker ends here, or when the picture it is drawing is finished,
     // before the dialog: Windows starts its own over the same bytes to print.
     let built = previews.end(job).map_err(save::Refusal::from)?;
     present_built(&app, built).await
+}
+
+/// Reads the job back as `present_job` does, then prints it on the printer
+/// the preview chose, on a thread of its own.
+///
+/// Copies past what the driver makes by itself are made by sending the pages
+/// again, each copy whole before the next.
+#[cfg(windows)]
+fn print_chosen(
+    app: &tauri::AppHandle,
+    built: Built,
+    mut printer: crate::printers_win::Printer,
+    sizes: &[crate::render::PageSize],
+    settings: &crate::print_layout::Settings,
+) -> Result<(), String> {
+    let Built {
+        bytes,
+        title,
+        expected,
+    } = built;
+    let reading = print_win::read(&bytes)
+        .ok_or("the print job could not be read back, so it will not be printed")?;
+    print::expect_pages(reading.pages.len(), expected)?;
+    let mut pages = chosen_pages(settings, reading.pages.len())?;
+    let copies = settings.copies.max(1);
+    let layout = settings.layout();
+    // Laid out here as well as on the print thread, for the count the
+    // progress line says, from the sizes the preview's worker read: the
+    // read-back's are `Windows.Data.Pdf`'s, in DIPs rather than points.
+    let mut sheets = crate::print_layout::lay_out(sizes, &pages, &printer.paper()?, layout)?.len();
+    if copies > printer.describe().most_copies {
+        pages = pages.repeat(usize::from(copies));
+        sheets *= usize::from(copies);
+        printer.choose(None, None, 1, None, None)?;
+    }
+    // Crosses to the print thread as an integer, as the owner window does: a
+    // DC is a process-wide handle, and only that thread uses it from here.
+    let dc = printer.dc()?.0 as isize;
+    let marks = settings.marks;
+    let library = crate::pdfium_library_dir(app);
+    on_print_thread(app, move |owner, progress| {
+        let dc = windows::Win32::Graphics::Gdi::HDC(dc as *mut std::ffi::c_void);
+        print_win::print_on(
+            dc, &bytes, &title, owner, progress, &library, &pages, layout, sheets, marks,
+        )
+    });
+    Ok(())
+}
+
+/// Stops the Windows print that is being drawn. Elsewhere, and when nothing
+/// is printing, it does nothing: macOS and Linux print through their own
+/// systems, which have their own queues.
+#[tauri::command]
+pub fn print_cancel() {
+    #[cfg(windows)]
+    print_win::stop();
+}
+
+/// Runs a print on a thread of its own, reporting its progress to the window
+/// and saying in a message over it why a print failed.
+///
+/// `print` answers whether a job was sent; `false` is Cancel, which shows
+/// nothing.
+#[cfg(windows)]
+fn on_print_thread(
+    app: &tauri::AppHandle,
+    print: impl FnOnce(Option<windows::Win32::Foundation::HWND>, &dyn Fn(u32, u32)) -> Result<bool, String>
+        + Send
+        + 'static,
+) {
+    let owner = owner_of(app);
+    let app = app.clone();
+    std::thread::spawn(move || {
+        use tauri::Emitter;
+        let owner = owner.map(|h| windows::Win32::Foundation::HWND(h as *mut std::ffi::c_void));
+        let last = std::cell::Cell::new((0, 0));
+        let report = |sent, of, state| {
+            let _ = app.emit(PROGRESS_EVENT, Printing { sent, of, state });
+        };
+        let printed = print(owner, &|sent, of| {
+            last.set((sent, of));
+            report(sent, of, "printing");
+        });
+        let (sent, of) = last.get();
+        match printed {
+            Ok(true) => report(sent, of, "sent"),
+            // Stopped while printing: the line says so instead of "Printing".
+            Ok(false) if of > 0 => report(sent, of, "stopped"),
+            // Cancel in the dialog: no line was shown, so there is none to clear.
+            Ok(false) => {}
+            Err(e) => {
+                report(sent, of, "failed");
+                diag::note(&format!("[print] {e}"));
+                // Said in the window too, as on Linux: the dialog has closed, and
+                // until 26.10.24 a refused job on Windows was only this log line.
+                print_win::tell(owner, &e);
+            }
+        }
+    });
 }
 
 /// Closes the preview without printing, ending its worker.
@@ -607,52 +947,16 @@ fn present_job(
     // free. `None` is degradation and not failure: a print dialog with no owner is
     // still a print dialog, where refusing to print because a window handle could
     // not be found would be a worse outcome than a slightly misplaced panel.
-    // Carried across the thread boundary as an integer, not as an `HWND`. A raw
-    // handle is a `*mut c_void` and therefore not `Send`, and the compiler is right
-    // to say so in general --- but a window handle is a process-wide kernel-managed
-    // value with no thread affinity for this use, and `PrintDlgW` only ever reads
-    // it to parent a dialog. Reconstructed on the far side rather than smuggled
-    // through a wrapper type, so the one unsound-looking step is one line and is
-    // where the reasoning is written down.
-    let owner = {
-        use tauri::Manager;
-        app.get_webview_window("main")
-            .and_then(|w| w.hwnd().ok())
-            .map(|h| h.0 as isize)
-    };
-
+    // Carried across the thread boundary as an integer, not as an `HWND`
+    // (`owner_of`). A raw handle is a `*mut c_void` and therefore not `Send`, and
+    // the compiler is right to say so in general --- but a window handle is a
+    // process-wide kernel-managed value with no thread affinity for this use, and
+    // `PrintDlgW` only ever reads it to parent a dialog. Reconstructed on the far
+    // side rather than smuggled through a wrapper type, so the one
+    // unsound-looking step is one line and is where the reasoning is written down.
     let library = crate::pdfium_library_dir(app);
-    let app = app.clone();
-    std::thread::spawn(move || {
-        use tauri::Emitter;
-        let owner = owner.map(|h| windows::Win32::Foundation::HWND(h as *mut std::ffi::c_void));
-        let last = std::cell::Cell::new((0, 0));
-        let report = |sent, of, state| {
-            let _ = app.emit(PROGRESS_EVENT, Printing { sent, of, state });
-        };
-        let printed = print_win::present(
-            &bytes,
-            &title,
-            owner,
-            &|sent, of| {
-                last.set((sent, of));
-                report(sent, of, "printing");
-            },
-            &library,
-        );
-        let (sent, of) = last.get();
-        match printed {
-            Ok(true) => report(sent, of, "sent"),
-            // Cancel: no line was shown, so there is none to clear.
-            Ok(false) => {}
-            Err(e) => {
-                report(sent, of, "failed");
-                diag::note(&format!("[print] {e}"));
-                // Said in the window too, as on Linux: the dialog has closed, and
-                // until 26.10.24 a refused job on Windows was only this log line.
-                print_win::tell(owner, &e);
-            }
-        }
+    on_print_thread(app, move |owner, progress| {
+        print_win::present(&bytes, &title, owner, progress, &library)
     });
     Ok(())
 }

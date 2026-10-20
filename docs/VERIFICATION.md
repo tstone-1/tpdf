@@ -6926,6 +6926,37 @@ Windows desktop, screen locked, so the dialog was not seen in the application it
   finishes a picture after Print or Cancel is not kept. Each of those three guards was removed
   in turn and a test went red each time; so did removing the clamp at `PREVIEW_MAX_WIDTH`.
 
+## The print preview as the Windows print dialog — verified 2026-10-20
+
+Windows desktop, six printers installed, Microsoft Print to PDF as the printer for every print.
+
+- **The printers.** `cargo test --lib printers_win -- --nocapture` opened all six, read each one's
+  papers, copies, two-sided and colour, and turned each one's orientation without changing the
+  Windows default. The Brother reports 20 papers, A4 as paper 9 at 595x842 points, up to 999
+  copies, two-sided, colour.
+- **`print-probe` on `rotated.pdf`, 15 of 15.** Beyond the ten checks it had, four pages to a
+  sheet put ink in the top two quarters only for two pages (`[1802, 2840, 0, 0]`); pages turned
+  to fit landed within 1% of the turned page's geometry, where the page left unturned misses by
+  about 60% across; printing without marks took 1451 pixels off `comments.pdf` and added none,
+  and the pictures showed every highlight, note, box and underline gone with the text intact; and
+  `form.pdf`'s field value, which only `FPDF_FFLDraw` draws, came out with 0 pixels changed;
+  and a print stopped from another thread while it ran ended as stopped, with no file written.
+- **The layout** (`print_layout` tests): shrink, fit, actual size, a percentage, 2 to 16 to a
+  sheet, turning by page shape and never for a square page, and posters (A4 at 200% is 9 sheets,
+  each 18 points over its neighbour, centred; one page to a sheet only; more than 64 sheets
+  refused). The cut of a page to the paper renders a turned page with `turns: 3` at the paper's
+  density across its own height.
+- **The window's half** (`printpreview.test.ts`, `printing.test.ts`): odd, even, reversed and
+  current pages, the settings kept and refused from storage, the turned picture's box, and the
+  progress line's stopped state and sheet counts.
+- **Not verified:** a sheet on paper from the Brother through this path, so whether its driver
+  acts on two-sided, colour and copies set this way; the driver's own settings dialog; the Stop
+  button in the window. The dialog itself was photographed in the application by
+  `screenshots.py --more` on a release checks build, 55 of 55, with every new control in its
+  place, the custom page field hidden until *Custom* is chosen, and two-sided hidden for a
+  printer that cannot do it. The run measures the two checkboxes at 13x13, under its 24 px
+  line; each sits inside its label, so the label's text is part of what a click reaches.
+
 ### Words beside a scanned page are not compared — measured 2026-10-19
 
 The user-test kit's inspection report (`compare.rs`, *A page with no text is not a page with no

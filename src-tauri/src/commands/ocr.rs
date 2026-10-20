@@ -187,6 +187,7 @@ fn read(
         // One tile for the page: `render_size` keeps it inside the tile budget
         // and under `MAX_EDGE` a side, which fits the request's 16 bits.
         let request = TileRequest {
+            annotations: true,
             rid: 0,
             doc,
             page,

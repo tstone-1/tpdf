@@ -1029,6 +1029,7 @@ fn render(
         height,
         png,
         crop,
+        annotations,
     } = *request
     else {
         return Response::err("not a tile request");
@@ -1046,6 +1047,7 @@ fn render(
     };
 
     let req = TileRequest {
+        annotations,
         rid,
         doc: 0,
         page,
@@ -1220,6 +1222,7 @@ fn warm_fonts(bindings: progressive::Bindings) {
     // Through `render_tile`, not a bespoke render: warming has to exercise the
     // path a real tile takes, or it warms something adjacent to what is measured.
     let request = TileRequest {
+        annotations: true,
         rid: 0,
         doc: 0,
         page: 0,

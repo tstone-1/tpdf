@@ -55,8 +55,11 @@ use windows::Win32::Foundation::HWND;
 use windows::Win32::Foundation::{LPARAM, WPARAM};
 use windows::Win32::Graphics::Gdi::{
     DeleteDC, GetDeviceCaps, StretchDIBits, BITMAPINFO, DIB_RGB_COLORS, HDC, HORZRES, LOGPIXELSX,
-    LOGPIXELSY, SRCCOPY, VERTRES,
+    LOGPIXELSY, PHYSICALHEIGHT, PHYSICALOFFSETX, PHYSICALOFFSETY, PHYSICALWIDTH, SRCCOPY, VERTRES,
 };
+
+use crate::print_layout::{Paper, Placement};
+use crate::render::PageSize;
 use windows::Win32::UI::Controls::Dialogs::{
     CommDlgExtendedError, PrintDlgW, PD_ALLPAGES, PD_ENABLEPRINTHOOK, PD_NOSELECTION, PD_PAGENUMS,
     PD_RETURNDC, PRINTDLGW,
@@ -86,7 +89,7 @@ pub const PRINT_DPI: f32 = 300.0;
 ///
 /// Worth stating why that mattered more than an arithmetic slip usually does. The
 /// error is a uniform 1.33x, so every page still rendered, still had the right
-/// aspect ratio, and was still scaled down to fit the sheet by `draw_bmp` --- which
+/// aspect ratio, and was still scaled down to fit the sheet by `draw_cut` --- which
 /// means the *printed* output would have been very slightly soft and nothing else,
 /// on a path whose only honest verification is paper. It was caught by asserting the
 /// pixel dimensions at two different resolutions, which is a check on the units
@@ -225,7 +228,7 @@ fn to_stream(bytes: &[u8]) -> Option<InMemoryRandomAccessStream> {
 ///
 /// A BMP rather than the default PNG, and that choice is what keeps this module
 /// free of an image decoder: a BMP *is* a DIB with a 14-byte file header in front
-/// of it, so [`draw_bmp`] hands the bytes after that header straight to
+/// of it, so [`draw_cut`] hands the bytes after that header straight to
 /// `StretchDIBits`. Asking for PNG would mean pulling in a decoder to undo an
 /// encode that never needed to happen.
 ///
@@ -260,7 +263,7 @@ fn render_page_of(page: &PdfPage, dpi: f32) -> Result<Vec<u8>, String> {
     // height from the page's own aspect ratio, which is *usually* the same answer
     // and is not the same answer for a page whose `/MediaBox` and `/CropBox`
     // disagree --- and a page that came back a few pixels short would be scaled to
-    // fit the sheet by `draw_bmp` and print very slightly wrong.
+    // fit the sheet by `draw_cut` and print very slightly wrong.
     options
         .SetDestinationWidth(width)
         .map_err(|e| format!("destination width: {e}"))?;
@@ -286,7 +289,7 @@ fn read_stream(stream: &InMemoryRandomAccessStream) -> Result<Vec<u8>, String> {
         DataReader::CreateDataReader(&stream.GetInputStreamAt(0).map_err(|e| e.to_string())?)
             .map_err(|e| format!("stream reader: {e}"))?;
     // Without `ReadAhead` a partial read is legal and this would silently return
-    // a truncated image, which `draw_bmp` would then reject as a malformed header
+    // a truncated image, which `draw_cut` would then reject as a malformed header
     // --- a confusing report of a problem that is not there.
     reader
         .SetInputStreamOptions(InputStreamOptions::ReadAhead)
@@ -358,7 +361,7 @@ struct Dib<'a> {
     /// Bits per pixel, as the header declares it.
     ///
     /// GDI reads this back out of `header`, so it is here for [`Raster`] rather
-    /// than for [`draw_bmp`] --- a pixel comparison needs the stride, and the
+    /// than for [`draw_cut`] --- a pixel comparison needs the stride, and the
     /// stride is a function of this and the width.
     bpp: u16,
     /// Whether the rows run top to bottom, which a BMP says with a negative height.
@@ -640,63 +643,122 @@ impl<'a> Raster<'a> {
     }
 }
 
-/// Draws one rendered page onto a device context at its true physical size.
+/// The part of a placed page that lands in the printable area, and the pixels
+/// that draw it.
 ///
-/// Scaled down to fit rather than cropped, for the reason `print_macos.rs` gives
-/// about `PageScaleDownToFit`: an A0 page sent to A4 paper otherwise prints its
-/// top-left corner and nothing else. Centred on the sheet, and the aspect ratio is
-/// preserved --- a page stretched to fill the paper is a worse failure than a
-/// margin, because it looks deliberate.
+/// A page is drawn at the size its [`Placement`] gives it, which since the
+/// print settings moved into tpdf's own preview can be larger than the paper
+/// (actual size, or a percentage) as well as smaller. Only the part inside the
+/// printable area is rendered: the printer would clip the rest, and rendering
+/// an A0 page at 400% to throw nearly all of it away is a buffer of gigabytes.
 ///
-/// **`render_dpi` and the DC's own resolution are two different units, and treating
-/// one DIB pixel as one device unit is the defect this signature exists to prevent.**
-/// The first version did exactly that. A DIB rendered at 300 dpi placed onto a
-/// 600 dpi printer DC unit-for-unit comes out at **half physical size**, and for a
-/// page small enough that the fit-scale never engages there is nothing to correct
-/// it: every page printed at half size, centred, looking deliberate.
+/// **The density is fixed on paper, not on the page.** `scale` is chosen so a
+/// pixel is `1 / density` of an inch on the sheet, whatever the page's own
+/// size: an A0 page shrunk to A4 renders at a quarter of `density` per inch of
+/// A0, and lands at `density` on paper, which is what the old `paper_dpi` did
+/// for the one case it knew --- every pixel beyond what the sheet can hold is
+/// rendered, paid for and thrown away by the scaler otherwise, and a twelve-page
+/// A0 job did not finish inside two minutes before that was fixed.
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct Cut {
+    /// Render pixels per point of the page.
+    scale: f32,
+    /// Quarter turns clockwise the page is rendered by: 3 for a page the
+    /// layout turned, whose top then lies along the sheet's left edge.
+    turns: u8,
+    /// The window of the rendered page to draw, in render pixels.
+    x: u32,
+    y: u32,
+    width: u32,
+    height: u32,
+    /// Where that window goes, in points from the printable area's corner.
+    left: f32,
+    top: f32,
+    across: f32,
+    down: f32,
+}
+
+/// What of a page of `size`, placed as `placed`, shows in a printable area of
+/// `area` points, at `density` pixels per inch of paper. `None` when nothing
+/// of it does.
+fn cut(placed: &Placement, size: PageSize, area: (f32, f32), density: f32) -> Option<Cut> {
+    // A turned page is rendered turned, so its width on paper is its height.
+    let across = if placed.turned {
+        size.height_pt
+    } else {
+        size.width_pt
+    };
+    if !(across > 0.0 && placed.width > 0.0 && placed.height > 0.0 && density > 0.0) {
+        return None;
+    }
+    let per_point = density / POINTS_PER_INCH;
+    let scale = placed.width / across * per_point;
+    #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+    let (full_w, full_h) = (
+        (placed.width * per_point).round().max(1.0) as u32,
+        (placed.height * per_point).round().max(1.0) as u32,
+    );
+    let (left, right) = (placed.x.max(0.0), (placed.x + placed.width).min(area.0));
+    let (top, bottom) = (placed.y.max(0.0), (placed.y + placed.height).min(area.1));
+    if right <= left || bottom <= top {
+        return None;
+    }
+    #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+    let span = |from: f32, to: f32, origin: f32, full: u32| {
+        let first = (((from - origin) * per_point).floor().max(0.0) as u32).min(full - 1);
+        let last = (((to - origin) * per_point).ceil().max(0.0) as u32).clamp(first + 1, full);
+        (first, last - first)
+    };
+    let (x, width) = span(left, right, placed.x, full_w);
+    let (y, height) = span(top, bottom, placed.y, full_h);
+    #[allow(clippy::cast_precision_loss)]
+    Some(Cut {
+        scale,
+        turns: if placed.turned { 3 } else { 0 },
+        x,
+        y,
+        width,
+        height,
+        left: placed.x + x as f32 / per_point,
+        top: placed.y + y as f32 / per_point,
+        across: width as f32 / per_point,
+        down: height as f32 / per_point,
+    })
+}
+
+/// Draws a rendered window of a page onto a device context where [`cut`]
+/// placed it.
 ///
-/// It survived a passing test run, which is the part worth keeping. `print-probe`
-/// compared printed ink against sent ink and read `0.49` --- a plausible number for a
-/// path that rasterises twice and scales down, so it passed. What found it was
-/// replacing that with the **extent** of ink on the sheet, which reported 0.14 and
-/// cannot be satisfied by a page drawn at the wrong scale. An oracle whose expected
-/// value is "roughly less" cannot distinguish correct from half.
-fn draw_bmp(
-    dc: HDC,
-    bmp: &[u8],
-    sheet: (i32, i32),
-    render_dpi: f32,
-    device_dpi: (i32, i32),
-) -> Result<(), String> {
+/// **Points become device units through the DC's own resolution, and a pixel
+/// of the BMP is never taken for a device unit.** The first version of this
+/// module did exactly that: a DIB rendered at 300 dpi placed onto a 600 dpi
+/// printer DC unit-for-unit came out at half physical size, and on a page small
+/// enough that the fit never engaged there was nothing to correct it. It
+/// survived a passing `print-probe` run whose oracle was "less ink than was
+/// sent", and was found by measuring the *extent* of ink on the sheet instead.
+fn draw_cut(dc: HDC, bmp: &[u8], cut: &Cut, device_dpi: (i32, i32)) -> Result<(), String> {
     let dib = parse_bmp(bmp)?;
-    let (sheet_w, sheet_h) = sheet;
-    // Render pixels to device units, so the page occupies its real inches on paper.
     #[allow(clippy::cast_precision_loss)]
-    let (to_device_x, to_device_y) = (
-        device_dpi.0.max(1) as f32 / render_dpi.max(1.0),
-        device_dpi.1.max(1) as f32 / render_dpi.max(1.0),
+    let (per_x, per_y) = (
+        device_dpi.0.max(1) as f32 / POINTS_PER_INCH,
+        device_dpi.1.max(1) as f32 / POINTS_PER_INCH,
     );
-    #[allow(clippy::cast_precision_loss)]
-    let (natural_w, natural_h) = (
-        dib.width as f32 * to_device_x,
-        dib.height as f32 * to_device_y,
-    );
-    // Only ever *down*: a page that fits is printed at its true size, and one that
-    // does not is reduced until it does.
-    #[allow(clippy::cast_precision_loss)]
-    let fit = (sheet_w as f32 / natural_w)
-        .min(sheet_h as f32 / natural_h)
-        .min(1.0);
     #[allow(clippy::cast_possible_truncation)]
-    let (w, h) = ((natural_w * fit) as i32, (natural_h * fit) as i32);
+    let (x, y) = (
+        (cut.left * per_x).round() as i32,
+        (cut.top * per_y).round() as i32,
+    );
+    #[allow(clippy::cast_possible_truncation)]
+    let (w, h) = (
+        ((cut.left + cut.across) * per_x).round() as i32 - x,
+        ((cut.top + cut.down) * per_y).round() as i32 - y,
+    );
     if w <= 0 || h <= 0 {
         return Err(format!(
-            "a {}x{} page at {render_dpi} dpi maps to {w}x{h} device units",
+            "a {}x{} window maps to {w}x{h} device units",
             dib.width, dib.height
         ));
     }
-    let (x, y) = ((sheet_w - w) / 2, (sheet_h - h) / 2);
-
     // SAFETY: a live DC from the caller, and a header and pixel slice both
     // validated by `parse_bmp` to describe the same image.
     let rows = unsafe {
@@ -747,52 +809,59 @@ fn dc_dpi(dc: HDC) -> (i32, i32) {
     }
 }
 
-/// The resolution to rasterise one page at, so that [`PRINT_DPI`] lands on *paper*.
+/// The paper a device context prints on, in points: the whole sheet and the
+/// part of it the printer can reach. `print_layout` lays a job out on this,
+/// and the preview shows the same numbers.
 ///
-/// **`PRINT_DPI` relative to the page is the wrong quantity, and on a large-format
-/// document it is catastrophically wrong.** [`draw_bmp`] scales a page down to fit
-/// the sheet, so every pixel beyond what the sheet can hold is rendered, paid for,
-/// and then thrown away by the scaler. An A0 page is 33x47 inches: at 300 dpi that
-/// is 9933x14043, **532 MB** as 32-bit BGRA, for a sheet that can show 9 MB of it.
-///
-/// Measured, not predicted --- `print-probe` on `vector-multi.pdf`, twelve A0 pages,
-/// **did not finish inside two minutes**, and passed in seconds on the same fixture
-/// afterwards. The first version of this module had only a `PRINT_DPI` doc comment
-/// reasoning about A4, which is the trap of choosing the example that makes the
-/// constant look reasonable.
-///
-/// So the page is rendered at the resolution that gives `PRINT_DPI` *after* the fit:
-/// a page twice the sheet's size renders at half, and lands on paper at exactly the
-/// same density as one that fits. Never scaled up, matching `draw_bmp`, since
-/// enlarging a render is strictly worse than placing it at its own size.
-///
-/// `size` is the page as the worker reports it, in PDF points and after its
-/// `/Rotate`.
-fn paper_dpi(
-    size: crate::render::PageSize,
+/// A device with no physical size --- a display, or a driver that does not
+/// answer --- is taken to be all printable area.
+#[must_use]
+pub fn paper_of(dc: HDC) -> Paper {
+    let (dpi_x, dpi_y) = dc_dpi(dc);
+    let (area_w, area_h) = sheet_size(dc);
+    // SAFETY: a live DC; the four indices are documented constants.
+    let (sheet_w, sheet_h, left, top) = unsafe {
+        (
+            GetDeviceCaps(Some(dc), PHYSICALWIDTH),
+            GetDeviceCaps(Some(dc), PHYSICALHEIGHT),
+            GetDeviceCaps(Some(dc), PHYSICALOFFSETX),
+            GetDeviceCaps(Some(dc), PHYSICALOFFSETY),
+        )
+    };
+    let (sheet_w, sheet_h, left, top) = if sheet_w > 0 && sheet_h > 0 {
+        (sheet_w, sheet_h, left, top)
+    } else {
+        (area_w, area_h, 0, 0)
+    };
+    paper_in_points(
+        (sheet_w, sheet_h),
+        (left, top),
+        (area_w, area_h),
+        (dpi_x, dpi_y),
+    )
+}
+
+/// [`paper_of`]'s arithmetic, on numbers a test can give it.
+fn paper_in_points(
     sheet: (i32, i32),
-    dc_dpi: (i32, i32),
-    device_dpi: f32,
-) -> f32 {
+    offset: (i32, i32),
+    area: (i32, i32),
+    dpi: (i32, i32),
+) -> Paper {
     #[allow(clippy::cast_precision_loss)]
-    let (sheet_w_in, sheet_h_in) = (
-        sheet.0 as f32 / dc_dpi.0.max(1) as f32,
-        sheet.1 as f32 / dc_dpi.1.max(1) as f32,
+    let (x, y) = (
+        POINTS_PER_INCH / dpi.0.max(1) as f32,
+        POINTS_PER_INCH / dpi.1.max(1) as f32,
     );
-    let (page_w_in, page_h_in) = (
-        size.width_pt / POINTS_PER_INCH,
-        size.height_pt / POINTS_PER_INCH,
-    );
-    if page_w_in <= 0.0 || page_h_in <= 0.0 {
-        return device_dpi;
+    #[allow(clippy::cast_precision_loss)]
+    Paper {
+        width: sheet.0 as f32 * x,
+        height: sheet.1 as f32 * y,
+        left: offset.0 as f32 * x,
+        top: offset.1 as f32 * y,
+        printable_width: area.0 as f32 * x,
+        printable_height: area.1 as f32 * y,
     }
-    let fit = (sheet_w_in / page_w_in)
-        .min(sheet_h_in / page_h_in)
-        .min(1.0);
-    // A floor, because a pathologically large page must still print *something*
-    // legible rather than a thumbnail stretched over a sheet. 72 is one device pixel
-    // per PDF unit, which is the point below which line art stops surviving.
-    (device_dpi * fit).max(72.0).min(device_dpi)
 }
 
 /// The rows of a page drawn in one request, so that each fits the worker's tile
@@ -817,7 +886,7 @@ fn band_rows(width: u32) -> Result<u32, String> {
 /// A BMP header for a top-down 32-bit image of `width` by `height` pixels.
 ///
 /// Built here so the worker's pixels reach GDI through [`parse_bmp`] and
-/// [`draw_bmp`], the checks every page already passed when the OS drew it,
+/// [`draw_cut`], the checks every page already passed when the OS drew it,
 /// rather than through a second, unchecked route to `StretchDIBits`.
 fn bmp_header(width: u32, height: u32) -> Result<Vec<u8>, String> {
     let pixels = u64::from(width) * u64::from(height) * 4;
@@ -887,33 +956,30 @@ impl Painter {
         }
     }
 
-    /// Page `index` at `dpi`, as a top-down 32-bit BMP for [`draw_bmp`].
-    fn paint(&mut self, index: u32, dpi: f32) -> Result<Vec<u8>, String> {
-        let size = self.sizes[index as usize];
-        let scale = dpi / POINTS_PER_INCH;
-        // Rounded away from zero, for the reason `render_page_of` gives.
-        #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
-        let (width, height) = (
-            ((size.width_pt * scale).round() as u32).max(1),
-            ((size.height_pt * scale).round() as u32).max(1),
-        );
+    /// The window of page `index` that `cut` names, as a top-down 32-bit BMP
+    /// for [`draw_cut`].
+    fn paint(&mut self, index: u32, cut: &Cut, marks: bool) -> Result<Vec<u8>, String> {
+        let (width, height) = (cut.width, cut.height);
         let rows = band_rows(width)?;
         let mut bmp = bmp_header(width, height)?;
         let mut y = 0;
         while y < height {
+            // Between bands too: a dense page takes seconds a band.
+            stopped()?;
             let band = rows.min(height - y);
             let rgba = self
                 .session
                 .tile_within(
                     crate::render::TileRequest {
+                        annotations: marks,
                         rid: 0,
                         doc: 0,
                         page: index,
-                        scale,
-                        turns: 0,
+                        scale: cut.scale,
+                        turns: cut.turns,
                         invert: false,
-                        x: 0,
-                        y: i32::try_from(y).map_err(|_| "page too tall")?,
+                        x: i32::try_from(cut.x).map_err(|_| "page too wide")?,
+                        y: i32::try_from(cut.y + y).map_err(|_| "page too tall")?,
                         width: u16::try_from(width).map_err(|_| "page too wide")?,
                         height: u16::try_from(band).map_err(|_| "band too tall")?,
                         format: crate::render::TileFormat::Raw,
@@ -963,10 +1029,108 @@ pub fn spool(
     beat: Option<&crate::print::Beat<'_>>,
     library_dir: &std::path::Path,
 ) -> Result<u32, String> {
+    spool_planned(
+        dc,
+        bytes,
+        title,
+        output,
+        true,
+        beat,
+        library_dir,
+        |sizes, paper| {
+            // `print::sheets` has already validated these against a count --- but
+            // a *different* count, from the OS parser's read of the same bytes a
+            // moment earlier. Two parses are two chances to disagree, and asking
+            // again costs one comparison per sheet of a job about to be drawn.
+            let count = u32::try_from(sizes.len()).unwrap_or(u32::MAX);
+            if let Some(index) = sheets.iter().find(|&&index| index >= count) {
+                return Err(format!(
+                    "sheet {index} is not in this job, which has {count}"
+                ));
+            }
+            crate::print_layout::lay_out(sizes, sheets, paper, crate::print_layout::Layout::PLAIN)
+        },
+    )
+}
+
+/// Prints a job laid out as the preview's settings say: `pages` of it, zero
+/// based and in order, as `layout` places them, with the comments and other
+/// marks only when `marks` is set. `output` names a file to print to, as for
+/// [`spool`].
+///
+/// # Errors
+///
+/// As [`spool`], and anything [`crate::print_layout::lay_out`] refuses.
+#[allow(clippy::too_many_arguments)]
+pub fn spool_laid_out(
+    dc: HDC,
+    bytes: &[u8],
+    title: &str,
+    output: Option<&str>,
+    pages: &[u32],
+    layout: crate::print_layout::Layout,
+    marks: bool,
+    beat: Option<&crate::print::Beat<'_>>,
+    library_dir: &std::path::Path,
+) -> Result<u32, String> {
+    spool_planned(
+        dc,
+        bytes,
+        title,
+        output,
+        marks,
+        beat,
+        library_dir,
+        |sizes, paper| crate::print_layout::lay_out(sizes, pages, paper, layout),
+    )
+}
+
+/// Set by [`stop`], read before every sheet and every band of one.
+static STOP: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// What a print that was stopped fails with; [`print_on`] reads it as a
+/// stop rather than a failure.
+pub const STOPPED: &str = "the print was stopped";
+
+/// Stops the print that is being drawn, if one is. The sheets the spooler
+/// has are discarded with the job (`OpenDocument`); a sheet already on the
+/// printer is not called back.
+pub fn stop() {
+    STOP.store(true, std::sync::atomic::Ordering::SeqCst);
+}
+
+/// [`STOPPED`] once [`stop`] has been called.
+fn stopped() -> Result<(), String> {
+    if STOP.load(std::sync::atomic::Ordering::SeqCst) {
+        Err(STOPPED.to_owned())
+    } else {
+        Ok(())
+    }
+}
+
+/// Draws the sheets `plan` lays out, from the job's page sizes and the paper
+/// the DC prints on, and hands them to the spooler.
+///
+/// The plan is made before the document is opened on the spooler, so a layout
+/// that is refused leaves nothing half-printed.
+#[allow(clippy::too_many_arguments)]
+fn spool_planned(
+    dc: HDC,
+    bytes: &[u8],
+    title: &str,
+    output: Option<&str>,
+    marks: bool,
+    beat: Option<&crate::print::Beat<'_>>,
+    library_dir: &std::path::Path,
+    plan: impl FnOnce(&[PageSize], &Paper) -> Result<Vec<Vec<Placement>>, String>,
+) -> Result<u32, String> {
     use windows::Win32::Storage::Xps::{EndPage, StartDocW, StartPage, DOCINFOW};
 
+    // A Stop pressed for an earlier print does not stop this one.
+    STOP.store(false, std::sync::atomic::Ordering::SeqCst);
     let mut painter = ours(beat, || Painter::start(bytes, library_dir))?;
-    let count = u32::try_from(painter.sizes.len()).unwrap_or(u32::MAX);
+    let paper = paper_of(dc);
+    let sheets = plan(&painter.sizes, &paper)?;
 
     // Both `HSTRING`s are bound to locals rather than built inline, because
     // `DOCINFOW` holds borrowed pointers and a temporary would be dropped at the
@@ -999,40 +1163,36 @@ pub fn spool(
     // the job. Declared after the two `HSTRING`s, so it is dropped before them.
     let open = OpenDocument { dc };
 
-    let sheet = sheet_size(dc);
     let (dpi_x, dpi_y) = dc_dpi(dc);
     // Render at the printer's own resolution where that is *lower* than the
     // constant, so a 150 dpi device is not handed four times the pixels it can
     // use --- and never higher, for the buffer reason `PRINT_DPI` gives.
     #[allow(clippy::cast_precision_loss)]
-    let device_dpi = PRINT_DPI.min(dpi_x.min(dpi_y).max(1) as f32);
+    let density = PRINT_DPI.min(dpi_x.min(dpi_y).max(1) as f32);
+    let area = (paper.printable_width, paper.printable_height);
 
-    for &index in sheets {
-        // `print::sheets` has already validated this against a count --- but a
-        // *different* count, from `present`'s own parse of the same bytes a
-        // moment earlier. Two parses are two chances to disagree, and the cost of
-        // asking again is one comparison per sheet against a job that is about to
-        // be rasterised.
-        if index >= count {
-            return Err(format!(
-                "sheet {index} is not in this job, which has {count}"
-            ));
-        }
-        let size = painter.sizes[index as usize];
-        let dpi = paper_dpi(size, sheet, (dpi_x, dpi_y), device_dpi);
-        let bmp = ours(beat, || painter.paint(index, dpi))?;
+    for (number, sheet) in sheets.iter().enumerate() {
+        let number = number + 1;
+        stopped()?;
         // SAFETY: a live DC inside an open document.
         if unsafe { StartPage(dc) } <= 0 {
             return Err(format!(
-                "StartPage failed on page {index}: {}",
+                "StartPage failed on sheet {number}: {}",
                 std::io::Error::last_os_error()
             ));
         }
-        draw_bmp(dc, &bmp, sheet, dpi, (dpi_x, dpi_y))?;
+        for placed in sheet {
+            let size = painter.sizes[placed.page as usize];
+            let Some(cut) = cut(placed, size, area, density) else {
+                continue;
+            };
+            let bmp = ours(beat, || painter.paint(placed.page, &cut, marks))?;
+            draw_cut(dc, &bmp, &cut, (dpi_x, dpi_y))?;
+        }
         // SAFETY: as above, closing the page this opened.
         if unsafe { EndPage(dc) } <= 0 {
             return Err(format!(
-                "EndPage failed on page {index}: {}",
+                "EndPage failed on sheet {number}: {}",
                 std::io::Error::last_os_error()
             ));
         }
@@ -1145,6 +1305,67 @@ fn message(owner: Option<HWND>, text: &str, error: bool) {
 /// Returning zero lets the dialog handle every message itself.
 unsafe extern "system" fn classic_dialog(_: HWND, _: u32, _: WPARAM, _: LPARAM) -> usize {
     0
+}
+
+/// Prints a job on a DC the preview's printer settings made, laid out as the
+/// preview showed it: `pages` of it, placed as `layout` says, which `sheets`
+/// sheets of paper hold, with the marks when `marks` is set. Deletes the DC
+/// whatever the outcome.
+///
+/// `progress` hears `(sent, of)` before the first sheet and after each, as in
+/// [`present`], and a stuck queue is reported the same way. A print stopped
+/// with [`stop`] answers `false`, as a Cancel does.
+///
+/// # Errors
+///
+/// No page to print, or the job failing to spool.
+#[allow(clippy::too_many_arguments)]
+pub fn print_on(
+    dc: HDC,
+    bytes: &[u8],
+    title: &str,
+    owner: Option<HWND>,
+    progress: &dyn Fn(u32, u32),
+    library_dir: &std::path::Path,
+    pages: &[u32],
+    layout: crate::print_layout::Layout,
+    sheets: usize,
+    marks: bool,
+) -> Result<bool, String> {
+    let result = if pages.is_empty() {
+        Err("this print job has no pages in it".to_owned())
+    } else {
+        let of = u32::try_from(sheets).unwrap_or(u32::MAX);
+        let shown = owner.map(|h| h.0 as isize);
+        progress(0, of);
+        crate::print::watched(
+            crate::print::STALL,
+            |sent| progress(sent, of),
+            |beat| {
+                spool_laid_out(
+                    dc,
+                    bytes,
+                    title,
+                    None,
+                    pages,
+                    layout,
+                    marks,
+                    Some(beat),
+                    library_dir,
+                )
+            },
+            move |sent| {
+                let owner = shown.map(|h| HWND(h as *mut std::ffi::c_void));
+                message(owner, &crate::print::stalled_message(sent), false);
+            },
+        )
+    };
+    // SAFETY: the DC the caller handed over to be printed on and freed here.
+    let _ = unsafe { DeleteDC(dc) };
+    match result {
+        Err(e) if e == STOPPED => Ok(false),
+        other => other.map(|_| true),
+    }
 }
 
 /// Opens the system print dialog for these bytes and prints what it returns.
@@ -1283,15 +1504,19 @@ pub fn present(
     // SAFETY: the DC `PD_RETURNDC` handed over; the caller owns and must free it,
     // on every path including the failing one.
     let _ = unsafe { DeleteDC(dc) };
-    result.map(|_| true)
+    match result {
+        Err(e) if e == STOPPED => Ok(false),
+        other => other.map(|_| true),
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::{
-        append_bgra, band_rows, bmp_header, header_bytes, paper_dpi, parse_bmp, pixel_bytes, read,
-        render_page, Raster, BI_BITFIELDS, BI_RGB,
+        append_bgra, band_rows, bmp_header, cut, header_bytes, paper_in_points, parse_bmp,
+        pixel_bytes, read, render_page, Raster, BI_BITFIELDS, BI_RGB,
     };
+    use crate::print_layout::{lay_out, Layout, Paper, Placement, Scale};
 
     /// The worker's red reaches GDI as red: RGBA in, BGRA out.
     #[test]
@@ -1346,40 +1571,111 @@ mod tests {
         assert!(parse_bmp(&short).is_err());
     }
 
-    /// The worker reports points; a page that fits prints at the device's
-    /// resolution, and a larger one at what lands as that resolution on paper.
+    /// A Brother's A4 sheet at 600 dpi: 4960x7016 device units of paper, of
+    /// which 4757x6812 are printable, from 101 and 102 units in.
+    fn brother() -> Paper {
+        paper_in_points((4960, 7016), (101, 102), (4757, 6812), (600, 600))
+    }
+
+    /// The device's units become points through its own resolution.
     #[test]
-    fn paper_dpi_reads_the_workers_size_in_points() {
-        let a4 = PageSize {
-            width_pt: 595.0,
-            height_pt: 842.0,
-        };
+    fn the_paper_is_measured_in_points() {
+        let paper = brother();
+        assert!((paper.width - 595.2).abs() < 0.01, "{paper:?}");
+        assert!(
+            (paper.printable_width - 4757.0 * 0.12).abs() < 0.01,
+            "{paper:?}"
+        );
+        assert!((paper.left - 12.12).abs() < 0.01, "{paper:?}");
+        assert!((paper.top - 12.24).abs() < 0.01, "{paper:?}");
+    }
+
+    /// A page shrunk onto the sheet renders at the density asked for on
+    /// paper, not on the page: an A0 page at 300 dpi of A4 renders at about
+    /// a quarter of that per inch of A0.
+    #[test]
+    fn a_shrunk_page_renders_at_the_density_of_the_paper() {
+        let paper = brother();
+        let area = (paper.printable_width, paper.printable_height);
         let a0 = PageSize {
             width_pt: 2384.0,
             height_pt: 3370.0,
         };
-        let card = PageSize {
-            width_pt: 200.0,
-            height_pt: 100.0,
+        let sheets = lay_out(&[a0], &[0], &paper, Layout::PLAIN).expect("laid out");
+        let placed = sheets[0][0];
+        let cut = cut(&placed, a0, area, 300.0).expect("on the paper");
+        // 300 pixels per inch of the placed width.
+        let want = (placed.width / 72.0 * 300.0).round();
+        #[allow(clippy::cast_precision_loss)]
+        let got = cut.width as f32;
+        assert!((got - want).abs() <= 1.0, "{got} against {want}");
+        assert!(cut.scale < 300.0 / 72.0 / 3.0, "{cut:?}");
+        assert_eq!((cut.x, cut.y), (0, 0));
+    }
+
+    /// A page larger than the paper at actual size renders only the part the
+    /// printer can put on it, and that part lands where it belongs.
+    #[test]
+    fn a_page_past_the_paper_renders_only_what_lands_on_it() {
+        let paper = brother();
+        let area = (paper.printable_width, paper.printable_height);
+        let a3 = PageSize {
+            width_pt: 842.0,
+            height_pt: 1191.0,
         };
-        // A Brother's A4 sheet: 4757x6812 device units at 600 dpi, its
-        // printable area and so narrower than A4 paper.
-        let sheet = (4757, 6812);
-        let card_dpi = paper_dpi(card, sheet, (600, 600), 300.0);
-        assert!((card_dpi - 300.0).abs() < 0.01, "{card_dpi}");
-        // An A4 page is fitted to the printable width: 4757 / 600 inches of
-        // sheet over 595 / 72 of page.
-        let a4_dpi = paper_dpi(a4, sheet, (600, 600), 300.0);
-        let want = 300.0 * (4757.0 / 600.0) / (595.0 / 72.0);
-        assert!((a4_dpi - want).abs() < 0.5, "{a4_dpi} against {want}");
-        let a0_dpi = paper_dpi(a0, sheet, (600, 600), 300.0);
-        // The tighter of the two axes, here the width again.
-        let want = 300.0
-            * f32::min(
-                (4757.0 / 600.0) / (2384.0 / 72.0),
-                (6812.0 / 600.0) / (3370.0 / 72.0),
-            );
-        assert!((a0_dpi - want).abs() < 0.5, "{a0_dpi} against {want}");
+        let actual = Layout {
+            scale: Scale::Actual,
+            ..Layout::PLAIN
+        };
+        let placed = lay_out(&[a3], &[0], &paper, actual).expect("laid out")[0][0];
+        let cut = cut(&placed, a3, area, 300.0).expect("on the paper");
+        // At most the printable area at 300 dpi, with a pixel either side.
+        let most = (area.0 / 72.0 * 300.0).ceil() + 1.0;
+        #[allow(clippy::cast_precision_loss)]
+        let wide = cut.width as f32;
+        assert!(wide <= most, "{wide} wider than {most}");
+        assert!(cut.x > 0, "the left of the page is off the paper: {cut:?}");
+        // The window starts at or just left of the printable area's edge.
+        assert!(cut.left <= 0.0 && cut.left > -0.5, "{cut:?}");
+        // A page wholly off the paper has nothing to draw.
+        let away = Placement {
+            x: area.0 + 10.0,
+            ..placed
+        };
+        assert_eq!(super::cut(&away, a3, area, 300.0), None);
+    }
+
+    /// A turned page is rendered a quarter turn anticlockwise, at the density
+    /// of the paper across what is now its width: the page's own height.
+    #[test]
+    fn a_turned_page_renders_turned_at_the_density_of_the_paper() {
+        let paper = brother();
+        let area = (paper.printable_width, paper.printable_height);
+        let landscape = PageSize {
+            width_pt: 842.0,
+            height_pt: 595.0,
+        };
+        let turning = Layout {
+            rotate: true,
+            scale: Scale::Fit,
+            ..Layout::PLAIN
+        };
+        let placed = lay_out(&[landscape], &[0], &paper, turning).expect("laid out")[0][0];
+        assert!(placed.turned, "{placed:?}");
+        let cut = cut(&placed, landscape, area, 300.0).expect("on the paper");
+        assert_eq!(cut.turns, 3);
+        let want = placed.width / landscape.height_pt * 300.0 / 72.0;
+        assert!((cut.scale - want).abs() < 1e-4, "{cut:?} against {want}");
+        // Taller than wide, as the turned page lands.
+        assert!(cut.height > cut.width, "{cut:?}");
+        let flat = Placement {
+            turned: false,
+            ..placed
+        };
+        assert_eq!(
+            super::cut(&flat, landscape, area, 300.0).map(|c| c.turns),
+            Some(0)
+        );
     }
 
     /// A minimal one-page PDF, assembled here rather than by `lopdf`.

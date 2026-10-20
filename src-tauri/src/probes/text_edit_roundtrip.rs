@@ -151,6 +151,7 @@ pub(super) fn run(source: &Path, requests: &Path, directory: &Path) -> Result<()
         let width = size.width_pt.ceil() as u16;
         let height = size.height_pt.ceil() as u16;
         let request = Request::Tile {
+            annotations: true,
             rid: page as u64 + 1,
             page: page as u32,
             scale: 1.,

@@ -409,6 +409,10 @@ windows = { version = "0.62", features = [
     "Win32_Foundation",
     # StretchDIBits, GetDeviceCaps, CreateDC, DeleteDC.
     "Win32_Graphics_Gdi",
+    # The printers, their papers and their settings, for the print preview that
+    # chooses them (`printers_win.rs`): EnumPrinters, OpenPrinter,
+    # DocumentProperties. A feature on a crate already here; no package.
+    "Win32_Graphics_Printing",
     # StartDoc/StartPage/EndPage/EndDoc and DOCINFOW. Not in `Graphics_Gdi`, which
     # is where they read as though they belong: Windows files the document-level
     # printing calls under the XPS print stack even though they are the same

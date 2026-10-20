@@ -603,6 +603,8 @@ hop through the index.
 - A crop keeps the page order, so a branch on whether the order moved never told the renderer
 - A two-page fixture with every size known cannot show a size that moves every other page
 - A test that skips on a missing fixture passes unseen, because test output is captured
+- A ratio of ink totals read 0.945 with every comment gone, because the text is the rest
+- A turned page's ink ran the wrong way for the check, because a page's shape is not its ink's
 
 ## Harnesses: running checks and reading what they print
 - A mutation harness needs the same control as the thing it is testing
@@ -26886,3 +26888,24 @@ day (`print::watched`) first counted that render as waiting, and told the reader
 was stuck; it now stops its clock while tpdf parses or rasterises (`Beat::ours`). The cost on a
 dense vector page is real and is still there: a reader printing one waits minutes per sheet with
 nothing on screen to say so.
+
+
+### A ratio of ink totals read 0.945 with every comment gone, because the text is the rest
+
+Leaving the marks out of a print was first checked in `print-probe` as "ink without marks under
+0.9 of ink with marks" on `comments.pdf`. It read 0.945 and failed, and the pictures showed every
+highlight, note, box and underline gone: the comments are a twentieth of that page's ink and its
+text is the rest. Any change smaller than the threshold's margin is invisible to a ratio of totals,
+and the margin was set by guessing how much ink a comment has. The check now compares the two
+sheets pixel for pixel and counts both directions: what only the sheet with marks has (1451) and
+what only the other has (0, which is the half a ratio cannot see at all). Where a change should
+only take ink away, count what it adds too.
+
+### A turned page's ink ran the wrong way for the check, because a page's shape is not its ink's
+
+`print-probe`'s first check of pages turned to fit a portrait sheet expected every printed sheet's
+ink to run tall. On `rotated.pdf` it failed with the first page's ink running wide. The page had
+turned correctly: with the job's quarter turn it is a landscape page, and its text block runs tall
+on it, so turning the page laid the text across. The layout turns by the page's box, and a check
+of it has to as well. The check now swaps the source page's measured spans and holds the print to
+the same `predict` the extent check uses, which a page left unturned misses by about 60%.

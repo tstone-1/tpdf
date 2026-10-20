@@ -561,6 +561,7 @@ pub fn main() {
     let refused = wait(|reply| {
         workers.tile(
             TileRequest {
+                annotations: true,
                 crop: None,
                 page: worker_doc.page_count as u32,
                 ..request(worker_doc.id, 21, at)
@@ -1935,6 +1936,7 @@ fn clamp_side(pixels: f32) -> u16 {
 /// One tile request at the chosen placement.
 fn request(doc: u32, rid: u64, at: Placement) -> TileRequest {
     TileRequest {
+        annotations: true,
         crop: None,
         rid,
         doc,
@@ -1956,6 +1958,7 @@ fn request(doc: u32, rid: u64, at: Placement) -> TileRequest {
 /// at their defaults, so they need a request that does not.
 fn view_state_request(doc: u32, rid: u64, at: Placement) -> TileRequest {
     TileRequest {
+        annotations: true,
         turns: 1,
         invert: true,
         ..request(doc, rid, at)

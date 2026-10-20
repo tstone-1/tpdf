@@ -862,6 +862,42 @@ fn samples() -> BTreeMap<&'static str, String> {
     );
 
     put(
+        "Setup",
+        &crate::commands::print::Setup {
+            printers: vec!["Brother".into(), "Microsoft Print to PDF".into()],
+            device: crate::print_layout::Device {
+                printer: "Brother".into(),
+                papers: vec![crate::print_layout::PaperChoice {
+                    id: 9,
+                    name: "A4".into(),
+                }],
+                paper: 9,
+                landscape: false,
+                copies: 1,
+                most_copies: 999,
+                two_sided: Some(crate::print_layout::TwoSided::Long),
+                colour: Some(true),
+            },
+            paper: crate::print_layout::Paper {
+                width: 595.0,
+                height: 842.0,
+                left: 12.0,
+                top: 12.0,
+                printable_width: 571.0,
+                printable_height: 818.0,
+            },
+            sheets: vec![vec![crate::print_layout::Placement {
+                page: 0,
+                x: 0.0,
+                y: 0.0,
+                width: 571.0,
+                height: 818.0,
+                turned: true,
+            }]],
+        },
+    );
+
+    put(
         "HiddenText",
         &crate::commands::hidden::HiddenText::of(
             crate::hidden::survey::Survey {

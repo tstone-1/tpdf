@@ -27,6 +27,31 @@ have the binary.)
   drawn as you scroll to them. The print dialogs on Windows and Linux show no preview, so
   until now the first picture of a print job was on paper. macOS is unchanged: its print
   panel already shows the pages.
+- **On Windows the print preview is the print dialog.** Choose the printer, the pages,
+  copies, paper, orientation, two-sided printing and colour beside the sheets, and two
+  choices the Windows dialog never had: the scale (shrink large pages, fit to the printable
+  area, actual size, or a percentage) and 2, 4, 6, 9 or 16 pages to a sheet. The preview
+  shows each sheet of paper as it will print, inside the area the printer can reach.
+  *Printer settings...* opens the printer's own settings for anything else, such as trays.
+  On Linux the system dialog that follows the preview offers the same choices. Also in the
+  Windows print preview:
+  - **Pages turn to fit the sheet.** A landscape page on a portrait sheet prints a quarter
+    turn round, as large as the sheet allows, and the same for each page of several to a
+    sheet. On by default; untick *Turn pages to fit the sheet* to print every page as it
+    lies.
+  - **The current page**, chosen under *Pages*, without typing its number.
+  - **Odd or even pages only, and last page first**, to print both sides by hand on a
+    printer that prints one.
+  - **Comments and marks can be left out**: highlights, notes, stamps and drawings do not
+    print, and form fields still do.
+  - **Posters**: *Poster, across several sheets* prints a page at its real size, or a
+    percentage of it, over as many sheets as it takes, each repeating a quarter of an inch
+    of the next so the sheets can be trimmed and taped together.
+  - **The settings are kept** for the next print: the printer, paper, two-sided, colour,
+    pages per sheet, scale, turning and marks. The pages and copies start afresh.
+- **A Windows print can be stopped.** *Stop* beside the progress line ends the print
+  after the band being drawn, and the printer drops the sheets it was sent but has not
+  started. The line counts sheets of paper now, not pages, since one sheet can hold several.
 
 ### Changed
 

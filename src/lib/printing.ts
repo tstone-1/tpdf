@@ -22,11 +22,15 @@ export interface Printing {
   sent: number;
   /** Sheets in the job. */
   of: number;
-  state: "printing" | "sent" | "failed";
+  /** `stopped` is the reader's Stop, after which nothing more is sent. */
+  state: "printing" | "sent" | "failed" | "stopped";
 }
 
 /**
  * The toolbar's line for `progress`, or `null` to clear it.
+ *
+ * Counted in sheets of paper, not pages: with several pages to a sheet, or
+ * a poster, the two differ, and the sheet is what the printer is working on.
  *
  * A failure clears the line: the reason is in the message Windows shows over
  * the window, and a line still saying "Printing" would contradict it.
@@ -34,6 +38,16 @@ export interface Printing {
 export function printingLine(progress: Printing): string | null {
   const { sent, of, state } = progress;
   if (state === "failed") return null;
-  if (state === "sent") return of === 1 ? "Sent 1 page to the printer." : `Sent ${of} pages to the printer.`;
-  return `Printing page ${Math.min(sent + 1, of)} of ${of}...`;
+  if (state === "stopped") {
+    return sent === 0
+      ? "Printing stopped. Nothing was sent to the printer."
+      : "Printing stopped. The printer may still print the sheets it already had.";
+  }
+  if (state === "sent") return of === 1 ? "Sent 1 sheet to the printer." : `Sent ${of} sheets to the printer.`;
+  return `Printing sheet ${Math.min(sent + 1, of)} of ${of}...`;
+}
+
+/** Whether `progress` is of a print still being drawn, which Stop can stop. */
+export function stoppable(progress: Printing): boolean {
+  return progress.state === "printing";
 }

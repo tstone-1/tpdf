@@ -686,6 +686,14 @@ mod imp {
 
         range(&bytes, printer, expected, &sent, report)?;
 
+        per_sheet(&bytes, printer, expected, report)?;
+
+        turned(&bytes, printer, expected, &sent, report)?;
+
+        marks(printer, report)?;
+
+        stop(&bytes, printer, expected, report)?;
+
         boundary(report);
 
         let _ = std::fs::remove_file(&out);
@@ -797,6 +805,303 @@ mod imp {
         }
 
         let _ = std::fs::remove_file(&out);
+        Ok(())
+    }
+
+    /// Spools `pages` of `bytes` laid out as `layout` says, to a file, and
+    /// returns what the printer wrote.
+    fn print_laid_out(
+        bytes: &[u8],
+        printer: &str,
+        name: &str,
+        pages: &[u32],
+        layout: tpdf_lib::print_layout::Layout,
+        marks: bool,
+    ) -> Result<Vec<u8>, String> {
+        let out = std::env::temp_dir().join(format!(
+            "tpdf-print-probe-{name}-{}.pdf",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_file(&out);
+        let dc = open_printer(printer)?;
+        let spooled = stuck_fails(|beat| {
+            print_win::spool_laid_out(
+                dc,
+                bytes,
+                &format!("tpdf print probe ({name})"),
+                Some(&out.to_string_lossy()),
+                pages,
+                layout,
+                marks,
+                Some(beat),
+                &library(),
+            )
+        });
+        // SAFETY: the DC `open_printer` created, released once, on both paths.
+        let _ = unsafe { DeleteDC(dc) };
+        spooled.map_err(|e| format!("spooling {name}: {e}"))?;
+        let printed = wait_for_file(&out, std::time::Duration::from_secs(60))?;
+        let _ = std::fs::remove_file(&out);
+        Ok(printed)
+    }
+
+    /// Ink in each quarter of a rendered sheet: top left, top right, bottom
+    /// left, bottom right.
+    fn quarters(bmp: &[u8]) -> Result<[u32; 4], String> {
+        let raster = print_win::Raster::of(bmp)?;
+        let (width, height) = (raster.width(), raster.height());
+        let mut ink = [0u32; 4];
+        for y in 0..height {
+            for x in 0..width {
+                if raster.inked(x, y) {
+                    ink[usize::from(y >= height / 2) * 2 + usize::from(x >= width / 2)] += 1;
+                }
+            }
+        }
+        Ok(ink)
+    }
+
+    /// Four pages to a sheet: the job's pages land on one sheet, each in its
+    /// own quarter, in reading order, and the quarters with no page stay white.
+    ///
+    /// **Which quarters, not how many sheets.** A layout that drew every page
+    /// over the first cell, or that ignored `per_sheet` and drew one page
+    /// filling the sheet, would print one sheet with ink on it too; the
+    /// empty quarters are what only the right layout leaves empty.
+    fn per_sheet(
+        bytes: &[u8],
+        printer: &str,
+        expected: usize,
+        report: &mut Report,
+    ) -> Result<(), String> {
+        const NAME: &str = "four to a sheet puts each page in its own quarter";
+        let count = expected.min(4);
+        let pages: Vec<u32> = (0..u32::try_from(count).unwrap_or(0)).collect();
+        let layout = tpdf_lib::print_layout::Layout {
+            per_sheet: 4,
+            ..tpdf_lib::print_layout::Layout::PLAIN
+        };
+        let printed = print_laid_out(bytes, printer, "four", &pages, layout, true)?;
+        let after =
+            print_win::read(&printed).ok_or("the OS parser could not read the 4-up output")?;
+        if after.pages.len() != 1 {
+            report.check(
+                NAME,
+                false,
+                &format!("{} sheets, not one", after.pages.len()),
+            );
+            return Ok(());
+        }
+        let bmp = print_win::render_page(&printed, 0, CHECK_DPI)
+            .map_err(|e| format!("rendering the 4-up sheet: {e}"))?;
+        let ink = quarters(&bmp)?;
+        // The printable area is not the sheet, so a quarter of it is not
+        // exactly a quarter of the sheet; the gap between cells keeps a page
+        // inside its own quarter of either.
+        let right = ink
+            .iter()
+            .enumerate()
+            .all(|(quarter, &n)| (quarter < count) == (n > 0));
+        report.check(
+            NAME,
+            right,
+            &format!("{count} pages, ink per quarter {ink:?}"),
+        );
+        Ok(())
+    }
+
+    /// Turning pages to fit: a landscape page on a portrait sheet prints a
+    /// quarter turn round, its ink landing where the *turned* page predicts.
+    ///
+    /// **By the page's shape, not its ink's.** The first version of this
+    /// check expected every sheet's ink to run tall, and failed on
+    /// `rotated.pdf`, whose first page is landscape after the job's quarter
+    /// turn while its text block runs tall: the page turned, correctly, and
+    /// its ink came out wide. `predict` with the page's spans swapped is the
+    /// geometry of the turned page, and an unturned page misses it on both
+    /// axes wherever its ink is not square.
+    fn turned(
+        bytes: &[u8],
+        printer: &str,
+        expected: usize,
+        sent: &[Page],
+        report: &mut Report,
+    ) -> Result<(), String> {
+        const NAME: &str = "a landscape page turns to fit a portrait sheet";
+        let wide: Vec<bool> = sent
+            .iter()
+            .map(|p| {
+                let (w, h) = p.inches();
+                w > h
+            })
+            .collect();
+        if !wide.contains(&true) {
+            report.skip(NAME, "no page of this job is landscape, so nothing turns");
+            return Ok(());
+        }
+        let pages: Vec<u32> = (0..u32::try_from(expected).unwrap_or(0)).collect();
+        let turning = tpdf_lib::print_layout::Layout {
+            rotate: true,
+            ..tpdf_lib::print_layout::Layout::PLAIN
+        };
+        let printed = print_laid_out(bytes, printer, "turned", &pages, turning, true)?;
+        let printed = printed_pages(&printed, expected)?;
+        let off: Vec<f64> = sent
+            .iter()
+            .zip(&wide)
+            .zip(&printed)
+            .map(|((source, &turn), got)| {
+                let source = if turn {
+                    Page {
+                        inked: source.inked,
+                        width_span: source.height_span,
+                        height_span: source.width_span,
+                        width_px: source.height_px,
+                        height_px: source.width_px,
+                    }
+                } else {
+                    Page { ..*source }
+                };
+                let (w, h) = predict(&source, got);
+                ((got.width_span - w).abs() / w.max(0.01))
+                    .max((got.height_span - h).abs() / h.max(0.01))
+            })
+            .collect();
+        report.check(
+            NAME,
+            off.iter().all(|d| *d < 0.25) && off.len() == expected,
+            &format!(
+                "landscape per page {wide:?}, printed {}, worst axis off the turned geometry by {}",
+                extents(&printed),
+                off.iter()
+                    .map(|d| format!("{:.0}%", d * 100.0))
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            ),
+        );
+        Ok(())
+    }
+
+    /// Leaving the marks out: the comments of `comments.pdf` do not print,
+    /// and the value of `form.pdf`'s field, which only the form overlay draws,
+    /// still does.
+    ///
+    /// **The form is the control.** A render that dropped everything but the
+    /// page's own content would pass the first half; the field's value has no
+    /// appearance stream, so it survives only if `FPDF_FFLDraw` still runs.
+    ///
+    /// **Pixels that changed, not the amount of ink.** The comments are about
+    /// a twentieth of `comments.pdf`'s ink and the text is the rest, so a
+    /// ratio of the totals read 0.945 with every comment gone (2026-10-20,
+    /// checked by eye). What leaving the marks out may do is take ink away and
+    /// never add it, so the sheets are compared pixel for pixel: the pixels
+    /// only the sheet with marks has, and the ones only the other has.
+    /// Stop, on a live job: a print stopped while it is drawn ends as
+    /// stopped, and the printer writes nothing, because the guard abandons
+    /// the job with `AbortDoc` rather than ending it.
+    ///
+    /// Stop is pressed over and over from another thread for as long as the
+    /// print runs, since a print clears a Stop pressed before it began.
+    fn stop(
+        bytes: &[u8],
+        printer: &str,
+        expected: usize,
+        report: &mut Report,
+    ) -> Result<(), String> {
+        const NAME: &str = "a stopped print ends as stopped and prints nothing";
+        let out =
+            std::env::temp_dir().join(format!("tpdf-print-probe-stop-{}.pdf", std::process::id()));
+        let _ = std::fs::remove_file(&out);
+        let pages: Vec<u32> = (0..u32::try_from(expected).unwrap_or(0)).collect();
+        let done = std::sync::atomic::AtomicBool::new(false);
+        let dc = open_printer(printer)?;
+        let spooled = std::thread::scope(|scope| {
+            scope.spawn(|| {
+                while !done.load(std::sync::atomic::Ordering::SeqCst) {
+                    print_win::stop();
+                    std::thread::sleep(std::time::Duration::from_millis(1));
+                }
+            });
+            let spooled = print_win::spool_laid_out(
+                dc,
+                bytes,
+                "tpdf print probe (stop)",
+                Some(&out.to_string_lossy()),
+                &pages,
+                tpdf_lib::print_layout::Layout::PLAIN,
+                true,
+                None,
+                &library(),
+            );
+            done.store(true, std::sync::atomic::Ordering::SeqCst);
+            spooled
+        });
+        // SAFETY: the DC `open_printer` created, released once.
+        let _ = unsafe { DeleteDC(dc) };
+        // Time for a driver that was going to write the file to have started.
+        std::thread::sleep(std::time::Duration::from_secs(3));
+        let written = out.exists();
+        let _ = std::fs::remove_file(&out);
+        report.check(
+            NAME,
+            matches!(&spooled, Err(e) if e == print_win::STOPPED) && !written,
+            &format!("{spooled:?}, file written: {written}"),
+        );
+        Ok(())
+    }
+
+    fn marks(printer: &str, report: &mut Report) -> Result<(), String> {
+        const GONE: &str = "printing without marks leaves the comments out";
+        const KEPT: &str = "printing without marks still prints the form's values";
+        let layout = tpdf_lib::print_layout::Layout::PLAIN;
+        let sheet = |file: &str, marks: bool| -> Result<Vec<u8>, String> {
+            let bytes = std::fs::read(file).map_err(|e| format!("reading {file}: {e}"))?;
+            let printed = print_laid_out(&bytes, printer, "marks", &[0], layout, marks)?;
+            print_win::render_page(&printed, 0, CHECK_DPI)
+                .map_err(|e| format!("rendering {file} printed: {e}"))
+        };
+        for (file, name) in [("testdata/comments.pdf", GONE), ("testdata/form.pdf", KEPT)] {
+            if !Path::new(file).exists() {
+                report.skip(
+                    name,
+                    &format!("{file} is not there; generate the fixtures first"),
+                );
+                continue;
+            }
+            let (with, without) = (sheet(file, true)?, sheet(file, false)?);
+            let (with, without) = (
+                print_win::Raster::of(&with)?,
+                print_win::Raster::of(&without)?,
+            );
+            if (with.width(), with.height()) != (without.width(), without.height()) {
+                report.check(name, false, "the two sheets came out different sizes");
+                continue;
+            }
+            let (mut inked, mut taken, mut added) = (0u32, 0u32, 0u32);
+            for y in 0..with.height() {
+                for x in 0..with.width() {
+                    let (a, b) = (with.inked(x, y), without.inked(x, y));
+                    inked += u32::from(a);
+                    taken += u32::from(a && !b);
+                    added += u32::from(b && !a);
+                }
+            }
+            // A few pixels either way are the rasteriser's, at a glyph edge.
+            let ok = inked > 0
+                && added < 50
+                && if name == GONE {
+                    taken > 500
+                } else {
+                    taken < 50
+                };
+            report.check(
+                name,
+                ok,
+                &format!(
+                    "{file}: {inked} inked with marks, {taken} of them gone without, {added} added"
+                ),
+            );
+        }
         Ok(())
     }
 

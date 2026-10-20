@@ -418,6 +418,7 @@ fn render_region(
     let (top, rows) = ocr_gate::rows_of(region, height_px, SCALE)
         .ok_or_else(|| "the region is not on the page".to_string())?;
     let request = tpdf_lib::render::TileRequest {
+        annotations: true,
         rid: 0,
         doc,
         page: 0,

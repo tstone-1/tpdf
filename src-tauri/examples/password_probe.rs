@@ -538,6 +538,7 @@ fn tile_of(service: &RenderService, doc: u32, rid: u64, at: Placement) -> Result
     let (tx, rx) = channel();
     service.tile(
         TileRequest {
+            annotations: true,
             crop: None,
             rid,
             doc,

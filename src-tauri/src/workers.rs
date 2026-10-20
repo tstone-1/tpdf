@@ -1402,6 +1402,7 @@ impl Workers {
             let response = worker.call(&self.views.request(
                 request.doc,
                 Request::Tile {
+                    annotations: request.annotations,
                     rid: request.rid,
                     page: request.page,
                     crop: request.crop,
@@ -3027,6 +3028,7 @@ mod tests {
     /// A tile request of a given size and format, with nothing else meaningful.
     fn request(width: u16, height: u16, format: TileFormat) -> TileRequest {
         TileRequest {
+            annotations: true,
             rid: 1,
             doc: 0,
             page: 0,

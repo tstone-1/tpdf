@@ -497,6 +497,7 @@ fn render(worker: &mut Worker, page: u32, width: f32, height: f32) -> Result<Ink
     let pixels_wide = (w * f64::from(scale)).floor().max(1.) as usize;
     let pixels_high = (h * f64::from(scale)).floor().max(1.) as usize;
     let response = worker.call(&Request::Tile {
+        annotations: true,
         rid: 0,
         page,
         scale,

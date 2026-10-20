@@ -432,6 +432,7 @@ fn screenful(
         let tx = tx.clone();
         service.tile(
             TileRequest {
+                annotations: true,
                 crop: None,
                 rid: *rid,
                 doc: doc.id,

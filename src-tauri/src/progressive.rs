@@ -81,6 +81,18 @@ mod raw {
 /// `render.rs` uses. Any divergence here shows up as a pixel difference.
 const RENDER_FLAGS: c_int = raw::FPDF_ANNOT | raw::FPDF_REVERSE_BYTE_ORDER;
 
+/// The flags for a render with or without the page's annotations: comments,
+/// highlights, stamps, drawings. Form fields are drawn either way, by
+/// `FPDF_FFLDraw` after the page, which is what a print without the comments
+/// wants (`print_layout::Settings::marks`).
+const fn flags(annotations: bool) -> c_int {
+    if annotations {
+        RENDER_FLAGS
+    } else {
+        raw::FPDF_REVERSE_BYTE_ORDER
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Ownership
 // ---------------------------------------------------------------------------
@@ -1333,7 +1345,20 @@ pub fn render(
     slice: Option<Duration>,
     cancel: &CancelToken,
 ) -> Progress {
+    render_with(bitmap, page, placement, slice, cancel, true)
+}
+
+/// [`render`], drawing the page's annotations only when `annotations` is set.
+pub fn render_with(
+    bitmap: &mut RawBitmap<'_>,
+    page: &RawPage<'_>,
+    placement: Placement,
+    slice: Option<Duration>,
+    cancel: &CancelToken,
+    annotations: bool,
+) -> Progress {
     let bindings = bitmap.bindings;
+    let render_flags = flags(annotations);
     let started = Instant::now();
 
     // Match `render_into_bitmap_with_settings`: fill the *page* rect, not the
@@ -1373,7 +1398,7 @@ pub fn render(
             placement.size_x,
             placement.size_y,
             placement.turns as c_int,
-            RENDER_FLAGS,
+            render_flags,
             pause_ptr,
         )
     };
@@ -1420,7 +1445,7 @@ pub fn render(
                     placement.size_x,
                     placement.size_y,
                     placement.turns as c_int,
-                    RENDER_FLAGS,
+                    render_flags,
                 )
             };
         }
@@ -1498,6 +1523,24 @@ pub fn render_tile_into(
     slice: Option<Duration>,
     cancel: &CancelToken,
 ) -> Result<Progress, String> {
+    render_tile_into_with(bindings, page, spec, buffer, slice, cancel, true)
+}
+
+/// [`render_tile_into`], drawing the page's annotations only when
+/// `annotations` is set.
+///
+/// # Errors
+///
+/// As [`render_tile_into`].
+pub fn render_tile_into_with(
+    bindings: Bindings,
+    page: &RawPage<'_>,
+    spec: TileSpec,
+    buffer: &mut [u8],
+    slice: Option<Duration>,
+    cancel: &CancelToken,
+    annotations: bool,
+) -> Result<Progress, String> {
     let TileSpec {
         scale,
         turns,
@@ -1514,7 +1557,14 @@ pub fn render_tile_into(
     let placement = Placement::tile(page, scale, turns, x, y);
 
     let mut bitmap = RawBitmap::borrowed(bindings, buffer, width, height)?;
-    Ok(render(&mut bitmap, page, placement, slice, cancel))
+    Ok(render_with(
+        &mut bitmap,
+        page,
+        placement,
+        slice,
+        cancel,
+        annotations,
+    ))
 }
 
 #[cfg(test)]
