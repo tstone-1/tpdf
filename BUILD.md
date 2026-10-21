@@ -7149,8 +7149,12 @@ TEENYWEENY. The cask went to 26.10.24 with the `.dmg`'s SHA-256 equal to GitHub'
 audit --cask --online` was clean and `brew livecheck` reads 26.10.24. The winget pull request
 moved to 26.10.24 and passed `winget validate`. After publication, `run_on_windows.py --rev
 0be47c6f --pictures` on TEENYWEENY: `screenshots.py --more` 51/51 and 20 pictures, the print
-preview among them, looked at. **Not run:** the `no-press` controls of the update checks,
-`menu_check.py` and `save_check.py`.
+preview among them, looked at. Step 7's pass after the release, `--since v26.10.23 --resume` on
+the Windows desktop on `0be47c6f`: frontend 74 of 74; Rust 127 of 128 with 5 skipped as not
+runnable on Windows. The survivor was a row that changed nothing on Windows (`docs/TRAPS.md`, *A
+mutation that replaced `cfg!(windows)` with `true` changed nothing on Windows*); rewritten, it is
+caught there. **Not run:** the `no-press` controls of the update checks, `menu_check.py` and
+`save_check.py`.
 
 **26.10.23 verification, 2026-10-18:** prepared on the MacBook, with the macOS window checks
 on the Mac mini and the Windows half on TEENYWEENY and the Windows desktop over ssh. Step 1

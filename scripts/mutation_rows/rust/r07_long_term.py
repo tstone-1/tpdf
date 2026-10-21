@@ -1247,10 +1247,12 @@ ROWS += [
         "the_report_reaches_the_window_in_its_own_spelling",
     ),
     Mutation(
-        "ocr language: tell every reader more can be installed",
+        # Inverted rather than `true`: on Windows `cfg!(windows)` is already
+        # true, so `true` changed nothing there and survived on 2026-10-21.
+        "ocr language: offer installing more languages on the wrong platforms",
         "src/commands/ocr.rs",
         "        installable: cfg!(windows),",
-        "        installable: true,",
+        "        installable: !cfg!(windows),",
         "only_windows_tells_the_reader_more_languages_can_be_installed",
     ),
     Mutation(

@@ -605,6 +605,7 @@ hop through the index.
 - A test that skips on a missing fixture passes unseen, because test output is captured
 - A ratio of ink totals read 0.945 with every comment gone, because the text is the rest
 - A turned page's ink ran the wrong way for the check, because a page's shape is not its ink's
+- A mutation that replaced `cfg!(windows)` with `true` changed nothing on Windows
 
 ## Harnesses: running checks and reading what they print
 - A mutation harness needs the same control as the thing it is testing
@@ -26953,3 +26954,16 @@ any permission from its folder, and resets a tree that takes none. Tried on a tr
 way: repaired and said so once, silent on the next run and on a healthy tree. Anything else in
 this repository that unpacks into `tempfile` and moves the result to where a worker reads it has
 the same defect.
+
+
+### A mutation that replaced `cfg!(windows)` with `true` changed nothing on Windows
+
+The 26.10.24 pass of `mutate_rust.py --since v26.10.23` on the Windows desktop reported one
+survivor, *ocr language: tell every reader more can be installed*. The row replaced
+`installable: cfg!(windows)` with `installable: true` in `commands/ocr.rs`. On Windows
+`cfg!(windows)` is `true`, so the mutated program was the program, and no test could notice; on
+a Mac the same row is caught. The verdict read as a gap in the tests and was a row that can only
+be caught off Windows. The row now inverts the expression, `!cfg!(windows)`, which changes the
+answer on every platform and is caught by the test named for it on Windows. A row that replaces
+a platform test with a constant is a no-op on the platform where the constant already holds:
+invert it, or declare `only_on`. It was the only row in the tables that mutates a `cfg!`.
