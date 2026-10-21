@@ -7147,9 +7147,10 @@ the `-setup.exe`, the `.deb`, the AppImage and `latest.json` answer 200. An inst
 updated itself: `update_check_mac.py` 12/12 on the Mac mini and `update_check.py` 17/17 on
 TEENYWEENY. The cask went to 26.10.24 with the `.dmg`'s SHA-256 equal to GitHub's digest; `brew
 audit --cask --online` was clean and `brew livecheck` reads 26.10.24. The winget pull request
-moved to 26.10.24 and passed `winget validate`. **Not run:** the `no-press` controls of the
-update checks, the screenshot run that photographs the new print preview, `menu_check.py` and
-`save_check.py`, and step 7's `--since v26.10.23` pass after the release.
+moved to 26.10.24 and passed `winget validate`. After publication, `run_on_windows.py --rev
+0be47c6f --pictures` on TEENYWEENY: `screenshots.py --more` 51/51 and 20 pictures, the print
+preview among them, looked at. **Not run:** the `no-press` controls of the update checks,
+`menu_check.py` and `save_check.py`.
 
 **26.10.23 verification, 2026-10-18:** prepared on the MacBook, with the macOS window checks
 on the Mac mini and the Windows half on TEENYWEENY and the Windows desktop over ssh. Step 1
