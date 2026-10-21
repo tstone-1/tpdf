@@ -836,6 +836,7 @@ hop through the index.
 - A relative binary path with forward slashes is not found on Windows, so three window checks failed in a second
 - A print job *Spooling* with 0 pages was tpdf rasterising, not a stuck spooler
 - A helper whose callers all became Windows-only passed every gate on Windows and failed on the other two
+- PDFium unpacked through a Python temporary directory could not be loaded by a low-integrity worker
 
 ## Fixtures
 - The test fixtures are generated, not committed
@@ -26923,3 +26924,29 @@ a Mac change that breaks Windows, and nothing run from Windows compiles the macO
 `scripts/check_linux.py` now runs the `clippy` gate on the Linux tree under WSL from Windows; with
 the `cfg` removed again it failed on the same line as CI. When a change puts callers behind a
 platform `cfg`, run it, and read `ci.yml`'s three jobs before calling the push done.
+
+
+### PDFium unpacked through a Python temporary directory could not be loaded by a low-integrity worker
+
+On 2026-10-21, cutting 26.10.24, `print-probe` on TEENYWEENY failed all three fixtures at the
+same check: *the worker could not open the print job*, `LoadLibraryExW` error 5 on
+`vendor\pdfium\bin\pdfium.dll`. The window checks had passed 16 of 16 on the same machine an hour
+before. Those load the copy the checks build puts in `target\release\pdfium\`, which inherits the
+folder's permissions and grants `Users` read. The copy in `vendor\pdfium` granted only SYSTEM,
+Administrators and OWNER RIGHTS, and a low-integrity worker is refused by that. The print worker
+is the first worker a development tree starts on Windows with the library from `vendor`, since the
+print rework of 2026-10-20; until then Windows printing ran in the app process.
+
+The list came from `fetch_pdfium.py`. It unpacked into `tempfile.TemporaryDirectory()` and moved
+the tree into `vendor`. Since Python 3.13 a temporary directory on Windows gets an owner-only
+access list, and a move on the same volume keeps it. A directory made by `tempfile` and moved into
+`vendor` arrives with exactly that list, and a plain `mkdir` there inherits; both were measured on
+the desktop. Every Windows development tree installed by Python 3.13 or later had it, the
+desktop's clone included. Installed copies of tpdf never did, because the installer writes files
+that inherit.
+
+The script now unpacks beside `vendor\pdfium` with a plain `mkdir`, and the download alone stays
+in the temporary directory. Reinstalled with `--force`, the same probe binary on the same machine
+passed 14, 15 and 14 checks with no failure. A tree installed before the fix keeps its list until
+it is reinstalled: `python scripts/fetch_pdfium.py --force`. Anything else in this repository that
+unpacks into `tempfile` and moves the result to where a worker reads it has the same defect.

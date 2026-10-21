@@ -256,11 +256,26 @@ def install(key: str, dest: Path, force: bool) -> int:
             )
             return 1
 
-        staging = Path(tmp) / "tree"
-        safe_extract(archive, staging)
+        # Unpacked beside `dest`, not in `tmp`. Since Python 3.13 a temporary
+        # directory on Windows gets an owner-only DACL, and a move on the same
+        # volume keeps it, so a tree unpacked in `tmp` arrives readable by no
+        # low-integrity worker: the Windows print worker failed `print-probe`
+        # with LoadLibraryExW error 5 from such a tree on 2026-10-21. A plain
+        # mkdir here inherits `vendor`'s permissions.
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        staging = dest.parent / f".{dest.name}-staging"
+        if staging.exists():
+            shutil.rmtree(staging)
+        staging.mkdir()
+        try:
+            safe_extract(archive, staging)
+        except BaseException:
+            shutil.rmtree(staging, ignore_errors=True)
+            raise
 
         library = staging / library_path(key)
         if not library.is_file():
+            shutil.rmtree(staging, ignore_errors=True)
             sys.exit(f"[FAIL] {asset} contains no {library_path(key)}")
 
         (staging / "VERSION.txt").write_text(f"{TAG}\n", encoding="utf-8")
@@ -273,10 +288,9 @@ def install(key: str, dest: Path, force: bool) -> int:
         )
 
         # Swap late: the old tree stays usable until the new one is complete.
-        dest.parent.mkdir(parents=True, exist_ok=True)
         if dest.exists():
             shutil.rmtree(dest)
-        shutil.move(str(staging), str(dest))
+        staging.rename(dest)
 
     size = (dest / library_path(key)).stat().st_size
     print(f"[OK] pdfium {TAG} {key} -> {dest} ({size:,} bytes)")
