@@ -34,8 +34,9 @@ fn keys(dict: &Dictionary, allowed: &[&[u8]]) -> Result<(), String> {
 }
 
 fn glyph_content(bytes: &[u8]) -> Result<Content, String> {
-    // lopdf 0.45 tokenises d1 as operator d followed by number 1, even in
-    // decode_strict. Locate exactly six numeric tokens and the literal d1,
+    // lopdf 0.45 tokenised d1 as operator d followed by number 1, even in
+    // decode_strict; 0.46 reads it as one operator, and this substitution is
+    // right under either. Locate exactly six numeric tokens and the literal d1,
     // then substitute an alphabetic token in this scratch buffer. Separating
     // the header tokens also handles comments immediately after PDF numbers.
     // No font or saved document bytes are changed. Every other operator still

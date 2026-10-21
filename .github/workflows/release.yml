@@ -567,6 +567,16 @@ jobs:
           workers run under Landlock and seccomp. The Linux packages (deb
           and AppImage) do not update themselves: install the new one.
 
+          **New in 26.10.24.** On Windows the print preview is the print
+          dialog: printer, pages, copies, paper and two-sided beside the
+          sheets, plus a scale, 2 to 16 pages to a sheet, pages turned to
+          fit, odd or even pages, prints without comments, and posters
+          across several sheets. Linux shows the same preview before its
+          print dialog. A Windows print shows its progress, can be stopped,
+          reports a failure or a stuck queue, and draws dense pages about
+          six times faster. A comparison that could not read every page
+          says so instead of reporting the same words.
+
           **New in 26.10.23.** Compare with... lists every change in the
           words between two open documents, washed red and green on both,
           and `tpdf compare` prints the same. Save a copy with page numbers

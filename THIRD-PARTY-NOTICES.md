@@ -2662,7 +2662,7 @@ SOFTWARE.
 | cpubits | 0.1.1 | MIT OR Apache-2.0 |
 | cpufeatures | 0.2.17 | MIT OR Apache-2.0 |
 | cpufeatures | 0.3.1 | MIT OR Apache-2.0 |
-| crc32fast | 1.5.2 | MIT OR Apache-2.0 |
+| crc32fast | 1.5.3 | MIT OR Apache-2.0 |
 | crossbeam-channel | 0.5.17 | MIT OR Apache-2.0 |
 | crossbeam-deque | 0.8.8 | MIT OR Apache-2.0 |
 | crossbeam-epoch | 0.9.21 | MIT OR Apache-2.0 |
@@ -2793,7 +2793,7 @@ SOFTWARE.
 | indexmap | 2.14.2 | Apache-2.0 OR MIT |
 | infer | 0.22.0 | MIT |
 | inout | 0.1.4 | MIT OR Apache-2.0 |
-| inout | 0.2.4 | MIT OR Apache-2.0 |
+| inout | 0.2.5 | MIT OR Apache-2.0 |
 | ipnet | 2.12.2 | MIT OR Apache-2.0 |
 | itertools | 0.15.0 | MIT OR Apache-2.0 |
 | itoa | 1.0.18 | MIT OR Apache-2.0 |
@@ -2821,7 +2821,7 @@ SOFTWARE.
 | litemap | 0.8.3 | Unicode-3.0 |
 | lock_api | 0.4.14 | MIT OR Apache-2.0 |
 | log | 0.4.34 | MIT OR Apache-2.0 |
-| lopdf | 0.45.0 | MIT |
+| lopdf | 0.46.0 | MIT |
 | markup5ever | 0.39.0 | MIT OR Apache-2.0 |
 | maybe-owned | 0.3.4 | MIT OR Apache-2.0 |
 | md-5 | 0.11.0 | MIT OR Apache-2.0 |
@@ -2887,7 +2887,7 @@ SOFTWARE.
 | pkcs12 | 0.1.0 | Apache-2.0 OR MIT |
 | pkcs5 | 0.7.1 | Apache-2.0 OR MIT |
 | pkcs8 | 0.10.2 | Apache-2.0 OR MIT |
-| plist | 1.10.1 | MIT |
+| plist | 1.10.2 | MIT |
 | png | 0.17.16 | MIT OR Apache-2.0 |
 | png | 0.18.1 | MIT OR Apache-2.0 |
 | polling | 3.11.0 | Apache-2.0 OR MIT |
@@ -3018,7 +3018,7 @@ SOFTWARE.
 | tinyvec | 1.13.3 | Zlib OR Apache-2.0 OR MIT |
 | tls_codec | 0.4.2 | Apache-2.0 OR MIT |
 | tls_codec_derive | 0.4.2 | Apache-2.0 OR MIT |
-| tokio | 1.53.3 | MIT |
+| tokio | 1.54.0 | MIT |
 | tokio-rustls | 0.26.6 | MIT OR Apache-2.0 |
 | tokio-util | 0.7.20 | MIT |
 | toml | 1.1.8+spec-1.1.0 | MIT OR Apache-2.0 |

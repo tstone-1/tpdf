@@ -35,7 +35,7 @@ libfuzzer-sys = "0.4"
 arbitrary = { version = "1", features = ["derive"] }
 # The same version the application resolves, so a target that calls
 # `Document::load_mem_with_options` calls the code that ships. MIT.
-lopdf = "0.45"
+lopdf = "0.46"
 
 # The application's own library. Every walker target goes through this rather
 # than through a copy, so what is fuzzed is what runs -- `annots::scan`,
