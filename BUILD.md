@@ -7114,6 +7114,43 @@ read through. **Not run:** the written copy of `tpdf long-term` against a public
 authority (`docs/VERIFICATION.md` has why), the new entry of `mutate_viewer.py` by the
 harness itself, `print-probe` and `redact-reach-probe`.
 
+**26.10.24 verification and publication, 2026-10-21:** prepared on the Windows desktop, with the
+macOS half on the Mac mini and the Windows half on TEENYWEENY over ssh. Step 1 took `lopdf` 0.46,
+a `0.x` minor of a direct dependency: its writers still leave out `ObjStm`, `XRef` and
+`Linearized` objects, `processor.rs` is byte-identical, and it still records no free
+cross-reference entry, so the guards in `save.rs`, `redact.rs` and `docinfo/freed.rs` hold; it
+reads Type 3 `d1` as one operator now, which `type3.rs`'s substitution handles either way. Also
+`vite` 8.3.5 and eight patch crates; `tauri-plugin-updater` held at 2.13.3 again. Two more held
+crates are new to the list above and are held by others: `windows-core` 0.100 by Tauri's `tao`,
+`wry` and `webview2-com`, and `parking_lot` 0.13, which would be a second copy beside `tao`'s
+0.12. All 33 gates passed on the release tree, and `check_linux.py` passed. `window_checks.py` 16
+of 16 on the Mac mini through `run_on_mac.py` and 16 of 16 on TEENYWEENY on a `--no-bundle`
+checks build. Step 7 in the mutation worktree: `mutate_python.py` 38/38, `mutate_frontend.py
+--near v26.10.23` 12/12, `mutate_rust.py --near v26.10.23` 14/14 with 2 skipped as not runnable
+on Windows. `redact-reach-probe` over 177 documents in the desktop's Downloads: 15,034 regions,
+92.4% taken whole; the gate read back 13,669 on 388 pages, none still read as text, 8,119 not
+shown unreadable and 5,550 shown unreadable, in 96.0 s. **`print-probe` failed all three
+fixtures on TEENYWEENY at first**, the print worker refused `vendor\pdfium\bin\pdfium.dll` with
+`LoadLibraryExW` error 5: `fetch_pdfium.py` left an owner-only access list on development trees
+(`docs/TRAPS.md`, *PDFium unpacked through a Python temporary directory could not be loaded by a
+low-integrity worker*). Fixed in `0be47c6f`, the tagged commit; reinstalled with `--force`, the
+same binary passed 14/14 on `vector-multi.pdf`, 15/15 on `rotated.pdf` and 14/14 on `links.pdf`,
+each reading 78 modules with none named pdfium. No rehearsal tag: `release.yml` changed only in
+its notes. CI passed all three jobs on `0be47c6f` and `Audit` passed (run 39591223349); release
+run 39595647629 skipped its gates and left a draft of eight files whose `latest.json` offered
+26.10.24 for the four macOS and Windows entries. On the draft's files: the installer read as
+`Valid` by `Get-AuthenticodeSignature` and passed `installed_check.py` 25/25 on TEENYWEENY; the
+`.dmg` and its app were accepted as Notarized Developer ID and stapled, with a `tpdf-cli` that
+answered 26.10.24 and verified `testdata/incr-signed.pdf`. `publish_release.py v26.10.24
+--publish` published it; without authentication `releases/latest` is v26.10.24 and the `.dmg`,
+the `-setup.exe`, the `.deb`, the AppImage and `latest.json` answer 200. An installed 26.10.23
+updated itself: `update_check_mac.py` 12/12 on the Mac mini and `update_check.py` 17/17 on
+TEENYWEENY. The cask went to 26.10.24 with the `.dmg`'s SHA-256 equal to GitHub's digest; `brew
+audit --cask --online` was clean and `brew livecheck` reads 26.10.24. The winget pull request
+moved to 26.10.24 and passed `winget validate`. **Not run:** the `no-press` controls of the
+update checks, the screenshot run that photographs the new print preview, `menu_check.py` and
+`save_check.py`, and step 7's `--since v26.10.23` pass after the release.
+
 **26.10.23 verification, 2026-10-18:** prepared on the MacBook, with the macOS window checks
 on the Mac mini and the Windows half on TEENYWEENY and the Windows desktop over ssh. Step 1
 moved nothing: the lockfiles already held what `cargo update` and `npm update` reach, and
