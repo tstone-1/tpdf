@@ -26947,6 +26947,9 @@ that inherit.
 
 The script now unpacks beside `vendor\pdfium` with a plain `mkdir`, and the download alone stays
 in the temporary directory. Reinstalled with `--force`, the same probe binary on the same machine
-passed 14, 15 and 14 checks with no failure. A tree installed before the fix keeps its list until
-it is reinstalled: `python scripts/fetch_pdfium.py --force`. Anything else in this repository that
-unpacks into `tempfile` and moves the result to where a worker reads it has the same defect.
+passed 14, 15 and 14 checks with no failure. A tree installed before the fix is complete, so the
+script would never replace it; on Windows it now also asks `icacls` whether `vendor\pdfium` takes
+any permission from its folder, and resets a tree that takes none. Tried on a tree broken the old
+way: repaired and said so once, silent on the next run and on a healthy tree. Anything else in
+this repository that unpacks into `tempfile` and moves the result to where a worker reads it has
+the same defect.

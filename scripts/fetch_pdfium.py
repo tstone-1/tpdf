@@ -68,6 +68,7 @@ import hashlib
 import os
 import platform
 import shutil
+import subprocess
 import sys
 import tarfile
 import tempfile
@@ -182,6 +183,20 @@ def installed_complete(key: str, dest: Path) -> bool:
     return library.is_file() and file_digest(library) == recorded
 
 
+def inherits_permissions(dest: Path) -> bool:
+    """False for a Windows tree whose folder takes no permission from its parent.
+
+    Such a tree was unpacked in a Python temporary directory, which since 3.13
+    is owner-only, and moved here: a low-integrity worker cannot load the
+    library from it (`install`, beside `staging`). `icacls` marks every
+    inherited entry `(I)`; the flags do not change with the system language.
+    """
+    if os.name != "nt":
+        return True
+    listed = subprocess.run(["icacls", str(dest)], capture_output=True, text=True, check=False)
+    return listed.returncode != 0 or "(I)" in listed.stdout
+
+
 def download(url: str, target: Path) -> str:
     """Fetches `url` to `target`, returning its sha256. Streams; nothing buffers."""
     digest = hashlib.sha256()
@@ -233,6 +248,14 @@ def install(key: str, dest: Path, force: bool) -> int:
         sys.exit(f"[FAIL] refusing a V8 build: {asset}")
 
     if not force and installed_complete(key, dest):
+        # A tree installed before 0be47c6f is complete and unreadable by a
+        # worker, and nothing else would ever replace it.
+        if not inherits_permissions(dest):
+            subprocess.run(["icacls", str(dest), "/reset", "/T", "/Q"], capture_output=True, check=False)
+            if not inherits_permissions(dest):
+                sys.exit(f"[FAIL] {dest} takes no permission from its folder, and resetting them failed;"
+                         " a worker cannot load the library from it. Run with --force.")
+            print(f"[OK] {dest} now inherits its folder's permissions, so a worker can load the library")
         print(f"[OK] pdfium {TAG} {key} already installed at {dest}")
         return 0
 

@@ -8597,6 +8597,9 @@ starts at 0 and increments within the month.
    and four advisories published that week failed `Audit` on the release commit.
    - `toml`, `toml_datetime`, `toml_edit`, `brotli-decompressor`, `generic-array` and
      `rand_chacha` are not named in `Cargo.toml`; what names them pins them.
+   - **`windows-core` 0.100** is held by Tauri: `tao`, `wry` and `webview2-com` name 0.62.
+     **`parking_lot` 0.13** would be a second copy beside `tao`'s 0.12, the reason `base64` is
+     held. Take each when Tauri does (26.10.24).
    - **`tauri-plugin-updater` 2.14.0** and its npm half were held at 2.13.3 for 26.10.19
      (2026-10-14): step 12 asks for the new updater to be tested before the tag when its
      own crates move, which needs a Mac screen, and that release had the Linux packages to
@@ -8670,6 +8673,13 @@ starts at 0 and increments within the month.
    ```
    scripts/run_on_windows.py --host HOST --clone 'C:\Users\me\tpdf'
    ```
+
+   **A push that touches Windows printing also needs `print-probe`** (§8, the only check that
+   reaches a real spooler), not only at step 8. Since 2026-10-20 a worker draws every printed
+   page, and neither the gates nor `run_on_windows.py` starts one: 26.10.24's release commit was
+   pushed before `print-probe` found that no Windows development tree could start it
+   (`docs/TRAPS.md`, *PDFium unpacked through a Python temporary directory could not be loaded
+   by a low-integrity worker*).
 
    It sends the tree as it is here, uncommitted work included, to a Windows machine over
    SSH and runs `cargo test --test cli` there (`--suite lib` or `all` for more), in a
