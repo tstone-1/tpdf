@@ -90,6 +90,9 @@ have the binary.)
   page has reached the printer for a minute, tpdf says the queue may be stuck and where to
   look; the job still prints if the queue starts again. Time tpdf spends drawing a page is
   not counted, so a slow page does not set it off. `tpdf print` says the same on stderr.
+- **Certificate chains through the distrusted emSign intermediates are refused.** Their
+  private keys are public. `rustls-webpki` 0.103.16 rejects them in the update check's
+  connection and, on Linux, in the check of whom a signature chains to (RUSTSEC-2026-0382).
 
 ## [26.10.23] - 2026-10-18
 
