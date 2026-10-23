@@ -474,8 +474,9 @@ Verify an existing install without touching the network:
 scripts/fetch_pdfium.py --check
 ```
 
-The pin is `pdfium-8066-tpdf.1`; Phase 0 measurements in `AGENTS.md` and `docs/PLAN.md`
-used `chromium/7881`. Bumping it means editing `TAG` and the whole `PINS`
+The pin is `pdfium-8103-tpdf.1` since 2026-10-23; Phase 0 measurements in `AGENTS.md` and
+`docs/PLAN.md` used `chromium/7881`. Bumping it means `scripts/check_pdfium_age.py --repin
+<version> <commit>` for `scripts/pdfium_build.json`, editing `TAG` and the whole `PINS`
 table in `scripts/fetch_pdfium.py` together, then re-running the checks that a digest
 cannot stand in for:
 
