@@ -112,7 +112,12 @@ build writes the two values into its own checkout with `check_pdfium_age.py --re
 produces candidate archives; the pin of the repository is unchanged, and the steps from a
 candidate to a pin are the ones below. One issue per proposal: a run that finds an open
 issue with the same title starts nothing. `pdfium.yml` takes the same two values by hand:
-`gh workflow run pdfium.yml -f version=<branch>-tpdf.<n> -f pdfium=<commit>`.
+`gh workflow run pdfium.yml -f version=<branch>-tpdf.<n> -f pdfium=<commit>`. **The build
+writes its result into the issue** (since 2026-10-23): its job `report` comments with the
+verdict, each platform's conclusion and a link to the run, so a failed candidate is red
+where the work is tracked. Until then `pdfium-bump` was green once it had started the
+build, and the 8103 candidate failed on all three platforms while issue #5 said nothing.
+A build started by hand with no issue of that title prints the same text in its log.
 
 **To see that path work while the pin is current**, `gh workflow run audit.yml -f
 rehearse=true`: the check runs against a copy of the pin set back to 8066, the build of

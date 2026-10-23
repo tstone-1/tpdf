@@ -414,11 +414,29 @@ def leg_counts() -> list[str]:
     return wrong
 
 
+#: The line that names a PDFium candidate's issue. `audit.yml`'s `pdfium-bump`
+#: opens the issue under it and `pdfium.yml`'s `report` finds the issue by it,
+#: so the two copies must be one line: a report that looks for another title
+#: finds no issue, says so in its log, and is green.
+ISSUE_TITLE = 'title="PDFium: build $VERSION at ${PDFIUM:0:12}"'
+
+
+def issue_titles() -> list[str]:
+    """`ISSUE_TITLE` exactly once in each of the two workflows."""
+    wrong = []
+    for name in ("audit.yml", "pdfium.yml"):
+        lines = (ROOT / ".github/workflows" / name).read_text(encoding="utf-8").splitlines()
+        count = sum(line.strip() == ISSUE_TITLE for line in lines)
+        if count != 1:
+            wrong.append(f"{name} builds the candidate issue's title {count} times as `{ISSUE_TITLE}`, not once")
+    return wrong
+
+
 def main() -> int:
     """Compares the two jobs and reports the first difference."""
     found: dict[str, list[str]] = {}
     checked_out = 0
-    counted = leg_counts()
+    counted = leg_counts() + issue_titles()
     if counted:
         for line in counted:
             print(f"[FAIL] {line}")
@@ -473,6 +491,7 @@ def main() -> int:
     if left == right:
         print(f"[OK]   both '{JOB}' jobs run the same {len(left)} steps, in the same order")
         print(f"[OK]   both read-only, both installing {PINNED_TOOLS}")
+        print("[OK]   audit.yml and pdfium.yml name a PDFium candidate's issue with the same line")
         print(f"[OK]   none of the {secret_jobs} jobs that hold a secret restores an unchecked cache, "
               "and the signing client's pins agree")
         print(

@@ -100,3 +100,60 @@ jobs:
           path: ${{ runner.temp }}/pdfium-artifacts/
           if-no-files-found: error
           retention-days: 30
+
+  # The candidate's result, in the issue that asked for it. `audit.yml`'s
+  # `pdfium-bump` starts this build and opens the issue, and that job is green
+  # as soon as both are done. So until 2026-10-23 a build that failed said so
+  # only on this workflow's page: the 8103 candidate failed on all three
+  # platforms while issue #5 read as if it were still building. Like
+  # `pdfium-bump`, this runs no code from a checkout, only `gh` and `jq` with
+  # the two inputs, matched against their patterns first. The title is the one
+  # `pdfium-bump` writes, and `scripts/check_workflow_parity.py` holds the two
+  # lines that build it equal.
+  report:
+    name: Result in the issue
+    needs: build
+    if: always() && github.event_name == 'workflow_dispatch' && inputs.version != ''
+    runs-on: ubuntu-latest
+    permissions:
+      actions: read
+      issues: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+      VERSION: ${{ inputs.version }}
+      PDFIUM: ${{ inputs.pdfium }}
+      RESULT: ${{ needs.build.result }}
+      RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+    steps:
+      - name: Comment on the issue for this version and commit
+        run: |
+          set -euo pipefail
+          if ! [[ "$VERSION" =~ ^[0-9]+-tpdf\.[0-9]+$ && "$PDFIUM" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "[FAIL] the inputs are not a version and a 40-digit commit, so no issue can name them"
+            exit 1
+          fi
+          title="PDFium: build $VERSION at ${PDFIUM:0:12}"
+          jobs=$(gh run view "$GITHUB_RUN_ID" --json jobs \
+            --jq '.jobs[] | select(.name != "Result in the issue") | "- \(.name): \(.conclusion)"')
+          if [ -z "$jobs" ]; then
+            echo "[FAIL] the run lists no build job, so there is no result to report"
+            exit 1
+          fi
+          if [ "$RESULT" = success ]; then
+            verdict="The candidate build passed on every platform: [the run]($RUN_URL). Its archives are that run's artifacts, kept for 30 days."
+          else
+            verdict="**The candidate build did not pass** (\`$RESULT\`): [the run]($RUN_URL). Nothing from it can be published or pinned; the failing step's log is in the run."
+          fi
+          printf '%s\n\n%s\n' "$verdict" "$jobs" > "$RUNNER_TEMP/result.md"
+          cat "$RUNNER_TEMP/result.md"
+          # Read first and searched after, as in `pdfium-bump`: a listing cut
+          # short must not read as "no issue".
+          issues=$(gh issue list --state open --limit 200 --json number,title)
+          number=$(jq -r --arg t "$title" --arg r "Rehearsal, nothing to do: $title" \
+            '[.[] | select(.title == $t or .title == $r) | .number] | first // empty' <<< "$issues")
+          if [ -z "$number" ]; then
+            echo "no open issue is titled: $title -- the result above is this run's only report"
+            exit 0
+          fi
+          gh issue comment "$number" --body-file "$RUNNER_TEMP/result.md"
