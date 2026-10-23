@@ -69,8 +69,21 @@ class ObservationTests(unittest.TestCase):
         text = "Hello \u05d4\u05d9\u05d5\u05dd \u05e2\u05d5\u05dc\u05dd \u05e9\u05dc\u05d5\u05dd"
         seen["latin-prefix.pdf"]["text"] = text
         seen["latin-prefix.pdf"]["chars"] = [[ord(c), [0.0, 1.0, 0.0, 1.0]] for c in text]
-        with self.assertRaisesRegex(ValueError, "known limitation changed"):
+        with self.assertRaisesRegex(ValueError, "known limitation changed") as raised:
             verify(manifest, seen)
+        message = str(raised.exception)
+        self.assertIn("observed: " + ascii(text), message)
+        self.assertIn("expected: " + ascii(LIMITATIONS["latin-prefix.pdf"]), message)
+        self.assertIn("authored: " + ascii("AB"), message)
+
+    def test_an_ordinary_failure_names_both_strings(self):
+        manifest, seen = observation()
+        seen["arabic.pdf"]["text"] = "BA"
+        seen["arabic.pdf"]["chars"].reverse()
+        with self.assertRaises(ValueError) as raised:
+            verify(manifest, seen)
+        self.assertIn("observed: 'BA'", str(raised.exception))
+        self.assertIn("expected: 'AB'", str(raised.exception))
 
     def test_rejects_a_limitation_that_is_now_correct(self):
         manifest, seen = observation()
@@ -160,6 +173,17 @@ class ArtifactTests(unittest.TestCase):
             source.write_text("Synthetic Dragonbox license fixture")
             complete_licenses(root, root, "WARNING: unknow library dragonbox")
             self.assertEqual((root / "licenses/dragonbox.txt").read_bytes(), source.read_bytes())
+
+    def test_libyuv_notice_is_copied_from_its_license_file(self):
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            (root / "licenses").mkdir()
+            (root / "licenses/pdfium.txt").write_text("Synthetic PDFium license fixture")
+            source = root / "third_party/libyuv/LICENSE"
+            source.parent.mkdir(parents=True)
+            source.write_text("Synthetic libyuv license fixture")
+            complete_licenses(root, root, "WARNING: unknow library libyuv")
+            self.assertEqual((root / "licenses/libyuv.txt").read_bytes(), source.read_bytes())
 
 
 if __name__ == "__main__":

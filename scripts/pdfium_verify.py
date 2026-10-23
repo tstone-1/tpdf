@@ -40,6 +40,15 @@ LIMITATIONS = {
 }
 
 
+def shown(observed, expected, authored=None):
+    """The strings a text failure is about, escaped so a cp1252 console can print them:
+    a CI log that says only "changed" cannot tell an upstream fix from a regression."""
+    lines = f"\n  observed: {ascii(observed)}\n  expected: {ascii(expected)}"
+    if authored is not None:
+        lines += f"\n  authored: {ascii(authored)}"
+    return lines
+
+
 def verify(manifest, observed):
     cases = manifest["cases"]
     names = [case["file"] for case in cases]
@@ -59,9 +68,10 @@ def verify(manifest, observed):
             if seen["text"] == case["expected"]:
                 raise ValueError(f"{name}: known limitation now extracts correctly; move it to ORDINARY")
             if seen["text"] != LIMITATIONS[name]:
-                raise ValueError(f"{name}: known limitation changed")
+                raise ValueError(f"{name}: known limitation changed{shown(seen['text'], LIMITATIONS[name], case['expected'])}")
         elif seen["text"] != case["expected"]:
-            raise ValueError(f"{name}: extracted text differs from the authored text")
+            raise ValueError(f"{name}: extracted text differs from the authored text"
+                             f"{shown(seen['text'], case['expected'])}")
     return {"cases": len(inventory), "ordinary_correct": len(ORDINARY),
             "known_limitations_unchanged": len(LIMITATIONS)}
 

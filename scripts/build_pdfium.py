@@ -110,11 +110,13 @@ def canonical_archive(tree, dest):
 
 
 def complete_licenses(source, stage, log):
-    # The supplier at the pinned revision only warns on these two libraries.
-    # Both are permissive; copy notices from the actual DEPS-pinned sources.
+    # The supplier at the pinned revision only warns on these libraries. All are
+    # permissive; copy notices from the actual DEPS-pinned sources. libyuv is
+    # compiled in from chromium/8103 on; its LICENSE is BSD-3-Clause.
     supplements = {
         "dragonbox": ("third_party/dragonbox/src/LICENSE-Boost", "dragonbox.txt"),
         "harfbuzz": ("third_party/harfbuzz/src/COPYING", "harfbuzz.txt"),
+        "libyuv": ("third_party/libyuv/LICENSE", "libyuv.txt"),
     }
     for line in log.splitlines():
         if line.startswith("WARNING:"):

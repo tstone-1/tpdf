@@ -145,6 +145,9 @@ def main():
         if problems:
             failures.append(name)
         print(f"[{'FAIL' if problems else 'OK'}] {name}: {', '.join(problems) or 'text, indices and comparison agree'}")
+        if "text order" in problems:
+            # Escaped, so a CI log on any console carries the evidence.
+            print(f"       observed: {ascii(result['text'])}\n       authored: {ascii(case['expected'])}")
     if args.record:
         args.record.write_text(json.dumps(observed, indent=2) + "\n")
     print(f"{len(cases) - len(failures)}/{len(cases)} cases passed")
