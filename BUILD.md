@@ -7139,6 +7139,32 @@ read through. **Not run:** the written copy of `tpdf long-term` against a public
 authority (`docs/VERIFICATION.md` has why), the new entry of `mutate_viewer.py` by the
 harness itself, `print-probe` and `redact-reach-probe`.
 
+**26.10.25 verification and publication, 2026-10-23:** a dependency release that took a new
+engine on the way. Step 1 took `tokio` 1.54.1 for the yanked 1.54.0 (RUSTSEC-2026-0384), Tauri
+2.12.5, `rfd` 0.16.1 and patch crates, and removed five `unic-*` ignores from
+`.cargo/audit.toml` that matched no advisory any more; `tauri-plugin-updater` held at 2.13.3.
+All 33 gates passed on that tree, `check_linux.py` passed, and `window_checks.py` passed 16 of 16
+on macOS and on Windows. CI passed on `b392df90`, and `Audit` failed only on the PDFium pin:
+Chrome stable had moved to 8103, so step 1's engine question was answered by the `Audit` run
+rather than before it, and `check_pdfium_age.py` is in step 1 now (`1f2cd6dd`). The engine
+record is *PDFium 8103-tpdf.1* above. On the release commit `1885db12`, after the repin: all 33
+gates in 8 min 37 s (3,284 Rust tests with 12 ignored, 622 command-line checks with 3 skipped,
+3,199 frontend tests), `mutate_python.py` 38/38, `window_checks.py` 16 of 16 on macOS and on
+Windows, and `run_on_windows.py --suite all` passed. CI passed all three jobs (run
+39942302195) and `Audit` passed (run 39942302237). No rehearsal tag: `release.yml` changed only
+in its notes. Release run 39945723611 left a draft of eight files whose `latest.json` offered
+26.10.25 for the four macOS and Windows entries. On the draft's files: the installer read as
+`Valid` and timestamped by `Get-AuthenticodeSignature` and passed `installed_check.py` 25/25; the
+`.dmg` and its app were accepted as Notarized Developer ID and stapled, with a `tpdf-cli` that
+answered 26.10.25 and verified `testdata/incr-signed.pdf`. `publish_release.py v26.10.25
+--publish` published it; without authentication `releases/latest` is v26.10.25, all eight files
+answer under the tag, and `latest.json` offers 26.10.25. An installed 26.10.24 updated itself:
+`update_check_mac.py` 12/12 and `update_check.py` 17/17, and each `--control no-press` failed its
+seven checks and nothing else. The cask went to 26.10.25 with the `.dmg`'s SHA-256 equal to
+GitHub's digest; `brew audit --cask --online` was clean and `brew livecheck` reads 26.10.25. The
+winget pull request moved to 26.10.25 and passed `winget validate`. **Not run:** `print-probe`,
+`menu_check.py` and `save_check.py`.
+
 **26.10.24 verification and publication, 2026-10-21:** prepared on the Windows desktop, with the
 macOS half on the Mac mini and the Windows half on TEENYWEENY over ssh. Step 1 took `lopdf` 0.46,
 a `0.x` minor of a direct dependency: its writers still leave out `ObjStm`, `XRef` and
