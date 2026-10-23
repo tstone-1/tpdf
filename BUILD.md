@@ -8580,7 +8580,14 @@ starts at 0 and increments within the month.
    (cd src-tauri/fuzz && cargo update)           # its own lockfile, audited on its own
    git diff --stat -- package-lock.json src-tauri/Cargo.lock src-tauri/fuzz/Cargo.lock    # cargo's own lines are no proof
    scripts/third_party_notices.py                # when a crate or a package moved
+   scripts/check_pdfium_age.py                   # the engine pin against Chrome stable
    ```
+
+   The last line asks the question `Audit` asks on the release commit, and a pin that is
+   behind refuses the release there (*The pin is now asked about every week*, near the top
+   of this file). Asked here, a stale pin is found before the verification rather than after
+   the push, as on 2026-10-23, when Chrome stable had moved to `chromium/8103` while the
+   26.10.25 tree was being checked. It needs the network, which is why it is not a gate.
 
    Updates within the ranges are taken. A `0.x` minor of a direct dependency is taken too,
    by raising its range, and so is a major, unless something named here holds it. For each
