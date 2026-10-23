@@ -665,10 +665,10 @@ mod tests {
     const EDGE: &str = "{3A84F9C2-6164-485C-A7D9-4B27F8AC009E}";
     const DLL_AT: &str = r"C:\Users\reader\AppData\Local\tpdf\tpdf_shell.dll";
 
-    /// TEENYWEENY as measured on 2026-10-16: Edge's preview handler for the
+    /// The Windows build machine as measured on 2026-10-16: Edge's preview handler for the
     /// machine, no thumbnail provider, and the installer's `.pdf` keys for the
     /// user.
-    fn teenyweeny() -> Map {
+    fn build_machine() -> Map {
         let mut map = Map::default();
         map.machine.insert(
             (fold(&Slot::Preview.key()), String::new()),
@@ -703,7 +703,7 @@ mod tests {
 
     #[test]
     fn a_free_slot_is_taken_and_one_the_machine_owns_is_left_unless_replaced() {
-        let mut map = teenyweeny();
+        let mut map = build_machine();
         let said = enable(&mut map, DLL_AT, false).unwrap();
         assert_eq!(
             state(&map).unwrap(),
@@ -751,7 +751,7 @@ mod tests {
 
     #[test]
     fn turning_it_off_leaves_the_users_hive_as_it_was_before() {
-        let before = teenyweeny();
+        let before = build_machine();
         let mut map = before.clone();
         enable(&mut map, DLL_AT, true).unwrap();
         let said = disable(&mut map).unwrap();
@@ -772,7 +772,7 @@ mod tests {
     #[test]
     fn a_handler_the_user_had_is_put_back_after_being_replaced() {
         let other = "{11111111-2222-3333-4444-555555555555}";
-        let mut map = teenyweeny();
+        let mut map = build_machine();
         map.user
             .insert((fold(&Slot::Thumbnail.key()), String::new()), other.into());
         map.user.insert(
@@ -798,7 +798,7 @@ mod tests {
     #[test]
     fn turning_it_on_twice_keeps_what_the_first_time_replaced() {
         let other = "{11111111-2222-3333-4444-555555555555}";
-        let mut map = teenyweeny();
+        let mut map = build_machine();
         map.user
             .insert((fold(&Slot::Thumbnail.key()), String::new()), other.into());
         let before = map.clone();
@@ -816,7 +816,7 @@ mod tests {
 
     #[test]
     fn turning_it_off_when_it_was_never_on_changes_nothing() {
-        let mut map = teenyweeny();
+        let mut map = build_machine();
         let before = map.clone();
         disable(&mut map).unwrap();
         assert_eq!(map, before);
@@ -824,7 +824,7 @@ mod tests {
 
     #[test]
     fn an_indirect_display_name_falls_back_to_the_class_name_then_the_id() {
-        let mut map = teenyweeny();
+        let mut map = build_machine();
         map.machine.insert(
             (fold(&class_key(EDGE)), fold("DisplayName")),
             "@pdf.dll,-101".into(),

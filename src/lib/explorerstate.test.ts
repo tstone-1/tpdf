@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { ExplorerIntegration, replaceQuestion, type ExplorerState } from "./explorerstate";
 
 const edge = { kind: "other", name: "PDF Preview Handler" } as const;
-/** TEENYWEENY as measured: no thumbnail provider, Edge's preview handler. */
+/** The Windows build machine as measured: no thumbnail provider, Edge's preview handler. */
 const fresh: ExplorerState = { thumbnail: { kind: "nobody" }, preview: edge };
 
 function harness(states: (ExplorerState | null | Error)[], answer = true) {

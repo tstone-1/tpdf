@@ -1702,7 +1702,7 @@ pub enum Mode {
 ///
 /// A Windows worker is capped at `sandbox_win::WORKER_MEMORY_CAP`, 1 GiB of
 /// commit, so past that the allocation is refused and the worker aborts.
-/// Measured 2026-08-22 on `MOTHERSHIP`: a 345.0 MB scan prepares at 98.1% of the
+/// Measured 2026-08-22 on the Windows development machine: a 345.0 MB scan prepares at 98.1% of the
 /// cap, a 361.9 MB scan does not prepare at all, and the largest fixture in the
 /// repository sits at 95.7%. `BUILD.md` has the table.
 ///

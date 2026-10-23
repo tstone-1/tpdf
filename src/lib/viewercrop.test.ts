@@ -929,7 +929,7 @@ describe("a crop on a long document whose other pages are still estimated", () =
     // A lazy open knows page 1's size and lays every other page out at the mean
     // of the known sizes. The crop's size is the second one known, so learning
     // it moves every estimated page, by tens of thousands of pixels on a long
-    // document. On the Mac mini on 2026-10-16 a region dragged just after
+    // document. On the second Mac on 2026-10-16 a region dragged just after
     // cropping the last page of text-heavy.pdf mapped to y 78,010 pt on a 492 pt
     // page and made nothing: the offset had been left where the old layout put
     // it.
