@@ -8980,6 +8980,13 @@ starts at 0 and increments within the month.
    tracked changes without touching the tree; check that out there. The first build is cold,
    about a minute on an M5. A push does not wait for the tables; the tag does.
 
+   **A Rust selection of nothing is a pass only when no Rust source changed** (since
+   2026-10-23). With no `.rs` file and no row of `scripts/mutation_rows/rust/` changed since
+   the ref, `mutate_rust.py` prints `[OK] no Rust source changed since <ref>; nothing to
+   mutate` and exits 0, as a dependency release does; a lockfile does not count. A Rust file
+   that changed with no mutation near it is still refused with exit 1. The frontend and
+   viewer harnesses still refuse every empty selection.
+
    **What that gives up is run afterwards, not dropped.** A change far from a mutation, in
    the same file, can still blunt the test for it, and only the file rule finds that. So
    once the release is out, run `--since <the tag before>` with `--resume` on all three

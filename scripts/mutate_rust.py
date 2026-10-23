@@ -348,6 +348,17 @@ def all_test_names() -> set[str]:
     return {m for m in LISTED_TEST.findall(out)}
 
 
+def rust_source(path: str) -> bool:
+    """A repository path whose change can give this table something to do: a
+    Rust file of the crate, its fuzz package or examples, or a row of the table,
+    since a new row is a mutation nobody has run. With none of them changed,
+    `--since` and `--near` selecting nothing is exit 0 (`mutation_since.py`). A
+    lockfile is not among them, because no row mutates a dependency."""
+    return (path.startswith("src-tauri/") and path.endswith(".rs")) or path.startswith(
+        "scripts/mutation_rows/rust/"
+    )
+
+
 def main() -> int:
     # Before anything prints. A redirected run is block-buffered otherwise, and
     # this harness takes the better part of an hour: on 2026-08-19 a full run's
@@ -444,12 +455,12 @@ def main() -> int:
         # **0**. It refused rather than passing, because the guard below treats
         # an empty selection as "proved nothing"; so the flag was useless here
         # rather than misleading, which is the difference that guard makes.
-        chosen, code = mutation_since.apply(chosen, args.since, "src-tauri/")
-        if code:
+        chosen, code = mutation_since.apply(chosen, args.since, "src-tauri/", rust_source, "Rust source")
+        if code or not chosen:
             return code
     if args.near:
-        chosen, code = mutation_since.apply_near(chosen, args.near, "src-tauri/")
-        if code:
+        chosen, code = mutation_since.apply_near(chosen, args.near, "src-tauri/", rust_source, "Rust source")
+        if code or not chosen:
             return code
     # Mutations for another platform. `--list` still shows them, marked: the
     # table is the same everywhere and what differs is which rows this machine

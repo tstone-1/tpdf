@@ -27,6 +27,14 @@ mutations caught is indistinguishable in the output from zero mutations run and
 the reassuring reading is the wrong one. The message says nothing to run, not
 something failed.
 
+One empty selection is an answer, and a harness may ask for it by passing
+`sources`, a test of a repository path: when none of the changed files is one of
+the table's sources, there is nothing a mutation could have moved, and the run
+says so with `[OK]` and exit 0. A dependency release changes the lockfile and
+no Rust file, and until 2026-10-23 its release step 7 stopped there with a
+failure that was no finding. A source that changed with no mutation near it is
+still refused: that is the case the refusal exists for.
+
 ## What it does not reach, which is not the same as what it does not cover
 
 A mutation is selected by the file it edits. That is sound as far as it goes --
@@ -58,7 +66,7 @@ ROOT = Path(__file__).resolve().parent.parent
 NEAR_LINES = 25
 
 
-def changed_files(ref: str) -> "set[str] | None":
+def changed_files(ref: str, root: Path = ROOT) -> "set[str] | None":
     """Repo-relative paths differing from `ref`, working tree included.
 
     Two questions, because they have different answers and both matter: what
@@ -76,14 +84,31 @@ def changed_files(ref: str) -> "set[str] | None":
         ["git", "diff", "--name-only", "HEAD"],
         ["git", "ls-files", "--others", "--exclude-standard"],
     ):
-        done = subprocess.run(cmd, cwd=ROOT, capture_output=True, text=True)
+        done = subprocess.run(cmd, cwd=root, capture_output=True, text=True)
         if done.returncode != 0:
             return None
         out |= {line.strip() for line in done.stdout.splitlines() if line.strip()}
     return out
 
 
-def select(mutations, ref: str, prefix: str = "") -> "tuple[list, list[str]] | None":
+def no_source_changed(ref: str, sources, root: Path = ROOT) -> bool:
+    """True when git answered and none of the files changed since `ref` is one
+    `sources` names. An unanswered diff is False: unknown is not unchanged."""
+    touched = changed_files(ref, root)
+    return touched is not None and not any(sources(path.replace("\\", "/")) for path in touched)
+
+
+def _empty(flag: str, ref: str, sources, label: str, root: Path) -> int:
+    """The exit code for a selection of nothing, printed: 0 when the table's own
+    sources did not change, so that there is nothing to mutate, else 1."""
+    if sources is not None and no_source_changed(ref, sources, root):
+        print(f"[OK] no {label} changed since {ref}; nothing to mutate", flush=True)
+        return 0
+    print(f"[FAIL] {flag} {ref} selected no mutation, so there is nothing to run -- which is not a pass")
+    return 1
+
+
+def select(mutations, ref: str, prefix: str = "", root: Path = ROOT) -> "tuple[list, list[str]] | None":
     """The mutations `ref` could have moved, and the lines to print about them.
 
     `prefix` turns a table's paths into repo-relative ones: `mutate_rust.py`
@@ -95,7 +120,7 @@ def select(mutations, ref: str, prefix: str = "") -> "tuple[list, list[str]] | N
     `None` when git could not answer. A selection built on an unanswerable
     question is not a smaller run, it is an unknown one.
     """
-    touched = changed_files(ref)
+    touched = changed_files(ref, root)
     if touched is None:
         return None
 
@@ -133,7 +158,8 @@ def select(mutations, ref: str, prefix: str = "") -> "tuple[list, list[str]] | N
     return chosen, report
 
 
-def apply(mutations, ref: str, prefix: str = "") -> "tuple[list, int] | None":
+def apply(mutations, ref: str, prefix: str = "", sources=None, label: str = "source",
+          root: Path = ROOT) -> "tuple[list, int] | None":
     """`select`, printed, with the exit code a caller should use on refusal.
 
     Returns `None` to mean *carry on with what you had*, so a caller writes one
@@ -141,8 +167,11 @@ def apply(mutations, ref: str, prefix: str = "") -> "tuple[list, int] | None":
     this identically, and reaching it identically is the point: the first
     version of this lived in one of them, and the split is what `BUILD.md`
     called lopsided.
+
+    An empty list with code 0 means there was nothing to mutate (`sources`,
+    above), so a caller ends on `if code or not chosen: return code`.
     """
-    picked = select(mutations, ref, prefix)
+    picked = select(mutations, ref, prefix, root)
     if picked is None:
         print(f"[FAIL] git could not diff against {ref!r}, so nothing below would be readable")
         return [], 1
@@ -150,11 +179,7 @@ def apply(mutations, ref: str, prefix: str = "") -> "tuple[list, int] | None":
     for line in report:
         print(line, flush=True)
     if not chosen:
-        print(
-            f"[FAIL] --since {ref} selected no mutation, so there is nothing to run "
-            "-- which is not a pass"
-        )
-        return [], 1
+        return [], _empty("--since", ref, sources, label, root)
     return chosen, 0
 
 
@@ -319,10 +344,12 @@ def pick_near(mutations, changed, read, prefix: str = "", reach: int = NEAR_LINE
     return chosen
 
 
-def apply_near(mutations, ref: str, prefix: str = "") -> "tuple[list, int]":
-    """`pick_near` against git, printed, with the exit code to use on refusal."""
-    changed = changed_lines(ref)
-    by_file = select(mutations, ref, prefix)
+def apply_near(mutations, ref: str, prefix: str = "", sources=None, label: str = "source",
+               root: Path = ROOT) -> "tuple[list, int]":
+    """`pick_near` against git, printed, with the exit code to use on refusal,
+    and `apply`'s meaning for an empty list with code 0."""
+    changed = changed_lines(ref, root)
+    by_file = select(mutations, ref, prefix, root)
     if changed is None or by_file is None:
         print(f"[FAIL] git could not diff against {ref!r}, so nothing below would be readable")
         return [], 1
@@ -332,7 +359,7 @@ def apply_near(mutations, ref: str, prefix: str = "") -> "tuple[list, int]":
             # `open`, not `Path.read_text(newline=...)`: that keyword is
             # Python 3.13's, and Ubuntu 24.04 has 3.12, where `--near` died
             # with a TypeError before selecting anything (2026-10-15).
-            with open(ROOT / path, encoding="utf-8", newline="") as f:
+            with open(root / path, encoding="utf-8", newline="") as f:
                 return f.read()
         except (OSError, UnicodeDecodeError):
             return None
@@ -351,8 +378,7 @@ def apply_near(mutations, ref: str, prefix: str = "") -> "tuple[list, int]":
         flush=True,
     )
     if not chosen:
-        print(f"[FAIL] --near {ref} selected no mutation, so there is nothing to run -- which is not a pass")
-        return [], 1
+        return [], _empty("--near", ref, sources, label, root)
     return chosen, 0
 
 
@@ -466,6 +492,59 @@ def self_test() -> int:
             str(got),
         )
         check("an unknown ref is no answer, not an empty one", changed_lines("no-such-ref", root) is None)
+
+    # An empty selection: an answer when the table's sources did not change,
+    # a refusal when one did and no mutation is near it.
+    import contextlib
+    import io
+
+    with tempfile.TemporaryDirectory() as scratch:
+        root = Path(scratch)
+
+        def git(*args: str) -> None:
+            subprocess.run(["git", "-c", "user.email=t@example.invalid", "-c", "user.name=t", *args],
+                           cwd=root, check=True, capture_output=True)
+
+        (root / "crate").mkdir()
+        (root / "crate/a.rs").write_text("".join(f"line {n}\n" for n in range(1, 201)))
+        (root / "crate/b.rs").write_text("fn b() {}\n")
+        (root / "notes.md").write_text("notes\n")
+        git("init", "-q", "-b", "main")
+        git("add", "-A")
+        git("commit", "-q", "-m", "base")
+        rows = [M(name="in a", path="a.rs", before="line 100\n", expect="t")]
+        rust = lambda path: path.startswith("crate/") and path.endswith(".rs")  # noqa: E731
+
+        def run(fn, **kw):
+            printed = io.StringIO()
+            with contextlib.redirect_stdout(printed):
+                chosen, code = fn(rows, "HEAD", "crate/", root=root, **kw)
+            return chosen, code, printed.getvalue()
+
+        (root / "notes.md").write_text("changed\n")
+        for fn, flag in ((apply, "--since"), (apply_near, "--near")):
+            chosen, code, out = run(fn, sources=rust, label="Rust source")
+            check(f"{flag}: no Rust source changed is exit 0, and says so",
+                  chosen == [] and code == 0 and "[OK] no Rust source changed since HEAD; nothing to mutate" in out,
+                  f"{code} {out!r}")
+            chosen, code, out = run(fn)
+            check(f"{flag}: without sources an empty selection is still refused",
+                  chosen == [] and code == 1 and "[FAIL]" in out, f"{code} {out!r}")
+        (root / "crate/b.rs").write_text("fn b() { 1 }\n")
+        for fn, flag in ((apply, "--since"), (apply_near, "--near")):
+            chosen, code, out = run(fn, sources=rust, label="Rust source")
+            check(f"{flag}: a Rust source changed with no mutation on it is refused",
+                  chosen == [] and code == 1 and "[FAIL]" in out and "[OK] no" not in out, f"{code} {out!r}")
+        git("checkout", "-q", "--", "crate/b.rs")
+        (root / "crate/new.rs").write_text("fn new() {}\n")
+        chosen, code, out = run(apply_near, sources=rust, label="Rust source")
+        check("--near: a new, untracked Rust file is a change too", code == 1 and "[FAIL]" in out, f"{code} {out!r}")
+        (root / "crate/new.rs").unlink()
+        (root / "crate/a.rs").write_text((root / "crate/a.rs").read_text().replace("line 100\n", "line 100 changed\n"))
+        chosen, code, out = run(apply, sources=rust, label="Rust source")
+        check("--since: a change a mutation aims at is still selected", [m.name for m in chosen] == ["in a"] and code == 0,
+              f"{code} {out!r}")
+        check("an unknown ref is not 'no source changed'", not no_source_changed("no-such-ref", rust, root))
 
     print(f"\n{'[OK] self-test passed' if not failures else f'[FAIL] {len(failures)} checks'}")
     return 1 if failures else 0
