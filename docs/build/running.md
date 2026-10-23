@@ -1033,7 +1033,7 @@ cargo run --release --example print-probe -- testdata/vector-multi.pdf "Microsof
 ```
 
 **Over ssh, build it in the ssh session and run only the binary in the desktop session.** On
-2026-10-17 on TEENYWEENY, `cargo run --example print-probe` inside an interactive scheduled task
+2026-10-17 on the Windows build machine, `cargo run --example print-probe` inside an interactive scheduled task
 failed in tpdf's build script at `resource path ..\vendor\pdfium\bin\pdfium.dll doesn't exist`,
 with the file there; the same build from the ssh session passed, and
 `target\release\examples\print-probe.exe` then ran in the task (9/9 and 10/10). Why the task's
@@ -1227,7 +1227,7 @@ integration off and compares the user's classes with what they were, and uninsta
 on. `--control no-add` and `--control no-remove` break one step each and exit 0 exactly when
 the checks aimed at it failed.
 
-On 2026-10-16 on TEENYWEENY (Windows 11, build 26200): 20 of 20. All 15 hostile fixtures and
+On 2026-10-16 on the Windows build machine (Windows 11, build 26200): 20 of 20. All 15 hostile fixtures and
 the document got drawn thumbnails, random bytes and the password-protected document got
 Explorer's generic icon, each within 0.25 s; the provider ran in `dllhost.exe` and not in
 `explorer.exe`, and no `dllhost.exe`, `prevhost.exe` or `explorer.exe` had `pdfium.dll` mapped;
@@ -1238,7 +1238,7 @@ answered all 75 messages at once; the user's classes and preview list read as be
 `Software\Classes\Local Settings`, where the Explorer window the check opens records its view.
 Over ssh, send a file longer than about 24 KB as base64 on standard input: on the command line
 it passes Windows' 32,767-character limit, and the copy fails with only "exec request failed".
-The receiving end matters as much (2026-10-16): in TEENYWEENY's PowerShell 5.1 a 140 KB file
+The receiving end matters as much (2026-10-16): in the Windows build machine's PowerShell 5.1 a 140 KB file
 read through `$input` and joined arrived with its line breaks turned into spaces, and
 `[Console]::In.ReadToEnd()` never returned. What kept the bytes, with no base64 at all, is a
 one-line Python receiver, `open(sys.argv[1], 'wb').write(sys.stdin.buffer.read())`, saved on

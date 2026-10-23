@@ -326,7 +326,7 @@ it can only stay under it if something keeps measuring where the ceiling is. A r
 disappears is the signal that the bound can rise.
 
 The sweep that bracketed the ceiling was read from outside the process the first time, through
-PSAPI's `PagefileUsage` / `PeakPagefileUsage` over the probe's children. On `MOTHERSHIP`
+PSAPI's `PagefileUsage` / `PeakPagefileUsage` over the probe's children. On the Windows development machine
 (x86_64):
 
 ```

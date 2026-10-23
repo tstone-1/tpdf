@@ -16197,7 +16197,7 @@ was not written**: creating a keychain file adds it to the user's keychain searc
 user-level state, and the rule for that test was to stop rather than alter it and undo it. So
 `SecItemCopyMatching` over identities is **not covered by a test**. The first `SecTrust`
 evaluation in a process costs seconds (5.4 s and 19.2 s measured), which the chooser pays once.
-**Windows first ran 2026-09-27** on MOTHERSHIP: the ignored store test created CNG certificates in
+**Windows first ran 2026-09-27** on the Windows development machine: the ignored store test created CNG certificates in
 `CurrentUser\My` (RSA and ECDSA P-256), signed through `NCryptSignHash`, and read intact --- once
 its cleanup was fixed, which on the first run left both certificates behind (`BUILD.md`).
 
@@ -16567,7 +16567,7 @@ form from the command line* and *Redacting from the command line* below:
 first completed. For later real-keychain checks and the installed Windows signing
 workflow, see `BUILD.md`'s signing checks and *Cutting a release*, including the
 2026-09-29 installed Windows measurements and their remaining limitations. **The
-Windows tool ran on a desktop 2026-09-27** (MOTHERSHIP, from a console over SSH): `identities`,
+Windows tool ran on a desktop 2026-09-27** (the Windows development machine, from a console over SSH): `identities`,
 `verify` on ten fixtures with the macOS verdicts, and a real invisible and visible sign with a
 temporary store certificate, read intact by tpdf, pyHanko and OpenSSL. Installing onto PATH is
 still unexercised (**`tpdf-cli path --add` and `--remove` ran there 2026-10-01**; the installer's
@@ -18111,7 +18111,7 @@ column, and a column count other than two is one (`session.rs`, `spreads.ts`).
   layouts* in `menubar.test.ts`; the mutations are the `spread:` and `spreads:` rows in
   `scripts/mutation_rows/frontend/f05_latest.py`.
 
-**Checked in a window**, on the Mac mini, 2026-10-15 (`viewercheck/spreads.ts`, 344 of 344):
+**Checked in a window**, on the second Mac, 2026-10-15 (`viewercheck/spreads.ts`, 344 of 344):
 both pages of a row came 100 % sharp under facing; the middle of the screen read 40 %
 lightness, the surround's 40 %, between pages at 89 % and 88 %; back at one page to a row
 it read 91 %. The four commands ran from the palette. **Not checked yet**: Windows and
@@ -18167,7 +18167,7 @@ what each changes; `App.svelte` draws them.
 **Not built:** showing the toolbar when the pointer reaches the top edge in full screen;
 hiding the pointer after a pause while presenting; a laser pointer.
 
-**Run in a window on macOS**, on the Mac mini, 2026-10-15: `tabs_check.py --phase screen`
+**Run in a window on macOS**, on the second Mac, 2026-10-15: `tabs_check.py --phase screen`
 (`screencheck.ts`), 16 of 16. Full screen and back, with the toolbar hidden and shown;
 presenting at one page at a time and fit page on black; Space to the next page; `b` and
 any key; Esc out, with the layout and fit put back; and the window taken out of full
@@ -18175,7 +18175,7 @@ screen directly, which tpdf followed. It takes the screen it runs on, so it belo
 machine nobody is working at. The viewer window check runs the two commands through its
 recorder instead, for the same reason.
 
-**Run in a window on Windows 11**, TEENYWEENY at 1920 x 1080, 2026-10-16: the same phase, 16
+**Run in a window on Windows 11**, the Windows build machine at 1920 x 1080, 2026-10-16: the same phase, 16
 of 16. The phase runs the commands and sends its keys inside the page, so it does not say
 whether WebView2 lets a real F11 through to the page.
 
@@ -18189,8 +18189,7 @@ right-click menu for that tab. `tabclose.ts` decides which tabs each means (left
 in the tab's own side when there are two; others across the window) and keeps the last 20
 documents closed; `App.svelte` asks once about unsaved work, counting a document only when
 every view of it is closing, and then closes each tab through the one `closeTab`. A closed
-document reopens by its path, so it opens where it was left. Run in a window on the Mac
-mini: `tabs_check.py --phase closing` (`closecheck.ts`), 7 of 7.
+document reopens by its path, so it opens where it was left. Run in a window on the second Mac: `tabs_check.py --phase closing` (`closecheck.ts`), 7 of 7.
 
 **Done: the outline as a whole.** *Open every entry of the outline*
 (`view.outlineExpandAll`), *Close every entry of the outline* (`view.outlineCollapseAll`)
@@ -18396,7 +18395,7 @@ window takes a second launch's place on Windows and Linux through the single-ins
 and on macOS through `secondlaunch.rs`: a launch with a place, and only one with a place, hands
 its command line over a socket in the user's own temporary folder and ends, or starts on its
 own if no window answers within two seconds (`docs/THREAT-MODEL.md` §T6.44). Evidence:
-`open_check.py`, run in `window_checks.py` as `open`, on the Mac mini: page 12 at fit page from a
+`open_check.py`, run in `window_checks.py` as `open`, on the second Mac: page 12 at fit page from a
 cold launch (5 of 5) and handed to a running window (6 of 6), the second process ending with 0
 at once. Not measured: Windows and Linux, where the route is the plugin's and the phases are the
 same.
@@ -18410,10 +18409,9 @@ is sent so neither the build nor the installers gain a dependency, and on Window
 device context for the printer through the dialog's own `print_win::spool`. A name nothing knows
 is refused, with the names there are on macOS and Linux. Evidence: the CLI integration binary
 refuses an unknown printer after building pages 2 and 4, and a page past the end before any
-printer, on macOS and Windows; on Windows (TEENYWEENY) it prints pages 2 and 4 of `rotated.pdf`
+printer, on macOS and Windows; on Windows (the Windows build machine) it prints pages 2 and 4 of `rotated.pdf`
 to "Microsoft Print to PDF" and the file written has 2 pages, and on Ubuntu 24.04 under WSL it
-prints them to cups-pdf's queue and the file named by the CUPS job number has 2 pages. On the
-Mac mini a queue that holds
+prints them to cups-pdf's queue and the file named by the CUPS job number has 2 pages. On the second Mac a queue that holds
 its jobs received the whole document as job 1 (`rotated.pdf`, 2 KB) and pages 2 and 4 as job 2,
 read back by PDFKit as 2 pages. Not measured: paper.
 
@@ -18431,14 +18429,14 @@ through `goToDestination`, so Back returns. Evidence: the fixture `testdata/sync
 with `pdflatex -synctex=1` (TeX Live 2023, Ubuntu 24.04) and its unit tests name lines on both
 pages and in an `\input` file; the CLI integration binary holds each box against the rectangle
 `search` finds for that line's words through PDFium, on both pages; `open_check.py` lands on page
-2 from `main.tex:8` with the box painted over 100% of its area on the Mac mini. Not measured: an
+2 from `main.tex:8` with the box painted over 100% of its area on the second Mac. Not measured: an
 editor running it, Windows and Linux, and a SyncTeX file from XeTeX or LuaTeX.
 
 #### 7.8 Windows Explorer: thumbnails, preview and search, opt-in
 
 Decided 2026-10-15: built, and **off until the reader turns it on**.
 
-**Search left out 2026-10-16, after a measurement.** TEENYWEENY (Windows 11, build 26200)
+**Search left out 2026-10-16, after a measurement.** The Windows build machine (Windows 11, build 26200)
 already indexes PDF text with Windows' own filter: `.pdf`'s `PersistentHandler` names the
 filter in `C:\Windows\system32\Windows.Data.Pdf.dll`, registered for the machine. A filter of
 tpdf's would replace a working one, would have to be registered for the machine (the indexer
@@ -18462,7 +18460,7 @@ DLL from `tauri.explorer.conf.json`, which `release.yml` passes on its Windows l
 were found by running it, both now `docs/TRAPS.md` entries: the preview window never got a
 posted message because `#[implement]` objects are agile, and `tpdf-cli` at the low integrity
 `prevhost.exe` runs at could not stage standard input in `%TEMP%`. Evidence:
-`scripts/explorer_check.py` on TEENYWEENY with the installer, 20 of 20 (`BUILD.md`), and its two
+`scripts/explorer_check.py` on the Windows build machine with the installer, 20 of 20 (`BUILD.md`), and its two
 controls fail exactly what they aim at. Not measured: a document that runs out the time limit,
 the memory limit, Windows 10, and a reader's own Explorer settings beyond large icons and the
 details view.
@@ -18487,7 +18485,7 @@ COM server is thin: it starts a tpdf worker, sandboxed as today, and receives on
 - Commands: `app.enableExplorerIntegration`, `app.disableExplorerIntegration`.
 - `docs/THREAT-MODEL.md` gets the entry before the code: tpdf code running inside Explorer's
   process, and documents tpdf reads without the reader having opened them.
-- Exit: on TEENYWEENY, with the integration turned on, a folder of the hostile corpus shows
+- Exit: on the Windows build machine, with the integration turned on, a folder of the hostile corpus shows
   thumbnails or generic icons and Explorer stays responsive; `scripts/win_modules.py`, run
   against `explorer.exe` and `prevhost.exe`, finds no `pdfium.dll` loaded there; turning the
   integration off leaves no tpdf key in the registry.
@@ -19189,7 +19187,7 @@ criterion.**
 
 #### Acrobat — measured 2026-08-31
 
-Adobe Acrobat 26.001.21789 on the Windows desktop, in Reader mode: the
+Adobe Acrobat 26.001.21789 on the Windows development machine, in Reader mode: the
 `AcroExch.*` COM classes are absent, so there is no automation interface and the
 answer has to come from a person. The instrument is therefore twelve files and a
 checklist, which cost about five minutes and needed no code.

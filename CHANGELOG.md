@@ -3229,10 +3229,10 @@ against a real instance. `docs/TRAPS.md` has the entry.
 ### Fixed: the macOS arm of a new platform split had never been compiled
 
 `opener.rs`'s macOS half carried an unnecessary `unsafe` around `NSURL::URLWithString`.
-Every gate on the Windows desktop was green, because a Windows compiler never parses a
+Every gate on the Windows development machine was green, because a Windows compiler never parses a
 `#[cfg(target_os = "macos")]` line, and `unused_unsafe` under `-D warnings` would have
 turned the macOS CI leg red. `scripts/check_windows.py` is the mirror of this check and runs
-only Mac-to-Windows; there is no counterpart. Found by copying the tree to the Mac mini over
+only Mac-to-Windows; there is no counterpart. Found by copying the tree to the second Mac over
 `ssh` and compiling it there. `docs/TRAPS.md` has the entry.
 
 ## [26.9.2] - 2026-09-06
@@ -8227,7 +8227,7 @@ entry, so the two largest changes of the day were absent from the release histor
 - **`check_toolchain.py` now asserts the host triple, not only the version.** A bare
   `channel = "1.97.1"` carries no target triple, so rustup resolves it against its *default
   host triple* — a different setting from the default *toolchain*, with nothing keeping
-  the two in step. On the Windows desktop the default toolchain was
+  the two in step. On the Windows development machine the default toolchain was
   `stable-x86_64-pc-windows-msvc` and the default host was `x86_64-pc-windows-gnu`, so
   adding the pin silently moved that machine from MSVC to GNU; rustc reported the pinned
   1.97.1, clippy and rustfmt matched its commit hash, the gate said `[OK]`, and the build

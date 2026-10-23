@@ -425,7 +425,7 @@ rather than the account.** `docs/RATIONALE.md` has the full version of every one
   payload byte, reserved offsets and malformed padding, without generating random keys.
 - `hosted` — every fixture `scripts/ci_fixtures.py` builds on a runner is present, before
   `test`. A test whose fixture is absent skips and passes, and on 2026-10-17 two fixtures added
-  on 2026-09-28 had never been generated on the Windows desktop, so a mutation survived there
+  on 2026-09-28 had never been generated on the Windows development machine, so a mutation survived there
   that CI would have caught.
 - `anchors` — every mutation's search string occurs exactly once in the file it names, the
   test it names exists, and that test can go red on this platform. A killed harness's leftover

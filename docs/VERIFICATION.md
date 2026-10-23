@@ -2642,7 +2642,7 @@ reopened document goes through accepts only that matrix. No fuzz seed was
 added: the fuzz targets take documents and edit without a layout, so neither reaches
 `installed::accept`, whose input is the reader's own font file.
 
-**Windows x64, 2026-09-30, at `072f3ea`.** On MOTHERSHIP (Windows 11), in the console session
+**Windows x64, 2026-09-30, at `072f3ea`.** On the Windows development machine (Windows 11), in the console session
 at medium integrity through a one-shot `/IT` scheduled task, with `CARGO_BUILD_JOBS=2`:
 `cargo test --locked --lib textedit` passes 604 (1,824 filtered out), `--lib sysfont` 7, and
 `--lib installed` 27: the macOS 28 less its two macOS-gated tests, plus
@@ -2666,7 +2666,7 @@ which the same readers accept. The control is the same document with its font re
 is set in `NotoSans`. The readback then fails, and PDFKit counts 2,212 different pixels. `qpdf
 --check` is clean on every save.
 
-**CFF on Windows.** No CFF font is guaranteed on Windows. MOTHERSHIP has 18 CFF faces among
+**CFF on Windows.** No CFF font is guaranteed on Windows. The Windows development machine has 18 CFF faces among
 486 font files, all from Windows' optional Hebrew supplemental fonts: David, Frank Ruehl,
 Miriam and Nachlieli CLM, Frank Ruhl Hofshi and Miriam Libre. All are name-keyed, `fsType` 0 and
 not CFF2. Only the four Frank Ruhl Hofshi and Miriam Libre faces are drawn at 1000 units per
@@ -6100,7 +6100,7 @@ image descriptor not handed over. Each turned at least one check red.
 `--image stamp.png --lines ""` and expects no text, but `--lines "" --reason X` is a command
 line that works today and draws the reason, which the same request says must not change.
 
-**On Windows, with a key in the certificate store** (MOTHERSHIP, Windows 11, pwsh 7.6.6,
+**On Windows, with a key in the certificate store** (the Windows development machine, Windows 11, pwsh 7.6.6,
 `tpdf-cli` built from `458878f`, 2026-10-01). A one-day self-signed RSA certificate made by
 `New-SelfSignedCertificate` in `Cert:\CurrentUser\My`, software key storage provider, key
 usage `DigitalSignature,NonRepudiation`, and
@@ -6181,7 +6181,7 @@ skipped when the uninstaller runs as part of an update. *Install command-line to
 installer's script, because an NSIS string is cut at a fixed length and the desktop's user
 `PATH` measured here is 1,899 characters.
 
-**Measured on MOTHERSHIP**, with a debug `tpdf-cli` built from this tree and the value exported
+**Measured on the Windows development machine**, with a debug `tpdf-cli` built from this tree and the value exported
 first: `path` said the folder was not there; `--add` appended it as the last entry and nothing
 else changed; a second `--add` wrote nothing; `--remove` left the value identical to the one
 exported, character for character, with its registry type (`REG_SZ`) unchanged; a second
@@ -6782,7 +6782,7 @@ writer: `qpdf --check` and the pyHanko script above read them as the table says,
 
 ### Printing on Windows: progress, failures, and a stuck queue — measured 2026-10-19
 
-On the Windows desktop, a checks build printed the first two pages of `vector-multi.pdf` (cut
+On the Windows development machine, a checks build printed the first two pages of `vector-multi.pdf` (cut
 with `qpdf --pages . 1-2`) through the classic dialog to Microsoft Print to PDF, driven with UI
 Automation (`pywinauto`): Ctrl+P, OK, then the file name in *Save Print Output As*. The toolbar's
 line, read from the window's accessibility tree, said *Printing page 1 of 2...* 3 s after OK,
@@ -6803,7 +6803,7 @@ for a stuck queue, were not seen on screen: neither fault could be produced on d
 The 262 s above is `vector-multi.pdf`, which `testdata/make_vector_pdf.py` builds to be hostile:
 an A0 page of 200,000 stroked segments over a 7-point hatch grid, the same content on all twelve
 pages. It is not what an office document costs. A temporary example timed
-`RenderWithOptionsToStreamAsync` alone on the Windows desktop, release build, at the resolution
+`RenderWithOptionsToStreamAsync` alone on the Windows development machine, release build, at the resolution
 `paper_dpi` picks for an A4 sheet at 300 dpi, over the first ten pages of each of the 30 public
 samples in `scratch/prototype`, `scratch/prototype2` and `scratch/textedit-public` (agendas,
 minutes, invoices, tax forms, brochures, slides, budgets, arXiv papers, manuals) and
@@ -6862,7 +6862,7 @@ spike was not kept.
 **What shipped instead: PDFium draws the page in a worker.** `print_win::spool` starts a worker
 over the job (`InWorker::session_over`), asks it for every page's size, and has it draw each page
 in full-width bands that fit the 16 MiB tile mapping, three for an A4 sheet at 300 dpi, each
-allowed ten minutes rather than the usual 30 s. On the Windows desktop, a release `tpdf print` to
+allowed ten minutes rather than the usual 30 s. On the Windows development machine, a release `tpdf print` to
 Microsoft Print to PDF, wall clock including the CLI's own read-back, against the bitmap column
 of the table above (the old `spool`, called directly):
 
@@ -6962,7 +6962,7 @@ Windows desktop, six printers installed, Microsoft Print to PDF as the printer f
 The user-test kit's inspection report (`compare.rs`, *A page with no text is not a page with no
 words*): the draft is digital, the final version's page 2 a scan whose words say the result
 changed from *passed* to *failed*. Before the change `tpdf compare` listed the draft's page 2 as
-one removal and exited 1. After it, on a checks build on the Windows desktop, `tpdf compare`
+one removal and exited 1. After it, on a checks build on the Windows development machine, `tpdf compare`
 listed no change, said on stderr that 113 words of the draft stand where the final version has a
 page with no text and were not compared, and exited 1; *Compare with*, run from the palette and
 read through the accessibility tree, began *Incomplete: no change in the words that were read*,

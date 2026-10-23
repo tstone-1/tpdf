@@ -1099,7 +1099,7 @@ done
 cargo test --manifest-path src-tauri/Cargo.toml --lib keystore::tests::the_chain_api -- --ignored
 # On Windows, the store end to end: a CNG certificate created in CurrentUser\My,
 # found by identities(), used to sign, and removed with its key. First run
-# 2026-09-27 on MOTHERSHIP (Windows 11, pwsh 7): RSA and ECDSA P-256 both signed
+# 2026-09-27 on the Windows development machine (Windows 11, pwsh 7): RSA and ECDSA P-256 both signed
 # through CNG and read intact. The first attempt failed in its CLEANUP and left
 # both probe certificates, keys included, in the store: PowerShell 7 knows
 # `-DeleteKey` only once the Cert:\ path is bound, so the path now comes first,

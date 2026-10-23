@@ -2581,7 +2581,7 @@ application beside it already is.
 **Residual.** A link in `/usr/local/bin` points into the application bundle, so replacing the
 bundle replaces what `tpdf` runs --- which is the same authority an attacker who can replace the
 bundle already has over the application, and is why the link is not a copy. The Windows tool
-**first ran on a desktop 2026-09-27** (MOTHERSHIP): `identities` read the real
+**first ran on a desktop 2026-09-27** (the Windows development machine): `identities` read the real
 `CurrentUser\My`, `verify` gave the macOS verdicts fixture for fixture, and a temporary
 document-signing certificate signed invisibly and visibly, read intact by tpdf, pyHanko and
 `openssl cms -verify`. `sandbox_check` has no Windows counterpart --- a Windows worker's
@@ -3494,12 +3494,12 @@ So the code that runs there is kept to what cannot parse a PDF:
   removes every key tpdf wrote, and the uninstaller turns it off.
 
 **Search is not built.** Windows already indexes PDF text with its own filter
-(`Windows.Data.Pdf.dll`, registered for the machine; measured on TEENYWEENY, Windows 11 build
+(`Windows.Data.Pdf.dll`, registered for the machine; measured on the Windows build machine, Windows 11 build
 26200). A filter of tpdf's would have to be registered for the machine, and the indexer that
 loads it runs as SYSTEM: it would start a `tpdf-cli.exe` from the reader's own, writable
 install folder as a more privileged user, which is a way to raise privileges, not a feature.
 
-**Measured on TEENYWEENY, 2026-10-16** (`scripts/explorer_check.py`, against the installer):
+**Measured on the Windows build machine, 2026-10-16** (`scripts/explorer_check.py`, against the installer):
 every file of the hostile corpus, a document, random bytes and a locked document answered within
 0.25 s, the last two with Explorer's generic icon; the provider was loaded in `dllhost.exe` and
 not in `explorer.exe`; no `dllhost.exe`, `prevhost.exe` or `explorer.exe` had `pdfium.dll` mapped

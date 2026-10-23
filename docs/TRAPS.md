@@ -8029,7 +8029,7 @@ decoder. Grep for it before trusting a generated artifact.
 
 `rust-toolchain.toml` pins `channel = "1.97.1"`, and `check_toolchain.py` asserts rustc
 reports that version with clippy and rustfmt built from the same commit hash. On this
-project's Windows desktop all of that passed and the build then died three gates later:
+project's Windows development machine all of that passed and the build then died three gates later:
 
     error: error calling dlltool 'dlltool.exe': program not found
 
@@ -21059,7 +21059,7 @@ its process object being signalled"*.
 
 That is true of an idle machine. On 2026-08-31,
 `worker::tests::a_worker_whose_child_dies_says_so_rather_than_blocking` failed **two
-full `cargo test` runs out of four** on the Windows desktop — 1,155 tests in
+full `cargo test` runs out of four** on the Windows development machine — 1,155 tests in
 parallel — with the parent reporting `worker stopped answering (still running)` for
 a child that had already exited. Run alone, the same test passed **7 times out of 7,
 in 0.01 s**.
@@ -23112,8 +23112,7 @@ there is far more often a pairing failure than a resolver returning nothing.
 
 ### The macOS half of a platform split is invisible from Windows, and the cross-check runs one way
 
-2026-09-07. `opener.rs` has a macOS arm and a Windows arm. Every gate ran green on the
-Windows desktop — `cargo clippy --locked --all-targets -- -D warnings` included — and
+2026-09-07. `opener.rs` has a macOS arm and a Windows arm. Every gate ran green on the Windows development machine — `cargo clippy --locked --all-targets -- -D warnings` included — and
 the macOS arm had never been compiled by anything, because a Windows compiler never parses
 a `#[cfg(target_os = "macos")]` line. It carried an unnecessary `unsafe` block around
 `NSURL::URLWithString`, which `objc2-foundation` types safe. `unused_unsafe` is a warning,
@@ -23125,7 +23124,7 @@ the Windows tree *from a Mac*, because that is the direction the repository's hi
 the problem in. There is no Mac-from-Windows counterpart and there cannot easily be one —
 the Apple SDK is not obtainable here the way `xwin` makes the Windows SDK obtainable there.
 
-What closed it was not a tool. The changed files were copied to the Mac mini over `ssh`,
+What closed it was not a tool. The changed files were copied to the second Mac over `ssh`,
 `cargo clippy` and `cargo test` were run there, and the mini's clone was restored
 afterwards. That is a two-minute round trip and it is the whole distance between "the gates
 are green" and "the gates are green on the platform that compiles this file". Do it before
@@ -24428,7 +24427,7 @@ edit going wrong inside its own scope; for anything that moves text, compare gly
 
 ### `PDFPage.thumbnail` pixels are the main display's colour space, not sRGB
 
-`scripts/signature_pdfkit_check.swift` failed on this MacBook with *"signature-0 at 60,60:
+`scripts/signature_pdfkit_check.swift` failed on the development Mac with *"signature-0 at 60,60:
 [0.918, 0.2, 0.137], expected [1.0, 0.0, 0.0]"*, identically under PDFium 8044 and 8066, on
 PDFs that were byte-identical under both. PDFKit had rendered them correctly. The check read
 the wrong numbers.
@@ -26071,7 +26070,7 @@ a space; `glyph_cut_tests.rs` puts the space back before comparing.
 
 ### A PowerShell `$env:` variable in double quotes is emptied by the remote bash, and `Test-Path` then answers False about another path
 
-The Windows desktop's ssh shell is WSL, so a command sent to it is read by bash before
+The Windows development machine's ssh shell is WSL, so a command sent to it is read by bash before
 PowerShell sees it. On 2026-10-07 the question was whether tpdf was installed there, and
 the command sent was `powershell.exe -NoProfile -Command "Test-Path $env:LOCALAPPDATA\tpdf\tpdf.exe"`.
 The answer was `False`. tpdf 26.10.9 was installed there and running. On that answer the
@@ -26728,13 +26727,13 @@ update. A check that compares a machine with itself needs a machine that has nev
 
 The Rust tests read generated fixtures and return early when one is absent, which is right for
 a fixture a runner cannot build. It also hid two things at once, found on 2026-10-17 when a
-mutation pass on the Windows desktop reported `docinfo: call a document timestamp's time attested
+mutation pass on the Windows development machine reported `docinfo: call a document timestamp's time attested
 whatever its verdict` as SURVIVED.
 
 - **A stale set.** `incr-doc-timestamped.pdf` and `incr-lt.pdf` were added to
   `scripts/ci_fixtures.py` on 2026-09-28. The desktop's fixtures were older, so the tests reading
   them had skipped there for three weeks, every local gate green, and the mutation survived a
-  test that CI runs. The Mac mini was missing eight, because its `python3` had no pyhanko and
+  test that CI runs. The second Mac was missing eight, because its `python3` had no pyhanko and
   the generator skips those rather than failing. The `hosted` gate now runs
   `ci_fixtures.py --check --signed --hostile` before `test`. For pyhanko, use
   `uv run --no-project --with-requirements scripts/fixture-tools.txt python scripts/ci_fixtures.py --signed --hostile`.
@@ -26747,7 +26746,7 @@ whatever its verdict` as SURVIVED.
 
 ### A two-page fixture with every size known cannot show a size that moves every other page
 
-The window check *a page cropped by a drag is rendered under its crop* failed on the Mac mini
+The window check *a page cropped by a drag is rendered under its crop* failed on the second Mac
 in five of five runs for 26.10.21, which shipped with it red, while a unit test of the same
 sequence in `viewercrop.test.ts` passed. The unit test opened two pages with both sizes known;
 the window check cropped the last page of `text-heavy.pdf`, a long document opened lazily, where
@@ -26763,8 +26762,7 @@ The tests that now fail without the fix open 200 pages with one size known. Crop
 page alone is not enough, because the end of the document clamps a lost offset back onto the
 last page; a crop in the middle left the reader on page 123 instead of 100. `applyFit` also
 re-anchors whenever the zoom changes, so a mutation that removed only the explicit re-anchor
-survived the last-page test. Fixed 2026-10-17 for 26.10.22; the window check passed on the Mac
-mini that day.
+survived the last-page test. Fixed 2026-10-17 for 26.10.22; the window check passed on the second Mac that day.
 
 ### A watermark turned across the page merged the lines it crossed in the reading order
 
@@ -26846,7 +26844,7 @@ unit tests in nine files print `[SKIP] <fixture>: not generated` and return when
 fixture is absent. That is the documented contract (`ci_fixtures.py`: skipped on a runner,
 covered locally), but `cargo test` captures a passing test's output, so on a machine missing a
 fixture every one of them reported `ok` and nothing printed the skip. The local half had
-nothing behind it. Measured on the Windows desktop with `--nocapture`: two skips, both by
+nothing behind it. Measured on the Windows development machine with `--nocapture`: two skips, both by
 design, so the coverage there was real; nothing would have said so on a machine where it was
 not. The sites now call `fixtures::missing`, which fails the test when
 `TPDF_REQUIRE_FIXTURES` is set, and `gates.py` sets it unless `CI` is. Moving
@@ -26859,7 +26857,7 @@ refuses a run in which nothing passed.
 ### vitest coloured its output inside tmux, and the harness read a green suite as no summary at all
 
 On 2026-10-19 the release's `mutate_frontend.py --since v26.10.22` pass ran in a tmux session on
-the Mac mini and stopped at its control: *the control run produced no summary line*. By hand,
+the second Mac and stopped at its control: *the control run produced no summary line*. By hand,
 the same tree passed 148 files and 3,152 tests. vitest had coloured its output although the
 harness reads it through a pipe, so the summary began `\x1b[2m      Tests` and `SUMMARY`, anchored
 on `^\s*Tests`, matched nothing. The harness printed the last 2,000 characters of stdout and
@@ -26876,8 +26874,8 @@ a tool's human output should strip colour first, or ask for a machine format.
 ### A print job *Spooling* with 0 pages was tpdf rasterising, not a stuck spooler
 
 For the 26.10.23 release, `print-probe` on `vector-multi.pdf` was recorded as hanging on
-TEENYWEENY with its job left *Spooling*, 0 pages, and a reboot was taken to have cleared a stuck
-spooler. On 2026-10-19 the Windows desktop showed the same state: `Get-PrintJob` listed the job
+the Windows build machine with its job left *Spooling*, 0 pages, and a reboot was taken to have cleared a stuck
+spooler. On 2026-10-19 the Windows development machine showed the same state: `Get-PrintJob` listed the job
 *Spooling*, 0 pages, 0 bytes, for minutes. The probe was not blocked, though. It had used 440 s
 of CPU, and it finished 9 of 9 after 8.5 minutes, about 2.5 minutes for each sheet. `spool` opens
 the job with `StartDocW` and only then rasterises the page through `Windows.Data.Pdf`, at 300 dpi.
@@ -26917,7 +26915,7 @@ the same `predict` the extent check uses, which a page left unturned misses by a
 ### A helper whose callers all became Windows-only passed every gate on Windows and failed on the other two
 
 `commands::print::chosen_pages` was shared code until the 2026-10-20 print preview moved both of
-its callers behind `#[cfg(windows)]`. The full gate suite passed on the Windows desktop, 33 of 33,
+its callers behind `#[cfg(windows)]`. The full gate suite passed on the Windows development machine, 33 of 33,
 and CI then failed on macOS and Ubuntu with `function chosen_pages is never used`: on those two
 the function still compiled and nothing called it, and `-D warnings` makes that an error. Windows
 was the one platform where the code was live. `check_windows.py` exists for the other direction,
@@ -26929,7 +26927,7 @@ platform `cfg`, run it, and read `ci.yml`'s three jobs before calling the push d
 
 ### PDFium unpacked through a Python temporary directory could not be loaded by a low-integrity worker
 
-On 2026-10-21, cutting 26.10.24, `print-probe` on TEENYWEENY failed all three fixtures at the
+On 2026-10-21, cutting 26.10.24, `print-probe` on the Windows build machine failed all three fixtures at the
 same check: *the worker could not open the print job*, `LoadLibraryExW` error 5 on
 `vendor\pdfium\bin\pdfium.dll`. The window checks had passed 16 of 16 on the same machine an hour
 before. Those load the copy the checks build puts in `target\release\pdfium\`, which inherits the
@@ -26958,7 +26956,7 @@ the same defect.
 
 ### A mutation that replaced `cfg!(windows)` with `true` changed nothing on Windows
 
-The 26.10.24 pass of `mutate_rust.py --since v26.10.23` on the Windows desktop reported one
+The 26.10.24 pass of `mutate_rust.py --since v26.10.23` on the Windows development machine reported one
 survivor, *ocr language: tell every reader more can be installed*. The row replaced
 `installable: cfg!(windows)` with `installable: true` in `commands/ocr.rs`. On Windows
 `cfg!(windows)` is `true`, so the mutated program was the program, and no test could notice; on

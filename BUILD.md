@@ -1067,8 +1067,8 @@ starts at 0 and increments within the month.
    **Once, on the final tree.** If only version files, lockfiles and prose change after that
    run, step 3's `cargo check` plus `scripts/check_trap_index.py` and `scripts/check_dates.py`
    cover what changed, and CI then runs the full list on both platforms on the release commit.
-   The 26.9.18 cycle ran the suite twice here, once on MOTHERSHIP and twice more in the cloud on
-   one commit. **Do not run `gates.py` on the Windows desktop as part of the window checks**:
+   The 26.9.18 cycle ran the suite twice here, once on the Windows development machine and twice more in the cloud on
+   one commit. **Do not run `gates.py` on the Windows development machine as part of the window checks**:
    CI's `windows-2025` leg runs the same gates on the same commit. The desktop is for what CI
    cannot do: the window phases, `print-probe`, `redact-reach-probe` and the installers.
 
@@ -1093,7 +1093,7 @@ starts at 0 and increments within the month.
    **On Windows, the mirror is `scripts/check_linux.py`**, before a push that adds, moves or
    removes a platform `cfg`, and before a tag. It sends the tree as it is to `~/tpdf-linux` in
    WSL (Ubuntu 24.04, set up as *Linux* near the top of this file says) and runs the `clippy`
-   gate there. On 2026-10-20 the gates passed 33 of 33 on the Windows desktop while both other
+   gate there. On 2026-10-20 the gates passed 33 of 33 on the Windows development machine while both other
    runners failed on `function chosen_pages is never used`: its callers had all moved behind
    `#[cfg(windows)]`. The script, with that defect put back, fails on the same line; warm it
    takes under a minute. It compiles Linux, not macOS, so a `target_os = "macos"`-only line
@@ -2054,7 +2054,7 @@ starts at 0 and increments within the month.
    step now extracts both the MSI and NSIS setup, requires `tpdf-cli.exe` beside `tpdf.exe`,
    and exercises both through the installed Python client. The original presence check was
    proved failing on 26.9.20's own installers first, on
-   MOTHERSHIP: the MSI extracted to `THIRD-PARTY-NOTICES.md`, `tpdf.exe` and `pdfium.dll` only,
+   the Windows development machine: the MSI extracted to `THIRD-PARTY-NOTICES.md`, `tpdf.exe` and `pdfium.dll` only,
    and the step stopped at *the MSI does not carry tpdf-cli.exe*. Still extract one as below
    after a release that changes it, and run
    `tpdf-cli.exe --version` and `tpdf-cli.exe verify` on a signed PDF from the installed
@@ -2419,7 +2419,7 @@ starts at 0 and increments within the month.
     and `/S` runs at once. The installer goes into the folder the last install on that
     machine used, so after `update_check.py` it is `%LOCALAPPDATA%\tpdf-update-check`;
     read `InstallLocation` from the uninstall key instead of assuming `%LOCALAPPDATA%\tpdf`.
-    TEENYWEENY had `LocalManifestFiles` off again on 2026-10-19, two days after it was on;
+    The Windows build machine had `LocalManifestFiles` off again on 2026-10-19, two days after it was on;
     `winget settings --enable LocalManifestFiles` from the ssh session turned it back on.
     `git mv` of the version folder stages only the rename: edit the files after it, then
     `git add` them, and read `git show HEAD:<file>` before pushing. On 2026-10-19 the commit

@@ -70,8 +70,8 @@ GitHub's digest; `brew audit --cask --online` was clean and `brew livecheck` rea
 winget pull request moved to 26.10.25 and passed `winget validate`. **Not run:** `print-probe`,
 `menu_check.py` and `save_check.py`.
 
-**26.10.24 verification and publication, 2026-10-21:** prepared on the Windows desktop, with the
-macOS half on the Mac mini and the Windows half on TEENYWEENY over ssh. Step 1 took `lopdf` 0.46,
+**26.10.24 verification and publication, 2026-10-21:** prepared on the Windows development machine, with the
+macOS half on the second Mac and the Windows half on the Windows build machine over ssh. Step 1 took `lopdf` 0.46,
 a `0.x` minor of a direct dependency: its writers still leave out `ObjStm`, `XRef` and
 `Linearized` objects, `processor.rs` is byte-identical, and it still records no free
 cross-reference entry, so the guards in `save.rs`, `redact.rs` and `docinfo/freed.rs` hold; it
@@ -80,13 +80,13 @@ reads Type 3 `d1` as one operator now, which `type3.rs`'s substitution handles e
 crates are new to the list above and are held by others: `windows-core` 0.100 by Tauri's `tao`,
 `wry` and `webview2-com`, and `parking_lot` 0.13, which would be a second copy beside `tao`'s
 0.12. All 33 gates passed on the release tree, and `check_linux.py` passed. `window_checks.py` 16
-of 16 on the Mac mini through `run_on_mac.py` and 16 of 16 on TEENYWEENY on a `--no-bundle`
+of 16 on the second Mac through `run_on_mac.py` and 16 of 16 on the Windows build machine on a `--no-bundle`
 checks build. Step 7 in the mutation worktree: `mutate_python.py` 38/38, `mutate_frontend.py
 --near v26.10.23` 12/12, `mutate_rust.py --near v26.10.23` 14/14 with 2 skipped as not runnable
 on Windows. `redact-reach-probe` over 177 documents in the desktop's Downloads: 15,034 regions,
 92.4% taken whole; the gate read back 13,669 on 388 pages, none still read as text, 8,119 not
 shown unreadable and 5,550 shown unreadable, in 96.0 s. **`print-probe` failed all three
-fixtures on TEENYWEENY at first**, the print worker refused `vendor\pdfium\bin\pdfium.dll` with
+fixtures on the Windows build machine at first**, the print worker refused `vendor\pdfium\bin\pdfium.dll` with
 `LoadLibraryExW` error 5: `fetch_pdfium.py` left an owner-only access list on development trees
 (`docs/TRAPS.md`, *PDFium unpacked through a Python temporary directory could not be loaded by a
 low-integrity worker*). Fixed in `0be47c6f`, the tagged commit; reinstalled with `--force`, the
@@ -95,48 +95,48 @@ each reading 78 modules with none named pdfium. No rehearsal tag: `release.yml` 
 its notes. CI passed all three jobs on `0be47c6f` and `Audit` passed (run 39591223349); release
 run 39595647629 skipped its gates and left a draft of eight files whose `latest.json` offered
 26.10.24 for the four macOS and Windows entries. On the draft's files: the installer read as
-`Valid` by `Get-AuthenticodeSignature` and passed `installed_check.py` 25/25 on TEENYWEENY; the
+`Valid` by `Get-AuthenticodeSignature` and passed `installed_check.py` 25/25 on the Windows build machine; the
 `.dmg` and its app were accepted as Notarized Developer ID and stapled, with a `tpdf-cli` that
 answered 26.10.24 and verified `testdata/incr-signed.pdf`. `publish_release.py v26.10.24
 --publish` published it; without authentication `releases/latest` is v26.10.24 and the `.dmg`,
 the `-setup.exe`, the `.deb`, the AppImage and `latest.json` answer 200. An installed 26.10.23
-updated itself: `update_check_mac.py` 12/12 on the Mac mini and `update_check.py` 17/17 on
-TEENYWEENY. The cask went to 26.10.24 with the `.dmg`'s SHA-256 equal to GitHub's digest; `brew
+updated itself: `update_check_mac.py` 12/12 on the second Mac and `update_check.py` 17/17 on
+the Windows build machine. The cask went to 26.10.24 with the `.dmg`'s SHA-256 equal to GitHub's digest; `brew
 audit --cask --online` was clean and `brew livecheck` reads 26.10.24. The winget pull request
 moved to 26.10.24 and passed `winget validate`. After publication, `run_on_windows.py --rev
-0be47c6f --pictures` on TEENYWEENY: `screenshots.py --more` 51/51 and 20 pictures, the print
+0be47c6f --pictures` on the Windows build machine: `screenshots.py --more` 51/51 and 20 pictures, the print
 preview among them, looked at. Step 7's pass after the release, `--since v26.10.23 --resume` on
-the Windows desktop on `0be47c6f`: frontend 74 of 74; Rust 127 of 128 with 5 skipped as not
+the Windows development machine on `0be47c6f`: frontend 74 of 74; Rust 127 of 128 with 5 skipped as not
 runnable on Windows. The survivor was a row that changed nothing on Windows (`docs/TRAPS.md`, *A
 mutation that replaced `cfg!(windows)` with `true` changed nothing on Windows*); rewritten, it is
 caught there. **Not run:** the `no-press` controls of the update checks, `menu_check.py` and
 `save_check.py`.
 
-**26.10.23 verification, 2026-10-18:** prepared on the MacBook, with the macOS window checks
-on the Mac mini and the Windows half on TEENYWEENY and the Windows desktop over ssh. Step 1
+**26.10.23 verification, 2026-10-18:** prepared on the development Mac, with the macOS window checks
+on the second Mac and the Windows half on the Windows build machine and the Windows development machine over ssh. Step 1
 moved nothing: the lockfiles already held what `cargo update` and `npm update` reach, and
 `tauri-plugin-updater` stays at 2.13.3 in both Cargo lockfiles and npm. The engine is
 `pdfium-8078-tpdf.2`, whose code is that of `.1` (near the top of this file). All 33 gates
 passed on the release tree and `check_windows.py` type-checked the Windows tree, once the
 Windows `pdfium.dll` was placed in `vendor/pdfium/bin` as its message says. `window_checks.py`
-16 of 16 on the Mac mini through `run_on_mac.py`, `compare` and `add text` among them, and 16
-of 16 on TEENYWEENY on a `--no-bundle` checks build. Step 7, in the mutation worktree:
+16 of 16 on the second Mac through `run_on_mac.py`, `compare` and `add text` among them, and 16
+of 16 on the Windows build machine on a `--no-bundle` checks build. Step 7, in the mutation worktree:
 `mutate_rust.py --near v26.10.22` 164 of 164, `mutate_frontend.py --near v26.10.22` 61 of 61,
 `mutate_python.py` 38 of 38; the new rows for compare and added text had found twelve test
-gaps the day before (`75ec7e23`). `run_on_windows.py --suite all` on TEENYWEENY: 3,252 unit
+gaps the day before (`75ec7e23`). `run_on_windows.py --suite all` on the Windows build machine: 3,252 unit
 tests and 618 command-line checks, 4 skipped. The normal macOS bundle with the development
 engine hidden: `tpdf-cli --version` 26.10.23, `verify`, `text`, `page-numbers`, a Greek and
 Chinese `watermark`, and `compare` exiting 1 and 0; the app opened a document with all seven
-workers mapping the bundle's PDFium and the app process none. On TEENYWEENY the NSIS bundle
+workers mapping the bundle's PDFium and the app process none. On the Windows build machine the NSIS bundle
 passed `installed_check.py` 25/25, once built with `tauri.explorer.conf.json` as `release.yml`
 builds it (without the overlay, `tpdf_shell.dll is installed` fails, 24/25). `redact-reach-probe`
 over 175 documents in the desktop's Downloads: 14,867 regions, 92.3% taken whole; the gate read
 back 13,507 on 383 pages, none still read as text, 7,997 not shown unreadable and 5,510 shown
 unreadable, in 90.2 s. **`print-probe` on `vector-multi.pdf` hung at the range print** on
-TEENYWEENY, its job left *Spooling* with 0 pages, twice; `rotated.pdf` passed 10/10. The
+the Windows build machine, its job left *Spooling* with 0 pages, twice; `rotated.pdf` passed 10/10. The
 26.10.22 probe, whose `print_win.rs` and probe are the same, hangs the same way there today,
 and a spooler restart did not clear it, so the machine changed and the code did not; the
-range print on that fixture was unverified on Windows at the tag. After a reboot of TEENYWEENY
+range print on that fixture was unverified on Windows at the tag. After a reboot of the Windows build machine
 on 2026-10-19 the same probe binary passed 9/9 on `vector-multi.pdf`, the range print
 included, so the hang was the machine's state. That was the reading at the time; on 2026-10-19
 the desktop showed the same *Spooling*, 0 pages, while the probe spent 2.5 minutes rasterising
@@ -148,26 +148,26 @@ Publication, 2026-10-19: on `cc8611c1` CI passed all three jobs and `Audit` pass
 26.10.23 for the four macOS and Windows entries, with a `.dmg` Gatekeeper accepts as Notarized
 Developer ID. `publish_release.py v26.10.23 --publish` published it; without authentication
 `releases/latest` is v26.10.23 and all eight files answer 200. An installed 26.10.22 updated
-itself: `update_check_mac.py` 12/12 on the Mac mini and `update_check.py` 17/17 on
-TEENYWEENY, and each `no-press` control failed its seven checks and nothing else. The cask
+itself: `update_check_mac.py` 12/12 on the second Mac and `update_check.py` 17/17 on
+the Windows build machine, and each `no-press` control failed its seven checks and nothing else. The cask
 went to 26.10.23 with the `.dmg`'s SHA-256 equal to GitHub's digest; `brew audit --cask
 --online` was clean and `brew livecheck` reads 26.10.23. The winget pull request moved to
 26.10.23 and passed `winget validate`; the published installer had the manifest's SHA-256,
 installed with `/S`, showed in `winget list` as `tpdf 26.10.23` and uninstalled with `/S`.
 `winget install --manifest` itself stopped at SmartScreen (step 12's winget paragraph).
-Step 7's pass after the release, `--since v26.10.22 --resume`, on the Mac mini on `cc8611c1`:
+Step 7's pass after the release, `--since v26.10.22 --resume`, on the second Mac on `cc8611c1`:
 Python 38 of 38, Rust 1,006 of 1,006, frontend 593 of 593. The frontend harness first stopped
 at its control with *no summary line*: vitest coloured its output inside tmux (`docs/TRAPS.md`,
 *vitest coloured its output inside tmux*); the harness now strips colour codes, and the run
 was repeated with it.
 
-**26.10.22 verification and publication, 2026-10-17:** prepared on the Windows desktop. Step 1
+**26.10.22 verification and publication, 2026-10-17:** prepared on the Windows development machine. Step 1
 moved `libc` and `unicode-normalization` a patch each; `tauri-plugin-updater` 2.14.0 was held
 again with its npm half. All 33 gates passed on the release tree. `window_checks.py` passed 14 of
-14 on the Mac mini through `run_on_mac.py` and 14 of 14 on TEENYWEENY on a `--no-bundle` checks
+14 on the second Mac through `run_on_mac.py` and 14 of 14 on the Windows build machine on a `--no-bundle` checks
 build. Step 7: `mutate_python.py` 38/38, `mutate_frontend.py --near v26.10.21` 10/10;
 `mutate_rust.py --near v26.10.21` selected none, which it refuses as a pass, and `--since
-v26.10.21` caught 5 of 5. On TEENYWEENY the NSIS bundle passed `installed_check.py` 25/25, and
+v26.10.21` caught 5 of 5. On the Windows build machine the NSIS bundle passed `installed_check.py` 25/25, and
 `print-probe` through Microsoft Print to PDF passed 9/9 on `vector-multi.pdf` and 10/10 on
 `rotated.pdf`. Run from the desktop's own build, `cargo run --example print-probe` failed in the
 interactive scheduled task at `resource path ..\vendor\pdfium\bin\pdfium.dll doesn't exist` and
@@ -181,22 +181,22 @@ passed (run 39061175640); release run 39063139652 skipped its gates and left a d
 files whose `latest.json` offered 26.10.22 for the four macOS and Windows entries.
 `publish_release.py v26.10.22 --publish` published it; without authentication `releases/latest`
 is v26.10.22 and all eight files answer 200. An installed 26.10.21 updated itself:
-`update_check_mac.py` 12/12 on the Mac mini, its `no-press` control failing its seven checks and
-nothing else; `update_check.py` 17/17 on TEENYWEENY, and `winarm.yml` 25/25 and 17/17 on both
-`windows-11-arm` (ARM64) and `windows-2025` (AMD64). TEENYWEENY's `no-press` control failed its
+`update_check_mac.py` 12/12 on the second Mac, its `no-press` control failing its seven checks and
+nothing else; `update_check.py` 17/17 on the Windows build machine, and `winarm.yml` 25/25 and 17/17 on both
+`windows-11-arm` (ARM64) and `windows-2025` (AMD64). The Windows build machine's `no-press` control failed its
 seven and one more, *the .pdf class reads as it did before the install*: that control never
 updates, so 26.10.21's uninstaller ran and left the empty key 26.10.22 fixes; from 26.10.22 on
 the control uninstalls a version that does not. The cask went to 26.10.22 with the `.dmg`'s
 SHA-256 equal to GitHub's digest; `brew audit --cask --online` was clean and `brew livecheck`
 reads 26.10.22. The winget pull request moved to 26.10.22 with `ProductCode` and
-`AppsAndFeaturesEntries`; on TEENYWEENY `winget install --manifest` installed it after
+`AppsAndFeaturesEntries`; on the Windows build machine `winget install --manifest` installed it after
 SmartScreen's prompt was answered, and `winget uninstall --manifest --silent` removed it in two
 seconds with no window. **Not run:** `menu_check.py` and `save_check.py` on a macOS bundle, and
 the two Linux-only mutation rows.
 
 **26.10.21 publication, 2026-10-17:** one rehearsal tag first, because `release.yml` had
 changed since 26.10.20. `v26.10.21-rc1` passed every job; `installed_check.py` passed 24/24
-on its signed installer on TEENYWEENY, in the desktop session through an interactive
+on its signed installer on the Windows build machine, in the desktop session through an interactive
 scheduled task, and its `.dmg` was accepted by Gatekeeper as Notarized Developer ID,
 stapled, with a `tpdf-cli` inside that answered `--version` with 26.10.21 and verified
 `testdata/incr-signed.pdf`. The rc draft and tag were deleted by id. On the release commit
@@ -208,23 +208,22 @@ published it. Without authentication `releases/latest` is v26.10.21, all eight f
 under the tag, and `latest.json` offers 26.10.21. The Homebrew cask went from 26.10.20 to
 26.10.21 with the `.dmg`'s SHA-256 equal to the digest GitHub records for it; `brew audit
 --cask --online` printed no finding and `brew livecheck` reads 26.10.21. An installed
-26.10.20 updated itself: `update_check_mac.py` 12/12 over SSH on the Mac mini and
-`update_check.py` 17/17 on TEENYWEENY, and each `--control no-press` failed its seven checks
+26.10.20 updated itself: `update_check_mac.py` 12/12 over SSH on the second Mac and
+`update_check.py` 17/17 on the Windows build machine, and each `--control no-press` failed its seven checks
 and nothing else. The winget pull request (445804, still a new package awaiting a moderator)
 moved to 26.10.21 and passed `winget validate`; the published installer had the manifest's
 SHA-256, a valid timestamped signature, installed with `/S` and showed in `winget list` as
 `tpdf 26.10.21`, and uninstalled with `/S`. Step 7's pass after the release, `--since
 v26.10.20 --resume`: the four second-launch rows on a Mac caught 4 of 4; Python 38 of 38;
 frontend 958 of 959, and the row it missed (Escape leaving the strokes of a drawing behind)
-is now red in its own ink test. Rust on the Windows desktop, resumed after a stop for low
+is now red in its own ink test. Rust on the Windows development machine, resumed after a stop for low
 memory: 767 of 768, 13 skipped as not runnable there. The one survivor, `docinfo: call a
 document timestamp's time attested whatever its verdict`, survived because that machine had never
 generated `incr-doc-timestamped.pdf`, so its test skipped; with the fixture it is red, there and
-on the Mac mini. The Mac mini ran the five macOS-only save rows: 5 of 5. The two Linux-only
+on the second Mac. The second Mac ran the five macOS-only save rows: 5 of 5. The two Linux-only
 reveal rows did not run. The `hosted` gate came out of this.
 
-**26.10.21 verification, 2026-10-16:** the first release prepared and checked from the
-Windows desktop, with the macOS half run on the Mac mini over SSH. All 32 gates passed on
+**26.10.21 verification, 2026-10-16:** the first release prepared and checked from the Windows development machine, with the macOS half run on the second Mac over SSH. All 32 gates passed on
 Windows 11 on the release tree, once `vendor/pdfium` there was brought to the 8078 pin the
 pull had moved (the `pdfium` gate said so first; `test` and `bins` were run again on 8078).
 CI passed all three jobs and `Audit` passed on `1f92ca31`. `Audit` had failed all day before
@@ -232,10 +231,10 @@ it: every `zip` below 9.0.3 was yanked and `tauri-plugin-updater` requires `zip 
 `scripts/check_cargo_audit.py` let exactly `zip 4.6.1` through, until 4.6.1 was unyanked
 that afternoon and the script, finding its allowance unused, failed the next `Audit` and
 the entry went; four patch updates the resolver could then reach were taken with it. `scripts/run_on_windows.py --suite all` passed 3,209 unit
-tests and 603 command-line tests with 4 skipped on TEENYWEENY. Every mutation selected
+tests and 603 command-line tests with 4 skipped on the Windows build machine. Every mutation selected
 `--near v26.10.20` on Windows was caught, 172 Rust (6 skipped as macOS- or Linux-only, the
 four second-launch rows among them, which no platform ran this cycle) and 394 frontend, and
-all 38 of `mutate_python.py`. `scripts/run_on_mac.py` on the Mac mini: 13 of 14 window
+all 38 of `mutate_python.py`. `scripts/run_on_mac.py` on the second Mac: 13 of 14 window
 checks. **`marks on text` failed there, and the release went out with it red, by decision:**
 its *a page cropped by a drag is rendered under its crop* failed in five of five runs. After
 the drag-crop of the last page of `text-heavy.pdf`, a 60 by 40 pixel region drag inside the
@@ -1020,7 +1019,7 @@ harness; with the development engine hidden, `menu_check.py` (after its self-tes
 clean menu bar, `save_check.py` saved over the document twice and refused a print after a
 second writer, and the bundled `tpdf-cli` answered `--version` and `verify`. A local build is
 ad-hoc signed, so the Developer ID check belongs to the published artifact. On Windows x64 the
-same day, `sign --image` and `--hide` ran natively on MOTHERSHIP against a certificate-store
+same day, `sign --image` and `--hide` ran natively on the Windows development machine against a certificate-store
 key (*`sign --image` and `sign --hide`*). `docs/THREAT-MODEL.md` gained the two commands that
 watch the open file, which the cycle had added without it; `README.md` gained centred lines.
 `release.yml` changed only in its notes, so no rehearsal tag was cut. **Not run before the
@@ -1221,7 +1220,7 @@ the gutter, and the space before a pushed word*. `release.yml` changed only in i
 no rehearsal tag was cut; the README's editing paragraph was corrected for columns on tagged
 pages and for Noto in place of a restricted font.
 
-**Not run before the tag:** everything that needs a window or the Windows desktop — the
+**Not run before the tag:** everything that needs a window or the Windows development machine — the
 window phases, `mutate_viewer.py`, Windows `print-probe` and `redact-reach-probe`, the external
 smoke test of the normal bundle (step 8) and the hand-applied update (step 12). CI's
 `windows-2025` gate leg is the Windows evidence for this release until those are run.
@@ -1247,7 +1246,7 @@ passed, the gates were skipped, and the draft carried all 8 assets; draft and ta
 by id. The release notes still described 26.9.18 and were corrected on the draft before
 publishing, and on `main`.
 
-**Not run before the tag:** everything that needs a window or the Windows desktop. The
+**Not run before the tag:** everything that needs a window or the Windows development machine. The
 release was cut unattended overnight: no window phases or `mutate_viewer.py` (it selected
 none), no Windows window phases, `print-probe` or `redact-reach-probe`, no external smoke test
 of the normal bundle (step 8) and no hand-applied update (step 12). CI's `windows-2025` gate
@@ -1285,7 +1284,7 @@ release is Latest. Fetched without an account, the `.dmg`, `.msi`, `-setup.exe` 
 `latest.json` answered 200, and `latest.json` offers 26.9.18 for `darwin-aarch64` and
 `windows-x86_64`.
 
-**The MacBook clone's tags were stale after the 2026-09-24 history rewrite, and any
+**The development Mac's tags were stale after the 2026-09-24 history rewrite, and any
 clone not made after it will be too.** `git fetch` does not overwrite an existing tag, so
 `v26.9.17` still named a commit with no merge base with `main`. Every `--since` run then stopped at *"git
 could not diff against 'v26.9.17'"*. `git fetch origin --tags --force` once per clone fixes it.
@@ -1338,7 +1337,7 @@ own page beside an inserted one was checked end to end through the sandboxed
 worker (`redact-import-probe`, 17/17) and read back with `qpdf --check` and pypdf.
 
 **The Windows window phases, `print-probe` and `redact-reach-probe` were not run
-before the tag: MOTHERSHIP was unreachable (asleep) for the whole release.** They
+before the tag: the Windows development machine was unreachable (asleep) for the whole release.** They
 were run against the published tag the next morning, 2026-09-21, and all passed:
 viewer sweeps 315 text-heavy and 217 vector-heavy checks, `textedit-push` 6/6,
 the embedded textedit phase 23/23, the import phase **28/28** including every
