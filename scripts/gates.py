@@ -194,6 +194,12 @@ def gates() -> "list[tuple[str, list[str], str]]":
             "or the index names a section that file does not have",
         ),
         (
+            "buildindex",
+            [sys.executable, str(ROOT / "scripts" / "check_build_index.py")],
+            "a section of docs/build/ is missing from BUILD.md's index of it, the index "
+            "names a section that is not there, or a file there is linked from nowhere",
+        ),
+        (
             # Cheap, and it guards the instrument every other dated claim in the
             # repository is read through. Seventy stamps were written a day and
             # two days ahead on 2026-08-28 before anything noticed.

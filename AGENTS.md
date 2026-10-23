@@ -225,7 +225,7 @@ mixed-direction limitations to upstream's exact output.
 Only mac-arm64 and win-x64 are published. Engine releases are prereleases with
 Latest disabled so they do not replace the application updater's release.
 Phase 0 measurements used `chromium/7881`; they remain historical evidence.
-On a pin change, re-run the compatibility probes listed near the top of `BUILD.md`.
+On a pin change, re-run the compatibility probes in `docs/build/pdfium-probes.md`.
 
 `pdfium-render` hides its bindings accessor; raw-interface callers go through
 `progressive::bind` ([`docs/DETAIL.md`](docs/DETAIL.md) *Stack*).
