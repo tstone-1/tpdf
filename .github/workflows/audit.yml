@@ -74,7 +74,8 @@ jobs:
       # lockfile does not. The script, not `cargo audit` itself, because a
       # yanked crate has no advisory id to ignore: it lets through exactly the
       # yanked versions it names, with the reason (none now; `zip` 4.6.1 for a few
-      # hours on 2026-10-16, until it was unyanked).
+      # hours on 2026-10-16, until it was unyanked). It also audits each lockfile
+      # without `.cargo/audit.toml` and fails on an ignore neither lockfile needs.
       - name: The audit filter, offline
         run: python3 scripts/check_cargo_audit.py --self-test
 

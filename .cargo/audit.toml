@@ -8,8 +8,10 @@
 # and `src-tauri/fuzz/Cargo.lock`), which carry the same set: the fuzz crate
 # depends on `tpdf` by path, so every runtime dependency reaches both.
 #
-# Remove an entry when its crate leaves the tree: the audit does not complain
-# about an ignore that matches nothing, so a stale entry is silent.
+# Remove an entry when its crate leaves the tree. cargo-audit does not complain
+# about an ignore that matches nothing; `scripts/check_cargo_audit.py` does,
+# since 2026-10-23: it audits each lockfile again without this file and fails
+# on an ignored id that neither lockfile reports.
 
 [advisories]
 ignore = [
