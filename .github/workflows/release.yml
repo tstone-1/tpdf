@@ -567,9 +567,10 @@ jobs:
           workers run under Landlock and seccomp. The Linux packages (deb
           and AppImage) do not update themselves: install the new one.
 
-          **New in 26.10.25.** Dependency updates, among them tokio
-          1.54.1, which replaces a yanked release with a security advisory,
-          and Tauri 2.12.5. Nothing else changed.
+          **New in 26.10.25.** The PDF engine is PDFium 8103, the branch
+          Chrome 157 ships. Dependency updates, among them tokio 1.54.1,
+          which replaces a yanked release with a security advisory, and
+          Tauri 2.12.5.
 
           **New in 26.10.24.** On Windows the print preview is the print
           dialog: printer, pages, copies, paper and two-sided beside the

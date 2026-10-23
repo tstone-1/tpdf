@@ -21,6 +21,10 @@ have the binary.)
 
 ### Changed
 
+- **The PDF engine is PDFium 8103**, the branch Chrome 157 ships (`pdfium-8103-tpdf.1`, the
+  head of `chromium/8103`), built as before without patches to PDFium's text code. It
+  compiles in libyuv, whose BSD-3-Clause notice is now in `THIRD-PARTY-NOTICES.md`. The two
+  known mixed Hebrew and Latin limitations extract exactly as on 8078.
 - **Dependency updates.** `tokio` 1.54.1 replaces 1.54.0, which was yanked and is
   RUSTSEC-2026-0384; Tauri 2.12.5 with its build crates, `rfd` 0.16.1, `plist` 1.10.3,
   the ICU 2.4 crates and other patch releases in both Cargo lockfiles; the Tauri CLI 2.12.4

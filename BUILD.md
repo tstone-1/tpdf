@@ -36,6 +36,31 @@ The build
 gate verifies both profiles and leaves normal assets ready for packaging. Smoke-test
 the normal bundle separately before release.
 
+**PDFium 8103-tpdf.1 (2026-10-23).** `Audit` went red on the 26.10.25 release commit: Chrome
+stable 157 had moved to `chromium/8103`, and `chromium/8078` had gained commits after the pin.
+`pdfium-bump` started the build and opened issue #5, and the build failed on all three
+platforms, for two reasons. On macOS, the builder's `patches/mac/build.patch` at `f2e9a1c` no
+longer applied to `toolchain/apple/toolchain.gni`. Its next commit, `976ce1f`, changes only that
+patch. Checked with `git apply --check` against the `chromium/src/build` revision that 8103's
+DEPS names (`ebdaeefa`): `976ce1f` applies, `f2e9a1c` fails as on the runner, and
+`clang_rt.patch` and `win/build.patch` apply too. On Linux and Windows, the engine passed its
+text tests and the RTL observation, and then the licence inventory refused libyuv, which 8103
+compiles in. Its `LICENSE` at the DEPS revision (`eb8eda9c`) is BSD-3-Clause, and
+`build_pdfium.py` copies it as it does Dragonbox's and HarfBuzz's. With both changes,
+[run 39936822326](https://github.com/tstone-1/tpdf/actions/runs/39936822326) at `8ab2d086`
+built all three platforms: 63 upstream text tests on macOS and Linux, 62 on Windows, and the
+two mixed-direction limitations unchanged. **The code moved.** Every library differs from
+`8078-tpdf.2`, by about 1.1 to 1.8% in size, so the probes were run. On Windows 11: `remove-probe c`;
+multilingual search 68/68 and encoding search 23/23, which need `--lib vendor/pdfium/bin`
+when started from the repository root; `progressive-probe` identical on vector-heavy and the
+form; `backend-probe` 42/44 on `vector-heavy.pdf` with two skipped and 41/44 on
+`text-heavy.pdf` with three skipped; `worker-probe` 48/48. On macOS the engine scan found no
+V8 and no XFA, and `remove-probe c` passed. The notices cross-check is byte-identical against
+the macOS and Linux archives, and libyuv's notice is the new one. All 33 gates passed on the
+installed engine. `window_checks.py` passed 16 of 16 on a second Mac through `run_on_mac.py` and
+16 of 16 on Windows 11 on a `--no-bundle` checks build, and `scripts/run_on_windows.py --suite
+all` passed 3,284 unit tests and 622 command-line checks, with 4 skipped.
+
 **PDFium 8078-tpdf.2 (2026-10-18).** The weekly check found one commit on `chromium/8078`
 after the pin, `2f22dfe` *[M156] Guard against re-entrant destruction of the CJS_Runtime*,
 and `Audit` went red. The automatic path worked as written: `pdfium-bump` started
