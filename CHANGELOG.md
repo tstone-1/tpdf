@@ -17,6 +17,17 @@ as *downloadable*, while the release sat as a draft that GitHub showed to nobody
 are given now because they are different facts, and only the second one means a reader can
 have the binary.)
 
+## [26.10.25] - 2026-10-23
+
+### Changed
+
+- **Dependency updates.** `tokio` 1.54.1 replaces 1.54.0, which was yanked and is
+  RUSTSEC-2026-0384; Tauri 2.12.5 with its build crates, `rfd` 0.16.1, `plist` 1.10.3,
+  the ICU 2.4 crates and other patch releases in both Cargo lockfiles; the Tauri CLI 2.12.4
+  and Vite's bundler 1.2.15 in npm. `tauri-plugin-updater` stays at 2.13.3 in Cargo and npm.
+- `.cargo/audit.toml` no longer lists the five `unic-*` advisories: `urlpattern` 0.6
+  does not use those crates, and neither lockfile holds one.
+
 ## [26.10.24] - 2026-10-21
 
 ### Added

@@ -2585,7 +2585,7 @@ SOFTWARE.
 
 ## Rust crates
 
-524 crates are linked into the application binary. Build- and dev-dependencies are excluded: they run at compile time and are not distributed.
+523 crates are linked into the application binary. Build- and dev-dependencies are excluded: they run at compile time and are not distributed.
 
 | Crate | Version | Licence |
 |---|---|---|
@@ -2777,14 +2777,14 @@ SOFTWARE.
 | hyper-rustls | 0.27.10 | Apache-2.0 OR ISC OR MIT |
 | hyper-util | 0.1.21 | MIT |
 | iana-time-zone | 0.1.65 | MIT OR Apache-2.0 |
-| ico | 0.5.0 | MIT |
-| icu_collections | 2.3.0 | Unicode-3.0 |
-| icu_locale_core | 2.3.0 | Unicode-3.0 |
-| icu_normalizer | 2.3.0 | Unicode-3.0 |
-| icu_normalizer_data | 2.3.0 | Unicode-3.0 |
-| icu_properties | 2.3.0 | Unicode-3.0 |
-| icu_properties_data | 2.3.0 | Unicode-3.0 |
-| icu_provider | 2.3.1 | Unicode-3.0 |
+| ico | 0.6.0 | MIT |
+| icu_collections | 2.4.0 | Unicode-3.0 |
+| icu_locale_core | 2.4.0 | Unicode-3.0 |
+| icu_normalizer | 2.4.0 | Unicode-3.0 |
+| icu_normalizer_data | 2.4.0 | Unicode-3.0 |
+| icu_properties | 2.4.0 | Unicode-3.0 |
+| icu_properties_data | 2.4.0 | Unicode-3.0 |
+| icu_provider | 2.4.0 | Unicode-3.0 |
 | ident_case | 1.0.1 | MIT/Apache-2.0 |
 | idna | 1.1.0 | MIT OR Apache-2.0 |
 | idna_adapter | 1.2.2 | Apache-2.0 OR MIT |
@@ -2887,8 +2887,7 @@ SOFTWARE.
 | pkcs12 | 0.1.0 | Apache-2.0 OR MIT |
 | pkcs5 | 0.7.1 | Apache-2.0 OR MIT |
 | pkcs8 | 0.10.2 | Apache-2.0 OR MIT |
-| plist | 1.10.2 | MIT |
-| png | 0.17.16 | MIT OR Apache-2.0 |
+| plist | 1.10.3 | MIT |
 | png | 0.18.1 | MIT OR Apache-2.0 |
 | polling | 3.11.0 | Apache-2.0 OR MIT |
 | potential_utf | 0.1.6 | Unicode-3.0 |
@@ -2922,7 +2921,7 @@ SOFTWARE.
 | regex-syntax | 0.8.11 | MIT OR Apache-2.0 |
 | reqwest | 0.13.5 | MIT OR Apache-2.0 |
 | rfc6979 | 0.4.0 | Apache-2.0 OR MIT |
-| rfd | 0.16.0 | MIT |
+| rfd | 0.16.1 | MIT |
 | ring | 0.17.14 | Apache-2.0 AND ISC |
 | rsa | 0.9.10 | MIT OR Apache-2.0 |
 | rustc-hash | 2.1.3 | Apache-2.0 OR MIT |
@@ -2994,16 +2993,16 @@ SOFTWARE.
 | system-configuration-sys | 0.6.0 | MIT OR Apache-2.0 |
 | tao | 0.37.1 | Apache-2.0 |
 | tar | 0.4.46 | MIT OR Apache-2.0 |
-| tauri | 2.12.4 | Apache-2.0 OR MIT |
-| tauri-codegen | 2.7.3 | Apache-2.0 OR MIT |
-| tauri-macros | 2.7.3 | Apache-2.0 OR MIT |
+| tauri | 2.12.5 | Apache-2.0 OR MIT |
+| tauri-codegen | 2.7.4 | Apache-2.0 OR MIT |
+| tauri-macros | 2.7.4 | Apache-2.0 OR MIT |
 | tauri-plugin-dialog | 2.8.3 | Apache-2.0 OR MIT |
 | tauri-plugin-fs | 2.7.1 | Apache-2.0 OR MIT |
 | tauri-plugin-process | 2.4.0 | Apache-2.0 OR MIT |
 | tauri-plugin-single-instance | 2.5.4 | Apache-2.0 OR MIT |
 | tauri-plugin-updater | 2.13.3 | Apache-2.0 OR MIT |
 | tauri-runtime | 2.12.2 | Apache-2.0 OR MIT |
-| tauri-runtime-wry | 2.12.2 | Apache-2.0 OR MIT |
+| tauri-runtime-wry | 2.12.3 | Apache-2.0 OR MIT |
 | tauri-utils | 2.10.2 | Apache-2.0 OR MIT |
 | tempfile | 3.27.0 | MIT OR Apache-2.0 |
 | tendril | 0.5.1 | MIT OR Apache-2.0 |
@@ -3014,11 +3013,11 @@ SOFTWARE.
 | time | 0.3.55 | MIT OR Apache-2.0 |
 | time-core | 0.1.9 | MIT OR Apache-2.0 |
 | time-macros | 0.2.32 | MIT OR Apache-2.0 |
-| tinystr | 0.8.4 | Unicode-3.0 |
+| tinystr | 0.8.5 | Unicode-3.0 |
 | tinyvec | 1.13.3 | Zlib OR Apache-2.0 OR MIT |
 | tls_codec | 0.4.2 | Apache-2.0 OR MIT |
 | tls_codec_derive | 0.4.2 | Apache-2.0 OR MIT |
-| tokio | 1.54.0 | MIT |
+| tokio | 1.54.1 | MIT |
 | tokio-rustls | 0.26.6 | MIT OR Apache-2.0 |
 | tokio-util | 0.7.20 | MIT |
 | toml | 1.1.8+spec-1.1.0 | MIT OR Apache-2.0 |
@@ -3091,7 +3090,7 @@ SOFTWARE.
 | x509-cert | 0.2.5 | Apache-2.0 OR MIT |
 | x509-ocsp | 0.2.1 | Apache-2.0 OR MIT |
 | xattr | 1.6.1 | MIT OR Apache-2.0 |
-| yoke | 0.8.3 | Unicode-3.0 |
+| yoke | 0.8.4 | Unicode-3.0 |
 | yoke-derive | 0.8.4 | Unicode-3.0 |
 | zbus | 5.19.0 | MIT |
 | zbus_macros | 5.19.0 | MIT |
@@ -3103,8 +3102,8 @@ SOFTWARE.
 | zeroize | 1.9.1 | Apache-2.0 OR MIT |
 | zeroize_derive | 1.5.0 | Apache-2.0 OR MIT |
 | zerotrie | 0.2.5 | Unicode-3.0 |
-| zerovec | 0.11.8 | Unicode-3.0 |
-| zerovec-derive | 0.11.6 | Unicode-3.0 |
+| zerovec | 0.11.9 | Unicode-3.0 |
+| zerovec-derive | 0.11.7 | Unicode-3.0 |
 | zip | 4.6.1 | MIT |
 | zlib-rs | 0.6.8 | Zlib |
 | zmij | 1.0.23 | MIT |
