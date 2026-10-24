@@ -107,7 +107,7 @@ def main():
     drafts = [release for release in releases if release['tagName'] == args.tag]
     if len(drafts) != 1 or not drafts[0]['isDraft']:
         raise RuntimeError('expected exactly one unpublished draft for this tag')
-    print(f'[PASS] {args.tag} at {sha}: both packaged API checks passed in run {latest["databaseId"]}, '
+    print(f'[PASS] {args.tag} at {sha}: all {len(PLATFORMS)} packaged API checks passed in run {latest["databaseId"]}, '
           f'audit run {audit["databaseId"]} passed')
     if args.publish:
         # Re-read the tag immediately before mutation; never publish against a

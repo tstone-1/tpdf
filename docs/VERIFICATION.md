@@ -54,6 +54,27 @@ The two affected UI mutations were caught by their named checks after a green
 the OCR gate enabled; no sampled region read back as remaining text, and
 inconclusive controls remained unverified.
 
+Release `v26.10.26` points to `4200ceef`. CI run `40097826496` passed all three
+platform jobs; audit run `40097826505` passed. Release run `40100530951` passed
+all three packaged CLI/API checks. The published release has eight assets;
+unauthenticated downloads of the installer and DMG match the checked draft bytes,
+and `latest.json` offers 26.10.26. The Windows installer has a valid Authenticode
+signature. Homebrew audit/livecheck and winget manifest validation passed.
+
+The Windows live update from 26.10.25 passed 17/17, including reopening the document
+from a path with spaces and uninstall cleanup. The macOS live-update check remains
+unverified: one desktop's System Events menu queries timed out twice; another
+returned `osascript is not allowed assistive access` (-1719). Both attempts ended
+before choosing Install update. A general System Events process query responding
+does not prove Accessibility access to an application's menu. Run the check from
+a desktop context granted that access; do not interpret these failures as updater
+defects or as a passed update. The test restores the original session and removes
+its temporary application.
+
+The Windows CI cache post-step took several minutes after all tests passed.
+Review cache size and upload time separately from release correctness; no cache
+policy was changed during this release.
+
 ### Existing-text workflow (unreleased)
 
 Use synthetic inputs and the isolated checks application. On macOS:
