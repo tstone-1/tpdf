@@ -1015,11 +1015,14 @@ starts at 0 and increments within the month.
    crate still held back, ask `cargo tree -i <crate>@<version>` what holds it, and take it
    when the answer has changed. Held on 2026-10-13, 26.10.18:
 
-   - **`der`, `x509-cert`, `ecdsa`, `p256`, `p384`, `sha1`, `signature`, and the second
-     `sha2`** are one set and move together. `cms` 0.2.3 and `rsa` 0.9 need the old set,
+   - **`der`, `x509-cert`, `sha1`, and the second `sha2`** remain on the generation
+     required by `cms` 0.2.3 and `rsa` 0.9,
      and the versions of both that take the new one are release candidates (`cms`
-     0.3.0-rc.0, `rsa` 0.10.0-rc.19). Take the set when both are released. The Linux
-     certificate-file reader's `pkcs5`, `des`, `rc2`, `cbc` and `hmac` belong to the same
+     0.3.0-rc.0, `rsa` 0.10.0-rc.19). Take that set when both are released. ECDSA is
+     independent: it exchanges prehashed bytes and SEC1 points, not their ASN.1 types.
+     `ecdsa` 0.17 and `p256`/`p384` 0.14 move to fixed `crypto-bigint` 0.7.6 for
+     RUSTSEC-2026-0387. The earlier requirement to hold them together was wrong.
+     The Linux certificate-file reader's `pkcs5`, `des`, `rc2`, `cbc` and `hmac` belong to the same
      generation (`Cargo.toml` says so beside `pkcs12`) and move with it (26.10.20).
    - **`gtk` 0.19** is held by Tauri: `muda` and `tao` name 0.18. Take it when they do.
    - **`base64` 0.23** compiles here. It is held because 0.22 comes with

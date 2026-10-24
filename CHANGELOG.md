@@ -28,6 +28,8 @@ have the binary.)
 
 ### Fixed
 
+- Update ECDSA arithmetic to fix the timing side channels in
+  `crypto-bigint` (RUSTSEC-2026-0387), including Linux certificate-file signing.
 - Verified redaction and successful signing messages use a green banner. Failures
   and unverified results retain the red problem style, including across tabs.
 

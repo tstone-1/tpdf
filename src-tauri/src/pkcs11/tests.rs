@@ -207,6 +207,7 @@ fn a_token_lists_its_certificates_and_signs_after_its_pin() {
     )
     .unwrap();
     let verifying = rsa::pkcs1v15::VerifyingKey::<sha2_10::Sha256>::new(key);
+    use rsa::signature::hazmat::PrehashVerifier as _;
     let parsed = rsa::pkcs1v15::Signature::try_from(signature.as_slice()).unwrap();
     verifying
         .verify_prehash(&rsa_digest, &parsed)

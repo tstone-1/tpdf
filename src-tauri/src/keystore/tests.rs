@@ -89,11 +89,7 @@ fn the_os_signs_a_revision_that_the_verifier_calls_intact() {
             }
             Soft::P256(key) => {
                 // X9.63: the uncompressed public point, then the scalar.
-                let mut data = key
-                    .verifying_key()
-                    .to_encoded_point(false)
-                    .as_bytes()
-                    .to_vec();
+                let mut data = key.verifying_key().to_sec1_point(false).as_bytes().to_vec();
                 data.extend_from_slice(&key.to_bytes());
                 (data, unsafe { kSecAttrKeyTypeECSECPrimeRandom })
             }

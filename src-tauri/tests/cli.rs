@@ -1724,7 +1724,7 @@ fn key() -> p256::ecdsa::SigningKey {
 
 /// A self-issued certificate for [`key`], valid around `now`, stating no usage.
 fn certificate(now: u64) -> Vec<u8> {
-    let point = key().verifying_key().to_encoded_point(false);
+    let point = key().verifying_key().to_sec1_point(false);
     let spki = SubjectPublicKeyInfoOwned {
         algorithm: AlgorithmIdentifierOwned {
             oid: ObjectIdentifier::new_unwrap("1.2.840.10045.2.1"),

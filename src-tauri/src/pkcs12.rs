@@ -209,16 +209,8 @@ pub fn open(file: &[u8], password: &str) -> Result<Opened, Refusal> {
         None => return Err(Refusal::NoKey),
     };
     let public = match &key {
-        EcKey::P256(k) => k
-            .verifying_key()
-            .to_encoded_point(false)
-            .as_bytes()
-            .to_vec(),
-        EcKey::P384(k) => k
-            .verifying_key()
-            .to_encoded_point(false)
-            .as_bytes()
-            .to_vec(),
+        EcKey::P256(k) => k.verifying_key().to_sec1_point(false).as_bytes().to_vec(),
+        EcKey::P384(k) => k.verifying_key().to_sec1_point(false).as_bytes().to_vec(),
     };
     let signer = certificates
         .iter()

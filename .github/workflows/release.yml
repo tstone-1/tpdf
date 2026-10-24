@@ -572,6 +572,8 @@ jobs:
           Recognition is temporary and leaves the PDF unchanged; it clears after
           edits or reopening. Verified redaction and successful signing messages
           now have a green background; failures and unverified results remain red.
+          ECDSA arithmetic is updated to fix RUSTSEC-2026-0387, including Linux
+          certificate-file signing.
 
           **New in 26.10.25.** The PDF engine is PDFium 8103, the branch
           Chrome 157 ships. Dependency updates, among them tokio 1.54.1,

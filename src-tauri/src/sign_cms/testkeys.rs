@@ -101,11 +101,11 @@ impl Soft {
             }
             Soft::P256(key) => ec_spki(
                 "1.2.840.10045.3.1.7",
-                key.verifying_key().to_encoded_point(false).as_bytes(),
+                key.verifying_key().to_sec1_point(false).as_bytes(),
             ),
             Soft::P384(key) => ec_spki(
                 "1.3.132.0.34",
-                key.verifying_key().to_encoded_point(false).as_bytes(),
+                key.verifying_key().to_sec1_point(false).as_bytes(),
             ),
         }
     }

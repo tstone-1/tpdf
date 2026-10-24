@@ -587,7 +587,7 @@ fn certificate_dated(spec: &Spec<'_>, dates: Dates) -> Vec<u8> {
 
 /// [`certificate_dated`], with `more` extensions after the ones `spec` says.
 fn certificate_with(spec: &Spec<'_>, dates: Dates, more: &[Extension]) -> Vec<u8> {
-    let point = spec.key.verifying_key().to_encoded_point(false);
+    let point = spec.key.verifying_key().to_sec1_point(false);
     let spki = SubjectPublicKeyInfoOwned {
         algorithm: AlgorithmIdentifierOwned {
             oid: oid("1.2.840.10045.2.1"),

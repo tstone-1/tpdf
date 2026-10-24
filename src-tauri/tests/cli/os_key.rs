@@ -64,7 +64,7 @@ mod platform {
             // X9.63 uncompressed public point followed by the private scalar.
             let mut bytes = soft
                 .verifying_key()
-                .to_encoded_point(false)
+                .to_sec1_point(false)
                 .as_bytes()
                 .to_vec();
             bytes.extend_from_slice(&soft.to_bytes());
@@ -135,7 +135,7 @@ mod platform {
                 NCryptOpenStorageProvider(&mut handle.provider, MS_KEY_STORAGE_PROVIDER, 0)
             })?;
             // BCRYPT_ECCKEY_BLOB header, big-endian X, Y and private scalar.
-            let point = soft.verifying_key().to_encoded_point(false);
+            let point = soft.verifying_key().to_sec1_point(false);
             let mut blob = BCRYPT_ECDSA_PRIVATE_P256_MAGIC.to_le_bytes().to_vec();
             blob.extend_from_slice(&32u32.to_le_bytes());
             blob.extend_from_slice(&point.as_bytes()[1..]);

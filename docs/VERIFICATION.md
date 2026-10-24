@@ -6,6 +6,25 @@ Where a section says "this file", "above" or "the top of this file", it means [`
 
 ### Temporary search recovery and success banners (26.10.26, 2026-10-24)
 
+The first release audit found RUSTSEC-2026-0387 in `crypto-bigint` 0.5.5.
+Linux certificate-file signing uses private ECDSA keys, so a verification-only
+exception would be false. The stable curve updates use fixed 0.7.6 independently
+of CMS/RSA: the boundary is prehashed bytes and SEC1 points. `BUILD.md`'s former
+instruction to hold all of these together was corrected. The checks below were
+completed before that dependency update; its verification is recorded separately.
+
+After the update, both lockfiles pass `check_cargo_audit.py` without a new ignore.
+Windows `cargo check --all-targets` and the fuzz binaries compile; Linux passes
+the all-target clippy gate and all five `pkcs12::` tests, including actual P-256
+and P-384 signatures. The licence inventory was regenerated and checked.
+The repeated full Windows run passed 32/34 gates: formatting needed adjustment
+after the SEC1 method rename, and one CLI text-output replacement returned
+Windows access denied. The complete CLI rerun passed 630/630 with three platform
+skips; the cause of that one filesystem refusal was not established. The Rust
+unit tests passed 3,285/3,285, with 12 ignored, on the updated dependency tree.
+The final `gates.py --gate fmt --gate test` passed both gates (2.3 and 96.5
+seconds), completing the full gate set after those corrections and reruns.
+
 `scripts/gates.py` on Windows: 34/34, 1,000.9 seconds across the gates,
 including 3,285 Rust tests and 3,203 frontend tests. `scripts/check_linux.py`
 passed the Linux clippy gate on the same source snapshot.

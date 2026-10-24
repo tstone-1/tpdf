@@ -2620,7 +2620,7 @@ SOFTWARE.
 
 ## Rust crates
 
-523 crates are linked into the application binary. Build- and dev-dependencies are excluded: they run at compile time and are not distributed.
+533 crates are linked into the application binary. Build- and dev-dependencies are excluded: they run at compile time and are not distributed.
 
 | Crate | Version | Licence |
 |---|---|---|
@@ -2646,7 +2646,7 @@ SOFTWARE.
 | atk | 0.18.2 | MIT |
 | atk-sys | 0.18.2 | MIT |
 | atomic-waker | 1.1.2 | Apache-2.0 OR MIT |
-| base16ct | 0.2.0 | Apache-2.0 OR MIT |
+| base16ct | 1.0.0 | Apache-2.0 OR MIT |
 | base64 | 0.21.7 | MIT OR Apache-2.0 |
 | base64 | 0.22.1 | MIT OR Apache-2.0 |
 | base64 | 0.23.1 | MIT OR Apache-2.0 |
@@ -2683,6 +2683,7 @@ SOFTWARE.
 | chrono | 0.4.45 | MIT OR Apache-2.0 |
 | cipher | 0.4.4 | MIT OR Apache-2.0 |
 | cipher | 0.5.2 | MIT OR Apache-2.0 |
+| cmov | 0.5.4 | Apache-2.0 OR MIT |
 | cms | 0.2.3 | Apache-2.0 OR MIT |
 | concurrent-queue | 2.5.0 | Apache-2.0 OR MIT |
 | const-oid | 0.10.2 | Apache-2.0 OR MIT |
@@ -2702,7 +2703,7 @@ SOFTWARE.
 | crossbeam-deque | 0.8.8 | MIT OR Apache-2.0 |
 | crossbeam-epoch | 0.9.21 | MIT OR Apache-2.0 |
 | crossbeam-utils | 0.8.23 | MIT OR Apache-2.0 |
-| crypto-bigint | 0.5.5 | Apache-2.0 OR MIT |
+| crypto-bigint | 0.7.6 | Apache-2.0 OR MIT |
 | crypto-common | 0.1.7 | MIT OR Apache-2.0 |
 | crypto-common | 0.2.2 | MIT OR Apache-2.0 |
 | cryptoki | 0.12.1 | Apache-2.0 |
@@ -2710,6 +2711,7 @@ SOFTWARE.
 | cssparser | 0.37.0 | MPL-2.0 |
 | cssparser-macros | 0.7.1 | MPL-2.0 |
 | ctor | 1.0.13 | Apache-2.0 OR MIT |
+| ctutils | 0.4.5 | Apache-2.0 OR MIT |
 | darling | 0.24.1 | MIT |
 | darling_core | 0.24.1 | MIT |
 | darling_macro | 0.24.1 | MIT |
@@ -2718,6 +2720,7 @@ SOFTWARE.
 | defmt-macros | 1.2.0 | MIT OR Apache-2.0 |
 | defmt-parser | 1.1.0 | MIT OR Apache-2.0 |
 | der | 0.7.10 | Apache-2.0 OR MIT |
+| der | 0.8.2 | Apache-2.0 OR MIT |
 | der_derive | 0.7.3 | Apache-2.0 OR MIT |
 | deranged | 0.5.9 | MIT OR Apache-2.0 |
 | derive_more | 2.1.1 | MIT |
@@ -2738,9 +2741,9 @@ SOFTWARE.
 | dunce | 1.0.5 | CC0-1.0 OR MIT-0 OR Apache-2.0 |
 | dyn-clone | 1.0.20 | MIT OR Apache-2.0 |
 | ecb | 0.2.1 | MIT OR Apache-2.0 |
-| ecdsa | 0.16.9 | Apache-2.0 OR MIT |
+| ecdsa | 0.17.0 | Apache-2.0 OR MIT |
 | either | 1.19.0 | MIT OR Apache-2.0 |
-| elliptic-curve | 0.13.8 | Apache-2.0 OR MIT |
+| elliptic-curve | 0.14.1 | Apache-2.0 OR MIT |
 | embed_plist | 1.2.2 | MIT OR Apache-2.0 |
 | encoding_rs | 0.8.42 | (Apache-2.0 OR MIT) AND BSD-3-Clause |
 | endi | 1.1.1 | MIT |
@@ -2754,7 +2757,7 @@ SOFTWARE.
 | fastrand | 2.5.0 | Apache-2.0 OR MIT |
 | fax | 0.3.0 | MIT |
 | fdeflate | 0.3.7 | MIT OR Apache-2.0 |
-| ff | 0.13.1 | MIT/Apache-2.0 |
+| ff | 0.14.0 | MIT/Apache-2.0 |
 | field-offset | 0.3.6 | MIT OR Apache-2.0 |
 | filetime | 0.2.29 | MIT/Apache-2.0 |
 | flagset | 0.4.7 | Apache-2.0 |
@@ -2792,7 +2795,7 @@ SOFTWARE.
 | glib-sys | 0.18.1 | MIT |
 | glob | 0.3.4 | MIT OR Apache-2.0 |
 | gobject-sys | 0.18.0 | MIT |
-| group | 0.13.0 | MIT/Apache-2.0 |
+| group | 0.14.0 | MIT/Apache-2.0 |
 | gtk | 0.18.2 | MIT |
 | gtk-sys | 0.18.2 | MIT |
 | gtk3-macros | 0.18.2 | MIT |
@@ -2802,6 +2805,7 @@ SOFTWARE.
 | heck | 0.5.0 | MIT OR Apache-2.0 |
 | hex | 0.4.3 | MIT OR Apache-2.0 |
 | hmac | 0.12.1 | MIT OR Apache-2.0 |
+| hmac | 0.13.0 | MIT OR Apache-2.0 |
 | html5ever | 0.39.0 | MIT OR Apache-2.0 |
 | http | 1.5.0 | MIT OR Apache-2.0 |
 | http-body | 1.1.0 | MIT |
@@ -2900,8 +2904,8 @@ SOFTWARE.
 | option-ext | 0.2.0 | MPL-2.0 |
 | ordered-stream | 0.2.0 | MIT OR Apache-2.0 |
 | osakit | 0.3.1 | MIT OR Apache-2.0 |
-| p256 | 0.13.2 | Apache-2.0 OR MIT |
-| p384 | 0.13.1 | Apache-2.0 OR MIT |
+| p256 | 0.14.0 | Apache-2.0 OR MIT |
+| p384 | 0.14.0 | Apache-2.0 OR MIT |
 | pango | 0.18.3 | MIT |
 | pango-sys | 0.18.0 | MIT |
 | parking | 2.2.1 | Apache-2.0 OR MIT |
@@ -2922,6 +2926,7 @@ SOFTWARE.
 | pkcs12 | 0.1.0 | Apache-2.0 OR MIT |
 | pkcs5 | 0.7.1 | Apache-2.0 OR MIT |
 | pkcs8 | 0.10.2 | Apache-2.0 OR MIT |
+| pkcs8 | 0.11.0 | Apache-2.0 OR MIT |
 | plist | 1.10.3 | MIT |
 | png | 0.18.1 | MIT OR Apache-2.0 |
 | polling | 3.11.0 | Apache-2.0 OR MIT |
@@ -2929,7 +2934,8 @@ SOFTWARE.
 | powerfmt | 0.2.1 | MIT OR Apache-2.0 |
 | ppv-lite86 | 0.2.21 | MIT OR Apache-2.0 |
 | precomputed-hash | 0.1.1 | MIT |
-| primeorder | 0.13.6 | Apache-2.0 OR MIT |
+| primefield | 0.14.0 | Apache-2.0 OR MIT |
+| primeorder | 0.14.0 | Apache-2.0 OR MIT |
 | proc-macro-crate | 1.3.1 | MIT OR Apache-2.0 |
 | proc-macro-crate | 2.0.2 | MIT OR Apache-2.0 |
 | proc-macro-crate | 3.5.0 | MIT OR Apache-2.0 |
@@ -2955,7 +2961,7 @@ SOFTWARE.
 | regex-automata | 0.4.18 | MIT OR Apache-2.0 |
 | regex-syntax | 0.8.11 | MIT OR Apache-2.0 |
 | reqwest | 0.13.5 | MIT OR Apache-2.0 |
-| rfc6979 | 0.4.0 | Apache-2.0 OR MIT |
+| rfc6979 | 0.6.0 | Apache-2.0 OR MIT |
 | rfd | 0.16.1 | MIT |
 | ring | 0.17.14 | Apache-2.0 AND ISC |
 | rsa | 0.9.10 | MIT OR Apache-2.0 |
@@ -2974,7 +2980,7 @@ SOFTWARE.
 | schemars_derive | 0.8.22 | MIT |
 | scopeguard | 1.2.0 | MIT OR Apache-2.0 |
 | scrypt | 0.11.0 | MIT OR Apache-2.0 |
-| sec1 | 0.7.3 | Apache-2.0 OR MIT |
+| sec1 | 0.8.1 | Apache-2.0 OR MIT |
 | seccompiler | 0.5.0 | Apache-2.0 OR BSD-3-Clause |
 | secrecy | 0.10.3 | Apache-2.0 OR MIT |
 | security-framework | 3.7.0 | MIT OR Apache-2.0 |
@@ -2992,6 +2998,7 @@ SOFTWARE.
 | serde_spanned | 1.1.2 | MIT OR Apache-2.0 |
 | serde_with | 3.24.0 | MIT OR Apache-2.0 |
 | serde_with_macros | 3.24.0 | MIT OR Apache-2.0 |
+| serdect | 0.4.3 | Apache-2.0 OR MIT |
 | serialize-to-javascript | 0.1.2 | MIT OR Apache-2.0 |
 | serialize-to-javascript-impl | 0.1.2 | MIT OR Apache-2.0 |
 | servo_arc | 0.4.3 | MIT OR Apache-2.0 |
@@ -3001,6 +3008,7 @@ SOFTWARE.
 | sha3 | 0.10.9 | MIT OR Apache-2.0 |
 | signal-hook-registry | 1.4.8 | MIT OR Apache-2.0 |
 | signature | 2.2.0 | Apache-2.0 OR MIT |
+| signature | 3.0.0 | Apache-2.0 OR MIT |
 | simd-adler32 | 0.3.10 | MIT |
 | simdutf8 | 0.1.5 | MIT OR Apache-2.0 |
 | siphasher | 1.0.4 | MIT OR Apache-2.0 |
@@ -3012,6 +3020,7 @@ SOFTWARE.
 | soup3-sys | 0.5.0 | MIT |
 | spin | 0.9.9 | MIT |
 | spki | 0.7.3 | Apache-2.0 OR MIT |
+| spki | 0.8.1 | Apache-2.0 OR MIT |
 | stable_deref_trait | 1.2.1 | MIT OR Apache-2.0 |
 | string_cache | 0.9.0 | MIT OR Apache-2.0 |
 | stringprep | 0.1.5 | MIT/Apache-2.0 |
@@ -3118,6 +3127,7 @@ SOFTWARE.
 | windows_x86_64_msvc | 0.53.1 | MIT OR Apache-2.0 |
 | winnow | 0.5.40 | MIT |
 | winnow | 1.0.4 | MIT |
+| wnaf | 0.14.1 | Apache-2.0 OR MIT |
 | writeable | 0.6.4 | Unicode-3.0 |
 | wry | 0.57.1 | Apache-2.0 OR MIT |
 | x11 | 2.21.0 | MIT |
@@ -3279,6 +3289,8 @@ MIT and the BSD family require the copyright notice itself to be reproduced, whi
 - Copyright (c) 2018-2024 The rust-random Project Developers
 - Copyright (c) 2018-2025 The RustCrypto Project Developers
 - Copyright (c) 2018-2025 The rust-random Project Developers
+- Copyright (c) 2018-2025 `group` crate developers
+- Copyright (c) 2018-2026 RustCrypto Developers
 - Copyright (c) 2018-2026 The Rand Project Developers
 - Copyright (c) 2018-2026 The RustCrypto Project Developers
 - Copyright (c) 2018-2026 The rust-random Project Developers
@@ -3308,13 +3320,13 @@ MIT and the BSD family require the copyright notice itself to be reproduced, whi
 - Copyright (c) 2020 The RustCrypto Project Developers
 - Copyright (c) 2020 Yoshua Wuyts
 - Copyright (c) 2020-2021 RustCrypto Developers
-- Copyright (c) 2020-2022 RustCrypto Developers
 - Copyright (c) 2020-2022 Tauri Programme within The Commons Conservancy
 - Copyright (c) 2020-2022 The RustCrypto Project Developers
 - Copyright (c) 2020-2023 Ngo Iok Ui & Tauri Programme within The Commons Conservancy
 - Copyright (c) 2020-2023 RustCrypto Developers
 - Copyright (c) 2020-2023 The RustCrypto Project Developers
 - Copyright (c) 2020-2025 The RustCrypto Project Developers
+- Copyright (c) 2020-2026 RustCrypto Developers
 - Copyright (c) 2020-2026 The RustCrypto Project Developers
 - Copyright (c) 2021 Chip Reed
 - Copyright (c) 2021 RustCrypto Developers
@@ -3323,11 +3335,11 @@ MIT and the BSD family require the copyright notice itself to be reproduced, whi
 - Copyright (c) 2021 the Deno authors
 - Copyright (c) 2021, Tauri Programme within The Commons Conservancy
 - Copyright (c) 2021, Tauri Programme within The Commons Conservancy.
-- Copyright (c) 2021-2022 The RustCrypto Project Developers
 - Copyright (c) 2021-2023 The RustCrypto Project Developers
 - Copyright (c) 2021-2024 The RustCrypto Project Developers
 - Copyright (c) 2021-2025 The RustCrypto Project Developers
 - Copyright (c) 2021-2026 RustCrypto Developers
+- Copyright (c) 2021-2026 The RustCrypto Project Developers
 - Copyright (c) 2022 1Password
 - Copyright (c) 2022 Artyom Pavlov
 - Copyright (c) 2022 Bartłomiej Maryńczak
@@ -3349,7 +3361,9 @@ MIT and the BSD family require the copyright notice itself to be reproduced, whi
 - Copyright (c) 2024 Mullvad VPN AB
 - Copyright (c) 2024 Orson Peters
 - Copyright (c) 2024 Zeeshan Ali Khan & zbus contributors
+- Copyright (c) 2024-2026 RustCrypto Developers
 - Copyright (c) 2025 Alice Maz, Marshall Pierce
+- Copyright (c) 2025-2026 The RustCrypto Project Developers
 - Copyright (c) 2026 RustCrypto Developers
 - Copyright (c) 2026 Zeeshan Ali Khan & zcheapstr contributors
 - Copyright (c) Ferrous Systems
