@@ -548,6 +548,25 @@ comment in the file, which is the copy that has to stay right.
 
 ## Quality gates: release workflow and Windows measurements
 
+On Windows the gate runner defaults `CARGO_BUILD_JOBS` to 2, respecting an explicit
+override. Concurrent example builds exhausted commit memory with OS error 1455
+and allocation aborts; use the same bound for local Cargo verification outside
+the runner. This limits compilation concurrency, not the Rust test threads.
+On Linux it sets one job per 2 GiB of memory when that is fewer than the CPUs:
+a 7.5 GB WSL VM linked twelve test binaries at once and swapped for 15 minutes.
+
+
+An outer execution sandbox can prevent PDFium loading in tpdf's Windows worker.
+On 2026-10-24, the same executable, engine and control PDF failed inside the
+session sandbox with `STATUS_DLL_INIT_FAILED` / `LoadLibraryExW` error 1114,
+but searched successfully in an approved run outside it. `win-sandbox-probe`
+also changed from failing its `lowil` row to rendering identical pixels with
+low integrity and the job limits intact. Before diagnosing an engine defect or
+changing containment, compare the identical command outside the outer sandbox
+through the execution tool's approval mechanism. This establishes an environment
+dependency; it does not identify the particular DLL initializer or denied API.
+
+
 `.github/workflows/release.yml` fires only on a CalVer tag and **invokes `scripts/gates.py`**
 rather than re-listing commands in YAML. The one part with no precedent in the portfolio is
 signing the bundled `libpdfium.dylib`: notarization requires every Mach-O in the bundle to carry

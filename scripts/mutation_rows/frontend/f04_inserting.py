@@ -139,8 +139,8 @@ ROWS += [
     Mutation(
         "search: ask the opened document about an imported page",
         "src/lib/search.ts",
-        "        result = await call(\"search_page\", {\n          doc: source.doc,",
-        "        result = await call(\"search_page\", {\n          doc: this.doc,",
+        "        result = await this.ask({\n          doc: source.doc,",
+        "        result = await this.ask({\n          doc: this.doc,",
         "asks the file each page is drawn from, and finds a match on the imported one",
     ),
     Mutation(

@@ -865,6 +865,12 @@ measured the Windows render constants come out 1.5–1.8x worse.
   page the recogniser refuses, which the closing line names. A document with unsaved changes is
   asked to be saved first. The engine and its limits are under *Text recognition* below.
   <!-- built: file.recogniseText -->
+  <!-- built: file.recognisePage -->
+  **Recognise this page for search** reads the current saved page even when its
+  existing text is unusable. It is available in Find, the File menu and the
+  command palette. Recognition is local and temporary: the PDF stays unchanged,
+  and editing or leaving the view discards it. Search highlights whole recognised
+  words, including when only part of a word matches.
 - **Find text the pages do not show** is the check for a document redacted somewhere
   else. It compares the text in the saved file with what each page looks like and lists,
   in a sidebar tab, every passage the page does not show: words under a black box, under

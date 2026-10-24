@@ -306,8 +306,10 @@ export function afterRedaction(applied: {
 export function afterRedactionCopy(applied: Parameters<typeof afterRedaction>[0]): {
   message: string;
   offers: Offer[];
+  success: boolean;
 } {
   return {
+    success: applied.verified && !applied.changed && !applied.notes?.length,
     message: afterRedaction(applied),
     offers: !applied.verified && !applied.changed ? ["rasterCopy"] : [],
   };

@@ -317,6 +317,7 @@ describe("what a tab keeps across a switch", () => {
     searchScope: [{ from: 1, to: 2 }] as unknown as TabState["searchScope"],
     sidebarTab: "comments",
     error: "could not render page 2",
+    messageSuccess: true,
     offers: [{ kind: "recover" }] as unknown as TabState["offers"],
     notice: "saved",
     redactedCopyPath: "/fixture/1-redacted.pdf",
@@ -362,6 +363,7 @@ describe("what a tab keeps across a switch", () => {
       covered: note("covered"), query: note("query"), findShown: note("findShown"),
       searchOptions: note("searchOptions"), searchScope: note("searchScope"),
       sidebarTab: note("sidebarTab"), error: note("error"), offers: note("offers"),
+      messageSuccess: note("messageSuccess"),
       notice: note("notice"), redactedCopyPath: note("redactedCopyPath"),
     };
     return { applied, seen, apply };
@@ -388,7 +390,7 @@ describe("what a tab keeps across a switch", () => {
       return applied.map(([key]) => key);
     };
     // The message before the copy it clears the offer of: `say` resets it.
-    expect(at("unmounted")).toEqual(["query", "findShown", "error", "offers", "notice", "redactedCopyPath"]);
+    expect(at("unmounted")).toEqual(["query", "findShown", "error", "messageSuccess", "offers", "notice", "redactedCopyPath"]);
     expect(at("model")).toEqual(["covered"]);
     expect(at("mounted")).toEqual(["searchOptions", "searchScope", "sidebarTab"]);
   });

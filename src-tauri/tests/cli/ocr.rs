@@ -321,6 +321,56 @@ fn text_of(file: &str) -> String {
     tool(&["text", file], &[]).1
 }
 
+/// The explicit recovery must read both a scan and a page whose existing
+/// character codes are unusable, without changing either source file.
+fn search_recovery(report: &mut Report, path: &Path, query: &str) {
+    let before = std::fs::read(path).unwrap();
+    let service = RenderService::start_with(library_dir(), Backend::Worker);
+    let file = std::fs::File::open(path).unwrap();
+    let info = wait(|r| service.open_handed(path.to_path_buf(), Some(file), true, None, r))
+        .map_err(|e| e.reason)
+        .expect("recovery fixture opens");
+    let original: tpdf_lib::text::PageText = wait(|r| service.text(info.id, 0, None, r)).unwrap();
+    let native =
+        tpdf_lib::search::search_codes(&original.codes, 0, query, Default::default(), None);
+    report.check(
+        "recovery control: native search misses the visible word",
+        native.matches.is_empty(),
+        query,
+    );
+    let recovered = tpdf_lib::recognition::recognise_one(&service, info.id, 0, None);
+    match recovered {
+        Ok(text) => {
+            let found =
+                tpdf_lib::search::search_codes(&text.codes, 0, query, Default::default(), None);
+            report.check(
+                "explicit recognition recovers the visible word",
+                !found.matches.is_empty(),
+                query,
+            );
+            report.check(
+                "recovered words have nonempty in-page positions",
+                text.boxes.chunks_exact(4).any(|b| {
+                    b[0] >= 0.0
+                        && b[1] >= 0.0
+                        && b[2] > b[0]
+                        && b[3] > b[1]
+                        && b[2] <= text.width_pt
+                        && b[3] <= text.height_pt
+                }),
+                query,
+            );
+        }
+        Err(why) => report.check("explicit recognition reads the page", false, &why),
+    }
+    wait(|r| service.close(info.id, r)).expect("close recovery fixture");
+    report.check(
+        "search recovery never writes the original PDF",
+        std::fs::read(path).unwrap() == before,
+        query,
+    );
+}
+
 /// The window's command on the same scan: the same words in the same places,
 /// and its three refusals leave nothing behind.
 fn window_path(report: &mut Report, source: &str, scanned: &str, out: &str, refused: &str) {
@@ -866,6 +916,16 @@ pub(super) fn makes_a_scan_searchable(report: &mut Report) {
         return;
     }
     scan(Path::new(&picture), Path::new(&scanned));
+    search_recovery(report, Path::new(&scanned), "quartz");
+    if let Some(encoded) = fixture("encodings.pdf") {
+        search_recovery(report, &encoded, "Encoding");
+    } else {
+        report.check(
+            "recovery encoding fixture exists",
+            false,
+            "generate encodings.pdf",
+        );
+    }
 
     report.check(
         "the control: the scan has no text and a search of it finds nothing",

@@ -2796,8 +2796,8 @@ application.
 them, as invisible text. The window's *Recognise text and save as* does the same through
 `ocr_copy`, which is the twelfth command that writes a file (§3). Its path is the one the
 reader chose in a save panel, and like the other eleven the command does not check that.
-`ocr_cancel` sets a flag the running recognition reads between pages; it takes no argument
-and writes nothing.
+`ocr_cancel` names the recognition run to stop; its number is checked between pages,
+and it writes nothing.
 
 **No new process and no new authority.** The page is rendered by the parser worker under its
 own profile. The pixels go to the OCR worker of §5.1, under `OCR_SANDBOX_PROFILE`, which
@@ -2823,6 +2823,14 @@ the layer recognised. The window's copy is read back while it is still the stage
 This is the caller `ocr.rs` describes as wanting recall, and nothing downstream may treat a
 layer's words as verified. In particular the redaction gate does not: it reads pixels
 through its own control (§5.1), never this layer.
+
+**Temporary search recovery (26.10.26).** `recognise_page` reads a saved page through
+those same parser and OCR workers even if its native text is present but unusable.
+It writes no file and grants no new authority. The result contains at most one million
+Unicode scalars, with finite whole-word rectangles. `search_text` accepts at most the
+same number and uses the normal matcher. The viewer retains at most one million
+recovered scalars in total and drops them after edits or disposal. These words are
+search and selection data only; the redaction verifier never consumes this cache.
 
 **Residual.** A reader who searches a recognised copy for a word and finds nothing has
 learned that the recogniser did not report it, not that the page does not show it. And a

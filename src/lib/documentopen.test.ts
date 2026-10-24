@@ -305,7 +305,7 @@ describe("the open's wiring in App.svelte", () => {
       "const resume = placeToResume(retained?.place, override, session.places, path, retained?.edits.state.pages.length ?? doc.page_count);",
       "abandonOpen(acquired, replaced, twins);",
       "const said = openFailure(e, resuming);",
-      "if (said !== null) error = said;",
+      "if (said !== null) say(said);",
     ])).toEqual([]);
     expect(missingFrom(functionIn(app, "function adoptModel("), [
       "tabs.keep(tabToKeep(view, doc, path, model, from), replacing?.view);",

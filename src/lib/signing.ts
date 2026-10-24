@@ -387,6 +387,12 @@ export function afterSigning(signed: Signed): string {
   return text;
 }
 
+/** Green means read back intact, including signatures already in the file. */
+export function succeeded(signed: Signed): boolean {
+  return signed.signatures.some(s => s.ours) &&
+    signed.signatures.every(s => s.integrity?.verdict === "intact");
+}
+
 /** What {@link signDocument} needs from the shell. */
 export interface SigningShell {
   /**
@@ -439,6 +445,7 @@ export interface SigningShell {
   resume(pending: number, timestamp: string | null, longTerm: boolean): Promise<SignOutcome>;
   /** `sign_discard`: the held signature is dropped, and nothing is written. */
   discard(pending: number): Promise<void>;
+  completed?(signed: Signed): void;
 }
 
 /**
@@ -506,6 +513,7 @@ export async function signDocument(shell: SigningShell, field: SignTarget | null
         );
   }
   if (!outcome.signed) throw new Error("The signing answered neither a signature nor a reason.");
+  shell.completed?.(outcome.signed);
   return afterSigning(outcome.signed);
 }
 

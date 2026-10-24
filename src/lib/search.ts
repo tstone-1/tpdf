@@ -35,7 +35,7 @@
  * prevent.
  */
 
-import { call } from "./ipc";
+import { call, type Commands } from "./ipc";
 import { filePage, type FilePage, type PageAddress } from "./pages";
 
 /**
@@ -436,6 +436,7 @@ export class Search {
       doc,
       page: filePage(slot),
     }),
+    private readonly ask: (args: Commands["search_page"]["args"]) => Promise<PageMatches> = args => call("search_page", args),
   ) {
     this.doc = doc;
     this.pageCount = pageCount;
@@ -659,7 +660,7 @@ export class Search {
       const source = this.addressOf(page);
       if (source === undefined) return true;
       try {
-        result = await call("search_page", {
+        result = await this.ask({
           doc: source.doc,
           page: source.page,
           query,
@@ -714,7 +715,7 @@ export class Search {
       const carry = carried?.page === first - 1 ? carried.carry : undefined;
       let reply: PageMatches | null = null;
       try {
-        reply = await call("search_page", {
+        reply = await this.ask({
           doc,
           page: sources[0] as FilePage,
           pages: sources,

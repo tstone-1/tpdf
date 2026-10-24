@@ -1388,8 +1388,8 @@ ROWS += [
     Mutation(
         "tabs: restore a kept tab without one of its fields",
         "src/lib/documenttabs.ts",
-        "  return { covered, query, findShown, searchOptions, searchScope, sidebarTab, error, offers, notice,\n",
-        "  return { covered, query, findShown, searchOptions, searchScope, sidebarTab, error, offers,\n",
+        "  return { covered, query, findShown, searchOptions, searchScope, sidebarTab, error, messageSuccess, offers, notice,\n",
+        "  return { covered, query, findShown, searchOptions, searchScope, sidebarTab, error, messageSuccess, offers,\n",
         "restores every field that was kept, and nothing from another tab",
     ),
     Mutation(
@@ -2536,5 +2536,39 @@ ROWS += [
         "          if (made) continue;",
         "          if (false) continue;",
         "copies a selection that runs across a page tpdf made",
+    ),
+]
+
+ROWS += [
+    Mutation(
+        "search recovery: drop the recognised replacement",
+        "src/lib/searchrecovery.ts",
+        "    this.pages.set(this.key(doc, page), text);",
+        "    this.pages.delete(this.key(doc, page));",
+        "replaces the garbled source for search and cached selection",
+    ),
+    Mutation(
+        "search recovery: send a mixed batch to native extraction",
+        "src/lib/searchrecovery.ts",
+        "{ ...args, page, pages: [page] }",
+        "{ ...args, page, pages }",
+        "keeps unrelated documents and pages native",
+    ),
+    Mutation(
+        "search recovery: retain unlimited recognised text",
+        "src/lib/searchrecovery.ts",
+        "if (total > 1_000_000)",
+        "if (total < 0)",
+        "bounds retained text instead of silently evicting",
+    ),
+]
+
+ROWS += [
+    Mutation(
+        "signing: report success when a previous signature is broken",
+        "src/lib/signing.ts",
+        'signed.signatures.every(s => s.integrity?.verdict === "intact")',
+        'signed.signatures.some(s => s.integrity?.verdict === "intact")',
+        "uses success only for a new signature read back intact",
     ),
 ]

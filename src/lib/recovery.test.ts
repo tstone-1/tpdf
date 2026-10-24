@@ -245,6 +245,7 @@ describe("afterRedactionCopy", () => {
         const prompt = afterRedactionCopy(applied);
         expect(prompt.offers).toEqual(!verified && !changed ? ["rasterCopy"] : []);
         expect(prompt.message).toBe(afterRedaction(applied));
+        expect(prompt.success).toBe(verified && !changed);
       }
     }
   });

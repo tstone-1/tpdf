@@ -26,6 +26,7 @@ export interface DocumentTab {
   searchScope: KeptScope | null;
   sidebarTab: Tab;
   error: string | null;
+  messageSuccess: boolean;
   offers: Offer[];
   notice: string | null;
   redactedCopyPath: string | null;
@@ -105,6 +106,7 @@ export function freshState(): FreshState {
     searchScope: null,
     sidebarTab: "outline",
     error: null,
+    messageSuccess: false,
     offers: [],
     notice: null,
     redactedCopyPath: null,
@@ -129,9 +131,9 @@ export function keepState(tab: DocumentTab, state: TabState): void {
  */
 export function restoredState(tab: DocumentTab | undefined): FreshState {
   if (!tab) return freshState();
-  const { covered, query, findShown, searchOptions, searchScope, sidebarTab, error, offers, notice,
+  const { covered, query, findShown, searchOptions, searchScope, sidebarTab, error, messageSuccess, offers, notice,
     redactedCopyPath } = tab;
-  return { covered, query, findShown, searchOptions, searchScope, sidebarTab, error, offers, notice,
+  return { covered, query, findShown, searchOptions, searchScope, sidebarTab, error, messageSuccess, offers, notice,
     redactedCopyPath };
 }
 
@@ -155,6 +157,7 @@ const RESTORED_AT: { readonly [K in keyof FreshState]: RestorePoint } = {
   query: "unmounted",
   findShown: "unmounted",
   error: "unmounted",
+  messageSuccess: "unmounted",
   offers: "unmounted",
   notice: "unmounted",
   redactedCopyPath: "unmounted",

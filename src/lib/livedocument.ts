@@ -75,6 +75,7 @@ export interface LiveDocument {
    */
   findTimer: number;
   error: string | null;
+  messageSuccess: boolean;
   offers: Offer[];
   notice: string | null;
   redactedCopyPath: string | null;
@@ -122,6 +123,7 @@ export function blankLive(): LiveDocument {
     findShown: false,
     findTimer: 0,
     error: null,
+    messageSuccess: false,
     offers: [],
     notice: null,
     redactedCopyPath: null,

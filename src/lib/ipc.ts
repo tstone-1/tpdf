@@ -364,6 +364,8 @@ export interface Commands {
     args: { doc: DocHandle; source: string; path: string; run: number; language: string | null };
     reply: Recognised;
   };
+  recognise_page: { args: { doc: DocHandle; page: number; language: string | null }; reply: PageText };
+  search_text: { args: { page: number; codes: number[]; query: string; options: SearchOptions; carry?: Carry | undefined }; reply: PageMatches };
   ocr_cancel: { args: { run: number }; reply: void };
   ocr_languages: { args: NoArgs; reply: Offered };
   hidden_text: { args: { doc: DocHandle; run: number }; reply: HiddenText };

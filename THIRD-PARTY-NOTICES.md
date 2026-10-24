@@ -3005,7 +3005,7 @@ SOFTWARE.
 | simdutf8 | 0.1.5 | MIT OR Apache-2.0 |
 | siphasher | 1.0.4 | MIT OR Apache-2.0 |
 | slab | 0.4.12 | MIT |
-| smallvec | 1.16.3 | MIT OR Apache-2.0 |
+| smallvec | 1.16.4 | MIT OR Apache-2.0 |
 | socket2 | 0.6.5 | MIT OR Apache-2.0 |
 | softbuffer | 0.4.8 | MIT OR Apache-2.0 |
 | soup3 | 0.5.0 | MIT |
@@ -3026,7 +3026,7 @@ SOFTWARE.
 | synstructure | 0.14.0 | MIT |
 | system-configuration | 0.7.0 | MIT OR Apache-2.0 |
 | system-configuration-sys | 0.6.0 | MIT OR Apache-2.0 |
-| tao | 0.37.1 | Apache-2.0 |
+| tao | 0.37.2 | Apache-2.0 |
 | tar | 0.4.46 | MIT OR Apache-2.0 |
 | tauri | 2.12.5 | Apache-2.0 OR MIT |
 | tauri-codegen | 2.7.4 | Apache-2.0 OR MIT |
@@ -3085,7 +3085,7 @@ SOFTWARE.
 | urlpattern | 0.6.0 | MIT |
 | utf16string | 0.2.0 | MIT OR Apache-2.0 |
 | utf8_iter | 1.0.4 | Apache-2.0 OR MIT |
-| uuid | 1.28.0 | Apache-2.0 OR MIT |
+| uuid | 1.29.0 | Apache-2.0 OR MIT |
 | vecmath | 1.0.0 | MIT |
 | walkdir | 2.5.0 | Unlicense/MIT |
 | want | 0.3.2 | MIT |
@@ -3119,7 +3119,7 @@ SOFTWARE.
 | winnow | 0.5.40 | MIT |
 | winnow | 1.0.4 | MIT |
 | writeable | 0.6.4 | Unicode-3.0 |
-| wry | 0.57.0 | Apache-2.0 OR MIT |
+| wry | 0.57.1 | Apache-2.0 OR MIT |
 | x11 | 2.21.0 | MIT |
 | x11-dl | 2.21.0 | MIT |
 | x509-cert | 0.2.5 | Apache-2.0 OR MIT |

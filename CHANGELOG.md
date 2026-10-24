@@ -17,6 +17,25 @@ as *downloadable*, while the release sat as a draft that GitHub showed to nobody
 are given now because they are different facts, and only the second one means a reader can
 have the binary.)
 
+## [26.10.26] - 2026-10-24
+
+### Added
+
+- **Recognise this page** in Find and the command palette recovers searchable text
+  from scans and pages with unusable font mappings. Recognition stays in the current
+  view, leaves the PDF unchanged, and clears after edits or reopening. Highlights
+  cover whole recognised words.
+
+### Fixed
+
+- Verified redaction and successful signing messages use a green banner. Failures
+  and unverified results retain the red problem style, including across tabs.
+
+### Changed
+
+- Update `smallvec`, `tao`, `uuid` and `wry` in both Cargo lockfiles. Pin the existing
+  updater hold at 2.13.3 explicitly until its separate upgrade verification is run.
+
 ## [26.10.25] - 2026-10-23
 
 ### Changed

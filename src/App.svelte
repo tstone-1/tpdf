@@ -92,7 +92,6 @@
   import { ExplorerIntegration } from "./lib/explorerstate";
   import {
     afterCopy,
-    afterRedaction,
     afterRedactionCopy,
     afterRasterRedaction,
     afterSplit,
@@ -341,6 +340,7 @@
   let sidebarHost = $state<HTMLDivElement | null>(null);
   let title = $state("");
   let error = $state<string | null>(null);
+  let messageSuccess = $state(false);
   /**
    * What the reader can press about {@link error}, in the order shown.
    *
@@ -528,7 +528,7 @@
       edits, place: currentPlace(false), covered: new Map(covered), query,
       findShown, searchOptions: viewer.searchOptionsNow,
       searchScope: keepScope(viewer.searchScopeRanges, edits.state.pages), sidebarTab: sidebar?.tab ?? "outline",
-      error, offers, notice, redactedCopyPath,
+      error, messageSuccess, offers, notice, redactedCopyPath,
     });
     refreshTabs();
   }
@@ -542,7 +542,8 @@
     query: (value) => { query = value; },
     findShown: (value) => { findShown = value; },
     // The message and its buttons are one fact, shown by one call.
-    error: (value, kept) => say(value, kept.offers),
+    error: (value, kept) => say(value, kept.offers, kept.messageSuccess),
+    messageSuccess: restoredWith("error"),
     offers: restoredWith("error"),
     notice: (value) => { notice = value; },
     redactedCopyPath: (value) => { redactedCopyPath = value; },
@@ -1457,6 +1458,7 @@
     findShown: { get: () => findShown, set: (value) => { findShown = value; } },
     findTimer: { get: () => findTimer, set: (value) => { findTimer = value; } },
     error: { get: () => error, set: (value) => { error = value; } },
+    messageSuccess: { get: () => messageSuccess, set: (value) => { messageSuccess = value; } },
     offers: { get: () => offers, set: (value) => { offers = value; } },
     notice: { get: () => notice, set: (value) => { notice = value; } },
     redactedCopyPath: { get: () => redactedCopyPath, set: (value) => { redactedCopyPath = value; } },
@@ -1793,6 +1795,7 @@
     redactCopy: () => void redactCopy(),
     redactRasterCopy: () => void redactRasterCopy(),
     recogniseText: () => void recogniseText(),
+    recognisePage: () => void recogniseCurrentPage(),
     findHiddenText: () => void findHiddenText(),
     compareWith: (index) => void compareWith(index),
     changeCount: () => comparisons.count,
@@ -2862,6 +2865,7 @@
    */
   function adoptEdit(model: Edits, after: EditState): boolean {
     if (edits !== model) return false;
+    viewer?.clearRecognition();
     // Only when the pages moved, and the viewer is what answers that: every
     // call below throws work away --- the strip's thumbnails, the panels' rows
     // --- and a turn moves no page, so doing it unconditionally would make
@@ -3288,7 +3292,7 @@
       // Cancelled, which is an answer rather than an error.
       if (!chosen) return;
       const result = afterRedactionCopy(await edits.redactCopy(openPathName, chosen, redactionFill));
-      say(result.message, result.offers);
+      say(result.message, result.offers, result.success);
       redactedCopyPath = chosen;
     } catch (e) {
         if (e instanceof SaveCancelled) return;
@@ -3348,7 +3352,7 @@
         afterRasterRedaction(
           await edits.redactRasterCopy(source, chosen, redactionFill),
           basename(chosen),
-        ),
+        ), [], true,
       );
     } catch (e) {
         if (e instanceof SaveCancelled) return;
@@ -3508,6 +3512,31 @@
       } finally {
         blockingTask = null;
         copyTaskBusy = false;
+        refreshMenu();
+      }
+    });
+  }
+
+  async function recogniseCurrentPage(): Promise<void> {
+    if (opening) return;
+    await documentTasks.run(async () => {
+      const shown = viewer, view = openView;
+      if (!shown || !edits || copyTaskBusy) return;
+      await settleDrafts();
+      if (viewer !== shown || openView !== view) return;
+      if (edits.dirty) { say(SAVE_FIRST); return; }
+      const slot = Math.max(0, (status?.page ?? 1) - 1);
+      copyTaskBusy = true;
+      blockingTask = "Recognising this page...";
+      refreshMenu();
+      try {
+        await shown.recognisePage(slot, recognitionLanguage.language);
+        asDocument(view, () => say("Recognised this page for search. The PDF is unchanged. Recognition lasts until you edit or leave this view; word highlights are approximate.", [], true));
+      } catch (e) {
+        asDocument(view, () => say(String(e)));
+      } finally {
+        copyTaskBusy = false;
+        blockingTask = null;
         refreshMenu();
       }
     });
@@ -3864,8 +3893,11 @@
       const place = currentPlace(false);
       say(null);
       let said: string;
+      let success = false;
       try {
-        said = afterRedaction(await edits.redactDocument(path, redactionFill));
+        const result = afterRedactionCopy(await edits.redactDocument(path, redactionFill));
+        said = result.message;
+        success = result.success;
       } catch (e) {
         if (e instanceof SaveCancelled) return;
         const failure = refusalOf(e);
@@ -3881,7 +3913,7 @@
         return;
       }
       await reopenAfterWrite(path, place);
-      if (!error) say(said);
+      if (!error) say(said, [], success);
     });
   }
 
@@ -4093,6 +4125,7 @@
       const doc = openDoc;
       const source = openPathName;
       try {
+        let signingSuccess = false;
         const said = await signing.signDocument({
           // Inside the task and before anything of this flow's own is raised,
           // which is where the six other flows that write call it and where
@@ -4140,8 +4173,9 @@
           resume: (pending, timestamp, longTerm) =>
             call("sign_resume", { pending, timestamp, longTerm }),
           discard: (pending) => call("sign_discard", { pending }),
+          completed: (signed) => { signingSuccess = signing.succeeded(signed); },
         }, field);
-        if (said) say(said);
+        if (said) say(said, [], signingSuccess);
       } catch (e) {
         say(String(e));
       }
@@ -4739,7 +4773,8 @@
    * discards the reader's work, offered for a reason that has gone. `say(null)`
    * clears both.
    */
-  function say(message: string | null, next: Offer[] = []) {
+  function say(message: string | null, next: Offer[] = [], success = false) {
+    messageSuccess = message !== null && success;
     redactedCopyPath = null;
     error = message;
     offers = message === null ? [] : next;
@@ -6434,7 +6469,7 @@
         // half work is worse to use than one whose links are all dead, and
         // silence makes the two indistinguishable.
         const said = linkNotice(result.limits);
-        if (said) error = said;
+        if (said) say(said);
       }))
       .catch(() => {
         // Deliberately quiet. A document with no readable links is the common
@@ -6617,7 +6652,7 @@
     } catch (e) {
       abandonOpen(acquired, replaced, twins);
       const said = openFailure(e, resuming);
-      if (said !== null) error = said;
+      if (said !== null) say(said);
       failed = said;
       // Whether or not it is reported: a row for a document that would not
       // open says so from here on, and keeps its control for removing it.
@@ -6776,6 +6811,9 @@
       {#if findLabel}<span class="stat" class:problem={status?.search.problem}
           >{findLabel}</span
         >{/if}
+      <button data-testid="recognise-page" disabled={copyTaskBusy || opening !== null}
+        title="Can you see a word that search misses? Recognise this page without changing the PDF."
+        onclick={() => void recogniseCurrentPage()}>Recognise this page</button>
       <button title="Previous match" onclick={() => viewer?.prevMatch()}>Previous</button>
       <button title="Next match" onclick={() => viewer?.nextMatch()}>Next</button>
       <button onclick={() => { findShown = false; viewer?.focus(); }}>Close</button>
@@ -6784,16 +6822,17 @@
 
 
   {#if error}
-    <div class="problem-bar" data-testid="problem">
+    <div class="problem-bar" class:success={messageSuccess} data-testid="problem">
       {#if redactedCopyPath}
         <p>Saved {basename(redactedCopyPath)}. You are still viewing the original with its pending redaction marks.</p>
         <button data-testid="open-redacted-copy" disabled={copyTaskBusy}
           onclick={async () => {
             const path = redactedCopyPath;
             const verdict = error;
+            const success = messageSuccess;
             if (!path) return;
             await openPath(path);
-            if (openPathName === path) say(verdict);
+            if (openPathName === path) say(verdict, [], success);
           }}>Open saved copy</button>
       {/if}
       {#if offers.includes("rasterCopy")}
@@ -7426,6 +7465,10 @@
     border-left: 3px solid var(--tpdf-problem);
     background: color-mix(in srgb, var(--tpdf-problem) 9%, Canvas);
     flex: none;
+  }
+  .problem-bar.success {
+    border-left-color: #278341;
+    background: color-mix(in srgb, #278341 14%, Canvas);
   }
   .problem-bar p { margin: 0; }
   /* Opens on a row of its own, under the message and the buttons. */

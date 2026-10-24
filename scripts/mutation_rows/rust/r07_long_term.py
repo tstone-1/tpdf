@@ -2484,3 +2484,20 @@ ROWS += [
         'a_passage_outside_the_page_is_listed_as_such',
     ),
 ]
+
+ROWS += [
+    Mutation(
+        "search recovery: replace recognised letters with spaces",
+        "src/commands/ocr.rs",
+        "text.codes.push(u32::from(c));",
+        "text.codes.push(u32::from(if c.is_alphabetic() { ' ' } else { c }));",
+        "recovery_search_uses_recognised_words_and_whole_word_boxes",
+    ),
+    Mutation(
+        "search recovery: lose whole-word highlight positions",
+        "src/commands/ocr.rs",
+        "text.boxes.extend_from_slice(&word.rect);",
+        "text.boxes.extend_from_slice(&[0.0; 4]);",
+        "recovery_search_uses_recognised_words_and_whole_word_boxes",
+    ),
+]

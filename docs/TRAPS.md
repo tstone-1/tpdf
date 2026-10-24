@@ -7601,6 +7601,15 @@ Not built here. Surfacing it is a product decision — what a reader is told, an
 the corpus exists so that the decision can be made against a measurement instead of a
 suspicion. `docs/PLAN.md` Phase 1 records it.
 
+A local document inspection also found this failure with Type 3 fonts lacking
+`/ToUnicode`, and visible Latin text extracting as private-use characters in a
+document whose composite fonts did have CMaps. Presence of a map alone therefore
+does not establish usable text. OCR recovered the visible words. The ordinary OCR
+eligibility rule (no text, or an image covering at least half the page) can skip
+these pages: a recovery path must also admit unusable text. Conversely, a page
+without extracted text need not be a scan: letters converted to vector outlines
+also require recognition. Keep confidential inspection inputs outside the tree.
+
 ### A pattern was compiled case-sensitively against a haystack the fold had lowercased
 
 `search.rs` folds the page — lowercasing it when `match_case` is off — and matches against

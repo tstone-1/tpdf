@@ -44,7 +44,7 @@ export async function recogniseCheck(host: OpenCheckHost, expected: string, repo
     return host.viewer()!.searchMatches.length;
   };
   /** The command through the palette, opened from the toolbar and typed into. */
-  const run = async () => {
+  const run = async (title = message("recogniseText")) => {
     const button = [...document.querySelectorAll<HTMLButtonElement>("button")].find(
       (b) => b.textContent === "Commands",
     );
@@ -54,12 +54,12 @@ export async function recogniseCheck(host: OpenCheckHost, expected: string, repo
     if (!(await settle(() => field() !== null && field()!.offsetParent !== null, DIALOG_MS))) {
       throw new Error("the palette did not open");
     }
-    field()!.value = message("recogniseText").slice(0, 14);
+    field()!.value = title;
     field()!.dispatchEvent(new InputEvent("input", { bubbles: true }));
     await pause(50);
     const highlighted =
       document.querySelector(".tpdf-palette [role=option][aria-selected=true]")?.textContent ?? "";
-    if (!highlighted.includes(message("recogniseText").slice(0, 26))) {
+    if (!highlighted.includes(title)) {
       throw new Error(`the palette highlights "${highlighted}"`);
     }
     field()!.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true }));
@@ -124,4 +124,28 @@ export async function recogniseCheck(host: OpenCheckHost, expected: string, repo
     offered && stopped && shown().includes("No copy was written"), shown().slice(0, 120));
   report.check("the document that was being read is still the open one", host.path() === long, host.path());
   report.check("and nothing is left running", task() === "" && stop() === null, task());
+
+  // Explicit recovery changes the view's reading, never the saved file.
+  await host.open(scan); await host.idle(); await quiet();
+  report.check("temporary recovery control has no native match", (await found(WORD)) === 0, WORD);
+  const saves = host.saveSuggestions().length;
+  await run("Recognise this page for search");
+  const recovered = await settle(() => shown().includes("Recognised this page for search"), READ_MS);
+  report.check("explicit recognition finishes without asking for a save path", recovered && host.saveSuggestions().length === saves, shown());
+  report.check("temporary recognition makes the word searchable", (await found(WORD)) > 0, WORD);
+  const successBar = document.querySelector('[data-testid="problem"]');
+  report.check("success has a green edge", successBar !== null &&
+    getComputedStyle(successBar).borderLeftColor === "rgb(39, 131, 65)", shown());
+  report.check("the original remains open and clean", host.path() === scan && !host.edits()?.dirty, host.path());
+  const matches = await host.viewer()!.matchQuadsByPage();
+  report.check("recognised matches have highlight rectangles", matches?.some(row => row.quads.length > 0) === true, String(matches?.length));
+  await host.apply(edits => edits.rotate(0, 1));
+  report.check("an edit discards temporary recognition", (await found(WORD)) === 0, WORD);
+  await run("Recognise this page for search");
+  const refusedRecovery = await settle(() => shown().trim() === SAVE_FIRST, DIALOG_MS);
+  const refusalBar = document.querySelector('[data-testid="problem"]');
+  report.check("a refusal replaces green with the problem style", refusedRecovery && refusalBar !== null &&
+    !refusalBar.classList.contains("success") && getComputedStyle(refusalBar).borderLeftColor !== "rgb(39, 131, 65)", shown());
+  await host.open(scan); await host.idle(); await quiet();
+  report.check("reopening never retains recognised text", (await found(WORD)) === 0, WORD);
 }

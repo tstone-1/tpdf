@@ -137,6 +137,151 @@ fn wait<T: Send + 'static, E: Send + 'static + From<String>>(
     super::answered("recognising text", call)
 }
 
+/// Explicit recovery reads pixels even when the PDF claims to contain text.
+/// Nothing is written, and the result never enters redaction verification.
+#[tauri::command]
+pub async fn recognise_page(
+    service: tauri::State<'_, RenderService>,
+    doc: u32,
+    page: u32,
+    language: Option<String>,
+) -> Result<crate::text::PageText, String> {
+    let service = service.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || recognise_one(&service, doc, page, language))
+        .await
+        .map_err(|e| format!("Text recognition stopped: {e}"))?
+}
+
+/// Recognises a saved page through the parser and OCR worker boundaries.
+///
+/// # Errors
+/// Rendering, recognition, unavailable language, or resource limits.
+pub fn recognise_one(
+    service: &RenderService,
+    doc: u32,
+    page: u32,
+    language: Option<String>,
+) -> Result<crate::text::PageText, String> {
+    let original: crate::text::PageText = wait(|reply| service.text(doc, page, None, reply))?;
+    let (width, height, scale) = ocr_layer::render_size(
+        original.width_pt,
+        original.height_pt,
+        PIXELS_CAPACITY.min(TILE_CAPACITY),
+    )
+    .ok_or("This page is too large to recognise.")?;
+    let request = TileRequest {
+        annotations: false,
+        rid: 0,
+        doc,
+        page,
+        scale,
+        turns: 0,
+        invert: false,
+        crop: None,
+        x: 0,
+        y: 0,
+        width: width as u16,
+        height: height as u16,
+        format: TileFormat::Raw,
+    };
+    let rgba = match wait(|reply| service.tile(request, reply))? {
+        TileOutcome::Rendered(tile) => tile.bytes,
+        TileOutcome::Abandoned => return Err("The page render was abandoned.".into()),
+    };
+    if rgba.len() != width as usize * height as usize * 4 {
+        return Err("The page was rendered at the wrong size.".into());
+    }
+    let offered = language
+        .as_ref()
+        .map(|_| offered_languages())
+        .transpose()?
+        .unwrap_or_default();
+    let choice = ocr_layer::choose(language.as_deref(), &offered);
+    if choice.unavailable.is_some() {
+        return Err(
+            "The selected recognition language is unavailable. Choose another language.".into(),
+        );
+    }
+    let mut engine = OcrWorker::spawn().map_err(|e| e.to_string())?;
+    let (_, items) = engine
+        .recognise_page(
+            Pixels {
+                rgba: &rgba,
+                width,
+                height,
+                scale,
+            },
+            &ocr_layer::options(choice.languages),
+        )
+        .map_err(|e| e.to_string())?;
+    let layer =
+        ocr_layer::layer_of(page, items).ok_or("No words could be recognised on this page.")?;
+    recovered_text(original.width_pt, original.height_pt, &layer.words)
+}
+
+/// Every scalar uses its whole word's box. OCR does not know glyph positions;
+/// a substring therefore highlights the whole word rather than invented slices.
+fn recovered_text(
+    width: f32,
+    height: f32,
+    words: &[crate::textlayer::Word],
+) -> Result<crate::text::PageText, String> {
+    let mut text = crate::text::PageText {
+        width_pt: width,
+        height_pt: height,
+        ..Default::default()
+    };
+    for word in words {
+        if word.rect.iter().any(|v| !v.is_finite()) {
+            return Err("Recognition returned invalid word positions.".into());
+        }
+        for c in word.text.chars() {
+            text.codes.push(u32::from(c));
+            text.boxes.extend_from_slice(&word.rect);
+        }
+        text.codes.push(u32::from(' '));
+        text.boxes.extend_from_slice(&[0.0; 4]);
+        if text.codes.len() > 1_000_000 {
+            return Err("The recognised text exceeds the page limit.".into());
+        }
+    }
+    Ok(text)
+}
+
+#[cfg(test)]
+mod recovery_tests {
+    use super::recovered_text;
+    use crate::textlayer::Word;
+
+    #[test]
+    fn recovery_search_uses_recognised_words_and_whole_word_boxes() {
+        let rect = [10.0, 20.0, 80.0, 32.0];
+        let text = recovered_text(
+            200.0,
+            300.0,
+            &[Word {
+                text: "Fluorine".into(),
+                rect,
+            }],
+        )
+        .unwrap();
+        let hits =
+            crate::search::search_codes(&text.codes, 0, "fluorine", Default::default(), None);
+        assert_eq!(hits.matches.len(), 1);
+        assert_eq!(text.boxes.len(), text.codes.len() * 4);
+        assert!(text.boxes[..32].chunks_exact(4).all(|b| b == rect));
+        assert!(recovered_text(
+            200.0,
+            300.0,
+            &[Word {
+                text: "bad".into(),
+                rect: [f32::NAN; 4]
+            }]
+        )
+        .is_err());
+    }
+}
+
 /// The layers to write, and the account of the pages that got none.
 struct Read {
     layers: Vec<Layer>,

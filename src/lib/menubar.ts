@@ -138,6 +138,7 @@ export const MENU_LAYOUT: LayoutSection[] = [
       "file.saveCopy",
       // A copy too, and the one of them that destroys nothing.
       "file.recogniseText",
+      "file.recognisePage",
       // Under the command it decides, and outside every document guard: the
       // choice is the reader's and is made with nothing open too.
       "file.recogniseTextLanguage",

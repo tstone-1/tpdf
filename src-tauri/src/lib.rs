@@ -225,7 +225,7 @@ pub mod redaction {
 /// the scan the tool's own `ocr` check is run on.
 pub mod recognition {
     pub use crate::commands::ocr::{
-        ocr_copy_asked, offered_languages, Progress, Recognised, CANCELLED, UNSAVED,
+        ocr_copy_asked, offered_languages, recognise_one, Progress, Recognised, CANCELLED, UNSAVED,
     };
 }
 
@@ -1033,6 +1033,8 @@ pub fn run() {
             redact_raster_copy,
             redact_document,
             ocr_copy,
+            recognise_page,
+            search_text,
             ocr_cancel,
             ocr_languages,
             hidden_text,

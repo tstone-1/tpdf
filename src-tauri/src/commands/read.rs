@@ -73,6 +73,25 @@ pub async fn search_page(
     await_reply("search_page", rx).await
 }
 
+/// Searches temporary OCR text with the same matcher as the document's text.
+#[tauri::command]
+pub async fn search_text(
+    page: u32,
+    codes: Vec<u32>,
+    query: String,
+    options: search::Options,
+    carry: Option<search::Carry>,
+) -> Result<search::PageMatches, String> {
+    if codes.len() > 1_000_000 {
+        return Err("The recognised text exceeds the page limit.".into());
+    }
+    tauri::async_runtime::spawn_blocking(move || {
+        search::search_codes(&codes, page, &query, options, carry.as_ref())
+    })
+    .await
+    .map_err(|e| format!("Recognised text search stopped: {e}"))
+}
+
 /// Compares the words of two documents, page by page as the caller read them.
 ///
 /// **No document is opened here.** The window already holds each page's

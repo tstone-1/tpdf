@@ -528,6 +528,7 @@ export async function appCommandChecks(
     redactCopy: () => fired.push("redactCopy"),
     redactRasterCopy: () => fired.push("redactRasterCopy"),
     recogniseText: () => fired.push("recogniseText"),
+    recognisePage: () => fired.push("recognisePage"),
     findHiddenText: () => fired.push("findHiddenText"),
     compareWith: (index) => fired.push(`compareWith:${index}`),
     changeCount: () => 0,
@@ -1594,6 +1595,11 @@ export async function appCommandChecks(
     {
       id: "file.recogniseText",
       ...shell("recogniseText"),
+      read: () => fired.join(","),
+    },
+    {
+      id: "file.recognisePage",
+      ...shell("recognisePage"),
       read: () => fired.join(","),
     },
     {

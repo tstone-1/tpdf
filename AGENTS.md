@@ -304,12 +304,11 @@ underneath it.
 `types` temporarily mutates the working tree. Run other compilers/tests, including
 `check_windows.py`, only after it finishes.
 
-On Windows the gate runner defaults `CARGO_BUILD_JOBS` to 2, respecting an explicit
-override. Concurrent example builds exhausted commit memory with OS error 1455
-and allocation aborts; use the same bound for local Cargo verification outside
-the runner. This limits compilation concurrency, not the Rust test threads.
-On Linux it sets one job per 2 GiB of memory when that is fewer than the CPUs:
-a 7.5 GB WSL VM linked twelve test binaries at once and swapped for 15 minutes.
+Use `CARGO_BUILD_JOBS=2` for local Windows builds, as the gate runner does.
+The memory measurements and Linux bound are in the detailed gate notes below.
+
+For Windows DLL initialization failures under an outer execution sandbox, see
+`docs/DETAIL.md`, *Quality gates: release workflow and Windows measurements*.
 
 The root `.cargo/config.toml` supplies the same macOS deployment target as
 `bundle.macOS.minimumSystemVersion` in `src-tauri/tauri.conf.json`. Keep them

@@ -4,6 +4,37 @@ What was run to verify each feature: the commands, the platform, the date and th
 The sections stood at the end of `BUILD.md`'s *Cutting a release* until 2026-10-05 and were moved here unchanged.
 Where a section says "this file", "above" or "the top of this file", it means [`BUILD.md`](../BUILD.md).
 
+### Temporary search recovery and success banners (26.10.26, 2026-10-24)
+
+`scripts/gates.py` on Windows: 34/34, 1,000.9 seconds across the gates,
+including 3,285 Rust tests and 3,203 frontend tests. `scripts/check_linux.py`
+passed the Linux clippy gate on the same source snapshot.
+
+`tabs_check.py <checks-binary> testdata/text-base14.pdf --phase recognise`
+passed 24/24 on Windows and macOS. It checks a native-search miss followed by
+an OCR hit, highlight rectangles, unchanged source bytes, invalidation after an
+edit or reopen, the computed green success border, and a refusal returning to
+the problem style. Native CLI tests also recover a scan and a page with an
+existing unusable text layer, then compare the source bytes.
+
+The macOS window suite passed 15/16 initially. Its viewer phase timed out on
+initial screen coverage while the window was obscured, then passed the other
+375 assertions. With the window brought forward, that phase passed in 17 seconds.
+The Windows dark screenshot run produced all 20 pictures; Find and the problem
+banner remained legible. The debug `print-probe` passed 15/15 through Microsoft
+Print to PDF. The normal installer, built with the Explorer overlay, passed
+25/25 in `installed_check.py`; the plain build's missing shell DLL was caught
+and the build command corrected in `BUILD.md`.
+
+The affected frontend and Rust mutation runs (`--near v26.10.25`) caught 66/66
+and 12/12, including new mutations that discard recognised text, lose word
+rectangles, remove the cache bound, or call signing successful with an earlier
+broken signature. `scripts/mutate_python.py` caught all 38 gate mutations.
+The two affected UI mutations were caught by their named checks after a green
+428-name viewer baseline. The Windows redaction corpus probe completed with
+the OCR gate enabled; no sampled region read back as remaining text, and
+inconclusive controls remained unverified.
+
 ### Existing-text workflow (unreleased)
 
 Use synthetic inputs and the isolated checks application. On macOS:

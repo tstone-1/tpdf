@@ -1,6 +1,6 @@
 [package]
 name = "tpdf"
-version = "26.10.25"
+version = "26.10.26"
 description = "Fast, lightweight PDF viewer and editor"
 authors = ["tstone-1"]
 edition = "2021"
@@ -131,7 +131,8 @@ caseless = "0.2.2"
 # signature is verified against a compiled-in public key before anything is
 # unpacked, which is what keeps those two archive parsers from ever seeing
 # attacker-chosen bytes. `docs/THREAT-MODEL.md` §T9 is the worked-out version.
-tauri-plugin-updater = "2.11"
+# Held until the new updater passes BUILD.md step 12 before tagging.
+tauri-plugin-updater = "=2.13.3"
 
 # The timestamp authority's HTTP client, `tsa.rs`: Phase 6 step 3, increment B.
 # **Zero packages** --- 617 before and 617 after over the whole tree, counted

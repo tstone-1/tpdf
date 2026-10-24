@@ -1,3 +1,5 @@
+import { SearchRecovery } from "./searchrecovery";
+import { call } from "./ipc";
 import { changedTextPages, type TextChange } from "./textedit";
 import { redrawn, type FieldEdited } from "./savedfields";
 /**
@@ -1715,13 +1717,14 @@ export class Viewer {
     // `edit_state` returns --- `App.svelte` deliberately does not hold the first
     // page behind that round trip, so the viewer needs an order before it.
     this.pages = unedited(opts.pageCount);
-    this.text = new TextCache(opts.doc);
+    this.text = new TextCache(opts.doc, this.recovery.text);
     this.a11y = new AccessibleText(root, opts.pageCount);
     this.searcher = new Search(
       opts.doc,
       opts.pageCount,
       () => this.onSearchProgress(),
       (slot) => this.pages.addressOf(slot, opts.doc),
+      this.recovery.search,
     );
 
     this.surfaceHost = document.createElement("div");
@@ -6221,6 +6224,40 @@ export class Viewer {
     this.markNote.offerTogether(this.pickableWith(mark));
   }
 
+  private readonly recovery = new SearchRecovery();
+
+  /** Recognise the file page currently shown. The caller holds document edits
+   * while this runs; OCR boxes describe whole words, including partial hits. */
+  async recognisePage(slot: number, language: string | null): Promise<number> {
+    const pages = this.pages;
+    const at = this.textAt(slot);
+    if (!at) throw new Error("This page has no saved content to recognise.");
+    const text = await call("recognise_page", { doc: at.doc, page: at.page, language });
+    if (this.life.ended || this.pages !== pages) throw new Error("The page changed during recognition. Try again.");
+    if (!text.codes.length) throw new Error("No words could be recognised on this page.");
+    this.recovery.put(at.doc, at.page, text);
+    at.cache.invalidatePage(at.page);
+    this.clearSelection();
+    this.searchScope = null;
+    if (this.searcher.query) this.search(this.searcher.query);
+    this.wake();
+    return text.codes.length;
+  }
+
+  /** Any document edit can change pixels or their coordinates. */
+  clearRecognition(): void {
+    if (!this.recovery.size) return;
+    this.recovery.clear();
+    for (let slot = 0; slot < this.pages.length; slot++) {
+      const at = this.textAt(slot);
+      if (at) at.cache.invalidatePage(at.page);
+    }
+    this.clearSelection();
+    this.searchScope = null;
+    if (this.searcher.query) this.search(this.searcher.query);
+    this.wake();
+  }
+
   /**
    * The cache that holds a slot's text, and the page of that cache's document.
    *
@@ -6243,7 +6280,7 @@ export class Viewer {
     if (doc === this.opts.doc) return this.text;
     let cache = this.otherText.get(doc);
     if (!cache) {
-      cache = new TextCache(doc);
+      cache = new TextCache(doc, this.recovery.text);
       // Into the view the other caches are in, or its first answer would be
       // turned differently from the page beside it.
       cache.setTurns(this.turns);
@@ -8364,7 +8401,7 @@ export class Viewer {
       (slot) => this.textOn(slot),
       (slot) => {
         const source = this.pages.sourceOf(slot);
-        return source !== undefined && this.searcher.unreadablePage(source);
+        return source !== undefined && !this.recovery.has(this.opts.doc, source) && this.searcher.unreadablePage(source);
       },
     );
     this.a11y.announce(this.currentPage());

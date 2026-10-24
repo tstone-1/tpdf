@@ -1038,6 +1038,8 @@ starts at 0 and increments within the month.
      own crates move, which needs a Mac screen, and that release had the Linux packages to
      land. Take it in a release that runs that test. Held again for 26.10.20, a release of
      fixes cut the day after, and for 26.10.21, prepared on Windows.
+     The 26.10.26 manifests pin 2.13.3 exactly in both ecosystems: a hold recorded
+     only here was undone by the routine dependency-update commands above.
    - **`zip` is held at 4.6.1 by the updater** (2026-10-16). Every `zip` below 9.0.3 was
      yanked for security issues that morning and 4.6.1 unyanked that afternoon;
      `tauri-plugin-updater` 2.13.3 and 2.14.0 both require `zip ^4`. While every version a
@@ -1825,12 +1827,17 @@ starts at 0 and increments within the month.
    regex required. One mutation of 322 reported `no summary line -- the run did not finish`
    for a mutation its test had caught. Fixed, and proved on five summary shapes.
 
-8. <a id="release-step-8"></a>`npm run tauri build` and smoke-test the normal bundle externally, including opening
+8. <a id="release-step-8"></a>`npm run tauri build` (on Windows,
+   `npm run tauri build -- --config src-tauri/tauri.explorer.conf.json --bundles nsis`)
+   and smoke-test the normal bundle externally, including opening
    and rendering a PDF with the development engine hidden. Normal bundles exclude the
    in-app harness, so `scripts/viewer_check.py` must instead use a separate checks build
    (commands at the top of this file), against both `testdata/text-heavy.pdf` and
    `testdata/vector-heavy.pdf`. Keep the normal-bundle and checks-build results separate.
    On Windows also run `print-probe` (§8), which is the only check that reaches a real spooler.
+   The Explorer overlay is required for the installer under test, as it is in
+   `release.yml`: a plain local build omits `tpdf_shell.dll`. The 26.10.26
+   installation check caught that omission while its other 24 checks passed.
 
    **The command-line tool, from the bundle and not from `target/`** (from 26.9.21): run
    `tpdf.app/Contents/MacOS/tpdf-cli --version` and `... verify testdata/incr-signed.pdf`, and on

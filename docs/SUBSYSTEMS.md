@@ -555,6 +555,18 @@ for `compressdialog.ts`. `docs/PLAN.md` *A smaller copy* has the measurements an
 
 ## A text layer over a scanned page (`tpdf ocr`, *Recognise text and save as*)
 
+The Find bar and command palette also offer *Recognise this page for search*.
+This explicitly reads a saved page even if it already has text. `recognise_page`
+renders through the parser worker and recognises through the OCR worker;
+`SearchRecovery` holds the result only in the current viewer. Search uses the
+same Rust matcher through `search_text`, and selection reads the same recovered
+characters. Existing text is replaced for that view, never concatenated. Each
+character retains its whole word's OCR box, so partial matches highlight the
+whole word. An edit or leaving the view discards the result, and a pending edit
+must be saved first. Recovery neither writes the PDF nor supplies evidence to
+redaction verification. The retained text budget is one million scalars; a full
+cache refuses another page instead of silently invalidating an active search.
+
 `textlayer.rs` writes recognised words into a page as invisible text; `ocr_layer.rs` decides
 which pages get a layer and what the engine is asked; `cli/ocr.rs` is the tool's command and
 `commands/ocr.rs` the window's. The two differ in who renders: the tool holds a worker

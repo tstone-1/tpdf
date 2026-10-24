@@ -17,7 +17,7 @@
  * if the *wrong* convention would also pass.
  */
 
-import { call } from "./ipc";
+import { call, type Commands } from "./ipc";
 import { quarterTurns, type FilePage } from "./pages";
 
 /**
@@ -352,7 +352,7 @@ export class TextCache {
    */
   private readonly extra = new Map<FilePage, number>();
 
-  constructor(doc: number) {
+  constructor(doc: number, private readonly ask: (args: Commands["page_text"]["args"]) => Promise<PageText> = args => call("page_text", args)) {
     this.doc = doc;
   }
 
@@ -595,7 +595,7 @@ export class TextCache {
     const under = this.issued.get(page) ?? 0;
     const stale = (): boolean => (this.issued.get(page) ?? 0) !== under;
 
-    const request = call("page_text", {
+    const request = this.ask({
       doc: this.doc,
       page,
       crop: this.crops.get(page) ?? null,

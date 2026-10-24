@@ -659,6 +659,8 @@ export interface AppActions {
   redactRasterCopy(): void;
   /** Ask for a name and write a copy whose scanned pages can be searched. */
   recogniseText(): void;
+  /** Recognise the current saved page for temporary search and selection. */
+  recognisePage(): void;
   /** Compare the saved file's text with its pages and list what is not shown. */
   findHiddenText(): void;
   /**
@@ -2360,6 +2362,12 @@ export function registerAppCommands(
       title: message("recogniseText", locale),
       enabled: withDocument,
       run: () => actions.recogniseText(),
+    },
+    {
+      id: "file.recognisePage",
+      title: "Recognise this page for search",
+      enabled: withDocument,
+      run: () => actions.recognisePage(),
     },
     {
       // A preference, not something done to a document, so it is offered with

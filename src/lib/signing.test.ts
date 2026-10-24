@@ -7,6 +7,7 @@ import {
   NOT_WRITTEN,
   UNSAVED,
   afterSigning,
+  succeeded,
   askIdentity,
   CHOOSER_INTRO,
   choiceDetail,
@@ -36,6 +37,23 @@ const choice: Choice = {
 
 /** The reader's saved visual signature, as the store answers it. */
 const saved: SignatureImage = { width: 1, height: 1, rgba: [0, 0, 0, 255] };
+
+it("uses success only for a new signature read back intact, with earlier ones intact too", async () => {
+  const completed = vi.fn();
+  await signDocument(shell({ completed }).shell);
+  expect(completed).toHaveBeenCalledOnce();
+  const signed = completed.mock.calls[0]![0] as Signed;
+  expect(succeeded(signed)).toBe(true);
+  expect(succeeded({ ...signed, signatures: [] })).toBe(false);
+  for (const verdict of ["altered", "unchecked", "broken"] as const) {
+    const bad = { ...signed.signatures[0]!, integrity: { ...signed.signatures[0]!.integrity!, verdict } };
+    expect(succeeded({ ...signed, signatures: [bad] })).toBe(false);
+    expect(succeeded({ ...signed, signatures: [...signed.signatures, { ...bad, ours: false }] })).toBe(false);
+  }
+  completed.mockClear();
+  await signDocument(shell({ completed, dirty: () => true }).shell);
+  expect(completed).not.toHaveBeenCalled();
+});
 
 /** What the reader chose in the appearance panel. */
 const chosenLook: Appearance = {

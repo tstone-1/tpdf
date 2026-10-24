@@ -567,6 +567,12 @@ jobs:
           workers run under Landlock and seccomp. The Linux packages (deb
           and AppImage) do not update themselves: install the new one.
 
+          **New in 26.10.26.** Find offers *Recognise this page* when visible
+          words cannot be searched, including pages with broken font mappings.
+          Recognition is temporary and leaves the PDF unchanged; it clears after
+          edits or reopening. Verified redaction and successful signing messages
+          now have a green background; failures and unverified results remain red.
+
           **New in 26.10.25.** The PDF engine is PDFium 8103, the branch
           Chrome 157 ships. Dependency updates, among them tokio 1.54.1,
           which replaces a yanked release with a security advisory, and
