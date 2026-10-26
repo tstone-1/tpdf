@@ -17,6 +17,17 @@ as *downloadable*, while the release sat as a draft that GitHub showed to nobody
 are given now because they are different facts, and only the second one means a reader can
 have the binary.)
 
+## [26.10.27] - Unreleased
+
+### Fixed
+
+- **Recognise this page** in the find bar was disabled on every document since 26.10.26.
+  It is now enabled whenever the same command in the Document menu is.
+- Searching a scanned document now says "no text: scanned pages" and puts **Recognize
+  text and save as...** in the find bar, so the reader is shown what to do next.
+- The page-recognition command, its find-bar button and its messages are spelled "Recognize"
+  in US English. They were British on every system.
+
 ## [26.10.26] - 2026-10-24
 
 ### Added

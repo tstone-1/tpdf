@@ -2365,7 +2365,7 @@ export function registerAppCommands(
     },
     {
       id: "file.recognisePage",
-      title: "Recognise this page for search",
+      title: message("recognisePage", locale),
       enabled: withDocument,
       run: () => actions.recognisePage(),
     },

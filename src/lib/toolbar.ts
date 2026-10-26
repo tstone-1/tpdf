@@ -49,7 +49,7 @@ export const TOOL_GROUPS: ToolGroup[] = [
       { id: "file.reload", label: "Reload from disk" },
       { id: "file.saveCopy", label: "Save a copy...", rule: true },
       { id: "file.recogniseText", label: message("recogniseText") },
-      { id: "file.recognisePage", label: "Recognise this page for search" },
+      { id: "file.recognisePage", label: message("recognisePage") },
       { id: "file.compress", label: "Save a smaller copy..." },
       { id: "file.saveRegionAsPicture", label: "Save a region as a picture..." },
       { id: "file.saveAttachment", label: "Save an attachment..." },

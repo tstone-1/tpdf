@@ -22,6 +22,12 @@ const EN_US = {
   recogniseLanguageChoice: "Language for recognizing text",
   recogniseAs: "Recognize text as",
   stopRecognising: "Stop recognizing text",
+  recognisePage: "Recognize this page for search",
+  recognisePageButton: "Recognize this page",
+  recognisePageHint: "Can you see a word that search misses? Recognize this page without changing the PDF.",
+  recogniseScanHint: "No page has text. Recognize every page and save a copy that can be searched.",
+  recognisingPage: "Recognizing this page...",
+  recognisedPage: "Recognized this page for search. The PDF is unchanged. Recognition lasts until you edit or leave this view; word highlights are approximate.",
 } as const;
 
 type Message = keyof typeof EN_US;
@@ -42,6 +48,12 @@ const CATALOGS: Record<UiLocale, Record<Message, string>> = {
     recogniseLanguageChoice: "Language for recognising text",
     recogniseAs: "Recognise text as",
     stopRecognising: "Stop recognising text",
+    recognisePage: "Recognise this page for search",
+    recognisePageButton: "Recognise this page",
+    recognisePageHint: "Can you see a word that search misses? Recognise this page without changing the PDF.",
+    recogniseScanHint: "No page has text. Recognise every page and save a copy that can be searched.",
+    recognisingPage: "Recognising this page...",
+    recognisedPage: "Recognised this page for search. The PDF is unchanged. Recognition lasts until you edit or leave this view; word highlights are approximate.",
   },
 };
 

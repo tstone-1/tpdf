@@ -3527,11 +3527,11 @@
       if (edits.dirty) { say(SAVE_FIRST); return; }
       const slot = Math.max(0, (status?.page ?? 1) - 1);
       copyTaskBusy = true;
-      blockingTask = "Recognising this page...";
+      blockingTask = message("recognisingPage");
       refreshMenu();
       try {
         await shown.recognisePage(slot, recognitionLanguage.language);
-        asDocument(view, () => say("Recognised this page for search. The PDF is unchanged. Recognition lasts until you edit or leave this view; word highlights are approximate.", [], true));
+        asDocument(view, () => say(message("recognisedPage"), [], true));
       } catch (e) {
         asDocument(view, () => say(String(e)));
       } finally {
@@ -5195,7 +5195,10 @@
       // Distinct from "no matches" on purpose: the query was never tested
       // against anything, and saying so is the difference between a working
       // search and a broken one from the reader's side.
-      return search.running ? "no text yet" : "no text to search";
+      // "scanned" names the cause, and the find bar then offers the remedy
+      // beside it: a counter that only said "no text to search" left the
+      // reader with nothing to do next.
+      return search.running ? "no text yet" : "no text: scanned pages";
     }
     // "in selection" rides on every answer below it, the empty one included: a
     // reader who is told "no matches" while the search can only see three lines
@@ -6811,9 +6814,19 @@
       {#if findLabel}<span class="stat" class:problem={status?.search.problem}
           >{findLabel}</span
         >{/if}
-      <button data-testid="recognise-page" disabled={copyTaskBusy || opening !== null}
-        title="Can you see a word that search misses? Recognise this page without changing the PDF."
-        onclick={() => void recogniseCurrentPage()}>Recognise this page</button>
+      <!--
+        Both guarded by their commands, as the header's buttons are. The page
+        button used to test `opening !== null`, and `opening` is a boolean, so
+        it was disabled on every document from the day it shipped.
+      -->
+      {#if status?.search.textless && !status.search.running}
+        <button data-testid="recognise-text" disabled={!toolState['file.recogniseText']?.enabled}
+          title={message("recogniseScanHint")}
+          onclick={() => runToolbarCommand('file.recogniseText')}>{message("recogniseText")}</button>
+      {/if}
+      <button data-testid="recognise-page" disabled={!toolState['file.recognisePage']?.enabled}
+        title={message("recognisePageHint")}
+        onclick={() => runToolbarCommand('file.recognisePage')}>{message("recognisePageButton")}</button>
       <button title="Previous match" onclick={() => viewer?.prevMatch()}>Previous</button>
       <button title="Next match" onclick={() => viewer?.nextMatch()}>Next</button>
       <button onclick={() => { findShown = false; viewer?.focus(); }}>Close</button>

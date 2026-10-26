@@ -129,8 +129,8 @@ export async function recogniseCheck(host: OpenCheckHost, expected: string, repo
   await host.open(scan); await host.idle(); await quiet();
   report.check("temporary recovery control has no native match", (await found(WORD)) === 0, WORD);
   const saves = host.saveSuggestions().length;
-  await run("Recognise this page for search");
-  const recovered = await settle(() => shown().includes("Recognised this page for search"), READ_MS);
+  await run(message("recognisePage"));
+  const recovered = await settle(() => shown().includes(message("recognisedPage").split(".")[0]!), READ_MS);
   report.check("explicit recognition finishes without asking for a save path", recovered && host.saveSuggestions().length === saves, shown());
   report.check("temporary recognition makes the word searchable", (await found(WORD)) > 0, WORD);
   const successBar = document.querySelector('[data-testid="problem"]');
@@ -141,7 +141,7 @@ export async function recogniseCheck(host: OpenCheckHost, expected: string, repo
   report.check("recognised matches have highlight rectangles", matches?.some(row => row.quads.length > 0) === true, String(matches?.length));
   await host.apply(edits => edits.rotate(0, 1));
   report.check("an edit discards temporary recognition", (await found(WORD)) === 0, WORD);
-  await run("Recognise this page for search");
+  await run(message("recognisePage"));
   const refusedRecovery = await settle(() => shown().trim() === SAVE_FIRST, DIALOG_MS);
   const refusalBar = document.querySelector('[data-testid="problem"]');
   report.check("a refusal replaces green with the problem style", refusedRecovery && refusalBar !== null &&

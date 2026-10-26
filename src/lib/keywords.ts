@@ -25,7 +25,7 @@ const NAMED: Record<string, readonly string[]> = {
   "file.extractPages": ["export pages", "save pages"],
   "file.compress": ["compress", "reduce", "shrink", "optimize", "optimise", "file size"],
   "file.recogniseText": ["ocr", "searchable", "scan", "text recognition"],
-  "file.recognisePage": ["ocr", "recognize", "search recovery", "missing word"],
+  "file.recognisePage": ["ocr", "search recovery", "missing word"],
   "file.recogniseTextLanguage": ["ocr language"],
   "file.protect": ["encrypt", "protect", "lock", "secure", "security"],
   "file.unprotect": ["decrypt", "unlock", "unprotect", "remove password"],

@@ -404,6 +404,7 @@ hop through the index.
 - There was no check on the overlay at all, and that is why a reader found the underline defect
 - A feature can be inert in the application while three layers of tests pass
 - A test that a line of `App.svelte` exists passed while the window showed the old text
+- A boolean compared with `null` is always unequal, and the find bar's recognise button shipped disabled
 - A control that is easier than the check certifies nothing
 - A bound enforced against an upper bound on the quantity is enforced against nothing, and the shortfall reads as the engine's fault
 - A count of failures bucketed by a property is not evidence about that property, and the numerator alone reads as a finding
@@ -26974,3 +26975,18 @@ be caught off Windows. The row now inverts the expression, `!cfg!(windows)`, whi
 answer on every platform and is caught by the test named for it on Windows. A row that replaces
 a platform test with a constant is a no-op on the platform where the constant already holds:
 invert it, or declare `only_on`. It was the only row in the tables that mutates a `cfg!`.
+
+
+### A boolean compared with `null` is always unequal, and the find bar's recognise button shipped disabled
+
+26.10.26 added **Recognise this page** to the find bar with
+`disabled={copyTaskBusy || opening !== null}`. `opening` in `App.svelte` is `$state(false)`, a
+boolean, so `opening !== null` is always true and the button was disabled on every document. A
+reader searching a scan saw "no text to search" beside the one button meant for it, greyed. The
+same command in the Document menu worked, because its guard is `withDocument` in
+`appcommands.ts`. `tsc` and `svelte-check` accept the comparison under `strict: true`: TypeScript
+reports no overlap between types for `===` against other literals, but lets anything be compared
+with `null`. No gate or check renders that markup, so all were green. The button now takes its
+state from `toolState`, as the header's buttons do, so it cannot disagree with the menu. A guard
+written in `App.svelte` markup instead of read from the command registry is a second copy of the
+rule, and nothing compares the two.

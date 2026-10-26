@@ -31,7 +31,7 @@ describe("UI language preferences", () => {
     const titles = [
       "view.rotateCounterClockwise", "edit.rotatePageCounterClockwise", "edit.alignCenter",
       "edit.centerOnPage", "edit.middleOnPage", "file.recogniseText",
-      "file.recogniseTextLanguage", "file.recogniseTextLanguage.choice",
+      "file.recogniseTextLanguage", "file.recogniseTextLanguage.choice", "file.recognisePage",
     ].map((id) => registry.find(id)?.title);
     expect(titles).toEqual([
       `Rotate view ${us ? "counter" : "anti"}clockwise`,
@@ -42,6 +42,7 @@ describe("UI language preferences", () => {
       `Recogni${us ? "z" : "s"}e text and save as...`,
       `Recogni${us ? "z" : "s"}e text: language...`,
       `Language for recogni${us ? "z" : "s"}ing text`,
+      `Recogni${us ? "z" : "s"}e this page for search`,
     ]);
   });
 });
