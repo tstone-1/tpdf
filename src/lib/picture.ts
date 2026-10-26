@@ -15,6 +15,13 @@
  * {@link PictureCache} by mark id.
  */
 
+import { catalog } from "./i18n";
+
+const TEXT = catalog({
+  "en-US": { damaged: "The picture came back damaged." },
+  "de-DE": { damaged: "Das Bild kam beschädigt zurück." },
+});
+
 /** Straight-alpha RGBA, four bytes a pixel, top row first. */
 export interface PicturePixels {
   width: number;
@@ -34,7 +41,7 @@ export const PICTURE_PIXELS = 4 * 1024 * 1024;
  * past a placed picture's limits, rather than drawing a wrong picture.
  */
 export function readPicture(reply: ArrayBuffer): PicturePixels {
-  const bad = new Error("The picture came back damaged.");
+  const bad = new Error(TEXT().damaged);
   if (reply.byteLength < 8) throw bad;
   const view = new DataView(reply);
   const width = view.getUint32(0, true), height = view.getUint32(4, true);

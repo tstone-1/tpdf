@@ -47,9 +47,27 @@
 
 import { placeholder } from "./panelrow";
 import { cssColor } from "./markcolors";
-import { nameOf } from "./markpopup";
+import { nameOf, removeLabel } from "./markpopup";
 import { rowLine } from "./rowline";
 import type { MarkRow } from "./pages";
+import { catalog } from "./i18n";
+
+const TEXT = catalog({
+  "en-US": {
+    lost: (count: number) => count === 1 ? "1 mark is not on any page." : `${count} marks are not on any page.`,
+    noNote: "No note",
+    marks: "Marks",
+    nothingMarked: "You have not marked anything in this document.",
+  },
+  "de-DE": {
+    lost: (count: number) => count === 1
+      ? "1 Markierung liegt auf keiner Seite."
+      : `${count} Markierungen liegen auf keiner Seite.`,
+    noNote: "Keine Notiz",
+    marks: "Markierungen",
+    nothingMarked: "Du hast in diesem Dokument nichts markiert.",
+  },
+});
 
 export interface MarkListOptions {
   /** Called when a row is activated, with the mark's id. */
@@ -90,9 +108,7 @@ const SWATCH = 9;
 export function noticeFor(rows: readonly MarkRow[]): string {
   const lost = rows.filter((row) => row.page === null).length;
   if (lost === 0) return "";
-  return lost === 1
-    ? "1 mark is not on any page."
-    : `${lost} marks are not on any page.`;
+  return TEXT().lost(lost);
 }
 
 /**
@@ -103,7 +119,7 @@ export function noticeFor(rows: readonly MarkRow[]): string {
  * comments panel's equivalent has to name a kind instead, because there the
  * question is whose annotation it is.
  */
-const NO_NOTE = "No note";
+const NO_NOTE = TEXT().noNote;
 
 /** The marks panel: a row per mark the reader made, in walk order. */
 export class MarkList {
@@ -130,7 +146,7 @@ export class MarkList {
 
     this.list = document.createElement("div");
     this.list.setAttribute("role", "listbox");
-    this.list.setAttribute("aria-label", "Marks");
+    this.list.setAttribute("aria-label", TEXT().marks);
     this.list.style.cssText = "flex:1;min-height:0;overflow-y:auto;";
     this.list.addEventListener("keydown", this.onKeyDown);
     // Focus can arrive without going through `focus(id)`, and a roving tabindex
@@ -258,7 +274,7 @@ export class MarkList {
 
     if (this.rows.length === 0) {
       this.list.appendChild(
-        placeholder("You have not marked anything in this document."),
+        placeholder(TEXT().nothingMarked),
       );
       this.focused = null;
       return;
@@ -350,7 +366,7 @@ export class MarkList {
     // The name literal stays on the call's own line: `check_webview_sinks.py`
     // reads these a line at a time and flags a call whose arguments it cannot
     // parse, which is the right behaviour and which wrapping this defeated.
-    const label = `Remove ${nameOf(mark.kind).toLowerCase()}`;
+    const label = removeLabel(mark.kind);
     remove.setAttribute("aria-label", label);
     remove.textContent = "\u00d7";
     remove.style.cssText =

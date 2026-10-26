@@ -49,6 +49,7 @@ import {
   chainRow,
   integrityRow,
   revocationRow,
+  rowNames,
   timestampRow,
   trustRow,
   type Chain,
@@ -57,6 +58,387 @@ import {
   type Revocation,
   type Trust,
 } from "./integrity";
+import { catalog } from "./i18n";
+
+/** Which kind of field an append listed on a page. */
+type FieldKind = "timestamp" | "either" | "signature";
+
+/** "1, 2 and 3", with the language's last joining word. */
+function listed(items: string[], and: string): string {
+  return items.length > 1 ? `${items.slice(0, -1).join(", ")} ${and} ${items.at(-1)}` : (items[0] ?? "");
+}
+
+/**
+ * The readout's words. The American half of the appendix sentences is
+ * restated in Rust (`cli/verify.rs`, `appendix_sentence`) and held equal by
+ * `cliwording.test.ts`. Values the worker reads out of the document --- a
+ * permission's name, a key usage, a date, `/Info` values --- are shown as they
+ * arrive.
+ */
+const TEXT = catalog({
+  "en-US": {
+    notChecked:
+      "tpdf checks that the bytes a signature covers are unchanged, that the " +
+      "signature matches the key in its certificate, and whether that certificate " +
+      "chains to a root this computer's own trust store trusts, which is not " +
+      "Adobe's list most signed PDFs are made against. It fetches nothing to check a signature: " +
+      "revocation is judged only from data the document itself carries, a document " +
+      "carrying none is not checked for it, and no missing certificate is fetched. " +
+      "What a certificate states its key is for is the issuer's own word. A " +
+      "timestamp's own signature and whether it covers this signature are checked, " +
+      "and its authority is asked about as the signer is; only when the timestamp is " +
+      "intact and its authority trusted is the signer's certificate judged at the " +
+      "time it attests rather than now. Nothing here means the signature is valid.",
+    certification: (level: number): string =>
+      level === 1
+        ? "certified, no changes permitted"
+        : level === 2
+          ? "certified, form filling permitted"
+          : level === 3
+            ? "certified, form filling and comments permitted"
+            : "",
+    lock: (level: number): string =>
+      level === 1
+        ? "locked by this signature, no changes permitted"
+        : level === 2
+          ? "locked by this signature, form filling and signing permitted"
+          : level === 3
+            ? "locked by this signature, form filling, signing and comments permitted"
+            : "",
+    covers: "Covers",
+    noRange: "no byte range stated, so nothing could be checked",
+    wholeFile: "the whole file, except the signature container it cannot cover",
+    upToSignature: (appended: string): string =>
+      `everything up to the signature, and ${appended} were appended afterwards`,
+    notWholeAppended: (appended: string): string =>
+      "not the whole file: the signed range does not begin at its first byte, and " +
+      `${appended} were appended afterwards`,
+    notWholeShort: (outside: string): string =>
+      `not the whole file — ${outside} lie outside the signed range`,
+    statesConformance: "States conformance",
+    conformance: (claims: string): string =>
+      `${claims} — the document's own claim, which tpdf does not check`,
+    metadata: "Metadata",
+    metadataUnread:
+      "the document carries an XMP packet that could not be read, so what it " +
+      "states about itself is unknown",
+    certificateNames: "Certificate names",
+    noName: "a certificate with no name in it",
+    issuedBy: "Issued by",
+    selfIssued: "itself — self-issued, so no other party vouched for this name",
+    certificateRuns: "Certificate runs",
+    runs: (from: string, until: string): string => `${from} to ${until}`,
+    serial: "Serial",
+    keyIsFor: "Key is for",
+    keyNotStated: "not stated — the certificate places no limit on what the key is used for",
+    keyNothing: "nothing — the certificate names no use for its own key",
+    issuedFor: "Issued for",
+    purposeNothing: "nothing — the certificate names no purpose",
+    alsoAuthority: "Also an authority",
+    mayIssue: "this certificate says it may issue other certificates",
+    extensions: "Extensions",
+    extensionsUnread: (count: number): string =>
+      `${count} could not be read, so what they state is unknown`,
+    certificatesPresent: "Certificates present",
+    present: (count: number, authority: boolean): string =>
+      `${count}, of which this is the ${authority ? "authority's" : "signer's"}`,
+    presentUnmatched:
+      "one, and the signature does not point at it — shown because there " +
+      "is nothing else it could be",
+    namesDisagree: "Names disagree",
+    disagree: (inCertificate: string, typed: string): string =>
+      `the certificate says ${inCertificate}, the document says ${typed}`,
+    appended: "Appended",
+    appendedUnread: "something, but its contents could not be read",
+    appendix: (what: string, pages: string): string => `${what}, and ${pages}`,
+    removedOnly: (removed: number, pages: string): string =>
+      `${removed === 1 ? "1 object was removed" : `${removed} objects were removed`}, and ${pages}`,
+    withRemoved: (what: string, removed: number, pages: string): string =>
+      `${what}, with ${removed === 1 ? "1 object removed" : `${removed} objects removed`}, and ${pages}`,
+    noPageRewritten: "no page was rewritten",
+    pagesRewritten: (count: number): string =>
+      count === 1 ? "1 page was rewritten" : `${count} pages were rewritten`,
+    fieldOnPage: (kind: FieldKind, page: number): string =>
+      `a ${enField(kind)} was added to page ${page}'s annotations ` +
+      `(the page's content is unchanged)`,
+    fieldOnPages: (kind: FieldKind, pages: number[]): string =>
+      `a ${enField(kind)} was added to the annotations of pages ${listed(pages.map(String), "and")} ` +
+      `(their content is unchanged)`,
+    validationData: "the certificates and revocation records a signature needs to be checked later",
+    anotherSignature: "another signature",
+    objects: (count: number): string => (count === 1 ? "1 object" : `${count} objects`),
+    status: "Status",
+    unsignedField: "a signature field, not yet signed",
+    signerTyped: "Signer typed",
+    reasonGiven: "Reason given",
+    locationGiven: "Location given",
+    dateGiven: "Date given",
+    certificationName: "Certification",
+    lockName: "Lock",
+    format: "Format",
+    counted: (signed: number, stamps: number, empty: number): string =>
+      listed(
+        [
+          signed === 1 ? "1 signature" : signed > 1 ? `${signed} signatures` : "",
+          stamps === 1 ? "1 document timestamp" : stamps > 1 ? `${stamps} document timestamps` : "",
+          empty === 1 ? "1 empty signature field" : empty > 1 ? `${empty} empty signature fields` : "",
+        ].filter(Boolean),
+        "and",
+      ),
+    notYetSigned: "not yet signed",
+    locked: "Locked",
+    contents: "Contents",
+    encryptedNoPassword: "encrypted, and no password has been given",
+    lockedNote:
+      "Everything below comes from the file's structure, which is readable " +
+      "without the password. Nothing inside the document could be read at " +
+      "all, so its properties, signatures and structure are not missing — " +
+      "they were never seen.",
+    documentTimestamp: "Document timestamp",
+    signature: "Signature",
+    describedAs: "Described as",
+    method: "Method",
+    methodValue: (method: string, revision: number): string => `${method}, revision ${revision}`,
+    allowed: "allowed",
+    notAllowed: "not allowed",
+    security: "Security",
+    securityNote:
+      "These are the document's stated restrictions. Any application may " +
+      "ignore them — they are a request, not an enforcement.",
+    pages: "Pages",
+    pageCount: (count: number): string => count.toLocaleString("en-US"),
+    size: "Size",
+    pdfVersion: "PDF version",
+    notStated: "not stated",
+    revisions: "Revisions",
+    language: "Language",
+    tagged: "Tagged",
+    taggedYes: "yes — the document states its own reading order",
+    taggedNo: "no — reading order is inferred from the layout",
+    attachments: "Attachments",
+    attachmentCount: (count: number): string =>
+      `${count} embedded file${count === 1 ? "" : "s"}; Save an attachment saves one`,
+    file: "File",
+    notFullyRead: "Not fully read",
+    notFullyReadNote:
+      "What is shown above is correct. It is not complete, and this says " +
+      "which part is missing rather than leaving the readout looking whole.",
+    infoLabel: (key: string): string =>
+      key === "CreationDate" ? "Created" : key === "ModDate" ? "Modified" : key,
+    propertiesName: "Properties",
+    propertiesDropped: (count: number): string => `${count} were not read`,
+    valuesName: "Values",
+    valuesClipped: (count: number): string => `${count} were shortened`,
+    fieldsName: "Signature fields",
+    fieldsDropped: (count: number): string => `${count} were not read`,
+    entriesName: "Entries",
+    entriesUnreadable: (count: number): string => `${count} could not be read at all`,
+    certificatesName: "Certificates",
+    certificatesUnread: (count: number): string => `${count} were present but could not be read`,
+  },
+  "de-DE": {
+    notChecked:
+      "tpdf prüft, ob die Bytes, die eine Signatur erfasst, unverändert sind, ob die Signatur " +
+      "zum Schlüssel in ihrem Zertifikat passt und ob dieses Zertifikat in seiner Kette zu einem " +
+      "Stammzertifikat führt, dem der eigene Vertrauensspeicher dieses Computers vertraut. Das ist " +
+      "nicht die Liste von Adobe, gegen die die meisten signierten PDFs erstellt werden. Um eine " +
+      "Signatur zu prüfen, ruft tpdf nichts ab: Ein Widerruf wird nur anhand von Daten beurteilt, " +
+      "die das Dokument selbst enthält, ein Dokument ohne solche Daten wird darauf nicht geprüft, " +
+      "und kein fehlendes Zertifikat wird abgerufen. Wofür der Schlüssel eines Zertifikats laut " +
+      "Zertifikat bestimmt ist, ist allein die Aussage des Ausstellers. Die eigene Signatur eines " +
+      "Zeitstempels wird geprüft und ob er diese Signatur erfasst, und sein Zeitstempeldienst wird " +
+      "so geprüft wie der Unterzeichner; nur wenn der Zeitstempel intakt und sein Zeitstempeldienst " +
+      "vertrauenswürdig ist, wird das Zertifikat des Unterzeichners zu dem Zeitpunkt beurteilt, den " +
+      "der Zeitstempel bestätigt, statt zum jetzigen. Nichts hier bedeutet, dass die Signatur " +
+      "gültig ist.",
+    certification: (level: number): string =>
+      level === 1
+        ? "zertifiziert, keine Änderungen erlaubt"
+        : level === 2
+          ? "zertifiziert, Ausfüllen von Formularen erlaubt"
+          : level === 3
+            ? "zertifiziert, Ausfüllen von Formularen und Kommentare erlaubt"
+            : "",
+    lock: (level: number): string =>
+      level === 1
+        ? "durch diese Signatur gesperrt, keine Änderungen erlaubt"
+        : level === 2
+          ? "durch diese Signatur gesperrt, Ausfüllen von Formularen und Signieren erlaubt"
+          : level === 3
+            ? "durch diese Signatur gesperrt, Ausfüllen von Formularen, Signieren und Kommentare erlaubt"
+            : "",
+    covers: "Erfasst",
+    noRange: "kein Bytebereich angegeben, daher konnte nichts geprüft werden",
+    wholeFile: "die ganze Datei außer dem Signaturcontainer, den sie nicht erfassen kann",
+    upToSignature: (appended: string): string =>
+      `alles bis zur Signatur, und danach wurden ${appended} angehängt`,
+    notWholeAppended: (appended: string): string =>
+      "nicht die ganze Datei: Der signierte Bereich beginnt nicht bei ihrem ersten Byte, und " +
+      `danach wurden ${appended} angehängt`,
+    notWholeShort: (outside: string): string =>
+      `nicht die ganze Datei — ${outside} liegen außerhalb des signierten Bereichs`,
+    statesConformance: "Erklärte Konformität",
+    conformance: (claims: string): string =>
+      `${claims} — die eigene Angabe des Dokuments, die tpdf nicht prüft`,
+    metadata: "Metadaten",
+    metadataUnread:
+      "das Dokument enthält ein XMP-Paket, das nicht gelesen werden konnte, daher ist " +
+      "unbekannt, was es über sich selbst angibt",
+    certificateNames: "Zertifikat nennt",
+    noName: "ein Zertifikat ohne Namen",
+    issuedBy: "Ausgestellt von",
+    selfIssued: "sich selbst — selbst ausgestellt, also hat keine andere Stelle für diesen Namen gebürgt",
+    certificateRuns: "Laufzeit des Zertifikats",
+    runs: (from: string, until: string): string => `${from} bis ${until}`,
+    serial: "Seriennummer",
+    keyIsFor: "Schlüssel ist für",
+    keyNotStated: "nicht angegeben — das Zertifikat schränkt nicht ein, wofür der Schlüssel verwendet wird",
+    keyNothing: "nichts — das Zertifikat nennt keine Verwendung für seinen eigenen Schlüssel",
+    issuedFor: "Ausgestellt für",
+    purposeNothing: "nichts — das Zertifikat nennt keinen Zweck",
+    alsoAuthority: "Auch eine Zertifizierungsstelle",
+    mayIssue: "dieses Zertifikat gibt an, dass es andere Zertifikate ausstellen darf",
+    extensions: "Erweiterungen",
+    extensionsUnread: (count: number): string =>
+      count === 1
+        ? "1 konnte nicht gelesen werden, daher ist unbekannt, was sie angibt"
+        : `${count} konnten nicht gelesen werden, daher ist unbekannt, was sie angeben`,
+    certificatesPresent: "Vorhandene Zertifikate",
+    present: (count: number, authority: boolean): string =>
+      `${count}, davon ist dieses das ${authority ? "des Zeitstempeldienstes" : "des Unterzeichners"}`,
+    presentUnmatched:
+      "eines, und die Signatur verweist nicht darauf — angezeigt, weil es kein anderes " +
+      "sein kann",
+    namesDisagree: "Namen weichen ab",
+    disagree: (inCertificate: string, typed: string): string =>
+      `das Zertifikat nennt ${inCertificate}, das Dokument nennt ${typed}`,
+    appended: "Angehängt",
+    appendedUnread: "etwas, aber sein Inhalt konnte nicht gelesen werden",
+    appendix: (what: string, pages: string): string => `${what}, und ${pages}`,
+    removedOnly: (removed: number, pages: string): string =>
+      `${removed === 1 ? "1 Objekt wurde entfernt" : `${removed} Objekte wurden entfernt`}, und ${pages}`,
+    withRemoved: (what: string, removed: number, pages: string): string =>
+      `${what}, wobei ${removed === 1 ? "1 Objekt entfernt wurde" : `${removed} Objekte entfernt wurden`}, ` +
+      `und ${pages}`,
+    noPageRewritten: "keine Seite wurde neu geschrieben",
+    pagesRewritten: (count: number): string =>
+      count === 1 ? "1 Seite wurde neu geschrieben" : `${count} Seiten wurden neu geschrieben`,
+    fieldOnPage: (kind: FieldKind, page: number): string =>
+      `ein ${deField(kind)} wurde den Annotationen von Seite ${page} hinzugefügt ` +
+      `(der Inhalt der Seite ist unverändert)`,
+    fieldOnPages: (kind: FieldKind, pages: number[]): string =>
+      `ein ${deField(kind)} wurde den Annotationen der Seiten ${listed(pages.map(String), "und")} ` +
+      `hinzugefügt (ihr Inhalt ist unverändert)`,
+    validationData:
+      "die Zertifikate und Widerrufsdaten, die eine Signatur braucht, um später geprüft zu werden",
+    anotherSignature: "eine weitere Signatur",
+    objects: (count: number): string => (count === 1 ? "1 Objekt" : `${count} Objekte`),
+    status: "Status",
+    unsignedField: "ein Signaturfeld, noch nicht signiert",
+    signerTyped: "Name laut Unterzeichner",
+    reasonGiven: "Angegebener Grund",
+    locationGiven: "Angegebener Ort",
+    dateGiven: "Angegebenes Datum",
+    certificationName: "Zertifizierung",
+    lockName: "Sperre",
+    format: "Format",
+    counted: (signed: number, stamps: number, empty: number): string =>
+      listed(
+        [
+          signed === 1 ? "1 Signatur" : signed > 1 ? `${signed} Signaturen` : "",
+          stamps === 1 ? "1 Dokumentzeitstempel" : stamps > 1 ? `${stamps} Dokumentzeitstempel` : "",
+          empty === 1 ? "1 leeres Signaturfeld" : empty > 1 ? `${empty} leere Signaturfelder` : "",
+        ].filter(Boolean),
+        "und",
+      ),
+    notYetSigned: "noch nicht signiert",
+    locked: "Gesperrt",
+    contents: "Inhalt",
+    encryptedNoPassword: "verschlüsselt, und es wurde kein Passwort eingegeben",
+    lockedNote:
+      "Alles Folgende stammt aus der Struktur der Datei, die ohne Passwort lesbar ist. Nichts " +
+      "im Dokument konnte gelesen werden, daher fehlen seine Eigenschaften, Signaturen und " +
+      "Struktur nicht — sie wurden nie gesehen.",
+    documentTimestamp: "Dokumentzeitstempel",
+    signature: "Signatur",
+    describedAs: "Beschreibung",
+    method: "Verfahren",
+    methodValue: (method: string, revision: number): string => `${method}, Revision ${revision}`,
+    allowed: "erlaubt",
+    notAllowed: "nicht erlaubt",
+    security: "Sicherheit",
+    securityNote:
+      "Das sind die angegebenen Einschränkungen des Dokuments. Jede Anwendung kann sie " +
+      "ignorieren — sie sind eine Bitte, keine Durchsetzung.",
+    pages: "Seiten",
+    pageCount: (count: number): string => count.toLocaleString("de-DE"),
+    size: "Größe",
+    pdfVersion: "PDF-Version",
+    notStated: "nicht angegeben",
+    revisions: "Revisionen",
+    language: "Sprache",
+    tagged: "Mit Tags",
+    taggedYes: "ja — das Dokument gibt seine eigene Lesereihenfolge an",
+    taggedNo: "nein — die Lesereihenfolge wird aus dem Layout abgeleitet",
+    attachments: "Anhänge",
+    attachmentCount: (count: number): string =>
+      `${count} ${count === 1 ? "eingebettete Datei" : "eingebettete Dateien"}; ` +
+      "„Anhang speichern...“ speichert einen",
+    file: "Datei",
+    notFullyRead: "Nicht vollständig gelesen",
+    notFullyReadNote:
+      "Was oben steht, ist richtig. Es ist nicht vollständig, und hier steht, welcher Teil " +
+      "fehlt, statt die Übersicht vollständig aussehen zu lassen.",
+    // The standard `/Info` keys; any other key is the document's own word.
+    infoLabel: (key: string): string => {
+      const labels: Record<string, string> = {
+        Title: "Titel",
+        Author: "Autor",
+        Subject: "Thema",
+        Keywords: "Stichwörter",
+        Creator: "Erstellt mit",
+        Producer: "PDF erzeugt mit",
+        CreationDate: "Erstellt",
+        ModDate: "Geändert",
+        Trapped: "Überfüllung",
+      };
+      return Object.prototype.hasOwnProperty.call(labels, key) ? labels[key]! : key;
+    },
+    propertiesName: "Eigenschaften",
+    propertiesDropped: (count: number): string =>
+      count === 1 ? "1 wurde nicht gelesen" : `${count} wurden nicht gelesen`,
+    valuesName: "Werte",
+    valuesClipped: (count: number): string =>
+      count === 1 ? "1 wurde gekürzt" : `${count} wurden gekürzt`,
+    fieldsName: "Signaturfelder",
+    fieldsDropped: (count: number): string =>
+      count === 1 ? "1 wurde nicht gelesen" : `${count} wurden nicht gelesen`,
+    entriesName: "Einträge",
+    entriesUnreadable: (count: number): string =>
+      count === 1 ? "1 konnte überhaupt nicht gelesen werden" : `${count} konnten überhaupt nicht gelesen werden`,
+    certificatesName: "Zertifikate",
+    certificatesUnread: (count: number): string =>
+      count === 1
+        ? "1 war vorhanden, konnte aber nicht gelesen werden"
+        : `${count} waren vorhanden, konnten aber nicht gelesen werden`,
+  },
+});
+
+function enField(kind: FieldKind): string {
+  return kind === "timestamp"
+    ? "timestamp field"
+    : kind === "either"
+      ? "signature or timestamp field"
+      : "signature field";
+}
+
+function deField(kind: FieldKind): string {
+  return kind === "timestamp"
+    ? "Zeitstempelfeld"
+    : kind === "either"
+      ? "Signatur- oder Zeitstempelfeld"
+      : "Signaturfeld";
+}
 
 /** One `/Info` entry, as `docinfo.rs` reports it. */
 export interface Field {
@@ -289,18 +671,7 @@ export interface Brief {
  * Stated once and reused, so the honest disclaimer cannot drift out of one place
  * it is needed while staying in another.
  */
-export const NOT_CHECKED =
-  "tpdf checks that the bytes a signature covers are unchanged, that the " +
-  "signature matches the key in its certificate, and whether that certificate " +
-  "chains to a root this computer's own trust store trusts, which is not " +
-  "Adobe's list most signed PDFs are made against. It fetches nothing to check a signature: " +
-  "revocation is judged only from data the document itself carries, a document " +
-  "carrying none is not checked for it, and no missing certificate is fetched. " +
-  "What a certificate states its key is for is the issuer's own word. A " +
-  "timestamp's own signature and whether it covers this signature are checked, " +
-  "and its authority is asked about as the signer is; only when the timestamp is " +
-  "intact and its authority trusted is the signer's certificate judged at the " +
-  "time it attests rather than now. Nothing here means the signature is valid.";
+export const NOT_CHECKED = TEXT().notChecked;
 
 /**
  * Words that would read as a verdict on a signature.
@@ -324,16 +695,7 @@ export const VERDICT_WORDS = ["valid", "verified", "authentic", "genuine"];
  * document's intent rather than what would actually survive.
  */
 export function certificationOf(level: number): string {
-  switch (level) {
-    case 1:
-      return "certified, no changes permitted";
-    case 2:
-      return "certified, form filling permitted";
-    case 3:
-      return "certified, form filling and comments permitted";
-    default:
-      return "";
-  }
+  return TEXT().certification(level);
 }
 
 /**
@@ -344,16 +706,7 @@ export function certificationOf(level: number): string {
  * signature states, not whether anything changed since.
  */
 export function lockOf(level: number): string {
-  switch (level) {
-    case 1:
-      return "locked by this signature, no changes permitted";
-    case 2:
-      return "locked by this signature, form filling and signing permitted";
-    case 3:
-      return "locked by this signature, form filling, signing and comments permitted";
-    default:
-      return "";
-  }
+  return TEXT().lock(level);
 }
 
 /**
@@ -385,10 +738,11 @@ export function lockOf(level: number): string {
  * the wording says when, not what, and does not imply the answer.
  */
 export function coverageOf(signature: Signature, bytes: number): Row {
+  const said = TEXT();
   if (signature.covered_bytes === 0) {
     return {
-      name: "Covers",
-      value: "no byte range stated, so nothing could be checked",
+      name: said.covers,
+      value: said.noRange,
       warn: true,
     };
   }
@@ -398,8 +752,8 @@ export function coverageOf(signature: Signature, bytes: number): Row {
     // here, is what stops the appended case below reading as though the
     // container were the reader's problem too.
     return {
-      name: "Covers",
-      value: "the whole file, except the signature container it cannot cover",
+      name: said.covers,
+      value: said.wholeFile,
     };
   }
   // "Everything up to the signature" is true only of a range that begins at
@@ -408,19 +762,15 @@ export function coverageOf(signature: Signature, bytes: number): Row {
   // for the skipped head was never reached when there was an append.
   if (signature.appended_bytes > 0 && signature.starts_at_zero) {
     return {
-      name: "Covers",
-      value:
-        `everything up to the signature, and ${formatBytes(signature.appended_bytes)} ` +
-        "were appended afterwards",
+      name: said.covers,
+      value: said.upToSignature(formatBytes(signature.appended_bytes)),
       warn: true,
     };
   }
   if (signature.appended_bytes > 0) {
     return {
-      name: "Covers",
-      value:
-        "not the whole file: the signed range does not begin at its first byte, and " +
-        `${formatBytes(signature.appended_bytes)} were appended afterwards`,
+      name: said.covers,
+      value: said.notWholeAppended(formatBytes(signature.appended_bytes)),
       warn: true,
     };
   }
@@ -430,8 +780,8 @@ export function coverageOf(signature: Signature, bytes: number): Row {
   // different suspicion.
   const short = Math.max(0, bytes - signature.covered_bytes);
   return {
-    name: "Covers",
-    value: `not the whole file — ${formatBytes(short)} lie outside the signed range`,
+    name: said.covers,
+    value: said.notWholeShort(formatBytes(short)),
     warn: true,
   };
 }
@@ -456,19 +806,18 @@ export function coverageOf(signature: Signature, bytes: number): Row {
 export function conformanceRows(xmp: Xmp | null): Row[] {
   if (!xmp) return [];
 
+  const said = TEXT();
   const rows: Row[] = [];
   if (xmp.conformance.length > 0) {
     rows.push({
-      name: "States conformance",
-      value: `${xmp.conformance.join(", ")} — the document's own claim, which tpdf does not check`,
+      name: said.statesConformance,
+      value: said.conformance(xmp.conformance.join(", ")),
     });
   }
   if (xmp.unread) {
     rows.push({
-      name: "Metadata",
-      value:
-        "the document carries an XMP packet that could not be read, so what it " +
-        "states about itself is unknown",
+      name: said.metadata,
+      value: said.metadataUnread,
       warn: true,
     });
   }
@@ -486,32 +835,34 @@ export function certificateRows(signature: Signature): Row[] {
   const certificate = signature.certificate;
   if (!certificate) return [];
 
+  const said = TEXT();
   const rows: Row[] = [];
   const named = certificate.subject_cn || certificate.subject;
   rows.push({
-    name: "Certificate names",
-    value: named || "a certificate with no name in it",
+    name: said.certificateNames,
+    value: named || said.noName,
     warn: !named,
   });
 
   if (certificate.self_issued) {
     rows.push({
-      name: "Issued by",
-      value: "itself — self-issued, so no other party vouched for this name",
+      name: said.issuedBy,
+      value: said.selfIssued,
     });
   } else {
     const by = certificate.issuer_cn || certificate.issuer;
-    if (by) rows.push({ name: "Issued by", value: by });
+    if (by) rows.push({ name: said.issuedBy, value: by });
   }
 
+  // The dates are the worker's (`docinfo.rs`), shown as it formats them.
   if (certificate.from && certificate.until) {
     rows.push({
-      name: "Certificate runs",
-      value: `${certificate.from} to ${certificate.until}`,
+      name: said.certificateRuns,
+      value: said.runs(certificate.from, certificate.until),
     });
   }
   if (certificate.serial) {
-    rows.push({ name: "Serial", value: certificate.serial });
+    rows.push({ name: said.serial, value: certificate.serial });
   }
 
   // What the certificate says its key is for. Shown even when nothing is
@@ -524,24 +875,24 @@ export function certificateRows(signature: Signature): Row[] {
   // this row stays the issuer's word, as NOT_CHECKED says.
   const usage = certificate.key_usage;
   rows.push({
-    name: "Key is for",
+    name: said.keyIsFor,
     value:
       usage === null
-        ? "not stated — the certificate places no limit on what the key is used for"
+        ? said.keyNotStated
         : usage.length > 0
           ? usage.join(", ")
-          : "nothing — the certificate names no use for its own key",
+          : said.keyNothing,
     warn: usage !== null && usage.length === 0,
   });
 
   const purposes = certificate.extended_usage;
   if (purposes !== null) {
     rows.push({
-      name: "Issued for",
+      name: said.issuedFor,
       value:
         purposes.length > 0
           ? purposes.join(", ")
-          : "nothing — the certificate names no purpose",
+          : said.purposeNothing,
       warn: purposes.length === 0,
     });
   }
@@ -551,34 +902,30 @@ export function certificateRows(signature: Signature): Row[] {
   // would be noise; a signer that is also an authority is worth a line.
   if (certificate.authority === true) {
     rows.push({
-      name: "Also an authority",
-      value: "this certificate says it may issue other certificates",
+      name: said.alsoAuthority,
+      value: said.mayIssue,
       warn: true,
     });
   }
 
   if (certificate.extensions_unread > 0) {
     rows.push({
-      name: "Extensions",
-      value: `${certificate.extensions_unread} could not be read, so what they state is unknown`,
+      name: said.extensions,
+      value: said.extensionsUnread(certificate.extensions_unread),
       warn: true,
     });
   }
   if (certificate.chain > 1) {
     rows.push({
-      name: "Certificates present",
+      name: said.certificatesPresent,
       // A document timestamp's own certificate is its authority's.
-      value: `${certificate.chain}, of which this is the ${
-        signature.kind === DOCUMENT_TIMESTAMP ? "authority's" : "signer's"
-      }`,
+      value: said.present(certificate.chain, signature.kind === DOCUMENT_TIMESTAMP),
     });
   }
   if (!certificate.matched_signer) {
     rows.push({
-      name: "Certificates present",
-      value:
-        "one, and the signature does not point at it — shown because there " +
-        "is nothing else it could be",
+      name: said.certificatesPresent,
+      value: said.presentUnmatched,
       warn: true,
     });
   }
@@ -590,8 +937,8 @@ export function certificateRows(signature: Signature): Row[] {
   const inCert = (certificate.subject_cn || certificate.subject).trim();
   if (typed && inCert && typed.toLowerCase() !== inCert.toLowerCase()) {
     rows.push({
-      name: "Names disagree",
-      value: `the certificate says ${inCert}, the document says ${typed}`,
+      name: said.namesDisagree,
+      value: said.disagree(inCert, typed),
       warn: true,
     });
   }
@@ -637,12 +984,13 @@ export function certificateRows(signature: Signature): Row[] {
 export function appendixRow(signature: Signature): Row | null {
   const appendix = signature.appendix;
   if (!appendix) return null;
+  const said = TEXT();
   if (appendix.unread) {
     // A fact about tpdf, in the voice `NOT_CHECKED` uses for the rest of this
     // panel: what could not be read is never reported as what is not there.
     return {
-      name: "Appended",
-      value: "something, but its contents could not be read",
+      name: said.appended,
+      value: said.appendedUnread,
       warn: true,
     };
   }
@@ -653,19 +1001,15 @@ export function appendixRow(signature: Signature): Row | null {
   const named = appendix.catalog_gained.includes("DSS") || appendix.kinds.includes("Sig");
   let value: string;
   if (appendix.removed === 0) {
-    value = `${what}, and ${pages}`;
+    value = said.appendix(what, pages);
   } else if (arrived === 0 && !named) {
     // Nothing arrived and something went: the removal is the whole of it,
     // and "0 objects" in front of it would be noise.
-    const removed =
-      appendix.removed === 1 ? "1 object was removed" : `${appendix.removed} objects were removed`;
-    value = `${removed}, and ${pages}`;
+    value = said.removedOnly(appendix.removed, pages);
   } else {
-    const removed =
-      appendix.removed === 1 ? "1 object removed" : `${appendix.removed} objects removed`;
-    value = `${what}, with ${removed}, and ${pages}`;
+    value = said.withRemoved(what, appendix.removed, pages);
   }
-  return { name: "Appended", value, warn: true };
+  return { name: said.appended, value, warn: true };
 }
 
 /**
@@ -681,29 +1025,18 @@ export function appendixRow(signature: Signature): Row | null {
  * changed and tpdf does not know why.
  */
 function describePages(appendix: Appendix): string {
+  const said = TEXT();
   const touched = appendix.pages_touched;
-  if (touched === 0) return "no page was rewritten";
+  if (touched === 0) return said.noPageRewritten;
   const listing = appendix.pages_listing;
-  if (listing.length !== touched) {
-    return touched === 1 ? "1 page was rewritten" : `${touched} pages were rewritten`;
-  }
-  const field = listing.every((entry) => entry.timestamp)
-    ? "timestamp field"
+  if (listing.length !== touched) return said.pagesRewritten(touched);
+  const field: FieldKind = listing.every((entry) => entry.timestamp)
+    ? "timestamp"
     : listing.some((entry) => entry.timestamp)
-      ? "signature or timestamp field"
-      : "signature field";
-  if (touched === 1) {
-    return (
-      `a ${field} was added to page ${listing[0]!.page}'s annotations ` +
-      `(the page's content is unchanged)`
-    );
-  }
-  const numbers = listing.map((entry) => `${entry.page}`);
-  const pages = `${numbers.slice(0, -1).join(", ")} and ${numbers.at(-1)}`;
-  return (
-    `a ${field} was added to the annotations of pages ${pages} ` +
-    `(their content is unchanged)`
-  );
+      ? "either"
+      : "signature";
+  if (touched === 1) return said.fieldOnPage(field, listing[0]!.page);
+  return said.fieldOnPages(field, listing.map((entry) => entry.page));
 }
 
 /**
@@ -717,16 +1050,14 @@ function describePages(appendix: Appendix): string {
  * own names, which is honest about having no better word for it.
  */
 function describeAppendix(appendix: Appendix): string {
+  const said = TEXT();
   if (appendix.catalog_gained.includes("DSS")) {
-    return "the certificates and revocation records a signature needs to be checked later";
+    return said.validationData;
   }
   if (appendix.kinds.includes("Sig")) {
-    return "another signature";
+    return said.anotherSignature;
   }
-  const objects =
-    appendix.added + appendix.replaced === 1
-      ? "1 object"
-      : `${appendix.added + appendix.replaced} objects`;
+  const objects = said.objects(appendix.added + appendix.replaced);
   if (appendix.kinds.length === 0) return objects;
   // The file's own vocabulary, unglossed. A reader who does not know what a
   // `/StructTreeRoot` is learns nothing from this, and a reader who does learns
@@ -742,8 +1073,9 @@ const DOCUMENT_TIMESTAMP = "ETSI.RFC3161";
 
 /** Every line of one signature. */
 export function signatureRows(signature: Signature, bytes: number): Row[] {
+  const said = TEXT();
   if (!signature.signed) {
-    return [{ name: "Status", value: "a signature field, not yet signed" }];
+    return [{ name: said.status, value: said.unsignedField }];
   }
 
   const rows: Row[] = [];
@@ -784,10 +1116,10 @@ export function signatureRows(signature: Signature, bytes: number): Row[] {
   // self-issued certificate is exactly as self-asserted as `/Name` is.
   rows.push(...certificateRows(signature));
 
-  claimed("Signer typed", signature.name);
-  claimed("Reason given", signature.reason);
-  claimed("Location given", signature.location);
-  claimed("Date given", signature.when);
+  claimed(said.signerTyped, signature.name);
+  claimed(said.reasonGiven, signature.reason);
+  claimed(said.locationGiven, signature.location);
+  claimed(said.dateGiven, signature.when);
 
   // Directly under the signer's own date, because the two answer the same
   // question from different places and the labels are what tell them apart:
@@ -818,12 +1150,12 @@ export function signatureRows(signature: Signature, bytes: number): Row[] {
   if (appended) rows.push(appended);
 
   const level = certificationOf(signature.certification);
-  if (level) rows.push({ name: "Certification", value: level });
+  if (level) rows.push({ name: said.certificationName, value: level });
   const lock = lockOf(signature.lock);
-  if (lock) rows.push({ name: "Lock", value: lock });
+  if (lock) rows.push({ name: said.lockName, value: lock });
 
   const how = [signature.handler, signature.kind].filter(Boolean).join(" / ");
-  claimed("Format", how);
+  claimed(said.format, how);
   // Under Format, which names the encoding: this names what that encoding,
   // with the timestamp and revocation rows above, adds up to.
   const pades = padesRow(signature.pades);
@@ -843,14 +1175,7 @@ export function countedSignatures(signatures: Signature[]): string {
   const stamps = signatures.filter((s) => s.signed && s.kind === DOCUMENT_TIMESTAMP).length;
   const empty = signatures.filter((s) => !s.signed).length;
   const signed = signatures.length - stamps - empty;
-  const parts = [
-    signed === 1 ? "1 signature" : signed > 1 ? `${signed} signatures` : "",
-    stamps === 1 ? "1 document timestamp" : stamps > 1 ? `${stamps} document timestamps` : "",
-    empty === 1 ? "1 empty signature field" : empty > 1 ? `${empty} empty signature fields` : "",
-  ].filter(Boolean);
-  return parts.length > 1
-    ? `${parts.slice(0, -1).join(", ")} and ${parts.at(-1)}`
-    : (parts[0] ?? "");
+  return TEXT().counted(signed, stamps, empty);
 }
 
 /**
@@ -863,15 +1188,20 @@ export function countedSignatures(signatures: Signature[]): string {
  * second place for it to be wrong.
  */
 export function briefly(signature: Signature, rows: Row[]): Brief[] {
-  if (!signature.signed) return [{ text: "not yet signed" }];
+  if (!signature.signed) return [{ text: TEXT().notYetSigned }];
   const who = signature.certificate?.subject_cn || signature.certificate?.subject || "";
   const out: Brief[] = who ? [{ text: who }] : [];
   // Its own certificate's rows only. A signature's timestamp has an authority
   // with a standing too, and "trusted · trusted" on a face says nothing about
   // which is whose; that row is one click away.
-  const own = signature.kind === DOCUMENT_TIMESTAMP ? AUTHORITY_VERDICTS : SIGNER_VERDICTS;
+  const named = rowNames();
+  const own = new Set(
+    signature.kind === DOCUMENT_TIMESTAMP
+      ? [named.authority, named.authorityRevocation, named.authorityChain]
+      : [named.trust, named.revocation, named.chain],
+  );
   for (const row of rows) {
-    if (row.name !== "Integrity" && !own.has(row.name)) continue;
+    if (row.name !== named.integrity && !own.has(row.name)) continue;
     // Up to the dash that separates a verdict from its reason; a row with no
     // dash is short enough to be said whole.
     const text = row.value.split(" — ")[0]!.replace(/\.$/, "");
@@ -883,15 +1213,6 @@ export function briefly(signature: Signature, rows: Row[]): Brief[] {
   return out;
 }
 
-/** The rows about a signer's certificate whose leading words are a verdict. */
-const SIGNER_VERDICTS = new Set(["Trust", "Revocation", "Chain revocation"]);
-/** The same rows as a document timestamp names them. */
-const AUTHORITY_VERDICTS = new Set([
-  "Timestamp authority",
-  "Authority revocation",
-  "Authority chain revocation",
-]);
-
 /**
  * The whole readout, in the order a reader wants it.
  *
@@ -901,22 +1222,19 @@ const AUTHORITY_VERDICTS = new Set([
  * asked, and encryption comes before both when it is the thing stopping them.
  */
 export function sections(properties: Properties): Section[] {
+  const said = TEXT();
   const locked: Section[] = properties.limits.locked
     ? [
         {
-          title: "Locked",
+          title: said.locked,
           rows: [
             {
-              name: "Contents",
-              value: "encrypted, and no password has been given",
+              name: said.contents,
+              value: said.encryptedNoPassword,
               warn: true,
             },
           ],
-          note:
-            "Everything below comes from the file's structure, which is readable " +
-            "without the password. Nothing inside the document could be read at " +
-            "all, so its properties, signatures and structure are not missing — " +
-            "they were never seen.",
+          note: said.lockedNote,
         },
       ]
     : [];
@@ -927,7 +1245,7 @@ export function sections(properties: Properties): Section[] {
   const signatures: Section[] = properties.signatures.map((signature) => {
     // Headed as what it is: a document timestamp under "Signature" reads as a
     // second party having signed, and nobody did.
-    const what = signature.kind === DOCUMENT_TIMESTAMP ? "Document timestamp" : "Signature";
+    const what = signature.kind === DOCUMENT_TIMESTAMP ? said.documentTimestamp : said.signature;
     const title = signature.field ? `${what} — ${signature.field}` : what;
     const rows = signatureRows(signature, properties.bytes);
     // The disclaimer goes on a signature that exists, and not on an empty field
@@ -948,69 +1266,64 @@ export function sections(properties: Properties): Section[] {
     value: field.value,
   }));
   const described: Section[] =
-    named.length > 0 ? [{ title: "Described as", rows: named }] : [];
+    named.length > 0 ? [{ title: said.describedAs, rows: named }] : [];
 
   const security: Section[] = [];
   if (properties.encryption) {
     const stated = properties.encryption;
     const rows: Row[] = [
-      { name: "Method", value: `${stated.method}, revision ${stated.revision}` },
+      { name: said.method, value: said.methodValue(stated.method, stated.revision) },
     ];
+    // A permission's name is the worker's words (`docinfo.rs`).
     for (const permission of stated.permissions) {
       rows.push({
         name: permission.what,
-        value: permission.allowed ? "allowed" : "not allowed",
+        value: permission.allowed ? said.allowed : said.notAllowed,
         warn: !permission.allowed,
       });
     }
     security.push({
-      title: "Security",
+      title: said.security,
       rows,
-      note:
-        "These are the document's stated restrictions. Any application may " +
-        "ignore them — they are a request, not an enforcement.",
+      note: said.securityNote,
     });
   }
 
   const rows: Row[] = [
-    { name: "Pages", value: properties.pages.toLocaleString("en-US") },
-    { name: "Size", value: formatBytes(properties.bytes) },
-    { name: "PDF version", value: properties.version || "not stated" },
+    { name: said.pages, value: said.pageCount(properties.pages) },
+    { name: said.size, value: formatBytes(properties.bytes) },
+    { name: said.pdfVersion, value: properties.version || said.notStated },
   ];
   if (properties.revisions > 1) {
-    rows.push({ name: "Revisions", value: `${properties.revisions}` });
+    rows.push({ name: said.revisions, value: `${properties.revisions}` });
   }
   if (properties.language) {
-    rows.push({ name: "Language", value: properties.language });
+    rows.push({ name: said.language, value: properties.language });
   }
   if (properties.tagged !== null) {
     rows.push({
-      name: "Tagged",
-      value: properties.tagged
-        ? "yes — the document states its own reading order"
-        : "no — reading order is inferred from the layout",
+      name: said.tagged,
+      value: properties.tagged ? said.taggedYes : said.taggedNo,
     });
   }
   if (properties.attachments !== null && properties.attachments > 0) {
     rows.push({
-      name: "Attachments",
-      value: `${properties.attachments} embedded file${properties.attachments === 1 ? "" : "s"}; Save an attachment saves one`,
+      name: said.attachments,
+      value: said.attachmentCount(properties.attachments),
     });
     rows.push(...attachmentRows(properties.embedded ?? []));
   }
   rows.push(...conformanceRows(properties.xmp));
-  const file: Section = { title: "File", rows };
+  const file: Section = { title: said.file, rows };
 
   const missed = limitRows(properties.limits);
   const cut: Section[] =
     missed.length > 0
       ? [
           {
-            title: "Not fully read",
+            title: said.notFullyRead,
             rows: missed,
-            note:
-              "What is shown above is correct. It is not complete, and this says " +
-              "which part is missing rather than leaving the readout looking whole.",
+            note: said.notFullyReadNote,
           },
         ]
       : [];
@@ -1026,36 +1339,26 @@ export function sections(properties: Properties): Section[] {
 
 /** A reader-facing label for an `/Info` key, which is written for a machine. */
 function labelFor(key: string): string {
-  switch (key) {
-    case "CreationDate":
-      return "Created";
-    case "ModDate":
-      return "Modified";
-    default:
-      // A custom key is the document's own word and is shown as written ---
-      // splitting it on case would turn `/SourceModified` into something the
-      // document does not say.
-      return key;
-  }
+  // A custom key is the document's own word and is shown as written ---
+  // splitting it on case would turn `/SourceModified` into something the
+  // document does not say.
+  return TEXT().infoLabel(key);
 }
 
 /** What was cut, one line each, so a partial readout says so. */
 export function limitRows(limits: Limits): Row[] {
+  const said = TEXT();
   const rows: Row[] = [];
-  const say = (name: string, count: number, what: string): void => {
-    if (count > 0) rows.push({ name, value: `${count} ${what}`, warn: true });
+  const say = (name: string, count: number, what: (count: number) => string): void => {
+    if (count > 0) rows.push({ name, value: what(count), warn: true });
   };
-  say("Properties", limits.fields_dropped, "were not read");
-  say("Values", limits.values_clipped, "were shortened");
-  say("Signature fields", limits.signatures_dropped, "were not read");
-  say("Entries", limits.unreadable, "could not be read at all");
+  say(said.propertiesName, limits.fields_dropped, said.propertiesDropped);
+  say(said.valuesName, limits.values_clipped, said.valuesClipped);
+  say(said.fieldsName, limits.signatures_dropped, said.fieldsDropped);
+  say(said.entriesName, limits.unreadable, said.entriesUnreadable);
   // Phrased as what tpdf could not do, not as something the document lacks ---
   // a signature whose certificate went unread must not read like one that has
   // none, which is the whole reason this is counted separately.
-  say(
-    "Certificates",
-    limits.certificates_unread,
-    "were present but could not be read",
-  );
+  say(said.certificatesName, limits.certificates_unread, said.certificatesUnread);
   return rows;
 }

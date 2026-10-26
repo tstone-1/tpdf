@@ -137,8 +137,8 @@ ROWS += [
         '  if (false) {',
         'says how many passages the list leaves out, only when it leaves any out'),
     Mutation('hidden text: list words outside the page as on it', 'src/lib/hiddentext.ts',
-        '  return passage.offPage ? `Page ${passage.page}, outside the page`',
-        '  return false ? `Page ${passage.page}, outside the page`',
+        "  return passage.offPage ? TEXT().offPage(passage.page) : TEXT().page(passage.page);",
+        "  return false ? TEXT().offPage(passage.page) : TEXT().page(passage.page);",
         'names its page, and says when the words are outside it'),
     Mutation('hidden text: take the page number for a slot', 'src/lib/hiddentext.ts',
         '  const slot = slotOf(passage.page - 1);',
@@ -313,8 +313,8 @@ ROWS += [
     # comment, which is how three of them got past the tests that read the
     # raw file.
     Mutation('hidden wiring: Stop goes round the module, the call left in a comment', 'src/App.svelte',
-        'onclick={() => hiddenRuns.stop((run) => void call("hidden_text_cancel", { run }))}>Stop',
-        'onclick={() => void call("hidden_text_cancel", { run: 0 })}>Stop<!-- onclick={() => hiddenRuns.stop((run) => void call("hidden_text_cancel", { run }))} -->',
+        'onclick={() => hiddenRuns.stop((run) => void call("hidden_text_cancel", { run }))}>{TEXT().stop}',
+        'onclick={() => void call("hidden_text_cancel", { run: 0 })}>{TEXT().stop}<!-- onclick={() => hiddenRuns.stop((run) => void call("hidden_text_cancel", { run }))} -->',
         'runs the check through Runs.check, and Stop and the progress line through the same Runs'),
     Mutation('hidden wiring: the progress line goes round the guard, the call left in a comment', 'src/App.svelte',
         '        hiddenRuns.report(event.payload, (line) => { blockingTask = line; });',
@@ -473,7 +473,7 @@ ROWS += [
         "  if (search.unread > 0) {", "  if (false) {",
         "refuses when a page could not be searched, and says how many"),
     Mutation("results: say nothing of a page whose search failed", "src/lib/results.ts",
-        "  if (unread > 0) {", "  if (false) {",
+        "  if (unread > 0) return text.unread(total, unread);", "  if (false) return text.unread(total, unread);",
         "says when a page's search failed, with or without hits"),
     Mutation("redact matches: ask only about the count", "src/App.svelte",
         "      running: searched.searching,\n", "",
@@ -494,8 +494,8 @@ ROWS += [
         '      unanswered.textContent = "";\n', "",
         "asks whether anyone else signs, with no answer, and signs nothing until it has one"),
     Mutation("signing: say nothing to choose some other way", "src/lib/signing.ts",
-        '    : `${NO_CERTIFICATE} in your keychain or certificate store.`;',
-        '    : "No certificate was found in your keychain or certificate store.";',
+        "    noneStore: (lead: string): string => `${lead} in your keychain or certificate store.`,",
+        '    noneStore: (lead: string): string => "No certificate was found in your keychain or certificate store.",',
         "begins with the words the field check waits for, on every platform and with anything skipped"),
     Mutation("downloads: mark the Linux button for Android", "site/download.js",
         '  if (/Linux/.test(agent) && !/Android/.test(agent)) return "linux";',
@@ -509,7 +509,7 @@ ROWS += [
         "BEFORE_REGEX.includes(last))",
         "a regular expression after return, ending in an escaped slash"),
     # Linux was offered the Windows name for showing a file until 2026-10-15.
-    Mutation("reveal: offer Linux the Windows name for showing a file", "src/lib/keys.ts", '  if (isLinux()) return "Show in Folder";\n', "", "names each platform's file manager, and none on Linux"),
+    Mutation("reveal: offer Linux the Windows name for showing a file", "src/lib/keys.ts", "  if (isLinux()) return text.showInFolder;\n", "", "names each platform's file manager, and none on Linux"),
 ]
 
 # --- sideways scrolling and the line keys, 2026-10-15 ------------------------
@@ -807,12 +807,12 @@ ROWS += [
 # --- a link's target as its tooltip, 2026-10-15 ------------------------------
 ROWS += [
     Mutation("link title: count pages from zero", "src/lib/links.ts",
-        '    case "page": return `Go to page ${target.page + 1}`;',
-        '    case "page": return `Go to page ${target.page}`;',
+        '    case "page": return TEXT().goToPage(target.page + 1);',
+        '    case "page": return TEXT().goToPage(target.page);',
         "names the page for a link inside the document and the address for a web link"),
     Mutation("link title: the host alone", "src/lib/links.ts",
-        '    case "web": return `Open ${target.host}${target.rest}`;',
-        '    case "web": return `Open ${target.host}`;',
+        '    case "web": return TEXT().open(`${target.host}${target.rest}`);',
+        '    case "web": return TEXT().open(target.host);',
         "names the page for a link inside the document and the address for a web link"),
     Mutation("link title: never written", "src/lib/viewer.ts",
         "      // Empty is no tooltip.\n      this.root.title = title;\n", "",
@@ -841,7 +841,7 @@ ROWS += [
 # --- favourites, 2026-10-15 ---------------------------------------------------
 ROWS += [
     Mutation("favourites: an empty name stays empty", "src/lib/favourites.ts",
-        "    const added = { path, page, name: name.trim() || `Page ${page + 1}` };",
+        "    const added = { path, page, name: name.trim() || TEXT().page(page + 1) };",
         "    const added = { path, page, name: name.trim() };",
         "names a page after its number when the reader gives no name"),
     Mutation("favourites: a page marked twice is listed twice", "src/lib/favourites.ts",
@@ -861,8 +861,8 @@ ROWS += [
         "    return step > 0 ? Math.max(...beyond) : Math.min(...beyond);",
         "steps to the nearest favourite page of the same document, either way"),
     Mutation("favourites: name the page from zero", "src/lib/favourites.ts",
-        "(${basename(favourite.path)}, page ${favourite.page + 1})`,",
-        "(${basename(favourite.path)}, page ${favourite.page})`,",
+        "    title: TEXT().goTo(favourite.name, basename(favourite.path), favourite.page + 1),",
+        "    title: TEXT().goTo(favourite.name, basename(favourite.path), favourite.page),",
         "offers one entry per favourite, which goes to it"),
 ]
 
@@ -1078,7 +1078,7 @@ ROWS += [
 # --- saving an attachment, 2026-10-16 ---------------------------------------------------
 ROWS += [
     Mutation("attachment: a program's name not called one", "src/lib/attachments.ts",
-        '  if (PROGRAMS.has(end)) return "a program or script";\n',
+        "  if (PROGRAMS.has(end)) return TEXT().program;\n",
         "",
         "calls a name that ends like a program one, and warns when it is saved"),
     Mutation("attachment: saved with no warning for a program", "src/lib/attachments.ts",
@@ -1134,7 +1134,7 @@ ROWS += [
         '  const colon = typed.indexOf(":");',
         "is a file and a line, split at the last colon"),
     Mutation("forward: line 0 taken", "src/lib/forward.ts",
-        "  if (number < 1) return { problem: `${said}, and lines count from 1` };\n",
+        "  if (number < 1) return { problem: TEXT().fromOne(typed) };\n",
         "",
         "refuses a value that is not a file and a line"),
     Mutation("forward: the line shown not said when it differs", "src/lib/forward.ts",
@@ -1190,8 +1190,8 @@ ROWS += [
         "",
         "says under the appearance what the chosen one does, and names the field it goes in"),
     Mutation("chooser: a self-signed certificate named twice", "src/lib/signing.ts",
-        '  const from = choice.issuer === choice.subject ? "Self-signed" : `Issued by ${choice.issuer}`;',
-        "  const from = `Issued by ${choice.issuer}`;",
+        "  const from = choice.issuer === choice.subject ? said.selfSigned : said.issuedBy(choice.issuer);",
+        "  const from = said.issuedBy(choice.issuer);",
         "says under a certificate from whom, until when and how, and self-signed for its own issuer"),
 ]
 ROWS += [

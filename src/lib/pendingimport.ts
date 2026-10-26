@@ -23,7 +23,23 @@
  * version that looks right.
  */
 
+import { catalog } from "./i18n";
 import { namePages, parsePageRange, type PageRange } from "./pageranges";
+
+const TEXT = catalog({
+  "en-US": {
+    placeholder: (name: string, pages: number) => `Pages of ${name} (1-${pages}); blank for all`,
+    insertOnly: (name: string) => `Insert the page of ${name}`,
+    insertAll: (pages: number, name: string) => `Insert all ${pages} pages of ${name}`,
+    insert: (named: string, name: string) => `Insert ${named} of ${name}`,
+  },
+  "de-DE": {
+    placeholder: (name: string, pages: number) => `Seiten von ${name} (1-${pages}); leer für alle`,
+    insertOnly: (name: string) => `Die Seite von ${name} einfügen`,
+    insertAll: (pages: number, name: string) => `Alle ${pages} Seiten von ${name} einfügen`,
+    insert: (named: string, name: string) => `${named} von ${name} einfügen`,
+  },
+});
 
 /**
  * What `page_import_prepare` answers.
@@ -134,16 +150,12 @@ export function chosenPages(raw: string, file: PreparedImport): PageRange {
   if (raw.trim() === "") {
     return { slots: Array.from({ length: file.pages }, (_, page) => page) };
   }
-  const range = parsePageRange(raw, file.pages);
-  if (range.problem?.startsWith("This document has")) {
-    return { problem: range.problem.replace("This document", file.name) };
-  }
-  return range;
+  return parsePageRange(raw, file.pages, file.name);
 }
 
 /** What the range question's input says before anything is typed. */
 export function rangePlaceholder(file: PreparedImport): string {
-  return `Pages of ${file.name} (1-${file.pages}); blank for all`;
+  return TEXT().placeholder(file.name, file.pages);
 }
 
 /** What inserting the named pages will do, or "" while the answer is unusable. */
@@ -151,9 +163,7 @@ export function rangePreview(raw: string, file: PreparedImport): string {
   const range = chosenPages(raw, file);
   if (!range.slots) return "";
   if (range.slots.length === file.pages) {
-    return file.pages === 1
-      ? `Insert the page of ${file.name}`
-      : `Insert all ${file.pages} pages of ${file.name}`;
+    return file.pages === 1 ? TEXT().insertOnly(file.name) : TEXT().insertAll(file.pages, file.name);
   }
-  return `Insert ${namePages(range.slots)} of ${file.name}`;
+  return TEXT().insert(namePages(range.slots), file.name);
 }

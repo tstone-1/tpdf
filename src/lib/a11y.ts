@@ -49,9 +49,25 @@
  * claim is made about it.
  */
 
+import { catalog } from "./i18n";
 import { linkRunsIn, onPage as linksOnPage, type Link } from "./links";
 import { readingBlocks, textOfRanges, type ReadingBlock } from "./reading";
 import { type PageText } from "./text";
+
+const TEXT = catalog({
+  "en-US": {
+    documentText: "Document text",
+    pageOf: (page: number, of: number) => `Page ${page} of ${of}`,
+    unreadable: "This page's text cannot be read. The document does not say what its characters mean.",
+    noText: "This page has no extractable text.",
+  },
+  "de-DE": {
+    documentText: "Text des Dokuments",
+    pageOf: (page: number, of: number) => `Seite ${page} von ${of}`,
+    unreadable: "Der Text dieser Seite kann nicht gelesen werden. Das Dokument gibt nicht an, was seine Zeichen bedeuten.",
+    noText: "Diese Seite enthält keinen extrahierbaren Text.",
+  },
+});
 
 /**
  * The DOM element a tagged block is announced as.
@@ -136,7 +152,7 @@ export class AccessibleText {
 
     this.host = document.createElement("div");
     this.host.setAttribute("role", "document");
-    this.host.setAttribute("aria-label", "Document text");
+    this.host.setAttribute("aria-label", TEXT().documentText);
     this.host.style.cssText = SR_ONLY;
     root.appendChild(this.host);
 
@@ -251,7 +267,7 @@ export class AccessibleText {
 
   /** Announces the page being read, when it changes. */
   announce(page: number): void {
-    const message = `Page ${page + 1} of ${this.pageCount}`;
+    const message = TEXT().pageOf(page + 1, this.pageCount);
     if (message === this.announced) return;
     this.announced = message;
     this.announcer.textContent = message;
@@ -272,7 +288,7 @@ export class AccessibleText {
 
   private build(page: number, content: PageText, unreadable = false): HTMLElement {
     const article = document.createElement("article");
-    article.setAttribute("aria-label", `Page ${page + 1} of ${this.pageCount}`);
+    article.setAttribute("aria-label", TEXT().pageOf(page + 1, this.pageCount));
     // Focusable programmatically but not in the tab order: Tab through a
     // 775-page document would be a trap, and the page still needs to be a
     // target for "go to this page".
@@ -291,8 +307,7 @@ export class AccessibleText {
     // would be read out in full, which is the outcome being avoided.
     if (unreadable) {
       const note = document.createElement("p");
-      note.textContent =
-        "This page's text cannot be read. The document does not say what its characters mean.";
+      note.textContent = TEXT().unreadable;
       article.appendChild(note);
       return article;
     }
@@ -313,7 +328,7 @@ export class AccessibleText {
       // which a screen reader passes over in silence and which is
       // indistinguishable from the layer being broken.
       const empty = document.createElement("p");
-      empty.textContent = "This page has no extractable text.";
+      empty.textContent = TEXT().noText;
       article.appendChild(empty);
     }
 

@@ -19,6 +19,20 @@ have the binary.)
 
 ## [26.10.27] - Unreleased
 
+### Added
+
+- The window is translated into German: menus, toolbar, command palette, dialogs, panels and
+  messages, with German key names (Strg, Umschalt, Entf). It follows the system language, and
+  **Language: Deutsch**, **Language: English (US)**, **Language: English (UK)** and
+  **Language: follow the system** choose one; the choice takes effect at the next start.
+  Messages from the document worker and the command-line tool are still English.
+- The command palette finds a command by its English title in the German window too.
+
+### Changed
+
+- The window uses American spelling ("Color", "Favorites", "Recognize") unless the system or
+  the Language setting asks for British English.
+
 ### Fixed
 
 - **Recognise this page** in the find bar was disabled on every document since 26.10.26.

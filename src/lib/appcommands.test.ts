@@ -28,6 +28,7 @@ import {
 import { CommandRegistry } from "./commands";
 import { setLinux } from "./keys";
 import { DISK_CHANGE_MODES, type DiskChangeMode } from "./diskwatch";
+import type { LanguageChoice } from "./i18n";
 import { PALETTE } from "./markcolors";
 import { menuEnablement } from "./menubar";
 import { NIBS } from "./marknibs";
@@ -48,7 +49,7 @@ function harness(
   hasDocument = true,
   update: {
     available?: boolean; ready?: boolean; automatic?: boolean; disk?: DiskChangeMode;
-    restoreTabs?: boolean; reopenable?: number; recents?: number; fieldBorder?: boolean; picked?: number; fieldPicked?: boolean; formEditing?: boolean; savedFields?: number; canOrderTabs?: boolean; signable?: number;
+    restoreTabs?: boolean; language?: LanguageChoice; reopenable?: number; recents?: number; fieldBorder?: boolean; picked?: number; fieldPicked?: boolean; formEditing?: boolean; savedFields?: number; canOrderTabs?: boolean; signable?: number;
     // One flag for each of the command-line tool's pair, so that swapping the
     // two guards is seen. Both offered by default: that is "not known", the
     // state the window starts in.
@@ -102,6 +103,7 @@ function harness(
   const fired: string[] = [];
   let automatic = update.automatic ?? true;
   let restoring = update.restoreTabs ?? false;
+  let language: LanguageChoice = update.language ?? "system";
   let framing = update.fieldBorder ?? true;
   let formEditing = update.formEditing ?? false;
   let diskMode: DiskChangeMode = update.disk ?? "ask";
@@ -154,6 +156,8 @@ function harness(
     toggleSyncScrolling: () => fired.push("toggleSyncScrolling"),
     restoreTabs: () => restoring,
     setRestoreTabs: (restore) => { restoring = restore; fired.push(`setRestoreTabs:${restore}`); },
+    languageChoice: () => language,
+    setLanguageChoice: (choice) => { language = choice; fired.push(`setLanguageChoice:${choice}`); },
     tabsToReopen: () => update.reopenable ?? 0,
     reopenLastTabs: () => fired.push("reopenLastTabs"),
     recentDocuments: () => update.recents ?? 0,
@@ -506,6 +510,26 @@ describe("the border of a new text field", () => {
   });
 });
 
+describe("the interface language", () => {
+  it("offers every choice but the current one, needs no document, and keeps the choice", () => {
+    const { registry, fired } = harness(false);
+    expect(registry.run("app.language.system")).toBe(false);
+    expect(registry.run("app.language.de-DE")).toBe(true);
+    expect(fired).toEqual(["setLanguageChoice:de-DE"]);
+    expect(registry.run("app.language.de-DE")).toBe(false);
+    expect(registry.run("app.language.system")).toBe(true);
+  });
+
+  it("names each language in its own language, in every locale", () => {
+    for (const locale of ["en-US", "de-DE"] as const) {
+      const registry = new CommandRegistry();
+      registerAppCommands(registry, {} as AppActions, locale);
+      expect(registry.find("app.language.de-DE")?.title).toMatch(/: Deutsch$/);
+      expect(registry.find("app.language.en-US")?.title).toMatch(/: English \(US\)$/);
+    }
+  });
+});
+
 describe("the commands that bring tabs back", () => {
   it("offers only the launch choice that is not the current one", () => {
     for (const restoring of [true, false]) {
@@ -709,6 +733,11 @@ describe("the commands a document is needed for", () => {
       // A preference, and off by default, so this is the one of its pair on
       // offer. First because the tab commands are registered first.
       "file.reopenTabsAtLaunch",
+      // The interface languages that are not the fixture's choice, which is
+      // the system's. Registered after the launch pair.
+      "app.language.en-US",
+      "app.language.en-GB",
+      "app.language.de-DE",
       "file.open",
       // It begins with pictures, not with a document.
       "file.fromPictures",
@@ -1013,7 +1042,7 @@ describe("every registered command", () => {
     // themselves are asserted above in both directions.
     const built = (update: {
       available?: boolean; ready?: boolean; disk?: DiskChangeMode;
-      restoreTabs?: boolean; reopenable?: number; recents?: number; fieldBorder?: boolean; picked?: number; fieldPicked?: boolean; formEditing?: boolean; savedFields?: number; canOrderTabs?: boolean; signable?: number;
+      restoreTabs?: boolean; language?: LanguageChoice; reopenable?: number; recents?: number; fieldBorder?: boolean; picked?: number; fieldPicked?: boolean; formEditing?: boolean; savedFields?: number; canOrderTabs?: boolean; signable?: number;
       sides?: { split: boolean; focused: "left" | "right"; others: string[] };
     }) => harness(
       true,
@@ -1068,7 +1097,7 @@ describe("every registered command", () => {
     // while its mode is the current one, so no single state offers all three.
     // And the launch pair, which is the update pair's shape again.
     const applied = built({
-      available: true, ready: true, disk: "reload", restoreTabs: true, fieldBorder: false,
+      available: true, ready: true, disk: "reload", restoreTabs: true, language: "de-DE", fieldBorder: false,
       formEditing: true, fieldPicked: true, savedFields: 2, canOrderTabs: true,
     });
     const states = [found, applied];
@@ -1474,7 +1503,7 @@ describe("the page operations", () => {
       const argument = choice(asking().registry)?.argument;
       expect(argument?.placeholder).toContain("now: German (Germany), de-DE");
       expect(argument?.preview("en")).toBe("Recognize text as English (United States), en-US");
-      expect(argument?.preview("automatic")).toBe("Let the recogniser choose the language");
+      expect(argument?.preview("automatic")).toBe("Let the recognizer choose the language");
       expect(argument?.problem("en")).toBeNull();
     });
 
@@ -2054,6 +2083,8 @@ describe("the window shortcuts for editing", () => {
     toggleSyncScrolling: () => fired.push("toggleSyncScrolling"),
     restoreTabs: () => false,
     setRestoreTabs: (restore) => fired.push(`setRestoreTabs:${restore}`),
+    languageChoice: () => "system",
+    setLanguageChoice: (choice) => fired.push(`setLanguageChoice:${choice}`),
     tabsToReopen: () => 0,
     reopenLastTabs: () => fired.push("reopenLastTabs"),
     recentDocuments: () => 0,

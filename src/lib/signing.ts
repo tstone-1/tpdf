@@ -86,6 +86,223 @@ import {
 } from "./signtimestamp";
 import { LOCK_ANSWERS, LOCK_NAME, LOCK_QUESTION, LOCK_UNANSWERED, lockOf } from "./signlock";
 import { button, footer as buttons, option, paragraph, section } from "./dialogparts";
+import { catalog } from "./i18n";
+
+/** A verdict as a list of signatures names it; `none` is a signature nothing checked. */
+type ListedVerdict = Integrity["verdict"] | "none";
+
+/**
+ * The signing's words. The American half of {@link afterSigning} is restated
+ * in Rust (`words.rs`) for `tpdf sign`, and `cliwording.test.ts` holds the two
+ * equal word for word. What the worker or the OS says --- why a certificate is
+ * not offered, why a timestamp did not come, the dates it reads back --- is
+ * shown as it arrives.
+ */
+const TEXT = catalog({
+  "en-US": {
+    locked: " The signature locks the document: no changes are permitted after it.",
+    withoutCertificate:
+      " To put a picture of your signature on a page without a certificate, use " +
+      "“Place a signature picture, without a certificate…” — it identifies nobody and locks nothing.",
+    notWritten: "Not signed: nothing was written.",
+    place: "Drag a rectangle where the signature should appear. Esc cancels signing.",
+    unsaved:
+      "Save your changes first: a signature covers the file as it is on disk, and this " +
+      "document has edits that are not in it yet.",
+    selfSigned: "Self-signed",
+    issuedBy: (issuer: string): string => `Issued by ${issuer}`,
+    choiceDetail: (from: string, day: string, method: string): string =>
+      `${from}, expires ${day} (${method})`,
+    noCertificate: "No certificate that can sign was found",
+    noneLinux: (lead: string): string =>
+      `${lead} on a smart card or token, or in a certificate file ` +
+      "you added. Add a certificate file for signing… adds one.",
+    noneStore: (lead: string): string => `${lead} in your keychain or certificate store.`,
+    notOffered: (reasons: string): string => ` Found but not offered — ${reasons}.`,
+    chooserIntro: "The signed document is saved as a new file; the original is not changed.",
+    keyHintLinux:
+      "tpdf asks for a smart card's PIN or a certificate file's password in a window of its own, " +
+      "passes it to the card or the file, and keeps no copy.",
+    keyHint: "Your operating system may ask for access to the key or for a PIN; tpdf never sees it.",
+    verdict: (verdict: ListedVerdict, why: string): string => {
+      switch (verdict) {
+        case "none":
+          return "not checked";
+        case "intact":
+          return "intact";
+        case "weak":
+          return "unchanged under SHA-1 only";
+        case "altered":
+          return "altered";
+        case "broken":
+          return "broken";
+        case "unchecked":
+          return `not checked (${why || "no reason given"})`;
+      }
+    },
+    notInFile: "it is not in the file",
+    notIntact: (name: string, field: string, reason: string): string =>
+      `${name} was written, but reading it back did not find the new signature ` +
+      `${field} intact: ${reason}. Do not rely on that copy.`,
+    notCheckedAgain: (name: string, field: string, why: string): string =>
+      `${name} was written. The new signature ${field} was intact when tpdf checked it ` +
+      `before writing; reading the file back did not check it again, because ${why}.`,
+    signedAs: (field: string, name: string): string =>
+      `Signed as ${field} and saved to ${name}. Read back after writing, the signature is intact.`,
+    timestampPart: (value: string): string => ` Timestamp: ${value}`,
+    authorityPart: (value: string): string => ` Timestamp authority: ${value}`,
+    revocationPart: (value: string): string => ` Revocation: ${value}`,
+    authorityRevocationPart: (value: string): string => ` Authority revocation: ${value}`,
+    archivePart: (listed: string): string => ` Archive timestamp: ${listed}.`,
+    earlierPart: (count: number, listed: string): string =>
+      ` Earlier signature${count === 1 ? "" : "s"}: ${listed}.`,
+    neither: "The signing answered neither a signature nor a reason.",
+    signDocument: "Sign document",
+    certificate: "Certificate",
+    appearance: "Appearance",
+    visible: "Visible",
+    invisible: "Invisible",
+    invisibleHint: "The signature is in the file, not on a page.",
+    dragHint: "You choose what it shows, with a preview, then drag a rectangle on a page.",
+    fieldHint: (field: string): string =>
+      `You choose what it shows, with a preview; it is drawn in the field ${field}.`,
+    timestamp: "Timestamp",
+    noTimestamp: "No timestamp, the time is your computer's clock",
+    anotherAuthority: "Another authority…",
+    stampNote:
+      "A timestamp authority confirms when the signature was made. tpdf sends it a hash " +
+      "of the new signature, nothing of the document, and writes nothing if no timestamp " +
+      "that checks out comes back.",
+    authorityAddress: "Timestamp authority address",
+    longTerm: "Keep it verifiable after the certificates expire",
+    longTermHint:
+      "tpdf also asks the certificate authorities whether the certificates are revoked, adds " +
+      "their answers to the document, and asks the timestamp authority once more for a " +
+      "timestamp over the whole. Needs a timestamp.",
+    cancel: "Cancel",
+    sign: "Sign…",
+    tryAgain: "Try again",
+    stampLabel: "No timestamp",
+    stampHeading: "The timestamp could not be added",
+    stampHelp:
+      "Nothing has been written. The signature is made; you can try the timestamp again, " +
+      "or save it without a timestamp, and the key is not asked for again either way.",
+    stampWithout: "Sign without a timestamp",
+    longTermLabel: "No long-term validation data",
+    longTermHeading: "The long-term validation data could not be added",
+    longTermHelp:
+      "Nothing has been written. The signature is made and timestamped; you can try again, " +
+      "or save it without the long-term data — it keeps its timestamp. The key is not asked " +
+      "for again either way.",
+    longTermWithout: "Sign without long-term data",
+  },
+  "de-DE": {
+    locked: " Die Signatur sperrt das Dokument: Nach ihr sind keine Änderungen erlaubt.",
+    withoutCertificate:
+      " Um ein Bild deiner Unterschrift ohne Zertifikat auf eine Seite zu setzen, verwende " +
+      "„Unterschriftsbild ohne Zertifikat platzieren...“ — es identifiziert niemanden und sperrt nichts.",
+    notWritten: "Nicht signiert: Es wurde nichts geschrieben.",
+    place: "Ziehe ein Rechteck dort auf, wo die Signatur erscheinen soll. Esc bricht das Signieren ab.",
+    unsaved:
+      "Speichere zuerst deine Änderungen: Eine Signatur erfasst die Datei so, wie sie auf dem " +
+      "Datenträger liegt, und dieses Dokument hat Änderungen, die noch nicht darin sind.",
+    selfSigned: "Selbst signiert",
+    issuedBy: (issuer: string): string => `Ausgestellt von ${issuer}`,
+    // The worker gives the day as YYYY-MM-DD; the window shows DD.MM.YYYY.
+    choiceDetail: (from: string, day: string, method: string): string => {
+      const parts = /^(\d{4})-(\d{2})-(\d{2})$/.exec(day);
+      const shown = parts ? `${parts[3]}.${parts[2]}.${parts[1]}` : day;
+      return `${from}, läuft am ${shown} ab (${method})`;
+    },
+    noCertificate: "Es wurde kein Zertifikat gefunden, das signieren kann",
+    noneLinux: (lead: string): string =>
+      `${lead}, weder auf einer Smartcard oder einem Token noch in einer Zertifikatsdatei, die ` +
+      "du hinzugefügt hast. „Zertifikatsdatei zum Signieren hinzufügen…“ fügt eine hinzu.",
+    noneStore: (lead: string): string => `${lead}, weder im Schlüsselbund noch im Zertifikatsspeicher.`,
+    notOffered: (reasons: string): string => ` Gefunden, aber nicht angeboten — ${reasons}.`,
+    chooserIntro: "Das signierte Dokument wird als neue Datei gespeichert; das Original bleibt unverändert.",
+    keyHintLinux:
+      "tpdf fragt in einem eigenen Fenster nach der PIN einer Smartcard oder dem Passwort einer " +
+      "Zertifikatsdatei, gibt sie an die Karte oder die Datei weiter und behält keine Kopie.",
+    keyHint:
+      "Dein Betriebssystem fragt eventuell nach dem Zugriff auf den Schlüssel oder nach einer PIN; " +
+      "tpdf bekommt sie nie zu sehen.",
+    verdict: (verdict: ListedVerdict, why: string): string => {
+      switch (verdict) {
+        case "none":
+          return "nicht geprüft";
+        case "intact":
+          return "intakt";
+        case "weak":
+          return "unverändert nur unter SHA-1";
+        case "altered":
+          return "verändert";
+        case "broken":
+          return "fehlerhaft";
+        case "unchecked":
+          return `nicht geprüft (${why || "kein Grund angegeben"})`;
+      }
+    },
+    notInFile: "sie ist nicht in der Datei",
+    notIntact: (name: string, field: string, reason: string): string =>
+      `${name} wurde geschrieben, aber beim Zurücklesen war die neue Signatur ${field} nicht ` +
+      `intakt: ${reason}. Verlass dich nicht auf diese Kopie.`,
+    // "denn", not "weil": the reason is a main clause in its own words.
+    notCheckedAgain: (name: string, field: string, why: string): string =>
+      `${name} wurde geschrieben. Die neue Signatur ${field} war intakt, als tpdf sie vor dem ` +
+      `Schreiben geprüft hat; beim Zurücklesen der Datei wurde sie nicht erneut geprüft, denn ${why}.`,
+    signedAs: (field: string, name: string): string =>
+      `Als ${field} signiert und in ${name} gespeichert. Beim Zurücklesen nach dem Schreiben ist ` +
+      "die Signatur intakt.",
+    timestampPart: (value: string): string => ` Zeitstempel: ${value}`,
+    authorityPart: (value: string): string => ` Zeitstempeldienst: ${value}`,
+    revocationPart: (value: string): string => ` Widerruf: ${value}`,
+    authorityRevocationPart: (value: string): string => ` Widerruf des Zeitstempeldienstes: ${value}`,
+    archivePart: (listed: string): string => ` Archivzeitstempel: ${listed}.`,
+    earlierPart: (count: number, listed: string): string =>
+      ` ${count === 1 ? "Frühere Signatur" : "Frühere Signaturen"}: ${listed}.`,
+    neither: "Das Signieren lieferte weder eine Signatur noch einen Grund.",
+    signDocument: "Dokument signieren",
+    certificate: "Zertifikat",
+    appearance: "Erscheinungsbild",
+    visible: "Sichtbar",
+    invisible: "Unsichtbar",
+    invisibleHint: "Die Signatur ist in der Datei enthalten, nicht auf einer Seite sichtbar.",
+    dragHint: "Du wählst mit einer Vorschau, was sie zeigt, und ziehst dann ein Rechteck auf einer Seite auf.",
+    fieldHint: (field: string): string =>
+      `Du wählst mit einer Vorschau, was sie zeigt; sie wird im Feld ${field} gezeichnet.`,
+    timestamp: "Zeitstempel",
+    noTimestamp: "Kein Zeitstempel, die Zeit stammt von der Uhr deines Computers",
+    anotherAuthority: "Anderer Zeitstempeldienst…",
+    stampNote:
+      "Ein Zeitstempeldienst bestätigt, wann die Signatur erstellt wurde. tpdf sendet ihm einen " +
+      "Hash der neuen Signatur, nichts vom Dokument, und schreibt nichts, wenn kein Zeitstempel " +
+      "zurückkommt, der die Prüfung besteht.",
+    authorityAddress: "Adresse des Zeitstempeldienstes",
+    longTerm: "Nach Ablauf der Zertifikate prüfbar halten",
+    longTermHint:
+      "tpdf fragt außerdem die Zertifizierungsstellen, ob die Zertifikate widerrufen sind, fügt " +
+      "ihre Antworten dem Dokument hinzu und bittet den Zeitstempeldienst noch einmal um einen " +
+      "Zeitstempel über das Ganze. Erfordert einen Zeitstempel.",
+    cancel: "Abbrechen",
+    sign: "Signieren…",
+    tryAgain: "Erneut versuchen",
+    stampLabel: "Kein Zeitstempel",
+    stampHeading: "Der Zeitstempel konnte nicht hinzugefügt werden",
+    stampHelp:
+      "Es wurde nichts geschrieben. Die Signatur ist erstellt; du kannst den Zeitstempel erneut " +
+      "versuchen oder sie ohne Zeitstempel speichern. In beiden Fällen wird der Schlüssel nicht " +
+      "erneut angefragt.",
+    stampWithout: "Ohne Zeitstempel signieren",
+    longTermLabel: "Keine Langzeitvalidierungsdaten",
+    longTermHeading: "Die Langzeitvalidierungsdaten konnten nicht hinzugefügt werden",
+    longTermHelp:
+      "Es wurde nichts geschrieben. Die Signatur ist erstellt und hat einen Zeitstempel; du kannst " +
+      "es erneut versuchen oder sie ohne die Langzeitdaten speichern — sie behält ihren " +
+      "Zeitstempel. In beiden Fällen wird der Schlüssel nicht erneut angefragt.",
+    longTermWithout: "Ohne Langzeitdaten signieren",
+  },
+});
 
 /** A certificate the chooser may offer. Mirrors `sign_cms::Choice`. */
 export interface Choice {
@@ -189,18 +406,16 @@ export type AfterStamp = "retry" | "without" | null;
  * What the sentence after signing adds for a signature that read back as
  * locking the document. `words::LOCKED`, word for word.
  */
-export const LOCKED = " The signature locks the document: no changes are permitted after it.";
+export const LOCKED = TEXT().locked;
 
 /**
  * Where a reader with no certificate is sent: the picture of a signature that
  * needs none, by the name its command has.
  */
-export const WITHOUT_CERTIFICATE =
-  " To put a picture of your signature on a page without a certificate, use " +
-  "“Place a signature picture, without a certificate…” — it identifies nobody and locks nothing.";
+export const WITHOUT_CERTIFICATE = TEXT().withoutCertificate;
 
 /** What is said when the reader cancels after a timestamp did not come. */
-export const NOT_WRITTEN = "Not signed: nothing was written.";
+export const NOT_WRITTEN = TEXT().notWritten;
 
 /** Where a visible signature goes. Mirrors `commands::sign::Placement`. */
 export interface Placement {
@@ -221,13 +436,10 @@ export interface Placement {
  * the chooser that asked for it has just closed and nothing else on screen says
  * the next drag is a signature.
  */
-export const PLACE =
-  "Drag a rectangle where the signature should appear. Esc cancels signing.";
+export const PLACE = TEXT().place;
 
 /** The refusal for a document with edits nobody has saved. */
-export const UNSAVED =
-  "Save your changes first: a signature covers the file as it is on disk, and this " +
-  "document has edits that are not in it yet.";
+export const UNSAVED = TEXT().unsaved;
 
 /** The name the save panel suggests: `report.pdf` becomes `report-signed.pdf`. */
 export function signedName(openPath: string): string {
@@ -247,8 +459,9 @@ function day(expires: string): string {
  * twice in a row.
  */
 export function choiceDetail(choice: Choice): string {
-  const from = choice.issuer === choice.subject ? "Self-signed" : `Issued by ${choice.issuer}`;
-  return `${from}, expires ${day(choice.expires)} (${choice.method})`;
+  const said = TEXT();
+  const from = choice.issuer === choice.subject ? said.selfSigned : said.issuedBy(choice.issuer);
+  return said.choiceDetail(from, day(choice.expires), choice.method);
 }
 
 /**
@@ -256,7 +469,7 @@ export function choiceDetail(choice: Choice): string {
  * Exported for `fieldcheck.ts`, which has to tell this answer from any other
  * failure that mentions a certificate.
  */
-export const NO_CERTIFICATE = "No certificate that can sign was found";
+export const NO_CERTIFICATE = TEXT().noCertificate;
 
 /**
  * What to say when there is nothing to choose from.
@@ -268,17 +481,15 @@ export const NO_CERTIFICATE = "No certificate that can sign was found";
 export function nothingToChoose(choices: Choices, linux = isLinux()): string {
   // Linux has no keychain or certificate store: a smart card is read through
   // PKCS#11 and a certificate file is added to tpdf (`certfiles.rs`).
-  const none = linux
-    ? `${NO_CERTIFICATE} on a smart card or token, or in a certificate file ` +
-      "you added. Add a certificate file for signing\u2026 adds one."
-    : `${NO_CERTIFICATE} in your keychain or certificate store.`;
+  const none = linux ? TEXT().noneLinux(NO_CERTIFICATE) : TEXT().noneStore(NO_CERTIFICATE);
   if (choices.skipped.length === 0) return none + WITHOUT_CERTIFICATE;
+  // Each reason is the backend's clause (`sign_cms::Skipped`), as it came.
   const reasons = choices.skipped.map((s) => `${s.subject}: ${s.why}`).join("; ");
-  return `${none} Found but not offered — ${reasons}.${WITHOUT_CERTIFICATE}`;
+  return `${none}${TEXT().notOffered(reasons)}${WITHOUT_CERTIFICATE}`;
 }
 
 /** The chooser's line under its heading. */
-export const CHOOSER_INTRO = "The signed document is saved as a new file; the original is not changed.";
+export const CHOOSER_INTRO = TEXT().chooserIntro;
 
 /**
  * The line under the certificates: who asks for the PIN. On macOS and Windows
@@ -287,27 +498,13 @@ export const CHOOSER_INTRO = "The signed document is saved as a new file; the or
  * certificate file (`pin_prompt.rs`).
  */
 export function keyHint(linux = isLinux()): string {
-  return linux
-    ? "tpdf asks for a smart card's PIN or a certificate file's password in a window of its own, " +
-        "passes it to the card or the file, and keeps no copy."
-    : "Your operating system may ask for access to the key or for a PIN; tpdf never sees it.";
+  return linux ? TEXT().keyHintLinux : TEXT().keyHint;
 }
 
 /** A verdict in a few words, for a list of signatures. */
 function verdict(integrity: Integrity | null): string {
-  if (!integrity) return "not checked";
-  switch (integrity.verdict) {
-    case "intact":
-      return "intact";
-    case "weak":
-      return "unchanged under SHA-1 only";
-    case "altered":
-      return "altered";
-    case "broken":
-      return "broken";
-    case "unchecked":
-      return `not checked (${integrity.why ? WHY[integrity.why] : "no reason given"})`;
-  }
+  if (!integrity) return TEXT().verdict("none", "");
+  return TEXT().verdict(integrity.verdict, integrity.why ? WHY[integrity.why] : "");
 }
 
 /**
@@ -335,17 +532,13 @@ export function afterSigning(signed: Signed): string {
   const archives = signed.signatures.filter((s) => s.archive);
   const unchecked =
     ours?.integrity?.verdict === "unchecked" && ours.integrity.why === "budget";
+  const said = TEXT();
   if (!ours || (ours.integrity?.verdict !== "intact" && !unchecked)) {
-    return (
-      `${name} was written, but reading it back did not find the new signature ` +
-      `${signed.field} intact: ${ours ? verdict(ours.integrity) : "it is not in the file"}. ` +
-      "Do not rely on that copy."
-    );
+    return said.notIntact(name, signed.field, ours ? verdict(ours.integrity) : said.notInFile);
   }
   let text = unchecked
-    ? `${name} was written. The new signature ${signed.field} was intact when tpdf checked it ` +
-      `before writing; reading the file back did not check it again, because ${WHY.budget}.`
-    : `Signed as ${signed.field} and saved to ${name}. Read back after writing, the signature is intact.`;
+    ? said.notCheckedAgain(name, signed.field, WHY.budget)
+    : said.signedAs(signed.field, name);
   // The lock, as read back and only beside an intact verdict: a signature not
   // checked again was not held to its lock either (`commands::sign::read_back`).
   if (ours.lock === 1 && !unchecked) text += LOCKED;
@@ -359,30 +552,30 @@ export function afterSigning(signed: Signed): string {
   const stamp = unchecked ? null : ours.timestamp;
   if (stamp) {
     const by = stamp.authority?.subject_cn || stamp.authority?.subject || "";
-    text += ` Timestamp: ${timestampRow(stamp.when, by, stamp.integrity, false).value}`;
+    text += said.timestampPart(timestampRow(stamp.when, by, stamp.integrity, false).value);
     const authority = authorityRow(stamp.trust, stamp.authority?.from, stamp.authority?.until);
-    if (authority) text += ` Timestamp authority: ${authority.value}`;
+    if (authority) text += said.authorityPart(authority.value);
   }
   // Long-term data: said only when the file's own data answers `good`, which
   // is what a signing that added it must read back as. A signing that added
   // none reads `none`, and says nothing more than it did before.
   if (ours.revocation?.standing === "good") {
     const signer = revocationRow(ours.revocation);
-    if (signer) text += ` Revocation: ${signer.value}`;
+    if (signer) text += said.revocationPart(signer.value);
     const authority = revocationRow(stamp?.revocation ?? null, true);
     if (authority && stamp?.revocation?.standing === "good") {
-      text += ` Authority revocation: ${authority.value}`;
+      text += said.authorityRevocationPart(authority.value);
     }
   }
   // The archive timestamp a long-term signing adds after the signature: named
   // apart, because it is neither earlier nor a signature anybody made.
   if (archives.length > 0) {
     const listed = archives.map((s) => `${s.field} ${verdict(s.integrity)}`).join(", ");
-    text += ` Archive timestamp: ${listed}.`;
+    text += said.archivePart(listed);
   }
   if (earlier.length > 0) {
     const listed = earlier.map((s) => `${s.field} ${verdict(s.integrity)}`).join(", ");
-    text += ` Earlier signature${earlier.length === 1 ? "" : "s"}: ${listed}.`;
+    text += said.earlierPart(earlier.length, listed);
   }
   return text;
 }
@@ -512,7 +705,7 @@ export async function signDocument(shell: SigningShell, field: SignTarget | null
           next === "retry" && longTerm,
         );
   }
-  if (!outcome.signed) throw new Error("The signing answered neither a signature nor a reason.");
+  if (!outcome.signed) throw new Error(TEXT().neither);
   shell.completed?.(outcome.signed);
   return afterSigning(outcome.signed);
 }
@@ -540,15 +733,16 @@ export function askIdentity(
   // Until 2026-10-16 each option was one sentence, "option — explanation",
   // all at one size and colour, and the reader saw a wall of wrapped text.
   dialog.className = "sign-identity-dialog tpdf-dialog";
-  dialog.setAttribute("aria-label", "Sign document");
+  const said = TEXT();
+  dialog.setAttribute("aria-label", said.signDocument);
   const heading = document.createElement("h2");
-  heading.textContent = "Sign document";
+  heading.textContent = said.signDocument;
   const intro = paragraph("tpdf-dialog-intro", CHOOSER_INTRO);
 
-  const certificates = section("Certificate");
+  const certificates = section(said.certificate);
   const list = document.createElement("div");
   list.setAttribute("role", "radiogroup");
-  list.setAttribute("aria-label", "Certificate");
+  list.setAttribute("aria-label", said.certificate);
   list.className = "tpdf-dialog-stack";
   const radios = choices.map((choice, at) => {
     const radio = document.createElement("input");
@@ -565,10 +759,10 @@ export function askIdentity(
   // was, as what signing did before there was a choice; a reader who signs
   // expects to see the signature on the page, and one who does not is one
   // click from the other.
-  const appearanceSection = section("Appearance");
+  const appearanceSection = section(said.appearance);
   const shows = document.createElement("div");
   shows.setAttribute("role", "radiogroup");
-  shows.setAttribute("aria-label", "Appearance");
+  shows.setAttribute("aria-label", said.appearance);
   shows.className = "tpdf-segmented";
   const appearance = (value: string, text: string, checked: boolean) => {
     const radio = document.createElement("input");
@@ -583,16 +777,16 @@ export function askIdentity(
     shows.append(label);
     return radio;
   };
-  const visible = appearance("visible", "Visible", true);
-  const invisible = appearance("invisible", "Invisible", false);
+  const visible = appearance("visible", said.visible, true);
+  const invisible = appearance("invisible", said.invisible, false);
   // In a signature field the field is where it shows and nothing is dragged.
   const appearanceHint = paragraph("tpdf-dialog-hint", "");
   const syncAppearance = () => {
     appearanceHint.textContent = invisible.checked
-      ? "The signature is in the file, not on a page."
+      ? said.invisibleHint
       : field === null
-        ? "You choose what it shows, with a preview, then drag a rectangle on a page."
-        : `You choose what it shows, with a preview; it is drawn in the field ${field}.`;
+        ? said.dragHint
+        : said.fieldHint(field);
   };
   for (const radio of [visible, invisible]) radio.addEventListener("change", syncAppearance);
   syncAppearance();
@@ -603,27 +797,22 @@ export function askIdentity(
   // nothing is asked of it until they press Sign. A list rather than a radio
   // per authority, which was five rows for one setting.
   const remembered = readStampChoice(storage, undefined, preselectedStamp);
-  const stamps = section("Timestamp");
+  const stamps = section(said.timestamp);
   const stampList = document.createElement("select");
   stampList.name = "sign-timestamp";
-  stampList.setAttribute("aria-label", "Timestamp");
+  stampList.setAttribute("aria-label", said.timestamp);
   const entry = (value: string, text: string) => {
     const one = document.createElement("option");
     one.value = value;
     one.textContent = text;
     stampList.append(one);
   };
-  entry("none", "No timestamp, the time is your computer's clock");
+  entry("none", said.noTimestamp);
   for (const server of SERVERS) entry(server.name, server.label);
-  entry("other", "Another authority\u2026");
+  entry("other", said.anotherAuthority);
   // After the entries exist: a list's value names one of its entries.
   stampList.value = remembered.server;
-  const stampNote = paragraph(
-    "tpdf-dialog-hint",
-    "A timestamp authority confirms when the signature was made. tpdf sends it a hash " +
-      "of the new signature, nothing of the document, and writes nothing if no timestamp " +
-      "that checks out comes back.",
-  );
+  const stampNote = paragraph("tpdf-dialog-hint", said.stampNote);
   // The address, shown only while *another authority* is chosen, with the
   // line that says what is wrong with it.
   const other = document.createElement("div");
@@ -632,7 +821,7 @@ export function askIdentity(
   otherUrl.type = "url";
   otherUrl.value = remembered.url;
   otherUrl.placeholder = "https://";
-  otherUrl.setAttribute("aria-label", "Timestamp authority address");
+  otherUrl.setAttribute("aria-label", said.authorityAddress);
   const problem = document.createElement("p");
   problem.setAttribute("role", "alert");
   other.append(otherUrl, problem);
@@ -642,13 +831,7 @@ export function askIdentity(
   longTerm.type = "checkbox";
   longTerm.name = "sign-long-term";
   longTerm.checked = readLongTerm(storage);
-  const longTermLabel = option(
-    longTerm,
-    "Keep it verifiable after the certificates expire",
-    "tpdf also asks the certificate authorities whether the certificates are revoked, adds " +
-      "their answers to the document, and asks the timestamp authority once more for a " +
-      "timestamp over the whole. Needs a timestamp.",
-  );
+  const longTermLabel = option(longTerm, said.longTerm, said.longTermHint);
   const syncStamp = () => {
     longTerm.disabled = stampList.value === "none";
     other.hidden = stampList.value !== "other";
@@ -674,8 +857,8 @@ export function askIdentity(
   const unanswered = document.createElement("p");
   unanswered.setAttribute("role", "alert");
   locks.append(unanswered);
-  const cancel = button("Cancel");
-  const next = button("Sign…", true);
+  const cancel = button(said.cancel);
+  const next = button(said.sign, true);
   dialog.append(heading, intro, certificates, appearanceSection, stamps, locks, buttons(cancel, next));
   document.body.append(dialog);
   return new Promise((resolve) => {
@@ -747,15 +930,14 @@ export function askIdentity(
  * they asked for.
  */
 export function askAfterStampFailed(why: string): Promise<AfterStamp> {
+  const said = TEXT();
   return askAfter({
     className: "sign-timestamp-dialog",
-    label: "No timestamp",
-    heading: "The timestamp could not be added",
+    label: said.stampLabel,
+    heading: said.stampHeading,
     why,
-    help:
-      "Nothing has been written. The signature is made; you can try the timestamp again, " +
-      "or save it without a timestamp, and the key is not asked for again either way.",
-    without: "Sign without a timestamp",
+    help: said.stampHelp,
+    without: said.stampWithout,
   });
 }
 
@@ -766,16 +948,14 @@ export function askAfterStampFailed(why: string): Promise<AfterStamp> {
  * authority is asked again. Cancel is the default, and Escape is Cancel.
  */
 export function askAfterLongTermFailed(why: string): Promise<AfterStamp> {
+  const said = TEXT();
   return askAfter({
     className: "sign-long-term-dialog",
-    label: "No long-term validation data",
-    heading: "The long-term validation data could not be added",
+    label: said.longTermLabel,
+    heading: said.longTermHeading,
     why,
-    help:
-      "Nothing has been written. The signature is made and timestamped; you can try again, " +
-      "or save it without the long-term data — it keeps its timestamp. The key is not asked " +
-      "for again either way.",
-    without: "Sign without long-term data",
+    help: said.longTermHelp,
+    without: said.longTermWithout,
   });
 }
 
@@ -797,13 +977,14 @@ function askAfter(question: AfterQuestion): Promise<AfterStamp> {
   dialog.setAttribute("aria-label", question.label);
   const heading = document.createElement("h2");
   heading.textContent = question.heading;
+  // The reason is the backend's sentence, as it came.
   const reason = paragraph("", `${question.why}.`);
   const help = paragraph("tpdf-dialog-intro", question.help);
-  const cancel = button("Cancel");
+  const cancel = button(TEXT().cancel);
   const without = button(question.without);
   // Try again is the one drawn as the dialog's work; Cancel keeps the focus,
   // so Enter on a dialog nobody read still writes nothing.
-  const retry = button("Try again", true);
+  const retry = button(TEXT().tryAgain, true);
   dialog.append(heading, reason, help, buttons(cancel, without, retry));
   document.body.append(dialog);
   return new Promise((resolve) => {

@@ -10,25 +10,55 @@
 
 import { defaults, judge, POSITION_TITLES, POSITIONS, type AddedText, type Kind, type Position } from "./addtext";
 import { button, footer, paragraph, row, section } from "./dialogparts";
+import { catalog } from "./i18n";
 
 /** Class on the dialog, so the check harness can find it. */
 export const DIALOG_CLASS = "tpdf-add-text";
 
+const TEXT = catalog({
+  "en-US": {
+    numbersTitle: "Save a copy with page numbers",
+    numbersIntro: "{page} is each page's number and {pages} how many pages are numbered. Add words around them for a header or a footer.",
+    firstNumber: "First number",
+    watermarkTitle: "Save a copy with a watermark",
+    watermarkIntro: "The text is written across each page, turned and see-through, over what is on it.",
+    opacityPercent: "Opacity, percent",
+    chooseWhere: "Choose where to save...",
+    text: "Text",
+    position: "Position",
+    sizePoints: "Size, points",
+    placing: "Placing",
+    pages: "Pages",
+    everyPage: "Every page",
+    pagesHint: "Leave empty for every page, or type 2-10 or 1,3,5.",
+    cancel: "Cancel",
+  },
+  "de-DE": {
+    numbersTitle: "Kopie mit Seitenzahlen speichern",
+    numbersIntro: "{page} ist die Nummer jeder Seite und {pages} die Anzahl der nummerierten Seiten. Ergänze Wörter darum herum für eine Kopf- oder Fußzeile.",
+    firstNumber: "Erste Zahl",
+    watermarkTitle: "Kopie mit Wasserzeichen speichern",
+    watermarkIntro: "Der Text wird quer über jede Seite geschrieben, gedreht und durchscheinend, über ihren Inhalt.",
+    opacityPercent: "Deckkraft, Prozent",
+    chooseWhere: "Speicherort wählen...",
+    text: "Text",
+    position: "Position",
+    sizePoints: "Größe, Punkt",
+    placing: "Platzierung",
+    pages: "Seiten",
+    everyPage: "Alle Seiten",
+    pagesHint: "Leer lassen für alle Seiten, oder 2-10 oder 1,3,5 eingeben.",
+    cancel: "Abbrechen",
+  },
+});
+
 /** What each kind asks, beside the text and the position. */
-const WORDING: Record<Kind, { title: string; intro: string; extra: string; save: string }> = {
-  numbers: {
-    title: "Save a copy with page numbers",
-    intro: "{page} is each page's number and {pages} how many pages are numbered. Add words around them for a header or a footer.",
-    extra: "First number",
-    save: "Choose where to save...",
-  },
-  watermark: {
-    title: "Save a copy with a watermark",
-    intro: "The text is written across each page, turned and see-through, over what is on it.",
-    extra: "Opacity, percent",
-    save: "Choose where to save...",
-  },
-};
+function wordingOf(kind: Kind): { title: string; intro: string; extra: string; save: string } {
+  const text = TEXT();
+  return kind === "numbers"
+    ? { title: text.numbersTitle, intro: text.numbersIntro, extra: text.firstNumber, save: text.chooseWhere }
+    : { title: text.watermarkTitle, intro: text.watermarkIntro, extra: text.opacityPercent, save: text.chooseWhere };
+}
 
 export class AddTextDialog {
   private readonly dialog: HTMLDialogElement;
@@ -53,44 +83,45 @@ export class AddTextDialog {
     this.heading = document.createElement("h2");
     this.intro = paragraph("tpdf-dialog-intro", "");
 
-    this.text = this.input("text", "Text");
-    const words = section("Text");
+    const text = TEXT();
+    this.text = this.input("text", text.text);
+    const words = section(text.text);
     words.append(this.text);
 
     this.position = document.createElement("select");
-    this.position.setAttribute("aria-label", "Position");
+    this.position.setAttribute("aria-label", text.position);
     for (const position of POSITIONS) {
       const option = document.createElement("option");
       option.value = position;
       option.textContent = POSITION_TITLES[position];
       this.position.append(option);
     }
-    this.size = this.input("text", "Size, points");
+    this.size = this.input("text", text.sizePoints);
     this.size.inputMode = "decimal";
     this.size.style.width = "5em";
     this.extra = this.input("text", "");
     this.extra.inputMode = "decimal";
     this.extra.style.width = "5em";
     this.extraLabel = document.createElement("span");
-    const place = section("Placing");
+    const place = section(text.placing);
     const line = row();
-    line.append(this.labelled("Position", this.position), this.labelled("Size, points", this.size));
+    line.append(this.labelled(text.position, this.position), this.labelled(text.sizePoints, this.size));
     const second = document.createElement("label");
     second.append(this.extraLabel, this.extra);
     second.style.cssText = "display:inline-flex;gap:6px;align-items:center;";
     line.append(second);
     place.append(line);
 
-    this.pages = this.input("text", "Pages");
-    this.pages.placeholder = "Every page";
-    const which = section("Pages");
-    which.append(this.pages, paragraph("tpdf-dialog-hint", "Leave empty for every page, or type 2-10 or 1,3,5."));
+    this.pages = this.input("text", text.pages);
+    this.pages.placeholder = text.everyPage;
+    const which = section(text.pages);
+    which.append(this.pages, paragraph("tpdf-dialog-hint", text.pagesHint));
 
     this.problem = paragraph("tpdf-dialog-hint", "");
     this.problem.setAttribute("role", "alert");
     this.problem.style.minHeight = "1.45em";
 
-    const cancel = button("Cancel");
+    const cancel = button(text.cancel);
     this.save = button("", true);
     cancel.addEventListener("click", () => this.settle(null));
     this.save.addEventListener("click", () => this.submit());
@@ -132,7 +163,7 @@ export class AddTextDialog {
     this.kind = kind;
     this.count = pageCount;
     const start = defaults(kind);
-    const wording = WORDING[kind];
+    const wording = wordingOf(kind);
     this.heading.textContent = wording.title;
     this.dialog.setAttribute("aria-label", wording.title);
     this.intro.textContent = wording.intro;

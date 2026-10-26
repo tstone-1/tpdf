@@ -29,6 +29,87 @@
  * within the week of it being written.
  */
 
+import { catalog } from "./i18n";
+
+const TEXT = catalog({
+  "en-US": {
+    beforeReload:
+      "Reloading opens the file again and discards the edits you have not saved. " +
+      "Save a copy first to keep them.",
+    beforeRedactingInPlace: (name: string) =>
+      `Redacting removes the marked text from ${name} itself. There is no undo ` +
+      "and no original left afterwards. Save a copy first to keep one.",
+    afterCopyChanged:
+      "The file was written, but the original changed on disk while you had it open, " +
+      "so your edits were applied to the newer version. Check it before relying on it.",
+    regions: (n: number) => (n === 1 ? "1 region" : `${n} regions`),
+    removals: (n: number) => (n === 1 ? "1 removal" : `${n} removals`),
+    redactedClean: (removed: string) =>
+      `Redacted ${removed}. tpdf read the file back and none of the removed words are in it.`,
+    redactionNote: (notes: string) => ` Note: ${notes}.`,
+    redactionNotVerified: (removed: string, why: string) =>
+      `Redaction not verified. Redacted ${removed}, but tpdf could not prove the file is clean. Checks before adding the fill found: ` +
+      `${why}. Treat it as unredacted until you have checked it.`,
+    redactionAlsoChanged:
+      " The original also changed on disk while you had it open, so this was " +
+      "built from the newer version.",
+    rasterSaved: (name: string, regions: number) =>
+      `Saved ${name}. Created an image-only PDF with ` +
+      `${regions === 1 ? "1 masked region" : `${regions} masked regions`}. ` +
+      "The original is unchanged.",
+    splitNothing: "Nothing was written.",
+    splitWrote: (count: number, first: string, last: string) =>
+      `Wrote ${count} file${count === 1 ? "" : "s"}, ${first} to ${last}.`,
+    splitChanged:
+      " The original changed on disk while you had it open, so your edits " +
+      "were applied to the newer version. Check them before relying on them.",
+    merged: (files: number, pages: number) =>
+      `Merged this document with ${files === 1 ? "1 other document" : `${files} other documents`}` +
+      ` — ${pages === 1 ? "1 page" : `${pages} pages`} in all.`,
+    mergeChanged:
+      " The original changed on disk while you had it open, " +
+      "so your edits were applied to the newer version.",
+  },
+  "de-DE": {
+    beforeReload:
+      "Neu laden öffnet die Datei erneut und verwirft deine nicht gespeicherten Änderungen. " +
+      "Speichere zuerst eine Kopie, um sie zu behalten.",
+    beforeRedactingInPlace: (name: string) =>
+      `Das Schwärzen entfernt den markierten Text aus ${name} selbst. Es lässt sich nicht ` +
+      "rückgängig machen, und danach gibt es kein Original mehr. Speichere zuerst eine Kopie, um eines zu behalten.",
+    afterCopyChanged:
+      "Die Datei wurde geschrieben, aber das Original hat sich auf dem Datenträger geändert, während du es geöffnet hattest. " +
+      "Deine Änderungen wurden deshalb auf die neuere Fassung angewendet. Prüfe die Datei, bevor du dich auf sie verlässt.",
+    regions: (n: number) => (n === 1 ? "1 Bereich" : `${n} Bereiche`),
+    removals: (n: number) => (n === 1 ? "1 entfernte Stelle" : `${n} entfernte Stellen`),
+    redactedClean: (removed: string) =>
+      `Geschwärzt: ${removed}. tpdf hat die Datei erneut gelesen, und keines der entfernten Wörter ist darin enthalten.`,
+    redactionNote: (notes: string) => ` Hinweis: ${notes}.`,
+    redactionNotVerified: (removed: string, why: string) =>
+      `Schwärzung nicht bestätigt. Geschwärzt: ${removed}, aber tpdf konnte nicht nachweisen, dass die Datei sauber ist. ` +
+      `Die Prüfung vor dem Einfügen der Füllung ergab: ${why}. Behandle die Datei als ungeschwärzt, bis du sie geprüft hast.`,
+    redactionAlsoChanged:
+      " Außerdem hat sich das Original auf dem Datenträger geändert, während du es geöffnet hattest. " +
+      "Das Ergebnis beruht daher auf der neueren Fassung.",
+    rasterSaved: (name: string, regions: number) =>
+      `${name} gespeichert. Ein PDF nur aus Bildern mit ` +
+      `${regions === 1 ? "1 abgedecktem Bereich" : `${regions} abgedeckten Bereichen`} wurde erstellt. ` +
+      "Das Original ist unverändert.",
+    splitNothing: "Es wurde nichts geschrieben.",
+    splitWrote: (count: number, first: string, last: string) =>
+      `${count} ${count === 1 ? "Datei" : "Dateien"} geschrieben, ${first} bis ${last}.`,
+    splitChanged:
+      " Das Original hat sich auf dem Datenträger geändert, während du es geöffnet hattest. Deine Änderungen " +
+      "wurden deshalb auf die neuere Fassung angewendet. Prüfe sie, bevor du dich auf sie verlässt.",
+    merged: (files: number, pages: number) =>
+      `Dieses Dokument wurde mit ${files === 1 ? "1 anderen Dokument" : `${files} anderen Dokumenten`} zusammengeführt,` +
+      ` insgesamt ${pages === 1 ? "1 Seite" : `${pages} Seiten`}.`,
+    mergeChanged:
+      " Das Original hat sich auf dem Datenträger geändert, während du es geöffnet hattest. " +
+      "Deine Änderungen wurden deshalb auf die neuere Fassung angewendet.",
+  },
+});
+
 /**
  * One thing the window can offer to do about a refusal or a warning.
  *
@@ -171,9 +252,7 @@ export function afterRefusal(failure: RefusalShape): Prompt {
 export function beforeReload(dirty: boolean): Prompt | null {
   if (!dirty) return null;
   return {
-    message:
-      "Reloading opens the file again and discards the edits you have not saved. " +
-      "Save a copy first to keep them.",
+    message: TEXT().beforeReload,
     offers: ["saveCopy", "reload"],
   };
 }
@@ -224,9 +303,7 @@ export async function reloadAsked(host: {
  */
 export function beforeRedactingInPlace(name: string): Prompt {
   return {
-    message:
-      `Redacting removes the marked text from ${name} itself. There is no undo ` +
-      "and no original left afterwards. Save a copy first to keep one.",
+    message: TEXT().beforeRedactingInPlace(name),
     offers: ["saveCopy", "redact"],
   };
 }
@@ -250,8 +327,7 @@ export function afterCopy(copied: { changed?: boolean }): string | null {
     // calling it at all until 2026-08-24, while `lib.rs`'s own comment on
     // `extract_pages` said the reader "is told the same way". A sentence naming
     // one caller is how that stays wrong when it is fixed.
-    "The file was written, but the original changed on disk while you had it open, " +
-    "so your edits were applied to the newer version. Check it before relying on it."
+    TEXT().afterCopyChanged
   );
 }
 
@@ -284,22 +360,18 @@ export function afterRedaction(applied: {
   notes?: string[];
   changed?: boolean;
 }): string {
-  const removed = `${count(applied.regions, "region")}, ${count(applied.shows, "removal")}`;
+  const removed = `${TEXT().regions(applied.regions)}, ${TEXT().removals(applied.shows)}`;
   const verdict = applied.verified
-    ? `Redacted ${removed}. tpdf read the file back and none of the removed words are in it.` +
+    ? TEXT().redactedClean(removed) +
       // What the clean verdict covers less of than usual: `redact::Applied::notes`.
-      (applied.notes?.length ? ` Note: ${applied.notes.join("; ")}.` : "")
+      (applied.notes?.length ? TEXT().redactionNote(applied.notes.join("; ")) : "")
     : // Named as a failure to *prove* rather than as a failure to remove,
       // because those are different and only one of them is known. A blind spot
       // is a scan that could not look, and telling a reader their words are
       // still there when nothing said so would be its own confident lie.
-      `Redaction not verified. Redacted ${removed}, but tpdf could not prove the file is clean. Checks before adding the fill found: ` +
-      `${applied.why.join("; ")}. Treat it as unredacted until you have checked it.`;
+      TEXT().redactionNotVerified(removed, applied.why.join("; "));
   if (!applied.changed) return verdict;
-  return (
-    `${verdict} The original also changed on disk while you had it open, so this was ` +
-    "built from the newer version."
-  );
+  return `${verdict}${TEXT().redactionAlsoChanged}`;
 }
 
 /** Pending regions remain available after a copy, so an unverified copy can be retried. */
@@ -317,16 +389,7 @@ export function afterRedactionCopy(applied: Parameters<typeof afterRedaction>[0]
 
 /** What to say after creating the deliberately image-only redaction fallback. */
 export function afterRasterRedaction(applied: { regions: number }, name: string): string {
-  return (
-    `Saved ${name}. Created an image-only PDF with ` +
-    `${count(applied.regions, "masked region")}. ` +
-    "The original is unchanged."
-  );
-}
-
-/** `1 region` or `4 regions`, so a sentence does not say "1 regions". */
-function count(many: number, noun: string): string {
-  return many === 1 ? `1 ${noun}` : `${many} ${noun}s`;
+  return TEXT().rasterSaved(name, applied.regions);
 }
 
 /**
@@ -347,15 +410,9 @@ export function afterSplit(split: { changed?: boolean; paths: string[] }): strin
   const count = split.paths.length;
   const first = basenameOf(split.paths[0] ?? "");
   const last = basenameOf(split.paths[count - 1] ?? "");
-  const said =
-    count === 0
-      ? "Nothing was written."
-      : `Wrote ${count} file${count === 1 ? "" : "s"}, ${first} to ${last}.`;
+  const said = count === 0 ? TEXT().splitNothing : TEXT().splitWrote(count, first, last);
   if (!split.changed) return said;
-  return (
-    `${said} The original changed on disk while you had it open, so your edits ` +
-    "were applied to the newer version. Check them before relying on them."
-  );
+  return `${said}${TEXT().splitChanged}`;
 }
 
 /** The last path segment, for either platform's separator. */
@@ -388,15 +445,9 @@ export function afterMerge(merged: {
   pages: number;
   files: number;
 }): string {
-  const others =
-    merged.files === 1 ? "1 other document" : `${merged.files} other documents`;
-  const pages = merged.pages === 1 ? "1 page" : `${merged.pages} pages`;
-  const said = `Merged this document with ${others} — ${pages} in all.`;
+  const said = TEXT().merged(merged.files, merged.pages);
   if (!merged.changed) return said;
-  return (
-    `${said} The original changed on disk while you had it open, ` +
-    "so your edits were applied to the newer version."
-  );
+  return `${said}${TEXT().mergeChanged}`;
 }
 
 /** How a sentence of ours that was written to follow another begins. */

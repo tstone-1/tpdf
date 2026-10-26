@@ -15,6 +15,25 @@
  */
 
 import type { Quad } from "./markband";
+import { catalog } from "./i18n";
+
+const TEXT = catalog({
+  "en-US": {
+    needs: (count: number) => `needs ${["none", "one", "two", "three"][count] ?? count} picked`,
+    picked: "picked",
+    pickedNotice: (count: number) =>
+      `${count} picked. Arrange aligns, spaces and sizes them; the first one picked is the one the others follow.`,
+    pickAnother: "1 picked. Hold Shift and click another to arrange them together.",
+  },
+  "de-DE": {
+    needs: (count: number) =>
+      `erfordert ${["keine", "eine", "zwei", "drei"][count] ?? count} ausgewählte ${count === 1 ? "Markierung" : "Markierungen"}`,
+    picked: "ausgewählt",
+    pickedNotice: (count: number) =>
+      `${count} ausgewählt. Anordnen richtet sie aus, verteilt sie und passt ihre Größe an; die zuerst ausgewählte gibt den anderen die Richtung vor.`,
+    pickAnother: "1 ausgewählt. Halte Umschalt gedrückt und klicke eine weitere an, um sie gemeinsam anzuordnen.",
+  },
+});
 
 /** Every arrangement there is a command for. */
 export const ARRANGEMENTS = [
@@ -47,9 +66,6 @@ export function needs(how: Arrangement): number {
   return 2;
 }
 
-/** How many, as a reader is told it. */
-const COUNTED = ["none", "one", "two", "three"] as const;
-
 /**
  * What is missing for an arrangement with this many picked, in words that
  * follow its name ("Distribute horizontally needs three picked"), or `null`
@@ -59,7 +75,8 @@ const COUNTED = ["none", "one", "two", "three"] as const;
 export function lacks(how: Arrangement, picked: number): string | null {
   const want = needs(how);
   if (picked >= want) return null;
-  return `needs ${COUNTED[want] ?? want} picked`;
+  // How many is spelled out as a reader is told it: "three", not "3".
+  return TEXT().needs(want);
 }
 
 interface Size {
@@ -257,11 +274,14 @@ export class Picked {
 
 /** What a reader is told when they have picked several marks. */
 export function pickedNotice(count: number): string {
-  return `${count} picked. Arrange aligns, spaces and sizes them; the first one picked is the one the others follow.`;
+  return TEXT().pickedNotice(count);
 }
 
 /** What a reader is told with one mark picked and another on its page to pick with it. */
-export const PICK_ANOTHER = "1 picked. Hold Shift and click another to arrange them together.";
+export const PICK_ANOTHER = TEXT().pickAnother;
+
+/** Whether a status line is one of the two above: a count, then the word for picked. */
+const PICKED_LINE = new RegExp(`^\\d+ ${TEXT().picked}\\. `);
 
 /**
  * The status line after the picked marks changed.
@@ -276,5 +296,5 @@ export const PICK_ANOTHER = "1 picked. Hold Shift and click another to arrange t
 export function noticeAfterPick(count: number, more: boolean, current: string | null): string | null {
   if (count > 1) return pickedNotice(count);
   if (count === 1 && more) return PICK_ANOTHER;
-  return current !== null && /^\d+ picked\. /.test(current) ? null : current;
+  return current !== null && PICKED_LINE.test(current) ? null : current;
 }

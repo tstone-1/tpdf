@@ -21,37 +21,63 @@
  *   `tpdf.signatureLock`, is no longer read.
  */
 
+import { catalog } from "./i18n";
+
+const TEXT = catalog({
+  "en-US": {
+    question: "Does anyone else still need to sign this document?",
+    others: "Yes, leave it open for their signatures",
+    last: "No, I am the last to sign: lock it",
+    lastHint:
+      "The signature then says that nothing may change after it. A program that checks " +
+      "signatures reports any later change, and no further signature can be added.",
+    unanswered:
+      "Say whether anyone else still needs to sign: a locked document takes no further signature.",
+  },
+  "de-DE": {
+    question: "Muss noch jemand anderes dieses Dokument signieren?",
+    others: "Ja, für weitere Signaturen offen lassen",
+    last: "Nein, nach mir signiert niemand mehr: Dokument sperren",
+    lastHint:
+      "Die Signatur besagt dann, dass sich nach ihr nichts mehr ändern darf. Ein Programm, " +
+      "das Signaturen prüft, meldet jede spätere Änderung, und es kann keine weitere Signatur " +
+      "hinzugefügt werden.",
+    unanswered:
+      "Gib an, ob noch jemand anderes signieren muss: Ein gesperrtes Dokument nimmt keine " +
+      "weitere Signatur an.",
+  },
+});
+
+const T = TEXT();
+
 /** The radio group's name in the chooser. */
 export const LOCK_NAME = "sign-lock";
 
 /** The question, as the chooser asks it. */
-export const LOCK_QUESTION = "Does anyone else still need to sign this document?";
+export const LOCK_QUESTION = T.question;
 
 /**
  * The two answers: the radio's value, its words, the smaller line under them
  * (empty for none), and whether it locks. What a lock does stays on screen
  * beside the answer that makes one, as the line under it.
  */
-export const LOCK_ANSWERS = [
+export const LOCK_ANSWERS: readonly { value: string; text: string; hint: string; lock: boolean }[] = [
   {
     value: "others",
-    text: "Yes, leave it open for their signatures",
+    text: T.others,
     hint: "",
     lock: false,
   },
   {
     value: "last",
-    text: "No, I am the last to sign: lock it",
-    hint:
-      "The signature then says that nothing may change after it. A program that checks " +
-      "signatures reports any later change, and no further signature can be added.",
+    text: T.last,
+    hint: T.lastHint,
     lock: true,
   },
-] as const;
+];
 
 /** What *Sign…* says while the question has no answer. */
-export const LOCK_UNANSWERED =
-  "Say whether anyone else still needs to sign: a locked document takes no further signature.";
+export const LOCK_UNANSWERED = T.unanswered;
 
 /** Whether the chosen answer locks, or `null` while none is chosen or the value is not one of ours. */
 export function lockOf(answer: string | undefined): boolean | null {

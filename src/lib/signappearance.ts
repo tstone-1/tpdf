@@ -36,6 +36,63 @@
 
 import type { SignatureImage } from "./signature";
 import { button, footer, option, paragraph, row, section } from "./dialogparts";
+import { catalog } from "./i18n";
+
+/**
+ * The panel's words. The appearance itself --- *Digitally signed by*, the
+ * name and the signing time --- is drawn into the PDF by the worker
+ * (`sign_prepare/appearance.rs`) and is document content: its words and its
+ * date format are the worker's, whatever the window's language. So the German
+ * checkbox quotes the line as it will be drawn.
+ */
+const TEXT = catalog({
+  "en-US": {
+    title: "Signature appearance",
+    help:
+      "Choose what the signature shows. You place it on a page next; it is laid out again " +
+      "for the rectangle you drag.",
+    preview: "Preview of the signature",
+    image: "Image",
+    savedImage: "Saved signature",
+    drawnImage: "The one drawn now",
+    noImage: "No image",
+    draw: "Draw or import…",
+    text: "Text",
+    labelLine: "“Digitally signed by”",
+    nameLine: "Your name, from the certificate",
+    dateLine: "Date and time",
+    optional: "Optional",
+    reason: "Reason",
+    location: "Location",
+    remember: "Remember as my default",
+    cancel: "Cancel",
+    place: "Place on page…",
+    drawing: "Drawing the preview…",
+  },
+  "de-DE": {
+    title: "Erscheinungsbild der Signatur",
+    help:
+      "Wähle, was die Signatur zeigt. Danach platzierst du sie auf einer Seite; sie wird " +
+      "für das Rechteck, das du aufziehst, neu angeordnet.",
+    preview: "Vorschau der Signatur",
+    image: "Bild",
+    savedImage: "Gespeicherte Unterschrift",
+    drawnImage: "Die gerade gezeichnete",
+    noImage: "Kein Bild",
+    draw: "Zeichnen oder importieren…",
+    text: "Text",
+    labelLine: "Zeile „Digitally signed by“",
+    nameLine: "Dein Name aus dem Zertifikat",
+    dateLine: "Datum und Uhrzeit",
+    optional: "Optional",
+    reason: "Grund",
+    location: "Ort",
+    remember: "Als meine Standardeinstellung merken",
+    cancel: "Abbrechen",
+    place: "Auf Seite platzieren…",
+    drawing: "Die Vorschau wird gezeichnet…",
+  },
+});
 
 /** Which lines are drawn, and the reason and location. Mirrors `sign_prepare::Options`. */
 export interface AppearanceOptions {
@@ -325,17 +382,14 @@ export function askAppearance(shell: AskShell): Promise<Appearance | null> {
 
   const dialog = document.createElement("dialog");
   dialog.className = "sign-appearance-dialog tpdf-dialog";
-  dialog.setAttribute("aria-label", "Signature appearance");
+  const said = TEXT();
+  dialog.setAttribute("aria-label", said.title);
   const heading = document.createElement("h2");
-  heading.textContent = "Signature appearance";
-  const help = paragraph(
-    "tpdf-dialog-intro",
-    "Choose what the signature shows. You place it on a page next; it is laid out again " +
-      "for the rectangle you drag.",
-  );
+  heading.textContent = said.title;
+  const help = paragraph("tpdf-dialog-intro", said.help);
 
   canvas.setAttribute("role", "img");
-  canvas.setAttribute("aria-label", "Preview of the signature");
+  canvas.setAttribute("aria-label", said.preview);
   canvas.width = PREVIEW_SIZE[0] * 2;
   canvas.height = PREVIEW_SIZE[1] * 2;
   canvas.style.cssText =
@@ -363,7 +417,7 @@ export function askAppearance(shell: AskShell): Promise<Appearance | null> {
   };
 
   // The image.
-  const images = group("Image");
+  const images = group(said.image);
   const radio = (value: ImageSource, text: string) => {
     const input = document.createElement("input");
     input.type = "radio";
@@ -372,14 +426,14 @@ export function askAppearance(shell: AskShell): Promise<Appearance | null> {
     images.append(option(input, text));
     return input;
   };
-  const saved = radio("saved", "Saved signature");
-  const drawn = radio("drawn", "The one drawn now");
-  const none = radio("none", "No image");
-  const draw = button("Draw or import…");
+  const saved = radio("saved", said.savedImage);
+  const drawn = radio("drawn", said.drawnImage);
+  const none = radio("none", said.noImage);
+  const draw = button(said.draw);
   images.append(draw);
 
   // The lines.
-  const lines = group("Text");
+  const lines = group(said.text);
   const check = (line: Line, text: string) => {
     const input = document.createElement("input");
     input.type = "checkbox";
@@ -388,13 +442,13 @@ export function askAppearance(shell: AskShell): Promise<Appearance | null> {
     return input;
   };
   const checks: Record<Line, HTMLInputElement> = {
-    label: check("label", "“Digitally signed by”"),
-    name: check("name", "Your name, from the certificate"),
-    date: check("date", "Date and time"),
+    label: check("label", said.labelLine),
+    name: check("name", said.nameLine),
+    date: check("date", said.dateLine),
   };
 
   // The reason and location.
-  const notes = group("Optional");
+  const notes = group(said.optional);
   const field = (name: string, text: string) => {
     const input = document.createElement("input");
     input.type = "text";
@@ -405,17 +459,17 @@ export function askAppearance(shell: AskShell): Promise<Appearance | null> {
     notes.append(input);
     return input;
   };
-  const reason = field("sign-appearance-reason", "Reason");
-  const location = field("sign-appearance-location", "Location");
+  const reason = field("sign-appearance-reason", said.reason);
+  const location = field("sign-appearance-location", said.location);
 
   const remember = document.createElement("input");
   remember.type = "checkbox";
   remember.name = "sign-appearance-remember";
-  const keeping = option(remember, "Remember as my default");
+  const keeping = option(remember, said.remember);
   keeping.style.marginTop = "14px";
 
-  const cancel = button("Cancel");
-  const place = button("Place on page…", true);
+  const cancel = button(said.cancel);
+  const place = button(said.place, true);
 
   dialog.append(heading, help, canvas, status, ...sets, keeping, footer(cancel, place));
   document.body.append(dialog);
@@ -430,7 +484,8 @@ export function askAppearance(shell: AskShell): Promise<Appearance | null> {
     for (const line of ["label", "name", "date"] as const) checks[line].checked = panel.options[line];
     const state = panel.state;
     status.textContent =
-      state.kind === "drawing" ? "Drawing the preview…" : state.kind === "refused" ? state.why : "";
+      // A refusal is the worker's sentence, shown as it came.
+      state.kind === "drawing" ? said.drawing : state.kind === "refused" ? state.why : "";
     place.disabled = !panel.canContinue();
   };
   const redraw = () => {

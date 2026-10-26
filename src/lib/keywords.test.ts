@@ -19,7 +19,7 @@ import { describe, expect, it } from "vitest";
 import { registerAppCommands, type AppActions } from "./appcommands";
 import { CommandRegistry, rank, type Command } from "./commands";
 import type { UiLocale } from "./i18n";
-import { KEYWORDS, respelled } from "./keywords";
+import { GERMAN_KEYWORDS, KEYWORDS, respelled } from "./keywords";
 
 /** Every application command, each one offered. */
 function everyCommand(locale?: UiLocale): Command[] {
@@ -177,6 +177,100 @@ describe("the keyword table", () => {
   });
 });
 
+describe("a reader of the German window", () => {
+  const german = everyCommand("de-DE");
+  const american = everyCommand("en-US");
+
+  /** A German word, and the command it must find. */
+  const GERMAN: [string, string][] = [
+    ["zusammenführen", "file.mergeDocuments"], ["kombinieren", "file.mergeDocuments"],
+    ["aufteilen", "file.splitDocument"], ["extrahieren", "file.extractPages"],
+    ["komprimieren", "file.compress"], ["kleinere", "file.compress"],
+    ["text erkennen", "file.recogniseText"], ["passwort", "file.protect"],
+    ["verschlüsseln", "file.protect"], ["entsperren", "file.unprotect"],
+    ["schwärzen", "edit.redactRegion"], ["signieren", "file.signDocument"],
+    ["unterschrift", "file.signDocument"], ["ausfüllen", "edit.fillForm"],
+    ["kontrollkästchen", "edit.addCheckbox"], ["kommentar", "edit.addComment"],
+    ["notiz", "edit.addComment"], ["hervorheben", "edit.highlightSelection"],
+    ["textmarker", "edit.highlightSelection"], ["durchstreichen", "edit.strikeoutSelection"],
+    ["stempel", "edit.stamp.approved"], ["freihand", "edit.draw"], ["kreis", "edit.drawEllipse"],
+    ["radieren", "edit.erase"], ["textkasten", "edit.addTextBox"],
+    ["seite löschen", "edit.deletePage"], ["drehen", "edit.rotatePageClockwise"],
+    ["leere seite", "edit.insertBlankPage"], ["zuschneiden", "edit.cropToDrag"],
+    ["dunkelmodus", "view.invertPages"], ["gliederung", "view.showOutline"],
+    ["inhaltsverzeichnis", "view.showOutline"], ["seitenminiaturen", "view.showThumbnails"],
+    ["suchen", "find.open"], ["seitenbreite", "view.fitWidth"], ["drucken", "file.print"],
+    ["öffnen", "file.open"], ["speichern", "file.save"], ["rückgängig", "edit.undo"],
+    ["eigenschaften", "file.properties"], ["favorit", "nav.nextFavourite"],
+  ];
+
+  it("finds a command by the German word in the first three rows", () => {
+    const lost = GERMAN.filter(([word, id]) => {
+      const rows = rank(word, german).slice(0, 3);
+      return !rows.some((row) => row.command.id === id);
+    }).map(([word, id]) => `${word} -> ${id}`);
+    expect(lost).toEqual([]);
+  });
+
+  it("finds every command by its whole American title, in the first three rows", () => {
+    // The control: the titles really are German, so a hit is the keyword's.
+    expect(german.find((command) => command.id === "file.save")?.title).toBe("Speichern");
+    const lost = american.filter((command) => {
+      const rows = rank(command.title, german).slice(0, 3);
+      return !rows.some((row) => row.command.id === command.id);
+    }).map((command) => `${command.title} -> ${command.id}`);
+    expect(american.length).toBeGreaterThan(100);
+    expect(lost).toEqual([]);
+  });
+
+  it("finds commands by the English words the English table holds", () => {
+    // A sample of `TYPED` that are keywords or title beginnings, not every
+    // word: "smaller" finds the English title's middle, which a keyword
+    // matched from its start cannot.
+    const sample: [string, string][] = [
+      ["merge", "file.mergeDocuments"], ["ocr", "file.recogniseText"], ["redact", "edit.redactRegion"],
+      ["compress", "file.compress"], ["colour", "edit.color.yellow"], ["color", "edit.color.yellow"],
+      ["zoom in", "view.zoomIn"], ["fit width", "view.fitWidth"], ["favourite", "nav.nextFavourite"],
+    ];
+    const lost = sample.filter(([word, id]) => {
+      const rows = rank(word, german).slice(0, 3);
+      return !rows.some((row) => row.command.id === id);
+    }).map(([word, id]) => `${word} -> ${id}`);
+    expect(lost).toEqual([]);
+  });
+
+  it("is given German keywords that are lower case, attached, and not already in the title", () => {
+    const known = new Set(german.map((command) => command.id));
+    expect(Object.keys(GERMAN_KEYWORDS).filter((id) => !known.has(id))).toEqual([]);
+    const words = Object.values(GERMAN_KEYWORDS).flat();
+    expect(words.length).toBeGreaterThan(100);
+    expect(words.filter((word) => word !== word.toLowerCase() || word.trim() !== word)).toEqual([]);
+    const missing = Object.entries(GERMAN_KEYWORDS).flatMap(([id, list]) => {
+      const carried = german.find((command) => command.id === id)?.keywords ?? [];
+      return list.filter((word) => !carried.includes(word)).map((word) => `${id}: ${word}`);
+    });
+    expect(missing).toEqual([]);
+    // Three earn it, for the reason "form" does in English: each is a verb a
+    // German title puts last, and it ends several titles.
+    const earned = new Set([
+      "edit.redactRegion: schwärzen", "edit.rotatePageClockwise: drehen", "find.open: suchen",
+    ]);
+    const repeats = german.flatMap((command) =>
+      (GERMAN_KEYWORDS[command.id] ?? [])
+        .filter((word) => command.title.toLowerCase().split(/[^\p{L}\p{N}]+/u).includes(word))
+        .filter((word) => !earned.has(`${command.id}: ${word}`))
+        .map((word) => `${command.id}: ${word}`),
+    );
+    expect(repeats).toEqual([]);
+  });
+
+  it("is not given the German keywords in English", () => {
+    const carried = american.find((command) => command.id === "file.mergeDocuments")?.keywords ?? [];
+    expect(carried).not.toContain("kombinieren");
+    expect(carried).toContain("combine");
+  });
+});
+
 describe("a word the two locales spell differently", () => {
   it("is given back in the other spelling, alone and in the whole title", () => {
     expect(respelled("Color: yellow")).toEqual(["colour", "colour: yellow"]);
@@ -195,6 +289,16 @@ describe("a word the two locales spell differently", () => {
     expect(respelled("Merge documents...")).toEqual([]);
   });
 
+  it("keeps a word with a letter outside a-z whole", () => {
+    // Split at every letter outside a-z, "größe" came apart into "gr", "ö",
+    // "ße"; split at what is not a letter, it is one word and stays as it is.
+    expect(respelled("Größe: color")).toEqual(["colour", "größe: colour"]);
+    expect(respelled("Seite löschen")).toEqual([]);
+    // The case that tells the two apart: cut at the "Ü", the rest of the word
+    // would begin "center" and be respelled.
+    expect(respelled("Ücenter")).toEqual([]);
+  });
+
   /** A spelling, and the command it must find in either locale. */
   const EITHER: [string, string][] = [
     ["color", "edit.color.yellow"], ["colour", "edit.color.yellow"],
@@ -204,6 +308,7 @@ describe("a word the two locales spell differently", () => {
     ["anticlockwise", "edit.rotatePageCounterClockwise"],
     ["recognize", "file.recogniseText"], ["recognise", "file.recogniseText"],
     ["recognize text", "file.recogniseText"], ["recognise text", "file.recogniseText"],
+    ["favorite", "nav.nextFavourite"], ["favourite", "nav.nextFavourite"],
   ];
 
   it.each(["en-US", "en-GB"] as const)("finds its command under both in %s", (locale) => {

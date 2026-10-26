@@ -20,6 +20,7 @@
  *   own.
  */
 
+import { catalog } from "./i18n";
 import type { Prompt } from "./recovery";
 
 /**
@@ -88,15 +89,27 @@ export function afterDiskChange(
   if (mode === "ignore") return null;
   if (dirty) {
     return {
-      message:
-        `${name} changed on disk while you have unsaved edits. ` +
-        "Save a copy to keep them; reloading discards them.",
+      message: TEXT().changedDirty(name),
       offers: ["saveCopy", "reload"],
     };
   }
   if (mode === "reload") return "reload";
-  return { message: `${name} changed on disk.`, offers: ["reload"] };
+  return { message: TEXT().changed(name), offers: ["reload"] };
 }
+
+const TEXT = catalog({
+  "en-US": {
+    changedDirty: (name: string) =>
+      `${name} changed on disk while you have unsaved edits. Save a copy to keep them; reloading discards them.`,
+    changed: (name: string) => `${name} changed on disk.`,
+  },
+  "de-DE": {
+    changedDirty: (name: string) =>
+      `${name} wurde auf dem Datenträger geändert, während du ungespeicherte Änderungen hast. ` +
+      "Speichere eine Kopie, um sie zu behalten; Neu laden verwirft sie.",
+    changed: (name: string) => `${name} wurde auf dem Datenträger geändert.`,
+  },
+});
 
 /** What {@link onDiskChange} needs from the window. */
 export interface DiskChangeHost {

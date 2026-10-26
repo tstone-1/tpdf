@@ -35,6 +35,7 @@
  * prevent.
  */
 
+import { catalog } from "./i18n";
 import { call, type Commands } from "./ipc";
 import { filePage, type FilePage, type PageAddress } from "./pages";
 
@@ -940,12 +941,37 @@ export const MAX_MATCHES_TO_MARK = 500;
  */
 export function tooManyMatchesToMark(count: number): string | null {
   if (count <= MAX_MATCHES_TO_MARK) return null;
-  return (
-    `${count} matches is more than the ${MAX_MATCHES_TO_MARK} that can be marked at ` +
-    `once. Every region has to be readable in the review list before anything is ` +
-    `removed. Narrow the search and try again.`
-  );
+  return TEXT().tooMany(count, MAX_MATCHES_TO_MARK);
 }
+
+const TEXT = catalog({
+  "en-US": {
+    tooMany: (count: number, most: number) =>
+      `${count} matches is more than the ${most} that can be marked at ` +
+      `once. Every region has to be readable in the review list before anything is ` +
+      `removed. Narrow the search and try again.`,
+    stillRunning:
+      "The search is still running, so not every page has been searched. " +
+      "Nothing was marked: wait for it to finish and try again.",
+    unread: (count: number) =>
+      `${count === 1 ? "1 page" : `${count} pages`} could not be searched, so a match there would ` +
+      `be left in the file. Nothing was marked. Search again, or mark those ` +
+      `pages by hand.`,
+  },
+  "de-DE": {
+    tooMany: (count: number, most: number) =>
+      `${count} Treffer sind mehr als die ${most}, die auf einmal markiert werden können. ` +
+      `Jeder Bereich muss in der Prüfliste lesbar sein, bevor etwas entfernt wird. ` +
+      `Grenze die Suche ein und versuche es erneut.`,
+    stillRunning:
+      "Die Suche läuft noch, es wurden also noch nicht alle Seiten durchsucht. " +
+      "Nichts wurde markiert: Warte, bis sie fertig ist, und versuche es erneut.",
+    unread: (count: number) =>
+      `${count === 1 ? "1 Seite konnte" : `${count} Seiten konnten`} nicht durchsucht werden, ` +
+      `ein Treffer dort bliebe also in der Datei. ` +
+      `Nichts wurde markiert. Suche erneut oder markiere diese Seiten von Hand.`,
+  },
+});
 
 /**
  * Why the matches cannot all be marked for removal yet, or `null` when they can.
@@ -969,22 +995,10 @@ export function completeForMarking(search: {
   count: number;
 }): string | null {
   if (search.running) {
-    return (
-      "The search is still running, so not every page has been searched. " +
-      "Nothing was marked: wait for it to finish and try again."
-    );
+    return TEXT().stillRunning;
   }
   if (search.unread > 0) {
-    return (
-      `${unreadPages(search.unread)} could not be searched, so a match there would ` +
-      `be left in the file. Nothing was marked. Search again, or mark those ` +
-      `pages by hand.`
-    );
+    return TEXT().unread(search.unread);
   }
   return tooManyMatchesToMark(search.count);
-}
-
-/** "1 page" / "3 pages", for the sentences that count unread pages. */
-export function unreadPages(count: number): string {
-  return count === 1 ? "1 page" : `${count} pages`;
 }

@@ -7,18 +7,32 @@
  * and from the session's `Place`, so neither lives in `App.svelte`.
  */
 
+import { catalog } from "./i18n";
 import { SINGLE, type Spread } from "./scroller";
 
 /** The layouts offered, in the order the menu lists them. */
 export const SPREAD_KINDS = ["single", "facing", "book"] as const;
 export type SpreadKind = (typeof SPREAD_KINDS)[number];
 
-/** What the palette and the menu call each layout. */
-export const SPREAD_TITLES: Record<SpreadKind, string> = {
-  single: "Pages: one to a row",
-  facing: "Pages: facing",
-  book: "Pages: book, with the cover alone",
-};
+/** What the palette and the menu call each layout, in every locale. */
+export const spreadTitles = catalog({
+  "en-US": {
+    single: "Pages: one to a row",
+    facing: "Pages: facing",
+    book: "Pages: book, with the cover alone",
+  },
+  "de-DE": {
+    single: "Seiten: eine pro Zeile",
+    facing: "Seiten: Doppelseiten",
+    book: "Seiten: Buch, Titelseite einzeln",
+  },
+});
+
+/**
+ * What the palette and the menu call each layout, in the language chosen at
+ * startup (a change of language takes a restart, so this is read once).
+ */
+export const SPREAD_TITLES: Record<SpreadKind, string> = spreadTitles();
 
 /** Which of the offered layouts `spread` is. */
 export function kindOf(spread: Spread): SpreadKind {

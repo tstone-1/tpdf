@@ -53,10 +53,22 @@
  * reader is told this is a list of eleven things when it is a list of 775.
  */
 
+import { catalog } from "./i18n";
 import { Lifetime } from "./lifetime";
 import { filePage, quarterTurns, type PageAddress } from "./pages";
 import { displayedSize, TIER1_WIDTH, type PageSize } from "./scroller";
 import { cancelTile, fetchTile, nextRequestId } from "./tiles";
+
+const TEXT = catalog({
+  "en-US": {
+    pages: "Pages",
+    page: (page: number) => `Page ${page}`,
+  },
+  "de-DE": {
+    pages: "Seiten",
+    page: (page: number) => `Seite ${page}`,
+  },
+});
 
 /** Width of a thumbnail as drawn, in CSS pixels. */
 const THUMB_WIDTH = 116;
@@ -458,7 +470,7 @@ export class Thumbnails {
 
     this.list = document.createElement("div");
     this.list.setAttribute("role", "listbox");
-    this.list.setAttribute("aria-label", "Pages");
+    this.list.setAttribute("aria-label", TEXT().pages);
     this.list.style.cssText = "position:relative;outline:none;";
     this.list.addEventListener("keydown", this.onKeyDown);
     // Same reason as the outline tree: focus can arrive without going through
@@ -995,7 +1007,7 @@ export class Thumbnails {
   private mount(page: number): void {
     const row = document.createElement("div");
     row.setAttribute("role", "option");
-    row.setAttribute("aria-label", `Page ${page + 1}`);
+    row.setAttribute("aria-label", TEXT().page(page + 1));
     // The window is a rendering detail; a reader is in a list of every page.
     row.setAttribute("aria-setsize", String(this.opts.pageCount));
     row.setAttribute("aria-posinset", String(page + 1));

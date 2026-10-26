@@ -12,6 +12,33 @@
  * them without a DOM.
  */
 
+import { catalog } from "./i18n";
+
+/**
+ * Why an entry goes nowhere. Each is a verb phrase, since `links.ts` puts it
+ * after "This link".
+ */
+const TEXT = catalog({
+  "en-US": {
+    broken: "points at a page this document does not have",
+    none: "no destination",
+    launch: "opens a program — not followed",
+    uri: "opens a web link — not followed",
+    remote: "opens another document — not followed",
+    embedded: "opens an embedded file — not followed",
+    unsupported: "unsupported action — not followed",
+  },
+  "de-DE": {
+    broken: "verweist auf eine Seite, die dieses Dokument nicht hat",
+    none: "hat kein Ziel",
+    launch: "öffnet ein Programm (wird nicht ausgeführt)",
+    uri: "öffnet einen Weblink (wird nicht geöffnet)",
+    remote: "öffnet ein anderes Dokument (wird nicht geöffnet)",
+    embedded: "öffnet eine eingebettete Datei (wird nicht geöffnet)",
+    unsupported: "löst eine nicht unterstützte Aktion aus (wird nicht ausgeführt)",
+  },
+});
+
 /** Where an entry points, mirroring `outline.rs`'s `Target`. */
 export type Target =
   | { kind: "page"; page: number; top_pt: number | null }
@@ -155,18 +182,19 @@ export function reasonFor(target: Target): string {
     case "web":
       return "";
     case "broken":
-      return "points at a page this document does not have";
+      return TEXT().broken;
     case "refused":
       return refusalWording(target.action);
     case "none":
-      return "no destination";
+      return TEXT().none;
   }
 }
 
 function refusalWording(action: string): string {
+  const text = TEXT();
   switch (action) {
     case "launch":
-      return "opens a program — not followed";
+      return text.launch;
     // Still reachable, and it means something narrower than it did: since
     // 2026-09-07 an `http` or `https` address becomes a `web` target, so a
     // refusal here is a scheme outside that allowlist --- `javascript:`,
@@ -174,13 +202,13 @@ function refusalWording(action: string): string {
     // unchanged on purpose: naming the scheme would put a string the document
     // wrote into a sentence tpdf speaks, which is the door `weburl.rs` closes.
     case "uri":
-      return "opens a web link — not followed";
+      return text.uri;
     case "remote":
-      return "opens another document — not followed";
+      return text.remote;
     case "embedded":
-      return "opens an embedded file — not followed";
+      return text.embedded;
     default:
-      return "unsupported action — not followed";
+      return text.unsupported;
   }
 }
 

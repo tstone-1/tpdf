@@ -38,7 +38,34 @@
  * that `markband.ts` has to be and says so.
  */
 
+import { catalog } from "./i18n";
 import type { MarkKind } from "./pages";
+
+/**
+ * The swatch names, lowercase because they appear mid-sentence. Read once at
+ * module load: the language is fixed at startup, so `Swatch.name` stays a plain
+ * string and every caller keeps reading `entry.name`.
+ */
+const TEXT = catalog({
+  "en-US": {
+    default: "default",
+    yellow: "yellow",
+    green: "green",
+    blue: "blue",
+    pink: "pink",
+    orange: "orange",
+    red: "red",
+  },
+  "de-DE": {
+    default: "Standard",
+    yellow: "gelb",
+    green: "grün",
+    blue: "blau",
+    pink: "pink",
+    orange: "orange",
+    red: "rot",
+  },
+});
 
 /** Red, green and blue in 0..=1, as `/C` takes them and `Mark::color` holds them. */
 export type MarkColor = readonly [number, number, number];
@@ -131,7 +158,7 @@ export const MARK_COLORS: Record<MarkKind, MarkColor> = {
  * holding yellow here would quietly turn every underline yellow the first time
  * somebody used it to undo a choice.
  */
-export const DEFAULT_SWATCH: Swatch = { id: "default", name: "default", rgb: null };
+export const DEFAULT_SWATCH: Swatch = { id: "default", name: TEXT().default, rgb: null };
 
 /**
  * The swatches, in the order the row draws them.
@@ -149,12 +176,12 @@ export const DEFAULT_SWATCH: Swatch = { id: "default", name: "default", rgb: nul
  */
 export const PALETTE: readonly Swatch[] = [
   DEFAULT_SWATCH,
-  { id: "yellow", name: "yellow", rgb: MARK_COLORS.highlight },
-  { id: "green", name: "green", rgb: [0.35, 0.8, 0.35] },
-  { id: "blue", name: "blue", rgb: [0.3, 0.6, 0.95] },
-  { id: "pink", name: "pink", rgb: [0.95, 0.45, 0.75] },
-  { id: "orange", name: "orange", rgb: [1, 0.6, 0.15] },
-  { id: "red", name: "red", rgb: MARK_COLORS.underline },
+  { id: "yellow", name: TEXT().yellow, rgb: MARK_COLORS.highlight },
+  { id: "green", name: TEXT().green, rgb: [0.35, 0.8, 0.35] },
+  { id: "blue", name: TEXT().blue, rgb: [0.3, 0.6, 0.95] },
+  { id: "pink", name: TEXT().pink, rgb: [0.95, 0.45, 0.75] },
+  { id: "orange", name: TEXT().orange, rgb: [1, 0.6, 0.15] },
+  { id: "red", name: TEXT().red, rgb: MARK_COLORS.underline },
 ];
 
 /** The swatch with this id, or `undefined`. */

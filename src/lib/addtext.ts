@@ -13,6 +13,61 @@
 import { parsePageRange } from "./pageranges";
 import { basename } from "./paths";
 import { afterCopy } from "./recovery";
+import { catalog } from "./i18n";
+
+const TEXT = catalog({
+  "en-US": {
+    topLeft: "Top left",
+    topCenter: "Top center",
+    topRight: "Top right",
+    middleLeft: "Middle left",
+    center: "Center",
+    middleRight: "Middle right",
+    bottomLeft: "Bottom left",
+    bottomCenter: "Bottom center",
+    bottomRight: "Bottom right",
+    typeText: "Type the text to write on the pages.",
+    tooLong: (most: number) => `The text is longer than ${most} characters.`,
+    control: "The text has a control character in it.",
+    unclosed: "A field opened with { is not closed.",
+    notField: (field: string) => `${field} is not a field. The fields are {page} and {pages}.`,
+    sizeRange: (min: number, max: number) => `The size is a number of points from ${min} to ${max}.`,
+    firstNumber: "The first number is a whole number from 0.",
+    opacity: "The opacity is a percentage, more than 0 and at most 100.",
+    numberedName: (stem: string) => `${stem} numbered.pdf`,
+    watermarkedName: (stem: string) => `${stem} watermarked.pdf`,
+    savedNumbers: (name: string) => `Saved ${name} with page numbers.`,
+    savedWatermark: (name: string) => `Saved ${name} with a watermark.`,
+  },
+  "en-GB": {
+    topCenter: "Top centre",
+    center: "Centre",
+    bottomCenter: "Bottom centre",
+  },
+  "de-DE": {
+    topLeft: "Oben links",
+    topCenter: "Oben Mitte",
+    topRight: "Oben rechts",
+    middleLeft: "Mitte links",
+    center: "Mitte",
+    middleRight: "Mitte rechts",
+    bottomLeft: "Unten links",
+    bottomCenter: "Unten Mitte",
+    bottomRight: "Unten rechts",
+    typeText: "Gib den Text ein, der auf die Seiten geschrieben wird.",
+    tooLong: (most: number) => `Der Text ist länger als ${most} Zeichen.`,
+    control: "Der Text enthält ein Steuerzeichen.",
+    unclosed: "Ein mit { geöffnetes Feld ist nicht geschlossen.",
+    notField: (field: string) => `${field} ist kein Feld. Die Felder sind {page} und {pages}.`,
+    sizeRange: (min: number, max: number) => `Die Größe ist eine Zahl von ${min} bis ${max} Punkt.`,
+    firstNumber: "Die erste Zahl ist eine ganze Zahl ab 0.",
+    opacity: "Die Deckkraft ist ein Prozentwert, größer als 0 und höchstens 100.",
+    numberedName: (stem: string) => `${stem} nummeriert.pdf`,
+    watermarkedName: (stem: string) => `${stem} mit Wasserzeichen.pdf`,
+    savedNumbers: (name: string) => `${name} mit Seitenzahlen gespeichert.`,
+    savedWatermark: (name: string) => `${name} mit Wasserzeichen gespeichert.`,
+  },
+});
 
 /** `Position` in `addedtext.rs`, in reading order. */
 export const POSITIONS = [
@@ -24,15 +79,15 @@ export type Position = (typeof POSITIONS)[number];
 
 /** What a position is called in the dialog. */
 export const POSITION_TITLES: Record<Position, string> = {
-  "top-left": "Top left",
-  "top-center": "Top center",
-  "top-right": "Top right",
-  "middle-left": "Middle left",
-  center: "Center",
-  "middle-right": "Middle right",
-  "bottom-left": "Bottom left",
-  "bottom-center": "Bottom center",
-  "bottom-right": "Bottom right",
+  "top-left": TEXT().topLeft,
+  "top-center": TEXT().topCenter,
+  "top-right": TEXT().topRight,
+  "middle-left": TEXT().middleLeft,
+  center: TEXT().center,
+  "middle-right": TEXT().middleRight,
+  "bottom-left": TEXT().bottomLeft,
+  "bottom-center": TEXT().bottomCenter,
+  "bottom-right": TEXT().bottomRight,
 };
 
 /** `AddedText` in `addedtext.rs`, as `save_with_text` takes it. */
@@ -92,31 +147,31 @@ export interface Typed {
 export function judge(kind: Kind, typed: Typed, pageCount: number): AddedText | string {
   const added = defaults(kind);
   const text = typed.text;
-  if (text.trim() === "") return "Type the text to write on the pages.";
-  if ([...text].length > MAX_CHARS) return `The text is longer than ${MAX_CHARS} characters.`;
+  if (text.trim() === "") return TEXT().typeText;
+  if ([...text].length > MAX_CHARS) return TEXT().tooLong(MAX_CHARS);
   // `addedtext::check`'s first refusal. Whether a font has every character
   // is the backend's to say: it holds the fonts, and a copy of their
   // coverage here would drift from them.
-  if (/\p{Cc}/u.test(text)) return "The text has a control character in it.";
+  if (/\p{Cc}/u.test(text)) return TEXT().control;
   for (const field of text.match(/\{[^}]*\}?/g) ?? []) {
-    if (!field.endsWith("}")) return "A field opened with { is not closed.";
+    if (!field.endsWith("}")) return TEXT().unclosed;
     if (field !== "{page}" && field !== "{pages}") {
-      return `${field} is not a field. The fields are {page} and {pages}.`;
+      return TEXT().notField(field);
     }
   }
   const size = Number(typed.size);
   if (!Number.isFinite(size) || size < MIN_SIZE || size > MAX_SIZE) {
-    return `The size is a number of points from ${MIN_SIZE} to ${MAX_SIZE}.`;
+    return TEXT().sizeRange(MIN_SIZE, MAX_SIZE);
   }
   const extra = Number(typed.extra);
   if (kind === "numbers") {
     if (!Number.isInteger(extra) || extra < 0 || extra > 1_000_000) {
-      return "The first number is a whole number from 0.";
+      return TEXT().firstNumber;
     }
     added.first_number = extra;
   } else {
     if (!Number.isFinite(extra) || extra <= 0 || extra > 100) {
-      return "The opacity is a percentage, more than 0 and at most 100.";
+      return TEXT().opacity;
     }
     added.opacity = extra / 100;
   }
@@ -132,7 +187,7 @@ export function judge(kind: Kind, typed: Typed, pageCount: number): AddedText | 
 /** `report.pdf` gives `report numbered.pdf`, or `report watermarked.pdf`. */
 export function suggestedName(path: string, kind: Kind): string {
   const stem = basename(path).replace(/\.pdf$/i, "");
-  return `${stem} ${kind === "numbers" ? "numbered" : "watermarked"}.pdf`;
+  return kind === "numbers" ? TEXT().numberedName(stem) : TEXT().watermarkedName(stem);
 }
 
 /**
@@ -141,8 +196,8 @@ export function suggestedName(path: string, kind: Kind): string {
  */
 export function afterAdding(copied: { changed?: boolean }, path: string, kind: Kind): string {
   const said = kind === "numbers"
-    ? `Saved ${basename(path)} with page numbers.`
-    : `Saved ${basename(path)} with a watermark.`;
+    ? TEXT().savedNumbers(basename(path))
+    : TEXT().savedWatermark(basename(path));
   const changed = afterCopy(copied);
   return changed ? `${said} ${changed}` : said;
 }

@@ -11,15 +11,40 @@
  * choice, so it does not happen by accident.
  */
 
+import { catalog } from "./i18n";
+
+const TEXT = catalog({
+  "en-US": {
+    black: "Black",
+    white: "White",
+    red: "Red",
+    whiteNote: "White boxes cannot be seen on white paper: a reader of the copy will not see that anything was removed.",
+    groupLabel: "Color of the boxes drawn over what is removed",
+    caption: "Box color",
+  },
+  "en-GB": {
+    groupLabel: "Colour of the boxes drawn over what is removed",
+    caption: "Box colour",
+  },
+  "de-DE": {
+    black: "Schwarz",
+    white: "Weiß",
+    red: "Rot",
+    whiteNote: "Weiße Kästen sind auf weißem Papier unsichtbar: Wer die Kopie liest, sieht nicht, dass etwas entfernt wurde.",
+    groupLabel: "Farbe der Kästen über dem Entfernten",
+    caption: "Kastenfarbe",
+  },
+});
+
 /** The three colours, by the names `redaction_fill::Fill` takes. */
 export type Fill = "black" | "white" | "red";
 
 /** Every colour, in the order the panel shows them. The first is the default. */
 export const FILLS: readonly { fill: Fill; label: string; css: string }[] = [
-  { fill: "black", label: "Black", css: "#000" },
-  { fill: "white", label: "White", css: "#fff" },
+  { fill: "black", label: TEXT().black, css: "#000" },
+  { fill: "white", label: TEXT().white, css: "#fff" },
   // The same red `redaction_fill.rs` writes: 0.83, 0.16, 0.16.
-  { fill: "red", label: "Red", css: "#d42929" },
+  { fill: "red", label: TEXT().red, css: "#d42929" },
 ];
 
 /** What a redaction is filled with when nothing was chosen. */
@@ -66,7 +91,7 @@ export function writeFill(fill: Fill, storage: () => Store = () => window.localS
  */
 export function fillNote(fill: Fill): string {
   return fill === "white"
-    ? "White boxes cannot be seen on white paper: a reader of the copy will not see that anything was removed."
+    ? TEXT().whiteNote
     : "";
 }
 
@@ -99,10 +124,10 @@ export class FillPicker {
 
     const group = document.createElement("div");
     group.setAttribute("role", "radiogroup");
-    group.setAttribute("aria-label", "Colour of the boxes drawn over what is removed");
+    group.setAttribute("aria-label", TEXT().groupLabel);
     group.style.cssText = "display:flex;align-items:center;gap:0.7rem;flex-wrap:wrap;";
     const caption = document.createElement("span");
-    caption.textContent = "Box colour";
+    caption.textContent = TEXT().caption;
     caption.style.cssText = "opacity:0.75;";
     group.append(caption);
 

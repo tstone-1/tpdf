@@ -52,6 +52,7 @@
  * table of contents.
  */
 
+import { catalog } from "./i18n";
 import { iconElement, type IconName } from "./icons";
 import { placeholder } from "./panelrow";
 import {
@@ -209,7 +210,7 @@ export class Sidebar {
 
     this.host = document.createElement("aside");
     this.host.className = SIDEBAR_CLASS;
-    this.host.setAttribute("aria-label", "Sidebar");
+    this.host.setAttribute("aria-label", TEXT().sidebar);
     this.host.style.cssText =
       "display:flex;flex-direction:column;height:100%;box-sizing:border-box;" +
       `flex:none;width:${WIDTH}px;` +
@@ -218,7 +219,7 @@ export class Sidebar {
 
     this.tablist = document.createElement("div");
     this.tablist.setAttribute("role", "tablist");
-    this.tablist.setAttribute("aria-label", "Sidebar");
+    this.tablist.setAttribute("aria-label", TEXT().sidebar);
     // **Eight pictures in one row, each named by its `aria-label` and `title`.**
     // They were words until 2026-10-02, and the words did not fit: measured in a
     // real window on 2026-08-25 with five tabs, the buttons wanted 318 px
@@ -247,7 +248,7 @@ export class Sidebar {
 
     this.tree = document.createElement("div");
     this.tree.setAttribute("role", "tree");
-    this.tree.setAttribute("aria-label", "Document outline");
+    this.tree.setAttribute("aria-label", TEXT().documentOutline);
     this.tree.style.cssText = "flex:1;min-height:0;overflow:auto;padding:0.2rem 0;";
     this.tree.addEventListener("keydown", this.onKeyDown);
     // Focus can arrive without going through `focus(id)` --- a Tab into the
@@ -261,37 +262,38 @@ export class Sidebar {
       if (id !== undefined) this.focus(id);
     });
 
-    const outlinePanel = this.panel("outline", "Outline", "outline");
+    const text = TEXT();
+    const outlinePanel = this.panel("outline", text.outline, "outline");
     outlinePanel.append(this.notice, this.tree);
     this.host.append(this.tablist, outlinePanel);
 
-    const pagesPanel = this.panel("pages", "Pages", "thumbnails");
+    const pagesPanel = this.panel("pages", text.pages, "thumbnails");
     this.host.appendChild(pagesPanel);
     if (opts.pages) this.strip = new Thumbnails(pagesPanel, opts.pages);
 
-    const resultsPanel = this.panel("results", "Results", "results");
+    const resultsPanel = this.panel("results", text.results, "results");
     this.host.appendChild(resultsPanel);
     this.hits = new Results(resultsPanel, opts.results);
 
-    const commentsPanel = this.panel("comments", "Comments", "comment");
+    const commentsPanel = this.panel("comments", text.comments, "comment");
     this.host.appendChild(commentsPanel);
     this.notes = new CommentList(commentsPanel, opts.comments);
 
-    const marksPanel = this.panel("marks", "Marks", "highlight");
+    const marksPanel = this.panel("marks", text.marks, "highlight");
     this.host.appendChild(marksPanel);
     this.mine = new MarkList(marksPanel, opts.marks);
 
-    const redactionsPanel = this.panel("redactions", "Redactions", "redact");
+    const redactionsPanel = this.panel("redactions", text.redactions, "redact");
     this.host.appendChild(redactionsPanel);
     this.pending = new RedactList(redactionsPanel, opts.redactions);
 
     // Last, and beside the redactions: it is the same subject from the other
     // side, what a redaction somebody else made left in the file.
-    const hiddenPanel = this.panel("hidden", "Text the pages do not show", "unshown");
+    const hiddenPanel = this.panel("hidden", text.hidden, "unshown");
     this.host.appendChild(hiddenPanel);
     this.unshown = new HiddenList(hiddenPanel, opts.hidden);
 
-    const changesPanel = this.panel("changes", "Changes", "compare");
+    const changesPanel = this.panel("changes", text.changes, "compare");
     this.host.appendChild(changesPanel);
     this.differences = new ChangeList(changesPanel, opts.changes);
 
@@ -600,17 +602,17 @@ export class Sidebar {
     }
 
     if (!this.loaded) {
-      this.tree.appendChild(placeholder("Reading the outline…"));
+      this.tree.appendChild(placeholder(TEXT().reading));
       this.rows = [];
       return;
     }
     if (!this.outline) {
-      this.tree.appendChild(placeholder("The outline could not be read."));
+      this.tree.appendChild(placeholder(TEXT().unreadable));
       this.rows = [];
       return;
     }
     if (this.outline.items.length === 0) {
-      this.tree.appendChild(placeholder("This document has no outline."));
+      this.tree.appendChild(placeholder(TEXT().noOutline));
       this.rows = [];
       return;
     }
@@ -666,7 +668,7 @@ export class Sidebar {
 
     const title = document.createElement("span");
     title.style.cssText = "flex:1;overflow-wrap:anywhere;";
-    title.textContent = row.title || "(untitled)";
+    title.textContent = row.title || TEXT().untitled;
 
     element.append(twisty, title);
 
@@ -831,9 +833,53 @@ export class Sidebar {
 
 /** What the limits banner says, naming the bound that fired. */
 function noticeFor(limits: Outline["limits"]): string {
+  const text = TEXT();
   const parts: string[] = [];
-  if (limits.cycles) parts.push("loops back on itself");
-  if (limits.too_deep) parts.push("nests deeper than tpdf will follow");
-  if (limits.over_budget) parts.push("has more entries than tpdf will show");
-  return `This outline ${parts.join(", ")} — what is shown is incomplete.`;
+  if (limits.cycles) parts.push(text.loops);
+  if (limits.too_deep) parts.push(text.tooDeep);
+  if (limits.over_budget) parts.push(text.overBudget);
+  return text.incomplete(parts.join(", "));
 }
+
+const TEXT = catalog({
+  "en-US": {
+    sidebar: "Sidebar",
+    documentOutline: "Document outline",
+    outline: "Outline",
+    pages: "Pages",
+    results: "Results",
+    comments: "Comments",
+    marks: "Marks",
+    redactions: "Redactions",
+    hidden: "Text the pages do not show",
+    changes: "Changes",
+    reading: "Reading the outline…",
+    unreadable: "The outline could not be read.",
+    noOutline: "This document has no outline.",
+    untitled: "(untitled)",
+    loops: "loops back on itself",
+    tooDeep: "nests deeper than tpdf will follow",
+    overBudget: "has more entries than tpdf will show",
+    incomplete: (parts: string) => `This outline ${parts} — what is shown is incomplete.`,
+  },
+  "de-DE": {
+    sidebar: "Seitenleiste",
+    documentOutline: "Gliederung des Dokuments",
+    outline: "Gliederung",
+    pages: "Seiten",
+    results: "Ergebnisse",
+    comments: "Kommentare",
+    marks: "Markierungen",
+    redactions: "Schwärzungen",
+    hidden: "Text, den die Seiten nicht zeigen",
+    changes: "Änderungen",
+    reading: "Gliederung wird gelesen…",
+    unreadable: "Die Gliederung konnte nicht gelesen werden.",
+    noOutline: "Dieses Dokument hat keine Gliederung.",
+    untitled: "(ohne Titel)",
+    loops: "verweist auf sich selbst zurück",
+    tooDeep: "ist tiefer verschachtelt, als tpdf folgt",
+    overBudget: "hat mehr Einträge, als tpdf anzeigt",
+    incomplete: (parts: string) => `Diese Gliederung ${parts}; die Anzeige ist unvollständig.`,
+  },
+});

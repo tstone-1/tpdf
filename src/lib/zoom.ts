@@ -28,6 +28,8 @@
  * the height, and on a spreadsheet in a tall window is the width.
  */
 
+import { catalog } from "./i18n";
+
 /** What the zoom is following, if anything. */
 export type FitMode = "none" | "width" | "page" | "height" | "content";
 
@@ -157,12 +159,30 @@ export function parseZoomPercent(raw: string): number | null {
 
 /** What the zoom is following, in words. For a tooltip and the palette. */
 export function describeFit(mode: FitMode): string {
-  if (mode === "width") return "Fit width";
-  if (mode === "page") return "Fit page";
-  if (mode === "height") return "Fit height";
-  if (mode === "content") return "Fit content";
-  return "Fixed zoom";
+  const text = TEXT();
+  if (mode === "width") return text.width;
+  if (mode === "page") return text.page;
+  if (mode === "height") return text.height;
+  if (mode === "content") return text.content;
+  return text.fixed;
 }
+
+const TEXT = catalog({
+  "en-US": {
+    width: "Fit width",
+    page: "Fit page",
+    height: "Fit height",
+    content: "Fit content",
+    fixed: "Fixed zoom",
+  },
+  "de-DE": {
+    width: "Seitenbreite",
+    page: "Ganze Seite",
+    height: "Seitenhöhe",
+    content: "Inhalt einpassen",
+    fixed: "Fester Zoom",
+  },
+});
 
 /** A zoom as a reader reads it: whole percent, no decimals. */
 export function percentOf(zoom: number): number {

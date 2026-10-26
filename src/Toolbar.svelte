@@ -3,7 +3,52 @@
   import { TOOL_ACTIONS, TOOL_GROUPS, popupShift, styleOptions, type ArmedTool, type ToolGroup, type ToolItem } from "./lib/toolbar";
   import { icon } from "./lib/icons";
   import { DEFAULT_SWATCH, swatch, swatchBackground } from "./lib/markcolors";
-  import { message } from "./lib/i18n";
+  import { catalog, message } from "./lib/i18n";
+
+  const TEXT = catalog({
+    "en-US": {
+      selectTextFirstHint: "Select text first, then choose a highlight or underline",
+      selectTextFirst: "Select text first",
+      documentTools: "Document tools",
+      undo: "Undo",
+      redo: "Redo",
+      finishDrawingFirst: "Finish or discard this drawing first",
+      selectHint: "Select text and marks",
+      select: "Select",
+      more: "More",
+      editingText: "Edit existing text — choose an outlined line",
+      done: "Done",
+      drawing: (strokes: number) =>
+        `Drawing${strokes > 0 ? `: ${strokes} stroke${strokes === 1 ? "" : "s"}` : " - press and drag"}`,
+      finish: "Finish",
+      discard: "Discard",
+      cancel: "Cancel",
+      erasing: "Erasing marks",
+      corners: (n: number) => ` (${n} corner${n === 1 ? "" : "s"})`,
+      stop: "Stop",
+    },
+    "de-DE": {
+      selectTextFirstHint: "Wähle zuerst Text aus, dann eine Hervorhebung oder Unterstreichung",
+      selectTextFirst: "Wähle zuerst Text aus",
+      documentTools: "Dokumentwerkzeuge",
+      undo: "Rückgängig",
+      redo: "Wiederholen",
+      finishDrawingFirst: "Beende oder verwirf zuerst diese Zeichnung",
+      selectHint: "Text und Markierungen auswählen",
+      select: "Auswählen",
+      more: "Mehr",
+      editingText: "Vorhandenen Text bearbeiten — wähle eine umrandete Zeile",
+      done: "Fertig",
+      drawing: (strokes: number) =>
+        `Zeichnen${strokes > 0 ? `: ${strokes} ${strokes === 1 ? "Strich" : "Striche"}` : " - drücken und ziehen"}`,
+      finish: "Abschließen",
+      discard: "Verwerfen",
+      cancel: "Abbrechen",
+      erasing: "Markierungen radieren",
+      corners: (n: number) => ` (${n} ${n === 1 ? "Ecke" : "Ecken"})`,
+      stop: "Beenden",
+    },
+  });
 
   let {
     state: commandState,
@@ -57,13 +102,17 @@
   let inTool = $derived(active !== null || drawing !== null || erasing || editing);
   let offered = $derived(styleOptions({ armed, drawing: drawing !== null, erasing }));
 
+  // Read from the armed kind, never from `active`: that is the reader's
+  // wording, and it is translated.
+  const DRAWN: readonly ArmedTool[] = ["square", "ellipse", "line", "arrow", "polygon", "polyline", "stamp"];
+
   function toolPressed(id: string): boolean {
-    if (id === "draw") return drawing !== null || erasing || /^(Box|Ellipse|Line|Arrow|Polygon|Polyline|Stamp)/.test(active ?? "");
-    if (id === "edit.addComment") return active?.startsWith("Comment") ?? false;
-    if (id === "edit.addTextBox") return active?.startsWith("Text box") ?? false;
+    if (id === "draw") return drawing !== null || erasing || DRAWN.includes(armed ?? null);
+    if (id === "edit.addComment") return armed === "note";
+    if (id === "edit.addTextBox") return armed === "textbox";
     if (id === "edit.editText") return editing;
-    if (id === "pages") return active?.startsWith("Crop") ?? false;
-    if (id === "redact") return active?.startsWith("Redact") ?? false;
+    if (id === "pages") return armed === "crop";
+    if (id === "redact") return armed === "redact";
     return false;
   }
 
@@ -214,14 +263,14 @@
       data-testid={group.id === "color" ? "markcolor" : group.id === "width" ? "marknib" : undefined}
       aria-expanded={open === group.id}
       disabled={unfinished && !option}
-      title={group.id === "highlight" && selected === 0 ? "Select text first, then choose a highlight or underline" : option ? optionLabel(group) : group.label}
+      title={group.id === "highlight" && selected === 0 ? TEXT().selectTextFirstHint : option ? optionLabel(group) : group.label}
       aria-label={option ? optionLabel(group) : undefined}
       onclick={() => toggle(group.id)}
     >{#if group.id === "color"}<span class="swatch" style:background={swatchBackground(selectedSwatch)} aria-hidden="true"></span>{:else if group.icon}<span class="icon" use:icon={group.icon}></span>{/if}{#if !option}{group.label}{/if}<span class="chevron" aria-hidden="true"></span></button>
     {#if open === group.id}
       <div class="popup" aria-label={group.label}>
         {#if group.id === "highlight" && selected === 0}
-          <p class="hint">Select text first</p>
+          <p class="hint">{TEXT().selectTextFirst}</p>
         {/if}
         {#each group.items as item}
           {@render itemButton(item, option)}
@@ -243,16 +292,16 @@
   </div>
 {/snippet}
 
-<div class="tools" bind:this={host} role="toolbar" aria-label="Document tools">
+<div class="tools" bind:this={host} role="toolbar" aria-label={TEXT().documentTools}>
   <!-- Keep Document visible at narrow widths too: Windows has no native File menu. -->
   {#each TOOL_GROUPS.filter((group) => group.id === "document") as group}
     {@render dropdown(group)}
   {/each}
   <div class="history">
-    <button disabled={!enabled("edit.undo")} title={commandState["edit.undo"]?.title ?? "Undo"} aria-label="Undo" onclick={() => invoke("edit.undo")}><span class="icon" use:icon={"undo"}></span></button>
-    <button disabled={!enabled("edit.redo")} title={commandState["edit.redo"]?.title ?? "Redo"} aria-label="Redo" onclick={() => invoke("edit.redo")}><span class="icon" use:icon={"redo"}></span></button>
+    <button disabled={!enabled("edit.undo")} title={commandState["edit.undo"]?.title ?? TEXT().undo} aria-label={TEXT().undo} onclick={() => invoke("edit.undo")}><span class="icon" use:icon={"undo"}></span></button>
+    <button disabled={!enabled("edit.redo")} title={commandState["edit.redo"]?.title ?? TEXT().redo} aria-label={TEXT().redo} onclick={() => invoke("edit.redo")}><span class="icon" use:icon={"redo"}></span></button>
   </div>
-  <button class:pressed={!inTool} aria-pressed={!inTool} disabled={unfinished} title={unfinished ? "Finish or discard this drawing first" : "Select text and marks"} onclick={cancel}><span class="icon" use:icon={"select"}></span>Select</button>
+  <button class:pressed={!inTool} aria-pressed={!inTool} disabled={unfinished} title={unfinished ? TEXT().finishDrawingFirst : TEXT().selectHint} onclick={cancel}><span class="icon" use:icon={"select"}></span>{TEXT().select}</button>
   {#each basicGroups.filter((group) => group.id === "highlight") as group}
     {@render dropdown(group)}
   {/each}
@@ -266,7 +315,7 @@
     {#each otherGroups as group}{@render dropdown(group)}{/each}
   </div>
   <div class="compact dropdown">
-    <button data-group="More tools" aria-expanded={open === "More tools"} onclick={() => toggle("More tools")}>More<span class="chevron" aria-hidden="true"></span></button>
+    <button data-group="More tools" aria-expanded={open === "More tools"} onclick={() => toggle("More tools")}>{TEXT().more}<span class="chevron" aria-hidden="true"></span></button>
     {#if open === "More tools"}
       <div class="popup more">
         {#each moreGroups as group}
@@ -288,16 +337,16 @@
     <div class="tool-state" role="status">
       {#if editing}
         <!-- Done and not Cancel: an unapplied draft is applied, not thrown away. -->
-        <span data-testid="editing">Edit existing text — choose an outlined line</span>
-        <button onclick={cancel}>Done</button>
+        <span data-testid="editing">{TEXT().editingText}</span>
+        <button onclick={cancel}>{TEXT().done}</button>
       {:else if drawing !== null}
-        <span data-testid="drawing">{`Drawing${drawing > 0 ? `: ${drawing} stroke${drawing === 1 ? "" : "s"}` : " - press and drag"}`}</span>
-        <button class="finish" disabled={drawing === 0} onclick={finish}>Finish</button>
-        <button onclick={cancel}>{drawing > 0 ? "Discard" : "Cancel"}</button>
+        <span data-testid="drawing">{TEXT().drawing(drawing)}</span>
+        <button class="finish" disabled={drawing === 0} onclick={finish}>{TEXT().finish}</button>
+        <button onclick={cancel}>{drawing > 0 ? TEXT().discard : TEXT().cancel}</button>
       {:else}
-        <span data-testid={erasing ? "erasing" : "armed"}>{erasing ? "Erasing marks" : active}{corners ? ` (${corners} corner${corners === 1 ? "" : "s"})` : ""}</span>
-        {#if corners !== null}<button class="finish" disabled={corners === 0} onclick={finish}>Finish</button>{/if}
-        <button onclick={cancel}>{erasing ? "Stop" : corners ? "Discard" : "Cancel"}</button>
+        <span data-testid={erasing ? "erasing" : "armed"}>{erasing ? TEXT().erasing : active}{corners ? TEXT().corners(corners) : ""}</span>
+        {#if corners !== null}<button class="finish" disabled={corners === 0} onclick={finish}>{TEXT().finish}</button>{/if}
+        <button onclick={cancel}>{erasing ? TEXT().stop : corners ? TEXT().discard : TEXT().cancel}</button>
       {/if}
       <!-- What the armed tool draws with, in the row that names it; see `styleOptions`. -->
       {#if offered.color || offered.width}

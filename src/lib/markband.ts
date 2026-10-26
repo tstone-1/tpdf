@@ -40,6 +40,7 @@
  * `save.rs` maps quads and does not police them.
  */
 
+import { catalog } from "./i18n";
 import type { MarkKind } from "./pages";
 
 /**
@@ -496,19 +497,29 @@ export const ERASER_RADIUS = 6;
  * thing --- reads as one clause.
  */
 export function sweepLabel(taken: { strokes: number; marks: number }): string {
+  const text = TEXT();
   const parts: string[] = [];
-  if (taken.strokes > 0) {
-    parts.push(`${taken.strokes} stroke${taken.strokes === 1 ? "" : "s"}`);
-  }
-  if (taken.marks > 0) {
-    parts.push(`${taken.marks} mark${taken.marks === 1 ? "" : "s"}`);
-  }
+  if (taken.strokes > 0) parts.push(text.strokes(taken.strokes));
+  if (taken.marks > 0) parts.push(text.marks(taken.marks));
   // "a mark", not "a drawing": the nib takes every kind now, and a reader told
   // to drag across a drawing would not try it on the highlight they want gone.
-  return parts.length === 0
-    ? "Erasing — drag across a mark"
-    : `Erasing: ${parts.join(", ")}`;
+  return parts.length === 0 ? text.idle : text.erasing(parts.join(", "));
 }
+
+const TEXT = catalog({
+  "en-US": {
+    strokes: (count: number) => `${count} stroke${count === 1 ? "" : "s"}`,
+    marks: (count: number) => `${count} mark${count === 1 ? "" : "s"}`,
+    idle: "Erasing — drag across a mark",
+    erasing: (parts: string) => `Erasing: ${parts}`,
+  },
+  "de-DE": {
+    strokes: (count: number) => `${count} ${count === 1 ? "Strich" : "Striche"}`,
+    marks: (count: number) => `${count} ${count === 1 ? "Markierung" : "Markierungen"}`,
+    idle: "Radieren: Ziehe über eine Markierung",
+    erasing: (parts: string) => `Radieren: ${parts}`,
+  },
+});
 
 /**
  * Whether `at` is within `radius` of the polyline `points`.

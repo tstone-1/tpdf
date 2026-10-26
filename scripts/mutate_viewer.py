@@ -39,7 +39,7 @@ afterwards because both sides read through the same translation.
 Usage:
     scripts/mutate_viewer.py                     # every mutation
     scripts/mutate_viewer.py --list
-    scripts/mutate_viewer.py --only "Cmd-K"      # substring of the name
+    scripts/mutate_viewer.py --only "Cmd-K"      # substring of the name; repeatable
     scripts/mutate_viewer.py --since HEAD~3      # only what the diff touched
     scripts/mutate_viewer.py --resume            # reuse a killed run's verdicts
 """
@@ -589,7 +589,7 @@ MUTATIONS = [
         "src/lib/appcommands.ts",
         """    {
       id: "view.showThumbnails",
-      title: "Show page thumbnails",
+      title: TEXT(locale).showThumbnails,
       enabled: withDocument,
       run: () => actions.showTab("pages"),
     },
@@ -629,12 +629,12 @@ MUTATIONS = [
         "zoom in is offered with no document",
         "src/lib/appcommands.ts",
         """      id: "view.zoomIn",
-      title: "Zoom in",
+      title: TEXT(locale).zoomIn,
       keys: label("view.zoomIn"),
       enabled: withDocument,
 """,
         """      id: "view.zoomIn",
-      title: "Zoom in",
+      title: TEXT(locale).zoomIn,
       keys: label("view.zoomIn"),
 """,
         "with no document only the commands needing none are offered",
@@ -789,8 +789,8 @@ MUTATIONS = [
         # which is why the check runs on every corpus rather than skipping.
         "encoding: say a page could not be searched on every document",
         "src/lib/results.ts",
-        "  if (unsearchablePages > 0) {",
-        "  if (unsearchablePages >= 0) {",
+        "  if (unsearchablePages > 0) return text.unsearchable(total, unsearchablePages);",
+        "  if (unsearchablePages >= 0) return text.unsearchable(total, unsearchablePages);",
         "a reader is told when a page could not be searched",
     ),
     Mutation(
@@ -1190,7 +1190,7 @@ MUTATIONS = [
         # skipped one.
         "mark walk: wrap at the last mark rather than stopping",
         "src/lib/viewer.ts",
-        "    if (!next) {\n      this.opts.onError?.(\n        direction === 1 ? \"No further marks.\" : \"No earlier marks.\",\n      );\n      return false;\n    }",
+        "    if (!next) {\n      this.opts.onError?.(direction === 1 ? TEXT().noFurtherMarks : TEXT().noEarlierMarks);\n      return false;\n    }",
         "    if (!next) {\n      this.showMark(walk[0]?.id ?? -1, false);\n      return true;\n    }",
         "the walk stops at the last mark rather than wrapping",
         "viewer",
@@ -1723,7 +1723,9 @@ def main() -> int:
     stream_results()
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--list", action="store_true", help="print the pairs and stop")
-    parser.add_argument("--only", default="", help="run mutations whose name contains this")
+    parser.add_argument(
+        "--only", action="append", default=[], help="run mutations whose name contains this; repeatable"
+    )
     parser.add_argument(
         "--runner",
         default="",
@@ -1775,10 +1777,18 @@ def main() -> int:
     global RAISE_WINDOW
     RAISE_WINDOW = args.raise_window
 
+    # Match every requested filter, as the other three harnesses do. Until
+    # 2026-10-26 this took one string, so a repeated `--only` kept the last
+    # value and reported success for a quarter of the run it was asked for.
+    missing = [needle for needle in args.only if not any(needle.lower() in m.name.lower() for m in MUTATIONS)]
+    if missing:
+        print(f"[FAIL] no mutation matches {missing!r}")
+        return 1
     chosen = [
         m
         for m in MUTATIONS
-        if args.only.lower() in m.name.lower() and (not args.runner or m.runner == args.runner)
+        if (not args.only or any(needle.lower() in m.name.lower() for needle in args.only))
+        and (not args.runner or m.runner == args.runner)
     ]
     if args.since:
         # No prefix: this table names paths from the repository root.

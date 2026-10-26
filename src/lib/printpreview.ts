@@ -10,7 +10,53 @@
  */
 
 import type { PageSize, PrintPlacement, PrintPaper, PrintScale, PrintSettings, TwoSided } from "./ipc";
+import { catalog } from "./i18n";
 import { PAGE_SIZES } from "./pagesizes";
+
+const TEXT = catalog({
+  "en-US": {
+    notARange: (typed: string) => `"${typed}" is not a page or a range of pages.`,
+    outside: (page: number, count: number) =>
+      count === 1 ? `This job has 1 page, not ${page}.` : `This job has pages 1 to ${count}, not ${page}.`,
+    backwards: (typed: string) => `"${typed}" runs backwards.`,
+    noCurrent: "There is no current page in this job.",
+    noOdd: "None of these pages has an odd number.",
+    noEven: "None of these pages has an even number.",
+    sheets: (sheets: number, pages: number, copies: number) =>
+      (sheets === 1 ? "1 sheet of paper" : `${sheets} sheets of paper`) +
+      (pages === sheets ? "" : ` for ${pages === 1 ? "1 page" : `${pages} pages`}`) +
+      (copies > 1 ? `, ${copies} copies` : ""),
+    landscape: (paper: string) => `${paper} landscape`,
+    millimetres: (width: number, height: number) => `${width} x ${height} mm`,
+    pages: (count: number) => (count === 1 ? "1 page" : `${count} pages`),
+    onePaper: (pages: string, paper: string) => `${pages}, ${paper}`,
+    allOnePaper: (pages: string, paper: string) => `${pages}, all ${paper}`,
+    fewPapers: (pages: string, first: string, last: string) => `${pages}: ${first} and ${last}`,
+    mixedPapers: (pages: string) => `${pages} in mixed sizes`,
+  },
+  "de-DE": {
+    notARange: (typed: string) => `„${typed}“ ist weder eine Seite noch ein Seitenbereich.`,
+    outside: (page: number, count: number) =>
+      count === 1
+        ? `Dieser Druckauftrag hat 1 Seite, nicht ${page}.`
+        : `Dieser Druckauftrag hat die Seiten 1 bis ${count}, nicht ${page}.`,
+    backwards: (typed: string) => `„${typed}“ läuft rückwärts.`,
+    noCurrent: "Dieser Druckauftrag hat keine aktuelle Seite.",
+    noOdd: "Keine dieser Seiten hat eine ungerade Nummer.",
+    noEven: "Keine dieser Seiten hat eine gerade Nummer.",
+    sheets: (sheets: number, pages: number, copies: number) =>
+      `${sheets} Blatt Papier` +
+      (pages === sheets ? "" : ` für ${pages === 1 ? "1 Seite" : `${pages} Seiten`}`) +
+      (copies > 1 ? `, ${copies} Exemplare` : ""),
+    landscape: (paper: string) => `${paper} quer`,
+    millimetres: (width: number, height: number) => `${width} × ${height} mm`,
+    pages: (count: number) => (count === 1 ? "1 Seite" : `${count} Seiten`),
+    onePaper: (pages: string, paper: string) => `${pages}, ${paper}`,
+    allOnePaper: (pages: string, paper: string) => `${pages}, alle ${paper}`,
+    fewPapers: (pages: string, first: string, last: string) => `${pages}: ${first} und ${last}`,
+    mixedPapers: (pages: string) => `${pages} in gemischten Größen`,
+  },
+});
 
 /** The pages-to-a-sheet a reader can choose. `print_layout::PER_SHEET`. */
 export const PER_SHEET = [1, 2, 4, 6, 9, 16] as const;
@@ -61,15 +107,13 @@ export function parsePages(text: string, count: number): number[] | null | strin
     const piece = part.trim();
     if (piece === "") continue;
     const match = /^(\d+)\s*(?:-\s*(\d+))?$/.exec(piece);
-    if (!match) return `"${piece}" is not a page or a range of pages.`;
+    if (!match) return TEXT().notARange(piece);
     const first = Number(match[1]);
     const last = match[2] === undefined ? first : Number(match[2]);
     for (const page of [first, last]) {
-      if (page < 1 || page > count) {
-        return count === 1 ? `This job has 1 page, not ${page}.` : `This job has pages 1 to ${count}, not ${page}.`;
-      }
+      if (page < 1 || page > count) return TEXT().outside(page, count);
     }
-    if (last < first) return `"${piece}" runs backwards.`;
+    if (last < first) return TEXT().backwards(piece);
     for (let page = first; page <= last; page += 1) pages.push(page - 1);
   }
   return pages.length === 0 ? null : pages;
@@ -114,7 +158,7 @@ export function choosePages(choice: PageChoice, count: number): number[] | null 
     if (typeof typed === "string") return typed;
     pages = typed ?? [...Array(count).keys()];
   } else if (choice.range === "current") {
-    if (!(choice.current >= 0 && choice.current < count)) return "There is no current page in this job.";
+    if (!(choice.current >= 0 && choice.current < count)) return TEXT().noCurrent;
     pages = [choice.current];
   } else {
     pages = [...Array(count).keys()];
@@ -123,7 +167,7 @@ export function choosePages(choice: PageChoice, count: number): number[] | null 
     const odd = choice.subset === "odd";
     pages = pages.filter((page) => (page % 2 === 0) === odd);
     if (pages.length === 0) {
-      return odd ? "None of these pages has an odd number." : "None of these pages has an even number.";
+      return odd ? TEXT().noOdd : TEXT().noEven;
     }
   }
   if (choice.reverse) pages = [...pages].reverse();
@@ -296,10 +340,7 @@ export function placementBox(placed: PrintPlacement, paper: PrintPaper): Percent
 
 /** The line under the heading once the job is laid out on paper: sheets, and pages if they differ. */
 export function sheetSummary(sheets: number, pages: number, copies: number): string {
-  const paper = sheets === 1 ? "1 sheet of paper" : `${sheets} sheets of paper`;
-  const of = pages === sheets ? "" : ` for ${pages === 1 ? "1 page" : `${pages} pages`}`;
-  const times = copies > 1 ? `, ${copies} copies` : "";
-  return `${paper}${of}${times}`;
+  return TEXT().sheets(sheets, pages, copies);
 }
 
 /**
@@ -325,11 +366,11 @@ export function paperName(size: PageSize): string {
       return named.title;
     }
     if (Math.abs(width - named.height) <= NAMED_WITHIN && Math.abs(height - named.width) <= NAMED_WITHIN) {
-      return `${named.title} landscape`;
+      return TEXT().landscape(named.title);
     }
   }
   const mm = (points: number) => Math.round((points / 72) * 25.4);
-  return `${mm(width)} x ${mm(height)} mm`;
+  return TEXT().millimetres(mm(width), mm(height));
 }
 
 /**
@@ -337,12 +378,13 @@ export function paperName(size: PageSize): string {
  * Up to three different papers are named; more than that is "mixed sizes".
  */
 export function previewSummary(pages: readonly PageSize[]): string {
-  const count = pages.length === 1 ? "1 page" : `${pages.length} pages`;
+  const count = TEXT().pages(pages.length);
   const names = [...new Set(pages.map(paperName))];
-  if (names.length === 0) return count;
-  if (names.length === 1) return pages.length === 1 ? `${count}, ${names[0]}` : `${count}, all ${names[0]}`;
-  if (names.length <= 3) return `${count}: ${names.slice(0, -1).join(", ")} and ${names[names.length - 1]}`;
-  return `${count} in mixed sizes`;
+  const [only] = names;
+  if (only === undefined) return count;
+  if (names.length === 1) return pages.length === 1 ? TEXT().onePaper(count, only) : TEXT().allOnePaper(count, only);
+  if (names.length <= 3) return TEXT().fewPapers(count, names.slice(0, -1).join(", "), names[names.length - 1]!);
+  return TEXT().mixedPapers(count);
 }
 
 /**

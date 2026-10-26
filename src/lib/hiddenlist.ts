@@ -21,7 +21,13 @@ import {
   type HiddenText,
   type Passage,
 } from "./hiddentext";
+import { catalog } from "./i18n";
 import { placeholder } from "./panelrow";
+
+const TEXT = catalog({
+  "en-US": { label: "Text the pages do not show" },
+  "de-DE": { label: "Text, den die Seiten nicht zeigen" },
+});
 
 export interface HiddenListOptions {
   /** Called when a row is pressed, with the passage it stands for. */
@@ -47,7 +53,7 @@ export class HiddenList {
 
     this.list = document.createElement("div");
     this.list.setAttribute("role", "group");
-    this.list.setAttribute("aria-label", "Text the pages do not show");
+    this.list.setAttribute("aria-label", TEXT().label);
     this.list.style.cssText = "flex:1;min-height:0;overflow-y:auto;";
 
     host.append(this.notice, this.list);

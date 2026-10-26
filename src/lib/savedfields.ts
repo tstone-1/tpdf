@@ -17,6 +17,18 @@ import type { EditState } from "./edits";
 import type { Form, FormAlign, FormWidget } from "./forms";
 import { INK_WIDTH } from "./markband";
 import type { MarkView, PageId, PageView } from "./pages";
+import { catalog } from "./i18n";
+
+const TEXT = catalog({
+  "en-US": {
+    nameTaken: (name: string) => `\`${name}\`: another field has this name`,
+    valueTaken: (value: string) => `The group already has a button with the value \`${value}\``,
+  },
+  "de-DE": {
+    nameTaken: (name: string) => `„${name}“: Ein anderes Feld hat diesen Namen`,
+    valueTaken: (value: string) => `Die Gruppe hat schon eine Schaltfläche mit dem Wert „${value}“`,
+  },
+});
 
 /**
  * Where the ids of saved fields start. The model counts marks up from one, so
@@ -217,7 +229,7 @@ export function renamed(
     })
     || state.marks.some((mark) => mark.kind === "field" && mark.note === name)
   );
-  if (taken) return `\`${name}\`: another field has this name`;
+  if (taken) return TEXT().nameTaken(name);
   return target(found, { name });
 }
 
@@ -383,7 +395,7 @@ export function revalued(
   const taken = form.widgets.some((other) =>
     same(other.object, found.widget.object)
     && !editOf(other, state)?.removed && buttonValue(other, state) === value);
-  if (taken) return `The group already has a button with the value \`${value}\``;
+  if (taken) return TEXT().valueTaken(value);
   return target(found, { value });
 }
 

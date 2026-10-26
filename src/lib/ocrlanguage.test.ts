@@ -126,15 +126,15 @@ describe("the sentences", () => {
     expect(placeholder(null)).toContain("now: Automatic");
     expect(placeholder("de-DE")).toContain("now: German (Germany), de-DE");
     expect(preview("de-DE")).toBe("Recognize text as German (Germany), de-DE");
-    expect(preview(null)).toBe("Let the recogniser choose the language");
-    expect(chosen("de-DE")).toBe("Text will be recognised as German (Germany), de-DE.");
-    expect(chosen(null)).toBe("Text will be recognised in the language the recogniser chooses.");
+    expect(preview(null)).toBe("Let the recognizer choose the language");
+    expect(chosen("de-DE")).toBe("Text will be recognized as German (Germany), de-DE.");
+    expect(chosen(null)).toBe("Text will be recognized in the language the recognizer chooses.");
   });
 
   it("say which language was missing and which command chooses another", () => {
     expect(fellBack("de-DE")).toBe(
       "German (Germany), de-DE is not available on this computer, " +
-        `so the recogniser chose the language itself. ${CHOOSE_AGAIN}`,
+        `so the recognizer chose the language itself. ${CHOOSE_AGAIN}`,
     );
   });
 

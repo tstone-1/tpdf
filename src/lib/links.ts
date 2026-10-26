@@ -26,6 +26,7 @@
  */
 
 import { onPage as placedOnPage, turnedFor as placedTurnedFor } from "./comments";
+import { catalog } from "./i18n";
 import { isNavigable, reasonFor, type Target } from "./outline";
 import { centreOfCharacter, coversPoint, type IndexRange } from "./text";
 
@@ -357,8 +358,55 @@ function linkOfCharacter(
 export function refusalFor(target: Target): string | null {
   if (isNavigable(target)) return null;
   const reason = reasonFor(target);
-  return reason ? `This link ${reason}.` : null;
+  return reason ? TEXT().thisLink(reason) : null;
 }
+
+const TEXT = catalog({
+  "en-US": {
+    thisLink: (reason: string) => `This link ${reason}.`,
+    overBudget: "too many links to list them all",
+    crowded: (count: number) =>
+      count === 1 ? "one page had more links than tpdf lists" : `${count} pages had more links than tpdf lists`,
+    unreadable: (count: number) =>
+      count === 1 ? "one annotation could not be read" : `${count} annotations could not be read`,
+    unresolved: (count: number) =>
+      count === 1
+        ? "one named destination could not be resolved"
+        : `${count} named destinations could not be resolved`,
+    pagesMissed: (count: number) =>
+      count === 1 ? "one page could not be read at all" : `${count} pages could not be read at all`,
+    missing: (parts: string) => `Some links are missing: ${parts}.`,
+    goToPage: (page: number) => `Go to page ${page}`,
+    open: (address: string) => `Open ${address}`,
+    broken: "This link goes to a page the document does not have",
+    refused: (action: string) => `tpdf does not follow this link: ${action}`,
+  },
+  "de-DE": {
+    thisLink: (reason: string) => `Dieser Link ${reason}.`,
+    overBudget: "zu viele Links, um alle aufzulisten",
+    crowded: (count: number) =>
+      count === 1
+        ? "eine Seite hatte mehr Links, als tpdf auflistet"
+        : `${count} Seiten hatten mehr Links, als tpdf auflistet`,
+    unreadable: (count: number) =>
+      count === 1
+        ? "eine Anmerkung konnte nicht gelesen werden"
+        : `${count} Anmerkungen konnten nicht gelesen werden`,
+    unresolved: (count: number) =>
+      count === 1
+        ? "ein benanntes Ziel konnte nicht aufgelöst werden"
+        : `${count} benannte Ziele konnten nicht aufgelöst werden`,
+    pagesMissed: (count: number) =>
+      count === 1
+        ? "eine Seite konnte gar nicht gelesen werden"
+        : `${count} Seiten konnten gar nicht gelesen werden`,
+    missing: (parts: string) => `Einige Links fehlen: ${parts}.`,
+    goToPage: (page: number) => `Gehe zu Seite ${page}`,
+    open: (address: string) => `${address} öffnen`,
+    broken: "Dieser Link verweist auf eine Seite, die das Dokument nicht hat",
+    refused: (action: string) => `tpdf folgt diesem Link nicht: ${action}`,
+  },
+});
 
 /**
  * What the panel says when the scan cut something, or `null` when it did not.
@@ -369,41 +417,18 @@ export function refusalFor(target: Target): string | null {
  * measured in that module's header is over the per-document budget by itself.
  */
 export function noticeFor(limits: LinkLimits): string | null {
+  const text = TEXT();
   const parts: string[] = [];
-  if (limits.over_budget) parts.push("too many links to list them all");
-  if (limits.crowded_pages > 0) {
-    parts.push(
-      limits.crowded_pages === 1
-        ? "one page had more links than tpdf lists"
-        : `${limits.crowded_pages} pages had more links than tpdf lists`,
-    );
-  }
-  if (limits.unreadable > 0) {
-    parts.push(
-      limits.unreadable === 1
-        ? "one annotation could not be read"
-        : `${limits.unreadable} annotations could not be read`,
-    );
-  }
-  if (limits.unresolved_names > 0) {
-    parts.push(
-      limits.unresolved_names === 1
-        ? "one named destination could not be resolved"
-        : `${limits.unresolved_names} named destinations could not be resolved`,
-    );
-  }
+  if (limits.over_budget) parts.push(text.overBudget);
+  if (limits.crowded_pages > 0) parts.push(text.crowded(limits.crowded_pages));
+  if (limits.unreadable > 0) parts.push(text.unreadable(limits.unreadable));
+  if (limits.unresolved_names > 0) parts.push(text.unresolved(limits.unresolved_names));
   // First in the sentence would be better and is not worth the reordering: this
   // is the one entry that means "the scan could not look", where every other
   // means "it looked and cut something". Both belong in the notice.
-  if (limits.pages_missed > 0) {
-    parts.push(
-      limits.pages_missed === 1
-        ? "one page could not be read at all"
-        : `${limits.pages_missed} pages could not be read at all`,
-    );
-  }
+  if (limits.pages_missed > 0) parts.push(text.pagesMissed(limits.pages_missed));
   if (parts.length === 0) return null;
-  return `Some links are missing: ${parts.join("; ")}.`;
+  return text.missing(parts.join("; "));
 }
 
 /** Somewhere in the document a reader was: a page and points down it. */
@@ -516,10 +541,10 @@ export class History {
  */
 export function linkTitle(target: Target): string {
   switch (target.kind) {
-    case "page": return `Go to page ${target.page + 1}`;
-    case "web": return `Open ${target.host}${target.rest}`;
-    case "broken": return "This link goes to a page the document does not have";
-    case "refused": return `tpdf does not follow this link: ${target.action}`;
+    case "page": return TEXT().goToPage(target.page + 1);
+    case "web": return TEXT().open(`${target.host}${target.rest}`);
+    case "broken": return TEXT().broken;
+    case "refused": return TEXT().refused(target.action);
     case "none": return "";
   }
 }

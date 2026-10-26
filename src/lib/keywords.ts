@@ -17,6 +17,7 @@
  */
 
 import type { CommandRegistry } from "./commands";
+import { UI_LOCALE, type UiLocale } from "./i18n";
 
 /** Keywords for the commands whose ids are written out. */
 const NAMED: Record<string, readonly string[]> = {
@@ -94,10 +95,7 @@ const NAMED: Record<string, readonly string[]> = {
   "view.outlineCollapseAll": ["collapse all"],
   "view.outlineToCurrent": ["where am i"],
   "file.nextInFolder": ["next file", "directory"],
-  "nav.addFavourite": ["bookmark this page", "favorite", "remember page"],
-  "nav.removeFavourite": ["favorite"],
-  "nav.nextFavourite": ["favorite"],
-  "nav.previousFavourite": ["favorite"],
+  "nav.addFavourite": ["bookmark this page", "remember page"],
   "file.previousInFolder": ["previous file", "directory"],
   "view.presentation": ["slideshow", "slides", "presentation mode"],
   "view.showOutline": ["bookmarks", "contents", "table of contents", "toc"],
@@ -124,6 +122,7 @@ const SPELLINGS: readonly (readonly [string, string])[] = [
   ["recogniz", "recognis"],
   ["organiz", "organis"],
   ["optimiz", "optimis"],
+  ["favorit", "favourit"],
 ];
 
 /** `word` in the other spelling, or null when it has only one. */
@@ -144,7 +143,9 @@ function otherSpelling(word: string): string | null {
  * command added tomorrow with "color" in its name needs no entry here.
  */
 export function respelled(title: string): string[] {
-  const words = title.toLowerCase().split(/([^a-z]+)/);
+  // Words are runs of letters of any script, so that a title with an umlaut
+  // or an accent is not cut inside a word.
+  const words = title.toLowerCase().split(/([^\p{L}]+)/u);
   const others = words.map(otherSpelling);
   if (others.every((other) => other === null)) return [];
   const whole = words.map((word, index) => others[index] ?? word).join("");
@@ -155,17 +156,123 @@ export function respelled(title: string): string[] {
 export const KEYWORDS: Record<string, readonly string[]> = NAMED;
 
 /**
+ * The German words a reader types for a command when they are not in its
+ * German title. Added to the English ones above, not instead of them: a German
+ * reader often knows the English word too ("ocr", "redact"). Same rules as
+ * the English table: lower case, and no word the German title already has.
+ */
+export const GERMAN_KEYWORDS: Record<string, readonly string[]> = {
+  "file.mergeDocuments": ["kombinieren", "verbinden", "anhängen"],
+  "file.splitDocument": ["trennen", "teilen"],
+  "file.extractPages": ["seiten exportieren", "seiten speichern"],
+  "file.compress": ["komprimieren", "verkleinern", "dateigröße", "optimieren"],
+  "file.recogniseText": ["durchsuchbar", "scan", "texterkennung"],
+  "file.recognisePage": ["fehlendes wort", "texterkennung"],
+  "file.protect": ["verschlüsseln", "schützen", "sperren", "kennwort", "sicherheit"],
+  "file.unprotect": ["entschlüsseln", "entsperren", "passwort entfernen", "kennwort"],
+  "file.signDocument": ["unterschrift", "unterschreiben", "zertifikat", "digitale signatur", "zeitstempel"],
+  "file.addCertificateFile": ["importieren", "signaturschlüssel", "digitale id"],
+  "file.findHiddenText": ["versteckt", "unsichtbar"],
+  "file.compareWith": ["unterschiede", "änderungen", "versionen"],
+  "file.addPageNumbers": ["nummerierung", "seiten nummerieren", "kopfzeile", "fußzeile"],
+  "file.addWatermark": ["entwurf", "vertraulich", "hintergrundtext"],
+  "file.fromPictures": ["foto", "konvertieren", "umwandeln", "scan"],
+  "file.properties": ["metadaten", "info", "autor"],
+  "file.saveCopy": ["speichern unter", "exportieren"],
+  "file.reload": ["aktualisieren", "zurücksetzen"],
+  "file.print": ["drucker"],
+  // The three words a German title puts last, where the English one puts it
+  // first: "schwärzen" ends seven titles, so it is a keyword of the one a
+  // reader means by it, as "form" is of Fill form in English.
+  "edit.redactRegion": ["schwärzen", "zensieren", "text entfernen", "abdecken"],
+  "find.open": ["suchen"],
+  "edit.redactSelection": ["zensieren", "abdecken"],
+  "edit.addSignature": ["initialen", "unterschrift", "handschriftlich"],
+  "edit.addComment": ["notiz", "haftnotiz", "anmerkung", "kommentieren"],
+  "edit.highlightSelection": ["textmarker", "markieren"],
+  "edit.strikeoutSelection": ["ausstreichen"],
+  "edit.squigglySelection": ["wellig", "geschlängelt"],
+  "edit.addTextBox": ["schreiben", "text hinzufügen", "schreibmaschine", "tippen"],
+  "edit.editText": ["text ändern", "korrigieren"],
+  "edit.fillForm": ["formularfeld"],
+  "edit.addCheckbox": ["ankreuzfeld", "häkchen", "checkbox"],
+  "edit.addDropdown": ["kombinationsfeld", "liste", "dropdown"],
+  "edit.addRadio": ["radiobutton", "optionsschaltfläche"],
+  "edit.rotatePageClockwise": ["drehen", "wenden"],
+  "edit.rotatePageCounterClockwise": ["wenden"],
+  "edit.deletePage": ["seite entfernen"],
+  "edit.movePageUp": ["umsortieren", "neu anordnen", "reihenfolge"],
+  "edit.movePageDown": ["umsortieren", "neu anordnen", "reihenfolge"],
+  "edit.insertBlankPage": ["seite hinzufügen", "neue seite"],
+  "edit.insertPages": ["seiten hinzufügen", "seiten importieren"],
+  "edit.cropToDrag": ["beschneiden"],
+  "edit.cropToContent": ["beschneiden", "ränder"],
+  "edit.draw": ["stift", "bleistift", "tinte"],
+  "edit.drawBox": ["viereck", "quadrat", "form"],
+  "edit.drawEllipse": ["kreis", "oval", "form"],
+  "edit.drawLine": ["strich", "gerade", "form"],
+  "edit.drawArrow": ["form"],
+  "edit.drawPolygon": ["dreieck", "vieleck", "form"],
+  "edit.drawPolyline": ["polylinie", "pfad", "zickzack", "form"],
+  "edit.addLink": ["hyperlink", "verknüpfung", "sprungziel"],
+  "edit.addPicture": ["foto", "logo", "grafik", "einfügen"],
+  "edit.pastePicture": ["foto", "screenshot", "grafik"],
+  "edit.copyRegionAsPicture": ["schnappschuss", "screenshot", "png"],
+  "file.saveRegionAsPicture": ["schnappschuss", "screenshot", "png", "exportieren"],
+  "file.saveAttachment": ["eingebettet", "extrahieren", "datei"],
+  "edit.erase": ["radiergummi", "löschen"],
+  "edit.removeMark": ["markierung löschen"],
+  "edit.copyMark": ["zwischenablage", "anmerkung"],
+  "edit.cutMark": ["zwischenablage", "anmerkung"],
+  "edit.pasteMark": ["zwischenablage", "anmerkung"],
+  "edit.removeRedaction": ["schwärzung löschen"],
+  "view.invertPages": ["dunkel", "dunkelmodus", "nachtmodus"],
+  "view.singlePage": ["eine seite", "einspaltig"],
+  "view.facing": ["zwei seiten", "doppelseite"],
+  "view.book": ["buchansicht", "zwei seiten", "doppelseite"],
+  "view.rightToLeft": ["manga"],
+  "view.pageAtATime": ["einzelseite", "nicht fortlaufend"],
+  "view.fullScreen": ["maximieren"],
+  "view.outlineExpandAll": ["alle aufklappen"],
+  "view.outlineCollapseAll": ["alle zuklappen"],
+  "view.outlineToCurrent": ["wo bin ich"],
+  "nav.addFavourite": ["lesezeichen", "seite merken"],
+  "view.presentation": ["diashow", "folien", "präsentationsmodus"],
+  "view.showOutline": ["lesezeichen", "inhalt", "inhaltsverzeichnis"],
+  "view.showThumbnails": ["seitenübersicht", "vorschaubilder"],
+  "view.sideBySide": ["vergleichen", "geteilte ansicht"],
+  "nav.goToPage": ["springen", "seitennummer"],
+  "app.installCommandLineTool": ["terminal", "kommandozeile", "konsole", "cli"],
+  "app.enableExplorerIntegration": ["vorschau", "miniaturansichten"],
+  "app.checkForUpdates": ["aktualisieren", "aktualisierung", "version"],
+  "app.about": ["version", "lizenz"],
+};
+
+/**
  * Gives each registered command its keywords.
  *
  * As a getter and not a value, because a title can be one: "Move tab to right
  * side" is worded from where the tab is when it is asked for, and reading every
  * title here, once, would read it before there is a window to ask.
+ *
+ * In German, a command also carries its German keywords and its American
+ * title, which `english` reads, so that English typing still finds it. The
+ * English spellings are derived from that title, not from the German one.
  */
-export function attachKeywords(registry: CommandRegistry): void {
+export function attachKeywords(
+  registry: CommandRegistry,
+  locale: UiLocale = UI_LOCALE,
+  english?: (id: string) => string | undefined,
+): void {
+  const german = locale === "de-DE";
   for (const command of registry.all()) {
-    const named = KEYWORDS[command.id] ?? [];
+    const named = [...(KEYWORDS[command.id] ?? []), ...(german ? (GERMAN_KEYWORDS[command.id] ?? []) : [])];
     Object.defineProperty(command, "keywords", {
-      get: () => [...named, ...respelled(command.title)],
+      get: () => {
+        if (!english) return [...named, ...respelled(command.title)];
+        const title = english(command.id);
+        return title === undefined ? named : [...named, title.toLowerCase(), ...respelled(title)];
+      },
       enumerable: true,
       configurable: true,
     });

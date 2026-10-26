@@ -422,6 +422,6 @@ describe("a failure as a reader is shown it", () => {
     // Once more as it came, under "Technical details", which is where a
     // number to look up belongs.
     expect(markup.split("{error}</p>").length - 1).toBe(1);
-    expect(markup).toContain('<summary>Technical details</summary><p class="error">{error}</p>');
+    expect(markup).toContain('<summary>{TEXT().technicalDetails}</summary><p class="error">{error}</p>');
   });
 });

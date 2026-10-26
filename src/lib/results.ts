@@ -34,8 +34,9 @@
  * query changes underneath it.
  */
 
+import { catalog } from "./i18n";
 import { placeholder } from "./panelrow";
-import { unreadPages, type Match } from "./search";
+import type { Match } from "./search";
 
 /** Rows drawn at once. Beyond this the panel says how many it is not showing. */
 export const MAX_RESULT_ROWS = 2000;
@@ -82,7 +83,7 @@ export class Results {
 
     this.list = document.createElement("div");
     this.list.setAttribute("role", "listbox");
-    this.list.setAttribute("aria-label", "Search results");
+    this.list.setAttribute("aria-label", TEXT().searchResults);
     this.list.style.cssText = "flex:1;min-height:0;overflow-y:auto;";
 
     host.append(this.notice, this.list);
@@ -341,17 +342,15 @@ export function statusFor(
   unsearchablePages = 0,
   unread = 0,
 ): string {
-  if (!query) return "Type in the find field to search.";
-  if (running) return total === 0 ? "Searching…" : `${countOf(total)}, still searching…`;
+  const text = TEXT();
+  if (!query) return text.typeToSearch;
+  if (running) return total === 0 ? text.searching : text.stillSearching(total);
 
   // A page whose search failed is skipped and counted as searched, so a list
   // that ends here is shorter than the document's by however many hits it
   // held. Said before the unreadable-font case: this one is about pages that
   // were not read at all.
-  if (unread > 0) {
-    const found = total === 0 ? "No matches" : countOf(total);
-    return `${found}. ${unreadPages(unread)} could not be searched: reading them failed.`;
-  }
+  if (unread > 0) return text.unread(total, unread);
 
   // The line this whole path exists for. A page whose fonts state no character
   // mapping was never searchable, and "No matches." claims the opposite about
@@ -361,22 +360,55 @@ export function statusFor(
   // Said whether or not there were hits, and that is the case worth defending:
   // three matches from a document with an unreadable page is a partial answer
   // presented as a total one, which is the same defect in a quieter form.
-  if (unsearchablePages > 0) {
-    const pages =
-      unsearchablePages === 1 ? "1 page" : `${unsearchablePages} pages`;
-    const found = total === 0 ? "No matches" : countOf(total);
-    return `${found}. ${pages} could not be searched — the text there is not stored as readable characters.`;
-  }
+  if (unsearchablePages > 0) return text.unsearchable(total, unsearchablePages);
 
-  if (total === 0) return "No matches.";
+  if (total === 0) return text.noMatches;
   // The cap is stated, never silently applied: a list that stopped at 2,000 rows
   // without saying so is a document that appears to have 2,000 hits in it.
-  const capped =
-    total > MAX_RESULT_ROWS ? `, showing the first ${MAX_RESULT_ROWS}` : "";
-  return `${countOf(total)}${capped}`;
+  return total > MAX_RESULT_ROWS ? text.capped(total, MAX_RESULT_ROWS) : text.count(total);
 }
 
 /** "1 match" / "7 matches". */
 function countOf(total: number): string {
   return `${total} match${total === 1 ? "" : "es"}`;
 }
+
+/** "1 Treffer" / "7 Treffer". */
+function trefferOf(total: number): string {
+  return `${total} Treffer`;
+}
+
+const TEXT = catalog({
+  "en-US": {
+    searchResults: "Search results",
+    typeToSearch: "Type in the find field to search.",
+    searching: "Searching…",
+    stillSearching: (total: number) => `${countOf(total)}, still searching…`,
+    unread: (total: number, unread: number) =>
+      `${total === 0 ? "No matches" : countOf(total)}. ${unread === 1 ? "1 page" : `${unread} pages`} ` +
+      "could not be searched: reading them failed.",
+    unsearchable: (total: number, pages: number) =>
+      `${total === 0 ? "No matches" : countOf(total)}. ${pages === 1 ? "1 page" : `${pages} pages`} ` +
+      "could not be searched — the text there is not stored as readable characters.",
+    noMatches: "No matches.",
+    count: (total: number) => countOf(total),
+    capped: (total: number, shown: number) => `${countOf(total)}, showing the first ${shown}`,
+  },
+  "de-DE": {
+    searchResults: "Suchergebnisse",
+    typeToSearch: "Gib einen Suchbegriff in das Suchfeld ein.",
+    searching: "Suche läuft…",
+    stillSearching: (total: number) => `${trefferOf(total)}, Suche läuft noch…`,
+    unread: (total: number, unread: number) =>
+      `${total === 0 ? "Keine Treffer" : trefferOf(total)}. ` +
+      `${unread === 1 ? "1 Seite konnte" : `${unread} Seiten konnten`} ` +
+      "nicht durchsucht werden: Das Lesen ist fehlgeschlagen.",
+    unsearchable: (total: number, pages: number) =>
+      `${total === 0 ? "Keine Treffer" : trefferOf(total)}. ` +
+      `${pages === 1 ? "1 Seite konnte" : `${pages} Seiten konnten`} ` +
+      "nicht durchsucht werden; der Text dort ist nicht als lesbare Zeichen gespeichert.",
+    noMatches: "Keine Treffer.",
+    count: (total: number) => trefferOf(total),
+    capped: (total: number, shown: number) => `${trefferOf(total)}, die ersten ${shown} werden angezeigt`,
+  },
+});

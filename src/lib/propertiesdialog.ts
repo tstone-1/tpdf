@@ -33,6 +33,18 @@
  */
 
 import { type Properties, type Section, sections } from "./properties";
+import { catalog } from "./i18n";
+
+const TEXT = catalog({
+  "en-US": {
+    title: "Document properties",
+    reading: "Reading the document...",
+  },
+  "de-DE": {
+    title: "Dokumenteigenschaften",
+    reading: "Das Dokument wird gelesen...",
+  },
+});
 
 /** Class on the backdrop, so the check harness can find it. */
 export const DIALOG_CLASS = "tpdf-properties";
@@ -62,7 +74,7 @@ export class PropertiesDialog {
     this.panel = document.createElement("div");
     this.panel.setAttribute("role", "dialog");
     this.panel.setAttribute("aria-modal", "true");
-    this.panel.setAttribute("aria-label", "Document properties");
+    this.panel.setAttribute("aria-label", TEXT().title);
     this.panel.tabIndex = -1;
     this.panel.style.cssText =
       "margin-top:8vh;width:min(620px,92vw);max-height:78vh;overflow:auto;" +
@@ -71,7 +83,7 @@ export class PropertiesDialog {
       "font:13px/1.55 system-ui,-apple-system,sans-serif;";
 
     this.heading = document.createElement("h2");
-    this.heading.textContent = "Document properties";
+    this.heading.textContent = TEXT().title;
     // Translucent row labels form stacking contexts; keep the title above them.
     this.heading.style.cssText =
       "margin:0;padding:0.85rem 1rem;font-size:15px;font-weight:600;" +
@@ -116,7 +128,7 @@ export class PropertiesDialog {
     if (problem) {
       this.body.append(this.message(problem, true));
     } else if (!properties) {
-      this.body.append(this.message("Reading the document...", false));
+      this.body.append(this.message(TEXT().reading, false));
     } else {
       for (const section of sections(properties)) {
         this.body.append(this.section(section));

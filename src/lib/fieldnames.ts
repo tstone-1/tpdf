@@ -16,6 +16,34 @@
 
 import type { Form } from "./forms";
 import type { FieldKind, MarkView, PlacedField } from "./pages";
+import { catalog } from "./i18n";
+
+const TEXT = catalog({
+  "en-US": {
+    choicesNeeded: "The choices, with a semicolon between them: Yes; No; Maybe",
+    emptyChoice: "There is an empty choice between two semicolons",
+    tooManyChoices: (most: number) => `A dropdown offers at most ${most} choices`,
+    choiceTooLong: (most: number) => `A choice is at most ${most} characters`,
+    choiceControl: "A choice cannot contain a control character",
+    choiceTwice: (choice: string) => `"${choice}" is there twice`,
+    groupNeeded: "The name of the group this button belongs to, such as Payment",
+    namePeriod: "A field's name cannot contain a period",
+    nameControl: "A field's name cannot contain a control character",
+    nameTooLong: "A field's name is at most 255 characters",
+  },
+  "de-DE": {
+    choicesNeeded: "Die Auswahlmöglichkeiten, durch Semikolon getrennt: Ja; Nein; Vielleicht",
+    emptyChoice: "Zwischen zwei Semikolons steht eine leere Auswahlmöglichkeit",
+    tooManyChoices: (most: number) => `Eine Auswahlliste bietet höchstens ${most} Auswahlmöglichkeiten`,
+    choiceTooLong: (most: number) => `Eine Auswahlmöglichkeit hat höchstens ${most} Zeichen`,
+    choiceControl: "Eine Auswahlmöglichkeit darf kein Steuerzeichen enthalten",
+    choiceTwice: (choice: string) => `„${choice}“ steht doppelt da`,
+    groupNeeded: "Der Name der Gruppe, zu der diese Schaltfläche gehört, zum Beispiel Zahlung",
+    namePeriod: "Der Name eines Felds darf keinen Punkt enthalten",
+    nameControl: "Der Name eines Felds darf kein Steuerzeichen enthalten",
+    nameTooLong: "Der Name eines Felds hat höchstens 255 Zeichen",
+  },
+});
 
 /**
  * The least a side of a field of this kind may be, in points: `formfields.rs`'s
@@ -54,16 +82,16 @@ const MAX_OPTION = 255;
  */
 export function parseChoices(raw: string): { options: string[] } | { problem: string } {
   const typed = raw.trim().replace(/;\s*$/, "");
-  if (typed === "") return { problem: "The choices, with a semicolon between them: Yes; No; Maybe" };
+  if (typed === "") return { problem: TEXT().choicesNeeded };
   const options = typed.split(";").map((part) => part.trim());
-  if (options.some((option) => option === "")) return { problem: "There is an empty choice between two semicolons" };
-  if (options.length > MAX_OPTIONS) return { problem: `A dropdown offers at most ${MAX_OPTIONS} choices` };
+  if (options.some((option) => option === "")) return { problem: TEXT().emptyChoice };
+  if (options.length > MAX_OPTIONS) return { problem: TEXT().tooManyChoices(MAX_OPTIONS) };
   const long = options.find((option) => [...option].length > MAX_OPTION);
-  if (long !== undefined) return { problem: `A choice is at most ${MAX_OPTION} characters` };
+  if (long !== undefined) return { problem: TEXT().choiceTooLong(MAX_OPTION) };
   // A character a reader cannot see cannot be told apart in a list either.
-  if (options.some((option) => /\p{Cc}/u.test(option))) return { problem: "A choice cannot contain a control character" };
+  if (options.some((option) => /\p{Cc}/u.test(option))) return { problem: TEXT().choiceControl };
   const twice = options.find((option, at) => options.indexOf(option) !== at);
-  if (twice !== undefined) return { problem: `"${twice}" is there twice` };
+  if (twice !== undefined) return { problem: TEXT().choiceTwice(twice) };
   return { options };
 }
 
@@ -136,10 +164,10 @@ export function canOrderTabs(
  */
 export function parseGroup(raw: string): { group: string } | { problem: string } {
   const group = raw.trim();
-  if (group === "") return { problem: "The name of the group this button belongs to, such as Payment" };
-  if (group.includes(".")) return { problem: "A field's name cannot contain a period" };
-  if (/\p{Cc}/u.test(group)) return { problem: "A field's name cannot contain a control character" };
-  if ([...group].length > 255) return { problem: "A field's name is at most 255 characters" };
+  if (group === "") return { problem: TEXT().groupNeeded };
+  if (group.includes(".")) return { problem: TEXT().namePeriod };
+  if (/\p{Cc}/u.test(group)) return { problem: TEXT().nameControl };
+  if ([...group].length > 255) return { problem: TEXT().nameTooLong };
   return { group };
 }
 

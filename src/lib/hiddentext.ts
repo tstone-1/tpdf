@@ -15,6 +15,8 @@
  * that to "clean".
  */
 
+import { catalog } from "./i18n";
+
 /**
  * The event that says which page is being compared.
  *
@@ -58,24 +60,53 @@ export interface HiddenText {
   unsaved: boolean;
 }
 
+/**
+ * The window's own words. The backend's summary and `notLookedAt` arrive in
+ * English and are shown as they are (phase 2 of German).
+ */
+const TEXT = catalog({
+  "en-US": {
+    starting: "Comparing text with the pages...",
+    progress: (page: number, of: number) => `Comparing text with the pages: page ${page} of ${of}...`,
+    notChecked:
+      "Not checked yet. “Find text the pages do not show” compares the text in this " +
+      "document with what its pages look like.",
+    unsaved: "The saved file was checked. Your unsaved changes were not part of it.",
+    pageGone: "That page is no longer in the document.",
+    firstRows: (shown: number, of: number) => `Showing the first ${shown} of ${of} passages.`,
+    page: (page: number) => `Page ${page}`,
+    offPage: (page: number) => `Page ${page}, outside the page`,
+  },
+  "de-DE": {
+    starting: "Text wird mit den Seiten verglichen...",
+    progress: (page: number, of: number) => `Text wird mit den Seiten verglichen: Seite ${page} von ${of}...`,
+    notChecked:
+      "Noch nicht geprüft. „Text finden, den die Seiten nicht zeigen“ vergleicht den Text in diesem " +
+      "Dokument mit dem, wie seine Seiten aussehen.",
+    unsaved: "Geprüft wurde die gespeicherte Datei. Deine ungespeicherten Änderungen waren nicht Teil davon.",
+    pageGone: "Diese Seite ist nicht mehr im Dokument.",
+    firstRows: (shown: number, of: number) => `Die ersten ${shown} von ${of} Passagen werden angezeigt.`,
+    page: (page: number) => `Seite ${page}`,
+    offPage: (page: number) => `Seite ${page}, außerhalb der Seite`,
+  },
+});
+
 /** The line shown before the first page has been reported. */
-export const STARTING = "Comparing text with the pages...";
+export const STARTING = TEXT().starting;
 
 /** The line shown while a page is being compared. */
 export function progressLine(at: Progress): string {
-  return `Comparing text with the pages: page ${at.page} of ${at.of}...`;
+  return TEXT().progress(at.page, at.of);
 }
 
 /** What the panel says before any check has been run on the open document. */
-export const NOT_CHECKED =
-  "Not checked yet. “Find text the pages do not show” compares the text in this " +
-  "document with what its pages look like.";
+export const NOT_CHECKED = TEXT().notChecked;
 
 /** What a result says when the document had unsaved changes. */
-export const UNSAVED = "The saved file was checked. Your unsaved changes were not part of it.";
+export const UNSAVED = TEXT().unsaved;
 
 /** What a passage's row is told when its page has since been deleted. */
-export const PAGE_GONE = "That page is no longer in the document.";
+export const PAGE_GONE = TEXT().pageGone;
 
 /** Rows drawn at once. Beyond this the panel says how many it is not showing. */
 export const MAX_ROWS = 500;
@@ -91,7 +122,7 @@ export const MAX_ROWS = 500;
 export function sentences(checked: HiddenText): string[] {
   const said = [checked.summary];
   if (checked.found.length > MAX_ROWS) {
-    said.push(`Showing the first ${MAX_ROWS} of ${checked.found.length} passages.`);
+    said.push(TEXT().firstRows(MAX_ROWS, checked.found.length));
   }
   if (checked.unsaved) said.push(UNSAVED);
   said.push(checked.notLookedAt);
@@ -100,7 +131,7 @@ export function sentences(checked: HiddenText): string[] {
 
 /** What a row says before the words: `Page 4`, or `Page 4, outside the page`. */
 export function rowLabel(passage: Passage): string {
-  return passage.offPage ? `Page ${passage.page}, outside the page` : `Page ${passage.page}`;
+  return passage.offPage ? TEXT().offPage(passage.page) : TEXT().page(passage.page);
 }
 
 /**

@@ -21,6 +21,9 @@ export function needsMoreThanADocument(linux: boolean): string[] {
     // run of this check after them, on 2026-10-04, found it.
     "file.reopenLastTabs",
     "file.reopenLastDocumentAtLaunch",
+    // The fixture follows the system's language, so that choice is the
+    // current one and is not offered.
+    "app.language.system",
     // This fixture remembers no documents, so there is nothing to clear.
     "file.clearRecents",
     // This fixture has no other document to put beside the open one, and so
@@ -164,6 +167,11 @@ export function needsNoDocument(linux: boolean): string[] {
   return [
     // A preference, registered with the tab commands, which come first.
     "file.reopenTabsAtLaunch",
+    // The interface languages that are not the fixture's choice, which is
+    // the system's. Registered after the launch pair.
+    "app.language.en-US",
+    "app.language.en-GB",
+    "app.language.de-DE",
     "file.open",
     // Makes a document, so it needs none. Missing here from the day it was
     // registered until this check next ran, 2026-10-04.

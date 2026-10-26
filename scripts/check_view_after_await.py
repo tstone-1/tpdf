@@ -148,6 +148,7 @@ PER_WINDOW: dict[str, str] = {
     "favourites": "the reader's favourites, one list across every document",
     "diskChangeMode": "a preference, kept between sessions",
     "restoreTabs": "a preference, kept in the session",
+    "languageChoice": "a preference, kept in localStorage and read at the next start",
     # Built once at launch, on `document.body`.
     "palette": "the one palette",
     "signatureDialog": "a dialog on `document.body`",

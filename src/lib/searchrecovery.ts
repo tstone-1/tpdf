@@ -2,8 +2,14 @@
  * Search and selection must read the same characters. A mixed search run is
  * answered one page at a time so its carry and indices stay in that source.
  */
+import { catalog } from "./i18n";
 import { call, type Commands } from "./ipc";
 import type { PageText } from "./text";
+
+const TEXT = catalog({
+  "en-US": { full: "Recognition memory is full. Reopen the document to start again." },
+  "de-DE": { full: "Der Speicher für erkannten Text ist voll. Öffne das Dokument erneut, um neu zu beginnen." },
+});
 
 export class SearchRecovery {
   private pages = new Map<string, PageText>();
@@ -12,7 +18,7 @@ export class SearchRecovery {
   put(doc: number, page: number, text: PageText): void {
     const total = [...this.pages.entries()].reduce((n, [key, value]) => n +
       (key === this.key(doc, page) ? 0 : value.codes.length), text.codes.length);
-    if (total > 1_000_000) throw new Error("Recognition memory is full. Reopen the document to start again.");
+    if (total > 1_000_000) throw new Error(TEXT().full);
     this.pages.set(this.key(doc, page), text);
   }
 

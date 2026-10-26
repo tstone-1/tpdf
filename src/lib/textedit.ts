@@ -1,5 +1,37 @@
 import type { EditState } from "./edits";
 import { defaultTextLayout, TextLayoutControls } from "./textlayout";
+import { catalog } from "./i18n";
+
+const TEXT = catalog({
+  "en-US": {
+    tooLong: "Use at most 4096 characters without control characters. Enable wrapping for line breaks.",
+    replaceExisting: "Replace existing text",
+    replacementText: "Replacement text",
+    help: "Longer text grows into the room after the line by itself; set a width to size the box yourself. Apply updates the page; Save writes the PDF. With wrapping, Ctrl+Enter applies.",
+    apply: "Apply",
+    previewAlt: "PDF preview of the replacement",
+    cancel: "Cancel",
+    editRun: (text: string) => `Edit: ${text}`,
+    emptyText: "empty text",
+    applied: "Applied. Save to write the PDF.",
+    preparing: "Preparing preview...",
+    preview: (font: string, lines: number) => `Preview: ${font}, ${lines} ${lines === 1 ? "line" : "lines"}.`,
+  },
+  "de-DE": {
+    tooLong: "Verwende höchstens 4096 Zeichen ohne Steuerzeichen. Für Zeilenumbrüche aktiviere den Umbruch.",
+    replaceExisting: "Vorhandenen Text ersetzen",
+    replacementText: "Ersatztext",
+    help: "Längerer Text wächst von selbst in den Platz hinter der Zeile; lege eine Breite fest, um die Größe des Kastens selbst zu bestimmen. Übernehmen aktualisiert die Seite; Speichern schreibt das PDF. Mit Umbruch übernimmt Strg+Eingabe.",
+    apply: "Übernehmen",
+    previewAlt: "PDF-Vorschau des Ersatztexts",
+    cancel: "Abbrechen",
+    editRun: (text: string) => `Bearbeiten: ${text}`,
+    emptyText: "leerer Text",
+    applied: "Übernommen. Speichere, um das PDF zu schreiben.",
+    preparing: "Vorschau wird erstellt...",
+    preview: (font: string, lines: number) => `Vorschau: ${font}, ${lines} ${lines === 1 ? "Zeile" : "Zeilen"}.`,
+  },
+});
 
 /** Worker-inspected source addresses; these always refer to the original PDF. */
 export interface TextRun {
@@ -78,7 +110,7 @@ export function changedTextPages(before: readonly TextChange[], after: readonly 
 
 export function replacementError(value: string, wrap = false): string | null {
   return Array.from(value).length > 4096 || /[\x00-\x1f\x7f-\x9f\ud800-\udfff\u2028\u2029]/u.test(wrap ? value.replaceAll("\n", "") : value)
-    ? "Use at most 4096 characters without control characters. Enable wrapping for line breaks."
+    ? TEXT().tooLong
     : null;
 }
 
@@ -130,22 +162,22 @@ export class TextEditor {
     this.root.style.cssText = "position:absolute;inset:0;pointer-events:none;z-index:12;overflow:hidden";
     this.popup.className = "text-edit-popup";
     this.popup.setAttribute("role", "group");
-    this.popup.setAttribute("aria-label", "Replace existing text");
+    this.popup.setAttribute("aria-label", TEXT().replaceExisting);
     this.popup.style.cssText = "position:absolute;max-width:calc(100% - 16px);max-height:calc(100% - 64px);overflow:auto;width:440px;box-sizing:border-box;padding:12px;background:Canvas;color:CanvasText;border:1px solid #888;border-radius:6px;pointer-events:auto;box-shadow:0 5px 24px #0004;z-index:3";
     this.popup.hidden = true;
-    const label = document.createElement("label"); label.textContent = "Replacement text";
+    const label = document.createElement("label"); label.textContent = TEXT().replacementText;
     this.input.rows = 2; this.input.maxLength = 8192; this.input.style.cssText = "display:block;width:100%;box-sizing:border-box;margin:8px 0;resize:vertical";
     label.append(this.input);
-    const help = document.createElement("p"); help.textContent = "Longer text grows into the room after the line by itself; set a width to size the box yourself. Apply updates the page; Save writes the PDF. With wrapping, Ctrl+Enter applies.";
+    const help = document.createElement("p"); help.textContent = TEXT().help;
     help.style.cssText = "font-size:12px;margin:6px 0";
     this.message.setAttribute("role", "alert"); this.message.tabIndex = 0;
     this.message.style.cssText = "font-size:12px;margin:6px 0";
-    this.apply.type = "button"; this.apply.className = "text-edit-apply"; this.apply.textContent = "Apply";
+    this.apply.type = "button"; this.apply.className = "text-edit-apply"; this.apply.textContent = TEXT().apply;
     this.apply.addEventListener("click", () => this.commit());
-    this.previewImage.alt = "PDF preview of the replacement"; this.previewImage.hidden = true;
+    this.previewImage.alt = TEXT().previewAlt; this.previewImage.hidden = true;
     this.previewImage.style.cssText = "max-width:100%;max-height:140px;object-fit:contain;background:white;margin:8px 0";
     this.previewImage.addEventListener("load", () => { if (!this.disposed) this.layout(); });
-    this.popup.append(label, this.controls.root, help, this.previewImage, this.message, this.button("Cancel", () => this.cancel()), this.apply);
+    this.popup.append(label, this.controls.root, help, this.previewImage, this.message, this.button(TEXT().cancel, () => this.cancel()), this.apply);
     this.popup.addEventListener("keydown", (event) => {
       event.stopPropagation();
       // Buttons own their native Enter activation; intercepting Cancel here
@@ -155,7 +187,7 @@ export class TextEditor {
     });
     this.input.addEventListener("input", () => this.draftChanged());
     for (const run of source.runs) {
-      const button = this.button(`Edit: ${run.text || "empty text"}`, () => this.select(run));
+      const button = this.button(TEXT().editRun(run.text || TEXT().emptyText), () => this.select(run));
       button.textContent = ""; button.className = "text-edit-run";
       button.style.cssText = "position:absolute;padding:0;border:1px solid #2874d0;background:#2874d012;pointer-events:auto;cursor:text";
       this.buttons.push(button); this.root.append(button);
@@ -237,7 +269,7 @@ export class TextEditor {
       this.acceptedLayout = JSON.stringify(this.controls.read());
       this.clearPreview();
     }
-    this.buttons.forEach((button, index) => button.setAttribute("aria-label", `Edit: ${this.value(this.source.runs[index]!) || "empty text"}`));
+    this.buttons.forEach((button, index) => button.setAttribute("aria-label", TEXT().editRun(this.value(this.source.runs[index]!) || TEXT().emptyText)));
     this.layout();
     this.refreshOutlines();
   }
@@ -286,7 +318,7 @@ export class TextEditor {
       if (this.disposed) return;
       this.changes = state.text_edits ?? []; this.accepted = replacement;
       this.acceptedLayout = JSON.stringify(this.controls.read());
-      this.message.textContent = "Applied. Save to write the PDF.";
+      this.message.textContent = TEXT().applied;
     }).catch((error: unknown) => {
       if (!this.disposed) { this.failure = error; this.message.textContent = String(error); }
     }).finally(() => { this.saving = false; if (!this.disposed) this.setBusy(this.busy); });
@@ -309,7 +341,7 @@ export class TextEditor {
     const error = replacementError(this.input.value, this.controls.wrap.checked) ?? this.controls.error();
     if (error) { this.message.textContent = error; return; }
     const change = this.draft(this.active), generation = this.previewGeneration;
-    this.message.textContent = "Preparing preview...";
+    this.message.textContent = TEXT().preparing;
     this.previewTimer = setTimeout(() => {
       if (this.disposed || generation !== this.previewGeneration) return;
       void this.preview!(change).then((result) => {
@@ -319,7 +351,7 @@ export class TextEditor {
         // webview-sink-ok: URL.createObjectURL above receives only a local image/png Blob; no document URL is used.
         this.previewImage.src = this.previewUrl; this.previewImage.hidden = false;
         this.previewRect = preview.rect;
-        this.message.textContent = `Preview: ${preview.font}, ${preview.lines} ${preview.lines === 1 ? "line" : "lines"}.`;
+        this.message.textContent = TEXT().preview(preview.font, preview.lines);
         this.layout();
       }).catch((error: unknown) => {
         if (!this.disposed && generation === this.previewGeneration) this.message.textContent = String(error);

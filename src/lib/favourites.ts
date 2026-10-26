@@ -8,6 +8,7 @@
  */
 
 import type { Command } from "./commands";
+import { catalog } from "./i18n";
 import { basename } from "./paths";
 import type { Favourite } from "./session";
 
@@ -36,7 +37,7 @@ export class Favourites {
    * already marked renames it rather than adding it twice.
    */
   add(path: string, page: number, name: string): Favourite {
-    const added = { path, page, name: name.trim() || `Page ${page + 1}` };
+    const added = { path, page, name: name.trim() || TEXT().page(page + 1) };
     const at = this.list.findIndex((one) => one.path === path && one.page === page);
     if (at >= 0) this.list[at] = added;
     else this.list.push(added);
@@ -69,7 +70,21 @@ export function favouriteCommands(
 ): Command[] {
   return list.map((favourite, index) => ({
     id: `${FAVOURITE_PREFIX}${index}`,
-    title: `Go to favourite: ${favourite.name} (${basename(favourite.path)}, page ${favourite.page + 1})`,
+    title: TEXT().goTo(favourite.name, basename(favourite.path), favourite.page + 1),
     run: () => go(favourite),
   }));
 }
+
+const TEXT = catalog({
+  "en-US": {
+    page: (page: number) => `Page ${page}`,
+    goTo: (name: string, file: string, page: number) => `Go to favorite: ${name} (${file}, page ${page})`,
+  },
+  "en-GB": {
+    goTo: (name: string, file: string, page: number) => `Go to favourite: ${name} (${file}, page ${page})`,
+  },
+  "de-DE": {
+    page: (page: number) => `Seite ${page}`,
+    goTo: (name: string, file: string, page: number) => `Gehe zu Favorit: ${name} (${file}, Seite ${page})`,
+  },
+});

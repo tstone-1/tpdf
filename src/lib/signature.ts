@@ -1,3 +1,19 @@
+import { catalog } from "./i18n";
+
+/** What an import that is refused says; the signature dialog shows it. */
+const TEXT = catalog({
+  "en-US": {
+    invalid: "Choose a valid, still PNG or JPEG image smaller than 10 MB and 8 megapixels.",
+    tooLarge: "Choose an image smaller than 10 MB.",
+    disagree: "The decoded image dimensions disagree with its header.",
+  },
+  "de-DE": {
+    invalid: "Wähle ein gültiges, unbewegtes PNG- oder JPEG-Bild unter 10 MB und 8 Megapixeln.",
+    tooLarge: "Wähle ein Bild unter 10 MB.",
+    disagree: "Die Abmessungen des dekodierten Bildes widersprechen den Angaben in seinem Dateikopf.",
+  },
+});
+
 /** Normalized, straight-alpha pixels shared with signature::Image. */
 export interface SignatureImage { width: number; height: number; rgba: number[] }
 export const SIGNATURE_KEY = "tpdf.saved-signature";
@@ -7,7 +23,7 @@ const MAX_IMPORT_PIXELS = 8 * 1024 * 1024;
 
 /** Read dimensions before handing compressed input to the browser's decoder. */
 export function signatureDimensions(bytes: Uint8Array): { width: number; height: number } {
-  const invalid = () => new Error("Choose a valid, still PNG or JPEG image smaller than 10 MB and 8 megapixels.");
+  const invalid = () => new Error(TEXT().invalid);
   if (bytes.length > MAX_IMPORT_BYTES) throw invalid();
   const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
   const bounded = (width: number, height: number) => {
@@ -60,7 +76,7 @@ export function signatureDimensions(bytes: Uint8Array): { width: number; height:
 /** Refuse oversized input before decoding, and verify the decoder's dimensions. */
 export async function decodeSignature(file: Blob,
   decode: (blob: Blob) => Promise<ImageBitmap> = createImageBitmap): Promise<ImageBitmap> {
-  if (file.size > MAX_IMPORT_BYTES) throw new Error("Choose an image smaller than 10 MB.");
+  if (file.size > MAX_IMPORT_BYTES) throw new Error(TEXT().tooLarge);
   const bytes = new Uint8Array(await file.arrayBuffer());
   const expected = signatureDimensions(bytes);
   const image = await decode(file);
@@ -69,7 +85,7 @@ export async function decodeSignature(file: Blob,
   if ((image.width !== expected.width || image.height !== expected.height)
       && (image.width !== expected.height || image.height !== expected.width)) {
     image.close();
-    throw new Error("The decoded image dimensions disagree with its header.");
+    throw new Error(TEXT().disagree);
   }
   return image;
 }

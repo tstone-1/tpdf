@@ -177,7 +177,8 @@ const EXACT = WORD_START * 4;
  */
 function startsWord(title: string, index: number): boolean {
   if (index === 0) return true;
-  return !/[A-Za-z0-9]/.test(title[index - 1] ?? "");
+  // Letters of any script, so that in "Größe" the ß does not start a word.
+  return !/[\p{L}\p{N}]/u.test(title[index - 1] ?? "");
   // A camel-case clause was here too --- a capital after a lower-case letter,
   // for titles like "zoomIn". Every title is a human-readable label in sentence
   // case, so no mutation of that clause could fail a test, which is the

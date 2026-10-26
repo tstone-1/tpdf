@@ -8,6 +8,24 @@
  * print systems show their own progress.
  */
 
+import { catalog } from "./i18n";
+
+const TEXT = catalog({
+  "en-US": {
+    stoppedNothingSent: "Printing stopped. Nothing was sent to the printer.",
+    stoppedSomeSent: "Printing stopped. The printer may still print the sheets it already had.",
+    sent: (sheets: number) => (sheets === 1 ? "Sent 1 sheet to the printer." : `Sent ${sheets} sheets to the printer.`),
+    printing: (sheet: number, of: number) => `Printing sheet ${sheet} of ${of}...`,
+  },
+  "de-DE": {
+    stoppedNothingSent: "Drucken abgebrochen. Es wurde nichts an den Drucker gesendet.",
+    stoppedSomeSent: "Drucken abgebrochen. Der Drucker druckt möglicherweise noch die Blätter, die er schon erhalten hat.",
+    sent: (sheets: number) =>
+      sheets === 1 ? "1 Blatt an den Drucker gesendet." : `${sheets} Blätter an den Drucker gesendet.`,
+    printing: (sheet: number, of: number) => `Blatt ${sheet} von ${of} wird gedruckt...`,
+  },
+});
+
 /**
  * The event that says how far a print has got.
  *
@@ -39,12 +57,10 @@ export function printingLine(progress: Printing): string | null {
   const { sent, of, state } = progress;
   if (state === "failed") return null;
   if (state === "stopped") {
-    return sent === 0
-      ? "Printing stopped. Nothing was sent to the printer."
-      : "Printing stopped. The printer may still print the sheets it already had.";
+    return sent === 0 ? TEXT().stoppedNothingSent : TEXT().stoppedSomeSent;
   }
-  if (state === "sent") return of === 1 ? "Sent 1 sheet to the printer." : `Sent ${of} sheets to the printer.`;
-  return `Printing sheet ${Math.min(sent + 1, of)} of ${of}...`;
+  if (state === "sent") return TEXT().sent(of);
+  return TEXT().printing(Math.min(sent + 1, of), of);
 }
 
 /** Whether `progress` is of a print still being drawn, which Stop can stop. */

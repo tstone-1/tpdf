@@ -50,7 +50,7 @@ describe("favouriteCommands", () => {
       (favourite) => went.push(`${favourite.path}:${favourite.page}`),
     );
     expect(commands.map((command) => [command.id, command.title])).toEqual([
-      [`${FAVOURITE_PREFIX}0`, "Go to favourite: Results (report.pdf, page 7)"],
+      [`${FAVOURITE_PREFIX}0`, "Go to favorite: Results (report.pdf, page 7)"],
     ]);
     void commands[0]!.run?.();
     expect(went).toEqual(["/docs/report.pdf:6"]);

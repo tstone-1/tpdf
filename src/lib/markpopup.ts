@@ -56,7 +56,7 @@
  */
 
 import type { MarkKind, MarkView } from "./pages";
-import { message } from "./i18n";
+import { catalog, message } from "./i18n";
 import { PointerDrag, type DragPoint } from "./drag";
 import { place, POPUP_WIDTH, type Anchor } from "./popup";
 import {
@@ -114,6 +114,69 @@ export interface MarkPopupOptions {
   onOpen: (mark: number | null) => void;
 }
 
+const TEXT = catalog({
+  "en-US": {
+    highlight: "Highlight",
+    underline: "Underline",
+    strikeout: "Strikeout",
+    squiggly: "Squiggly",
+    note: "Comment",
+    square: "Box",
+    ellipse: "Ellipse",
+    textbox: "Text box",
+    field: "Form field",
+    stamp: "Stamp",
+    signature: "Signature",
+    picture: "Picture",
+    line: "Line",
+    link: "Link",
+    arrow: "Arrow",
+    polygon: "Polygon",
+    polyline: "Polyline",
+    ink: "Drawing",
+    together: "Shift-click another to arrange them together",
+    markNote: "Mark note",
+    note_: "Note",
+    size: "Size: ",
+    smaller: "Smaller",
+    larger: "Larger",
+    removeKind: (name: string) => `Remove ${name.toLowerCase()}`,
+    fieldName: "Field name",
+    goesTo: "Goes to: a page number or a web address",
+    closeNote: "Close note",
+  },
+  "de-DE": {
+    highlight: "Hervorhebung",
+    underline: "Unterstreichung",
+    strikeout: "Durchstreichung",
+    squiggly: "Wellenlinie",
+    note: "Kommentar",
+    square: "Rechteck",
+    ellipse: "Ellipse",
+    textbox: "Textkasten",
+    field: "Formularfeld",
+    stamp: "Stempel",
+    signature: "Unterschrift",
+    picture: "Bild",
+    line: "Linie",
+    link: "Link",
+    arrow: "Pfeil",
+    polygon: "Polygon",
+    polyline: "Linienzug",
+    ink: "Zeichnung",
+    together: "Umschalt-Klick auf eine weitere, um sie gemeinsam anzuordnen",
+    markNote: "Notiz zur Markierung",
+    note_: "Notiz",
+    size: "Größe: ",
+    smaller: "Kleiner",
+    larger: "Größer",
+    removeKind: (name: string) => `${name} entfernen`,
+    fieldName: "Feldname",
+    goesTo: "Ziel: eine Seitenzahl oder eine Webadresse",
+    closeNote: "Notiz schließen",
+  },
+});
+
 /**
  * The word a reader sees for each kind.
  *
@@ -122,24 +185,24 @@ export interface MarkPopupOptions {
  * is a name in a file and not a word anybody says.
  */
 const NAMES: Record<MarkKind, string> = {
-  highlight: "Highlight",
-  underline: "Underline",
-  strikeout: "Strikeout",
+  highlight: TEXT().highlight,
+  underline: TEXT().underline,
+  strikeout: TEXT().strikeout,
   // "Squiggly", where the PDF subtype, the serde name and the reader's word are
   // all the same --- the second kind of which that is true, after `ellipse`, and
   // for the same reason: there is no better everyday word, so there is nothing
   // for a third spelling to fix. `comments.ts` already answers "Squiggly" for a
   // document's own, so the two tables agree without being arranged to.
-  squiggly: "Squiggly",
+  squiggly: TEXT().squiggly,
   // "Comment", never "Note". The note is the *text*, and every mark has one ---
   // a box headed "Note" beside a field holding the note would be naming the
   // field rather than the thing being removed.
-  note: "Comment",
+  note: TEXT().note,
   // "Box", never "Square". The PDF subtype is `/Square` and the serde name is
   // `square`, and neither is what a reader would call the rectangle they just
   // dragged round a figure --- one that is actually square is the rare case.
   // The third spelling, and the same arrangement as `note` above.
-  square: "Box",
+  square: TEXT().square,
   // "Ellipse", where the PDF subtype is `/Circle` and the serde name is
   // `ellipse`. The one shape kind whose three spellings do not all differ ---
   // and `/Circle` is the one that had to go, for `square`'s reason above: an
@@ -152,7 +215,7 @@ const NAMES: Record<MarkKind, string> = {
   // *and* meet again --- draw one, save, reopen, and the mark is now something
   // `annots.rs` read out of the file. Two tables disagreeing would have named
   // one shape two ways in one window.
-  ellipse: "Ellipse",
+  ellipse: TEXT().ellipse,
   // "Text box", where the PDF subtype is `/FreeText` and the serde name is
   // `textbox`. A third spelling again: "free" in the file's name means
   // unattached to a text selection, a distinction only the specification draws.
@@ -160,23 +223,23 @@ const NAMES: Record<MarkKind, string> = {
   // **This is the one kind whose note box is not optional.** For every other
   // mark the note is a remark about something drawn; here it is the thing on the
   // page, so the field a reader types in is the mark itself.
-  textbox: "Text box",
+  textbox: TEXT().textbox,
   // "Form field". Its note is its name, which is why the box a reader types in
   // is labelled as a name for this kind: see {@link noteLabel}.
-  field: "Form field",
+  field: TEXT().field,
   // "Stamp", the third kind whose PDF subtype, serde name and reader's word
   // are one word --- after "Squiggly" and "Ellipse", and for their reason.
-  stamp: "Stamp",
-  signature: "Signature",
-  picture: "Picture",
+  stamp: TEXT().stamp,
+  signature: TEXT().signature,
+  picture: TEXT().picture,
   // The words `comments.ts`'s `labelFor` already gives a document's own
   // `/Line`, `/Polygon` and `/PolyLine`, so one shape is named one way in one
   // window. An arrow is a `/Line` in the file and an arrow to a reader.
-  line: "Line",
-  link: "Link",
-  arrow: "Arrow",
-  polygon: "Polygon",
-  polyline: "Polyline",
+  line: TEXT().line,
+  link: TEXT().link,
+  arrow: TEXT().arrow,
+  polygon: TEXT().polygon,
+  polyline: TEXT().polyline,
   // "Drawing", never "Ink". `/Ink` is the file's spelling, `ink` is the serde
   // name, and inside this codebase "ink" already means how a mark is laid down
   // --- `Paint` in `save.rs`, `markBand` here. A reader who drew a line and
@@ -188,7 +251,7 @@ const NAMES: Record<MarkKind, string> = {
   // things --- that one labels marks the file arrived with, this one labels the
   // reader's --- so nothing forces them to agree, and a reader looking at both
   // panels would notice if they did not.
-  ink: "Drawing",
+  ink: TEXT().ink,
 };
 
 /**
@@ -204,8 +267,17 @@ export function nameOf(kind: MarkKind): string {
   return NAMES[kind];
 }
 
+/**
+ * What a control that takes a mark of `kind` off says: one phrase for the note
+ * box's button and the marks panel's, worded per language rather than by
+ * lowering the name, which German nouns do not allow.
+ */
+export function removeLabel(kind: MarkKind): string {
+  return TEXT().removeKind(NAMES[kind]);
+}
+
 /** What the box says when a press with Shift would pick another mark to arrange with this one. */
-export const TOGETHER = "Shift-click another to arrange them together";
+export const TOGETHER = TEXT().together;
 
 /** The least room kept between a dragged box and the host's edge, in pixels. */
 const DRAG_MARGIN = 8;
@@ -272,7 +344,7 @@ export class MarkPopup {
     // Not the kind. The label names the *dialog*, and a screen reader announces
     // it when the box opens; a name that changed per mark would read as three
     // different dialogs, and the kind is the first thing inside it anyway.
-    this.element.setAttribute("aria-label", "Mark note");
+    this.element.setAttribute("aria-label", TEXT().markNote);
     this.element.tabIndex = -1;
     this.element.style.cssText =
       "position:absolute;display:none;z-index:5;box-sizing:border-box;" +
@@ -296,8 +368,8 @@ export class MarkPopup {
     });
 
     this.input = document.createElement("textarea");
-    this.input.setAttribute("aria-label", "Note");
-    this.input.placeholder = "Note";
+    this.input.setAttribute("aria-label", TEXT().note_);
+    this.input.placeholder = TEXT().note_;
     this.input.rows = 3;
     this.input.style.cssText =
       "box-sizing:border-box;width:100%;resize:vertical;" +
@@ -308,8 +380,8 @@ export class MarkPopup {
       if (this.shown !== null) this.opts.onDraft(this.shown, this.input.value);
     });
 
-    this.signatureSize.textContent = "Size: ";
-    for (const [label, factor] of [["Smaller", 0.8], ["Larger", 1.25]] as const) {
+    this.signatureSize.textContent = TEXT().size;
+    for (const [label, factor] of [[TEXT().smaller, 0.8], [TEXT().larger, 1.25]] as const) {
       const button = document.createElement("button"); button.type = "button"; button.textContent = label;
       button.style.cssText = "margin:0 6px 8px 0;padding:4px 8px";
       button.addEventListener("click", () => {
@@ -374,12 +446,12 @@ export class MarkPopup {
     // which mark a reader means --- the Edit menu's item says "Remove mark",
     // since it is chosen with the pointer somewhere else entirely and cannot.
     this.title.textContent = NAMES[mark.kind];
-    this.remove.textContent = `Remove ${NAMES[mark.kind].toLowerCase()}`;
+    this.remove.textContent = removeLabel(mark.kind);
     // A field's note is its name and a link's is where it goes, so the box
     // says so and is one line for both.
     const label = mark.kind === "field"
-      ? "Field name"
-      : mark.kind === "link" ? "Goes to: a page number or a web address" : "Note";
+      ? TEXT().fieldName
+      : mark.kind === "link" ? TEXT().goesTo : TEXT().note_;
     this.input.setAttribute("aria-label", label);
     this.input.placeholder = label;
     this.input.rows = mark.kind === "field" || mark.kind === "link" ? 1 : 3;
@@ -606,7 +678,7 @@ export class MarkPopup {
 
     const close = document.createElement("button");
     close.type = "button";
-    close.setAttribute("aria-label", "Close note");
+    close.setAttribute("aria-label", TEXT().closeNote);
     close.textContent = "×";
     close.style.cssText =
       "border:0;background:none;color:inherit;opacity:0.55;font:inherit;" +

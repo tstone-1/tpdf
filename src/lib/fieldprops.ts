@@ -19,6 +19,84 @@ import {
   type FieldProperties, type FieldProps, type FieldTarget,
   differing, isSaved, placedProperties, propertied, properties, revalued,
 } from "./savedfields";
+import { catalog } from "./i18n";
+
+const TEXT = catalog({
+  "en-US": {
+    tooltipTooLong: (most: number) => `A tooltip is at most ${most} characters`,
+    tooltipControl: "A tooltip cannot contain a control character",
+    maxLengthRange: (most: number) => `The most characters is a number from 1 to ${most}, or empty for no limit`,
+    alignmentChoice: "The alignment is left, center or right",
+    buttonValue: "The value this button gives its group",
+    radioOneValue: "A radio button has one value, with no semicolon in it",
+    offReserved: "Off is what a group holds when nothing is chosen",
+    textSizeRange: (min: number, max: number) =>
+      `The text size is ${min} to ${max} points, or empty for one that follows the field's height`,
+    defaultControl: "A default value cannot contain a control character",
+    defaultTooLong: (most: number) => `The default value has more than the ${most} characters the field takes`,
+    nothingChanged: "Nothing about the field was changed.",
+    fieldProperties: "Field properties",
+    tooltip: "Tooltip",
+    mostCharacters: "Most characters",
+    noLimit: "No limit",
+    alignment: "Alignment",
+    left: "Left",
+    center: "Center",
+    right: "Right",
+    choices: "Choices",
+    choicesExample: "Yes; No; Maybe",
+    textSize: "Text size",
+    followsHeight: "Follows the field's height",
+    defaultValue: "Default value",
+    choicesCaption: "Choices, with a semicolon between them",
+    textSizeCaption: "Text size, in points",
+    cancel: "Cancel",
+    apply: "Apply",
+    required: "Required",
+    readOnly: "Read-only",
+    propertiesOf: (name: string) => `Properties of ${name}`,
+    buttonValueCaption: "Value this button gives its group",
+  },
+  "en-GB": {
+    alignmentChoice: "The alignment is left, centre or right",
+    center: "Centre",
+  },
+  "de-DE": {
+    tooltipTooLong: (most: number) => `Ein Tooltip hat höchstens ${most} Zeichen`,
+    tooltipControl: "Ein Tooltip darf kein Steuerzeichen enthalten",
+    maxLengthRange: (most: number) => `Die Höchstzahl an Zeichen ist eine Zahl von 1 bis ${most}, oder leer für keine Grenze`,
+    alignmentChoice: "Die Ausrichtung ist links, zentriert oder rechts",
+    buttonValue: "Der Wert, den diese Schaltfläche ihrer Gruppe gibt",
+    radioOneValue: "Ein Optionsfeld hat einen einzigen Wert, ohne Semikolon",
+    offReserved: "„Off“ ist der Wert einer Gruppe, in der nichts gewählt ist",
+    textSizeRange: (min: number, max: number) =>
+      `Die Schriftgröße ist ${min} bis ${max} Punkt, oder leer für eine, die sich nach der Höhe des Felds richtet`,
+    defaultControl: "Ein Standardwert darf kein Steuerzeichen enthalten",
+    defaultTooLong: (most: number) => `Der Standardwert hat mehr als die ${most} Zeichen, die das Feld aufnimmt`,
+    nothingChanged: "Am Feld wurde nichts geändert.",
+    fieldProperties: "Feldeigenschaften",
+    tooltip: "Tooltip",
+    mostCharacters: "Höchstzahl an Zeichen",
+    noLimit: "Keine Grenze",
+    alignment: "Ausrichtung",
+    left: "Links",
+    center: "Zentriert",
+    right: "Rechts",
+    choices: "Auswahlmöglichkeiten",
+    choicesExample: "Ja; Nein; Vielleicht",
+    textSize: "Schriftgröße",
+    followsHeight: "Richtet sich nach der Höhe des Felds",
+    defaultValue: "Standardwert",
+    choicesCaption: "Auswahlmöglichkeiten, durch Semikolon getrennt",
+    textSizeCaption: "Schriftgröße in Punkt",
+    cancel: "Abbrechen",
+    apply: "Übernehmen",
+    required: "Pflichtfeld",
+    readOnly: "Schreibgeschützt",
+    propertiesOf: (name: string) => `Eigenschaften von ${name}`,
+    buttonValueCaption: "Wert, den diese Schaltfläche ihrer Gruppe gibt",
+  },
+});
 
 /** Class on the backdrop, so the check harness can find it. */
 export const DIALOG_CLASS = "tpdf-field-properties";
@@ -69,15 +147,15 @@ export function shown(now: FieldProperties): Typed {
  */
 export function read(now: FieldProperties, typed: Typed): FieldProperties | { problem: string } {
   const tooltip = typed.tooltip.trim();
-  if ([...tooltip].length > MAX_TOOLTIP) return { problem: `A tooltip is at most ${MAX_TOOLTIP} characters` };
-  if (/\p{Cc}/u.test(tooltip)) return { problem: "A tooltip cannot contain a control character" };
+  if ([...tooltip].length > MAX_TOOLTIP) return { problem: TEXT().tooltipTooLong(MAX_TOOLTIP) };
+  if (/\p{Cc}/u.test(tooltip)) return { problem: TEXT().tooltipControl };
   let maxLength: number | null = null;
   if (now.maxLength !== null) {
     const text = typed.maxLength.trim();
     if (text === "") {
       maxLength = 0;
     } else if (!/^[0-9]{1,6}$/.test(text) || Number(text) < 1 || Number(text) > MAX_LENGTH) {
-      return { problem: `The most characters is a number from 1 to ${MAX_LENGTH}, or empty for no limit` };
+      return { problem: TEXT().maxLengthRange(MAX_LENGTH) };
     } else {
       maxLength = Number(text);
     }
@@ -85,16 +163,16 @@ export function read(now: FieldProperties, typed: Typed): FieldProperties | { pr
   let align: FormAlign | null = null;
   if (now.align !== null) {
     if (typed.align !== "left" && typed.align !== "center" && typed.align !== "right") {
-      return { problem: "The alignment is left, centre or right" };
+      return { problem: TEXT().alignmentChoice };
     }
     align = typed.align;
   }
   let options: string[] | null = null;
   if (now.options !== null) {
     const parsed = parseChoices(typed.options);
-    if ("problem" in parsed) return now.single ? { problem: "The value this button gives its group" } : parsed;
-    if (now.single && parsed.options.length !== 1) return { problem: "A radio button has one value, with no semicolon in it" };
-    if (now.single && parsed.options[0] === "Off") return { problem: "Off is what a group holds when nothing is chosen" };
+    if ("problem" in parsed) return now.single ? { problem: TEXT().buttonValue } : parsed;
+    if (now.single && parsed.options.length !== 1) return { problem: TEXT().radioOneValue };
+    if (now.single && parsed.options[0] === "Off") return { problem: TEXT().offReserved };
     options = parsed.options;
   }
   // A part the field's kind does not have stays as it was said: `null`, or left out.
@@ -106,15 +184,15 @@ export function read(now: FieldProperties, typed: Typed): FieldProperties | { pr
     const text = typed.textSize.trim().replace(",", ".");
     const size = text === "" ? 0 : Number(text);
     if (text !== "" && (!/^[0-9]{1,3}(\.[0-9]{1,2})?$/.test(text) || size < MIN_TEXT_SIZE || size > MAX_TEXT_SIZE)) {
-      return { problem: `The text size is ${MIN_TEXT_SIZE} to ${MAX_TEXT_SIZE} points, or empty for one that follows the field's height` };
+      return { problem: TEXT().textSizeRange(MIN_TEXT_SIZE, MAX_TEXT_SIZE) };
     }
     sized.textSize = size;
   }
   if (now.defaultValue != null) {
     const value = typed.defaultValue;
-    if (/\p{Cc}/u.test(value)) return { problem: "A default value cannot contain a control character" };
+    if (/\p{Cc}/u.test(value)) return { problem: TEXT().defaultControl };
     const most = maxLength || MAX_LENGTH;
-    if ([...value].length > most) return { problem: `The default value has more than the ${most} characters the field takes` };
+    if ([...value].length > most) return { problem: TEXT().defaultTooLong(most) };
     sized.defaultValue = value;
   }
   return {
@@ -196,7 +274,7 @@ export async function changeProperties(deps: PropertiesDeps): Promise<boolean> {
   if (!isSaved(after.id)) {
     const props = differing(after.now, to);
     if (Object.keys(props).length === 0) {
-      deps.say("Nothing about the field was changed.");
+      deps.say(TEXT().nothingChanged);
       return false;
     }
     deps.refit(after.id, props);
@@ -209,7 +287,7 @@ export async function changeProperties(deps: PropertiesDeps): Promise<boolean> {
     return false;
   }
   if (!target && !button) {
-    deps.say("Nothing about the field was changed.");
+    deps.say(TEXT().nothingChanged);
     return false;
   }
   // The group's properties are held under its first button and the value
@@ -260,7 +338,7 @@ export class FieldPropertiesDialog {
     const panel = document.createElement("div");
     panel.setAttribute("role", "dialog");
     panel.setAttribute("aria-modal", "true");
-    panel.setAttribute("aria-label", "Field properties");
+    panel.setAttribute("aria-label", TEXT().fieldProperties);
     panel.style.cssText =
       "margin-top:14vh;width:min(420px,92vw);" +
       "border-radius:10px;background:Canvas;color:CanvasText;" +
@@ -270,34 +348,35 @@ export class FieldPropertiesDialog {
     this.heading = document.createElement("h2");
     this.heading.style.cssText = "margin:0 0 0.6rem;font-size:15px;font-weight:600;overflow-wrap:anywhere;";
 
-    this.tooltip = this.input("Tooltip");
+    const text = TEXT();
+    this.tooltip = this.input(text.tooltip);
     this.required = this.tick();
     this.readOnly = this.tick();
-    this.maxLength = this.input("Most characters");
+    this.maxLength = this.input(text.mostCharacters);
     this.maxLength.inputMode = "numeric";
-    this.maxLength.placeholder = "No limit";
+    this.maxLength.placeholder = text.noLimit;
     this.align = document.createElement("select");
-    this.align.setAttribute("aria-label", "Alignment");
+    this.align.setAttribute("aria-label", text.alignment);
     this.align.style.cssText = FIELD_STYLE;
-    for (const [value, label] of [["left", "Left"], ["center", "Centre"], ["right", "Right"]] as const) {
+    for (const [value, label] of [["left", text.left], ["center", text.center], ["right", text.right]] as const) {
       const option = document.createElement("option");
       option.value = value;
       option.textContent = label;
       this.align.append(option);
     }
-    this.options = this.input("Choices");
-    this.options.placeholder = "Yes; No; Maybe";
-    this.textSize = this.input("Text size");
+    this.options = this.input(text.choices);
+    this.options.placeholder = text.choicesExample;
+    this.textSize = this.input(text.textSize);
     this.textSize.inputMode = "decimal";
-    this.textSize.placeholder = "Follows the field's height";
-    this.defaultValue = this.input("Default value");
+    this.textSize.placeholder = text.followsHeight;
+    this.defaultValue = this.input(text.defaultValue);
 
     this.rows = {
-      maxLength: this.row("Most characters", this.maxLength),
-      align: this.row("Alignment", this.align),
-      options: this.row("Choices, with a semicolon between them", this.options),
-      textSize: this.row("Text size, in points", this.textSize),
-      defaultValue: this.row("Default value", this.defaultValue),
+      maxLength: this.row(text.mostCharacters, this.maxLength),
+      align: this.row(text.alignment, this.align),
+      options: this.row(text.choicesCaption, this.options),
+      textSize: this.row(text.textSizeCaption, this.textSize),
+      defaultValue: this.row(text.defaultValue, this.defaultValue),
     };
     this.optionsCaption = this.rows.options.children[0] as HTMLElement;
 
@@ -307,16 +386,16 @@ export class FieldPropertiesDialog {
 
     const buttons = document.createElement("div");
     buttons.style.cssText = "display:flex;gap:0.5rem;justify-content:flex-end;margin-top:0.85rem;";
-    const cancel = this.button("Cancel", () => this.settle(null));
-    const apply = this.button("Apply", () => this.submit());
+    const cancel = this.button(text.cancel, () => this.settle(null));
+    const apply = this.button(text.apply, () => this.submit());
     apply.style.fontWeight = "600";
     buttons.append(cancel, apply);
 
     panel.append(
       this.heading,
-      this.row("Tooltip", this.tooltip),
-      this.ticked("Required", this.required),
-      this.ticked("Read-only", this.readOnly),
+      this.row(text.tooltip, this.tooltip),
+      this.ticked(text.required, this.required),
+      this.ticked(text.readOnly, this.readOnly),
       this.rows.maxLength,
       this.rows.align,
       this.rows.textSize,
@@ -357,7 +436,7 @@ export class FieldPropertiesDialog {
   ask(now: FieldProperties): Promise<FieldProperties | null> {
     this.settle(null);
     this.now = now;
-    this.heading.textContent = `Properties of ${now.name}`;
+    this.heading.textContent = TEXT().propertiesOf(now.name);
     this.problem.textContent = "";
     this.put(shown(now));
     this.rows.maxLength.style.display = now.maxLength === null ? "none" : "block";
@@ -366,9 +445,9 @@ export class FieldPropertiesDialog {
     this.rows.textSize.style.display = now.textSize == null ? "none" : "block";
     this.rows.defaultValue.style.display = now.defaultValue == null ? "none" : "block";
     this.optionsCaption.textContent = now.single
-      ? "Value this button gives its group"
-      : "Choices, with a semicolon between them";
-    this.options.placeholder = now.single ? "" : "Yes; No; Maybe";
+      ? TEXT().buttonValueCaption
+      : TEXT().choicesCaption;
+    this.options.placeholder = now.single ? "" : TEXT().choicesExample;
     const active = document.activeElement as { focus?: () => void } | null;
     this.returnFocus = typeof active?.focus === "function" ? (active as HTMLElement) : null;
     this.open = true;

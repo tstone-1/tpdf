@@ -23,6 +23,8 @@
  * needs it is handed the handles in that order.
  */
 
+import { catalog } from "./i18n";
+
 export type Side = "left" | "right";
 /** One of the window's two page areas, in the order they were built. */
 export type Slot = 0 | 1;
@@ -291,17 +293,18 @@ export function pickPartner(
 ): { index: number } | { problem: string } {
   const typed = raw.trim().toLowerCase();
   const lower = names.map((name) => name.toLowerCase());
-  if (names.length === 0) return { problem: "No other document is open" };
+  const text = TEXT();
+  if (names.length === 0) return { problem: text.noOther };
   if (typed === "") {
-    return names.length === 1 ? { index: 0 } : { problem: "Type part of a document's name" };
+    return names.length === 1 ? { index: 0 } : { problem: text.typeName };
   }
   const exact = lower.indexOf(typed);
   if (exact >= 0 && lower.lastIndexOf(typed) === exact) return { index: exact };
   const matching = lower.flatMap((name, index) => (name.includes(typed) ? [index] : []));
   const only = matching[0];
-  if (only === undefined) return { problem: "No other open document has that in its name" };
+  if (only === undefined) return { problem: text.noneMatch };
   if (matching.length > 1) {
-    return { problem: `${matching.length} open documents match. Type more of the name` };
+    return { problem: text.manyMatch(matching.length) };
   }
   return { index: only };
 }
@@ -309,5 +312,22 @@ export function pickPartner(
 /** The names the question offers, cut to what fits the field. */
 export function partnerPlaceholder(names: readonly string[]): string {
   const shown = names.slice(0, 3).join(", ");
-  return names.length > 3 ? `${shown} and ${names.length - 3} more` : shown;
+  return names.length > 3 ? TEXT().andMore(shown, names.length - 3) : shown;
 }
+
+const TEXT = catalog({
+  "en-US": {
+    noOther: "No other document is open",
+    typeName: "Type part of a document's name",
+    noneMatch: "No other open document has that in its name",
+    manyMatch: (count: number) => `${count} open documents match. Type more of the name`,
+    andMore: (shown: string, more: number) => `${shown} and ${more} more`,
+  },
+  "de-DE": {
+    noOther: "Kein anderes Dokument ist geöffnet",
+    typeName: "Gib einen Teil des Dokumentnamens ein",
+    noneMatch: "Kein anderes geöffnetes Dokument hat das im Namen",
+    manyMatch: (count: number) => `${count} geöffnete Dokumente passen. Gib mehr vom Namen ein`,
+    andMore: (shown: string, more: number) => `${shown} und ${more} weitere`,
+  },
+});

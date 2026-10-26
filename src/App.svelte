@@ -2,7 +2,360 @@
   import { TextEditor } from "./lib/textedit";
   import { FormLayer } from "./lib/forms";
   import { onMount, tick } from "svelte";
-  import { message } from "./lib/i18n";
+  import { catalog, message, readLanguageChoice, writeLanguageChoice, type LanguageChoice } from "./lib/i18n";
+
+  const LANGUAGE_TEXT = catalog({
+    "en-US": {
+      restart: "The new language is used the next time tpdf starts.",
+      notKept: "Could not save the language. Nothing has changed.",
+    },
+    "de-DE": {
+      restart: "Die neue Sprache gilt ab dem nächsten Start von tpdf.",
+      notKept: "Die Sprache konnte nicht gespeichert werden. Es hat sich nichts geändert.",
+    },
+  });
+
+  /** The window's own wording: its header, find bar, banners, tabs and prompts. */
+  const TEXT = catalog({
+    "en-US": {
+      // Closing with unsaved work.
+      discardChangesTo: (name: string) => `Discard unsaved changes to ${name}?`,
+      discardChangesIn: (count: number) => `Discard unsaved changes in ${count} documents?`,
+      discardChangesOnQuit: (count: number) => `Discard unsaved changes in ${count} open document(s)?`,
+      closeTabs: "Close tabs",
+      closeTab: "Close tab",
+      closeAllTabs: "Close all tabs",
+      closeTpdf: "Close tpdf",
+      discardChanges: "Discard changes",
+      keepOpen: "Keep open",
+      lastInFolder: "This is the last PDF in its folder.",
+      firstInFolder: "This is the first PDF in its folder.",
+      // What the status line calls an armed tool.
+      armedCrop: "Crop — drag out what to keep",
+      armedSignature: "Signature — drag out where it appears; Esc cancels",
+      armedRegion: "Picture — drag out the region to copy or save; Esc cancels",
+      armedRedact: "Redact — drag across words or blank paper to mark; Esc when done; nothing is removed yet",
+      armedCorners: (name: string) => `${name} — click each corner; Enter or a click on the last corner finishes`,
+      armedEnds: (name: string) => `${name} — drag from one end to the other`,
+      armedClick: (name: string) => `${name} — click to place`,
+      armedDrag: (name: string) => `${name} — click and drag`,
+      // Forms and marks.
+      formEditing: "The document's fields can be dragged, resized by a corner, renamed and removed. Finish from the Edit menu.",
+      tabOrderOnSave: "Saving will put the form's fields in reading order for the Tab key.",
+      alreadyArranged: "They are already arranged that way.",
+      fieldBorderOn: "Text fields placed from now on are drawn with a line round them.",
+      fieldBorderOff: "Text fields placed from now on draw nothing until they are filled.",
+      choiceNotKept: " The choice could not be saved and lasts until tpdf closes.",
+      matchPagesUnread: "Some of the pages with matches on them could not be read, so nothing was marked. Nothing has been changed.",
+      choosePicture: "Choose a picture to put on the page",
+      pictures: "Pictures",
+      pressPaste: "Press Ctrl+V on the page to paste the picture on the clipboard.",
+      regionNotCopied: (why: string) => `The region was not copied: ${why}`,
+      saveRegion: "Save a region as a picture",
+      pngPicture: "PNG picture",
+      noAttachments: "This document carries no attachments.",
+      saveAttachment: "Save an attachment",
+      noPictureToPaste: "The clipboard holds no picture to paste.",
+      nothingCopied: "Nothing was copied",
+      marksCut: (count: number) => `${count} mark${count === 1 ? "" : "s"} cut`,
+      marksCopied: (count: number) => `${count} mark${count === 1 ? "" : "s"} copied`,
+      partlyCopied: (kept: string, count: number, first: string) => `${kept}; ${count} not copied: ${first}`,
+      // Pages and text.
+      chooseInsertSource: "Choose a document to insert pages from",
+      blankNothingToCrop: "A blank page has nothing to crop to.",
+      nothingToCrop: "There is nothing on this page to crop to.",
+      blankCannotCrop: "A blank page cannot be cropped.",
+      rectNotCrop: "That rectangle could not be turned into a crop.",
+      redactionsBeforeTextEdit: "Finish or remove pending redactions before editing text.",
+      noEditableText: "This page has no supported text to edit.",
+      changedBeforeTextApplied: "The document changed before the text was applied.",
+      textEditUnavailable: "Text editing is currently unavailable.",
+      cannotEditText: (why: string) => `Cannot edit this text: ${why}`,
+      // Copies, redaction and the save panels.
+      saveCopy: "Save a copy",
+      copySuggested: (stem: string) => `${stem} copy.pdf`,
+      redactSaveAs: "Redact and save as",
+      redactedName: (stem: string) => `${stem} redacted.pdf`,
+      rasterWarning: "Creates an image-only PDF. Text will no longer be selectable; links, forms and signatures will not remain interactive/valid. Original unchanged.",
+      rasterTitle: "Redact to image-only copy",
+      createRasterCopy: "Create image-only copy",
+      cancel: "Cancel",
+      rasterName: (stem: string) => `${stem} redacted image-only.pdf`,
+      creatingRasterCopy: "Creating image-only copy...",
+      rasterFailed: (why: string) => `Image-only redaction failed. No verified copy was saved. ${why}`,
+      saveSmaller: "Save a smaller copy",
+      savingSmaller: "Saving the smaller copy...",
+      saveWithPassword: "Save a copy with a password",
+      saveWithoutPassword: "Save a copy without its password",
+      savingCopy: "Saving the copy...",
+      saveWithNumbers: "Save a copy with page numbers",
+      saveWithWatermark: "Save a copy with a watermark",
+      extractPages: "Extract pages",
+      splitDocument: "Split document",
+      chooseCertificate: "Choose a certificate file",
+      certificateFile: "Certificate file",
+      chooseMerge: "Choose documents to merge into this one",
+      saveMerged: "Save the merged document",
+      mergedName: (stem: string) => `${stem} merged.pdf`,
+      choosePictures: "Choose pictures, one for each page",
+      saveNewDocument: "Save the new document",
+      makingDocument: "Making the document...",
+      saveSigned: "Save the signed document",
+      saveWithValidation: "Save the document with long-term validation data",
+      showInExplorer: "Show PDFs in Explorer",
+      replace: "Replace",
+      keepIt: "Keep it",
+      // A tab's context menu.
+      moveToStart: "Move to start",
+      moveToEnd: "Move to end",
+      moveToSide: (side: "left" | "right") => `Move to ${side} side`,
+      copyPath: "Copy file path",
+      copyPathFailed: (why: string) => `Could not copy the file path: ${why}`,
+      copyFileName: "Copy file name",
+      copyNameFailed: (why: string) => `Could not copy the file name: ${why}`,
+      close: "Close",
+      closeOthers: "Close other tabs",
+      closeLeft: "Close tabs to the left",
+      closeRight: "Close tabs to the right",
+      // Settings.
+      diskAsk: "tpdf will ask before reloading a file that changed on disk.",
+      diskReload: "tpdf will reload a file that changed on disk, unless it has unsaved edits.",
+      diskIgnore: "tpdf will not check whether the open file changed on disk.",
+      recentsCleared: "Recent documents cleared.",
+      updatesOn: "Automatic update checks enabled for future launches.",
+      updatesOff: "Automatic update checks disabled. You can still use Check for updates. A check already started may finish.",
+      updatesOnNotKept: "Could not save the update preference. Automatic checks remain disabled.",
+      updatesOffNotKept: "Automatic checks disabled for this launch, but the preference could not be saved for future launches.",
+      restoreNotKept: "Could not save that choice. It holds until tpdf is closed.",
+      forwardSearchFailed: (why: string) => `Forward search: ${why}`,
+      waitForOther: "Wait for the other document to finish, then press the field again",
+      // The find counter.
+      noTextYet: "no text yet",
+      noTextScanned: "no text: scanned pages",
+      inSelection: " in selection",
+      searching: "searching",
+      noMatches: "no matches",
+      matchOf: (index: number, total: string) => `${index} of ${total}`,
+      // The header and the find bar.
+      openPdf: "Open a PDF",
+      toggleSidebar: "Toggle sidebar",
+      save: "Save",
+      print: "Print",
+      edited: "Edited",
+      stop: "Stop",
+      stopHiddenText: "Stop comparing text with the pages",
+      stopPrinting: "Stop printing; sheets already on the printer still print",
+      pageNavigation: "Page navigation",
+      previousPage: "Previous page",
+      goToPage: "Go to page",
+      nextPage: "Next page",
+      findInDocument: "Find in document",
+      find: "Find",
+      allCommands: (keys: string) => `All commands (${keys})`,
+      commands: "Commands",
+      menuHint: "Documents, settings and tpdf",
+      menu: "Menu",
+      restartToUpdate: "Restart tpdf now to finish installing the update",
+      applyUpdate: "Download and apply this update",
+      matchCase: (keys: string) => `Match case (${keys})`,
+      wholeWords: (keys: string) => `Whole words (${keys})`,
+      regex: (keys: string) => `Regular expression (${keys})`,
+      searchSelection: (keys: string) => `Search the selection (${keys})`,
+      previousMatch: "Previous match",
+      previous: "Previous",
+      nextMatch: "Next match",
+      next: "Next",
+      // The message banner.
+      redactedCopySaved: (name: string) => `Saved ${name}. You are still viewing the original with its pending redaction marks.`,
+      openSavedCopy: "Open saved copy",
+      rasterOffer: "Redaction not verified. Create an image-only copy to remove everything inside the marked regions.",
+      technicalDetails: "Technical details",
+      offerSaveCopy: "Save a copy…",
+      offerReload: "Reload from disk",
+      offerRasterCopy: "Create image-only copy...",
+      offerRedact: "Redact this file",
+      dismiss: "Dismiss",
+      dismissMessage: "Dismiss this message",
+      // Tabs, sides and the blank page.
+      unsavedChanges: "Unsaved changes",
+      closeNamed: (name: string) => `Close ${name}`,
+      openInTabs: "Open PDFs in new tabs",
+      openDocuments: "Open documents",
+      leftDocuments: "Documents on the left side",
+      rightDocuments: "Documents on the right side",
+      divider: "Divider between the two sides",
+      dividerHint: "Drag to resize. Double-click for equal halves.",
+      syncScrollOn: "The two sides scroll together. Hold Alt to scroll one side alone.",
+      syncScroll: "Scroll both sides together",
+      invite: "Open a PDF, or drop one here.",
+      openPdfEllipsis: "Open a PDF…",
+      recentlyOpened: "Recently opened",
+    },
+    "de-DE": {
+      discardChangesTo: (name: string) => `Nicht gespeicherte Änderungen an ${name} verwerfen?`,
+      discardChangesIn: (count: number) => `Nicht gespeicherte Änderungen in ${count} Dokumenten verwerfen?`,
+      discardChangesOnQuit: (count: number) =>
+        `Nicht gespeicherte Änderungen in ${count} geöffneten ${count === 1 ? "Dokument" : "Dokumenten"} verwerfen?`,
+      closeTabs: "Tabs schließen",
+      closeTab: "Tab schließen",
+      closeAllTabs: "Alle Tabs schließen",
+      closeTpdf: "tpdf schließen",
+      discardChanges: "Änderungen verwerfen",
+      keepOpen: "Geöffnet lassen",
+      lastInFolder: "Das ist das letzte PDF in diesem Ordner.",
+      firstInFolder: "Das ist das erste PDF in diesem Ordner.",
+      armedCrop: "Zuschneiden — zieh einen Rahmen um das, was bleiben soll",
+      armedSignature: "Signatur — zieh einen Rahmen dort auf, wo sie erscheinen soll; Esc bricht ab",
+      armedRegion: "Bild — zieh einen Rahmen um den Bereich, den du kopieren oder speichern willst; Esc bricht ab",
+      armedRedact: "Schwärzen — zieh über Wörter oder leere Stellen, um sie zu markieren; Esc, wenn du fertig bist; noch wird nichts entfernt",
+      armedCorners: (name: string) => `${name} — klicke auf jede Ecke; Eingabe oder ein Klick auf die letzte Ecke schließt ab`,
+      armedEnds: (name: string) => `${name} — zieh von einem Ende zum anderen`,
+      armedClick: (name: string) => `${name} — zum Platzieren klicken`,
+      armedDrag: (name: string) => `${name} — klicken und ziehen`,
+      formEditing: "Du kannst die Felder des Dokuments ziehen, an einer Ecke in der Größe ändern, umbenennen und entfernen. Beenden kannst du das im Menü „Bearbeiten“.",
+      tabOrderOnSave: "Beim Speichern werden die Formularfelder für die Tab-Taste in Lesereihenfolge gebracht.",
+      alreadyArranged: "Sie sind bereits so angeordnet.",
+      fieldBorderOn: "Ab jetzt platzierte Textfelder erhalten einen Rahmen.",
+      fieldBorderOff: "Ab jetzt platzierte Textfelder zeigen nichts an, bis sie ausgefüllt sind.",
+      choiceNotKept: " Die Auswahl konnte nicht gespeichert werden und gilt nur, bis du tpdf schließt.",
+      matchPagesUnread: "Einige Seiten mit Treffern konnten nicht gelesen werden, deshalb wurde nichts markiert. Es wurde nichts geändert.",
+      choosePicture: "Bild für die Seite auswählen",
+      pictures: "Bilder",
+      pressPaste: "Drücke Strg+V auf der Seite, um das Bild aus der Zwischenablage einzufügen.",
+      regionNotCopied: (why: string) => `Der Bereich wurde nicht kopiert: ${why}`,
+      saveRegion: "Bereich als Bild speichern",
+      pngPicture: "PNG-Bild",
+      noAttachments: "Dieses Dokument hat keine Anhänge.",
+      saveAttachment: "Anhang speichern",
+      noPictureToPaste: "In der Zwischenablage ist kein Bild zum Einfügen.",
+      nothingCopied: "Es wurde nichts kopiert",
+      marksCut: (count: number) => `${count} ${count === 1 ? "Markierung" : "Markierungen"} ausgeschnitten`,
+      marksCopied: (count: number) => `${count} ${count === 1 ? "Markierung" : "Markierungen"} kopiert`,
+      partlyCopied: (kept: string, count: number, first: string) => `${kept}; ${count} nicht kopiert: ${first}`,
+      chooseInsertSource: "Dokument auswählen, aus dem Seiten eingefügt werden",
+      blankNothingToCrop: "Auf einer leeren Seite gibt es nichts, worauf zugeschnitten werden kann.",
+      nothingToCrop: "Auf dieser Seite gibt es nichts, worauf zugeschnitten werden kann.",
+      blankCannotCrop: "Eine leere Seite kann nicht zugeschnitten werden.",
+      rectNotCrop: "Aus diesem Rechteck ließ sich kein Zuschnitt machen.",
+      redactionsBeforeTextEdit: "Wende ausstehende Schwärzungen an oder entferne sie, bevor du Text bearbeitest.",
+      noEditableText: "Diese Seite enthält keinen Text, der bearbeitet werden kann.",
+      changedBeforeTextApplied: "Das Dokument hat sich geändert, bevor der Text übernommen wurde.",
+      textEditUnavailable: "Die Textbearbeitung ist gerade nicht verfügbar.",
+      cannotEditText: (why: string) => `Dieser Text kann nicht bearbeitet werden: ${why}`,
+      saveCopy: "Kopie speichern",
+      copySuggested: (stem: string) => `${stem} Kopie.pdf`,
+      redactSaveAs: "Schwärzen und speichern unter",
+      redactedName: (stem: string) => `${stem} geschwärzt.pdf`,
+      rasterWarning: "Erstellt ein PDF nur aus Bildern. Text lässt sich danach nicht mehr auswählen; Links, Formulare und Signaturen funktionieren nicht mehr und sind nicht mehr gültig. Das Original bleibt unverändert.",
+      rasterTitle: "Als Kopie nur aus Bildern schwärzen",
+      createRasterCopy: "Kopie nur aus Bildern erstellen",
+      cancel: "Abbrechen",
+      rasterName: (stem: string) => `${stem} geschwärzt nur Bilder.pdf`,
+      creatingRasterCopy: "Kopie nur aus Bildern wird erstellt...",
+      rasterFailed: (why: string) => `Das Schwärzen als Kopie nur aus Bildern ist fehlgeschlagen. Es wurde keine bestätigte Kopie gespeichert. ${why}`,
+      saveSmaller: "Kleinere Kopie speichern",
+      savingSmaller: "Kleinere Kopie wird gespeichert...",
+      saveWithPassword: "Kopie mit Passwort speichern",
+      saveWithoutPassword: "Kopie ohne Passwort speichern",
+      savingCopy: "Kopie wird gespeichert...",
+      saveWithNumbers: "Kopie mit Seitenzahlen speichern",
+      saveWithWatermark: "Kopie mit Wasserzeichen speichern",
+      extractPages: "Seiten extrahieren",
+      splitDocument: "Dokument aufteilen",
+      chooseCertificate: "Zertifikatsdatei auswählen",
+      certificateFile: "Zertifikatsdatei",
+      chooseMerge: "Dokumente auswählen, die mit diesem zusammengeführt werden",
+      saveMerged: "Zusammengeführtes Dokument speichern",
+      mergedName: (stem: string) => `${stem} zusammengeführt.pdf`,
+      choosePictures: "Bilder auswählen, eines pro Seite",
+      saveNewDocument: "Neues Dokument speichern",
+      makingDocument: "Dokument wird erstellt...",
+      saveSigned: "Signiertes Dokument speichern",
+      saveWithValidation: "Dokument mit Langzeitvalidierungsdaten speichern",
+      showInExplorer: "PDFs im Explorer anzeigen",
+      replace: "Ersetzen",
+      keepIt: "Beibehalten",
+      moveToStart: "An den Anfang verschieben",
+      moveToEnd: "Ans Ende verschieben",
+      moveToSide: (side: "left" | "right") => `Auf die ${side === "right" ? "rechte" : "linke"} Seite verschieben`,
+      copyPath: "Dateipfad kopieren",
+      copyPathFailed: (why: string) => `Der Dateipfad konnte nicht kopiert werden: ${why}`,
+      copyFileName: "Dateinamen kopieren",
+      copyNameFailed: (why: string) => `Der Dateiname konnte nicht kopiert werden: ${why}`,
+      close: "Schließen",
+      closeOthers: "Andere Tabs schließen",
+      closeLeft: "Tabs links schließen",
+      closeRight: "Tabs rechts schließen",
+      diskAsk: "tpdf fragt nach, bevor eine auf dem Datenträger geänderte Datei neu geladen wird.",
+      diskReload: "tpdf lädt eine auf dem Datenträger geänderte Datei neu, außer sie hat nicht gespeicherte Änderungen.",
+      diskIgnore: "tpdf prüft nicht, ob sich die geöffnete Datei auf dem Datenträger geändert hat.",
+      recentsCleared: "Liste der zuletzt geöffneten Dokumente geleert.",
+      updatesOn: "Die automatische Suche nach Updates ist ab dem nächsten Start eingeschaltet.",
+      updatesOff: "Die automatische Suche nach Updates ist ausgeschaltet. „Nach Updates suchen“ kannst du weiterhin verwenden. Eine bereits gestartete Suche kann noch zu Ende laufen.",
+      updatesOnNotKept: "Die Update-Einstellung konnte nicht gespeichert werden. Die automatische Suche bleibt ausgeschaltet.",
+      updatesOffNotKept: "Die automatische Suche ist für diesen Start ausgeschaltet, aber die Einstellung konnte nicht für künftige Starts gespeichert werden.",
+      restoreNotKept: "Die Auswahl konnte nicht gespeichert werden. Sie gilt, bis du tpdf schließt.",
+      forwardSearchFailed: (why: string) => `Vorwärtssuche: ${why}`,
+      waitForOther: "Warte, bis das andere Dokument fertig ist, und klicke dann erneut auf das Feld",
+      noTextYet: "noch kein Text",
+      noTextScanned: "kein Text: gescannte Seiten",
+      inSelection: " in der Auswahl",
+      searching: "wird gesucht",
+      noMatches: "keine Treffer",
+      matchOf: (index: number, total: string) => `${index} von ${total}`,
+      openPdf: "PDF öffnen",
+      toggleSidebar: "Seitenleiste ein- oder ausblenden",
+      save: "Speichern",
+      print: "Drucken",
+      edited: "Bearbeitet",
+      stop: "Stopp",
+      stopHiddenText: "Vergleich des Texts mit den Seiten abbrechen",
+      stopPrinting: "Drucken abbrechen; Blätter, die schon beim Drucker sind, werden trotzdem gedruckt",
+      pageNavigation: "Seitennavigation",
+      previousPage: "Vorherige Seite",
+      goToPage: "Zu Seite springen",
+      nextPage: "Nächste Seite",
+      findInDocument: "Im Dokument suchen",
+      find: "Suchen",
+      allCommands: (keys: string) => `Alle Befehle (${keys})`,
+      commands: "Befehle",
+      menuHint: "Dokumente, Einstellungen und tpdf",
+      menu: "Menü",
+      restartToUpdate: "tpdf jetzt neu starten, um die Installation des Updates abzuschließen",
+      applyUpdate: "Dieses Update herunterladen und installieren",
+      matchCase: (keys: string) => `Groß-/Kleinschreibung beachten (${keys})`,
+      wholeWords: (keys: string) => `Ganze Wörter (${keys})`,
+      regex: (keys: string) => `Regulärer Ausdruck (${keys})`,
+      searchSelection: (keys: string) => `In der Auswahl suchen (${keys})`,
+      previousMatch: "Vorheriger Treffer",
+      previous: "Zurück",
+      nextMatch: "Nächster Treffer",
+      next: "Weiter",
+      redactedCopySaved: (name: string) => `${name} gespeichert. Du siehst weiterhin das Original mit den ausstehenden Schwärzungsmarkierungen.`,
+      openSavedCopy: "Gespeicherte Kopie öffnen",
+      rasterOffer: "Schwärzung nicht bestätigt. Erstelle eine Kopie nur aus Bildern, um alles in den markierten Bereichen zu entfernen.",
+      technicalDetails: "Technische Details",
+      offerSaveCopy: "Kopie speichern…",
+      offerReload: "Neu laden",
+      offerRasterCopy: "Kopie nur aus Bildern erstellen...",
+      offerRedact: "Diese Datei schwärzen",
+      dismiss: "Schließen",
+      dismissMessage: "Diese Meldung schließen",
+      unsavedChanges: "Nicht gespeicherte Änderungen",
+      closeNamed: (name: string) => `${name} schließen`,
+      openInTabs: "PDFs in neuen Tabs öffnen",
+      openDocuments: "Geöffnete Dokumente",
+      leftDocuments: "Dokumente auf der linken Seite",
+      rightDocuments: "Dokumente auf der rechten Seite",
+      divider: "Trennlinie zwischen den beiden Seiten",
+      dividerHint: "Ziehen, um die Größe zu ändern. Doppelklick für gleich große Hälften.",
+      syncScrollOn: "Die beiden Seiten scrollen gemeinsam. Halte Alt gedrückt, um nur eine Seite zu scrollen.",
+      syncScroll: "Beide Seiten gemeinsam scrollen",
+      invite: "Öffne ein PDF oder zieh eines hierher.",
+      openPdfEllipsis: "PDF öffnen…",
+      recentlyOpened: "Zuletzt geöffnet",
+    },
+  });
   import {
     DiskWatch,
     onDiskChange,
@@ -893,9 +1246,9 @@
       if (!unsaved.length) return true;
       return confirmDialog(
         unsaved.length === 1
-          ? `Discard unsaved changes to ${unsaved[0]}?`
-          : `Discard unsaved changes in ${unsaved.length} documents?`,
-        { title: "Close tabs", kind: "warning", okLabel: "Discard changes", cancelLabel: "Keep open" },
+          ? TEXT().discardChangesTo(unsaved[0]!)
+          : TEXT().discardChangesIn(unsaved.length),
+        { title: TEXT().closeTabs, kind: "warning", okLabel: TEXT().discardChanges, cancelLabel: TEXT().keepOpen },
       );
     }));
     if (!go) return;
@@ -952,7 +1305,7 @@
     }
     const next = neighbourIn(paths, tab.path, step);
     if (next === null) {
-      say(step > 0 ? "This is the last PDF in its folder." : "This is the first PDF in its folder.");
+      say(step > 0 ? TEXT().lastInFolder : TEXT().firstInFolder);
       return;
     }
     const keep = tab.edits.state.dirty || twinsOf(tabs.all, tab).length > 0;
@@ -987,8 +1340,8 @@
         // the other.
         const lastView = twinsOf(tabs.all, tab).length === 0;
         if (lastView && !asked && tab.edits.state.dirty && !await confirmDialog(
-          `Discard unsaved changes to ${basename(tab.path)}?`,
-          { title: "Close tab", kind: "warning", okLabel: "Discard changes", cancelLabel: "Keep open" },
+          TEXT().discardChangesTo(basename(tab.path)),
+          { title: TEXT().closeTab, kind: "warning", okLabel: TEXT().discardChanges, cancelLabel: TEXT().keepOpen },
         )) return;
         endComparison(id);
         if (id === openView) clearActiveDocument();
@@ -1023,9 +1376,9 @@
         const unsaved = oneEach(tabs.all).filter((tab) => tab.edits.state.dirty).map((tab) => basename(tab.path));
         if (unsaved.length && !await confirmDialog(
           unsaved.length === 1
-            ? `Discard unsaved changes to ${unsaved[0]}?`
-            : `Discard unsaved changes in ${unsaved.length} documents?`,
-          { title: "Close all tabs", kind: "warning", okLabel: "Discard changes", cancelLabel: "Keep open" },
+            ? TEXT().discardChangesTo(unsaved[0]!)
+            : TEXT().discardChangesIn(unsaved.length),
+          { title: TEXT().closeAllTabs, kind: "warning", okLabel: TEXT().discardChanges, cancelLabel: TEXT().keepOpen },
         )) return;
         const ids = tabs.all.map((tab) => tab.view);
         const handles = oneEach(tabs.all).map((tab) => tab.doc.id);
@@ -1171,22 +1524,22 @@
    * unreachable entry, so the fallback is the honest one if that ever changes.
    */
   function armedLabel(kind: MarkKind | "crop" | "redact" | "place" | "region"): string {
-    if (kind === "crop") return "Crop — drag out what to keep";
-    if (kind === "place") return "Signature — drag out where it appears; Esc cancels";
-    if (kind === "region") return "Picture — drag out the region to copy or save; Esc cancels";
+    if (kind === "crop") return TEXT().armedCrop;
+    if (kind === "place") return TEXT().armedSignature;
+    if (kind === "region") return TEXT().armedRegion;
     // **Says what goes, where the crop's says what stays**, because the two are
     // the same drag and this is the only place the reader is told which one
     // they armed. "Nothing is removed yet" is the other half: marking is
     // reversible and applying is not, and a reader who thinks the first line
     // has already destroyed something will not review the list.
     if (kind === "redact")
-      return "Redact — drag across words or blank paper to mark; Esc when done; nothing is removed yet";
+      return TEXT().armedRedact;
     if (kind === "polygon" || kind === "polyline")
-      return `${nameOf(kind)} — click each corner; Enter or a click on the last corner finishes`;
-    if (kind === "line" || kind === "arrow") return `${nameOf(kind)} — drag from one end to the other`;
+      return TEXT().armedCorners(nameOf(kind));
+    if (kind === "line" || kind === "arrow") return TEXT().armedEnds(nameOf(kind));
     return kind === "note"
-      ? `${nameOf(kind)} — click to place`
-      : `${nameOf(kind)} — click and drag`;
+      ? TEXT().armedClick(nameOf(kind))
+      : TEXT().armedDrag(nameOf(kind));
   }
   /**
    * The degraded-state words currently on screen, or `null` for none.
@@ -1628,6 +1981,8 @@
     focusOtherSide: () => { if (focusSide(otherSide(panes.focused))) viewer?.focus(); },
     restoreTabs: () => restoreTabs,
     setRestoreTabs: (restore) => setRestoreTabs(restore),
+    languageChoice: () => languageChoice,
+    setLanguageChoice: (choice) => setLanguageChoice(choice),
     tabsToReopen: () => tabsToReopen(session, isOpenTab).length,
     reopenLastTabs: () => void reopenLastTabs(),
     recentDocuments: () => startRows.length,
@@ -1724,7 +2079,7 @@
       if (edits) viewer?.setMarks(shownMarks(edits.state));
       formLayer?.layout();
       notice = on
-        ? "The document's fields can be dragged, resized by a corner, renamed and removed. Finish from the Edit menu."
+        ? TEXT().formEditing
         : "";
       refreshMenu();
     },
@@ -1734,7 +2089,7 @@
     orderTabs: () => {
       const view = openView;
       void applyEdit((e) => e.orderTabs()).then(() => {
-        asDocument(view, () => { notice = "Saving will put the form's fields in reading order for the Tab key."; });
+        asDocument(view, () => { notice = TEXT().tabOrderOnSave; });
         refreshMenu();
       });
     },
@@ -1743,16 +2098,16 @@
     arrange: (how) => {
       // `false` is too few picked or nothing to move; the command is only
       // offered with enough picked, so what is left to say is the second.
-      if (viewer && !viewer.arrangePicked(how)) notice = "They are already arranged that way.";
+      if (viewer && !viewer.arrangePicked(how)) notice = TEXT().alreadyArranged;
     },
     fieldBorder: () => fieldBorder,
     setFieldBorder: (border) => {
       fieldBorder = border;
       const kept = writeFieldBorder(border);
       notice = (border
-        ? "Text fields placed from now on are drawn with a line round them."
-        : "Text fields placed from now on draw nothing until they are filled.")
-        + (kept ? "" : " The choice could not be saved and lasts until tpdf closes.");
+        ? TEXT().fieldBorderOn
+        : TEXT().fieldBorderOff)
+        + (kept ? "" : TEXT().choiceNotKept);
       refreshMenu();
     },
     signature: () => void addSignature(),
@@ -1970,10 +2325,7 @@
     }
     const found = await searched.matchQuadsByPage();
     if (found === null) {
-      asDocument(view, () => say(
-        "Some of the pages with matches on them could not be read, so nothing " +
-          "was marked. Nothing has been changed.",
-      ));
+      asDocument(view, () => say(TEXT().matchPagesUnread));
       return;
     }
     for (const { page, quads } of found) {
@@ -2071,8 +2423,8 @@
       const picked = queued?.[0] ?? await openDialog({
         multiple: false,
         directory: false,
-        title: "Choose a picture to put on the page",
-        filters: [{ name: "Pictures", extensions: PICTURE_EXTENSIONS }],
+        title: TEXT().choosePicture,
+        filters: [{ name: TEXT().pictures, extensions: PICTURE_EXTENSIONS }],
       });
       if (typeof picked !== "string") return;
       const pixels = readPicture(await call("picture_open", { path: picked }));
@@ -2094,7 +2446,7 @@
     const focused = document.activeElement;
     if (focused instanceof HTMLElement && focused !== document.body) focused.blur();
     try {
-      if (!(await call("paste"))) say("Press Ctrl+V on the page to paste the picture on the clipboard.");
+      if (!(await call("paste"))) say(TEXT().pressPaste);
     } catch (e) {
       say(String(e));
     }
@@ -2123,7 +2475,7 @@
       else await navigator.clipboard.write([new ClipboardItem({ "image/png": fetchTilePng(request) })]);
       tell(regionSaid(request));
     } catch (e) {
-      say(`The region was not copied: ${e instanceof Error ? e.message : String(e)}`);
+      say(TEXT().regionNotCopied(e instanceof Error ? e.message : String(e)));
     }
   }
 
@@ -2141,9 +2493,9 @@
     if (__TPDF_CHECKS__) lastRegion = request;
     const suggested = regionName(basename(name), region.pageNumber);
     const panel = () => saveDialog({
-      title: "Save a region as a picture",
+      title: TEXT().saveRegion,
       defaultPath: suggested,
-      filters: [{ name: "PNG picture", extensions: ["png"] }],
+      filters: [{ name: TEXT().pngPicture, extensions: ["png"] }],
     });
     try {
       const chosen = __TPDF_CHECKS__ && signSaves ? await signSaves.ask(suggested, panel) : await panel();
@@ -2166,7 +2518,7 @@
     try {
       const files = (await call("document_properties", { doc })).embedded ?? [];
       if (files.length === 0) {
-        tell("This document carries no attachments.");
+        tell(TEXT().noAttachments);
         return;
       }
       const asked = { doc, source, files };
@@ -2198,7 +2550,7 @@
   async function saveAttachmentAt(asked: { doc: number; source: string; files: Embedded[] }, index: number): Promise<void> {
     const file = asked.files[index];
     if (!file) return;
-    const panel = () => saveDialog({ title: "Save an attachment", defaultPath: file.name });
+    const panel = () => saveDialog({ title: TEXT().saveAttachment, defaultPath: file.name });
     try {
       const chosen = __TPDF_CHECKS__ && signSaves ? await signSaves.ask(file.name, panel) : await panel();
       if (!chosen) return;
@@ -2222,7 +2574,7 @@
     event.preventDefault();
     const file = pastedPicture(event.clipboardData);
     if (!file) {
-      say("The clipboard holds no picture to paste.");
+      say(TEXT().noPictureToPaste);
       return;
     }
     void (async () => {
@@ -2336,13 +2688,13 @@
       return;
     }
     if (copied === 0) {
-      say(unread[0] ?? "Nothing was copied");
+      say(unread[0] ?? TEXT().nothingCopied);
       return;
     }
     if (cut) mounted.removeMarks();
-    const kept = `${copied} mark${copied === 1 ? "" : "s"} ${cut ? "cut" : "copied"}`;
+    const kept = cut ? TEXT().marksCut(copied) : TEXT().marksCopied(copied);
     asDocument(view, () => {
-      notice = unread.length > 0 ? `${kept}; ${unread.length} not copied: ${unread[0]}` : kept;
+      notice = unread.length > 0 ? TEXT().partlyCopied(kept, unread.length, unread[0]!) : kept;
     });
     refreshMenu();
   }
@@ -2511,7 +2863,7 @@
     const picked = await openDialog({
       multiple: false,
       directory: false,
-      title: "Choose a document to insert pages from",
+      title: TEXT().chooseInsertSource,
       filters: [{ name: "PDF", extensions: ["pdf"] }],
     });
     const path = typeof picked === "string" ? picked : null;
@@ -2634,7 +2986,7 @@
       // Two ways to get here and only one of them is worth a message: a slot
       // that is not in the document is a stale press, and a page tpdf made is a
       // reader asking a reasonable question about a page with nothing on it.
-      if (shown !== undefined) say("A blank page has nothing to crop to.");
+      if (shown !== undefined) say(TEXT().blankNothingToCrop);
       return;
     }
     // The page's identity, taken before the measurement goes out. `at` is a
@@ -2645,7 +2997,7 @@
     const page = shown.id;
     const box = await contentBox(source.doc, source.page).catch(() => null);
     if (!box) {
-      asDocument(view, () => say("There is nothing on this page to crop to."));
+      asDocument(view, () => say(TEXT().nothingToCrop));
       return;
     }
     await applyEdit((e) => {
@@ -2707,12 +3059,12 @@
       // has one and nothing gets that far. Its sibling for a redaction has no
       // such guard, which is how the shared message it used to carry --- about
       // marking --- was shown to somebody dragging a region.
-      if (shown !== undefined) say("A blank page cannot be cropped.");
+      if (shown !== undefined) say(TEXT().blankCannotCrop);
       return;
     }
     const box = await cropBox(source.doc, source.page, rect).catch(() => null);
     if (!box) {
-      asDocument(view, () => say("That rectangle could not be turned into a crop."));
+      asDocument(view, () => say(TEXT().rectNotCrop));
       return;
     }
     await applyEdit((e) => {
@@ -2794,12 +3146,12 @@
     try {
       await settleDocument();
       if (!wanted()) return;
-      if (model.state.redactions.length) throw new Error("Finish or remove pending redactions before editing text.");
+      if (model.state.redactions.length) throw new Error(TEXT().redactionsBeforeTextEdit);
       const page = model.state.pages[(asDocument(view, () => status?.page) ?? 1) - 1];
       if (!page) return;
       const runs = await call("document_text_runs", { doc: model.doc, page: page.id });
       if (!wanted()) return;
-      if (!runs.runs.length) throw new Error("This page has no supported text to edit.");
+      if (!runs.runs.length) throw new Error(TEXT().noEditableText);
       asDocument(view, () => textEditor?.destroy());
       const editor: TextEditor = new TextEditor(host, page.id, runs,
         // By the page's identity, not by `runs.page`: that number is a page
@@ -2810,11 +3162,11 @@
           let result: EditState | undefined;
           let failure: unknown;
           await applyEdit(async (current) => {
-            if (current !== model) throw new Error("The document changed before the text was applied.");
+            if (current !== model) throw new Error(TEXT().changedBeforeTextApplied);
             try { result = await current.replaceText(page.id, change); return result; }
             catch (error) { failure = error; throw error; }
           }, view);
-          if (!result) throw failure ?? new Error("Text editing is currently unavailable.");
+          if (!result) throw failure ?? new Error(TEXT().textEditUnavailable);
           return result;
         }, () => { editor.destroy(); asDocument(view, () => { if (textEditor === editor) textEditor = null; }); },
         (change) => call("document_text_runs", { doc: model.doc, page: page.id, change }),
@@ -2824,7 +3176,7 @@
       editor.update(model.state); editor.setBusy(documentBusy);
     } catch (error) {
       if (generation === textEditorGeneration) asDocument(view, () => {
-        if (edits === model) say(`Cannot edit this text: ${error instanceof Error ? error.message : String(error)}`);
+        if (edits === model) say(TEXT().cannotEditText(error instanceof Error ? error.message : String(error)));
       });
     }
   }
@@ -3241,8 +3593,8 @@
       const suggested = basename(openPathName).replace(/\.pdf$/i, "");
       try {
         const chosen = await saveDialog({
-          title: "Save a copy",
-          defaultPath: `${suggested} copy.pdf`,
+          title: TEXT().saveCopy,
+          defaultPath: TEXT().copySuggested(suggested),
           filters: [{ name: "PDF", extensions: ["pdf"] }],
         });
       // Cancelled. Deliberately not an error and deliberately not a message:
@@ -3285,8 +3637,8 @@
       const suggested = basename(openPathName).replace(/\.pdf$/i, "");
       try {
         const chosen = await saveDialog({
-          title: "Redact and save as",
-          defaultPath: `${suggested} redacted.pdf`,
+          title: TEXT().redactSaveAs,
+          defaultPath: TEXT().redactedName(suggested),
           filters: [{ name: "PDF", extensions: ["pdf"] }],
         });
       // Cancelled, which is an answer rather than an error.
@@ -3325,25 +3677,25 @@
       try {
         await settled;
         const proceed = await confirmDialog(
-          "Creates an image-only PDF. Text will no longer be selectable; links, forms and signatures will not remain interactive/valid. Original unchanged.",
+          TEXT().rasterWarning,
           {
-            title: "Redact to image-only copy",
+            title: TEXT().rasterTitle,
             kind: "warning",
-            okLabel: "Create image-only copy",
-            cancelLabel: "Cancel",
+            okLabel: TEXT().createRasterCopy,
+            cancelLabel: TEXT().cancel,
           },
         );
         if (!proceed || !edits || !openPathName) return;
         const source = openPathName;
         const suggested = basename(source).replace(/\.pdf$/i, "");
         const chosen = await saveDialog({
-          title: "Redact to image-only copy",
-          defaultPath: `${suggested} redacted image-only.pdf`,
+          title: TEXT().rasterTitle,
+          defaultPath: TEXT().rasterName(suggested),
           filters: [{ name: "PDF", extensions: ["pdf"] }],
         });
       if (!chosen) return;
 
-      blockingTask = "Creating image-only copy...";
+      blockingTask = TEXT().creatingRasterCopy;
       // Give the progress line one render before the long native call occupies
       // this command. Without the tick, a fast state change followed by IPC can
       // leave the only visible acknowledgement until after the file exists.
@@ -3356,7 +3708,7 @@
       );
     } catch (e) {
         if (e instanceof SaveCancelled) return;
-      say(`Image-only redaction failed. No verified copy was saved. ${String(e)}`);
+      say(TEXT().rasterFailed(String(e)));
     } finally {
       blockingTask = null;
       copyTaskBusy = false;
@@ -3394,7 +3746,7 @@
         const suggested = smallerName(source);
         const panel = () =>
           saveDialog({
-            title: "Save a smaller copy",
+            title: TEXT().saveSmaller,
             defaultPath: suggested,
             filters: [{ name: "PDF", extensions: ["pdf"] }],
           });
@@ -3403,7 +3755,7 @@
           ? await signSaves.ask(suggested, panel)
           : await panel();
         if (!path || !edits) return;
-        blockingTask = "Saving the smaller copy...";
+        blockingTask = TEXT().savingSmaller;
         await tick();
         say(afterCompress(
           await edits.compressCopy(source, path, chosen.pictures),
@@ -3448,7 +3800,7 @@
         const suggested = protectedName(source, set);
         const panel = () =>
           saveDialog({
-            title: set ? "Save a copy with a password" : "Save a copy without its password",
+            title: set ? TEXT().saveWithPassword : TEXT().saveWithoutPassword,
             defaultPath: suggested,
             filters: [{ name: "PDF", extensions: ["pdf"] }],
           });
@@ -3457,7 +3809,7 @@
           ? await signSaves.ask(suggested, panel)
           : await panel();
         if (!chosen || !edits) return;
-        blockingTask = "Saving the copy...";
+        blockingTask = TEXT().savingCopy;
         await tick();
         say(afterProtect(await edits.protectCopy(source, chosen, password), chosen, set));
       } catch (e) {
@@ -3494,7 +3846,7 @@
         const suggested = addedTextName(source, kind);
         const panel = () =>
           saveDialog({
-            title: kind === "numbers" ? "Save a copy with page numbers" : "Save a copy with a watermark",
+            title: kind === "numbers" ? TEXT().saveWithNumbers : TEXT().saveWithWatermark,
             defaultPath: suggested,
             filters: [{ name: "PDF", extensions: ["pdf"] }],
           });
@@ -3503,7 +3855,7 @@
           ? await signSaves.ask(suggested, panel)
           : await panel();
         if (!chosen || !edits) return;
-        blockingTask = "Saving the copy...";
+        blockingTask = TEXT().savingCopy;
         await tick();
         say(afterAdding(await edits.addTextCopy(source, chosen, [added]), chosen, kind));
       } catch (e) {
@@ -3937,7 +4289,7 @@
       const suggested = basename(openPathName).replace(/\.pdf$/i, "");
       try {
         const chosen = await saveDialog({
-          title: "Extract pages",
+          title: TEXT().extractPages,
           defaultPath: `${suggested} ${namePages(slots)}.pdf`,
           filters: [{ name: "PDF", extensions: ["pdf"] }],
         });
@@ -3980,7 +4332,7 @@
       const suggested = basename(openPathName).replace(/\.pdf$/i, "");
       try {
         const chosen = await saveDialog({
-          title: "Split document",
+          title: TEXT().splitDocument,
           defaultPath: `${suggested}.pdf`,
           filters: [{ name: "PDF", extensions: ["pdf"] }],
         });
@@ -4016,8 +4368,8 @@
       const picked = await openDialog({
         multiple: false,
         directory: false,
-        title: "Choose a certificate file",
-        filters: [{ name: "Certificate file", extensions: ["p12", "pfx"] }],
+        title: TEXT().chooseCertificate,
+        filters: [{ name: TEXT().certificateFile, extensions: ["p12", "pfx"] }],
       });
       const path = typeof picked === "string" ? picked : null;
       if (!path) return;
@@ -4038,7 +4390,7 @@
         const picked = await openDialog({
           multiple: true,
           directory: false,
-          title: "Choose documents to merge into this one",
+          title: TEXT().chooseMerge,
           filters: [{ name: "PDF", extensions: ["pdf"] }],
         });
       const others =
@@ -4046,8 +4398,8 @@
       if (others.length === 0) return;
       const suggested = basename(openPathName).replace(/\.pdf$/i, "");
       const chosen = await saveDialog({
-        title: "Save the merged document",
-        defaultPath: `${suggested} merged.pdf`,
+        title: TEXT().saveMerged,
+        defaultPath: TEXT().mergedName(suggested),
         filters: [{ name: "PDF", extensions: ["pdf"] }],
       });
       if (!chosen) return;
@@ -4080,8 +4432,8 @@
         const picked = queued ?? await openDialog({
           multiple: true,
           directory: false,
-          title: "Choose pictures, one for each page",
-          filters: [{ name: "Pictures", extensions: PICTURE_EXTENSIONS }],
+          title: TEXT().choosePictures,
+          filters: [{ name: TEXT().pictures, extensions: PICTURE_EXTENSIONS }],
         });
         const images = typeof picked === "string" ? [picked] : (picked ?? []);
         const first = images[0];
@@ -4089,7 +4441,7 @@
         const suggested = pictureName(first);
         const panel = () =>
           saveDialog({
-            title: "Save the new document",
+            title: TEXT().saveNewDocument,
             defaultPath: suggested,
             filters: [{ name: "PDF", extensions: ["pdf"] }],
           });
@@ -4097,7 +4449,7 @@
           ? await signSaves.ask(suggested, panel)
           : await panel();
         if (!chosen) return;
-        blockingTask = "Making the document...";
+        blockingTask = TEXT().makingDocument;
         await tick();
         done.said = afterPictures(await call("images_to_pdf", { images, path: chosen }), chosen);
         done.path = chosen;
@@ -4155,7 +4507,7 @@
           saveAs: async (suggested) => {
             const panel = () =>
               saveDialog({
-                title: "Save the signed document",
+                title: TEXT().saveSigned,
                 defaultPath: suggested,
                 filters: [{ name: "PDF", extensions: ["pdf"] }],
               });
@@ -4207,7 +4559,7 @@
           chooseAuthority: () => validationData.askAuthority(),
           saveAs: (suggested) =>
             saveDialog({
-              title: "Save the document with long-term validation data",
+              title: TEXT().saveWithValidation,
               defaultPath: suggested,
               filters: [{ name: "PDF", extensions: ["pdf"] }],
             }),
@@ -4348,7 +4700,7 @@
     read: () => call("explorer_state"),
     apply: (on, replace) => call("explorer_set", { on, replace }),
     confirm: (question) =>
-      confirmDialog(question, { title: "Show PDFs in Explorer", kind: "info", okLabel: "Replace", cancelLabel: "Keep it" }),
+      confirmDialog(question, { title: TEXT().showInExplorer, kind: "info", okLabel: TEXT().replace, cancelLabel: TEXT().keepIt }),
     say: (text) => (notice = text),
     changed: () => refreshMenu(),
   });
@@ -4417,16 +4769,16 @@
     if (!tab) return;
     const across = otherSide(panes.sideOf(id));
     contextMenu?.show(["tab.reveal", "tab.copyPath", "tab.copyName", "---", "tab.moveStart", "tab.moveEnd", "tab.moveSide", "---", "tab.close", "tab.closeOthers", "tab.closeLeft", "tab.closeRight", "file.closeAll"], { x: event.clientX, y: event.clientY }, [{
-      id: "tab.moveStart", title: "Move to start",
+      id: "tab.moveStart", title: TEXT().moveToStart,
       enabled: () => tabs.find(id) === tab && tabs.all.length > 1,
       run: () => { tabs.moveTo(id, "start"); refreshTabs(); },
     }, {
-      id: "tab.moveEnd", title: "Move to end",
+      id: "tab.moveEnd", title: TEXT().moveToEnd,
       enabled: () => tabs.find(id) === tab && tabs.all.length > 1,
       run: () => { tabs.moveTo(id, "end"); refreshTabs(); },
     }, {
       // Named for where the tab goes. With one side, the right one is made.
-      id: "tab.moveSide", title: `Move to ${across} side`,
+      id: "tab.moveSide", title: TEXT().moveToSide(across),
       enabled: () => tabs.find(id) === tab && tabs.all.length > 1 && !opening && !documentBusy,
       run: () => moveTab(id, across),
     }, {
@@ -4438,26 +4790,26 @@
         catch (error) { say(String(error)); }
       },
     }, {
-      id: "tab.copyPath", title: "Copy file path",
+      id: "tab.copyPath", title: TEXT().copyPath,
       enabled: () => tabs.find(id) === tab,
       run: async () => {
         try { await navigator.clipboard.writeText(tab.path); }
-        catch (error) { say(`Could not copy the file path: ${String(error)}`); }
+        catch (error) { say(TEXT().copyPathFailed(String(error))); }
       },
     }, {
-      id: "tab.copyName", title: "Copy file name",
+      id: "tab.copyName", title: TEXT().copyFileName,
       enabled: () => tabs.find(id) === tab,
       run: async () => {
         try { await navigator.clipboard.writeText(basename(tab.path)); }
-        catch (error) { say(`Could not copy the file name: ${String(error)}`); }
+        catch (error) { say(TEXT().copyNameFailed(String(error))); }
       },
     }, {
-      id: "tab.close", title: "Close",
+      id: "tab.close", title: TEXT().close,
       enabled: () => tabs.find(id) === tab && !opening && !documentBusy,
       run: () => closeTab(id),
     }, ...(["others", "left", "right"] as const).map((which) => ({
       id: { others: "tab.closeOthers", left: "tab.closeLeft", right: "tab.closeRight" }[which],
-      title: { others: "Close other tabs", left: "Close tabs to the left", right: "Close tabs to the right" }[which],
+      title: { others: TEXT().closeOthers, left: TEXT().closeLeft, right: TEXT().closeRight }[which],
       enabled: () => tabs.find(id) === tab && !opening && !documentBusy && tabsClosedBy(id, which).length > 0,
       run: () => closeTabs(tabsClosedBy(id, which)),
     }))]);
@@ -4860,10 +5212,10 @@
     diskChangeMode = mode;
     const kept = writeDiskChangeMode(mode);
     notice = {
-      ask: "tpdf will ask before reloading a file that changed on disk.",
-      reload: "tpdf will reload a file that changed on disk, unless it has unsaved edits.",
-      ignore: "tpdf will not check whether the open file changed on disk.",
-    }[mode] + (kept ? "" : " The choice could not be saved and lasts until tpdf closes.");
+      ask: TEXT().diskAsk,
+      reload: TEXT().diskReload,
+      ignore: TEXT().diskIgnore,
+    }[mode] + (kept ? "" : TEXT().choiceNotKept);
     refreshMenu();
   }
 
@@ -5021,7 +5373,7 @@
     places.forgotten();
     notePlace();
     await refreshStartPage();
-    if (!said) tell("Recent documents cleared.");
+    if (!said) tell(TEXT().recentsCleared);
   }
 
   /**
@@ -5198,16 +5550,16 @@
       // "scanned" names the cause, and the find bar then offers the remedy
       // beside it: a counter that only said "no text to search" left the
       // reader with nothing to do next.
-      return search.running ? "no text yet" : "no text: scanned pages";
+      return search.running ? TEXT().noTextYet : TEXT().noTextScanned;
     }
     // "in selection" rides on every answer below it, the empty one included: a
     // reader who is told "no matches" while the search can only see three lines
     // has been told something false about the document.
-    const where = search.scoped ? " in selection" : "";
+    const where = search.scoped ? TEXT().inSelection : "";
     if (search.total === 0) {
-      return (search.running ? "searching" : "no matches") + where;
+      return (search.running ? TEXT().searching : TEXT().noMatches) + where;
     }
-    return `${search.index} of ${search.total}${search.running ? "+" : ""}${where}`;
+    return TEXT().matchOf(search.index, `${search.total}${search.running ? "+" : ""}`) + where;
   });
 
   $effect(() => {
@@ -5388,8 +5740,8 @@
             await settleDocument();
             const unsaved = oneEach(tabs.all).filter((tab) => tab.edits.state.dirty);
             if (unsaved.length && !await confirmDialog(
-              `Discard unsaved changes in ${unsaved.length} open document(s)?`,
-              { title: "Close tpdf", kind: "warning", okLabel: "Discard changes", cancelLabel: "Keep open" },
+              TEXT().discardChangesOnQuit(unsaved.length),
+              { title: TEXT().closeTpdf, kind: "warning", okLabel: TEXT().discardChanges, cancelLabel: TEXT().keepOpen },
             )) return;
             await getCurrentWindow().destroy();
           } finally { opening = false; }
@@ -5688,12 +6040,12 @@
     try {
       updates.setAutomatic(enabled);
       notice = enabled
-        ? "Automatic update checks enabled for future launches."
-        : "Automatic update checks disabled. You can still use Check for updates. A check already started may finish.";
+        ? TEXT().updatesOn
+        : TEXT().updatesOff;
     } catch {
       notice = enabled
-        ? "Could not save the update preference. Automatic checks remain disabled."
-        : "Automatic checks disabled for this launch, but the preference could not be saved for future launches.";
+        ? TEXT().updatesOnNotKept
+        : TEXT().updatesOffNotKept;
     }
     refreshMenu();
   }
@@ -5780,7 +6132,7 @@
       const note = forwardSaid(found, asked.line);
       if (note !== null) tell(note);
     } catch (e) {
-      say(`Forward search: ${String(e)}`);
+      say(TEXT().forwardSearchFailed(String(e)));
     }
   }
 
@@ -5834,11 +6186,24 @@
     if (said) say(said);
   }
 
+  /** The interface language as chosen; {@link UI_LOCALE} is what this run uses. */
+  let languageChoice = readLanguageChoice();
+
+  function setLanguageChoice(choice: LanguageChoice): void {
+    if (!writeLanguageChoice(choice)) {
+      tell(LANGUAGE_TEXT().notKept);
+      return;
+    }
+    languageChoice = choice;
+    refreshMenu();
+    say(LANGUAGE_TEXT().restart, [], true);
+  }
+
   function setRestoreTabs(restore: boolean): void {
     restoreTabs = restore;
     refreshMenu();
     void call("session_set_restore_tabs", { restore }).catch(() => {
-      tell("Could not save that choice. It holds until tpdf is closed.");
+      tell(TEXT().restoreNotKept);
     });
   }
 
@@ -6363,7 +6728,7 @@
         // it is asked for. So the reader is taken to this document first,
         // and where that is refused nothing is signed.
         if (!readerIsIn(view, openView, () => focusSide(panes.sideOf(view)))) {
-          asDocument(view, () => say("Wait for the other document to finish, then press the field again"));
+          asDocument(view, () => say(TEXT().waitForOther));
           return;
         }
         void signDocument(edits ? signTarget(widget, edits.state.pages) : null);
@@ -6684,36 +7049,36 @@
 
 <main class:full-screen={screenMode !== "window"}>
   <header>
-    <button title="Open a PDF" aria-label="Open a PDF" onclick={pickAndOpen} disabled={opening || copyTaskBusy || documentBusy}><span class="icon" use:icon={"open"}></span></button>
+    <button title={TEXT().openPdf} aria-label={TEXT().openPdf} onclick={pickAndOpen} disabled={opening || copyTaskBusy || documentBusy}><span class="icon" use:icon={"open"}></span></button>
     {#if title}
-      <button class="sidebar-toggle" aria-pressed={sidebarShown} title="Toggle sidebar" aria-label="Toggle sidebar" onclick={toggleSidebar}><span class="icon" use:icon={"sidebar"}></span></button>
-      <button title={toolState['file.save']?.title} aria-label="Save" disabled={!toolState['file.save']?.enabled}
+      <button class="sidebar-toggle" aria-pressed={sidebarShown} title={TEXT().toggleSidebar} aria-label={TEXT().toggleSidebar} onclick={toggleSidebar}><span class="icon" use:icon={"sidebar"}></span></button>
+      <button title={toolState['file.save']?.title} aria-label={TEXT().save} disabled={!toolState['file.save']?.enabled}
         onclick={() => runToolbarCommand('file.save')}><span class="icon" use:icon={"save"}></span></button>
       <!-- Save a copy is in the Document menu, one row down, and no longer here too. -->
-      <button class="secondary-file" title={toolState['file.print']?.title} aria-label="Print"
+      <button class="secondary-file" title={toolState['file.print']?.title} aria-label={TEXT().print}
         disabled={!toolState['file.print']?.enabled}
         onclick={() => runToolbarCommand('file.print')}><span class="icon" use:icon={"print"}></span></button>
     {/if}
     <span class="document-name">
       {#if !title}<span class="title">tpdf</span>{/if}
-      {#if dirty}<span class="edited">Edited</span>{/if}
+      {#if dirty}<span class="edited">{TEXT().edited}</span>{/if}
       {#if degraded && status}<span class="degraded">{degraded}</span>{/if}
       {#if blockingTask}<span class="notice" data-testid="blocking-task">{blockingTask}</span>
         {#if recognising}<button data-testid="stop-recognition" title={message("stopRecognising")}
-          onclick={() => void call("ocr_cancel", { run: recognitionRun })}>Stop</button>{/if}
-        {#if findingHidden}<button data-testid="stop-hidden-text" title="Stop comparing text with the pages"
-          onclick={() => hiddenRuns.stop((run) => void call("hidden_text_cancel", { run }))}>Stop</button>{/if}
+          onclick={() => void call("ocr_cancel", { run: recognitionRun })}>{TEXT().stop}</button>{/if}
+        {#if findingHidden}<button data-testid="stop-hidden-text" title={TEXT().stopHiddenText}
+          onclick={() => hiddenRuns.stop((run) => void call("hidden_text_cancel", { run }))}>{TEXT().stop}</button>{/if}
       {:else if notice}<span class="notice" data-testid="notice">{notice}</span>
-        {#if printStoppable}<button data-testid="stop-printing" title="Stop printing; sheets already on the printer still print"
-          onclick={() => void call("print_cancel")}>Stop</button>{/if}{/if}
+        {#if printStoppable}<button data-testid="stop-printing" title={TEXT().stopPrinting}
+          onclick={() => void call("print_cancel")}>{TEXT().stop}</button>{/if}{/if}
     </span>
     {#if status}
-      <div class="navigation" aria-label="Page navigation">
-        <button aria-label="Previous page" title={toolState['nav.previousPage']?.title} disabled={!toolState['nav.previousPage']?.enabled}
+      <div class="navigation" aria-label={TEXT().pageNavigation}>
+        <button aria-label={TEXT().previousPage} title={toolState['nav.previousPage']?.title} disabled={!toolState['nav.previousPage']?.enabled}
           onclick={() => runToolbarCommand('nav.previousPage')}><span class="icon" use:icon={"previous"}></span></button>
-        <button title="Go to page" onclick={() => runToolbarCommand('nav.goToPage')}>
+        <button title={TEXT().goToPage} onclick={() => runToolbarCommand('nav.goToPage')}>
           {status.page} / {status.pageCount}</button>
-        <button aria-label="Next page" title={toolState['nav.nextPage']?.title} disabled={!toolState['nav.nextPage']?.enabled}
+        <button aria-label={TEXT().nextPage} title={toolState['nav.nextPage']?.title} disabled={!toolState['nav.nextPage']?.enabled}
           onclick={() => runToolbarCommand('nav.nextPage')}><span class="icon" use:icon={"next"}></span></button>
       </div>
       <details class="zoom-menu" bind:this={zoomMenu}>
@@ -6727,13 +7092,13 @@
           {/each}
         </div>
       </details>
-      <button aria-pressed={findShown} title="Find in document" aria-label="Find in document" onclick={focusFind}><span class="icon" use:icon={"find"}></span></button>
+      <button aria-pressed={findShown} title={TEXT().findInDocument} aria-label={TEXT().findInDocument} onclick={focusFind}><span class="icon" use:icon={"find"}></span></button>
     {/if}
-    <button title="All commands ({label('app.palette')})" onclick={openPaletteFromToolbar}>Commands</button>
+    <button title={TEXT().allCommands(label('app.palette'))} onclick={openPaletteFromToolbar}>{TEXT().commands}</button>
     {#if !isMac()}
       <!-- Windows has no menu bar: this carries what the tool row's menus do not. -->
       <details class="zoom-menu" bind:this={windowMenu}>
-        <summary title="Documents, settings and tpdf">Menu<span class="chevron" aria-hidden="true"></span></summary>
+        <summary title={TEXT().menuHint}>{TEXT().menu}<span class="chevron" aria-hidden="true"></span></summary>
         <div class="zoom-options window-options">
           {#each WINDOW_MENU as section}
             <p class="menu-heading">{section.label}</p>
@@ -6753,8 +7118,8 @@
         class:ready={updateState.kind === "ready"}
         disabled={updates.busy}
         title={updateState.kind === "ready"
-          ? "Restart tpdf now to finish installing the update"
-          : "Download and apply this update"}
+          ? TEXT().restartToUpdate
+          : TEXT().applyUpdate}
         onclick={() => void finishUpdateStep(stepFor(updateState))}>{updateLabel(updateState)}</button
       >
     {/if}
@@ -6768,12 +7133,12 @@
       finish={finishToolbarDrawing} cancel={cancelToolbarTool} />
   {/if}
     {#if title && findShown}
-      <section class="find-panel" aria-label="Find in document">
+      <section class="find-panel" aria-label={TEXT().findInDocument}>
       <input
-        aria-label="Find in document"
+        aria-label={TEXT().findInDocument}
         class="find"
         type="search"
-        placeholder="Find"
+        placeholder={TEXT().find}
         bind:value={query}
         bind:this={findField}
         oninput={onFindInput}
@@ -6783,21 +7148,21 @@
         class="toggle"
         class:on={status?.search.options.matchCase}
         aria-pressed={status?.search.options.matchCase ?? false}
-        title="Match case ({label('find.matchCase')})"
+        title={TEXT().matchCase(label('find.matchCase'))}
         onclick={() => toggleSearchOptionFromToolbar("matchCase")}>Aa</button
       >
       <button
         class="toggle"
         class:on={status?.search.options.wholeWord}
         aria-pressed={status?.search.options.wholeWord ?? false}
-        title="Whole words ({label('find.wholeWord')})"
+        title={TEXT().wholeWords(label('find.wholeWord'))}
         onclick={() => toggleSearchOptionFromToolbar("wholeWord")}>|ab|</button
       >
       <button
         class="toggle"
         class:on={status?.search.options.regex}
         aria-pressed={status?.search.options.regex ?? false}
-        title="Regular expression ({label('find.regex')})"
+        title={TEXT().regex(label('find.regex'))}
         onclick={() => toggleSearchOptionFromToolbar("regex")}>.*</button
       >
       <button
@@ -6805,7 +7170,7 @@
         class:on={status?.search.scoped}
         aria-pressed={status?.search.scoped ?? false}
         disabled={!status?.search.scoped && (status?.selected ?? 0) === 0}
-        title="Search the selection ({label('find.inSelection')})"
+        title={TEXT().searchSelection(label('find.inSelection'))}
         onclick={() => {
           toggleSearchScope();
           findField?.focus();
@@ -6827,9 +7192,9 @@
       <button data-testid="recognise-page" disabled={!toolState['file.recognisePage']?.enabled}
         title={message("recognisePageHint")}
         onclick={() => runToolbarCommand('file.recognisePage')}>{message("recognisePageButton")}</button>
-      <button title="Previous match" onclick={() => viewer?.prevMatch()}>Previous</button>
-      <button title="Next match" onclick={() => viewer?.nextMatch()}>Next</button>
-      <button onclick={() => { findShown = false; viewer?.focus(); }}>Close</button>
+      <button title={TEXT().previousMatch} onclick={() => viewer?.prevMatch()}>{TEXT().previous}</button>
+      <button title={TEXT().nextMatch} onclick={() => viewer?.nextMatch()}>{TEXT().next}</button>
+      <button onclick={() => { findShown = false; viewer?.focus(); }}>{TEXT().close}</button>
       </section>
     {/if}
 
@@ -6837,7 +7202,7 @@
   {#if error}
     <div class="problem-bar" class:success={messageSuccess} data-testid="problem">
       {#if redactedCopyPath}
-        <p>Saved {basename(redactedCopyPath)}. You are still viewing the original with its pending redaction marks.</p>
+        <p>{TEXT().redactedCopySaved(basename(redactedCopyPath))}</p>
         <button data-testid="open-redacted-copy" disabled={copyTaskBusy}
           onclick={async () => {
             const path = redactedCopyPath;
@@ -6846,11 +7211,11 @@
             if (!path) return;
             await openPath(path);
             if (openPathName === path) say(verdict, [], success);
-          }}>Open saved copy</button>
+          }}>{TEXT().openSavedCopy}</button>
       {/if}
       {#if offers.includes("rasterCopy")}
-        <p class="error">Redaction not verified. Create an image-only copy to remove everything inside the marked regions.</p>
-        <details><summary>Technical details</summary><p class="error">{error}</p></details>
+        <p class="error">{TEXT().rasterOffer}</p>
+        <details><summary>{TEXT().technicalDetails}</summary><p class="error">{error}</p></details>
       {:else}
         <p class="error">{plainly(error)}</p>
       {/if}
@@ -6879,21 +7244,21 @@
             {#if offer === "saveCopy"}
               <button data-testid="offer-saveCopy" disabled={copyTaskBusy}
                 onclick={() => void saveCopy()}
-                >Save a copy…</button
+                >{TEXT().offerSaveCopy}</button
               >
             {:else if offer === "reload"}
               <button data-testid="offer-reload" disabled={copyTaskBusy}
                 onclick={() => reloadAnyway()}
-                >Reload from disk</button
+                >{TEXT().offerReload}</button
               >
             {:else if offer === "rasterCopy"}
               <button data-testid="offer-rasterCopy" disabled={copyTaskBusy}
                 onclick={() => void redactRasterCopy()}
-                >Create image-only copy...</button>
+                >{TEXT().offerRasterCopy}</button>
             {:else if offer === "redact"}
               <button data-testid="offer-redact" disabled={copyTaskBusy}
                 onclick={() => void redactAnyway()}
-                >Redact this file</button
+                >{TEXT().offerRedact}</button
               >
             {/if}
           {/each}
@@ -6901,8 +7266,8 @@
       {/if}
       <!-- Takes the message away and decides nothing: it runs no offer, and
            Reload from disk stays in the Document menu and the palette. -->
-      <button class="dismiss" data-testid="problem-dismiss" title="Dismiss"
-        aria-label="Dismiss this message"
+      <button class="dismiss" data-testid="problem-dismiss" title={TEXT().dismiss}
+        aria-label={TEXT().dismissMessage}
         onclick={() => { say(null); viewer?.focus(); }}
         ><span class="icon" use:icon={"close"}></span></button>
     </div>
@@ -6928,19 +7293,19 @@
             onpointerdown={(event) => tabPress(event, tab.id)}
             onclick={() => { if (!tabDragEnded) void activateTab(tab.id); }} onkeydown={(event) => tabKey(event, tab.id)}>
             <span class="tab-name">{tabLabelOf.get(tab.id)}</span>
-            {#if tab.id === activeTab ? dirty : tab.dirty}<span aria-label="Unsaved changes">*</span>{/if}
+            {#if tab.id === activeTab ? dirty : tab.dirty}<span aria-label={TEXT().unsavedChanges}>*</span>{/if}
           </button>
-          <button class="tab-close" title={`Close ${tabLabelOf.get(tab.id)}`}
-            aria-label={`Close ${tabLabelOf.get(tab.id)}`} disabled={opening || documentBusy}
+          <button class="tab-close" title={TEXT().closeNamed(tabLabelOf.get(tab.id) ?? "")}
+            aria-label={TEXT().closeNamed(tabLabelOf.get(tab.id) ?? "")} disabled={opening || documentBusy}
             onclick={() => void closeTab(tab.id)}><span class="icon" use:icon={"close"}></span></button>
         </div>
       {/each}
-      <button class="tab-open" title="Open PDFs in new tabs" aria-label="Open PDFs in new tabs"
+      <button class="tab-open" title={TEXT().openInTabs} aria-label={TEXT().openInTabs}
         disabled={opening || documentBusy} onclick={pickAndOpen}><span class="icon" use:icon={"add"}></span></button>
     </div>
   {/snippet}
   {#if tabRows.length && !paneLayout.split}
-    {@render tabStrip(tabRows, activeTab, "Open documents")}
+    {@render tabStrip(tabRows, activeTab, TEXT().openDocuments)}
   {/if}
   {#if title || bodyHeld}
     <div class="body" id="document-panel" role="tabpanel" aria-labelledby={`document-tab-${activeTab}`}>
@@ -6964,7 +7329,7 @@
             onfocusin={() => { focusSide(panes.sideIn(slot as Slot)); }}>
             {#if paneLayout.split}
               {@render tabStrip(tabRows.filter((tab) => tab.slot === slot), paneLayout.front[slot] ?? -1,
-                paneLayout.order[slot] === 0 ? "Documents on the left side" : "Documents on the right side")}
+                paneLayout.order[slot] === 0 ? TEXT().leftDocuments : TEXT().rightDocuments)}
             {/if}
             <div class="surface" bind:this={areaHosts[slot]}></div>
           </div>
@@ -6972,7 +7337,7 @@
         {#if paneLayout.split}
           <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
           <div class="pane-divider" role="separator" aria-orientation="vertical"
-            aria-label="Divider between the two sides" title="Drag to resize. Double-click for equal halves."
+            aria-label={TEXT().divider} title={TEXT().dividerHint}
             aria-valuemin="20" aria-valuemax="80" aria-valuenow={Math.round(paneShare * 100)}
             onpointerdown={dividerDown} onpointermove={dividerMove}
             onpointerup={refreshTabs} onpointercancel={refreshTabs}
@@ -6982,9 +7347,9 @@
             <button class="sync-scroll" class:on={syncScroll} aria-pressed={syncScroll}
               data-testid="sync-scroll"
               title={syncScroll
-                ? "The two sides scroll together. Hold Alt to scroll one side alone."
-                : "Scroll both sides together"}
-              aria-label="Scroll both sides together"
+                ? TEXT().syncScrollOn
+                : TEXT().syncScroll}
+              aria-label={TEXT().syncScroll}
               onpointerdown={(event) => event.stopPropagation()}
               ondblclick={(event) => event.stopPropagation()}
               onclick={() => setSyncScroll(!syncScroll)}><span></span><span></span></button>
@@ -7008,12 +7373,12 @@
     <div class="empty">
       <div class="start" role="presentation" bind:this={startHost}
         onkeydown={(event) => startPageKey(event, startRowOf(event))}>
-      <p class="invite">Open a PDF, or drop one here.</p>
+      <p class="invite">{TEXT().invite}</p>
       <button class="start-open" disabled={opening || copyTaskBusy || documentBusy}
         onclick={() => runStartCommand("file.open")}
-        >Open a PDF… <span class="start-keys">{label("file.open")}</span></button>
+        >{TEXT().openPdfEllipsis} <span class="start-keys">{label("file.open")}</span></button>
       {#if startRows.length}
-        <ul class="recent" aria-label="Recently opened">
+        <ul class="recent" aria-label={TEXT().recentlyOpened}>
           {#each startRows as row, index (row.path)}
             <li class:unopened={row.trouble !== ""} data-start-row={index}>
               <button class="recent-open" title={row.path}

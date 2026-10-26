@@ -44,6 +44,24 @@ import {
   type Comments,
   type CommentRow,
 } from "./comments";
+import { catalog } from "./i18n";
+
+const TEXT = catalog({
+  "en-US": {
+    comments: "Comments",
+    reading: "Reading the comments…",
+    unreadable: "The comments could not be read.",
+    none: "This document has no comments.",
+    hidden: "hidden",
+  },
+  "de-DE": {
+    comments: "Kommentare",
+    reading: "Kommentare werden gelesen…",
+    unreadable: "Die Kommentare konnten nicht gelesen werden.",
+    none: "Dieses Dokument hat keine Kommentare.",
+    hidden: "ausgeblendet",
+  },
+});
 
 /** Indent of a reply, in CSS pixels. */
 const INDENT = 16;
@@ -93,7 +111,7 @@ export class CommentList {
 
     this.list = document.createElement("div");
     this.list.setAttribute("role", "listbox");
-    this.list.setAttribute("aria-label", "Comments");
+    this.list.setAttribute("aria-label", TEXT().comments);
     this.list.style.cssText = "flex:1;min-height:0;overflow-y:auto;";
     this.list.addEventListener("keydown", this.onKeyDown);
     // Focus can arrive without going through `focus(id)` --- a Tab into the
@@ -225,15 +243,15 @@ export class CommentList {
     this.say(notice ?? "");
 
     if (!this.loaded) {
-      this.list.appendChild(placeholder("Reading the comments…"));
+      this.list.appendChild(placeholder(TEXT().reading));
       return;
     }
     if (!this.comments) {
-      this.list.appendChild(placeholder("The comments could not be read."));
+      this.list.appendChild(placeholder(TEXT().unreadable));
       return;
     }
     if (this.comments.items.length === 0) {
-      this.list.appendChild(placeholder("This document has no comments."));
+      this.list.appendChild(placeholder(TEXT().none));
       return;
     }
 
@@ -352,7 +370,7 @@ export class CommentList {
       // and marked, because it is not on the page and a reader looking for it
       // there would not find it.
       const flag = document.createElement("span");
-      flag.textContent = "hidden";
+      flag.textContent = TEXT().hidden;
       flag.style.cssText = "flex:none;opacity:0.6;font-size:0.85em;";
       element.appendChild(flag);
     }

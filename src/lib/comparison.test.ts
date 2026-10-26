@@ -106,7 +106,7 @@ describe("sentences", () => {
     const none = { changes: [], total_changes: 0, removed_words: 0, added_words: 0 };
     const partly = sentences(compared(none, { left: 0, right: 1 }));
     expect(partly[0]).toBe(SAME_AS_FAR_AS_READ);
-    expect(partly).toContain("v2.pdf has 1 page with no text, which was not compared. A scanned page has to be recognised first.");
+    expect(partly).toContain("v2.pdf has 1 page with no text, which was not compared. A scanned page has to be recognized first.");
     expect(partly).not.toContain("The two documents have the same words.");
     const scans = sentences(compared({ ...none, left_words: 0, right_words: 0 }, { left: 3, right: 3 }));
     expect(scans[0]).toBe(NOTHING_COMPARED);
@@ -143,7 +143,7 @@ describe("sentences", () => {
 
   it("names a side with pages that have no text", () => {
     expect(sentences(compared({}, { left: 0, right: 2 }))).toContain(
-      "v2.pdf has 2 pages with no text, which were not compared. A scanned page has to be recognised first.",
+      "v2.pdf has 2 pages with no text, which were not compared. A scanned page has to be recognized first.",
     );
   });
 });
@@ -156,7 +156,7 @@ describe("refusal", () => {
   it("refuses a side none of whose pages has text", () => {
     const said = refusal(names, { left: text, right: scan });
     expect(said).toBe(
-      "scan.pdf: none of its pages has text, so there are no words to compare. A scan has to be recognised first.",
+      "scan.pdf: none of its pages has text, so there are no words to compare. A scan has to be recognized first.",
     );
     expect(refusal(names, { left: scan, right: text })).toMatch(/^v1\.pdf: none of its pages has text/);
   });

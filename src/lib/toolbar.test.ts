@@ -1,7 +1,8 @@
 import { describe, expect, it } from "vitest";
 import { registerAppCommands, type AppActions } from "./appcommands";
 import { CommandRegistry } from "./commands";
-import { HEADER_COMMANDS, POPUP_MARGIN, TOOL_ACTIONS, TOOL_GROUPS, WINDOW_MENU, popupShift, styleOptions, toolbarState, type ArmedTool } from "./toolbar";
+import { HEADER_COMMANDS, POPUP_MARGIN, TOOL_ACTIONS, TOOL_GROUPS, WINDOW_MENU, popupShift, styleOptions, toolActions, toolbarState, toolGroups, windowMenu, type ArmedTool } from "./toolbar";
+import type { UiLocale } from "./i18n";
 import { BINDINGS } from "./keys";
 import app from "../App.svelte?raw";
 import { missingFrom, withoutComments } from "./sourcetext";
@@ -22,7 +23,7 @@ function live(snapshot: ReturnType<typeof toolbarState>): string[] {
   return Object.keys(snapshot).filter((id) => snapshot[id]!.enabled && !elsewhere.has(id));
 }
 
-function harness() {
+function harness(locale?: UiLocale) {
   const state = { open: false, selected: false, dirty: false, undo: false, redo: false, matches: 0, border: false };
   // Only guards are called here. Missing action methods must fail if the
   // snapshot starts executing commands instead of describing them.
@@ -53,6 +54,8 @@ function harness() {
     updateAvailable: () => false,
     diskChangeMode: () => "ask" as const,
     restoreTabs: () => false,
+    languageChoice: () => "system" as const,
+    setLanguageChoice: () => undefined,
     syncScrolling: () => false,
     tabLabels: () => ({ canGrow: true, canShrink: true, isDefault: true }),
     documentCount: () => 1,
@@ -62,7 +65,7 @@ function harness() {
     changeCount: () => 0,
   } satisfies Partial<AppActions> as unknown as AppActions;
   const registry = new CommandRegistry();
-  registerAppCommands(registry, actions);
+  registerAppCommands(registry, actions, locale);
   return { state, registry };
 }
 
@@ -131,6 +134,43 @@ describe("toolbar command surface", () => {
       return words(item.label).filter((word) => !title.includes(word)).map((word) => `${item.label}: ${word}`);
     });
     expect(foreign).toEqual([]);
+  });
+
+  it.each(["de-DE", "en-GB"] as const)("words a label with the words of the command's title in %s", (locale) => {
+    // The same rule in the other languages, against titles of the same
+    // language: a German label is a shorter German title, not a translation
+    // of the English label. Words are letters of any script, so that "Größe"
+    // is one word and not three.
+    const { registry } = harness(locale);
+    const words = (text: string) => text.toLowerCase().split(/[^\p{L}]+/u).filter(Boolean);
+    const groups = toolGroups(locale).filter((group) => group.id !== "width");
+    const items = [...toolActions(locale), ...groups.flatMap((group) => group.items)];
+    expect(items.length).toBeGreaterThan(50);
+    const foreign = items.flatMap((item) => {
+      const title = words(registry.find(item.id)?.title ?? "");
+      return words(item.label).filter((word) => !title.includes(word)).map((word) => `${item.label}: ${word}`);
+    });
+    expect(foreign).toEqual([]);
+    // The control: the labels are in the language asked for, not English.
+    if (locale === "de-DE") {
+      expect(items.find((item) => item.id === "edit.deletePage")?.label).toBe("Seite löschen");
+      expect(registry.find("edit.deletePage")?.title).toBe("Seite löschen");
+    }
+  });
+
+  it("lists the same items under every language", () => {
+    // Only the words change with the language; a menu with one item fewer in
+    // German would be a command a German reader cannot reach from it.
+    const ids = (locale: UiLocale) => [
+      ...toolActions(locale).map((item) => item.id),
+      ...toolGroups(locale).flatMap((group) => [group.id, ...group.items.map((item) => item.id)]),
+      ...windowMenu(locale).flatMap((section) => section.items),
+    ];
+    expect(ids("de-DE")).toEqual(ids("en-US"));
+    expect(ids("en-GB")).toEqual(ids("en-US"));
+    expect(windowMenu("de-DE").map((section) => section.label)).not.toEqual(windowMenu("en-US").map((section) => section.label));
+    expect(windowMenu("en-GB").find((section) => section.items.includes("nav.addFavourite"))?.label).toBe("Favourites");
+    expect(windowMenu("en-US").find((section) => section.items.includes("nav.addFavourite"))?.label).toBe("Favorites");
   });
 
   it("resolves every visible action against the real application registry", () => {

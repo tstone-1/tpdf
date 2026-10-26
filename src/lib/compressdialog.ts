@@ -25,6 +25,7 @@ import {
   type Pictures,
   type Shrinkage,
 } from "./compress";
+import { catalog } from "./i18n";
 
 /** Class on the backdrop, so the check harness can find it. */
 export const DIALOG_CLASS = "tpdf-compress";
@@ -49,8 +50,47 @@ export function isPicture(url: string): boolean {
 /** The id of the row for the reader's own numbers. */
 const CUSTOM = "custom";
 
-const WORKING = "Working it out...";
-const FAILED = "Could not be worked out";
+const TEXT = catalog({
+  "en-US": {
+    working: "Working it out...",
+    failed: "Could not be worked out",
+    dialog: "Save a smaller copy",
+    howMuch: "How much smaller",
+    pixelsAnInch: "Pixels an inch",
+    qualityField: "JPEG quality, 1 to 100",
+    quality: "JPEG quality",
+    storeJpeg: "Store photographs as JPEG",
+    ownNumbers: "Your own numbers",
+    pageNow: "The page as it is now",
+    pageCopy: "The page as the copy draws it",
+    cancel: "Cancel",
+    chooseWhere: "Choose where to save...",
+    heading: (name: string) => `A smaller copy of ${name}`,
+  },
+  "de-DE": {
+    working: "Wird berechnet...",
+    failed: "Konnte nicht berechnet werden",
+    dialog: "Kleinere Kopie speichern",
+    howMuch: "Wie viel kleiner",
+    pixelsAnInch: "Pixel pro Zoll",
+    qualityField: "JPEG-Qualität, 1 bis 100",
+    quality: "JPEG-Qualität",
+    storeJpeg: "Fotos als JPEG speichern",
+    ownNumbers: "Eigene Werte",
+    pageNow: "Die Seite, wie sie jetzt ist",
+    pageCopy: "Die Seite, wie die Kopie sie zeichnet",
+    cancel: "Abbrechen",
+    chooseWhere: "Speicherort wählen...",
+    heading: (name: string) => `Eine kleinere Kopie von ${name}`,
+  },
+});
+
+/** Said beside a choice while its size is worked out; `compresscheck.ts` waits for it to go. */
+export const WORKING = TEXT().working;
+const FAILED = TEXT().failed;
+
+/** The button that saves; `compresscheck.ts` presses it by this text. */
+export const CHOOSE_WHERE = TEXT().chooseWhere;
 
 /** One row's state: not asked yet, asked, answered, or failed with a reason. */
 type Known = { shrinkage: Shrinkage } | { problem: string } | "working" | null;
@@ -94,7 +134,7 @@ export class CompressDialog {
     const panel = document.createElement("div");
     panel.setAttribute("role", "dialog");
     panel.setAttribute("aria-modal", "true");
-    panel.setAttribute("aria-label", "Save a smaller copy");
+    panel.setAttribute("aria-label", TEXT().dialog);
     panel.style.cssText =
       "margin:6vh 0;width:min(720px,94vw);" +
       "border-radius:10px;background:Canvas;color:CanvasText;" +
@@ -106,16 +146,16 @@ export class CompressDialog {
 
     const list = document.createElement("div");
     list.setAttribute("role", "radiogroup");
-    list.setAttribute("aria-label", "How much smaller");
+    list.setAttribute("aria-label", TEXT().howMuch);
     for (const choice of CHOICES) {
       list.append(this.row(choice.id, choice.title, choice.note));
     }
-    this.dpi = this.number("Pixels an inch", String(CUSTOM_START.dpi), "5.5em");
-    this.quality = this.number("JPEG quality, 1 to 100", String(CUSTOM_START.quality), "4.5em");
+    this.dpi = this.number(TEXT().pixelsAnInch, String(CUSTOM_START.dpi), "5.5em");
+    this.quality = this.number(TEXT().qualityField, String(CUSTOM_START.quality), "4.5em");
     this.jpeg = document.createElement("input");
     this.jpeg.type = "checkbox";
     this.jpeg.checked = CUSTOM_START.jpeg;
-    this.jpeg.setAttribute("aria-label", "Store photographs as JPEG");
+    this.jpeg.setAttribute("aria-label", TEXT().storeJpeg);
     const fields = document.createElement("span");
     // Under the title, where a row's note goes. As a fourth child with no
     // column of its own it landed in the radio's column and widened it by the
@@ -124,11 +164,11 @@ export class CompressDialog {
     fields.style.cssText =
       "grid-column:2 / span 2;display:inline-flex;gap:0.6rem;align-items:center;flex-wrap:wrap;";
     fields.append(
-      this.labelled("Pixels an inch", this.dpi),
-      this.labelled("JPEG quality", this.quality),
-      this.labelled("Store photographs as JPEG", this.jpeg, true),
+      this.labelled(TEXT().pixelsAnInch, this.dpi),
+      this.labelled(TEXT().quality, this.quality),
+      this.labelled(TEXT().storeJpeg, this.jpeg, true),
     );
-    const own = this.row(CUSTOM, "Your own numbers", "");
+    const own = this.row(CUSTOM, TEXT().ownNumbers, "");
     own.append(fields);
     list.append(own);
 
@@ -139,8 +179,8 @@ export class CompressDialog {
     this.preview.style.cssText = "display:none;margin-top:0.6rem;";
     const pair = document.createElement("div");
     pair.style.cssText = "display:flex;gap:8px;";
-    this.before = this.picture("The page as it is now");
-    this.after = this.picture("The page as the copy draws it");
+    this.before = this.picture(TEXT().pageNow);
+    this.after = this.picture(TEXT().pageCopy);
     pair.append(this.before, this.after);
     this.under = document.createElement("p");
     this.under.style.cssText = "margin:0.35rem 0 0;opacity:0.72;";
@@ -153,8 +193,8 @@ export class CompressDialog {
     const buttons = document.createElement("div");
     buttons.style.cssText =
       "display:flex;gap:0.5rem;justify-content:flex-end;margin-top:0.6rem;";
-    const cancel = this.button("Cancel", () => this.settle(null));
-    this.save = this.button("Choose where to save...", () => this.submit());
+    const cancel = this.button(TEXT().cancel, () => this.settle(null));
+    this.save = this.button(CHOOSE_WHERE, () => this.submit());
     this.save.style.fontWeight = "600";
     buttons.append(cancel, this.save);
 
@@ -205,7 +245,7 @@ export class CompressDialog {
     // A fresh line: an estimate still running for the opening before this one
     // must not hold these back, and its answer is dropped by `run`.
     this.queue = Promise.resolve();
-    this.heading.textContent = `A smaller copy of ${name}`;
+    this.heading.textContent = TEXT().heading(name);
     this.dpi.value = String(CUSTOM_START.dpi);
     this.quality.value = String(CUSTOM_START.quality);
     this.jpeg.checked = CUSTOM_START.jpeg;

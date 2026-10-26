@@ -350,15 +350,15 @@ ROWS += [
     Mutation(
         "results: call an empty query and an empty result the same thing",
         "src/lib/results.ts",
-        '  if (!query) return "Type in the find field to search.";',
+        "  if (!query) return text.typeToSearch;",
         "",
         "tells an empty query apart from a search that has found nothing",
     ),
     Mutation(
         "results: apply the row cap without saying so",
         "src/lib/results.ts",
-        '    total > MAX_RESULT_ROWS ? `, showing the first ${MAX_RESULT_ROWS}` : "";',
-        '    "";',
+        "  return total > MAX_RESULT_ROWS ? text.capped(total, MAX_RESULT_ROWS) : text.count(total);",
+        "  return text.count(total);",
         "states the row cap rather than applying it silently",
     ),
     Mutation(
@@ -369,8 +369,7 @@ ROWS += [
         # survivor afterwards.
         "results: do not say a scan is still running",
         "src/lib/results.ts",
-        '  if (running) return total === 0 ? "Searching…" : `${countOf(total)}, '
-        "still searching…`;",
+        "  if (running) return total === 0 ? text.searching : text.stillSearching(total);",
         "",
         "says a scan is still running",
     ),
@@ -536,8 +535,8 @@ ROWS += [
     Mutation(
         "zoom: give two fit modes the same words",
         "src/lib/zoom.ts",
-        '  if (mode === "page") return "Fit page";',
-        '  if (mode === "page") return "Fit width";',
+        '  if (mode === "page") return text.page;',
+        '  if (mode === "page") return text.width;',
         "gives each mode its own words",
     ),
     Mutation(
@@ -1013,7 +1012,9 @@ ROWS += [
         # without a word is indistinguishable from a broken viewer.
         "links: refuse a link silently",
         "src/lib/links.ts",
-        "  if (isNavigable(target)) return null;\n  const reason = reasonFor(target);\n  return reason ? `This link ${reason}.` : null;",
+        "  if (isNavigable(target)) return null;\n"
+        "  const reason = reasonFor(target);\n"
+        "  return reason ? TEXT().thisLink(reason) : null;",
         "  return null;",
         "uses the outline's words for a refused action",
     ),
@@ -1022,7 +1023,7 @@ ROWS += [
         # application is arranged to avoid.
         "links: report a truncated scan as complete",
         "src/lib/links.ts",
-        '  if (limits.over_budget) parts.push("too many links to list them all");',
+        "  if (limits.over_budget) parts.push(text.overBudget);",
         "  if (false) parts.push(\"unreachable\");",
         "names each bound separately",
     ),
@@ -1637,9 +1638,11 @@ ROWS += [
         # pressing a button the application offered them.
         "appcommands: offer the highlight with nothing selected",
         "src/lib/appcommands.ts",
-        "      id: \"edit.highlightSelection\",\n      title: \"Highlight selection\",\n"
+        '      id: "edit.highlightSelection",\n'
+        "      title: TEXT(locale).highlightSelection,\n"
         "      enabled: () => withDocument() && actions.hasSelection(),",
-        "      id: \"edit.highlightSelection\",\n      title: \"Highlight selection\",\n"
+        '      id: "edit.highlightSelection",\n'
+        "      title: TEXT(locale).highlightSelection,\n"
         "      enabled: withDocument,",
         "is withheld with nothing selected, and offered once there is",
     ),
@@ -1650,9 +1653,11 @@ ROWS += [
         # say the test walks all three rather than stopping at the first.
         "appcommands: offer the strikeout with nothing selected",
         "src/lib/appcommands.ts",
-        "      id: \"edit.strikeoutSelection\",\n      title: \"Strike out selection\",\n"
+        '      id: "edit.strikeoutSelection",\n'
+        "      title: TEXT(locale).strikeoutSelection,\n"
         "      enabled: () => withDocument() && actions.hasSelection(),",
-        "      id: \"edit.strikeoutSelection\",\n      title: \"Strike out selection\",\n"
+        '      id: "edit.strikeoutSelection",\n'
+        "      title: TEXT(locale).strikeoutSelection,\n"
         "      enabled: withDocument,",
         "is withheld with nothing selected, and offered once there is",
     ),
@@ -1710,7 +1715,7 @@ ROWS += [
         # is the half a single assertion on the header would miss.
         "markpopup: offer to remove a highlight whatever is open",
         "src/lib/markpopup.ts",
-        '    this.remove.textContent = `Remove ${NAMES[mark.kind].toLowerCase()}`;',
+        "    this.remove.textContent = removeLabel(mark.kind);",
         '    this.remove.textContent = "Remove highlight";',
         "names the kind of mark it is open on",
     ),
@@ -1721,7 +1726,7 @@ ROWS += [
         "markpopup: label the box once rather than per mark",
         "src/lib/markpopup.ts",
         "    this.title.textContent = NAMES[mark.kind];\n"
-        "    this.remove.textContent = `Remove ${NAMES[mark.kind].toLowerCase()}`;",
+        "    this.remove.textContent = removeLabel(mark.kind);",
         "",
         "relabels itself when a mark of another kind takes the box",
     ),
@@ -2047,7 +2052,10 @@ ROWS += [
         # trap about a wrap being correct when there is nothing ahead.
         "viewer: wrap the mark walk at the end",
         "src/lib/viewer.ts",
-        "    if (!next) {\n      this.opts.onError?.(\n        direction === 1 ? \"No further marks.\" : \"No earlier marks.\",\n      );\n      return false;\n    }",
+        "    if (!next) {\n"
+        "      this.opts.onError?.(direction === 1 ? TEXT().noFurtherMarks : TEXT().noEarlierMarks);\n"
+        "      return false;\n"
+        "    }",
         "    if (!next) {\n      this.showMark(walk[0]?.id ?? -1, false);\n      return true;\n    }",
         "stops at each end rather than wrapping, and says so",
     ),
@@ -2056,7 +2064,7 @@ ROWS += [
         # nothing and reports nothing is indistinguishable from a broken one.
         "viewer: walk an unmarked document silently",
         "src/lib/viewer.ts",
-        "      this.opts.onError?.(\"You have not marked anything in this document.\");",
+        "      this.opts.onError?.(TEXT().nothingMarked);",
         "",
         "says so on a document the reader has not marked",
     ),
@@ -2387,8 +2395,8 @@ ROWS += [
         # touch and cannot find.
         "markband: report the marks a sweep took as strokes",
         "src/lib/markband.ts",
-        '    parts.push(`${taken.marks} mark${taken.marks === 1 ? "" : "s"}`);',
-        '    parts.push(`${taken.marks} stroke${taken.marks === 1 ? "" : "s"}`);',
+        '    marks: (count: number) => `${count} mark${count === 1 ? "" : "s"}`,',
+        '    marks: (count: number) => `${count} stroke${count === 1 ? "" : "s"}`,',
         "leaves out the half that is zero",
     ),
     Mutation(
@@ -2396,8 +2404,8 @@ ROWS += [
         # marks" -- a clause about nothing, in a line that comes and goes.
         "markband: report the half of a sweep that took nothing",
         "src/lib/markband.ts",
-        "  if (taken.marks > 0) {",
-        "  if (taken.marks >= 0) {",
+        "  if (taken.marks > 0) parts.push(text.marks(taken.marks));",
+        "  if (taken.marks >= 0) parts.push(text.marks(taken.marks));",
         "leaves out the half that is zero",
     ),
 ]

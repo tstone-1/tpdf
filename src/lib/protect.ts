@@ -8,11 +8,46 @@
  * the same rules to the password and is the one that counts.
  */
 
+import { catalog } from "./i18n";
 import { basename } from "./paths";
 import { afterCopy } from "./recovery";
 
 /** `MAX_BYTES` in `protect.rs`: revision 6 reads no more of a password. */
 export const MAX_BYTES = 127;
+
+const TEXT = catalog({
+  "en-US": {
+    notAscii:
+      "Preview on macOS does not open a document whose password has accented or " +
+      "non-Latin characters. Other readers do.",
+    advice: "The copy cannot be opened without this password, and tpdf cannot recover it.",
+    typePassword: "Type a password.",
+    untypeable: "The password holds a tab, a line break or another character that cannot be typed back.",
+    tooLong: (max: number, bytes: number) =>
+      `The password is too long: a PDF password is at most ${max} bytes, and this one is ${bytes}.`,
+    notSame: "The two passwords are not the same.",
+    protectedName: (stem: string) => `${stem} protected.pdf`,
+    unprotectedName: (stem: string) => `${stem} unprotected.pdf`,
+    savedProtected: (name: string) => `Saved ${name}. It needs the new password to open.`,
+    savedUnprotected: (name: string) => `Saved ${name}. It opens without a password.`,
+  },
+  "de-DE": {
+    notAscii:
+      "Vorschau unter macOS öffnet kein Dokument, dessen Passwort Akzente oder " +
+      "nicht lateinische Zeichen enthält. Andere Programme schon.",
+    advice: "Die Kopie lässt sich ohne dieses Passwort nicht öffnen, und tpdf kann es nicht wiederherstellen.",
+    typePassword: "Gib ein Passwort ein.",
+    untypeable:
+      "Das Passwort enthält einen Tabulator, einen Zeilenumbruch oder ein anderes Zeichen, das sich nicht wieder eintippen lässt.",
+    tooLong: (max: number, bytes: number) =>
+      `Das Passwort ist zu lang: Ein PDF-Passwort hat höchstens ${max} Byte, dieses hat ${bytes}.`,
+    notSame: "Die beiden Passwörter stimmen nicht überein.",
+    protectedName: (stem: string) => `${stem} geschützt.pdf`,
+    unprotectedName: (stem: string) => `${stem} ungeschützt.pdf`,
+    savedProtected: (name: string) => `${name} gespeichert. Zum Öffnen ist das neue Passwort nötig.`,
+    savedUnprotected: (name: string) => `${name} gespeichert. Die Datei öffnet sich ohne Passwort.`,
+  },
+});
 
 /**
  * Shown under the fields while the password has a character outside ASCII.
@@ -20,29 +55,26 @@ export const MAX_BYTES = 127;
  * Measured 2026-10-03: PDFKit, which Preview uses, does not open a document
  * whose password has such a character, whether tpdf or `qpdf` wrote it.
  */
-export const NOT_ASCII =
-  "Preview on macOS does not open a document whose password has accented or " +
-  "non-Latin characters. Other readers do.";
+export const NOT_ASCII = TEXT().notAscii;
 
 /** What a password must be, said before the reader has typed one. */
-export const ADVICE =
-  "The copy cannot be opened without this password, and tpdf cannot recover it.";
+export const ADVICE = TEXT().advice;
 
 /**
  * Why `first`, typed again as `second`, cannot be the password, or `null`
  * when it can.
  */
 export function judge(first: string, second: string): string | null {
-  if (first === "") return "Type a password.";
+  if (first === "") return TEXT().typePassword;
   // By code point, as `char::is_control` counts: C0, DEL and C1.
   if (/[\u0000-\u001f\u007f-\u009f]/.test(first)) {
-    return "The password holds a tab, a line break or another character that cannot be typed back.";
+    return TEXT().untypeable;
   }
   const bytes = new TextEncoder().encode(first).length;
   if (bytes > MAX_BYTES) {
-    return `The password is too long: a PDF password is at most ${MAX_BYTES} bytes, and this one is ${bytes}.`;
+    return TEXT().tooLong(MAX_BYTES, bytes);
   }
-  if (first !== second) return "The two passwords are not the same.";
+  if (first !== second) return TEXT().notSame;
   return null;
 }
 
@@ -54,7 +86,7 @@ export function beyondAscii(password: string): boolean {
 /** `report.pdf` gives `report protected.pdf`, or `report unprotected.pdf`. */
 export function suggestedName(path: string, set: boolean): string {
   const stem = basename(path).replace(/\.pdf$/i, "");
-  return `${stem} ${set ? "protected" : "unprotected"}.pdf`;
+  return set ? TEXT().protectedName(stem) : TEXT().unprotectedName(stem);
 }
 
 /**
@@ -69,9 +101,7 @@ export function afterProtect(
   path: string,
   set: boolean,
 ): string {
-  const said = set
-    ? `Saved ${basename(path)}. It needs the new password to open.`
-    : `Saved ${basename(path)}. It opens without a password.`;
+  const said = set ? TEXT().savedProtected(basename(path)) : TEXT().savedUnprotected(basename(path));
   const changed = afterCopy(copied);
   return changed ? `${said} ${changed}` : said;
 }

@@ -671,3 +671,62 @@ Moved out of `AGENTS.md` on 2026-10-12.
   That is the cheap case, and it held only because the clone was made with a repo-local
   identity — a fresh clone on the Windows flat layout has no `includeIf` rule and would
   silently commit under a work address. Set `user.email` / `user.name` repo-locally there.
+
+## Interface language: catalogs, the checks, and the German glossary
+
+Added 2026-10-26. The window speaks American English, British English or German; the CLI, the
+JSON reports and the worker's messages stay English (German for the worker is phase 2, and the
+Language commands are excluded from the README until it lands, `readme.test.ts`).
+
+- **Every string the window shows comes from a catalog.** `catalog()` in `src/lib/i18n.ts`, one
+  `TEXT` per module beside the code that shows it. The `"de-DE"` half must have every key of the
+  `"en-US"` half with the same parameters, and the type refuses one that does not, so a string
+  added in English cannot ship untranslated. `"en-GB"` lists only respellings.
+- **The `"en-US"` half is American.** Before 2026-10-26 the prose outside the old catalog was
+  British on every system; a respelling therefore needs an `"en-GB"` entry, never a change to
+  the American one.
+- **Unit tests and the checks build run in American English**, whatever the machine is set to
+  (`startupLocale`). The window checks find controls by their English words on purpose, so that
+  a check cannot agree with the code by reading the same catalog; a German check run would need
+  its own expectations.
+- **Strings matched against text the worker writes stay English** (`plainly()` in `recovery.ts`,
+  the rows `cliwording.test.ts` holds against Rust). Translating one of them breaks a match no
+  type sees.
+- **Text written into a PDF is document content, not interface**: stamp words, default field
+  names, the "Digitally signed by" line, page-number and watermark defaults. All stay English
+  until somebody decides otherwise for the document, not the window.
+- **The choice is kept in `localStorage`** (`tpdf.ui-language`) and read at startup. WebView2
+  writes it to disk a few seconds after the change; a process killed before that loses it, a
+  window closed normally keeps it (measured 2026-10-26).
+
+German glossary. The reader is addressed with "du". Buttons are infinitives or nouns, messages
+whole sentences, no "Bitte", „…" quotation marks, "..." where English has it.
+
+| English | German | English | German |
+|---|---|---|---|
+| document / page / tab | Dokument / Seite / Tab | sidebar | Seitenleiste |
+| thumbnails | Seitenminiaturen | outline | Gliederung |
+| favourite | Favorit | Commands / Menu | Befehle / Menü |
+| save a copy / save as | Kopie speichern / Speichern unter | reload from disk | Neu laden |
+| undo / redo / cancel | Rückgängig / Wiederholen / Abbrechen | match (search hit) | Treffer |
+| match case / whole words | Groß-/Kleinschreibung beachten / Ganze Wörter | regular expression | Regulärer Ausdruck |
+| fit width / fit page / actual size | Seitenbreite / Ganze Seite / Originalgröße | selection | Auswahl |
+| highlight / underline / strike out | Hervorheben / Unterstreichen / Durchstreichen | squiggly underline | Wellenlinie |
+| comment / text box (a mark) | Kommentar / Textkasten | mark (annotation) | Markierung |
+| colour / line width | Farbe / Linienstärke | connected lines | Linienzug |
+| erase marks | Markierungen radieren | stamp / picture | Stempel / Bild |
+| form / text field / checkbox | Formular / Textfeld / Kontrollkästchen | dropdown / radio buttons | Auswahlliste / Optionsfelder |
+| signature field / tab order | Signaturfeld / Tabulatorreihenfolge | sign / digital signature | Signieren / Signatur |
+| signature picture | Unterschriftsbild | signer | Unterzeichner |
+| certificate / root certificate | Zertifikat / Stammzertifikat | certificate authority | Zertifizierungsstelle |
+| timestamp / timestamp authority | Zeitstempel / Zeitstempeldienst | long-term validation data | Langzeitvalidierungsdaten |
+| revocation (data) | Widerruf(sdaten) | appearance | Erscheinungsbild |
+| lock (a document) | sperren | intact / altered / broken | intakt / verändert / fehlerhaft |
+| redact / redaction | Schwärzen / Schwärzung | image-only copy | Kopie nur aus Bildern |
+| rotate / crop | Drehen / Zuschneiden | insert pages / blank page | Seiten einfügen / Leere Seite |
+| extract / split / merge | Extrahieren / Aufteilen / Zusammenführen | password | Passwort |
+| recognize text / text recognition | Text erkennen / Texterkennung | properties / attachment | Eigenschaften / Anhang |
+| watermark / page numbers | Wasserzeichen / Seitenzahlen | compare / side by side | Vergleichen / Nebeneinander |
+
+Keys on Windows and Linux: Strg, Umschalt, Alt, Entf, Eingabe, Leertaste, Rücktaste, Pos1, Ende,
+Bild auf, Bild ab, Einfg. macOS keeps its symbols.

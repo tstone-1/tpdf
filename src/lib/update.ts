@@ -23,11 +23,59 @@
  * of them is a way this turns into either a busy loop or a lie in the header.
  */
 
+import { catalog } from "./i18n";
+
+const TEXT = catalog({
+  "en-US": {
+    manualUpdates: "on Linux tpdf is updated by installing the new package from https://github.com/tstone-1/tpdf/releases",
+    updateTo: (version: string) => `Update to ${version}`,
+    downloading: "Downloading update",
+    downloadingPercent: (percent: number) => `Downloading update — ${percent}%`,
+    restartToFinish: "Restart to finish update",
+    unsavedOne: (name: string) => `unsaved changes to ${name}`,
+    unsavedMany: (count: number) => `unsaved changes in ${count} open documents`,
+    restartTitle: "Restart tpdf",
+    restartMessage: (what: string) => `Discard ${what} and restart to finish updating?`,
+    restartOk: "Discard and restart",
+    keepOpen: "Keep open",
+    installTitle: "Install update",
+    installMessage: (what: string) => `Installing closes tpdf. Discard ${what}?`,
+    installOk: "Discard and install",
+    checking: (version: string) => `tpdf ${version} — checking for updates`,
+    latest: (version: string) => `tpdf ${version} is the latest version`,
+    available: (version: string, newer: string) => `tpdf ${version} — version ${newer} is available`,
+    downloadingVersion: (newer: string) => `Downloading version ${newer}`,
+    installed: (newer: string) => `Version ${newer} is installed — restart tpdf to finish`,
+    failed: (version: string, reason: string) => `tpdf ${version} — could not check for updates: ${reason}`,
+  },
+  "de-DE": {
+    manualUpdates:
+      "unter Linux wird tpdf aktualisiert, indem du das neue Paket von https://github.com/tstone-1/tpdf/releases installierst",
+    updateTo: (version: string) => `Update auf ${version}`,
+    downloading: "Update wird heruntergeladen",
+    downloadingPercent: (percent: number) => `Update wird heruntergeladen – ${percent} %`,
+    restartToFinish: "Neu starten, um das Update abzuschließen",
+    unsavedOne: (name: string) => `die ungespeicherten Änderungen an ${name}`,
+    unsavedMany: (count: number) => `die ungespeicherten Änderungen in ${count} geöffneten Dokumenten`,
+    restartTitle: "tpdf neu starten",
+    restartMessage: (what: string) => `Möchtest du ${what} verwerfen und neu starten, um das Update abzuschließen?`,
+    restartOk: "Verwerfen und neu starten",
+    keepOpen: "Geöffnet lassen",
+    installTitle: "Update installieren",
+    installMessage: (what: string) => `Die Installation schließt tpdf. Möchtest du ${what} verwerfen?`,
+    installOk: "Verwerfen und installieren",
+    checking: (version: string) => `tpdf ${version} – Suche nach Updates`,
+    latest: (version: string) => `tpdf ${version} ist die neueste Version`,
+    available: (version: string, newer: string) => `tpdf ${version} – Version ${newer} ist verfügbar`,
+    downloadingVersion: (newer: string) => `Version ${newer} wird heruntergeladen`,
+    installed: (newer: string) => `Version ${newer} ist installiert – starte tpdf neu, um abzuschließen`,
+    failed: (version: string, reason: string) => `tpdf ${version} – Suche nach Updates fehlgeschlagen: ${reason}`,
+  },
+});
+
 // linux-difference: updates
 /** What a check says where tpdf does not update in place (Linux). */
-export const MANUAL_UPDATES =
-  "on Linux tpdf is updated by installing the new package from " +
-  "https://github.com/tstone-1/tpdf/releases";
+export const MANUAL_UPDATES = TEXT().manualUpdates;
 
 /** What the updater is doing, as the header shows it. */
 export type UpdateState =
@@ -234,11 +282,9 @@ export function updateLabel(state: UpdateState): string | null {
       // one describing a mechanism that does.
       return null;
     case "available":
-      return `Update to ${state.version}`;
+      return TEXT().updateTo(state.version);
     case "downloading":
-      return state.percent === null
-        ? "Downloading update"
-        : `Downloading update — ${state.percent}%`;
+      return state.percent === null ? TEXT().downloading : TEXT().downloadingPercent(state.percent);
     case "ready":
       // The same words as the command that does it, deliberately: this is a
       // button now rather than a sign, and a reader who reads "Restart to
@@ -250,7 +296,7 @@ export function updateLabel(state: UpdateState): string | null {
       // promising something the control does not perform, which is the shape
       // `docs/TRAPS.md` keeps recording: the words were true of the *world* and
       // false of the thing they were printed on.
-      return "Restart to finish update";
+      return TEXT().restartToFinish;
     case "failed":
       return null;
   }
@@ -328,21 +374,20 @@ export interface FinishPrompt {
  */
 export function finishPrompt(step: FinishStep, unsaved: string[]): FinishPrompt | null {
   if (unsaved.length === 0) return null;
-  const what = unsaved.length === 1
-    ? `unsaved changes to ${unsaved[0]}`
-    : `unsaved changes in ${unsaved.length} open documents`;
+  const [only] = unsaved;
+  const what = only !== undefined && unsaved.length === 1 ? TEXT().unsavedOne(only) : TEXT().unsavedMany(unsaved.length);
   return step === "restart"
     ? {
-      title: "Restart tpdf",
-      message: `Discard ${what} and restart to finish updating?`,
-      okLabel: "Discard and restart",
-      cancelLabel: "Keep open",
+      title: TEXT().restartTitle,
+      message: TEXT().restartMessage(what),
+      okLabel: TEXT().restartOk,
+      cancelLabel: TEXT().keepOpen,
     }
     : {
-      title: "Install update",
-      message: `Installing closes tpdf. Discard ${what}?`,
-      okLabel: "Discard and install",
-      cancelLabel: "Keep open",
+      title: TEXT().installTitle,
+      message: TEXT().installMessage(what),
+      okLabel: TEXT().installOk,
+      cancelLabel: TEXT().keepOpen,
     };
 }
 
@@ -442,21 +487,21 @@ export function updateNotice(state: UpdateState, version: string): string {
   switch (state.kind) {
     case "idle":
     case "checking":
-      return `tpdf ${version} — checking for updates`;
+      return TEXT().checking(version);
     case "current":
-      return `tpdf ${version} is the latest version`;
+      return TEXT().latest(version);
     case "available":
-      return `tpdf ${version} — version ${state.version} is available`;
+      return TEXT().available(version, state.version);
     case "downloading":
-      return `Downloading version ${state.version}`;
+      return TEXT().downloadingVersion(state.version);
     case "ready":
       // "installed", not "ready": the bytes are already on disk under the
       // running process, and the only thing outstanding is the restart. A
       // reader who reads "ready" reasonably asks what is left to download.
-      return `Version ${state.version} is installed — restart tpdf to finish`;
+      return TEXT().installed(state.version);
     case "failed":
       // The version still leads, because the reader asked two questions with one
       // press and only one of them failed.
-      return `tpdf ${version} — could not check for updates: ${state.message}`;
+      return TEXT().failed(version, state.message);
   }
 }

@@ -60,6 +60,31 @@ import { accelerator, BINDINGS, type BoundCommand } from "./keys";
 import { PALETTE } from "./markcolors";
 import { NIBS } from "./marknibs";
 import { PAGE_SIZE_NAMES } from "./pagesizes";
+import { catalog } from "./i18n";
+
+/** What each menu in the bar is called. The application menu takes the platform's name. */
+const TEXT = catalog({
+  "en-US": {
+    file: "File",
+    edit: "Edit",
+    arrange: "Arrange",
+    form: "Form",
+    page: "Page",
+    view: "View",
+    go: "Go",
+    find: "Find",
+  },
+  "de-DE": {
+    file: "Datei",
+    edit: "Bearbeiten",
+    arrange: "Anordnen",
+    form: "Formular",
+    page: "Seite",
+    view: "Ansicht",
+    go: "Gehe zu",
+    find: "Suchen",
+  },
+});
 
 /** A gap between groups of items. */
 export const SEPARATOR = "---";
@@ -113,7 +138,7 @@ export const MENU_LAYOUT: LayoutSection[] = [
       "app.makeDefaultPdfApp", "app.enableExplorerIntegration", "app.disableExplorerIntegration"],
   },
   {
-    title: "File",
+    title: TEXT().file,
     items: [
       "file.open",
       "file.fromPictures",
@@ -132,6 +157,10 @@ export const MENU_LAYOUT: LayoutSection[] = [
       "file.reopenLastTabs",
       "file.reopenTabsAtLaunch",
       "file.reopenLastDocumentAtLaunch",
+      "app.language.system",
+      "app.language.en-US",
+      "app.language.en-GB",
+      "app.language.de-DE",
       "file.clearRecents",
       SEPARATOR,
       "file.save",
@@ -191,7 +220,7 @@ export const MENU_LAYOUT: LayoutSection[] = [
     ],
   },
   {
-    title: "Edit",
+    title: TEXT().edit,
     items: [
       "edit.undo",
       "edit.redo",
@@ -299,7 +328,7 @@ export const MENU_LAYOUT: LayoutSection[] = [
     // The placed rectangles a reader has picked, against each other. A menu
     // of its own: thirteen items that all act on one selection are a group a
     // reader looks for by name, and at the foot of Edit they would double it.
-    title: "Arrange",
+    title: TEXT().arrange,
     items: [
       "edit.duplicate",
       "edit.alignLeft",
@@ -328,7 +357,7 @@ export const MENU_LAYOUT: LayoutSection[] = [
     // called Form and found none. After Arrange, because lining fields up is
     // what follows placing them. Signing in a signature field stays in File,
     // beside the other signature.
-    title: "Form",
+    title: TEXT().form,
     items: [
       "edit.fillForm",
       SEPARATOR,
@@ -356,7 +385,7 @@ export const MENU_LAYOUT: LayoutSection[] = [
     // A menu of its own, and the reason is the question that started this: the
     // page operations were the least reachable thing in the application, being
     // available only inside a sidebar that itself had no visible route in.
-    title: "Page",
+    title: TEXT().page,
     items: [
       "edit.rotatePageClockwise",
       "edit.rotatePageCounterClockwise",
@@ -402,7 +431,7 @@ export const MENU_LAYOUT: LayoutSection[] = [
     ],
   },
   {
-    title: "View",
+    title: TEXT().view,
     items: [
       "view.nextTab",
       "view.previousTab",
@@ -454,7 +483,7 @@ export const MENU_LAYOUT: LayoutSection[] = [
     ],
   },
   {
-    title: "Go",
+    title: TEXT().go,
     items: [
       "nav.nextPage",
       "nav.previousPage",
@@ -482,7 +511,7 @@ export const MENU_LAYOUT: LayoutSection[] = [
     ],
   },
   {
-    title: "Find",
+    title: TEXT().find,
     items: [
       "find.open",
       "find.next",

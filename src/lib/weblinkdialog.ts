@@ -43,6 +43,24 @@
  */
 
 import type { Target, WebTarget } from "./outline";
+import { catalog } from "./i18n";
+
+const TEXT = catalog({
+  "en-US": {
+    couldNotOpen: "this link could not be opened",
+    openThisLink: "Open this link?",
+    note: "This address is written in the document. It opens in your browser.",
+    cancel: "Cancel",
+    open: "Open",
+  },
+  "de-DE": {
+    couldNotOpen: "dieser Link konnte nicht geöffnet werden",
+    openThisLink: "Diesen Link öffnen?",
+    note: "Diese Adresse steht im Dokument. Sie öffnet sich in deinem Browser.",
+    cancel: "Abbrechen",
+    open: "Öffnen",
+  },
+});
 
 /** Class on the backdrop, so the check harness can find it. */
 export const DIALOG_CLASS = "tpdf-weblink";
@@ -125,7 +143,7 @@ export async function confirmAndOpen(
       e && typeof e === "object" && "message" in e
         ? String((e as { message: unknown }).message)
         : String(e);
-    deps.onError(said || "this link could not be opened");
+    deps.onError(said || TEXT().couldNotOpen);
     return false;
   }
 }
@@ -166,7 +184,7 @@ export class WebLinkDialog {
     this.panel = document.createElement("div");
     this.panel.setAttribute("role", "dialog");
     this.panel.setAttribute("aria-modal", "true");
-    this.panel.setAttribute("aria-label", "Open this link?");
+    this.panel.setAttribute("aria-label", TEXT().openThisLink);
     this.panel.style.cssText =
       "margin-top:14vh;width:min(460px,92vw);" +
       "border-radius:10px;background:Canvas;color:CanvasText;" +
@@ -175,7 +193,7 @@ export class WebLinkDialog {
 
     const heading = document.createElement("h2");
     heading.style.cssText = "margin:0 0 0.6rem;font-size:15px;font-weight:600;";
-    heading.textContent = "Open this link?";
+    heading.textContent = TEXT().openThisLink;
 
     // The host, and it is the only thing in the panel drawn at size. Word
     // breaking is on because a long host must wrap rather than push the panel
@@ -194,14 +212,13 @@ export class WebLinkDialog {
     const note = document.createElement("p");
     note.style.cssText = "margin:0.75rem 0 0;opacity:0.72;";
     // Ours, and fixed. Nothing the document said appears in this sentence.
-    note.textContent =
-      "This address is written in the document. It opens in your browser.";
+    note.textContent = TEXT().note;
 
     const buttons = document.createElement("div");
     buttons.style.cssText =
       "display:flex;gap:0.5rem;justify-content:flex-end;margin-top:0.85rem;";
-    this.cancel = this.button("Cancel", () => this.settle(false));
-    const open = this.button("Open", () => this.settle(true));
+    this.cancel = this.button(TEXT().cancel, () => this.settle(false));
+    const open = this.button(TEXT().open, () => this.settle(true));
     buttons.append(this.cancel, open);
 
     this.panel.append(heading, this.host, this.rest, note, buttons);

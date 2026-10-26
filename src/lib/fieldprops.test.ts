@@ -66,7 +66,7 @@ describe("what the panel shows and reads", () => {
     }
     expect(read(TEXT, typed({ maxLength: String(MAX_LENGTH) }))).toMatchObject({ maxLength: MAX_LENGTH });
     expect(read(TEXT, typed({ maxLength: "1", defaultValue: "" }))).toMatchObject({ maxLength: 1 });
-    expect(problem(TEXT, { align: "justify" })).toContain("left, centre or right");
+    expect(problem(TEXT, { align: "justify" })).toContain("left, center or right");
     expect(problem(CHOICE, { options: "" })).toContain("semicolon");
     expect(problem(CHOICE, { options: "A; A" })).toContain("twice");
     for (const bad of ["3.9", "144.5", "-9", "abc", "1e2", "9.555", "1234"]) {

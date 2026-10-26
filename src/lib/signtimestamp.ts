@@ -28,6 +28,8 @@
  *   that throws or holds anything tpdf did not write reads as none.
  */
 
+import { catalog } from "./i18n";
+
 /** A timestamp authority on the short list. Mirrors `tsa::Server`. */
 export interface Server {
   /** What is remembered, and what `tpdf sign --timestamp` accepts. */
@@ -149,23 +151,42 @@ export function writeStampChoice(
  * refuses anything this lets through that it would not.
  */
 export function addressProblem(text: string): string | null {
+  const said = TEXT();
   const trimmed = text.trim();
-  if (trimmed === "") return "Type the timestamp authority's address.";
-  if (trimmed.length > MAX_URL_CHARS) return "That address is too long.";
+  if (trimmed === "") return said.empty;
+  if (trimmed.length > MAX_URL_CHARS) return said.tooLong;
   let url: URL;
   try {
     url = new URL(trimmed);
   } catch {
-    return "That is not an address: it should begin with http:// or https://.";
+    return said.notAddress;
   }
   if (url.protocol !== "http:" && url.protocol !== "https:") {
-    return "tpdf asks timestamp authorities over http:// or https:// only.";
+    return said.scheme;
   }
   if (url.username !== "" || url.password !== "") {
-    return "An address with a user name or password in it is not asked.";
+    return said.credentials;
   }
   return null;
 }
+
+/** What {@link addressProblem} says. Server labels are names and stay as they are. */
+const TEXT = catalog({
+  "en-US": {
+    empty: "Type the timestamp authority's address.",
+    tooLong: "That address is too long.",
+    notAddress: "That is not an address: it should begin with http:// or https://.",
+    scheme: "tpdf asks timestamp authorities over http:// or https:// only.",
+    credentials: "An address with a user name or password in it is not asked.",
+  },
+  "de-DE": {
+    empty: "Gib die Adresse des Zeitstempeldienstes ein.",
+    tooLong: "Diese Adresse ist zu lang.",
+    notAddress: "Das ist keine Adresse: Sie muss mit http:// oder https:// beginnen.",
+    scheme: "tpdf fragt Zeitstempeldienste nur über http:// oder https:// an.",
+    credentials: "Eine Adresse, die einen Benutzernamen oder ein Passwort enthält, wird nicht angefragt.",
+  },
+});
 
 /**
  * The address the signing asks, or `null` for no timestamp.

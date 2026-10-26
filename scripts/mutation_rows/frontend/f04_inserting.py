@@ -245,8 +245,8 @@ ROWS += [
         # registration order, and `docs/TRAPS.md` records shipping once.
         "appcommands: name the sized inserts so one title is a prefix of another",
         "src/lib/appcommands.ts",
-        "      title: `Insert blank ${PAGE_SIZES[name].title} page`,",
-        "      title: `Insert blank page ${PAGE_SIZES[name].title}`,",
+        "    insertSizedPage: (size: string) => `Insert blank ${size} page`,",
+        "    insertSizedPage: (size: string) => `Insert blank page ${size}`,",
         "give the sized inserts titles that are nobody's prefix",
     ),
 ]
@@ -261,8 +261,8 @@ ROWS += [
         # they could not tell apart by their effect.
         "marknibs: give two nibs the same width",
         "src/lib/marknibs.ts",
-        '  { id: "broad", name: "broad", pt: 5 },',
-        '  { id: "broad", name: "broad", pt: 1 },',
+        '  { id: "broad", name: TEXT().broad, pt: 5 },',
+        '  { id: "broad", name: TEXT().broad, pt: 1 },',
         "goes from thinnest to thickest, with no two the same",
     ),
     Mutation(
@@ -272,8 +272,8 @@ ROWS += [
         # with nothing on either side saying so.
         "marknibs: offer a nib past what the backend accepts",
         "src/lib/marknibs.ts",
-        '  { id: "marker", name: "marker", pt: 10 },',
-        '  { id: "marker", name: "marker", pt: 40 },',
+        '  { id: "marker", name: TEXT().marker, pt: 10 },',
+        '  { id: "marker", name: TEXT().marker, pt: 40 },',
         "offers every one inside the range the backend clamps to",
     ),
     Mutation(
@@ -283,8 +283,8 @@ ROWS += [
         # does not match them.
         "marknibs: write the default nib as a number instead of the constant",
         "src/lib/marknibs.ts",
-        '  { id: "medium", name: "medium", pt: INK_WIDTH },',
-        '  { id: "medium", name: "medium", pt: 2.6 },',
+        '  { id: "medium", name: TEXT().medium, pt: INK_WIDTH },',
+        '  { id: "medium", name: TEXT().medium, pt: 2.6 },',
         "holds the default by reference, so it cannot be a shade off",
     ),
     Mutation(
@@ -928,11 +928,11 @@ ROWS += [
         '  return true\n    ? {',
         "says which act is about to happen, and the two are not the same act"),
     Mutation("update prompt: count the one document instead of naming it", "src/lib/update.ts",
-        '    ? `unsaved changes to ${unsaved[0]}`',
-        '    ? `unsaved changes in 1 open document`',
+        "    unsavedOne: (name: string) => `unsaved changes to ${name}`,",
+        "    unsavedOne: (name: string) => `unsaved changes in 1 open document`,",
         "names the one document, and counts several"),
     Mutation("update label: name the step rather than the action that takes it", "src/lib/update.ts",
-        '      return "Restart to finish update";',
+        "      return TEXT().restartToFinish;",
         '      return "Update ready \u2014 restart to finish";',
         "names the version on offer, and the restart when one is waiting"),
     # The registry half. Both guards are one line each and neither is visible
@@ -942,8 +942,8 @@ ROWS += [
         '      enabled: () => true,',
         "withholds the restart until the update is actually applied"),
     Mutation("update command: keep promising a restart it may not perform", "src/lib/appcommands.ts",
-        '      title: "Install update",',
-        '      title: "Install update and restart",',
+        '    installUpdate: "Install update",',
+        '    installUpdate: "Install update and restart",',
         "promises no restart from the command that may not perform one"),
     # The shell, where no test imports the file and a source assertion is the
     # only instrument there is.
@@ -1024,16 +1024,16 @@ ROWS += [
         '  if (count === 1) return PICK_ANOTHER;',
         'takes its own line away when it stops being true, and leaves any other'),
     Mutation('picked notice: leave a line that stopped being true', 'src/lib/arrange.ts',
-        '  return current !== null && /^\\d+ picked\\. /.test(current) ? null : current;',
+        "  return current !== null && PICKED_LINE.test(current) ? null : current;",
         '  return current;',
         'takes its own line away when it stops being true, and leaves any other'),
     Mutation('picked notice: take any line away', 'src/lib/arrange.ts',
-        '  return current !== null && /^\\d+ picked\\. /.test(current) ? null : current;',
+        "  return current !== null && PICKED_LINE.test(current) ? null : current;",
         '  return null;',
         'takes its own line away when it stops being true, and leaves any other'),
     Mutation('picked notice: take away a line that only begins with a number', 'src/lib/arrange.ts',
-        '/^\\d+ picked\\. /.test(current)',
-        '/^\\d+ picked/.test(current)',
+        "const PICKED_LINE = new RegExp(`^\\\\d+ ${TEXT().picked}\\\\. `);",
+        "const PICKED_LINE = new RegExp(`^\\\\d+ ${TEXT().picked}`);",
         'takes its own line away when it stops being true, and leaves any other'),
     Mutation('picked: count a picked mark as one still to pick', 'src/lib/viewer.ts',
         '          !this.arranging.has(other.id) && other.page === picked.page && isResizable(other.kind),',
@@ -1097,15 +1097,15 @@ ROWS += [
         "          `intact — the signed bytes are unchanged and the signature verifies ` +",
         "says each integrity verdict as the properties dialog does"),
     Mutation("cli wording: the application closes a signing differently", "src/lib/signing.ts",
-        "Read back after writing, the signature is intact.`;",
-        "Read back, the signature is intact.`;",
+        "Read back after writing, the signature is intact.`,",
+        "Read back, the signature is intact.`,",
         "closes a signing as the signing panel does"),
     # 2026-10-05: `tpdf verify` restates the dialog's Appended row
     # (`appendix_sentence` in `src-tauri/src/cli/verify.rs`).
     Mutation("cli wording: the application names another signature differently",
         "src/lib/properties.ts",
-        '    return "another signature";',
-        '    return "a further signature";',
+        '    anotherSignature: "another signature",',
+        '    anotherSignature: "a further signature",',
         "says what was appended after a signature as the properties dialog does"),
 ]
 
@@ -1271,10 +1271,10 @@ ROWS += [
         "signs the document through its own command, offered with or without edits"),
     Mutation("appcommands: withhold Sign document on an edited document",
         "src/lib/appcommands.ts",
-        """      title: "Sign document\\u2026",
-      enabled: withDocument,""",
-        """      title: "Sign document\\u2026",
-      enabled: () => withDocument() && !actions.isDirty(),""",
+        "      title: TEXT(locale).signDocument,\n"
+        "      enabled: withDocument,",
+        "      title: TEXT(locale).signDocument,\n"
+        "      enabled: () => withDocument() && !actions.isDirty(),",
         "signs the document through its own command, offered with or without edits"),
 ]
 
@@ -1301,8 +1301,8 @@ ROWS += [
         "        visible: true,\n        timestamp,\n",
         "answers a visible signature unless the reader picks an invisible one"),
     Mutation("signing: open the chooser with neither appearance picked", "src/lib/signing.ts",
-        "  const visible = appearance(\"visible\", \"Visible\", true);",
-        "  const visible = appearance(\"visible\", \"Visible\", false);",
+        '  const visible = appearance("visible", said.visible, true);',
+        '  const visible = appearance("visible", said.visible, false);',
         "answers a visible signature unless the reader picks an invisible one"),
     Mutation("lock: never ask the backend for it", "src/lib/signing.ts",
         "    chosen.lock === true,\n  );", "    false,\n  );",
@@ -1330,8 +1330,12 @@ ROWS += [
         "        lock,\n      });", "        lock: true,\n      });",
         "asks whether anyone else signs, with no answer, and signs nothing until it has one"),
     Mutation("lock: lock for the reader who says others still sign", "src/lib/signlock.ts",
-        "    text: \"Yes, leave it open for their signatures\",\n    hint: \"\",\n    lock: false,",
-        "    text: \"Yes, leave it open for their signatures\",\n    hint: \"\",\n    lock: true,",
+        "    text: T.others,\n"
+        '    hint: "",\n'
+        "    lock: false,",
+        "    text: T.others,\n"
+        '    hint: "",\n'
+        "    lock: true,",
         "locks only for the reader who says nobody else signs"),
     Mutation("lock: read an unknown answer as a lock", "src/lib/signlock.ts",
         "?.lock ?? null;", "?.lock ?? true;",
@@ -1696,8 +1700,10 @@ ROWS += [
         "      run: () => actions.signDocument(),",
         "adds validation data through its own command, offered on any open document"),
     Mutation("validation-data: withhold the command from an edited document", "src/lib/appcommands.ts",
-        '      title: "Add long-term validation data\\u2026",\n      enabled: withDocument,',
-        '      title: "Add long-term validation data\\u2026",\n      enabled: () => withDocument() && !actions.isDirty(),',
+        "      title: TEXT(locale).addValidationData,\n"
+        "      enabled: withDocument,",
+        "      title: TEXT(locale).addValidationData,\n"
+        "      enabled: () => withDocument() && !actions.isDirty(),",
         "adds validation data through its own command, offered on any open document"),
     Mutation("validation-data: leave the command out of the File menu", "src/lib/menubar.ts",
         '      "file.addValidationData",\n',
@@ -1723,23 +1729,28 @@ ROWS += [
     Mutation(
         "revocation: call a document with no revocation data not revoked",
         "src/lib/integrity.ts",
-        "          `not checked — the document carries no revocation data for ${whose}, and tpdf ` +",
-        "          `not revoked — the document carries no revocation data for ${whose}, and tpdf ` +",
+        "            `not checked — the document carries no revocation data for ${w.whose}, and tpdf ` +",
+        "            `not revoked — the document carries no revocation data for ${w.whose}, and tpdf ` +",
         "says a document carrying no revocation data was not checked, never that it is fine",
     ),
     Mutation(
         "revocation: let none pass without a warning",
         "src/lib/integrity.ts",
-        """          `same as one it has not.`,
-        warn: true,""",
-        """          `same as one it has not.`,""",
+        '    revocation.standing === "good" ||\n'
+        '    (revocation.standing === "revoked" && revocation.after_moment);',
+        '    revocation.standing === "good" || revocation.standing === "none" ||\n'
+        '    (revocation.standing === "revoked" && revocation.after_moment);',
         "marks everything but a good answer and a later revocation for a reader's attention",
     ),
     Mutation(
         "revocation: word every revocation as after the timestamp",
         "src/lib/integrity.ts",
-        "      if (revocation.after_moment) {",
-        "      if (true) {",
+        "          if (r.after_moment) {\n"
+        "            return (\n"
+        "              `revoked after the timestamp",
+        "          if (true) {\n"
+        "            return (\n"
+        "              `revoked after the timestamp",
         "says a revocation after an attested moment does not undo the signature, and only then",
     ),
     Mutation(
@@ -1780,8 +1791,8 @@ ROWS += [
     Mutation(
         "chain: name the leaf when an issuing certificate decides",
         "src/lib/integrity.ts",
-        "  const said = revocationRow(judged.revocation, authority, issuingCertificate(judged));",
-        "  const said = revocationRow(judged.revocation, authority);",
+        "  const shown = revocationRow(judged.revocation, authority, issuingCertificate(judged));",
+        "  const shown = revocationRow(judged.revocation, authority);",
         "names the issuing certificate a revocation is about, and warns",
     ),
     Mutation(
@@ -1815,22 +1826,22 @@ ROWS += [
     Mutation(
         "archive: leave the archive timestamp out of the closing sentence",
         "src/lib/signing.ts",
-        "    text += ` Archive timestamp: ${listed}.`;",
+        "    text += said.archivePart(listed);",
         "",
         "closes a signing as the signing panel does",
     ),
     Mutation(
         "trust: say trusted at the timestamp without saying when",
         "src/lib/integrity.ts",
-        "          `${computer} trusts at ${trust.attested_at}, the time a timestamp from an ` +",
-        "          `${computer} trusts at the time a timestamp from an ` +",
+        "            `${w.computer} trusts at ${w.attestedAt}, the time a timestamp from an ` +",
+        "            `${w.computer} trusts at the time a timestamp from an ` +",
         "says whose moment an attested judgement is, and that expiry since does not undo it",
     ),
     Mutation(
         "trust: hide that an untrusted chain was judged at the attested moment",
         "src/lib/integrity.ts",
-        "    ? `, judged at ${trust.attested_at}, the time the timestamp attests`",
-        '    ? ""',
+        '      const judged = w.attestedAt ? `, judged at ${w.attestedAt}, the time the timestamp attests` : "";',
+        '      const judged = w.attestedAt ? "" : "";',
         "says whose moment an attested judgement is, and that expiry since does not undo it",
     ),
     # `tpdf verify`, 2026-09-28: the moment after the reason read as the
@@ -1838,22 +1849,22 @@ ROWS += [
     Mutation(
         "trust: say the attested moment after the reason again",
         "src/lib/integrity.ts",
-        "          `not trusted${judged} — ${why}. So nothing establishes that the key ` +",
-        "          `not trusted — ${why}${judged}. So nothing establishes that the key ` +",
+        "            `not trusted${judged} — ${w.why}. So nothing establishes that the key ` +",
+        "            `not trusted — ${w.why}${judged}. So nothing establishes that the key ` +",
         "states the attested moment once, as the whole verdict's and not the reason's",
     ),
     Mutation(
         "authority: hide that an untrusted authority was judged at the archive's moment",
         "src/lib/integrity.ts",
-        "        value: `not trusted${judged} — ${why}. So nothing establishes who attests this time.`,",
-        "        value: `not trusted — ${why}. So nothing establishes who attests this time.`,",
+        "          return `not trusted${judged} — ${w.why}. So nothing establishes who attests this time.`;",
+        "          return `not trusted — ${w.why}. So nothing establishes who attests this time.`;",
         "states the archive's moment once, beside the verdict's word",
     ),
     Mutation(
         "authority: call an authority out of its dates the signer's certificate",
         "src/lib/integrity.ts",
-        '  not_in_force: (_computer, whose = "the signer\'s") => `${whose} certificate was not in force then`,',
-        '  not_in_force: () => "the signer\'s certificate was not in force then",',
+        "          return `${whose} certificate was not in force then`;",
+        "          return \"the signer's certificate was not in force then\";",
         "says an authority out of its dates is the authority's certificate, not the signer's",
     ),
 ]
@@ -1956,7 +1967,7 @@ ROWS += [
     Mutation("arrange bar: take every registered command for one that can run", "src/lib/arrangebar.ts", "    enabled: command.enabled?.() ?? true,", "    enabled: true,", "greys spacing with two picked and says it needs three, as the command does"),
     Mutation("arrange bar: drop what the command says is missing", "src/lib/arrangebar.ts", "    why: command.why?.() ?? null,", "    why: null,", "greys spacing with two picked and says it needs three, as the command does"),
     Mutation("arrange: say something is missing with just enough picked", "src/lib/arrange.ts", "  if (picked >= want) return null;", "  if (picked > want) return null;", "says what is missing with too few picked, and nothing with enough"),
-    Mutation("arrange: say how many are needed as a figure", "src/lib/arrange.ts", "  return `needs ${COUNTED[want] ?? want} picked`;", "  return `needs ${want} picked`;", "says what is missing with too few picked, and nothing with enough"),
+    Mutation("arrange: say how many are needed as a figure", "src/lib/arrange.ts", '    needs: (count: number) => `needs ${["none", "one", "two", "three"][count] ?? count} picked`,', "    needs: (count: number) => `needs ${count} picked`,", "says what is missing with too few picked, and nothing with enough"),
     Mutation("arrange command: say nothing about what is missing", "src/lib/appcommands.ts", "      why,\n      run: () => actions.arrange(how),", "      run: () => actions.arrange(how),", "offers each arrangement once enough marks are picked for it, and runs that one"),
     Mutation("mark popup: say Shift picks another on every mark", "src/lib/markpopup.ts", "    this.together.hidden = !together;", "    this.together.hidden = false;", "says Shift picks another only when it is told so, and for that opening only"),
     Mutation("mark popup: never say Shift picks another", "src/lib/markpopup.ts", "    this.together.hidden = !together;", "    this.together.hidden = true;", "says Shift picks another only when it is told so, and for that opening only"),
@@ -2014,12 +2025,12 @@ ROWS += [
         '  const base = home;',
         "writes the home folder, and what is under it, with a tilde"),
     Mutation("start page: say page 1 of a document left on its first page", "src/lib/startpage.ts",
-        '  return place.page > 0 ? `page ${place.page + 1}` : "";',
-        '  return place.page >= 0 ? `page ${place.page + 1}` : "";',
+        '  return place.page > 0 ? TEXT().page(place.page + 1) : "";',
+        '  return place.page >= 0 ? TEXT().page(place.page + 1) : "";',
         "says nothing on the first page and counts from one after it"),
     Mutation("start page: count pages from zero", "src/lib/startpage.ts",
-        '  return place.page > 0 ? `page ${place.page + 1}` : "";',
-        '  return place.page > 0 ? `page ${place.page}` : "";',
+        '  return place.page > 0 ? TEXT().page(place.page + 1) : "";',
+        '  return place.page > 0 ? TEXT().page(place.page) : "";',
         "says nothing on the first page and counts from one after it"),
     Mutation("start page: list every remembered document", "src/lib/startpage.ts",
         '  const offered = places.slice(0, MAX_RECENTS);',
@@ -2042,8 +2053,8 @@ ROWS += [
         '    run: () => open(rows[0]?.path ?? row.path),',
         "makes the command each row names, and it opens that row's document"),
     Mutation("start page: title a command with something the row does not show", "src/lib/startpage.ts",
-        '    title: `Open ${row.label}`,',
-        '    title: `Open ${row.path}`,',
+        "    title: TEXT().open(row.label),",
+        "    title: TEXT().open(row.path),",
         "makes the command each row names, and it opens that row's document"),
     Mutation("start page: answer a chord", "src/lib/startpage.ts",
         '  if (event.metaKey || event.ctrlKey || event.altKey || event.shiftKey) return null;\n',
@@ -2385,7 +2396,7 @@ ROWS += [
         "      enabled: () => true,",
         "offers the question only while a list of languages is held"),
     Mutation("ocr language: take an answer with no list to hold it against", "src/lib/appcommands.ts",
-        '          if (!asked) return "No list of languages is waiting";',
+        "          if (!asked) return TEXT(locale).noLanguageList;",
         "          if (!asked) return null;",
         "offers the question only while a list of languages is held"),
     Mutation("ocr language: need a document to choose a language", "src/lib/appcommands.ts",
@@ -2437,8 +2448,8 @@ ROWS += [
         "    read.nothingRead.length +\n",
         "names the pages the recogniser refused, says what that usually means, and counts them"),
     Mutation("ocr refused: name the pages with no reason", "src/lib/recognise.ts",
-        "said.push(`The recogniser refused ${pages(read.refused)}, ${REFUSED_MEANS}.`);",
-        "said.push(`The recogniser refused ${pages(read.refused)}.`);",
+        "    refused: (pages: string) => `The recognizer refused ${pages}, ${REFUSED_MEANS}.`,",
+        "    refused: (pages: string) => `The recognizer refused ${pages}.`,",
         "names the pages the recogniser refused, says what that usually means, and counts them"),
     Mutation("ocr refused: say what a refusal means in other words", "src/lib/recognise.ts",
         '  "which usually means a script it cannot read or a scan too unclear to tell the script";',

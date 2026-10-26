@@ -49,8 +49,30 @@
  * other way.
  */
 
-import { bylineOf, labelFor, type Comment } from "./comments";
+import { bylineOf, labelFor, noCommentLabel, type Comment } from "./comments";
+import { catalog } from "./i18n";
 import { place, POPUP_WIDTH, type Anchor } from "./popup";
+
+const TEXT = catalog({
+  "en-US": {
+    comment: "Comment",
+    commentText: "Comment text",
+    yourReply: "Your reply",
+    edit: "Edit",
+    reply: "Reply",
+    closeComment: "Close comment",
+    unknown: "Unknown",
+  },
+  "de-DE": {
+    comment: "Kommentar",
+    commentText: "Kommentartext",
+    yourReply: "Deine Antwort",
+    edit: "Bearbeiten",
+    reply: "Antworten",
+    closeComment: "Kommentar schließen",
+    unknown: "Unbekannt",
+  },
+});
 
 export { POPUP_WIDTH, type Anchor };
 
@@ -127,7 +149,7 @@ export class CommentPopup {
 
     this.element = document.createElement("div");
     this.element.setAttribute("role", "dialog");
-    this.element.setAttribute("aria-label", "Comment");
+    this.element.setAttribute("aria-label", TEXT().comment);
     this.element.tabIndex = -1;
     this.element.style.cssText =
       "position:absolute;display:none;z-index:5;box-sizing:border-box;" +
@@ -300,7 +322,7 @@ export class CommentPopup {
     this.mode = mode;
     const box = document.createElement("textarea");
     box.value = this.was;
-    box.setAttribute("aria-label", mode === "body" ? "Comment text" : "Your reply");
+    box.setAttribute("aria-label", mode === "body" ? TEXT().commentText : TEXT().yourReply);
     box.rows = 4;
     box.style.cssText =
       "width:100%;box-sizing:border-box;resize:vertical;font:inherit;" +
@@ -397,7 +419,7 @@ export class CommentPopup {
    * something people quote far more often than they change.
    */
   private editButton(): HTMLElement {
-    return this.armButton("Edit", () => this.edit());
+    return this.armButton(TEXT().edit, () => this.edit());
   }
 
   /**
@@ -435,7 +457,7 @@ export class CommentPopup {
    * helper so the two cannot drift apart in look or in behaviour.
    */
   private replyButton(): HTMLElement {
-    return this.armButton("Reply", () => this.reply());
+    return this.armButton(TEXT().reply, () => this.reply());
   }
 
   /**
@@ -449,7 +471,7 @@ export class CommentPopup {
   private closeButton(): HTMLElement {
     const button = document.createElement("button");
     button.type = "button";
-    button.setAttribute("aria-label", "Close comment");
+    button.setAttribute("aria-label", TEXT().closeComment);
     button.textContent = "\u00d7";
     button.style.cssText =
       "position:absolute;top:0.25rem;right:0.35rem;border:0;background:none;" +
@@ -479,7 +501,7 @@ function header(comment: Comment): HTMLElement {
     "display:flex;gap:0.5rem;align-items:baseline;margin-bottom:0.35rem;";
 
   const who = document.createElement("strong");
-  who.textContent = comment.author.trim() || "Unknown";
+  who.textContent = comment.author.trim() || TEXT().unknown;
   who.style.cssText = "flex:1;min-width:0;overflow-wrap:anywhere;";
 
   const kind = document.createElement("span");
@@ -515,7 +537,7 @@ function subject(comment: Comment): HTMLElement {
 function body(comment: Comment): HTMLElement {
   const element = document.createElement("div");
   const text = comment.body.trim();
-  element.textContent = text || `${labelFor(comment.kind)}, no comment`;
+  element.textContent = text || noCommentLabel(comment.kind);
   element.style.cssText =
     "white-space:pre-wrap;overflow-wrap:anywhere;" +
     (text ? "" : "opacity:0.6;font-style:italic;");

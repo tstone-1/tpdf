@@ -36,6 +36,13 @@
  * than this paragraph.
  */
 
+import { catalog } from "./i18n";
+
+const TEXT = catalog({
+  "en-US": { dialog: "Password required", password: "Password", cancel: "Cancel", unlock: "Unlock" },
+  "de-DE": { dialog: "Passwort erforderlich", password: "Passwort", cancel: "Abbrechen", unlock: "Entsperren" },
+});
+
 /** Class on the backdrop, so the check harness can find it. */
 export const DIALOG_CLASS = "tpdf-password";
 
@@ -81,7 +88,7 @@ export class PasswordDialog {
     this.panel = document.createElement("div");
     this.panel.setAttribute("role", "dialog");
     this.panel.setAttribute("aria-modal", "true");
-    this.panel.setAttribute("aria-label", "Password required");
+    this.panel.setAttribute("aria-label", TEXT().dialog);
     this.panel.style.cssText =
       "margin-top:14vh;width:min(420px,92vw);" +
       "border-radius:10px;background:Canvas;color:CanvasText;" +
@@ -98,7 +105,7 @@ export class PasswordDialog {
     // Through the property rather than `setAttribute`, which is how everything
     // else in this file sets one, and which the `sinks` gate is happier with.
     this.field.type = "password";
-    this.field.setAttribute("aria-label", "Password");
+    this.field.setAttribute("aria-label", TEXT().password);
     this.field.style.cssText =
       "width:100%;box-sizing:border-box;padding:0.4rem 0.5rem;font:inherit;" +
       "border-radius:6px;border:1px solid color-mix(in srgb, CanvasText 28%, transparent);" +
@@ -107,8 +114,8 @@ export class PasswordDialog {
     const buttons = document.createElement("div");
     buttons.style.cssText =
       "display:flex;gap:0.5rem;justify-content:flex-end;margin-top:0.85rem;";
-    const cancel = this.button("Cancel", () => this.settle(null));
-    const unlock = this.button("Unlock", () => this.submit());
+    const cancel = this.button(TEXT().cancel, () => this.settle(null));
+    const unlock = this.button(TEXT().unlock, () => this.submit());
     unlock.style.fontWeight = "600";
     buttons.append(cancel, unlock);
 

@@ -37,6 +37,12 @@
 import type { CommandRegistry } from "./commands";
 import { iconFrom, type IconPart } from "./icons";
 import type { Anchor } from "./popup";
+import { catalog } from "./i18n";
+
+const TEXT = catalog({
+  "en-US": { arrange: "Arrange" },
+  "de-DE": { arrange: "Anordnen" },
+});
 
 /** A command as the bar sees it, read when asked and not kept. */
 export interface BarCommand {
@@ -204,7 +210,7 @@ export class ArrangeBar {
     this.opts = opts;
     this.element = document.createElement("div");
     this.element.setAttribute("role", "toolbar");
-    this.element.setAttribute("aria-label", "Arrange");
+    this.element.setAttribute("aria-label", TEXT().arrange);
     // The border and the shadow are the note box's, so the two read as one
     // family; a step under it, which only matters if a reader drags the box
     // over the bar.

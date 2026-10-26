@@ -19,12 +19,24 @@
  */
 
 import type { Command, CommandRegistry, Ranked } from "./commands";
+import { catalog } from "./i18n";
+
+const TEXT = catalog({
+  "en-US": {
+    runCommand: "Run a command",
+    noMatch: "No matching command",
+  },
+  "de-DE": {
+    runCommand: "Befehl ausführen",
+    noMatch: "Kein passender Befehl",
+  },
+});
 
 /** Rows shown at once. More than this and the list scrolls. */
 const MAX_ROWS = 12;
 
 /** The placeholder shown while a command is being searched for. */
-const SEARCH_PLACEHOLDER = "Run a command";
+const SEARCH_PLACEHOLDER = (): string => TEXT().runCommand;
 
 export class Palette {
   private readonly registry: CommandRegistry;
@@ -70,8 +82,8 @@ export class Palette {
     this.input.setAttribute("autocorrect", "off");
     this.input.setAttribute("autocapitalize", "off");
     this.input.setAttribute("autocomplete", "off");
-    this.input.placeholder = "Run a command";
-    this.input.setAttribute("aria-label", "Run a command");
+    this.input.placeholder = SEARCH_PLACEHOLDER();
+    this.input.setAttribute("aria-label", SEARCH_PLACEHOLDER());
     this.input.style.cssText =
       "width:100%;box-sizing:border-box;border:0;outline:none;font:inherit;" +
       "font-size:15px;padding:0.7rem 0.9rem;background:transparent;color:inherit;" +
@@ -124,7 +136,7 @@ export class Palette {
       document.activeElement instanceof HTMLElement ? document.activeElement : null;
     this.backdrop.style.display = "flex";
     this.leave();
-    this.input.placeholder = SEARCH_PLACEHOLDER;
+    this.input.placeholder = SEARCH_PLACEHOLDER();
     this.input.value = "";
     this.refresh();
     this.input.focus();
@@ -207,7 +219,7 @@ export class Palette {
   /** Leaves argument mode, back to the command list. */
   private stopAsking(): void {
     this.leave();
-    this.input.placeholder = SEARCH_PLACEHOLDER;
+    this.input.placeholder = SEARCH_PLACEHOLDER();
     this.input.value = "";
     this.refresh();
   }
@@ -321,7 +333,7 @@ export class Palette {
     if (this.results.length === 0) {
       const empty = document.createElement("div");
       empty.style.cssText = "padding:0.6rem 0.9rem;opacity:0.55;";
-      empty.textContent = "No matching command";
+      empty.textContent = TEXT().noMatch;
       this.list.appendChild(empty);
       return;
     }

@@ -12,7 +12,25 @@
  * `textContent`.
  */
 
+import { catalog } from "./i18n";
 import { ADVICE, NOT_ASCII, beyondAscii, judge } from "./protect";
+
+const TEXT = catalog({
+  "en-US": {
+    newPassword: "New password",
+    again: "New password, again",
+    cancel: "Cancel",
+    chooseWhere: "Choose where to save...",
+    heading: (name: string) => `Password for a copy of ${name}`,
+  },
+  "de-DE": {
+    newPassword: "Neues Passwort",
+    again: "Neues Passwort wiederholen",
+    cancel: "Abbrechen",
+    chooseWhere: "Speicherort wählen...",
+    heading: (name: string) => `Passwort für eine Kopie von ${name}`,
+  },
+});
 
 /** Class on the backdrop, so the check harness can find it. */
 export const DIALOG_CLASS = "tpdf-new-password";
@@ -40,7 +58,7 @@ export class NewPasswordDialog {
     const panel = document.createElement("div");
     panel.setAttribute("role", "dialog");
     panel.setAttribute("aria-modal", "true");
-    panel.setAttribute("aria-label", "New password");
+    panel.setAttribute("aria-label", TEXT().newPassword);
     panel.style.cssText =
       "margin-top:14vh;width:min(420px,92vw);" +
       "border-radius:10px;background:Canvas;color:CanvasText;" +
@@ -53,8 +71,8 @@ export class NewPasswordDialog {
     this.note = document.createElement("p");
     this.note.style.cssText = "margin:0 0 0.75rem;opacity:0.72;";
 
-    this.first = this.field("New password");
-    this.second = this.field("New password, again");
+    this.first = this.field(TEXT().newPassword);
+    this.second = this.field(TEXT().again);
     this.second.style.marginTop = "0.5rem";
 
     this.problem = document.createElement("p");
@@ -64,8 +82,8 @@ export class NewPasswordDialog {
     const buttons = document.createElement("div");
     buttons.style.cssText =
       "display:flex;gap:0.5rem;justify-content:flex-end;margin-top:0.85rem;";
-    const cancel = this.button("Cancel", () => this.settle(null));
-    const save = this.button("Choose where to save...", () => this.submit());
+    const cancel = this.button(TEXT().cancel, () => this.settle(null));
+    const save = this.button(TEXT().chooseWhere, () => this.submit());
     save.style.fontWeight = "600";
     buttons.append(cancel, save);
 
@@ -101,7 +119,7 @@ export class NewPasswordDialog {
   /** Asks for the password `name`'s copy will have, or `null` when dismissed. */
   ask(name: string): Promise<string | null> {
     this.settle(null);
-    this.heading.textContent = `Password for a copy of ${name}`;
+    this.heading.textContent = TEXT().heading(name);
     this.note.textContent = ADVICE;
     this.problem.textContent = "";
     if (!this.shown) {

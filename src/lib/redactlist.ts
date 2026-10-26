@@ -55,6 +55,104 @@ import type { FilePage, PageId, RedactionRow, RedactionView, RegionPlan } from "
 import { touchedText } from "./reading";
 import { FillPicker, type FillPickerOptions } from "./redactfill";
 import type { PageText } from "./text";
+import { catalog, type UiLocale } from "./i18n";
+
+const TEXT = catalog({
+  "en-US": {
+    reading: "Reading the page…",
+    noText: "No text in this region",
+    unreadable: "Could not read the page",
+    marked: (count: number) => count === 1 ? "1 region marked" : `${count} regions marked`,
+    nothingRemoved: (marked: string) => `${marked}. Nothing has been removed yet.`,
+    lost: (said: string, count: number) =>
+      count === 1 ? `${said} 1 is not on any page.` : `${said} ${count} are not on any page.`,
+    many: (count: number, several: string) => `${count} ${several}`,
+    drawnTimes: (what: string, drawn: number) => `${what} drawn ${drawn} times`,
+    and: "and",
+    alsoCovers: (said: string) => `Also covers ${said}, which a removal cannot take`,
+    image: "a picture",
+    images: "pictures",
+    path: "a drawing",
+    paths: "drawings",
+    clipPath: "a drawing that also limits where the things after it are drawn",
+    clipPaths: "drawings that also limit where the things after them are drawn",
+    unplacedPath: "a drawing tpdf could not find in the page's content",
+    unplacedPaths: "drawings tpdf could not find in the page's content",
+    shading: "a color gradient",
+    shadings: "color gradients",
+    form: "a reusable block of content",
+    forms: "reusable blocks of content",
+    unsupported: "something of a kind tpdf cannot read",
+    unsupporteds: "things of a kind tpdf cannot read",
+    other: "something else",
+    others: "other things",
+    unmeasured: "Also covers text a removal leaves in place: it is written in a way tpdf cannot measure, " +
+      "such as vertically or right to left, and taking it out would move the text after it on its line",
+    pictures: (count: number) => count === 1 ? "a picture it covers, whole" : `${count} pictures it covers, whole`,
+    drawings: (count: number) => count === 1 ? "a drawing inside it" : `${count} drawings inside it`,
+    cuts: (count: number) => count === 1 ? "a line at its edge" : `${count} lines at its edge`,
+    cutsOnly: (cut: string) => `Cuts ${cut}`,
+    alsoRemoves: (said: string) => `Also removes ${said}`,
+    andCuts: (removes: string, cut: string) => `${removes}, and cuts ${cut}`,
+    staysOne: "The picture is also drawn elsewhere in this document and stays there",
+    staysMany: (count: number) => count === 1
+      ? "1 of the pictures is also drawn elsewhere in this document and stays there"
+      : `${count} of the pictures are also drawn elsewhere in this document and stay there`,
+    regions: "Regions marked for removal",
+    nothingMarked: "You have not marked anything for removal in this document.",
+    removeRegion: "Remove region",
+  },
+  "en-GB": {
+    shading: "a colour gradient",
+    shadings: "colour gradients",
+  },
+  "de-DE": {
+    reading: "Seite wird gelesen…",
+    noText: "Kein Text in diesem Bereich",
+    unreadable: "Die Seite konnte nicht gelesen werden",
+    marked: (count: number) => count === 1 ? "1 Bereich markiert" : `${count} Bereiche markiert`,
+    nothingRemoved: (marked: string) => `${marked}. Noch wurde nichts entfernt.`,
+    lost: (said: string, count: number) =>
+      count === 1 ? `${said} 1 liegt auf keiner Seite.` : `${said} ${count} liegen auf keiner Seite.`,
+    many: (count: number, several: string) => `${count} ${several}`,
+    drawnTimes: (what: string, drawn: number) => `${what}, ${drawn}-mal gezeichnet`,
+    and: "und",
+    alsoCovers: (said: string) => `Deckt auch ab, was eine Schwärzung nicht entfernen kann: ${said}`,
+    image: "ein Bild",
+    images: "Bilder",
+    path: "eine Zeichnung",
+    paths: "Zeichnungen",
+    clipPath: "eine Zeichnung, die auch begrenzt, wo das danach Gezeichnete erscheint",
+    clipPaths: "Zeichnungen, die auch begrenzen, wo das danach Gezeichnete erscheint",
+    unplacedPath: "eine Zeichnung, die tpdf im Inhalt der Seite nicht finden konnte",
+    unplacedPaths: "Zeichnungen, die tpdf im Inhalt der Seite nicht finden konnte",
+    shading: "ein Farbverlauf",
+    shadings: "Farbverläufe",
+    form: "ein wiederverwendbarer Inhaltsblock",
+    forms: "wiederverwendbare Inhaltsblöcke",
+    unsupported: "etwas einer Art, die tpdf nicht lesen kann",
+    unsupporteds: "Dinge einer Art, die tpdf nicht lesen kann",
+    other: "etwas anderes",
+    others: "andere Dinge",
+    unmeasured: "Deckt auch Text ab, den eine Schwärzung stehen lässt: Er ist so geschrieben, dass tpdf ihn nicht vermessen kann, " +
+      "etwa senkrecht oder von rechts nach links, und ihn zu entfernen würde den Text danach in seiner Zeile verschieben",
+    pictures: (count: number) => count === 1
+      ? "ein Bild, das er abdeckt, vollständig"
+      : `${count} Bilder, die er abdeckt, vollständig`,
+    drawings: (count: number) => count === 1 ? "eine Zeichnung darin" : `${count} Zeichnungen darin`,
+    cuts: (count: number) => count === 1 ? "eine Linie an seinem Rand" : `${count} Linien an seinem Rand`,
+    cutsOnly: (cut: string) => `Schneidet ${cut}`,
+    alsoRemoves: (said: string) => `Entfernt auch ${said}`,
+    andCuts: (removes: string, cut: string) => `${removes} und schneidet ${cut}`,
+    staysOne: "Das Bild ist auch an anderer Stelle in diesem Dokument gezeichnet und bleibt dort",
+    staysMany: (count: number) => count === 1
+      ? "1 der Bilder ist auch an anderer Stelle in diesem Dokument gezeichnet und bleibt dort"
+      : `${count} der Bilder sind auch an anderer Stelle in diesem Dokument gezeichnet und bleiben dort`,
+    regions: "Zum Schwärzen markierte Bereiche",
+    nothingMarked: "Du hast in diesem Dokument nichts zum Schwärzen markiert.",
+    removeRegion: "Bereich entfernen",
+  },
+});
 
 /** Side of the swatch standing for the region, in CSS pixels. */
 const SWATCH = 9;
@@ -71,7 +169,7 @@ const SWATCH = 9;
 const SWATCH_COLOR = "rgba(190, 30, 45, 0.55)";
 
 /** What a row says while the page it is on has not been read yet. */
-const READING = "Reading the page…";
+const READING = TEXT().reading;
 
 /**
  * What a row says once the page has been read and the region covers no words.
@@ -80,10 +178,10 @@ const READING = "Reading the page…";
  * subject: the reader dragged a rectangle and there are no words in it, which is
  * either exactly what they meant or the reason nothing will come out of it.
  */
-const NO_TEXT = "No text in this region";
+const NO_TEXT = TEXT().noText;
 
 /** What a row says when the page it is on could not be read at all. */
-const UNREADABLE = "Could not read the page";
+const UNREADABLE = TEXT().unreadable;
 
 /**
  * The panel's standing line above the rows, or "" when there are none.
@@ -96,14 +194,10 @@ const UNREADABLE = "Could not read the page";
  */
 export function noticeFor(rows: readonly RedactionRow[]): string {
   if (rows.length === 0) return "";
-  const many =
-    rows.length === 1 ? "1 region marked" : `${rows.length} regions marked`;
   const lost = rows.filter((row) => row.page === null).length;
-  const said = `${many}. Nothing has been removed yet.`;
+  const said = TEXT().nothingRemoved(TEXT().marked(rows.length));
   if (lost === 0) return said;
-  return lost === 1
-    ? `${said} 1 is not on any page.`
-    : `${said} ${lost} are not on any page.`;
+  return TEXT().lost(said, lost);
 }
 
 /**
@@ -351,12 +445,12 @@ export function warningFor(plan: RegionPlan | undefined): string {
     // `2 pictures drawn 22 times` and a phrase with a verb in it agrees.
     .map(({ place, drawn, many }) => {
       const [, one, several] = UNHANDLED_KINDS[place] ?? UNKNOWN_KIND;
-      const what = many === 1 ? one : `${many} ${several}`;
-      return drawn > 0 ? `${what} drawn ${drawn} times` : what;
+      const what = many === 1 ? one : TEXT().many(many, several);
+      return drawn > 0 ? TEXT().drawnTimes(what, drawn) : what;
     })
-    .join(" and ");
+    .join(` ${TEXT().and} `);
   return [
-    ...(kinds.size > 0 ? [`Also covers ${said}, which a removal cannot take`] : []),
+    ...(kinds.size > 0 ? [TEXT().alsoCovers(said)] : []),
     ...(unmeasured ? [UNMEASURED_TEXT_WARNING] : []),
   ].join(". ");
 }
@@ -382,23 +476,24 @@ export function warningFor(plan: RegionPlan | undefined): string {
  * XObject, content the file keeps once and can draw in several places; and
  * `unsupported` is whatever PDFium gives no type for.
  */
-export const UNHANDLED_KINDS: readonly (readonly [kind: string, one: string, several: string])[] = [
-  ["image", "a picture", "pictures"],
-  ["path", "a drawing", "drawings"],
-  [
-    "clip-path",
-    "a drawing that also limits where the things after it are drawn",
-    "drawings that also limit where the things after them are drawn",
-  ],
-  [
-    "unplaced-path",
-    "a drawing tpdf could not find in the page's content",
-    "drawings tpdf could not find in the page's content",
-  ],
-  ["shading", "a colour gradient", "colour gradients"],
-  ["form", "a reusable block of content", "reusable blocks of content"],
-  ["unsupported", "something of a kind tpdf cannot read", "things of a kind tpdf cannot read"],
-];
+export const UNHANDLED_KINDS = unhandledKinds();
+
+/**
+ * {@link UNHANDLED_KINDS} in one locale. British English is the backend's own
+ * wording, which is what `redactlist.test.ts` holds it equal to.
+ */
+export function unhandledKinds(locale?: UiLocale): readonly (readonly [kind: string, one: string, several: string])[] {
+  const text = TEXT(locale);
+  return [
+    ["image", text.image, text.images],
+    ["path", text.path, text.paths],
+    ["clip-path", text.clipPath, text.clipPaths],
+    ["unplaced-path", text.unplacedPath, text.unplacedPaths],
+    ["shading", text.shading, text.shadings],
+    ["form", text.form, text.forms],
+    ["unsupported", text.unsupported, text.unsupporteds],
+  ];
+}
 
 /**
  * What a row calls an object of a kind {@link UNHANDLED_KINDS} does not hold.
@@ -408,8 +503,8 @@ export const UNHANDLED_KINDS: readonly (readonly [kind: string, one: string, sev
  */
 export const UNKNOWN_KIND: readonly [kind: string, one: string, several: string] = [
   "",
-  "something else",
-  "other things",
+  TEXT().other,
+  TEXT().others,
 ];
 
 /**
@@ -430,9 +525,7 @@ export const UNMEASURED_TEXT = "unmeasured-text";
  * Said once however many such objects there are, since the count is of
  * content-stream objects and not of anything on the page a reader can count.
  */
-export const UNMEASURED_TEXT_WARNING =
-  "Also covers text a removal leaves in place: it is written in a way tpdf cannot measure, " +
-  "such as vertically or right to left, and taking it out would move the text after it on its line";
+export const UNMEASURED_TEXT_WARNING = TEXT().unmeasured;
 
 /**
  * What a region takes besides text, or `""` when it takes nothing else.
@@ -458,17 +551,17 @@ export function takesFor(plan: RegionPlan | undefined): string {
   // to warn about: nothing of it was outside what the reader marked.
   const said: string[] = [];
   if (pictures > 0) {
-    said.push(pictures === 1 ? "a picture it covers, whole" : `${pictures} pictures it covers, whole`);
+    said.push(TEXT().pictures(pictures));
   }
   if (drawings > 0) {
-    said.push(drawings === 1 ? "a drawing inside it" : `${drawings} drawings inside it`);
+    said.push(TEXT().drawings(drawings));
   }
   const cuts = (plan?.cuts?.length ?? 0) + (plan?.form_paths?.cuts?.length ?? 0);
   // A line or a rectangle that runs on past the region keeps what is outside.
-  const cut = cuts === 1 ? "a line at its edge" : `${cuts} lines at its edge`;
-  if (said.length === 0) return cuts > 0 ? `Cuts ${cut}` : "";
-  const removes = `Also removes ${said.join(" and ")}`;
-  const sentence = cuts > 0 ? `${removes}, and cuts ${cut}` : removes;
+  const cut = TEXT().cuts(cuts);
+  if (said.length === 0) return cuts > 0 ? TEXT().cutsOnly(cut) : "";
+  const removes = TEXT().alsoRemoves(said.join(` ${TEXT().and} `));
+  const sentence = cuts > 0 ? TEXT().andCuts(removes, cut) : removes;
   // A picture the document draws elsewhere too goes from this page and stays
   // in the file, which a reader removing a logo needs to know before they
   // call the document clean. Its own sentence, because it is about what is
@@ -477,8 +570,8 @@ export function takesFor(plan: RegionPlan | undefined): string {
   if (elsewhere === 0) return sentence;
   const stays =
     pictures === 1
-      ? "The picture is also drawn elsewhere in this document and stays there"
-      : `${elsewhere} of the pictures ${elsewhere === 1 ? "is" : "are"} also drawn elsewhere in this document and ${elsewhere === 1 ? "stays" : "stay"} there`;
+      ? TEXT().staysOne
+      : TEXT().staysMany(elsewhere);
   return `${sentence}. ${stays}`;
 }
 
@@ -505,7 +598,7 @@ export class RedactList {
 
     this.list = document.createElement("div");
     this.list.setAttribute("role", "listbox");
-    this.list.setAttribute("aria-label", "Regions marked for removal");
+    this.list.setAttribute("aria-label", TEXT().regions);
     this.list.style.cssText = "flex:1;min-height:0;overflow-y:auto;";
     this.list.addEventListener("keydown", this.onKeyDown);
     // Focus can arrive without going through `focus(id)`, and a roving tabindex
@@ -621,7 +714,7 @@ export class RedactList {
     if (this.rows.length === 0) {
       this.list.appendChild(
         placeholder(
-          "You have not marked anything for removal in this document.",
+          TEXT().nothingMarked,
         ),
       );
       this.focused = null;
@@ -706,7 +799,7 @@ export class RedactList {
     // The name literal stays on the call's own line: `check_webview_sinks.py`
     // reads these a line at a time and flags a call whose arguments it cannot
     // parse.
-    remove.setAttribute("aria-label", "Remove region");
+    remove.setAttribute("aria-label", TEXT().removeRegion);
     remove.textContent = "×";
     remove.style.cssText =
       "flex:none;border:0;background:none;cursor:pointer;padding:0 0.2rem;" +

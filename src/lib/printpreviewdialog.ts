@@ -21,6 +21,7 @@
  */
 
 import { isPicture } from "./compressdialog";
+import { catalog } from "./i18n";
 import type { PageSize, PrintPlacement, PrintScale, PrintSettings, PrintSetup, TwoSided } from "./ipc";
 import {
   MOST_COPIES,
@@ -70,13 +71,128 @@ interface Picture {
   url: string;
 }
 
+const TEXT = catalog({
+  "en-US": {
+    scaleShrink: "Shrink large pages to fit",
+    scaleFit: "Fit to printable area",
+    scaleActual: "Actual size",
+    scaleCustom: "Custom",
+    scalePoster: "Poster, across several sheets",
+    dialog: "Print preview",
+    sheetsToPrint: "Sheets to print",
+    printer: "Printer",
+    pages: "Pages",
+    whichPages: "Which pages",
+    pagesExample: "For example 1-3, 5",
+    ofThose: "Of those, print",
+    everyPage: "Every page",
+    oddPages: "Odd pages only",
+    evenPages: "Even pages only",
+    lastFirst: "Last page first",
+    copies: "Copies",
+    paper: "Paper",
+    orientation: "Orientation",
+    portrait: "Portrait",
+    landscape: "Landscape",
+    perSheet: "Pages per sheet",
+    scale: "Scale",
+    scalePercent: "Scale in percent",
+    scaleNote: "Each page is drawn as large as its part of the sheet allows.",
+    turnPages: "Turn pages to fit the sheet",
+    marks: "Comments and marks",
+    printMarks: "Print them",
+    leaveMarks: "Leave them out",
+    twoSided: "Two-sided",
+    off: "Off",
+    longEdge: "Flip on long edge",
+    shortEdge: "Flip on short edge",
+    colour: "Color",
+    inColour: "Color",
+    blackWhite: "Black and white",
+    printerSettings: "Printer settings...",
+    cancel: "Cancel",
+    print: "Print",
+    printNext: "Print...",
+    heading: (name: string) => `Print preview: ${name}`,
+    nextStep: "You choose the printer, the paper and the pages to print in the next step.",
+    copiesRange: (most: number) => `Copies is a whole number from 1 to ${most}.`,
+    percentRange: (most: number) => `The scale is a whole number of percent from 1 to ${most}.`,
+    all: "All",
+    currentPage: (page: number) => `Current page (${page})`,
+    custom: "Custom",
+    sheet: (sheet: number, of: number) => `Sheet ${sheet} of ${of}`,
+    page: (page: number) => `Page ${page}`,
+    drawing: (page: number) => `Drawing page ${page}...`,
+    notDrawn: (page: number) => `Page ${page} could not be drawn.`,
+    notDrawnBecause: (page: number, reason: string) => `Page ${page} could not be drawn: ${reason}`,
+  },
+  "en-GB": {
+    colour: "Colour",
+    inColour: "Colour",
+  },
+  "de-DE": {
+    scaleShrink: "Große Seiten verkleinern",
+    scaleFit: "An druckbaren Bereich anpassen",
+    scaleActual: "Originalgröße",
+    scaleCustom: "Benutzerdefiniert",
+    scalePoster: "Poster, über mehrere Blätter",
+    dialog: "Druckvorschau",
+    sheetsToPrint: "Zu druckende Blätter",
+    printer: "Drucker",
+    pages: "Seiten",
+    whichPages: "Welche Seiten",
+    pagesExample: "Zum Beispiel 1-3, 5",
+    ofThose: "Davon drucken",
+    everyPage: "Alle Seiten",
+    oddPages: "Nur ungerade Seiten",
+    evenPages: "Nur gerade Seiten",
+    lastFirst: "Letzte Seite zuerst",
+    copies: "Exemplare",
+    paper: "Papier",
+    orientation: "Ausrichtung",
+    portrait: "Hochformat",
+    landscape: "Querformat",
+    perSheet: "Seiten pro Blatt",
+    scale: "Skalierung",
+    scalePercent: "Skalierung in Prozent",
+    scaleNote: "Jede Seite wird so groß gezeichnet, wie ihr Teil des Blatts zulässt.",
+    turnPages: "Seiten drehen, damit sie auf das Blatt passen",
+    marks: "Kommentare und Markierungen",
+    printMarks: "Mitdrucken",
+    leaveMarks: "Weglassen",
+    twoSided: "Beidseitig",
+    off: "Aus",
+    longEdge: "An der langen Kante wenden",
+    shortEdge: "An der kurzen Kante wenden",
+    colour: "Farbe",
+    inColour: "Farbe",
+    blackWhite: "Schwarzweiß",
+    printerSettings: "Druckereinstellungen...",
+    cancel: "Abbrechen",
+    print: "Drucken",
+    printNext: "Drucken...",
+    heading: (name: string) => `Druckvorschau: ${name}`,
+    nextStep: "Drucker, Papier und die zu druckenden Seiten wählst du im nächsten Schritt.",
+    copiesRange: (most: number) => `Die Anzahl der Exemplare ist eine ganze Zahl von 1 bis ${most}.`,
+    percentRange: (most: number) => `Die Skalierung ist eine ganze Prozentzahl von 1 bis ${most}.`,
+    all: "Alle",
+    currentPage: (page: number) => `Aktuelle Seite (${page})`,
+    custom: "Benutzerdefiniert",
+    sheet: (sheet: number, of: number) => `Blatt ${sheet} von ${of}`,
+    page: (page: number) => `Seite ${page}`,
+    drawing: (page: number) => `Seite ${page} wird gezeichnet...`,
+    notDrawn: (page: number) => `Seite ${page} konnte nicht gezeichnet werden.`,
+    notDrawnBecause: (page: number, reason: string) => `Seite ${page} konnte nicht gezeichnet werden: ${reason}`,
+  },
+});
+
 /** The scale choices, in the order the list offers them. */
 const SCALES: { value: PrintScale["kind"]; label: string }[] = [
-  { value: "shrink", label: "Shrink large pages to fit" },
-  { value: "fit", label: "Fit to printable area" },
-  { value: "actual", label: "Actual size" },
-  { value: "percent", label: "Custom" },
-  { value: "poster", label: "Poster, across several sheets" },
+  { value: "shrink", label: TEXT().scaleShrink },
+  { value: "fit", label: TEXT().scaleFit },
+  { value: "actual", label: TEXT().scaleActual },
+  { value: "percent", label: TEXT().scaleCustom },
+  { value: "poster", label: TEXT().scalePoster },
 ];
 
 /** A modal showing the job's sheets, with Print and Cancel. Built once and reused. */
@@ -143,7 +259,7 @@ export class PrintPreviewDialog {
     const panel = document.createElement("div");
     panel.setAttribute("role", "dialog");
     panel.setAttribute("aria-modal", "true");
-    panel.setAttribute("aria-label", "Print preview");
+    panel.setAttribute("aria-label", TEXT().dialog);
     panel.style.cssText =
       "display:flex;flex-direction:column;width:min(1040px,96vw);height:min(900px,92vh);" +
       "border-radius:10px;background:Canvas;color:CanvasText;" +
@@ -160,7 +276,7 @@ export class PrintPreviewDialog {
 
     this.list = document.createElement("div");
     this.list.setAttribute("role", "list");
-    this.list.setAttribute("aria-label", "Sheets to print");
+    this.list.setAttribute("aria-label", TEXT().sheetsToPrint);
     this.list.tabIndex = 0;
     this.list.style.cssText =
       "flex:1;min-width:0;min-height:0;overflow:auto;padding:12px 0;" +
@@ -170,63 +286,63 @@ export class PrintPreviewDialog {
     this.side = document.createElement("div");
     this.side.style.cssText =
       "flex:none;width:250px;overflow:auto;display:none;flex-direction:column;gap:0.55rem;";
-    this.printer = this.select(this.side, "Printer");
-    this.range = this.select(this.side, "Pages");
-    this.pagesField = this.input(this.side, "Which pages", "text");
-    this.pagesField.placeholder = "For example 1-3, 5";
-    this.subset = this.select(this.side, "Of those, print");
+    this.printer = this.select(this.side, TEXT().printer);
+    this.range = this.select(this.side, TEXT().pages);
+    this.pagesField = this.input(this.side, TEXT().whichPages, "text");
+    this.pagesField.placeholder = TEXT().pagesExample;
+    this.subset = this.select(this.side, TEXT().ofThose);
     this.options(this.subset, [
-      ["all", "Every page"],
-      ["odd", "Odd pages only"],
-      ["even", "Even pages only"],
+      ["all", TEXT().everyPage],
+      ["odd", TEXT().oddPages],
+      ["even", TEXT().evenPages],
     ]);
-    this.reverse = this.checkbox(this.side, "Last page first");
-    this.copies = this.input(this.side, "Copies", "number");
+    this.reverse = this.checkbox(this.side, TEXT().lastFirst);
+    this.copies = this.input(this.side, TEXT().copies, "number");
     this.copies.min = "1";
     this.copies.max = String(MOST_COPIES);
-    this.paper = this.select(this.side, "Paper");
-    this.orientation = this.select(this.side, "Orientation");
+    this.paper = this.select(this.side, TEXT().paper);
+    this.orientation = this.select(this.side, TEXT().orientation);
     this.options(this.orientation, [
-      ["portrait", "Portrait"],
-      ["landscape", "Landscape"],
+      ["portrait", TEXT().portrait],
+      ["landscape", TEXT().landscape],
     ]);
-    this.perSheet = this.select(this.side, "Pages per sheet");
+    this.perSheet = this.select(this.side, TEXT().perSheet);
     this.options(
       this.perSheet,
       PER_SHEET.map((count) => [String(count), String(count)]),
     );
-    this.scale = this.select(this.side, "Scale");
+    this.scale = this.select(this.side, TEXT().scale);
     this.options(
       this.scale,
       SCALES.map((scale) => [scale.value, scale.label]),
     );
-    this.percent = this.input(this.side, "Scale in percent", "number");
+    this.percent = this.input(this.side, TEXT().scalePercent, "number");
     this.percent.min = "1";
     this.percent.max = String(MOST_PERCENT);
     this.scaleNote = document.createElement("p");
     this.scaleNote.style.cssText = "margin:-0.3rem 0 0;opacity:0.72;";
-    this.scaleNote.textContent = "Each page is drawn as large as its part of the sheet allows.";
+    this.scaleNote.textContent = TEXT().scaleNote;
     this.side.append(this.scaleNote);
-    this.rotate = this.checkbox(this.side, "Turn pages to fit the sheet");
-    this.marksChoice = this.select(this.side, "Comments and marks");
+    this.rotate = this.checkbox(this.side, TEXT().turnPages);
+    this.marksChoice = this.select(this.side, TEXT().marks);
     this.options(this.marksChoice, [
-      ["print", "Print them"],
-      ["leave", "Leave them out"],
+      ["print", TEXT().printMarks],
+      ["leave", TEXT().leaveMarks],
     ]);
-    this.twoSided = this.select(this.side, "Two-sided");
+    this.twoSided = this.select(this.side, TEXT().twoSided);
     this.options(this.twoSided, [
-      ["off", "Off"],
-      ["long", "Flip on long edge"],
-      ["short", "Flip on short edge"],
+      ["off", TEXT().off],
+      ["long", TEXT().longEdge],
+      ["short", TEXT().shortEdge],
     ]);
     this.twoSidedRow = this.twoSided.parentElement as HTMLElement;
-    this.colour = this.select(this.side, "Colour");
+    this.colour = this.select(this.side, TEXT().colour);
     this.options(this.colour, [
-      ["colour", "Colour"],
-      ["black", "Black and white"],
+      ["colour", TEXT().inColour],
+      ["black", TEXT().blackWhite],
     ]);
     this.colourRow = this.colour.parentElement as HTMLElement;
-    this.driverButton = this.button("Printer settings...", () => this.change(true));
+    this.driverButton = this.button(TEXT().printerSettings, () => this.change(true));
     this.driverButton.style.alignSelf = "flex-start";
     this.side.append(this.driverButton);
     this.problem = document.createElement("p");
@@ -241,8 +357,8 @@ export class PrintPreviewDialog {
 
     const buttons = document.createElement("div");
     buttons.style.cssText = "display:flex;gap:0.5rem;justify-content:flex-end;margin-top:0.6rem;";
-    const cancel = this.button("Cancel", () => this.settle(false));
-    this.print = this.button("Print", () => this.settle(true));
+    const cancel = this.button(TEXT().cancel, () => this.settle(false));
+    this.print = this.button(TEXT().print, () => this.settle(true));
     this.print.style.fontWeight = "600";
     buttons.append(cancel, this.print);
 
@@ -325,14 +441,12 @@ export class PrintPreviewDialog {
     this.queued = null;
     this.asking = false;
     this.broken = false;
-    this.heading.textContent = `Print preview: ${name}`;
+    this.heading.textContent = TEXT().heading(name);
     this.summary.textContent = previewSummary(pages);
     this.side.style.display = chooser ? "flex" : "none";
-    this.under.textContent = chooser
-      ? ""
-      : "You choose the printer, the paper and the pages to print in the next step.";
+    this.under.textContent = chooser ? "" : TEXT().nextStep;
     this.under.style.display = chooser ? "none" : "block";
-    this.print.textContent = chooser ? "Print" : "Print...";
+    this.print.textContent = chooser ? TEXT().print : TEXT().printNext;
     this.problem.textContent = "";
     if (!this.shown) {
       const active = document.activeElement as { focus?: () => void } | null;
@@ -380,14 +494,14 @@ export class PrintPreviewDialog {
     if (typeof pages === "string") return pages;
     const copies = Number(this.copies.value);
     if (!Number.isInteger(copies) || copies < 1 || copies > MOST_COPIES) {
-      return `Copies is a whole number from 1 to ${MOST_COPIES}.`;
+      return TEXT().copiesRange(MOST_COPIES);
     }
     const kind = this.scale.value as PrintScale["kind"];
     let scale: PrintScale;
     if (kind === "percent" || kind === "poster") {
       const percent = Number(this.percent.value);
       if (!Number.isInteger(percent) || percent < 1 || percent > MOST_PERCENT) {
-        return `The scale is a whole number of percent from 1 to ${MOST_PERCENT}.`;
+        return TEXT().percentRange(MOST_PERCENT);
       }
       scale = { kind, percent };
     } else {
@@ -517,9 +631,9 @@ export class PrintPreviewDialog {
     this.options(this.printer, settings.printer ? [[settings.printer, settings.printer]] : []);
     this.options(this.paper, []);
     this.options(this.range, [
-      ["all", "All"],
-      ...(this.current >= 0 ? [["current", `Current page (${this.current + 1})`] as const] : []),
-      ["custom", "Custom"],
+      ["all", TEXT().all],
+      ...(this.current >= 0 ? [["current", TEXT().currentPage(this.current + 1)] as const] : []),
+      ["custom", TEXT().custom],
     ]);
     this.range.value = "all";
     this.pagesField.value = "";
@@ -573,7 +687,7 @@ export class PrintPreviewDialog {
       );
       const box = document.createElement("div");
       box.setAttribute("role", "listitem");
-      box.setAttribute("aria-label", `Sheet ${index + 1} of ${sheets.length}`);
+      box.setAttribute("aria-label", TEXT().sheet(index + 1, sheets.length));
       box.style.cssText =
         `position:relative;flex:none;width:${width}px;height:${height}px;background:#fff;` +
         "box-shadow:0 1px 6px rgba(0,0,0,0.3);";
@@ -589,7 +703,7 @@ export class PrintPreviewDialog {
           `position:absolute;left:${at.left}%;top:${at.top}%;` + `width:${at.width}%;height:${at.height}%;`;
         // webview-sink-ok: its `src` is only ever a PNG `data:` URL; see `pump`.
         const picture = document.createElement("img");
-        picture.setAttribute("alt", `Page ${placed.page + 1}`);
+        picture.setAttribute("alt", TEXT().page(placed.page + 1));
         // The picture is of the page upright; a turned page is turned here,
         // a quarter anticlockwise about its middle, as the printer turns it.
         const turned = turnedPicture(placed);
@@ -643,7 +757,7 @@ export class PrintPreviewDialog {
     const marks = this.marks;
     this.drawing = page;
     const note = this.boxes[sheet]?.note;
-    if (note && !this.drawn.has(page)) note.textContent = `Drawing page ${page + 1}...`;
+    if (note && !this.drawn.has(page)) note.textContent = TEXT().drawing(page + 1);
     void draw(page, width, marks)
       .then((url) => {
         // Drawn for the other choice of marks: the next pump draws it again.
@@ -655,14 +769,14 @@ export class PrintPreviewDialog {
           }
           for (const box of this.boxes) if (box.pictures.some((p) => p.page === page)) box.note.textContent = "";
         } else if (note) {
-          note.textContent = `Page ${page + 1} could not be drawn.`;
+          note.textContent = TEXT().notDrawn(page + 1);
         }
       })
       .catch((error: unknown) => {
         if (run !== this.run || !this.shown || marks !== this.marks) return;
         // Recorded as drawn, at no width, so it is not asked for again and again.
         this.drawn.set(page, { width: Number.MAX_SAFE_INTEGER, url: "" });
-        if (note) note.textContent = `Page ${page + 1} could not be drawn: ${String(error)}`;
+        if (note) note.textContent = TEXT().notDrawnBecause(page + 1, String(error));
       })
       .finally(() => {
         if (run !== this.run) return;

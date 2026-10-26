@@ -1,9 +1,16 @@
 /** Byte counts as the window prints them. */
+import { catalog, UI_LOCALE, type UiLocale } from "./i18n";
+
+const TEXT = catalog({
+  "en-US": { unknown: "unknown", bytes: (count: string) => `${count} bytes`, number: "en-US" },
+  "de-DE": { unknown: "unbekannt", bytes: (count: string) => `${count} Bytes`, number: "de-DE" },
+});
 
 /** A byte count, with a rounded size beside it once it is worth having. */
-export function formatBytes(bytes: number): string {
-  if (!Number.isFinite(bytes) || bytes < 0) return "unknown";
-  const exact = `${Math.round(bytes).toLocaleString("en-US")} bytes`;
+export function formatBytes(bytes: number, locale: UiLocale = UI_LOCALE): string {
+  const text = TEXT(locale);
+  if (!Number.isFinite(bytes) || bytes < 0) return text.unknown;
+  const exact = text.bytes(Math.round(bytes).toLocaleString(text.number));
   if (bytes < 1024) return exact;
   const units = ["KB", "MB", "GB", "TB"];
   let value = bytes / 1024;
@@ -20,5 +27,7 @@ export function formatBytes(bytes: number): string {
   // decimal is 10.0, which is not below ten.
   const tenths = value.toFixed(1);
   const rounded = Number(tenths) < 10 ? tenths : Math.round(value).toString();
-  return `${rounded} ${units[unit]} (${exact})`;
+  // German writes the decimal with a comma: 8,7 MB.
+  const shown = text.number === "de-DE" ? rounded.replace(".", ",") : rounded;
+  return `${shown} ${units[unit]} (${exact})`;
 }

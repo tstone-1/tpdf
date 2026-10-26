@@ -36,7 +36,7 @@ import {
   preview as attachmentPreview,
   type Embedded,
 } from "./attachments";
-import type { CommandRegistry } from "./commands";
+import { CommandRegistry } from "./commands";
 import { attachKeywords } from "./keywords";
 import { BINDINGS, copyInterfaceText, inTextField, isLinux, label, matches, type BoundCommand } from "./keys";
 import {
@@ -49,7 +49,7 @@ import { DISK_CHANGE_MODES, type DiskChangeMode } from "./diskwatch";
 import { PALETTE } from "./markcolors";
 import type { CloseWhich } from "./tabclose";
 import { kindOf, SPREAD_TITLES, withKind, type SpreadKind } from "./spreads";
-import { message, UI_LOCALE, type UiLocale } from "./i18n";
+import { catalog, LOCALE_NAMES, message, UI_LOCALES, UI_LOCALE, type LanguageChoice, type UiLocale } from "./i18n";
 import { NIBS } from "./marknibs";
 import {
   pick as pickLanguage,
@@ -72,12 +72,451 @@ import { lacks, type Arrangement } from "./arrange";
 import { parseChoices, parseGroup } from "./fieldnames";
 import { partnerPlaceholder, pickPartner } from "./panes";
 
+/**
+ * Every title and argument text the commands show, in each locale.
+ *
+ * Keys follow the command id where there is one. The ids themselves never
+ * change with the language: menus, bindings and the window checks find a
+ * command by its id.
+ */
+const TEXT = catalog({
+  "en-US": {
+    closeTab: "Close tab",
+    closeAll: "Close all tabs",
+    closeOtherTabs: "Close other tabs",
+    closeTabsLeft: "Close tabs to the left",
+    closeTabsRight: "Close tabs to the right",
+    nextInFolder: "Open the next PDF in this folder",
+    previousInFolder: "Open the previous PDF in this folder",
+    reopenClosedTab: "Reopen closed tab",
+    reopenLastTabs: "Reopen the tabs from last time",
+    reopenTabsAtLaunch: "At launch: reopen all tabs",
+    reopenLastDocumentAtLaunch: "At launch: reopen only the last document",
+    clearRecents: "Clear recent documents",
+    tabLabelsLarger: "Larger tab labels",
+    tabLabelsSmaller: "Smaller tab labels",
+    tabLabelsDefault: "Default tab label size",
+    nextTab: "Next tab",
+    previousTab: "Previous tab",
+    sideBySide: "Show side by side with...",
+    moveToOtherSide: (toRight: boolean) => `Move tab to ${toRight ? "right" : "left"} side`,
+    bothSides: "Show this document on both sides",
+    switchSides: "Switch sides",
+    focusOtherSide: "Go to other side",
+    scrollSeparately: "Scroll the two sides separately",
+    scrollTogether: "Scroll both sides together",
+    open: "Open document",
+    fromPictures: "New document from pictures...",
+    reload: "Reload from disk",
+    onDiskChangeAsk: "When the file changes on disk: ask before reloading",
+    onDiskChangeReload: "When the file changes on disk: reload automatically",
+    onDiskChangeIgnore: "When the file changes on disk: do nothing",
+    about: "About tpdf",
+    checkForUpdates: "Check for updates",
+    disableAutomaticUpdates: "Disable automatic update checks",
+    enableAutomaticUpdates: "Enable automatic update checks",
+    installUpdate: "Install update",
+    restartForUpdate: "Restart to finish update",
+    installCommandLineTool: "Install command-line tool…",
+    uninstallCommandLineTool: "Uninstall command-line tool…",
+    makeDefaultPdfApp: "Make tpdf the default PDF app",
+    enableExplorerIntegration: "Show PDFs in Explorer with tpdf",
+    disableExplorerIntegration: "Stop showing PDFs in Explorer with tpdf",
+    findHiddenText: "Find text the pages do not show",
+    compareWith: "Compare with...",
+    properties: "Document properties",
+    print: "Print",
+    findOpen: "Find in document",
+    findNext: "Find next",
+    findPrevious: "Find previous",
+    matchCase: "Find: match case on or off",
+    wholeWord: "Find: whole words on or off",
+    inSelection: "Find: in selection on or off",
+    regex: "Find: regular expression on or off",
+    zoomIn: "Zoom in",
+    zoomOut: "Zoom out",
+    fitWidth: "Fit width",
+    fitPage: "Fit page",
+    fitHeight: "Fit height",
+    fitContent: "Fit content",
+    actualSize: "Actual size",
+    zoomTo: "Zoom to…",
+    zoomPlaceholder: "Zoom, in percent",
+    zoomRange: (min: number, max: number) => `Zoom, ${min} to ${max}%`,
+    notAZoom: (raw: string, min: number, max: number) =>
+      `"${raw}" is not a zoom between ${min}% and ${max}%`,
+    zoomPreview: (percent: number) => `Zoom to ${percent}%`,
+    rotateClockwise: "Rotate view clockwise",
+    addFavourite: "Add this page to favorites…",
+    favouritePlaceholder: "A name for this page, or Enter for its number",
+    addFavouriteAs: (name: string) => `Add as "${name}"`,
+    addFavouriteNumbered: "Add, named after the page",
+    removeFavourite: "Remove this page from favorites",
+    nextFavourite: "Next favorite in this document",
+    previousFavourite: "Previous favorite in this document",
+    outlineExpandAll: "Open every entry of the outline",
+    outlineCollapseAll: "Close every entry of the outline",
+    outlineToCurrent: "Show this page's entry in the outline",
+    fullScreen: "Full screen, or back to the window",
+    presentation: "Present one page at a time, or stop presenting",
+    continuous: "Pages: scroll continuously",
+    pageAtATime: "Pages: one page or pair at a time",
+    rightToLeft: "Facing pages: read right to left, or left to right again",
+    rotatePageClockwise: "Rotate page clockwise",
+    addComment: "Add comment",
+    drawBox: "Draw a box...",
+    drawEllipse: "Draw an ellipse...",
+    drawLine: "Add a line...",
+    drawArrow: "Add an arrow...",
+    drawPolygon: "Add a polygon, a corner per click...",
+    drawPolyline: "Add connected lines, a corner per click...",
+    addLink: "Add a link...",
+    addPicture: "Add a picture from a file...",
+    pastePicture: "Paste a picture from the clipboard",
+    editText: "Edit existing text...",
+    addSignature: "Place a signature picture, without a certificate...",
+    stamp: (name: string) => `Stamp ${name}...`,
+    addTextBox: "Add a text box...",
+    addTextField: "Add a form field: text...",
+    addMultilineField: "Add a form field: text on several lines...",
+    addCheckbox: "Add a form field: checkbox...",
+    addSignatureField: "Add a form field: signature...",
+    addDropdown: "Add a form field: dropdown...",
+    dropdownPlaceholder: "Choices, with a semicolon between them",
+    dropdownPreview: (count: number) =>
+      `${count === 1 ? "1 choice" : `${count} choices`}. Then drag the field onto the page.`,
+    fieldBorderOn: "Form fields: draw a line round new text fields",
+    fieldBorderOff: "Form fields: no line round new text fields",
+    formEditOn: "Form fields: change the document's own fields",
+    formEditOff: "Form fields: finish changing the document's fields",
+    tabOrder: "Form fields: tab through them in reading order",
+    addRadio: "Add a form field: radio buttons...",
+    radioPlaceholder: "The name of the group, such as Payment",
+    radioPreview: (group: string) =>
+      `Drag a button of ${group} onto the page, and another for each choice. Escape finishes.`,
+    fieldProperties: "Form fields: properties of the picked field...",
+    duplicate: "Arrange: duplicate",
+    alignLeft: "Arrange: align left",
+    alignRight: "Arrange: align right",
+    alignTop: "Arrange: align top",
+    alignMiddle: "Arrange: align middle",
+    alignBottom: "Arrange: align bottom",
+    distributeAcross: "Arrange: distribute horizontally",
+    distributeDown: "Arrange: distribute vertically",
+    sameWidth: "Arrange: same width",
+    sameHeight: "Arrange: same height",
+    sameSize: "Arrange: same size",
+    draw: "Draw freehand...",
+    erase: "Erase marks...",
+    highlightSelection: "Highlight selection",
+    underlineSelection: "Underline selection",
+    strikeoutSelection: "Strike out selection",
+    squigglySelection: "Squiggly underline selection",
+    nib: (name: string) => `Nib: ${name}`,
+    editForeignMark: "Edit this comment",
+    deleteComment: "Delete this comment",
+    replyToComment: "Reply to this comment",
+    removeMark: "Remove mark",
+    copyMark: "Copy mark",
+    cutMark: "Cut mark",
+    pasteMark: "Paste mark",
+    redactRegion: "Redact text or regions by dragging",
+    redactSelection: "Redact selection",
+    redactMatches: "Redact every search result",
+    removeRedaction: "Remove this redaction",
+    fillForm: "Fill form",
+    cropToDrag: "Crop page by dragging",
+    cropToContent: "Crop page to content",
+    resetCrop: "Reset page crop",
+    deletePage: "Delete page",
+    insertBlankPage: "Insert blank page",
+    insertSizedPage: (size: string) => `Insert blank ${size} page`,
+    insertPages: "Insert pages from file...",
+    insertPagesFrom: (file: string) => `Insert pages from ${file}`,
+    insertPagesFromChosen: "Insert pages from the chosen file",
+    pagesPlaceholder: "Pages",
+    noFileWaiting: "No file is waiting to be inserted",
+    movePageUp: "Move page up",
+    movePageDown: "Move page down",
+    undo: "Undo",
+    redo: "Redo",
+    save: "Save",
+    saveCopy: "Save a copy...",
+    signDocument: "Sign document…",
+    signField: "Sign in the signature field…",
+    addCertificateFile: "Add a certificate file for signing…",
+    addValidationData: "Add long-term validation data…",
+    noLanguageList: "No list of languages is waiting",
+    compress: "Save a smaller copy...",
+    saveRegionAsPicture: "Save a region as a picture...",
+    saveAttachment: "Save an attachment...",
+    saveAttachmentChoice: "Save which attachment",
+    noAttachmentList: "No list of attachments is waiting",
+    protect: "Save a copy with a password...",
+    unprotect: "Save a copy without its password...",
+    addPageNumbers: "Save a copy with page numbers...",
+    addWatermark: "Save a copy with a watermark...",
+    redactRasterCopy: "Redact to image-only copy...",
+    redactCopy: "Redact and save as…",
+    redactDocument: "Redact and save",
+    extractPages: "Extract pages...",
+    extractPlaceholder: "Pages, e.g. 1-3,5",
+    splitDocument: "Split document...",
+    splitPlaceholder: "Cut after pages, e.g. 3,7",
+    mergeDocuments: "Merge documents...",
+    nextPage: "Next page",
+    previousPage: "Previous page",
+    back: "Back",
+    forward: "Forward",
+    nextLink: "Next link",
+    previousLink: "Previous link",
+    nextMark: "Next mark",
+    previousMark: "Previous mark",
+    nextChange: "Next change",
+    previousChange: "Previous change",
+    firstPage: "Go to start",
+    lastPage: "Go to end",
+    goToPage: "Go to page…",
+    pageNumberPlaceholder: "Page number",
+    pageNumberRange: (pages: number) => `Page number, 1 to ${pages}`,
+    notAPageNumber: (raw: string) => `"${raw}" is not a page number`,
+    documentPages: (pages: number) => `This document has ${pages} page${pages === 1 ? "" : "s"}`,
+    goToPagePreview: (page: number, pages: number) => `Go to page ${page} of ${pages}`,
+    selectAll: "Select all on page",
+    copy: "Copy selection",
+    copyRegionAsPicture: "Copy a region as a picture",
+    clearSelection: "Clear selection",
+    toggleSidebar: "Toggle sidebar",
+    showOutline: "Show outline",
+    showThumbnails: "Show page thumbnails",
+    showMarks: "Show my marks",
+    showRedactions: "Show redactions",
+  },
+  "en-GB": {
+    addFavourite: "Add this page to favourites…",
+    removeFavourite: "Remove this page from favourites",
+    nextFavourite: "Next favourite in this document",
+    previousFavourite: "Previous favourite in this document",
+  },
+  "de-DE": {
+    closeTab: "Tab schließen",
+    closeAll: "Alle Tabs schließen",
+    closeOtherTabs: "Andere Tabs schließen",
+    closeTabsLeft: "Tabs links schließen",
+    closeTabsRight: "Tabs rechts schließen",
+    nextInFolder: "Nächstes PDF in diesem Ordner öffnen",
+    previousInFolder: "Vorheriges PDF in diesem Ordner öffnen",
+    reopenClosedTab: "Geschlossenen Tab wieder öffnen",
+    reopenLastTabs: "Tabs vom letzten Mal wieder öffnen",
+    reopenTabsAtLaunch: "Beim Start: alle Tabs wieder öffnen",
+    reopenLastDocumentAtLaunch: "Beim Start: nur das letzte Dokument wieder öffnen",
+    clearRecents: "Liste der zuletzt geöffneten Dokumente leeren",
+    tabLabelsLarger: "Größere Tab-Beschriftungen",
+    tabLabelsSmaller: "Kleinere Tab-Beschriftungen",
+    tabLabelsDefault: "Standardgröße der Tab-Beschriftungen",
+    nextTab: "Nächster Tab",
+    previousTab: "Vorheriger Tab",
+    sideBySide: "Nebeneinander anzeigen mit...",
+    moveToOtherSide: (toRight: boolean) => `Tab auf die ${toRight ? "rechte" : "linke"} Seite verschieben`,
+    bothSides: "Dieses Dokument auf beiden Seiten anzeigen",
+    switchSides: "Seiten tauschen",
+    focusOtherSide: "Zur anderen Seite wechseln",
+    scrollSeparately: "Beide Seiten getrennt scrollen",
+    scrollTogether: "Beide Seiten gemeinsam scrollen",
+    open: "Dokument öffnen",
+    fromPictures: "Neues Dokument aus Bildern...",
+    reload: "Neu laden",
+    onDiskChangeAsk: "Wenn sich die Datei auf dem Datenträger ändert: vor dem Neuladen fragen",
+    onDiskChangeReload: "Wenn sich die Datei auf dem Datenträger ändert: automatisch neu laden",
+    onDiskChangeIgnore: "Wenn sich die Datei auf dem Datenträger ändert: nichts tun",
+    about: "Über tpdf",
+    checkForUpdates: "Nach Updates suchen",
+    disableAutomaticUpdates: "Automatische Suche nach Updates ausschalten",
+    enableAutomaticUpdates: "Automatische Suche nach Updates einschalten",
+    installUpdate: "Update installieren",
+    restartForUpdate: "Neu starten, um das Update abzuschließen",
+    installCommandLineTool: "Befehlszeilenwerkzeug installieren…",
+    uninstallCommandLineTool: "Befehlszeilenwerkzeug deinstallieren…",
+    makeDefaultPdfApp: "tpdf als Standard-App für PDFs festlegen",
+    enableExplorerIntegration: "PDFs im Explorer mit tpdf anzeigen",
+    disableExplorerIntegration: "PDFs im Explorer nicht mehr mit tpdf anzeigen",
+    findHiddenText: "Text finden, den die Seiten nicht zeigen",
+    compareWith: "Vergleichen mit...",
+    properties: "Dokumenteigenschaften",
+    print: "Drucken",
+    findOpen: "Im Dokument suchen",
+    findNext: "Nächsten Treffer suchen",
+    findPrevious: "Vorherigen Treffer suchen",
+    matchCase: "Suchen: Groß-/Kleinschreibung beachten ein oder aus",
+    wholeWord: "Suchen: ganze Wörter ein oder aus",
+    inSelection: "Suchen: in der Auswahl ein oder aus",
+    regex: "Suchen: regulärer Ausdruck ein oder aus",
+    zoomIn: "Vergrößern",
+    zoomOut: "Verkleinern",
+    fitWidth: "Seitenbreite",
+    fitPage: "Ganze Seite",
+    fitHeight: "Seitenhöhe",
+    fitContent: "Inhalt einpassen",
+    actualSize: "Originalgröße",
+    zoomTo: "Zoomen auf…",
+    zoomPlaceholder: "Zoom in Prozent",
+    zoomRange: (min: number, max: number) => `Zoom, ${min} bis ${max} %`,
+    notAZoom: (raw: string, min: number, max: number) =>
+      `„${raw}“ ist kein Zoom zwischen ${min} % und ${max} %`,
+    zoomPreview: (percent: number) => `Zoomen auf ${percent} %`,
+    rotateClockwise: "Ansicht im Uhrzeigersinn drehen",
+    addFavourite: "Diese Seite zu den Favoriten hinzufügen…",
+    favouritePlaceholder: "Name für diese Seite oder Eingabe für die Seitenzahl",
+    addFavouriteAs: (name: string) => `Als „${name}“ hinzufügen`,
+    addFavouriteNumbered: "Hinzufügen, nach der Seitenzahl benannt",
+    removeFavourite: "Diese Seite aus den Favoriten entfernen",
+    nextFavourite: "Nächster Favorit in diesem Dokument",
+    previousFavourite: "Vorheriger Favorit in diesem Dokument",
+    outlineExpandAll: "Alle Einträge der Gliederung aufklappen",
+    outlineCollapseAll: "Alle Einträge der Gliederung zuklappen",
+    outlineToCurrent: "Eintrag dieser Seite in der Gliederung zeigen",
+    fullScreen: "Vollbild oder zurück zum Fenster",
+    presentation: "Seite für Seite präsentieren oder Präsentation beenden",
+    continuous: "Seiten: fortlaufend scrollen",
+    pageAtATime: "Seiten: einzeln oder paarweise blättern",
+    rightToLeft: "Doppelseiten: von rechts nach links lesen oder wieder von links nach rechts",
+    rotatePageClockwise: "Seite im Uhrzeigersinn drehen",
+    addComment: "Kommentar hinzufügen",
+    drawBox: "Rechteck zeichnen...",
+    drawEllipse: "Ellipse zeichnen...",
+    drawLine: "Linie hinzufügen...",
+    drawArrow: "Pfeil hinzufügen...",
+    drawPolygon: "Polygon hinzufügen, eine Ecke pro Klick...",
+    drawPolyline: "Linienzug hinzufügen, eine Ecke pro Klick...",
+    addLink: "Link hinzufügen...",
+    addPicture: "Bild aus einer Datei hinzufügen...",
+    pastePicture: "Bild aus der Zwischenablage einfügen",
+    editText: "Vorhandenen Text bearbeiten...",
+    addSignature: "Unterschriftsbild ohne Zertifikat platzieren...",
+    stamp: (name: string) => `Stempel „${name}“...`,
+    addTextBox: "Textkasten hinzufügen...",
+    addTextField: "Formularfeld hinzufügen: Textfeld...",
+    addMultilineField: "Formularfeld hinzufügen: mehrzeiliges Textfeld...",
+    addCheckbox: "Formularfeld hinzufügen: Kontrollkästchen...",
+    addSignatureField: "Formularfeld hinzufügen: Signaturfeld...",
+    addDropdown: "Formularfeld hinzufügen: Auswahlliste...",
+    dropdownPlaceholder: "Optionen, durch Semikolon getrennt",
+    dropdownPreview: (count: number) =>
+      `${count === 1 ? "1 Option" : `${count} Optionen`}. Ziehe dann das Feld auf die Seite.`,
+    fieldBorderOn: "Formularfelder: Linie um neue Textfelder ziehen",
+    fieldBorderOff: "Formularfelder: keine Linie um neue Textfelder",
+    formEditOn: "Formularfelder: eigene Felder des Dokuments ändern",
+    formEditOff: "Formularfelder: Ändern der Felder des Dokuments beenden",
+    tabOrder: "Formularfelder: Tabulatorreihenfolge nach Lesereihenfolge festlegen",
+    addRadio: "Formularfeld hinzufügen: Optionsfelder...",
+    radioPlaceholder: "Der Name der Gruppe, etwa Zahlung",
+    radioPreview: (group: string) =>
+      `Ziehe eine Schaltfläche von „${group}“ auf die Seite und eine weitere für jede Option. Esc beendet.`,
+    fieldProperties: "Formularfelder: Eigenschaften des ausgewählten Felds...",
+    duplicate: "Anordnen: duplizieren",
+    alignLeft: "Anordnen: links ausrichten",
+    alignRight: "Anordnen: rechts ausrichten",
+    alignTop: "Anordnen: oben ausrichten",
+    alignMiddle: "Anordnen: vertikal mittig ausrichten",
+    alignBottom: "Anordnen: unten ausrichten",
+    distributeAcross: "Anordnen: horizontal verteilen",
+    distributeDown: "Anordnen: vertikal verteilen",
+    sameWidth: "Anordnen: gleiche Breite",
+    sameHeight: "Anordnen: gleiche Höhe",
+    sameSize: "Anordnen: gleiche Größe",
+    draw: "Freihand zeichnen...",
+    erase: "Markierungen radieren...",
+    highlightSelection: "Auswahl hervorheben",
+    underlineSelection: "Auswahl unterstreichen",
+    strikeoutSelection: "Auswahl durchstreichen",
+    squigglySelection: "Auswahl mit Wellenlinie unterstreichen",
+    nib: (name: string) => `Linienstärke: ${name}`,
+    editForeignMark: "Diesen Kommentar bearbeiten",
+    deleteComment: "Diesen Kommentar löschen",
+    replyToComment: "Auf diesen Kommentar antworten",
+    removeMark: "Markierung entfernen",
+    copyMark: "Markierung kopieren",
+    cutMark: "Markierung ausschneiden",
+    pasteMark: "Markierung einfügen",
+    redactRegion: "Text oder Bereiche durch Ziehen schwärzen",
+    redactSelection: "Auswahl schwärzen",
+    redactMatches: "Alle Suchtreffer schwärzen",
+    removeRedaction: "Diese Schwärzung entfernen",
+    fillForm: "Formular ausfüllen",
+    cropToDrag: "Seite durch Ziehen zuschneiden",
+    cropToContent: "Seite auf den Inhalt zuschneiden",
+    resetCrop: "Zuschnitt der Seite zurücksetzen",
+    deletePage: "Seite löschen",
+    insertBlankPage: "Leere Seite einfügen",
+    insertSizedPage: (size: string) => `Leere Seite im Format ${size} einfügen`,
+    insertPages: "Seiten aus Datei einfügen...",
+    insertPagesFrom: (file: string) => `Seiten aus ${file} einfügen`,
+    insertPagesFromChosen: "Seiten aus der gewählten Datei einfügen",
+    pagesPlaceholder: "Seiten",
+    noFileWaiting: "Es wartet keine Datei darauf, eingefügt zu werden",
+    movePageUp: "Seite nach oben verschieben",
+    movePageDown: "Seite nach unten verschieben",
+    undo: "Rückgängig",
+    redo: "Wiederholen",
+    save: "Speichern",
+    saveCopy: "Kopie speichern...",
+    signDocument: "Dokument signieren…",
+    signField: "Im Signaturfeld signieren…",
+    addCertificateFile: "Zertifikatsdatei zum Signieren hinzufügen…",
+    addValidationData: "Langzeitvalidierungsdaten hinzufügen…",
+    noLanguageList: "Es wartet keine Liste von Sprachen",
+    compress: "Kleinere Kopie speichern...",
+    saveRegionAsPicture: "Bereich als Bild speichern...",
+    saveAttachment: "Anhang speichern...",
+    saveAttachmentChoice: "Welchen Anhang speichern",
+    noAttachmentList: "Es wartet keine Liste von Anhängen",
+    protect: "Kopie mit Passwort speichern...",
+    unprotect: "Kopie ohne Passwort speichern...",
+    addPageNumbers: "Kopie mit Seitenzahlen speichern...",
+    addWatermark: "Kopie mit Wasserzeichen speichern...",
+    redactRasterCopy: "Schwärzen als Kopie nur aus Bildern...",
+    redactCopy: "Schwärzen und speichern unter…",
+    redactDocument: "Schwärzen und speichern",
+    extractPages: "Seiten extrahieren...",
+    extractPlaceholder: "Seiten, z. B. 1-3,5",
+    splitDocument: "Dokument aufteilen...",
+    splitPlaceholder: "Trennen nach den Seiten, z. B. 3,7",
+    mergeDocuments: "Dokumente zusammenführen...",
+    nextPage: "Nächste Seite",
+    previousPage: "Vorherige Seite",
+    back: "Zurück",
+    forward: "Vorwärts",
+    nextLink: "Nächster Link",
+    previousLink: "Vorheriger Link",
+    nextMark: "Nächste Markierung",
+    previousMark: "Vorherige Markierung",
+    nextChange: "Nächste Änderung",
+    previousChange: "Vorherige Änderung",
+    firstPage: "Zum Anfang",
+    lastPage: "Zum Ende",
+    goToPage: "Gehe zu Seite…",
+    pageNumberPlaceholder: "Seitenzahl",
+    pageNumberRange: (pages: number) => `Seitenzahl, 1 bis ${pages}`,
+    notAPageNumber: (raw: string) => `„${raw}“ ist keine Seitenzahl`,
+    documentPages: (pages: number) => `Dieses Dokument hat ${pages} ${pages === 1 ? "Seite" : "Seiten"}`,
+    goToPagePreview: (page: number, pages: number) => `Gehe zu Seite ${page} von ${pages}`,
+    selectAll: "Alles auf der Seite auswählen",
+    copy: "Auswahl kopieren",
+    copyRegionAsPicture: "Bereich als Bild kopieren",
+    clearSelection: "Auswahl aufheben",
+    toggleSidebar: "Seitenleiste ein- oder ausblenden",
+    showOutline: "Gliederung anzeigen",
+    showThumbnails: "Seitenminiaturen anzeigen",
+    showMarks: "Meine Markierungen anzeigen",
+    showRedactions: "Schwärzungen anzeigen",
+  },
+});
+
 /** One title per choice, each a whole sentence so the palette reads it alone. */
-const DISK_CHANGE_TITLES: Record<DiskChangeMode, string> = {
-  ask: "When the file changes on disk: ask before reloading",
-  reload: "When the file changes on disk: reload automatically",
-  ignore: "When the file changes on disk: do nothing",
-};
+function diskChangeTitle(mode: DiskChangeMode, locale: UiLocale): string {
+  const text = TEXT(locale);
+  return { ask: text.onDiskChangeAsk, reload: text.onDiskChangeReload, ignore: text.onDiskChangeIgnore }[mode];
+}
 
 /**
  * What each stamp is called in the palette.
@@ -88,6 +527,10 @@ const DISK_CHANGE_TITLES: Record<DiskChangeMode, string> = {
  * and the two being different spellings of one name is deliberate --- the same
  * arrangement every `MarkKind` already has between its serde name, its PDF name
  * and the word a reader sees.
+ *
+ * English in every language, for now: the stamp draws `stampWord`, which is
+ * English, and a German title naming a word the stamp does not draw would
+ * promise something else. The two are translated together or not at all.
  */
 const STAMP_TITLES: Record<StampName, string> = {
   approved: "Approved",
@@ -144,6 +587,9 @@ export interface AppActions {
   /** Whether a launch reopens every tab rather than the last document alone. */
   restoreTabs(): boolean;
   setRestoreTabs(restore: boolean): void;
+  /** The interface language the reader chose, or "system". Applies at the next start. */
+  languageChoice(): LanguageChoice;
+  setLanguageChoice(choice: LanguageChoice): void;
   /** How many of last time's tabs are not open now. */
   tabsToReopen(): number;
   /** Open them, behind the document on screen. */
@@ -737,6 +1183,10 @@ export interface AppActions {
   showProperties(): void;
 }
 
+const LANGUAGE = catalog({
+  "en-US": { language: "Language", system: "Language: follow the system" },
+  "de-DE": { language: "Sprache", system: "Sprache: wie im System" },
+});
 /**
  * Registers every command the application has.
  *
@@ -789,14 +1239,14 @@ export function registerAppCommands(
   registry.register(
     {
       id: "file.close",
-      title: "Close tab",
+      title: TEXT(locale).closeTab,
       keys: label("file.close"),
       enabled: withDocument,
       run: () => actions.closeDocument(),
     },
     {
       id: "file.closeAll",
-      title: "Close all tabs",
+      title: TEXT(locale).closeAll,
       enabled: withDocument,
       run: () => actions.closeAllDocuments(),
     },
@@ -804,19 +1254,19 @@ export function registerAppCommands(
     // tab it was opened on. Unsaved work is asked about once for all of them.
     {
       id: "file.closeOtherTabs",
-      title: "Close other tabs",
+      title: TEXT(locale).closeOtherTabs,
       enabled: () => withDocument() && actions.canCloseTabs("others"),
       run: () => actions.closeTabs("others"),
     },
     {
       id: "file.closeTabsLeft",
-      title: "Close tabs to the left",
+      title: TEXT(locale).closeTabsLeft,
       enabled: () => withDocument() && actions.canCloseTabs("left"),
       run: () => actions.closeTabs("left"),
     },
     {
       id: "file.closeTabsRight",
-      title: "Close tabs to the right",
+      title: TEXT(locale).closeTabsRight,
       enabled: () => withDocument() && actions.canCloseTabs("right"),
       run: () => actions.closeTabs("right"),
     },
@@ -824,13 +1274,13 @@ export function registerAppCommands(
     // tab being added for each, unless it has unsaved work.
     {
       id: "file.nextInFolder",
-      title: "Open the next PDF in this folder",
+      title: TEXT(locale).nextInFolder,
       enabled: withDocument,
       run: () => actions.openInFolder(1),
     },
     {
       id: "file.previousInFolder",
-      title: "Open the previous PDF in this folder",
+      title: TEXT(locale).previousInFolder,
       enabled: withDocument,
       run: () => actions.openInFolder(-1),
     },
@@ -838,7 +1288,7 @@ export function registerAppCommands(
       // A browser's chord, where a reader looks for it. The document opens
       // where it was left, as a remembered one does.
       id: "file.reopenClosedTab",
-      title: "Reopen closed tab",
+      title: TEXT(locale).reopenClosedTab,
       keys: label("file.reopenClosedTab"),
       enabled: () => available() && actions.canReopenClosedTab(),
       run: () => actions.reopenClosedTab(),
@@ -848,7 +1298,7 @@ export function registerAppCommands(
       // a reader who does not want every tab back every morning still wants
       // them back on the morning after the application was closed by mistake.
       id: "file.reopenLastTabs",
-      title: "Reopen the tabs from last time",
+      title: TEXT(locale).reopenLastTabs,
       enabled: () => actions.tabsToReopen() > 0 && available(),
       run: () => actions.reopenLastTabs(),
     },
@@ -856,53 +1306,64 @@ export function registerAppCommands(
     // per choice, each offered while it is not the current one.
     {
       id: "file.reopenTabsAtLaunch",
-      title: "At launch: reopen all tabs",
+      title: TEXT(locale).reopenTabsAtLaunch,
       enabled: () => !actions.restoreTabs(),
       run: () => actions.setRestoreTabs(true),
     },
     {
       id: "file.reopenLastDocumentAtLaunch",
-      title: "At launch: reopen only the last document",
+      title: TEXT(locale).reopenLastDocumentAtLaunch,
       enabled: () => actions.restoreTabs(),
       run: () => actions.setRestoreTabs(false),
     },
+    // The interface language, the same shape: one command per choice, each
+    // offered while it is not the current one. A language's own name is not
+    // translated, so a reader who cannot read the current language finds theirs.
+    ...(["system", ...UI_LOCALES] as const).map((choice: LanguageChoice) => ({
+      id: `app.language.${choice}`,
+      title: choice === "system"
+        ? LANGUAGE(locale).system
+        : `${LANGUAGE(locale).language}: ${LOCALE_NAMES[choice]}`,
+      enabled: () => actions.languageChoice() !== choice,
+      run: () => actions.setLanguageChoice(choice),
+    })),
     {
       // Not withheld while a document is busy: it changes a list, and no
       // document. Withheld when the list is empty, so that a reader who runs
       // it sees it go, which is the only sign it worked that the palette has.
       id: "file.clearRecents",
-      title: "Clear recent documents",
+      title: TEXT(locale).clearRecents,
       enabled: () => actions.recentDocuments() > 0,
       run: () => actions.clearRecentDocuments(),
     },
     {
       id: "view.tabLabelsLarger",
-      title: "Larger tab labels",
+      title: TEXT(locale).tabLabelsLarger,
       enabled: () => withDocument() && actions.tabLabels().canGrow,
       run: () => actions.resizeTabLabels(1),
     },
     {
       id: "view.tabLabelsSmaller",
-      title: "Smaller tab labels",
+      title: TEXT(locale).tabLabelsSmaller,
       enabled: () => withDocument() && actions.tabLabels().canShrink,
       run: () => actions.resizeTabLabels(-1),
     },
     {
       id: "view.tabLabelsDefault",
-      title: "Default tab label size",
+      title: TEXT(locale).tabLabelsDefault,
       enabled: () => withDocument() && !actions.tabLabels().isDefault,
       run: () => actions.resizeTabLabels(0),
     },
     {
       id: "view.nextTab",
-      title: "Next tab",
+      title: TEXT(locale).nextTab,
       keys: label("view.nextTab"),
       enabled: () => withDocument() && actions.documentCount() > 1,
       run: () => actions.nextDocument(1),
     },
     {
       id: "view.previousTab",
-      title: "Previous tab",
+      title: TEXT(locale).previousTab,
       keys: label("view.previousTab"),
       enabled: () => withDocument() && actions.documentCount() > 1,
       run: () => actions.nextDocument(-1),
@@ -912,7 +1373,7 @@ export function registerAppCommands(
       // tab the reader pressed: from the keyboard there is no tab under the
       // pointer, and choosing the partner is the whole of the question.
       id: "view.sideBySide",
-      title: "Show side by side with...",
+      title: TEXT(locale).sideBySide,
       enabled: () => withDocument() && actions.sides().others.length > 0,
       argument: {
         get placeholder() {
@@ -937,7 +1398,7 @@ export function registerAppCommands(
       // Named for where the tab goes, which is the side the reader is not in.
       id: "view.moveToOtherSide",
       get title() {
-        return `Move tab to ${actions.sides().focused === "left" ? "right" : "left"} side`;
+        return TEXT(locale).moveToOtherSide(actions.sides().focused === "left");
       },
       enabled: () => withDocument() && actions.sides().others.length > 0,
       run: () => actions.moveToOtherSide(),
@@ -946,19 +1407,19 @@ export function registerAppCommands(
       // No second document needed, which is what tells it from the commands
       // above: the text on one side and its figures or notes on the other.
       id: "view.bothSides",
-      title: "Show this document on both sides",
+      title: TEXT(locale).bothSides,
       enabled: () => withDocument(),
       run: () => actions.showOnBothSides(),
     },
     {
       id: "view.switchSides",
-      title: "Switch sides",
+      title: TEXT(locale).switchSides,
       enabled: () => withDocument() && actions.sides().split,
       run: () => actions.switchSides(),
     },
     {
       id: "view.focusOtherSide",
-      title: "Go to other side",
+      title: TEXT(locale).focusOtherSide,
       enabled: () => withDocument() && actions.sides().split,
       run: () => actions.focusOtherSide(),
     },
@@ -967,14 +1428,14 @@ export function registerAppCommands(
       // the divider it is the keyboard's way to.
       id: "view.syncScrolling",
       get title() {
-        return actions.syncScrolling() ? "Scroll the two sides separately" : "Scroll both sides together";
+        return actions.syncScrolling() ? TEXT(locale).scrollSeparately : TEXT(locale).scrollTogether;
       },
       enabled: () => withDocument() && actions.sides().split,
       run: () => actions.toggleSyncScrolling(),
     },
     {
       id: "file.open",
-      title: "Open document",
+      title: TEXT(locale).open,
       keys: label("file.open"),
       enabled: available,
       run: () => actions.openDocument(),
@@ -983,7 +1444,7 @@ export function registerAppCommands(
       // Beside Open, because it also begins with no document: the pictures
       // are chosen in the platform's panel and the result is opened.
       id: "file.fromPictures",
-      title: "New document from pictures...",
+      title: TEXT(locale).fromPictures,
       enabled: available,
       run: () => actions.fromPictures(),
     },
@@ -999,7 +1460,7 @@ export function registerAppCommands(
       // except ⌘O and re-picking the file. It is useful either way: with the
       // watch below set to "do nothing", this is how you ask for the new file.
       id: "file.reload",
-      title: "Reload from disk",
+      title: TEXT(locale).reload,
       enabled: withDocument,
       run: () => actions.reloadDocument(),
     },
@@ -1009,7 +1470,7 @@ export function registerAppCommands(
     // preference and not something done to a document.
     ...DISK_CHANGE_MODES.map((mode) => ({
       id: `file.onDiskChange.${mode}`,
-      title: DISK_CHANGE_TITLES[mode],
+      title: diskChangeTitle(mode, locale),
       enabled: () => actions.diskChangeMode() !== mode,
       run: () => actions.setDiskChangeMode(mode),
     })),
@@ -1024,7 +1485,7 @@ export function registerAppCommands(
       // Windows defect where an app with no console could open no document, and
       // could not tell whether the release fixing it was the one they had.
       id: "app.about",
-      title: "About tpdf",
+      title: TEXT(locale).about,
       run: () => actions.about(),
     },
     {
@@ -1034,18 +1495,18 @@ export function registerAppCommands(
       // that withheld it while `failed` would strand the reader on a launch
       // that happened to have no network.
       id: "app.checkForUpdates",
-      title: "Check for updates",
+      title: TEXT(locale).checkForUpdates,
       run: () => actions.checkForUpdates(),
     },
     {
       id: "app.disableAutomaticUpdates",
-      title: "Disable automatic update checks",
+      title: TEXT(locale).disableAutomaticUpdates,
       enabled: () => actions.automaticUpdates(),
       run: () => actions.setAutomaticUpdates(false),
     },
     {
       id: "app.enableAutomaticUpdates",
-      title: "Enable automatic update checks",
+      title: TEXT(locale).enableAutomaticUpdates,
       enabled: () => !actions.automaticUpdates(),
       run: () => actions.setAutomaticUpdates(true),
     },
@@ -1063,7 +1524,7 @@ export function registerAppCommands(
       // does close and reopen tpdf --- but never more, and `docs/TRAPS.md` has
       // why that direction is the one that costs. The restart is its own
       // command below, offered exactly when it is the step that remains.
-      title: "Install update",
+      title: TEXT(locale).installUpdate,
       enabled: () => actions.updateAvailable() && !actions.updateReady(),
       run: () => actions.applyUpdate(),
     },
@@ -1076,7 +1537,7 @@ export function registerAppCommands(
       // behind. That is why the two guards are not mirror images: `install`
       // needs an update found *and* not yet applied, this one needs it applied.
       id: "app.restartForUpdate",
-      title: "Restart to finish update",
+      title: TEXT(locale).restartForUpdate,
       enabled: () => actions.updateReady(),
       run: () => actions.restartForUpdate(),
     },
@@ -1099,13 +1560,13 @@ export function registerAppCommands(
       // a greyed item says nothing. No binding, like every command a reader
       // runs once.
       id: "app.installCommandLineTool",
-      title: "Install command-line tool…",
+      title: TEXT(locale).installCommandLineTool,
       enabled: () => actions.commandLineToolOffered(true),
       run: () => actions.commandLineTool(true),
     },
     {
       id: "app.uninstallCommandLineTool",
-      title: "Uninstall command-line tool…",
+      title: TEXT(locale).uninstallCommandLineTool,
       enabled: () => actions.commandLineToolOffered(false),
       run: () => actions.commandLineTool(false),
     },
@@ -1113,7 +1574,7 @@ export function registerAppCommands(
       // Always enabled: whether tpdf is the default is the system's to say,
       // and the backend asks it each time.
       id: "app.makeDefaultPdfApp",
-      title: "Make tpdf the default PDF app",
+      title: TEXT(locale).makeDefaultPdfApp,
       run: () => actions.makeDefaultPdfApp(),
     },
     {
@@ -1122,13 +1583,13 @@ export function registerAppCommands(
       // installer registers nothing (`docs/PLAN.md` 7.8). Each is greyed when
       // it has nothing to do, from the backend's last answer.
       id: "app.enableExplorerIntegration",
-      title: "Show PDFs in Explorer with tpdf",
+      title: TEXT(locale).enableExplorerIntegration,
       enabled: () => actions.explorerOffered(true),
       run: () => actions.explorerIntegration(true),
     },
     {
       id: "app.disableExplorerIntegration",
-      title: "Stop showing PDFs in Explorer with tpdf",
+      title: TEXT(locale).disableExplorerIntegration,
       enabled: () => actions.explorerOffered(false),
       run: () => actions.explorerIntegration(false),
     },
@@ -1138,7 +1599,7 @@ export function registerAppCommands(
       // is asked: it reads the saved file, writes nothing, and its answer is a
       // tab of the sidebar.
       id: "file.findHiddenText",
-      title: "Find text the pages do not show",
+      title: TEXT(locale).findHiddenText,
       enabled: withDocument,
       run: () => actions.findHiddenText(),
     },
@@ -1148,7 +1609,7 @@ export function registerAppCommands(
       // other, and the one the reader is in is taken as the older. A document
       // not yet open is opened first, which is what makes it a choice here.
       id: "file.compareWith",
-      title: "Compare with...",
+      title: TEXT(locale).compareWith,
       enabled: () => withDocument() && actions.sides().others.length > 0,
       argument: {
         get placeholder() {
@@ -1171,7 +1632,7 @@ export function registerAppCommands(
     },
     {
       id: "file.properties",
-      title: "Document properties",
+      title: TEXT(locale).properties,
       // No shortcut, on the same reasoning as "Extract pages...": this is a
       // command a reader reaches deliberately rather than by muscle memory, and
       // a chord is a *global key claim* rather than a label --- see
@@ -1188,28 +1649,28 @@ export function registerAppCommands(
       // takes a range because thumbnail-selection printing will need it, not
       // because anything asks for one today.
       id: "file.print",
-      title: "Print",
+      title: TEXT(locale).print,
       keys: label("file.print"),
       enabled: withDocument,
       run: () => actions.printDocument(),
     },
     {
       id: "find.open",
-      title: "Find in document",
+      title: TEXT(locale).findOpen,
       keys: label("find.open"),
       enabled: withDocument,
       run: () => actions.focusFind(),
     },
     {
       id: "find.next",
-      title: "Find next",
+      title: TEXT(locale).findNext,
       keys: label("find.next"),
       enabled: withDocument,
       run: () => actions.viewer()?.nextMatch(),
     },
     {
       id: "find.previous",
-      title: "Find previous",
+      title: TEXT(locale).findPrevious,
       keys: label("find.previous"),
       enabled: withDocument,
       run: () => actions.viewer()?.prevMatch(),
@@ -1219,14 +1680,14 @@ export function registerAppCommands(
       // palette lists verbs, and "Match case" beside a checkbox that is already
       // on reads as a description of the state rather than as a command.
       id: "find.matchCase",
-      title: "Find: match case on or off",
+      title: TEXT(locale).matchCase,
       keys: label("find.matchCase"),
       enabled: withDocument,
       run: () => actions.toggleSearchOption("matchCase"),
     },
     {
       id: "find.wholeWord",
-      title: "Find: whole words on or off",
+      title: TEXT(locale).wholeWord,
       keys: label("find.wholeWord"),
       enabled: withDocument,
       run: () => actions.toggleSearchOption("wholeWord"),
@@ -1237,7 +1698,7 @@ export function registerAppCommands(
       // sees it greyed, with the reason being that nothing is selected. It
       // stays enabled while scoped so there is a way back out.
       id: "find.inSelection",
-      title: "Find: in selection on or off",
+      title: TEXT(locale).inSelection,
       keys: label("find.inSelection"),
       enabled: () => {
         const viewer = actions.viewer();
@@ -1253,42 +1714,42 @@ export function registerAppCommands(
       // not would understand. Both spellings are in the title so the palette
       // finds it either way.
       id: "find.regex",
-      title: "Find: regular expression on or off",
+      title: TEXT(locale).regex,
       keys: label("find.regex"),
       enabled: withDocument,
       run: () => actions.toggleSearchOption("regex"),
     },
     {
       id: "view.zoomIn",
-      title: "Zoom in",
+      title: TEXT(locale).zoomIn,
       keys: label("view.zoomIn"),
       enabled: withDocument,
       run: () => actions.viewer()?.zoomStep(1),
     },
     {
       id: "view.zoomOut",
-      title: "Zoom out",
+      title: TEXT(locale).zoomOut,
       keys: label("view.zoomOut"),
       enabled: withDocument,
       run: () => actions.viewer()?.zoomStep(-1),
     },
     {
       id: "view.fitWidth",
-      title: "Fit width",
+      title: TEXT(locale).fitWidth,
       keys: label("view.fitWidth"),
       enabled: withDocument,
       run: () => actions.viewer()?.setFit("width"),
     },
     {
       id: "view.fitPage",
-      title: "Fit page",
+      title: TEXT(locale).fitPage,
       keys: label("view.fitPage"),
       enabled: withDocument,
       run: () => actions.viewer()?.setFit("page"),
     },
     {
       id: "view.fitHeight",
-      title: "Fit height",
+      title: TEXT(locale).fitHeight,
       enabled: withDocument,
       run: () => actions.viewer()?.setFit("height"),
     },
@@ -1296,7 +1757,7 @@ export function registerAppCommands(
       // SumatraPDF's Fit Content: the page's content without its blank
       // margins, measured on the rendered page (`inkbounds.ts`).
       id: "view.fitContent",
-      title: "Fit content",
+      title: TEXT(locale).fitContent,
       enabled: withDocument,
       run: () => actions.viewer()?.setFit("content"),
     },
@@ -1306,7 +1767,7 @@ export function registerAppCommands(
       // no browser reports honestly. Every other reader calls this number
       // "actual size" and means the same thing by it.
       id: "view.actualSize",
-      title: "Actual size",
+      title: TEXT(locale).actualSize,
       keys: label("view.actualSize"),
       enabled: withDocument,
       run: () => actions.viewer()?.setZoomFixed(1),
@@ -1317,21 +1778,21 @@ export function registerAppCommands(
       // 175% cannot step to it, and before this there was nothing to type it
       // into either.
       id: "view.zoomTo",
-      title: "Zoom to…",
+      title: TEXT(locale).zoomTo,
       keys: label("view.zoomTo"),
       enabled: withDocument,
       argument: {
-        placeholder: "Zoom, in percent",
+        placeholder: TEXT(locale).zoomPlaceholder,
         problem: (raw: string) => {
           if (raw.trim() === "")
-            return `Zoom, ${percentOf(MIN_ZOOM)} to ${percentOf(MAX_ZOOM)}%`;
+            return TEXT(locale).zoomRange(percentOf(MIN_ZOOM), percentOf(MAX_ZOOM));
           if (parseZoomPercent(raw) === null) {
-            return `"${raw.trim()}" is not a zoom between ${percentOf(MIN_ZOOM)}% and ${percentOf(MAX_ZOOM)}%`;
+            return TEXT(locale).notAZoom(raw.trim(), percentOf(MIN_ZOOM), percentOf(MAX_ZOOM));
           }
           return null;
         },
         preview: (raw: string) =>
-          `Zoom to ${percentOf(parseZoomPercent(raw) ?? 1)}%`,
+          TEXT(locale).zoomPreview(percentOf(parseZoomPercent(raw) ?? 1)),
         run: (raw: string) => {
           const zoom = parseZoomPercent(raw);
           if (zoom !== null) actions.viewer()?.setZoomFixed(zoom);
@@ -1346,7 +1807,7 @@ export function registerAppCommands(
       // Rotating the *view* only. The file is untouched; rotating pages in the
       // document is a page operation and belongs with the ones that write.
       id: "view.rotateClockwise",
-      title: "Rotate view clockwise",
+      title: TEXT(locale).rotateClockwise,
       keys: label("view.rotateClockwise"),
       enabled: withDocument,
       run: () => actions.viewer()?.rotateBy(1),
@@ -1370,49 +1831,50 @@ export function registerAppCommands(
     // also a palette entry of its own (`favourites.ts`, `FAVOURITE_PREFIX`).
     {
       id: "nav.addFavourite",
-      title: "Add this page to favourites…",
+      title: TEXT(locale).addFavourite,
       enabled: withDocument,
       argument: {
-        placeholder: "A name for this page, or Enter for its number",
+        placeholder: TEXT(locale).favouritePlaceholder,
         problem: () => null,
-        preview: (raw: string) => (raw.trim() ? `Add as "${raw.trim()}"` : "Add, named after the page"),
+        preview: (raw: string) =>
+          (raw.trim() ? TEXT(locale).addFavouriteAs(raw.trim()) : TEXT(locale).addFavouriteNumbered),
         run: (raw: string) => actions.addFavourite(raw),
       },
     },
     {
       id: "nav.removeFavourite",
-      title: "Remove this page from favourites",
+      title: TEXT(locale).removeFavourite,
       enabled: () => withDocument() && actions.isFavourite(),
       run: () => actions.removeFavourite(),
     },
     {
       id: "nav.nextFavourite",
-      title: "Next favourite in this document",
+      title: TEXT(locale).nextFavourite,
       enabled: () => withDocument() && actions.canStepFavourite(1),
       run: () => actions.stepFavourite(1),
     },
     {
       id: "nav.previousFavourite",
-      title: "Previous favourite in this document",
+      title: TEXT(locale).previousFavourite,
       enabled: () => withDocument() && actions.canStepFavourite(-1),
       run: () => actions.stepFavourite(-1),
     },
     // The outline, opened or closed as a whole, or down to where the reader is.
     {
       id: "view.outlineExpandAll",
-      title: "Open every entry of the outline",
+      title: TEXT(locale).outlineExpandAll,
       enabled: () => withDocument() && actions.hasOutline(),
       run: () => actions.arrangeOutline("all"),
     },
     {
       id: "view.outlineCollapseAll",
-      title: "Close every entry of the outline",
+      title: TEXT(locale).outlineCollapseAll,
       enabled: () => withDocument() && actions.hasOutline(),
       run: () => actions.arrangeOutline("none"),
     },
     {
       id: "view.outlineToCurrent",
-      title: "Show this page's entry in the outline",
+      title: TEXT(locale).outlineToCurrent,
       enabled: () => withDocument() && actions.hasOutline(),
       run: () => actions.arrangeOutline("current"),
     },
@@ -1420,14 +1882,14 @@ export function registerAppCommands(
       // Full screen leaves the layout as it is; presenting is full screen with
       // one page at a time at fit page on black. Esc leaves either.
       id: "view.fullScreen",
-      title: "Full screen, or back to the window",
+      title: TEXT(locale).fullScreen,
       keys: label("view.fullScreen"),
       enabled: withDocument,
       run: () => actions.toggleFullScreen(),
     },
     {
       id: "view.presentation",
-      title: "Present one page at a time, or stop presenting",
+      title: TEXT(locale).presentation,
       enabled: withDocument,
       run: () => actions.togglePresentation(),
     },
@@ -1435,7 +1897,7 @@ export function registerAppCommands(
     // switch, as a pair of choices so that each says what it does.
     {
       id: "view.continuous",
-      title: "Pages: scroll continuously",
+      title: TEXT(locale).continuous,
       enabled: () => withDocument() && actions.viewer()?.spread.continuous === false,
       run: () => {
         const viewer = actions.viewer();
@@ -1444,7 +1906,7 @@ export function registerAppCommands(
     },
     {
       id: "view.pageAtATime",
-      title: "Pages: one page or pair at a time",
+      title: TEXT(locale).pageAtATime,
       enabled: () => withDocument() && actions.viewer()?.spread.continuous === true,
       run: () => {
         const viewer = actions.viewer();
@@ -1455,7 +1917,7 @@ export function registerAppCommands(
       // SumatraPDF's manga mode. Only with two pages to a row, where there is
       // a direction to change.
       id: "view.rightToLeft",
-      title: "Facing pages: read right to left, or left to right again",
+      title: TEXT(locale).rightToLeft,
       enabled: () => withDocument() && actions.viewer()?.spread.columns === 2,
       run: () => {
         const viewer = actions.viewer();
@@ -1468,7 +1930,7 @@ export function registerAppCommands(
       // The titles carry the distinction that matters --- "view" against
       // "page" --- since the shortcut cannot.
       id: "edit.rotatePageClockwise",
-      title: "Rotate page clockwise",
+      title: TEXT(locale).rotatePageClockwise,
       keys: label("edit.rotatePageClockwise"),
       enabled: withDocument,
       run: () => actions.rotatePage(1),
@@ -1500,7 +1962,7 @@ export function registerAppCommands(
       // said where. The status line names the armed tool instead, which is the
       // route that needed telling.
       id: "edit.addComment",
-      title: "Add comment",
+      title: TEXT(locale).addComment,
       enabled: withDocument,
       run: () => actions.addComment(null),
     },
@@ -1524,7 +1986,7 @@ export function registerAppCommands(
       // they are the frequent ones, and every armed tool is now named in the
       // toolbar's row with a button to leave it.
       id: "edit.drawBox",
-      title: "Draw a box...",
+      title: TEXT(locale).drawBox,
       enabled: withDocument,
       run: () => actions.drawBox(),
     },
@@ -1539,7 +2001,7 @@ export function registerAppCommands(
       // argument for the label and the same one `edit.drawBox` makes about
       // "square".
       id: "edit.drawEllipse",
-      title: "Draw an ellipse...",
+      title: TEXT(locale).drawEllipse,
       enabled: withDocument,
       run: () => actions.drawEllipse(),
     },
@@ -1548,25 +2010,25 @@ export function registerAppCommands(
     // that typing "draw" still finds *Draw freehand* among the first three.
     {
       id: "edit.drawLine",
-      title: "Add a line...",
+      title: TEXT(locale).drawLine,
       enabled: withDocument,
       run: () => actions.drawShape("line"),
     },
     {
       id: "edit.drawArrow",
-      title: "Add an arrow...",
+      title: TEXT(locale).drawArrow,
       enabled: withDocument,
       run: () => actions.drawShape("arrow"),
     },
     {
       id: "edit.drawPolygon",
-      title: "Add a polygon, a corner per click...",
+      title: TEXT(locale).drawPolygon,
       enabled: withDocument,
       run: () => actions.drawShape("polygon"),
     },
     {
       id: "edit.drawPolyline",
-      title: "Add connected lines, a corner per click...",
+      title: TEXT(locale).drawPolyline,
       enabled: withDocument,
       run: () => actions.drawShape("polyline"),
     },
@@ -1574,7 +2036,7 @@ export function registerAppCommands(
       // A rectangle to click, dragged like a box; where it goes is typed in
       // the box that opens on it, as a page number or a web address.
       id: "edit.addLink",
-      title: "Add a link...",
+      title: TEXT(locale).addLink,
       enabled: withDocument,
       run: () => actions.drawShape("link"),
     },
@@ -1582,7 +2044,7 @@ export function registerAppCommands(
       // A PNG or JPEG decoded in a worker, then placed by a drag as a
       // signature picture is; it keeps its proportions.
       id: "edit.addPicture",
-      title: "Add a picture from a file...",
+      title: TEXT(locale).addPicture,
       enabled: withDocument,
       run: () => actions.picture(),
     },
@@ -1591,14 +2053,14 @@ export function registerAppCommands(
       // placed by a drag the same way. ⌘V does it on the page; in a text field
       // ⌘V pastes text.
       id: "edit.pastePicture",
-      title: "Paste a picture from the clipboard",
+      title: TEXT(locale).pastePicture,
       keys: label("edit.pastePicture"),
       enabled: withDocument,
       run: () => actions.pastePicture(),
     },
     {
       id: "edit.editText",
-      title: "Edit existing text...",
+      title: TEXT(locale).editText,
       enabled: withDocument,
       run: () => actions.editText(),
     },
@@ -1606,7 +2068,7 @@ export function registerAppCommands(
       // A picture and nothing more, and named so since 2026-10-13: next to
       // "Sign document…" the old "Place signature image..." read as signing.
       id: "edit.addSignature",
-      title: "Place a signature picture, without a certificate...",
+      title: TEXT(locale).addSignature,
       enabled: withDocument,
       run: () => actions.signature(),
     },
@@ -1623,7 +2085,7 @@ export function registerAppCommands(
         // The ellipsis is the shape tools': the command arms a tool, and what
         // happens next is a drag the reader makes.
         id: `edit.stamp.${name}`,
-        title: `Stamp ${STAMP_TITLES[name]}...`,
+        title: TEXT(locale).stamp(STAMP_TITLES[name]),
         enabled: withDocument,
         run: () => actions.stamp(name),
       }),
@@ -1637,7 +2099,7 @@ export function registerAppCommands(
       // words come afterwards, so a verb about drawing would describe the wrong
       // half of it.
       id: "edit.addTextBox",
-      title: "Add a text box...",
+      title: TEXT(locale).addTextBox,
       enabled: withDocument,
       run: () => actions.drawTextBox(),
     },
@@ -1646,19 +2108,19 @@ export function registerAppCommands(
     // question about a rectangle they can no longer see being drawn.
     {
       id: "edit.addTextField",
-      title: "Add a form field: text...",
+      title: TEXT(locale).addTextField,
       enabled: withDocument,
       run: () => actions.drawField("text"),
     },
     {
       id: "edit.addMultilineField",
-      title: "Add a form field: text on several lines...",
+      title: TEXT(locale).addMultilineField,
       enabled: withDocument,
       run: () => actions.drawField("multiline"),
     },
     {
       id: "edit.addCheckbox",
-      title: "Add a form field: checkbox...",
+      title: TEXT(locale).addCheckbox,
       enabled: withDocument,
       run: () => actions.drawField("checkbox"),
     },
@@ -1666,7 +2128,7 @@ export function registerAppCommands(
       // An empty signature field: a place somebody signs with a certificate,
       // here or in another program.
       id: "edit.addSignatureField",
-      title: "Add a form field: signature...",
+      title: TEXT(locale).addSignatureField,
       enabled: withDocument,
       run: () => actions.drawField("signature"),
     },
@@ -1674,10 +2136,10 @@ export function registerAppCommands(
       // The choices are asked for before the drag: a dropdown with none is
       // not a field, and the name box that opens afterwards has one line.
       id: "edit.addDropdown",
-      title: "Add a form field: dropdown...",
+      title: TEXT(locale).addDropdown,
       enabled: withDocument,
       argument: {
-        placeholder: "Choices, with a semicolon between them",
+        placeholder: TEXT(locale).dropdownPlaceholder,
         problem: (raw: string) => {
           const parsed = parseChoices(raw);
           return "problem" in parsed ? parsed.problem : null;
@@ -1685,7 +2147,7 @@ export function registerAppCommands(
         preview: (raw: string) => {
           const parsed = parseChoices(raw);
           return "options" in parsed
-            ? `${parsed.options.length === 1 ? "1 choice" : `${parsed.options.length} choices`}. Then drag the field onto the page.`
+            ? TEXT(locale).dropdownPreview(parsed.options.length)
             : "";
         },
         run: (raw: string) => {
@@ -1700,13 +2162,13 @@ export function registerAppCommands(
     // has: one command per choice, each offered while it is not the current.
     {
       id: "edit.fieldBorderOn",
-      title: "Form fields: draw a line round new text fields",
+      title: TEXT(locale).fieldBorderOn,
       enabled: () => !actions.fieldBorder(),
       run: () => actions.setFieldBorder(true),
     },
     {
       id: "edit.fieldBorderOff",
-      title: "Form fields: no line round new text fields",
+      title: TEXT(locale).fieldBorderOff,
       enabled: () => actions.fieldBorder(),
       run: () => actions.setFieldBorder(false),
     },
@@ -1715,13 +2177,13 @@ export function registerAppCommands(
     // only for a document with a form: with none there is nothing to change.
     {
       id: "edit.formEditOn",
-      title: "Form fields: change the document's own fields",
+      title: TEXT(locale).formEditOn,
       enabled: () => withDocument() && actions.savedFields() > 0 && !actions.formEditing(),
       run: () => actions.setFormEditing(true),
     },
     {
       id: "edit.formEditOff",
-      title: "Form fields: finish changing the document's fields",
+      title: TEXT(locale).formEditOff,
       enabled: () => withDocument() && actions.formEditing(),
       run: () => actions.setFormEditing(false),
     },
@@ -1730,7 +2192,7 @@ export function registerAppCommands(
       // here is in that order already; this is for one from elsewhere, and
       // for one whose fields were moved about after they were made.
       id: "edit.tabOrder",
-      title: "Form fields: tab through them in reading order",
+      title: TEXT(locale).tabOrder,
       enabled: () => withDocument() && actions.canOrderTabs(),
       run: () => actions.orderTabs(),
     },
@@ -1738,17 +2200,17 @@ export function registerAppCommands(
       // The group is asked for before the drag: it is what makes several
       // buttons one question, and it is each button's name.
       id: "edit.addRadio",
-      title: "Add a form field: radio buttons...",
+      title: TEXT(locale).addRadio,
       enabled: withDocument,
       argument: {
-        placeholder: "The name of the group, such as Payment",
+        placeholder: TEXT(locale).radioPlaceholder,
         problem: (raw: string) => {
           const parsed = parseGroup(raw);
           return "problem" in parsed ? parsed.problem : null;
         },
         preview: (raw: string) => {
           const parsed = parseGroup(raw);
-          return "group" in parsed ? `Drag a button of ${parsed.group} onto the page, and another for each choice. Escape finishes.` : "";
+          return "group" in parsed ? TEXT(locale).radioPreview(parsed.group) : "";
         },
         run: (raw: string) => {
           const parsed = parseGroup(raw);
@@ -1761,7 +2223,7 @@ export function registerAppCommands(
     // would have to say what it shows where they differ.
     {
       id: "edit.fieldProperties",
-      title: "Form fields: properties of the picked field...",
+      title: TEXT(locale).fieldProperties,
       enabled: () => withDocument() && actions.fieldPicked(),
       run: () => actions.fieldProperties(),
     },
@@ -1777,22 +2239,22 @@ export function registerAppCommands(
       // A copy of each picked rectangle, a step down and to the right, picked
       // in place of the originals so that the next drag moves the copies.
       id: "edit.duplicate",
-      title: "Arrange: duplicate",
+      title: TEXT(locale).duplicate,
       keys: label("edit.duplicate"),
       enabled: () => withDocument() && actions.pickedMarks() >= 1,
       run: () => actions.duplicatePicked(),
     },
-    { id: "edit.alignLeft", title: "Arrange: align left", ...arranges("left") },
+    { id: "edit.alignLeft", title: TEXT(locale).alignLeft, ...arranges("left") },
     { id: "edit.alignCenter", title: message("alignCenter", locale), ...arranges("center") },
-    { id: "edit.alignRight", title: "Arrange: align right", ...arranges("right") },
-    { id: "edit.alignTop", title: "Arrange: align top", ...arranges("top") },
-    { id: "edit.alignMiddle", title: "Arrange: align middle", ...arranges("middle") },
-    { id: "edit.alignBottom", title: "Arrange: align bottom", ...arranges("bottom") },
-    { id: "edit.distributeAcross", title: "Arrange: distribute horizontally", ...arranges("distributeAcross") },
-    { id: "edit.distributeDown", title: "Arrange: distribute vertically", ...arranges("distributeDown") },
-    { id: "edit.sameWidth", title: "Arrange: same width", ...arranges("sameWidth") },
-    { id: "edit.sameHeight", title: "Arrange: same height", ...arranges("sameHeight") },
-    { id: "edit.sameSize", title: "Arrange: same size", ...arranges("sameSize") },
+    { id: "edit.alignRight", title: TEXT(locale).alignRight, ...arranges("right") },
+    { id: "edit.alignTop", title: TEXT(locale).alignTop, ...arranges("top") },
+    { id: "edit.alignMiddle", title: TEXT(locale).alignMiddle, ...arranges("middle") },
+    { id: "edit.alignBottom", title: TEXT(locale).alignBottom, ...arranges("bottom") },
+    { id: "edit.distributeAcross", title: TEXT(locale).distributeAcross, ...arranges("distributeAcross") },
+    { id: "edit.distributeDown", title: TEXT(locale).distributeDown, ...arranges("distributeDown") },
+    { id: "edit.sameWidth", title: TEXT(locale).sameWidth, ...arranges("sameWidth") },
+    { id: "edit.sameHeight", title: TEXT(locale).sameHeight, ...arranges("sameHeight") },
+    { id: "edit.sameSize", title: TEXT(locale).sameSize, ...arranges("sameSize") },
     { id: "edit.centerOnPage", title: message("centerOnPageAcross", locale), ...arranges("pageCenter") },
     { id: "edit.middleOnPage", title: message("centerOnPageDown", locale), ...arranges("pageMiddle") },
     {
@@ -1806,7 +2268,7 @@ export function registerAppCommands(
       // down rather than which mark it is. "Freehand" is also what separates it
       // from the box above at a glance, which is what a menu is for.
       id: "edit.draw",
-      title: "Draw freehand...",
+      title: TEXT(locale).draw,
       enabled: withDocument,
       run: () => actions.draw(),
     },
@@ -1831,7 +2293,7 @@ export function registerAppCommands(
       // The ellipsis matches the two tools above it and says the same thing
       // they do --- the command arms something rather than acting now.
       id: "edit.erase",
-      title: "Erase marks...",
+      title: TEXT(locale).erase,
       enabled: withDocument,
       run: () => actions.erase(),
     },
@@ -1843,7 +2305,7 @@ export function registerAppCommands(
       // is the shortest way to the most frequent mark. ⌘H stays the system's
       // hide-application chord.
       id: "edit.highlightSelection",
-      title: "Highlight selection",
+      title: TEXT(locale).highlightSelection,
       enabled: () => withDocument() && actions.hasSelection(),
       run: () => actions.markSelection("highlight"),
     },
@@ -1855,13 +2317,13 @@ export function registerAppCommands(
       // own: the highlight is the frequent one and has `h`, and these two are
       // a palette search away.
       id: "edit.underlineSelection",
-      title: "Underline selection",
+      title: TEXT(locale).underlineSelection,
       enabled: () => withDocument() && actions.hasSelection(),
       run: () => actions.markSelection("underline"),
     },
     {
       id: "edit.strikeoutSelection",
-      title: "Strike out selection",
+      title: TEXT(locale).strikeoutSelection,
       enabled: () => withDocument() && actions.hasSelection(),
       run: () => actions.markSelection("strikeout"),
     },
@@ -1875,7 +2337,7 @@ export function registerAppCommands(
       // rather than an action, and it sits directly under "Underline selection"
       // where a reader is choosing between two lines under the same words.
       id: "edit.squigglySelection",
-      title: "Squiggly underline selection",
+      title: TEXT(locale).squigglySelection,
       enabled: () => withDocument() && actions.hasSelection(),
       run: () => actions.markSelection("squiggly"),
     },
@@ -1918,7 +2380,7 @@ export function registerAppCommands(
       // "Nib:" leads for `Colour:`'s reason --- it groups the run in a list
       // sorted by title, and it is the word a reader searches for when they do
       // not know whether this application says "pen", "weight" or "thickness".
-      title: `Nib: ${entry.name}`,
+      title: TEXT(locale).nib(entry.name),
       enabled: withDocument,
       run: () => actions.setNib(entry.id),
     })),
@@ -1944,7 +2406,7 @@ export function registerAppCommands(
       // with the pointer somewhere else. Same reasoning as "Remove mark", one
       // step further --- that one could not say which mark it meant, and this one
       // can say which *kind* of thing it means.
-      title: "Edit this comment",
+      title: TEXT(locale).editForeignMark,
       enabled: () => withDocument() && actions.canEditComment(),
       run: () => actions.editComment(),
     },
@@ -1963,7 +2425,7 @@ export function registerAppCommands(
       // off the page, and a reader choosing between the two in a palette is
       // choosing between their annotation and somebody else's. Two words for one
       // act would be worse than the asymmetry.
-      title: "Delete this comment",
+      title: TEXT(locale).deleteComment,
       enabled: () => withDocument() && actions.canDeleteComment(),
       run: () => actions.deleteComment(),
     },
@@ -1978,7 +2440,7 @@ export function registerAppCommands(
       id: "edit.replyToComment",
       // "this comment" for the reason above: the subject is whichever note is
       // open, and the palette is chosen with the pointer somewhere else.
-      title: "Reply to this comment",
+      title: TEXT(locale).replyToComment,
       enabled: () => withDocument() && actions.canReplyToComment(),
       run: () => actions.replyToComment(),
     },
@@ -1988,7 +2450,7 @@ export function registerAppCommands(
       // mark there was. A menu item naming one of three kinds is wrong twice
       // out of three times, and is chosen with the pointer somewhere else, so
       // it cannot say which mark it means the way the note box can.
-      title: "Remove mark",
+      title: TEXT(locale).removeMark,
       enabled: () => withDocument() && actions.hasOpenMark(),
       run: () => actions.removeMark(),
     },
@@ -1996,19 +2458,19 @@ export function registerAppCommands(
     // path, in this tab or another. No keys: ⌘C and ⌘V copy and paste text.
     {
       id: "edit.copyMark",
-      title: "Copy mark",
+      title: TEXT(locale).copyMark,
       enabled: () => withDocument() && actions.hasOpenMark(),
       run: () => actions.copyMarks(false),
     },
     {
       id: "edit.cutMark",
-      title: "Cut mark",
+      title: TEXT(locale).cutMark,
       enabled: () => withDocument() && actions.hasOpenMark(),
       run: () => actions.copyMarks(true),
     },
     {
       id: "edit.pasteMark",
-      title: "Paste mark",
+      title: TEXT(locale).pasteMark,
       enabled: () => withDocument() && actions.canPasteMarks(),
       run: () => actions.pasteMarks(),
     },
@@ -2028,7 +2490,7 @@ export function registerAppCommands(
       // near each other in the palette on purpose, because a reader who has
       // confused the two should meet both.
       id: "edit.redactRegion",
-      title: "Redact text or regions by dragging",
+      title: TEXT(locale).redactRegion,
       enabled: withDocument,
       run: () => actions.redactRegion(),
     },
@@ -2045,7 +2507,7 @@ export function registerAppCommands(
       // dragging" has none: this workflow removes content, and a stray key
       // that arms it is worse than one extra keystroke.
       id: "edit.redactSelection",
-      title: "Redact selection",
+      title: TEXT(locale).redactSelection,
       enabled: () => withDocument() && actions.hasSelection(),
       run: () => actions.redactSelection(),
     },
@@ -2060,7 +2522,7 @@ export function registerAppCommands(
       // "every search result" rather than "matches": the reader is looking at a
       // results panel, and the title should name what is in front of them.
       id: "edit.redactMatches",
-      title: "Redact every search result",
+      title: TEXT(locale).redactMatches,
       enabled: () => withDocument() && actions.matchCount() > 0,
       run: () => actions.redactMatches(),
     },
@@ -2085,13 +2547,13 @@ export function registerAppCommands(
       // already says *Remove region*, and one act with two names in two places
       // is worse than the slight asymmetry with the verb "Redact" above it.
       id: "edit.removeRedaction",
-      title: "Remove this redaction",
+      title: TEXT(locale).removeRedaction,
       enabled: () => withDocument() && actions.hasPickedRedaction(),
       run: () => actions.removeRedaction(),
     },
     {
       id: "edit.fillForm",
-      title: "Fill form",
+      title: TEXT(locale).fillForm,
       enabled: withDocument,
       run: () => actions.fillForm(),
     },
@@ -2110,7 +2572,7 @@ export function registerAppCommands(
       // the window harness can wait for --- the other two are IPC replies and
       // are excused there for that reason. See `armCrop`.
       id: "edit.cropToDrag",
-      title: "Crop page by dragging",
+      title: TEXT(locale).cropToDrag,
       enabled: withDocument,
       run: () => actions.cropPage("drag"),
     },
@@ -2125,7 +2587,7 @@ export function registerAppCommands(
       // where a scanned page is one image object covering the sheet and the
       // object union is therefore the sheet.
       id: "edit.cropToContent",
-      title: "Crop page to content",
+      title: TEXT(locale).cropToContent,
       enabled: withDocument,
       run: () => actions.cropPage("content"),
     },
@@ -2135,7 +2597,7 @@ export function registerAppCommands(
       // page the reader has scrolled to, and a command that came and went as
       // they scrolled would be worse than one that sometimes does nothing.
       id: "edit.resetCrop",
-      title: "Reset page crop",
+      title: TEXT(locale).resetCrop,
       enabled: withDocument,
       run: () => actions.cropPage("reset"),
     },
@@ -2149,7 +2611,7 @@ export function registerAppCommands(
       // is two keystrokes away in the palette, which is what `docs/PLAN.md` asks
       // of every command.
       id: "edit.deletePage",
-      title: "Delete page",
+      title: TEXT(locale).deletePage,
       enabled: withDocument,
       run: () => actions.deletePage(),
     },
@@ -2163,7 +2625,7 @@ export function registerAppCommands(
       // inserting pages *from another file* is the other half of the same
       // README bullet and has a command of its own, `edit.insertPages`, below.
       id: "edit.insertBlankPage",
-      title: "Insert blank page",
+      title: TEXT(locale).insertBlankPage,
       enabled: withDocument,
       run: () => actions.insertBlankPage(),
     },
@@ -2183,7 +2645,7 @@ export function registerAppCommands(
       // once. The whole-title bonus in `commands.ts` would settle it anyway;
       // this costs nothing and does not lean on it.
       id: `edit.insertPage.${name}`,
-      title: `Insert blank ${PAGE_SIZES[name].title} page`,
+      title: TEXT(locale).insertSizedPage(PAGE_SIZES[name].title),
       enabled: withDocument,
       run: () => actions.insertSizedPage(name),
     })),
@@ -2196,7 +2658,7 @@ export function registerAppCommands(
       // chosen land in the file's own order after the page being read, and one
       // undo takes them all back out.
       id: "edit.insertPages",
-      title: "Insert pages from file...",
+      title: TEXT(locale).insertPages,
       enabled: withDocument,
       run: () => actions.importPages(),
     },
@@ -2218,17 +2680,17 @@ export function registerAppCommands(
       id: "edit.insertPages.range",
       get title() {
         const file = actions.pendingImport();
-        return file ? `Insert pages from ${file.name}` : "Insert pages from the chosen file";
+        return file ? TEXT(locale).insertPagesFrom(file.name) : TEXT(locale).insertPagesFromChosen;
       },
       enabled: () => withDocument() && actions.pendingImport() !== null,
       argument: {
         get placeholder() {
           const file = actions.pendingImport();
-          return file ? rangePlaceholder(file) : "Pages";
+          return file ? rangePlaceholder(file) : TEXT(locale).pagesPlaceholder;
         },
         problem: (raw: string) => {
           const file = actions.pendingImport();
-          if (!file) return "No file is waiting to be inserted";
+          if (!file) return TEXT(locale).noFileWaiting;
           return chosenPages(raw, file).problem ?? null;
         },
         preview: (raw: string) => {
@@ -2258,13 +2720,13 @@ export function registerAppCommands(
       // that reappeared at the other end would be a deletion as far as the eye
       // is concerned.
       id: "edit.movePageUp",
-      title: "Move page up",
+      title: TEXT(locale).movePageUp,
       enabled: withDocument,
       run: () => actions.movePage(-1),
     },
     {
       id: "edit.movePageDown",
-      title: "Move page down",
+      title: TEXT(locale).movePageDown,
       enabled: withDocument,
       run: () => actions.movePage(1),
     },
@@ -2274,14 +2736,14 @@ export function registerAppCommands(
       // teaches a reader that the command does nothing, which is the same
       // lesson a broken one teaches.
       id: "edit.undo",
-      title: "Undo",
+      title: TEXT(locale).undo,
       keys: label("edit.undo"),
       enabled: () => withDocument() && actions.canUndo(),
       run: () => actions.undoEdit(),
     },
     {
       id: "edit.redo",
-      title: "Redo",
+      title: TEXT(locale).redo,
       keys: label("edit.redo"),
       enabled: () => withDocument() && actions.canRedo(),
       run: () => actions.redoEdit(),
@@ -2293,7 +2755,7 @@ export function registerAppCommands(
       // document is a file a reader wants, and rewriting the open file to say
       // exactly what it already says is not.
       id: "file.save",
-      title: "Save",
+      title: TEXT(locale).save,
       keys: label("file.save"),
       enabled: () => withDocument() && actions.isDirty(),
       run: () => actions.saveDocument(),
@@ -2304,7 +2766,7 @@ export function registerAppCommands(
       // a downloads folder --- and a command that appears only after an edit is
       // one nobody finds.
       id: "file.saveCopy",
-      title: "Save a copy...",
+      title: TEXT(locale).saveCopy,
       keys: label("file.saveCopy"),
       enabled: withDocument,
       run: () => actions.saveCopy(),
@@ -2318,7 +2780,7 @@ export function registerAppCommands(
       // "Sign document…", not "Sign": the ellipsis is the chooser and the save
       // panel that follow, and the result is a new file.
       id: "file.signDocument",
-      title: "Sign document\u2026",
+      title: TEXT(locale).signDocument,
       enabled: withDocument,
       run: () => actions.signDocument(),
     },
@@ -2326,7 +2788,7 @@ export function registerAppCommands(
       // The same signing, into a signature field the document has: the first
       // empty one. A press on a field on its page signs that one.
       id: "file.signField",
-      title: "Sign in the signature field\u2026",
+      title: TEXT(locale).signField,
       enabled: () => withDocument() && actions.signableFields() >= 1,
       run: () => actions.signField(),
     },
@@ -2335,7 +2797,7 @@ export function registerAppCommands(
       // certificate file is imported with the system's own tools. Needs no
       // open document; the file is remembered for every signing after.
       id: "file.addCertificateFile",
-      title: "Add a certificate file for signing\u2026",
+      title: TEXT(locale).addCertificateFile,
       enabled: () => isLinux(),
       run: () => actions.addCertificateFile(),
     },
@@ -2348,7 +2810,7 @@ export function registerAppCommands(
       // The ellipsis is the dialog and the save panel that follow, and the
       // result is a new file.
       id: "file.addValidationData",
-      title: "Add long-term validation data\u2026",
+      title: TEXT(locale).addValidationData,
       enabled: withDocument,
       run: () => actions.addValidationData(),
     },
@@ -2393,7 +2855,7 @@ export function registerAppCommands(
         },
         problem: (raw: string) => {
           const asked = actions.recognitionLanguages();
-          if (!asked) return "No list of languages is waiting";
+          if (!asked) return TEXT(locale).noLanguageList;
           return pickLanguage(raw, asked.offered).problem ?? null;
         },
         preview: (raw: string) => {
@@ -2409,7 +2871,7 @@ export function registerAppCommands(
       // A copy, because shrinking pictures cannot be undone: the open
       // document and the file it came from keep every pixel.
       id: "file.compress",
-      title: "Save a smaller copy...",
+      title: TEXT(locale).compress,
       enabled: withDocument,
       run: () => actions.compressCopy(),
     },
@@ -2417,7 +2879,7 @@ export function registerAppCommands(
       // *Copy a region as a picture*, to a PNG file rather than the clipboard.
       // A worker renders and encodes it; the web view names the region only.
       id: "file.saveRegionAsPicture",
-      title: "Save a region as a picture...",
+      title: TEXT(locale).saveRegionAsPicture,
       enabled: withDocument,
       run: () => actions.saveRegion(),
     },
@@ -2427,7 +2889,7 @@ export function registerAppCommands(
       // which, below, once the list is read. Offered on every document: one
       // with none is told so, which a missing command would not say.
       id: "file.saveAttachment",
-      title: "Save an attachment...",
+      title: TEXT(locale).saveAttachment,
       enabled: withDocument,
       run: () => actions.saveAttachment(),
     },
@@ -2435,7 +2897,7 @@ export function registerAppCommands(
       // The question `file.saveAttachment` asks when there are several.
       // Enabled only while that list is held, so it is not listed otherwise.
       id: "file.saveAttachment.choice",
-      title: "Save which attachment",
+      title: TEXT(locale).saveAttachmentChoice,
       enabled: () => actions.attachmentsAsked() !== null,
       argument: {
         get placeholder() {
@@ -2443,7 +2905,7 @@ export function registerAppCommands(
         },
         problem: (raw: string) => {
           const files = actions.attachmentsAsked();
-          if (!files) return "No list of attachments is waiting";
+          if (!files) return TEXT(locale).noAttachmentList;
           const picked = pickAttachment(raw, files);
           return "problem" in picked ? picked.problem : null;
         },
@@ -2456,7 +2918,7 @@ export function registerAppCommands(
       // Copies, like every command that changes what a file is: the open
       // document keeps the password it has, or none.
       id: "file.protect",
-      title: "Save a copy with a password...",
+      title: TEXT(locale).protect,
       enabled: withDocument,
       run: () => actions.protectCopy(),
     },
@@ -2465,7 +2927,7 @@ export function registerAppCommands(
       // password: a document that never asked is told why there is nothing to
       // remove, which a missing command would not say.
       id: "file.unprotect",
-      title: "Save a copy without its password...",
+      title: TEXT(locale).unprotect,
       enabled: withDocument,
       run: () => actions.unprotectCopy(),
     },
@@ -2474,13 +2936,13 @@ export function registerAppCommands(
       // the smaller copy are: the numbers count the pages of the file written,
       // and a reader keeps an unnumbered original.
       id: "file.addPageNumbers",
-      title: "Save a copy with page numbers...",
+      title: TEXT(locale).addPageNumbers,
       enabled: withDocument,
       run: () => actions.addText("numbers"),
     },
     {
       id: "file.addWatermark",
-      title: "Save a copy with a watermark...",
+      title: TEXT(locale).addWatermark,
       enabled: withDocument,
       run: () => actions.addText("watermark"),
     },
@@ -2490,7 +2952,7 @@ export function registerAppCommands(
       // reader chooses it. The confirmation and destination dialog live at the
       // shell boundary in `App.svelte`.
       id: "file.redactRasterCopy",
-      title: "Redact to image-only copy...",
+      title: TEXT(locale).redactRasterCopy,
       enabled: withDocument,
       run: () => actions.redactRasterCopy(),
     },
@@ -2507,7 +2969,7 @@ export function registerAppCommands(
       // than not meet it at all. `lib.rs` refuses with "nothing in this document
       // is marked for removal", which is the sentence that answers them.
       id: "file.redactCopy",
-      title: "Redact and save as\u2026",
+      title: TEXT(locale).redactCopy,
       enabled: withDocument,
       run: () => actions.redactCopy(),
     },
@@ -2529,7 +2991,7 @@ export function registerAppCommands(
       // between Save and a command that destroys content is the one slip this
       // application must not make cheap.
       id: "file.redactDocument",
-      title: "Redact and save",
+      title: TEXT(locale).redactDocument,
       enabled: withDocument,
       run: () => actions.redactDocument(),
     },
@@ -2545,13 +3007,13 @@ export function registerAppCommands(
       // to invoke in either order. Two calls to one function cannot disagree;
       // a cache and its writer can.
       id: "file.extractPages",
-      title: "Extract pages...",
+      title: TEXT(locale).extractPages,
       // No shortcut, for the reason the two move commands have none: there is
       // no chord left that reads as "extract", and this is a command a reader
       // reaches deliberately rather than by muscle memory.
       enabled: withDocument,
       argument: {
-        placeholder: "Pages, e.g. 1-3,5",
+        placeholder: TEXT(locale).extractPlaceholder,
         problem: (raw: string) =>
           parsePageRange(raw, actions.pageCount()).problem ?? null,
         preview: (raw: string) => {
@@ -2584,12 +3046,12 @@ export function registerAppCommands(
       // is pure and cheap, and the alternative is a validated value cached
       // between two callbacks the palette may invoke in either order.
       id: "file.splitDocument",
-      title: "Split document...",
+      title: TEXT(locale).splitDocument,
       // No shortcut, for the reason extract and merge have none: no chord reads
       // as "split", and this is reached deliberately.
       enabled: withDocument,
       argument: {
-        placeholder: "Cut after pages, e.g. 3,7",
+        placeholder: TEXT(locale).splitPlaceholder,
         problem: (raw: string) =>
           parseSplitPoints(raw, actions.pageCount()).problem ?? null,
         preview: (raw: string) => {
@@ -2620,7 +3082,7 @@ export function registerAppCommands(
       // So the picking happens in the platform's own dialog, which is also
       // where `file.open` sends the reader.
       id: "file.mergeDocuments",
-      title: "Merge documents...",
+      title: TEXT(locale).mergeDocuments,
       // No shortcut, for `file.extractPages`' reason: no chord reads as
       // "merge", and this is reached deliberately rather than by reflex.
       enabled: withDocument,
@@ -2628,14 +3090,14 @@ export function registerAppCommands(
     },
     {
       id: "nav.nextPage",
-      title: "Next page",
+      title: TEXT(locale).nextPage,
       keys: label("nav.nextPage"),
       enabled: withDocument,
       run: () => actions.viewer()?.nextPage(),
     },
     {
       id: "nav.previousPage",
-      title: "Previous page",
+      title: TEXT(locale).previousPage,
       keys: label("nav.previousPage"),
       enabled: withDocument,
       run: () => actions.viewer()?.previousPage(),
@@ -2647,7 +3109,7 @@ export function registerAppCommands(
       // than links, so a jump from the outline or a search result is on the
       // same stack --- which is what a reader who has used a browser expects.
       id: "nav.back",
-      title: "Back",
+      title: TEXT(locale).back,
       keys: label("nav.back"),
       // **Greys when there is nowhere to go**, since 2026-08-23. Both of these
       // were guarded on `withDocument` alone, so the menu offered Back on a
@@ -2666,7 +3128,7 @@ export function registerAppCommands(
     },
     {
       id: "nav.forward",
-      title: "Forward",
+      title: TEXT(locale).forward,
       keys: label("nav.forward"),
       enabled: () => withDocument() && (actions.viewer()?.canGoForward ?? false),
       run: () => {
@@ -2679,7 +3141,7 @@ export function registerAppCommands(
       // could not follow a cross-reference at all -- which on a document whose
       // table of contents is its navigation is most of the document.
       id: "nav.nextLink",
-      title: "Next link",
+      title: TEXT(locale).nextLink,
       keys: label("nav.nextLink"),
       enabled: withDocument,
       run: () => {
@@ -2688,7 +3150,7 @@ export function registerAppCommands(
     },
     {
       id: "nav.previousLink",
-      title: "Previous link",
+      title: TEXT(locale).previousLink,
       keys: label("nav.previousLink"),
       enabled: withDocument,
       run: () => {
@@ -2705,7 +3167,7 @@ export function registerAppCommands(
       // Editing is what the note box and "Remove mark" then do, and both are
       // already commands of their own.
       id: "nav.nextMark",
-      title: "Next mark",
+      title: TEXT(locale).nextMark,
       keys: label("nav.nextMark"),
       enabled: withDocument,
       run: () => {
@@ -2714,7 +3176,7 @@ export function registerAppCommands(
     },
     {
       id: "nav.previousMark",
-      title: "Previous mark",
+      title: TEXT(locale).previousMark,
       keys: label("nav.previousMark"),
       enabled: withDocument,
       run: () => {
@@ -2726,26 +3188,26 @@ export function registerAppCommands(
       // stepping one side alone would leave the other showing the change
       // before.
       id: "nav.nextChange",
-      title: "Next change",
+      title: TEXT(locale).nextChange,
       enabled: () => withDocument() && actions.changeCount() > 0,
       run: () => actions.stepChange(1),
     },
     {
       id: "nav.previousChange",
-      title: "Previous change",
+      title: TEXT(locale).previousChange,
       enabled: () => withDocument() && actions.changeCount() > 0,
       run: () => actions.stepChange(-1),
     },
     {
       id: "nav.firstPage",
-      title: "Go to start",
+      title: TEXT(locale).firstPage,
       keys: label("nav.firstPage"),
       enabled: withDocument,
       run: () => actions.viewer()?.goToStart(),
     },
     {
       id: "nav.lastPage",
-      title: "Go to end",
+      title: TEXT(locale).lastPage,
       keys: label("nav.lastPage"),
       enabled: withDocument,
       run: () => actions.viewer()?.goToEnd(),
@@ -2760,39 +3222,39 @@ export function registerAppCommands(
       // rather than clamping: a reader who types 900 in a 775-page document has
       // made a mistake, and silently going to the last page hides it.
       id: "nav.goToPage",
-      title: "Go to page…",
+      title: TEXT(locale).goToPage,
       keys: label("nav.goToPage"),
       enabled: withDocument,
       argument: {
-        placeholder: "Page number",
+        placeholder: TEXT(locale).pageNumberPlaceholder,
         problem: (raw: string) => {
           const pages = actions.pageCount();
           const trimmed = raw.trim();
-          if (trimmed === "") return `Page number, 1 to ${pages}`;
+          if (trimmed === "") return TEXT(locale).pageNumberRange(pages);
           if (!/^[0-9]+$/.test(trimmed))
-            return `"${trimmed}" is not a page number`;
+            return TEXT(locale).notAPageNumber(trimmed);
           const page = Number(trimmed);
           if (page < 1 || page > pages) {
-            return `This document has ${pages} page${pages === 1 ? "" : "s"}`;
+            return TEXT(locale).documentPages(pages);
           }
           return null;
         },
         preview: (raw: string) =>
-          `Go to page ${Number(raw.trim())} of ${actions.pageCount()}`,
+          TEXT(locale).goToPagePreview(Number(raw.trim()), actions.pageCount()),
         run: (raw: string) =>
           actions.viewer()?.goToPage(Number(raw.trim()) - 1),
       },
     },
     {
       id: "edit.selectAll",
-      title: "Select all on page",
+      title: TEXT(locale).selectAll,
       keys: label("edit.selectAll"),
       enabled: withDocument,
       run: () => actions.viewer()?.selectPage(),
     },
     {
       id: "edit.copy",
-      title: "Copy selection",
+      title: TEXT(locale).copy,
       keys: label("edit.copy"),
       enabled: withDocument,
       run: () => void actions.viewer()?.copySelection(),
@@ -2804,13 +3266,13 @@ export function registerAppCommands(
       // web view's clipboard, which takes a PNG on macOS (measured
       // 2026-10-16); where it refuses, the window says why.
       id: "edit.copyRegionAsPicture",
-      title: "Copy a region as a picture",
+      title: TEXT(locale).copyRegionAsPicture,
       enabled: withDocument,
       run: () => actions.copyRegion(),
     },
     {
       id: "edit.clearSelection",
-      title: "Clear selection",
+      title: TEXT(locale).clearSelection,
       keys: label("edit.clearSelection"),
       enabled: withDocument,
       run: () => actions.viewer()?.clearSelection(),
@@ -2820,7 +3282,7 @@ export function registerAppCommands(
       // binding rather than two commands sharing one, which would show the
       // same shortcut twice in the palette and teach that it does two things.
       id: "view.toggleSidebar",
-      title: "Toggle sidebar",
+      title: TEXT(locale).toggleSidebar,
       keys: label("view.toggleSidebar"),
       enabled: withDocument,
       run: () => actions.toggleSidebar(),
@@ -2830,13 +3292,13 @@ export function registerAppCommands(
       // command is *found*: someone looking for thumbnails types "thumb", and a
       // command called "Switch sidebar tab" is not what they would type.
       id: "view.showOutline",
-      title: "Show outline",
+      title: TEXT(locale).showOutline,
       enabled: withDocument,
       run: () => actions.showTab("outline"),
     },
     {
       id: "view.showThumbnails",
-      title: "Show page thumbnails",
+      title: TEXT(locale).showThumbnails,
       enabled: withDocument,
       run: () => actions.showTab("pages"),
     },
@@ -2846,7 +3308,7 @@ export function registerAppCommands(
       // beside it. A reader with both open needs the two titles to say which
       // is which, and "Annotations" would name either.
       id: "view.showMarks",
-      title: "Show my marks",
+      title: TEXT(locale).showMarks,
       enabled: withDocument,
       run: () => actions.showTab("marks"),
     },
@@ -2856,7 +3318,7 @@ export function registerAppCommands(
       // --- and "region" names the shape rather than the purpose. The panel's
       // own tab carries the same word for the same reason.
       id: "view.showRedactions",
-      title: "Show redactions",
+      title: TEXT(locale).showRedactions,
       enabled: withDocument,
       run: () => actions.showTab("redactions"),
     },
@@ -2872,7 +3334,17 @@ export function registerAppCommands(
       run: () => actions.toggleInvert(),
     },
   );
-  attachKeywords(registry);
+  // In a language other than English, each command also answers to its
+  // American title, so a reader who types the English words finds it. Read
+  // from a registry of the same commands in American English, through the
+  // command and not copied, because some titles are worded when asked.
+  if (locale.startsWith("en")) {
+    attachKeywords(registry, locale);
+    return;
+  }
+  const english = new CommandRegistry();
+  registerAppCommands(english, actions, "en-US");
+  attachKeywords(registry, locale, (id) => english.find(id)?.title);
 }
 
 /** The part of the palette the window shortcuts drive. */

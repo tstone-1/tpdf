@@ -59,19 +59,76 @@ import {
   type StampChoice,
 } from "./signtimestamp";
 import { button, footer, option, paragraph, section } from "./dialogparts";
+import { catalog } from "./i18n";
 
-/** The refusal for a document with edits nobody has saved. Mirrors `commands::validation::refuse_unsaved`. */
-export const UNSAVED =
-  "Save your changes first: validation data is added to the file as it is on disk, and this " +
-  "document has edits that are not in it yet.";
+const TEXT = catalog({
+  "en-US": {
+    unsaved:
+      "Save your changes first: validation data is added to the file as it is on disk, and this " +
+      "document has edits that are not in it yet.",
+    waiting:
+      "Asking the certificate authorities and the timestamp authority, and writing the copy...",
+    nothingSigned:
+      "This document has no signature, so there is nothing to add long-term validation data for.",
+    help:
+      "tpdf asks the certificate authorities named in the signatures' certificates whether " +
+      "those certificates are revoked, adds their answers to the document, and asks the " +
+      "timestamp authority you choose for a timestamp over the whole. The certificate " +
+      "authorities are sent the certificates' serial numbers, and the timestamp authority a " +
+      "hash — nothing of the document. The result is saved as a new file; the original is not " +
+      "changed. Every signature in the document is covered, or nothing is written. It works " +
+      "while the certificates involved are still valid: once one has expired, its authority " +
+      "no longer answers for it.",
+    choose: "Choose the timestamp authority to ask.",
+    title: "Add long-term validation data",
+    authority: "Timestamp authority",
+    another: "Another authority…",
+    address: "Timestamp authority address",
+    cancel: "Cancel",
+    add: "Add…",
+  },
+  "de-DE": {
+    unsaved:
+      "Speichere zuerst deine Änderungen: Die Validierungsdaten werden der Datei so hinzugefügt, " +
+      "wie sie auf dem Datenträger liegt, und dieses Dokument hat Änderungen, die noch nicht " +
+      "darin sind.",
+    waiting:
+      "Die Zertifizierungsstellen und der Zeitstempeldienst werden angefragt, und die Kopie wird " +
+      "geschrieben...",
+    nothingSigned:
+      "Dieses Dokument hat keine Signatur, also gibt es nichts, wofür Langzeitvalidierungsdaten " +
+      "hinzugefügt werden könnten.",
+    help:
+      "tpdf fragt die Zertifizierungsstellen, die in den Zertifikaten der Signaturen genannt sind, " +
+      "ob diese Zertifikate widerrufen sind, fügt ihre Antworten dem Dokument hinzu und bittet den " +
+      "gewählten Zeitstempeldienst um einen Zeitstempel über das Ganze. Die " +
+      "Zertifizierungsstellen erhalten die Seriennummern der Zertifikate, der Zeitstempeldienst " +
+      "einen Hash — nichts vom Dokument. Das Ergebnis wird als neue Datei gespeichert; das " +
+      "Original bleibt unverändert. Entweder wird jede Signatur im Dokument erfasst, oder es wird " +
+      "nichts geschrieben. Das funktioniert nur, solange die beteiligten Zertifikate noch gültig " +
+      "sind: Ist eines abgelaufen, gibt seine Zertifizierungsstelle keine Auskunft mehr darüber.",
+    choose: "Wähle den Zeitstempeldienst, der angefragt werden soll.",
+    title: "Langzeitvalidierungsdaten hinzufügen",
+    authority: "Zeitstempeldienst",
+    another: "Anderer Zeitstempeldienst…",
+    address: "Adresse des Zeitstempeldienstes",
+    cancel: "Abbrechen",
+    add: "Hinzufügen…",
+  },
+});
+
+/**
+ * The refusal for a document with edits nobody has saved. Mirrors
+ * `commands::validation::refuse_unsaved`, which stays English until the
+ * worker's messages are translated.
+ */
+export const UNSAVED = TEXT().unsaved;
 
 /** What the window says while the authorities are asked and the copy is written. */
-export const WAITING =
-  "Asking the certificate authorities and the timestamp authority, and writing the copy...";
+export const WAITING = TEXT().waiting;
 
 /** What a document nobody has signed is told, before anything is asked. */
-export const NOTHING_SIGNED =
-  "This document has no signature, so there is nothing to add long-term validation data for.";
+export const NOTHING_SIGNED = TEXT().nothingSigned;
 
 /**
  * Where the authority chosen for this lives. **Its own key**, not a
@@ -146,18 +203,10 @@ export async function addValidationData(shell: ValidationShell): Promise<string 
 }
 
 /** What the dialog says before the reader chooses. */
-export const HELP =
-  "tpdf asks the certificate authorities named in the signatures' certificates whether " +
-  "those certificates are revoked, adds their answers to the document, and asks the " +
-  "timestamp authority you choose for a timestamp over the whole. The certificate " +
-  "authorities are sent the certificates' serial numbers, and the timestamp authority a " +
-  "hash — nothing of the document. The result is saved as a new file; the original is not " +
-  "changed. Every signature in the document is covered, or nothing is written. It works " +
-  "while the certificates involved are still valid: once one has expired, its authority " +
-  "no longer answers for it.";
+export const HELP = TEXT().help;
 
 /** What the dialog says when *Add* is pressed with no authority chosen. */
-export const CHOOSE = "Choose the timestamp authority to ask.";
+export const CHOOSE = TEXT().choose;
 
 /**
  * The dialog: which timestamp authority to ask for the archive timestamp.
@@ -172,15 +221,16 @@ export function askAuthority(
   const previous = document.activeElement as HTMLElement | null;
   const dialog = document.createElement("dialog");
   dialog.className = "validation-data-dialog tpdf-dialog";
-  dialog.setAttribute("aria-label", "Add long-term validation data");
+  const said = TEXT();
+  dialog.setAttribute("aria-label", said.title);
   const heading = document.createElement("h2");
-  heading.textContent = "Add long-term validation data";
+  heading.textContent = said.title;
   const help = paragraph("tpdf-dialog-intro", HELP);
   const remembered = readStampChoice(storage, AUTHORITY_KEY);
-  const authority = section("Timestamp authority");
+  const authority = section(said.authority);
   const list = document.createElement("div");
   list.setAttribute("role", "radiogroup");
-  list.setAttribute("aria-label", "Timestamp authority");
+  list.setAttribute("aria-label", said.authority);
   list.className = "tpdf-dialog-stack";
   const entry = (value: string, text: string) => {
     const radio = document.createElement("input");
@@ -193,13 +243,13 @@ export function askAuthority(
   };
   const radios = [
     ...SERVERS.map((server) => entry(server.name, server.label)),
-    entry("other", "Another authority\u2026"),
+    entry("other", said.another),
   ];
   const otherUrl = document.createElement("input");
   otherUrl.type = "url";
   otherUrl.value = remembered.url;
   otherUrl.placeholder = "https://";
-  otherUrl.setAttribute("aria-label", "Timestamp authority address");
+  otherUrl.setAttribute("aria-label", said.address);
   // The address shows only while *another authority* is chosen. The alert
   // stays outside it: it also says that no authority is chosen at all.
   const syncOther = () => {
@@ -210,8 +260,8 @@ export function askAuthority(
   const problem = document.createElement("p");
   problem.setAttribute("role", "alert");
   authority.append(list, otherUrl, problem);
-  const cancel = button("Cancel");
-  const next = button("Add…", true);
+  const cancel = button(said.cancel);
+  const next = button(said.add, true);
   dialog.append(heading, help, authority, footer(cancel, next));
   document.body.append(dialog);
   return new Promise((resolve) => {

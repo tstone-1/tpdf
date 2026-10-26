@@ -2,6 +2,48 @@ import type { EditState } from "./edits";
 import type { Anchor } from "./popup";
 import type { FieldEdited, FieldProps } from "./savedfields";
 import { isEmptySignature } from "./signfield";
+import { catalog } from "./i18n";
+
+const TEXT = catalog({
+  "en-US": {
+    answerMismatch: "The answer does not match this field.",
+    chooseNoDuplicates: "Choose available options without duplicates.",
+    chooseOne: "Choose one option.",
+    chooseOneRadio: "Choose one radio button.",
+    chooseAnOption: "Choose an option",
+    answerTooBig: "A form answer is limited to 16 KB.",
+    answerTooLong: "This answer exceeds the field's maximum length.",
+    westernOnly: "This field supports Western European characters only.",
+    oneLine: "This field accepts one line only.",
+    sign: "Sign",
+    signField: (name: string) => `Sign ${name}`,
+    theSignatureField: "the signature field",
+    signWithCertificate: (name: string) => `Sign ${name} with a certificate`,
+    formField: "Form field",
+    saveToChoose: "Save the document to choose this.",
+    answerRefused: "This answer was refused. Correct it before saving or switching documents.",
+    noFormFields: "This document has no supported editable form fields.",
+  },
+  "de-DE": {
+    answerMismatch: "Die Antwort passt nicht zu diesem Feld.",
+    chooseNoDuplicates: "Wähle verfügbare Optionen ohne Doppelungen.",
+    chooseOne: "Wähle eine Option.",
+    chooseOneRadio: "Wähle ein Optionsfeld.",
+    chooseAnOption: "Option wählen",
+    answerTooBig: "Eine Formularantwort ist auf 16 KB begrenzt.",
+    answerTooLong: "Diese Antwort überschreitet die maximale Länge des Felds.",
+    westernOnly: "Dieses Feld unterstützt nur westeuropäische Zeichen.",
+    oneLine: "Dieses Feld nimmt nur eine Zeile auf.",
+    sign: "Signieren",
+    signField: (name: string) => `${name} signieren`,
+    theSignatureField: "das Signaturfeld",
+    signWithCertificate: (name: string) => `${name} mit einem Zertifikat signieren`,
+    formField: "Formularfeld",
+    saveToChoose: "Speichere das Dokument, um dies zu wählen.",
+    answerRefused: "Diese Antwort wurde abgelehnt. Korrigiere sie, bevor du speicherst oder das Dokument wechselst.",
+    noFormFields: "Dieses Dokument hat keine unterstützten bearbeitbaren Formularfelder.",
+  },
+});
 
 /** Option indices preserve choices whose export values happen to be equal. */
 export type FormValue = string | boolean | number[];
@@ -145,20 +187,20 @@ export function answerError(widget: FormWidget, value: FormValue): string | null
   if (widget.reason) return widget.reason;
   const control = widget.control;
   if (Array.isArray(value)) {
-    if (control.kind !== "radio" && control.kind !== "choice") return "The answer does not match this field.";
+    if (control.kind !== "radio" && control.kind !== "choice") return TEXT().answerMismatch;
     const length = control.kind === "radio" ? control.states.length : control.options.length;
-    if (value.some((i, at) => !Number.isInteger(i) || i < 0 || i >= length || (at > 0 && i <= value[at - 1]!))) return "Choose available options without duplicates.";
-    if ((control.kind === "radio" || !control.multiple || control.combo) && value.length > 1) return "Choose one option.";
-    if (control.kind === "radio" && control.no_toggle_off && !value.length) return "Choose one radio button.";
+    if (value.some((i, at) => !Number.isInteger(i) || i < 0 || i >= length || (at > 0 && i <= value[at - 1]!))) return TEXT().chooseNoDuplicates;
+    if ((control.kind === "radio" || !control.multiple || control.combo) && value.length > 1) return TEXT().chooseOne;
+    if (control.kind === "radio" && control.no_toggle_off && !value.length) return TEXT().chooseOneRadio;
     return null;
   }
-  if (control.kind === "radio" || (control.kind === "choice" && (!control.editable || typeof value !== "string")) || control.kind === "unsupported") return "The answer does not match this field.";
-  if (control.kind !== "choice" && typeof value !== typeof widget.value) return "The answer does not match this field.";
+  if (control.kind === "radio" || (control.kind === "choice" && (!control.editable || typeof value !== "string")) || control.kind === "unsupported") return TEXT().answerMismatch;
+  if (control.kind !== "choice" && typeof value !== typeof widget.value) return TEXT().answerMismatch;
   if (typeof value === "boolean") return null;
-  if (new TextEncoder().encode(value).length > 16384) return "A form answer is limited to 16 KB.";
-  if (widget.max_length !== null && [...value].length > widget.max_length) return "This answer exceeds the field's maximum length.";
-  if (!/^[\x20-\x7e\xa0-\xff\n]*$/.test(value)) return "This field supports Western European characters only.";
-  if (!widget.multiline && /[\r\n]/.test(value)) return "This field accepts one line only.";
+  if (new TextEncoder().encode(value).length > 16384) return TEXT().answerTooBig;
+  if (widget.max_length !== null && [...value].length > widget.max_length) return TEXT().answerTooLong;
+  if (!/^[\x20-\x7e\xa0-\xff\n]*$/.test(value)) return TEXT().westernOnly;
+  if (!widget.multiline && /[\r\n]/.test(value)) return TEXT().oneLine;
   return null;
 }
 
@@ -257,9 +299,9 @@ export class FormLayer {
         const button = document.createElement("button");
         button.type = "button";
         button.className = "form-sign";
-        button.textContent = "Sign";
-        button.setAttribute("aria-label", `Sign ${widget.name || "the signature field"}`);
-        button.title = widget.tooltip || `Sign ${widget.name} with a certificate`;
+        button.textContent = TEXT().sign;
+        button.setAttribute("aria-label", TEXT().signField(widget.name || TEXT().theSignatureField));
+        button.title = widget.tooltip || TEXT().signWithCertificate(widget.name);
         button.style.cssText = "position:absolute;box-sizing:border-box;margin:0;pointer-events:auto;cursor:pointer;border:1px dashed #4674be;border-radius:1px;background:#4674be1f;color:#27508f;font:12px Helvetica,Arial,sans-serif;min-width:0;min-height:0;overflow:hidden";
         button.addEventListener("pointerdown", (event) => event.stopPropagation());
         button.addEventListener("click", () => { if (!this.disposed) this.sign?.(widget); });
@@ -284,7 +326,7 @@ export class FormLayer {
           input.setAttribute("list", list.id); this.node.append(list);
         }
       }
-      input.setAttribute("aria-label", widget.name || "Form field");
+      input.setAttribute("aria-label", widget.name || TEXT().formField);
       input.dataset.field = fieldKey(widget.object);
       input.autocomplete = "off";
       input.spellcheck = false;
@@ -354,7 +396,7 @@ export class FormLayer {
     if (control.input instanceof HTMLSelectElement) {
       if (!kind.combo) control.input.size = Math.max(2, Math.min(8, choices.length));
       if (kind.combo) {
-        const empty = document.createElement("option"); empty.value = ""; empty.textContent = "Choose an option"; control.list.append(empty);
+        const empty = document.createElement("option"); empty.value = ""; empty.textContent = TEXT().chooseAnOption; control.list.append(empty);
       }
     }
     for (const choice of choices) {
@@ -362,7 +404,7 @@ export class FormLayer {
       if (control.input instanceof HTMLSelectElement) {
         item.textContent = choice.label;
         item.value = choice.index === null ? "new" : String(choice.index);
-        if (choice.index === null) { item.disabled = true; item.title = "Save the document to choose this."; }
+        if (choice.index === null) { item.disabled = true; item.title = TEXT().saveToChoose; }
       } else item.value = choice.label;
       control.list.append(item);
     }
@@ -417,7 +459,7 @@ export class FormLayer {
       if (this.disposed) return;
       if (!control.pending && !sameAnswer(fieldValue(control.widget, this.changes), value)) {
         control.accepted = previous;
-        control.input.setCustomValidity("This answer was refused. Correct it before saving or switching documents.");
+        control.input.setCustomValidity(TEXT().answerRefused);
       }
       this.update({ forms: [...this.changes], fields: [...this.fields] } as EditState);
     }).finally(() => { this.pending.delete(task); });
@@ -487,7 +529,7 @@ export class FormLayer {
   /** Palette access also brings an off-screen field into view. */
   focus(): void {
     const first = this.controls[0];
-    if (!first) { this.error("This document has no supported editable form fields."); return; }
+    if (!first) { this.error(TEXT().noFormFields); return; }
     this.reveal(first.widget); this.layout(); first.input.focus({ preventScroll: true });
   }
 

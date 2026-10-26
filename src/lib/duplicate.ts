@@ -18,6 +18,7 @@
 
 import type { EditState } from "./edits";
 import { placing } from "./fieldnames";
+import { catalog } from "./i18n";
 import type { Form } from "./forms";
 import type { FieldKind, MarkKind, PageId, PlacedField } from "./pages";
 import { isSaved, properties, savedField } from "./savedfields";
@@ -37,6 +38,26 @@ export interface Copy {
 
 type State = Pick<EditState, "marks" | "fields" | "pages">;
 
+/** Why a mark is not copied. None of these may equal a `FieldKind`. */
+const TEXT = catalog({
+  "en-US": {
+    listOrEditable: "A list, or a dropdown that takes text of its own, cannot be duplicated yet",
+    kindNot: "This kind of field cannot be duplicated",
+    fieldGone: "That field is no longer in the document",
+    radioInGroup: "A radio button inside a group of fields cannot be duplicated yet",
+    markGone: "That mark is no longer on the page",
+    onlyThese: "Only form fields, boxes and ellipses are duplicated",
+  },
+  "de-DE": {
+    listOrEditable: "Eine Liste oder eine Auswahlliste mit eigener Texteingabe kann noch nicht dupliziert werden",
+    kindNot: "Diese Art von Feld kann nicht dupliziert werden",
+    fieldGone: "Dieses Feld ist nicht mehr im Dokument",
+    radioInGroup: "Ein Optionsfeld innerhalb einer Feldgruppe kann noch nicht dupliziert werden",
+    markGone: "Diese Markierung ist nicht mehr auf der Seite",
+    onlyThese: "Nur Formularfelder, Rechtecke und Ellipsen werden dupliziert",
+  },
+});
+
 /** The kind of placed field a field of the file is copied as, or why it is not copied. */
 function kindOf(control: Form["widgets"][number]["control"], multiline: boolean): FieldKind | string {
   switch (control.kind) {
@@ -49,12 +70,12 @@ function kindOf(control: Form["widgets"][number]["control"], multiline: boolean)
     case "choice":
       return control.combo && !control.editable && !control.multiple
         ? "dropdown"
-        : "A list, or a dropdown that takes text of its own, cannot be duplicated yet";
+        : TEXT().listOrEditable;
     case "signature":
       // A copy is a new place for a signature, whether or not this one is signed.
       return "signature";
     default:
-      return "This kind of field cannot be duplicated";
+      return TEXT().kindNot;
   }
 }
 
@@ -89,10 +110,10 @@ export function copyOf(
   const base = { quads: [...rect], color: [0.1, 0.35, 0.75] as [number, number, number], width: 1 };
   if (isSaved(id)) {
     const found = form ? savedField(form, state, id) : null;
-    if (!form || !found) return "That field is no longer in the document";
+    if (!form || !found) return TEXT().fieldGone;
     const kind = kindOf(found.widget.control, found.widget.multiline);
     if (kind !== "text" && kind !== "multiline" && kind !== "checkbox" && kind !== "dropdown" && kind !== "radio" && kind !== "signature") return kind;
-    if (kind === "radio" && found.widget.name.includes(".")) return "A radio button inside a group of fields cannot be duplicated yet";
+    if (kind === "radio" && found.widget.name.includes(".")) return TEXT().radioInGroup;
     const now = properties(form, state, id);
     const made = placing(
       { kind, options: kind === "dropdown" ? now?.options ?? [] : [], group: found.widget.name },
@@ -101,10 +122,10 @@ export function copyOf(
     return { ...base, kind: "field", page: found.page, note: made.name, field: { ...made.field, ...carried(now) } };
   }
   const mark = state.marks.find((one) => one.id === id);
-  if (!mark) return "That mark is no longer on the page";
+  if (!mark) return TEXT().markGone;
   const copied = { ...base, page: mark.page, color: mark.color, width: mark.width };
   if (mark.kind === "square" || mark.kind === "ellipse") return { ...copied, kind: mark.kind, note: mark.note };
-  if (mark.kind !== "field" || !mark.field) return "Only form fields, boxes and ellipses are duplicated";
+  if (mark.kind !== "field" || !mark.field) return TEXT().onlyThese;
   const made = placing(
     { kind: mark.field.kind, options: mark.field.kind === "dropdown" ? mark.field.options ?? [] : [], group: mark.note },
     mark.field.border, formNames, state.marks, form,

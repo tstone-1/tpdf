@@ -17,6 +17,7 @@ import { PALETTE } from "../markcolors";
 import { NIBS } from "../marknibs";
 import { PAGE_SIZE_NAMES } from "../pagesizes";
 import { CommandRegistry } from "../commands";
+import { UI_LOCALES } from "../i18n";
 import type { DocumentInfo } from "../ipc";
 import { Palette } from "../palette";
 import { isLinux } from "../keys";
@@ -385,6 +386,8 @@ export async function appCommandChecks(
     toggleSyncScrolling: () => fired.push("toggleSyncScrolling"),
     restoreTabs: () => false,
     setRestoreTabs: (restore) => fired.push(`setRestoreTabs:${restore}`),
+    languageChoice: () => "system",
+    setLanguageChoice: (choice) => fired.push(`setLanguageChoice:${choice}`),
     tabsToReopen: () => 0,
     reopenLastTabs: () => fired.push("reopenLastTabs"),
     recentDocuments: () => 0,
@@ -1472,6 +1475,15 @@ export async function appCommandChecks(
       ...shell(`stamp:${name}`),
       read: () => fired.join(","),
     })),
+    // Every language, for the stamps' reason: one command per locale, all
+    // calling one action with an argument. Built from `UI_LOCALES` so a locale
+    // added there and unclassified here reddens the sweep. The fake keeps
+    // nothing, so the check's own language does not change.
+    ...UI_LOCALES.map((locale) => ({
+      id: `app.language.${locale}`,
+      ...shell(`setLanguageChoice:${locale}`),
+      read: () => fired.join(","),
+    })),
     {
       // The two other kinds, aimed separately. One action taking an argument,
       // which is the shape this file's own note about `movePage` warns about:
@@ -1878,6 +1890,8 @@ export async function appCommandChecks(
     // It would change which application opens PDFs on the machine running the
     // check. The sentence is `defaultapp.rs`'s test; the wiring is `appcommands.test.ts`.
     "app.makeDefaultPdfApp": "it changes the machine's default application for PDFs",
+    // The fake's choice is already "system", so the command is withheld here.
+    "app.language.system": "withheld while the choice is already the system's; appcommands.test.ts drives it",
     // Both change which program Explorer loads for every PDF the user looks
     // at. The registry logic is `explorer.rs`'s tests over a map; the question
     // and the guards are `explorerstate.test.ts`; Explorer itself is the

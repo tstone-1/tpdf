@@ -20,6 +20,63 @@
  * they are handled.
  */
 
+import { catalog, UI_LOCALE, type UiLocale } from "./i18n";
+
+/**
+ * The words a label is spelled with. Display only: {@link matches} and
+ * {@link accelerator} read `KeyboardEvent.key`/`code` values from
+ * {@link BINDINGS} and never these, so a German label cannot move a chord.
+ */
+const TEXT = catalog({
+  "en-US": {
+    ctrl: "Ctrl",
+    alt: "Alt",
+    shift: "Shift",
+    home: "Home",
+    end: "End",
+    delete: "Del",
+    enter: "Enter",
+    space: "Space",
+    backspace: "Backspace",
+    pageUp: "Page Up",
+    pageDown: "Page Down",
+    insert: "Insert",
+    showInFinder: "Show in Finder",
+    showInFolder: "Show in Folder",
+    showInExplorer: "Show in Explorer",
+  },
+  "de-DE": {
+    ctrl: "Strg",
+    alt: "Alt",
+    shift: "Umschalt",
+    home: "Pos1",
+    end: "Ende",
+    delete: "Entf",
+    enter: "Eingabe",
+    space: "Leertaste",
+    backspace: "Rücktaste",
+    pageUp: "Bild auf",
+    pageDown: "Bild ab",
+    insert: "Einfg",
+    showInFinder: "Im Finder zeigen",
+    showInFolder: "Im Ordner zeigen",
+    showInExplorer: "Im Explorer zeigen",
+  },
+});
+
+/** `KeyboardEvent.key` values whose label is a word, and which word. */
+const KEY_WORDS: Readonly<Record<string, keyof ReturnType<typeof TEXT>>> = {
+  Home: "home",
+  End: "end",
+  Delete: "delete",
+  Enter: "enter",
+  " ": "space",
+  Backspace: "backspace",
+  PageUp: "pageUp",
+  PageDown: "pageDown",
+  Insert: "insert",
+};
+
 /** One advertised binding. */
 export interface Binding {
   /**
@@ -254,7 +311,8 @@ export type BoundCommand = keyof typeof BINDINGS;
  * and nothing could go red, because no binding held both and `label` accepted
  * only ids that exist.
  */
-export function render(binding: Binding): string {
+export function render(binding: Binding, locale: UiLocale = UI_LOCALE): string {
+  const text = TEXT(locale);
   const modified = Boolean(binding.accel || binding.ctrl || binding.shift || binding.alt);
   // What this keyboard prints in that position, when the binding names one and
   // the platform has answered. Before the answer arrives, and on a platform that
@@ -262,10 +320,14 @@ export function render(binding: Binding): string {
   // label the palette showed before any of this existed.
   const printed = binding.code === undefined ? undefined : PRINTED[binding.code];
   const first = printed ?? binding.keys[0] ?? "";
+  // A named key (Home, End...) is shown in the reader's language; the binding
+  // still matches the `KeyboardEvent.key` value.
+  const word = printed === undefined ? KEY_WORDS[first] : undefined;
   // A letter in a chord is capitalised and a bare one is not, which is what
   // every menu on this platform does: ⌘O, but `n` for the unmodified key.
   const key =
-    binding.shown ?? (modified && first.length === 1 ? first.toUpperCase() : first);
+    binding.shown ??
+    (word !== undefined ? text[word] : modified && first.length === 1 ? first.toUpperCase() : first);
   if (!MAC) {
     // Windows order and Windows spelling: Ctrl, Alt, Shift, joined by `+`. Not
     // a cosmetic difference --- this function renders every shortcut a reader
@@ -278,9 +340,9 @@ export function render(binding: Binding): string {
     // `Binding.accel` has said "⌘ on macOS, Ctrl elsewhere" since it was
     // written. The data model knew; only the renderer did not.
     const parts = [];
-    if (binding.accel || binding.ctrl) parts.push("Ctrl");
-    if (binding.alt) parts.push("Alt");
-    if (binding.shift) parts.push("Shift");
+    if (binding.accel || binding.ctrl) parts.push(text.ctrl);
+    if (binding.alt) parts.push(text.alt);
+    if (binding.shift) parts.push(text.shift);
     parts.push(key);
     return parts.join("+");
   }
@@ -359,10 +421,11 @@ let LINUX = detectLinux();
  * file manager to name, and until 2026-10-15 it was offered "Show in
  * Explorer", the Windows name, because the choice was Mac or not.
  */
-export function revealTitle(): string {
-  if (isMac()) return "Show in Finder";
-  if (isLinux()) return "Show in Folder";
-  return "Show in Explorer";
+export function revealTitle(locale: UiLocale = UI_LOCALE): string {
+  const text = TEXT(locale);
+  if (isMac()) return text.showInFinder;
+  if (isLinux()) return text.showInFolder;
+  return text.showInExplorer;
 }
 
 function detectLinux(): boolean {
@@ -407,8 +470,8 @@ export function setPrintedKeys(printed: Record<string, string>): void {
 }
 
 /** The string the palette shows for a bound command. */
-export function label(id: BoundCommand): string {
-  return render(BINDINGS[id]);
+export function label(id: BoundCommand, locale: UiLocale = UI_LOCALE): string {
+  return render(BINDINGS[id], locale);
 }
 
 /**

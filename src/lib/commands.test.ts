@@ -41,6 +41,13 @@ function titles(ranked: ReturnType<typeof rank>): string[] {
 }
 
 describe("fuzzyMatch", () => {
+  it("does not start a word after a letter outside a-z", () => {
+    // "Größe" is one word: the e after the ß is inside it, as the e after
+    // the s of "Base" is. A German title must not score as many words.
+    expect(fuzzyMatch("e", "Größe")?.score).toBe(fuzzyMatch("e", "Grose")?.score);
+    expect(fuzzyMatch("l", "Seite löschen")?.score).toBeGreaterThan(fuzzyMatch("l", "Seiteblöschen")?.score ?? 0);
+  });
+
   it("matches characters that are not adjacent", () => {
     const hit = fuzzyMatch("zi", "Zoom in");
     expect(hit).not.toBeNull();

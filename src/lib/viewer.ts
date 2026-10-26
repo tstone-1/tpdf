@@ -1,5 +1,6 @@
 import { SearchRecovery } from "./searchrecovery";
 import { call } from "./ipc";
+import { catalog } from "./i18n";
 import { changedTextPages, type TextChange } from "./textedit";
 import { redrawn, type FieldEdited } from "./savedfields";
 /**
@@ -182,6 +183,40 @@ import {
   type FitMode,
   type Fitted,
 } from "./zoom";
+
+/** What the viewer says to the reader through `onError` and thrown errors. */
+const TEXT = catalog({
+  "en-US": {
+    noLinks: "This document has no links.",
+    noFurtherLinks: "No further links.",
+    noEarlierLinks: "No earlier links.",
+    nothingMarked: "You have not marked anything in this document.",
+    noFurtherMarks: "No further marks.",
+    noEarlierMarks: "No earlier marks.",
+    nothingToRecognise: "This page has no saved content to recognize.",
+    pageChanged: "The page changed during recognition. Try again.",
+    noWordsRecognised: "No words could be recognized on this page.",
+    notCopied: "Some of the selected pages' text could not be read, so nothing was copied.",
+    clipboard: (error: string) => `Could not write to the clipboard: ${error}`,
+  },
+  "en-GB": {
+    nothingToRecognise: "This page has no saved content to recognise.",
+    noWordsRecognised: "No words could be recognised on this page.",
+  },
+  "de-DE": {
+    noLinks: "Dieses Dokument enthält keine Links.",
+    noFurtherLinks: "Keine weiteren Links.",
+    noEarlierLinks: "Keine vorherigen Links.",
+    nothingMarked: "Du hast in diesem Dokument nichts markiert.",
+    noFurtherMarks: "Keine weiteren Markierungen.",
+    noEarlierMarks: "Keine vorherigen Markierungen.",
+    nothingToRecognise: "Diese Seite hat keinen gespeicherten Inhalt, der erkannt werden kann.",
+    pageChanged: "Die Seite hat sich während der Texterkennung geändert. Versuche es erneut.",
+    noWordsRecognised: "Auf dieser Seite konnten keine Wörter erkannt werden.",
+    notCopied: "Der Text einiger ausgewählter Seiten konnte nicht gelesen werden, daher wurde nichts kopiert.",
+    clipboard: (error: string) => `Konnte nicht in die Zwischenablage schreiben: ${error}`,
+  },
+});
 
 /** What a drag extends the selection by. */
 export type SelectUnit = "char" | "word" | "line";
@@ -4045,14 +4080,12 @@ export class Viewer {
    */
   stepLink(direction: 1 | -1): boolean {
     if (this.linkWalk.length === 0) {
-      this.opts.onError?.("This document has no links.");
+      this.opts.onError?.(TEXT().noLinks);
       return false;
     }
     const next = stepAlong(this.linkWalk, this.focusedLink, this.position, direction);
     if (!next) {
-      this.opts.onError?.(
-        direction === 1 ? "No further links." : "No earlier links.",
-      );
+      this.opts.onError?.(direction === 1 ? TEXT().noFurtherLinks : TEXT().noEarlierLinks);
       return false;
     }
 
@@ -6084,15 +6117,13 @@ export class Viewer {
   stepMark(direction: 1 | -1): boolean {
     const walk = markWalk(this.marks, this.pages);
     if (walk.length === 0) {
-      this.opts.onError?.("You have not marked anything in this document.");
+      this.opts.onError?.(TEXT().nothingMarked);
       return false;
     }
     const from = walk.find((item) => item.id === this.markNote.openId) ?? null;
     const next = stepAlong(walk, from, this.position, direction);
     if (!next) {
-      this.opts.onError?.(
-        direction === 1 ? "No further marks." : "No earlier marks.",
-      );
+      this.opts.onError?.(direction === 1 ? TEXT().noFurtherMarks : TEXT().noEarlierMarks);
       return false;
     }
     this.showMark(next.id, false);
@@ -6231,10 +6262,10 @@ export class Viewer {
   async recognisePage(slot: number, language: string | null): Promise<number> {
     const pages = this.pages;
     const at = this.textAt(slot);
-    if (!at) throw new Error("This page has no saved content to recognise.");
+    if (!at) throw new Error(TEXT().nothingToRecognise);
     const text = await call("recognise_page", { doc: at.doc, page: at.page, language });
-    if (this.life.ended || this.pages !== pages) throw new Error("The page changed during recognition. Try again.");
-    if (!text.codes.length) throw new Error("No words could be recognised on this page.");
+    if (this.life.ended || this.pages !== pages) throw new Error(TEXT().pageChanged);
+    if (!text.codes.length) throw new Error(TEXT().noWordsRecognised);
     this.recovery.put(at.doc, at.page, text);
     at.cache.invalidatePage(at.page);
     this.clearSelection();
@@ -6734,9 +6765,7 @@ export class Viewer {
 
     const text = await this.selectionText(selection);
     if (text === null) {
-      this.opts.onError?.(
-        "Some of the selected pages' text could not be read, so nothing was copied.",
-      );
+      this.opts.onError?.(TEXT().notCopied);
       return null;
     }
     if (!text) return null;
@@ -6748,7 +6777,7 @@ export class Viewer {
       // know the clipboard does not hold what they asked for. The webview can
       // reject this --- permission, or a window that is not focused --- and
       // every caller here voids the promise, so nothing else would ever see it.
-      this.opts.onError?.(`Could not write to the clipboard: ${String(e)}`);
+      this.opts.onError?.(TEXT().clipboard(String(e)));
       return null;
     }
     return text;

@@ -6,7 +6,19 @@
  * `src-tauri/src/imagepages.rs`, in a worker.
  */
 
+import { catalog } from "./i18n";
 import { basename } from "./paths";
+
+const TEXT = catalog({
+  "en-US": {
+    saved: (name: string, pages: number) =>
+      `Saved ${name}: ${pages === 1 ? "1 page" : `${pages} pages`}, one for each picture.`,
+  },
+  "de-DE": {
+    saved: (name: string, pages: number) =>
+      `${name} gespeichert: ${pages === 1 ? "1 Seite" : `${pages} Seiten`}, eine für jedes Bild.`,
+  },
+});
 
 /** What `write_images` reports. `Made` in `save.rs`. */
 export interface Made {
@@ -33,6 +45,5 @@ export function suggestedName(first: string): string {
  * and the count is the evidence that every picture went in.
  */
 export function afterPictures(made: Made, path: string): string {
-  const pages = made.pages === 1 ? "1 page" : `${made.pages} pages`;
-  return `Saved ${basename(path)}: ${pages}, one for each picture.`;
+  return TEXT().saved(basename(path), made.pages);
 }

@@ -13,7 +13,7 @@
  * most readers cannot answer.
  */
 
-import { message } from "./i18n";
+import { catalog, message, UI_LOCALE } from "./i18n";
 
 /** What the machine offers. `Offered` in `commands/ocr.rs`. */
 export interface Offered {
@@ -23,27 +23,74 @@ export interface Offered {
   installable: boolean;
 }
 
+const TEXT = catalog({
+  "en-US": {
+    automatic: "Automatic",
+    chooseAgain: (command: string) => `Choose another with "${command}".`,
+    installMore: "More can be installed in Windows Settings, under Time & language, then Language & region.",
+    andMore: (shown: string, rest: number) => `${shown} and ${rest} more`,
+    offersNone: "This computer offers no language to choose.",
+    offers: (languages: string) => `This computer offers ${languages}.`,
+    typeLanguage: (automatic: string, offering: string) => `Type a language, or ${automatic}. ${offering}`,
+    several: (typed: string, labels: string) => `Several begin with "${typed}": ${labels}`,
+    noneBegins: (typed: string, offering: string) => `No language here begins with "${typed}". ${offering}`,
+    placeholder: (automatic: string, current: string) =>
+      `Language, such as de-DE or German, or ${automatic} (now: ${current})`,
+    letChoose: "Let the recognizer choose the language",
+    chosenAutomatic: "Text will be recognized in the language the recognizer chooses.",
+    chosen: (language: string) => `Text will be recognized as ${language}.`,
+    fellBack: (language: string, chooseAgain: string) =>
+      `${language} is not available on this computer, so the recognizer chose the language itself. ${chooseAgain}`,
+  },
+  "en-GB": {
+    letChoose: "Let the recogniser choose the language",
+    chosenAutomatic: "Text will be recognised in the language the recogniser chooses.",
+    chosen: (language: string) => `Text will be recognised as ${language}.`,
+    fellBack: (language: string, chooseAgain: string) =>
+      `${language} is not available on this computer, so the recogniser chose the language itself. ${chooseAgain}`,
+  },
+  "de-DE": {
+    automatic: "Automatisch",
+    chooseAgain: (command: string) => `Wähle mit „${command}“ eine andere.`,
+    installMore:
+      "Weitere Sprachen kannst du in den Windows-Einstellungen unter „Zeit und Sprache“, dann „Sprache und Region“ installieren.",
+    andMore: (shown: string, rest: number) => `${shown} und ${rest} weitere`,
+    offersNone: "Dieser Computer bietet keine Sprache zur Auswahl.",
+    offers: (languages: string) => `Dieser Computer bietet ${languages}.`,
+    typeLanguage: (automatic: string, offering: string) => `Gib eine Sprache ein oder ${automatic}. ${offering}`,
+    several: (typed: string, labels: string) => `Mehrere beginnen mit „${typed}“: ${labels}`,
+    noneBegins: (typed: string, offering: string) => `Keine angebotene Sprache beginnt mit „${typed}“. ${offering}`,
+    placeholder: (automatic: string, current: string) =>
+      `Sprache, etwa de-DE oder Deutsch, oder ${automatic} (jetzt: ${current})`,
+    letChoose: "Die Texterkennung die Sprache wählen lassen",
+    chosenAutomatic: "Text wird in der Sprache erkannt, die die Texterkennung wählt.",
+    chosen: (language: string) => `Text wird als ${language} erkannt.`,
+    fellBack: (language: string, chooseAgain: string) =>
+      `${language} ist auf diesem Computer nicht verfügbar, daher hat die Texterkennung die Sprache selbst gewählt. ${chooseAgain}`,
+  },
+});
+
 /** The word for the engine's own choice, as shown and as typed. */
-export const AUTOMATIC = "Automatic";
+export const AUTOMATIC = TEXT().automatic;
 
 /** Where to go after a language has gone missing. `appcommands.ts` has the title. */
-export const CHOOSE_AGAIN = `Choose another with "${message("recogniseLanguage")}".`;
+export const CHOOSE_AGAIN = TEXT().chooseAgain(message("recogniseLanguage"));
 
 /** Where a Windows reader adds a language. */
-export const INSTALL_MORE =
-  "More can be installed in Windows Settings, under Time & language, then Language & region.";
+export const INSTALL_MORE = TEXT().installMore;
 
 /**
  * `German (Germany)` for `de-DE`, or the tag when it has no name.
  *
- * The name is the webview's, in English like the rest of the window, and not
- * the platform's: one spelling on both systems, and no second list to keep. A
+ * The name is the webview's, in the window's language, and not the
+ * platform's: one spelling on both systems, and no second list to keep. A
  * tag the webview cannot name is shown as it is, which is what Vision's own
- * `vi-VT` gets on some systems.
+ * `vi-VT` gets on some systems. A typed answer is matched against the same
+ * name, so a German window takes `Deutsch` as an English one takes `German`.
  */
 export function nameOf(tag: string): string {
   try {
-    const name = new Intl.DisplayNames(["en"], {
+    const name = new Intl.DisplayNames([UI_LOCALE], {
       type: "language",
       // `English (United States)`, not `American English`: the region reads
       // the same way for every language in the list.
@@ -70,15 +117,13 @@ function some(tags: string[]): string {
   const SHOWN = 12;
   const rest = tags.length - SHOWN;
   const head = tags.slice(0, SHOWN).join(", ");
-  return rest > 0 ? `${head} and ${rest} more` : head;
+  return rest > 0 ? TEXT().andMore(head, rest) : head;
 }
 
 /** What to say about the list itself, after a problem. */
 function offering(offered: Offered): string {
   const said =
-    offered.languages.length === 0
-      ? "This computer offers no language to choose."
-      : `This computer offers ${some(offered.languages)}.`;
+    offered.languages.length === 0 ? TEXT().offersNone : TEXT().offers(some(offered.languages));
   return offered.installable ? `${said} ${INSTALL_MORE}` : said;
 }
 
@@ -95,7 +140,7 @@ function offering(offered: Offered): string {
 export function pick(raw: string, offered: Offered): Picked {
   const typed = raw.trim().toLowerCase();
   if (typed === "") {
-    return { problem: `Type a language, or ${AUTOMATIC.toLowerCase()}. ${offering(offered)}` };
+    return { problem: TEXT().typeLanguage(AUTOMATIC.toLowerCase(), offering(offered)) };
   }
   const choices: { language: string | null; words: string[] }[] = [
     { language: null, words: [AUTOMATIC.toLowerCase()] },
@@ -110,33 +155,28 @@ export function pick(raw: string, offered: Offered): Picked {
   const [only] = begun;
   if (only && begun.length === 1) return { language: only.language };
   if (begun.length > 1) {
-    return {
-      problem: `Several begin with "${raw.trim()}": ${begun
-        .slice(0, 6)
-        .map((choice) => label(choice.language))
-        .join("; ")}${begun.length > 6 ? "; ..." : ""}`,
-    };
+    const labels = begun
+      .slice(0, 6)
+      .map((choice) => label(choice.language))
+      .join("; ");
+    return { problem: TEXT().several(raw.trim(), `${labels}${begun.length > 6 ? "; ..." : ""}`) };
   }
-  return { problem: `No language here begins with "${raw.trim()}". ${offering(offered)}` };
+  return { problem: TEXT().noneBegins(raw.trim(), offering(offered)) };
 }
 
 /** What the palette's input shows before anything is typed. */
 export function placeholder(current: string | null): string {
-  return `Language, such as de-DE or German, or automatic (now: ${label(current)})`;
+  return TEXT().placeholder(AUTOMATIC.toLowerCase(), label(current));
 }
 
 /** What choosing will do, shown while a usable answer is in the input. */
 export function preview(language: string | null): string {
-  return language === null
-    ? "Let the recogniser choose the language"
-    : `${message("recogniseAs")} ${label(language)}`;
+  return language === null ? TEXT().letChoose : `${message("recogniseAs")} ${label(language)}`;
 }
 
 /** What is said once the choice is made. */
 export function chosen(language: string | null): string {
-  return language === null
-    ? "Text will be recognised in the language the recogniser chooses."
-    : `Text will be recognised as ${label(language)}.`;
+  return language === null ? TEXT().chosenAutomatic : TEXT().chosen(label(language));
 }
 
 /**
@@ -147,10 +187,7 @@ export function chosen(language: string | null): string {
  * command chooses another; that command says where one is installed.
  */
 export function fellBack(language: string): string {
-  return (
-    `${label(language)} is not available on this computer, ` +
-    `so the recogniser chose the language itself. ${CHOOSE_AGAIN}`
-  );
+  return TEXT().fellBack(label(language), CHOOSE_AGAIN);
 }
 
 /**

@@ -18,6 +18,7 @@
  * painted on.
  */
 
+import { catalog } from "./i18n";
 import type { PageText } from "./text";
 
 /** One page's characters, as `compare_texts` takes them. `PageCodes` in `compare.rs`. */
@@ -82,24 +83,108 @@ export interface Compared {
   withoutText: Record<Side, number>;
 }
 
+/** A count as the window writes it: `1,234` in English, `1.234` in German. */
+const count = (n: number, locale: string) => n.toLocaleString(locale);
+
+const TEXT = catalog({
+  "en-US": {
+    starting: "Reading both documents...",
+    comparing: "Comparing the words...",
+    notCompared:
+      "Not compared yet. “Compare with...” lists what changed in the words between " +
+      "this document and another open one.",
+    textOnly: "Only the words were compared. Pictures, drawings, colors, fonts and the position of text were not.",
+    outOfDate: "One of the documents has changed since it was compared. Compare them again to see what differs now.",
+    noText: (name: string) =>
+      `${name}: none of its pages has text, so there are no words to compare. A scan has to be recognized first.`,
+    nothingCompared: "Neither document has any text, so nothing was compared.",
+    sameAsFarAsRead:
+      "Incomplete: no change in the words that were read, but some pages have no text and were not compared.",
+    sameWords: "The two documents have the same words.",
+    changes: (changes: number, removed: number, added: number) =>
+      `${count(changes, "en-US")} ${changes === 1 ? "change" : "changes"}: ` +
+      `${count(removed, "en-US")} ${removed === 1 ? "word" : "words"} removed and ` +
+      `${count(added, "en-US")} ${added === 1 ? "word" : "words"} added.`,
+    fromTo: (left: string, right: string) => `From ${left}, in red, to ${right}, in green.`,
+    showing: (rows: number, total: number) => `Showing the first ${count(rows, "en-US")} of ${count(total, "en-US")}.`,
+    unaligned: (passages: number) =>
+      `${count(passages, "en-US")} ${passages === 1 ? "passage was" : "passages were"} too different to match word ` +
+      "by word, and each is listed as one replacement.",
+    pagesWithoutText: (name: string, pages: number) =>
+      `${name} has ${count(pages, "en-US")} ${pages === 1 ? "page" : "pages"} with no text, which ` +
+      `${pages === 1 ? "was" : "were"} not compared. A scanned page has to be recognized first.`,
+    unread: (words: number, name: string, other: string) =>
+      `${count(words, "en-US")} ${words === 1 ? "word" : "words"} of ${name} ${words === 1 ? "stands" : "stand"} where ` +
+      `${other} has a page with no text, and ${words === 1 ? "was" : "were"} not compared: ` +
+      "the change may be on that page.",
+    samePage: (page: number) => `Page ${page}`,
+    movedPage: (left: number, right: number) => `Page ${left} → page ${right}`,
+    removed: "removed",
+    added: "added",
+    replaced: "changed",
+  },
+  "en-GB": {
+    textOnly: "Only the words were compared. Pictures, drawings, colours, fonts and the position of text were not.",
+    noText: (name: string) =>
+      `${name}: none of its pages has text, so there are no words to compare. A scan has to be recognised first.`,
+    pagesWithoutText: (name: string, pages: number) =>
+      `${name} has ${count(pages, "en-GB")} ${pages === 1 ? "page" : "pages"} with no text, which ` +
+      `${pages === 1 ? "was" : "were"} not compared. A scanned page has to be recognised first.`,
+  },
+  "de-DE": {
+    starting: "Beide Dokumente werden gelesen...",
+    comparing: "Die Wörter werden verglichen...",
+    notCompared:
+      "Noch nicht verglichen. „Vergleichen mit...“ listet auf, was sich an den Wörtern zwischen " +
+      "diesem Dokument und einem anderen geöffneten geändert hat.",
+    textOnly: "Verglichen wurden nur die Wörter, nicht Bilder, Zeichnungen, Farben, Schriftarten oder die Position des Texts.",
+    outOfDate:
+      "Eines der Dokumente hat sich seit dem Vergleich geändert. Vergleiche sie erneut, um zu sehen, was sich jetzt unterscheidet.",
+    noText: (name: string) =>
+      `${name}: Keine seiner Seiten enthält Text, daher gibt es keine Wörter zum Vergleichen. Ein Scan muss zuerst erkannt werden.`,
+    nothingCompared: "Keines der Dokumente enthält Text, daher wurde nichts verglichen.",
+    sameAsFarAsRead:
+      "Unvollständig: keine Änderung in den gelesenen Wörtern, aber einige Seiten haben keinen Text und wurden nicht verglichen.",
+    sameWords: "Die beiden Dokumente haben dieselben Wörter.",
+    changes: (changes: number, removed: number, added: number) =>
+      `${count(changes, "de-DE")} ${changes === 1 ? "Änderung" : "Änderungen"}: ` +
+      `${count(removed, "de-DE")} ${removed === 1 ? "Wort" : "Wörter"} entfernt und ` +
+      `${count(added, "de-DE")} ${added === 1 ? "Wort" : "Wörter"} hinzugefügt.`,
+    fromTo: (left: string, right: string) => `Von ${left}, in Rot, zu ${right}, in Grün.`,
+    showing: (rows: number, total: number) => `Die ersten ${count(rows, "de-DE")} von ${count(total, "de-DE")} werden gezeigt.`,
+    unaligned: (passages: number) =>
+      `${count(passages, "de-DE")} ${passages === 1 ? "Abschnitt war" : "Abschnitte waren"} zu verschieden, um Wort ` +
+      "für Wort zugeordnet zu werden, und jeder ist als eine Ersetzung aufgeführt.",
+    pagesWithoutText: (name: string, pages: number) =>
+      `${name} hat ${count(pages, "de-DE")} ${pages === 1 ? "Seite" : "Seiten"} ohne Text, ` +
+      `die nicht verglichen ${pages === 1 ? "wurde" : "wurden"}. ` +
+      "Eine gescannte Seite muss zuerst erkannt werden.",
+    unread: (words: number, name: string, other: string) =>
+      `${count(words, "de-DE")} ${words === 1 ? "Wort" : "Wörter"} von ${name} ${words === 1 ? "steht" : "stehen"} dort, ` +
+      `wo ${other} eine Seite ohne Text hat, und ${words === 1 ? "wurde" : "wurden"} nicht verglichen: ` +
+      "Die Änderung kann auf dieser Seite liegen.",
+    samePage: (page: number) => `Seite ${page}`,
+    movedPage: (left: number, right: number) => `Seite ${left} → Seite ${right}`,
+    removed: "entfernt",
+    added: "hinzugefügt",
+    replaced: "geändert",
+  },
+});
+
 /** The line shown while the pages are being read. */
-export const STARTING = "Reading both documents...";
+export const STARTING = TEXT().starting;
 
 /** The line shown while the words are being compared. */
-export const COMPARING = "Comparing the words...";
+export const COMPARING = TEXT().comparing;
 
 /** What the panel says before a comparison has been made. */
-export const NOT_COMPARED =
-  "Not compared yet. “Compare with...” lists what changed in the words between " +
-  "this document and another open one.";
+export const NOT_COMPARED = TEXT().notCompared;
 
 /** Said under every result, because a result is about the words alone. */
-export const TEXT_ONLY =
-  "Only the words were compared. Pictures, drawings, colors, fonts and the position of text were not.";
+export const TEXT_ONLY = TEXT().textOnly;
 
 /** What the panel says once either document has changed since it was compared. */
-export const OUT_OF_DATE =
-  "One of the documents has changed since it was compared. Compare them again to see what differs now.";
+export const OUT_OF_DATE = TEXT().outOfDate;
 
 /** Rows drawn at once. Beyond this the panel says how many it is not showing. */
 export const MAX_ROWS = 2000;
@@ -138,22 +223,17 @@ export function refusal(
 ): string | null {
   for (const side of ["left", "right"] as const) {
     if (gathered[side].withoutText === gathered[side].pages.length) {
-      return `${names[side]}: none of its pages has text, so there are no words to compare. A scan has to be recognised first.`;
+      return TEXT().noText(names[side]);
     }
   }
   return null;
 }
 
-function plural(count: number, one: string, many: string): string {
-  return `${count.toLocaleString("en-US")} ${count === 1 ? one : many}`;
-}
-
 /** The first line when neither document has a word to compare. */
-export const NOTHING_COMPARED = "Neither document has any text, so nothing was compared.";
+export const NOTHING_COMPARED = TEXT().nothingCompared;
 
 /** The first line when no word changed but some pages were not read. */
-export const SAME_AS_FAR_AS_READ =
-  "Incomplete: no change in the words that were read, but some pages have no text and were not compared.";
+export const SAME_AS_FAR_AS_READ = TEXT().sameAsFarAsRead;
 
 /**
  * What the panel says above its rows, a sentence to a line.
@@ -174,43 +254,29 @@ export function sentences(compared: Compared): string[] {
     } else if (withoutText.left + withoutText.right > 0) {
       said.push(SAME_AS_FAR_AS_READ);
     } else {
-      said.push("The two documents have the same words.");
+      said.push(TEXT().sameWords);
     }
   } else {
-    said.push(
-      `${plural(result.total_changes, "change", "changes")}: ` +
-        `${plural(result.removed_words, "word", "words")} removed and ` +
-        `${plural(result.added_words, "word", "words")} added.`,
-    );
+    said.push(TEXT().changes(result.total_changes, result.removed_words, result.added_words));
   }
-  said.push(`From ${names.left}, in red, to ${names.right}, in green.`);
+  said.push(TEXT().fromTo(names.left, names.right));
   const rows = Math.min(result.changes.length, MAX_ROWS);
   if (result.total_changes > rows) {
-    said.push(`Showing the first ${rows.toLocaleString("en-US")} of ${result.total_changes.toLocaleString("en-US")}.`);
+    said.push(TEXT().showing(rows, result.total_changes));
   }
   if (result.unaligned > 0) {
-    said.push(
-      `${plural(result.unaligned, "passage was", "passages were")} too different to match word ` +
-        "by word, and each is listed as one replacement.",
-    );
+    said.push(TEXT().unaligned(result.unaligned));
   }
   for (const side of ["left", "right"] as const) {
     const empty = withoutText[side];
     if (empty > 0) {
-      said.push(
-        `${names[side]} has ${plural(empty, "page", "pages")} with no text, which ` +
-          `${empty === 1 ? "was" : "were"} not compared. A scanned page has to be recognised first.`,
-      );
+      said.push(TEXT().pagesWithoutText(names[side], empty));
     }
   }
   for (const [side, other] of [["left", "right"], ["right", "left"]] as const) {
     const unread = side === "left" ? result.left_unread : result.right_unread;
     if (unread > 0) {
-      said.push(
-        `${plural(unread, "word", "words")} of ${names[side]} ${unread === 1 ? "stands" : "stand"} where ` +
-          `${names[other]} has a page with no text, and ${unread === 1 ? "was" : "were"} not compared: ` +
-          "the change may be on that page.",
-      );
+      said.push(TEXT().unread(unread, names[side], names[other]));
     }
   }
   said.push(TEXT_ONLY);
@@ -221,9 +287,8 @@ export function sentences(compared: Compared): string[] {
 export function rowLabel(change: Change): string {
   const left = change.left_at.page + 1;
   const right = change.right_at.page + 1;
-  const pages = left === right ? `Page ${left}` : `Page ${left} → page ${right}`;
-  const what = { removed: "removed", added: "added", replaced: "changed" }[change.kind];
-  return `${pages}, ${what}`;
+  const pages = left === right ? TEXT().samePage(left) : TEXT().movedPage(left, right);
+  return `${pages}, ${TEXT()[change.kind]}`;
 }
 
 /**

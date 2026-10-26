@@ -26,6 +26,7 @@
  * plausibly placed and wrong.
  */
 
+import { catalog } from "./i18n";
 import { quarterTurns } from "./pages";
 import { coveredText } from "./reading";
 import { rowLine } from "./rowline";
@@ -160,42 +161,95 @@ export const HIT_SLACK_PT = 3;
 
 /** The word a reader sees for a kind. Ours, in their language, not the file's. */
 export function labelFor(kind: CommentKind): string {
-  switch (kind) {
-    case "text":
-      return "Note";
-    case "freetext":
-      return "Text box";
-    case "highlight":
-      return "Highlight";
-    case "underline":
-      return "Underline";
-    case "squiggly":
-      return "Squiggly";
-    case "strikeout":
-      return "Strikeout";
-    case "square":
-      return "Rectangle";
-    case "circle":
-      return "Ellipse";
-    case "line":
-      return "Line";
-    case "polygon":
-      return "Polygon";
-    case "polyline":
-      return "Polyline";
-    case "ink":
-      return "Drawing";
-    case "stamp":
-      return "Stamp";
-    case "caret":
-      return "Insertion";
-    case "fileattachment":
-      return "Attachment";
-    case "sound":
-      return "Sound";
-    case "redact":
-      return "Redaction";
-  }
+  return KIND_LABELS()[kind];
+}
+
+/** {@link labelFor}'s words, keyed by the kind itself. */
+const KIND_LABELS = catalog({
+  "en-US": {
+    text: "Note",
+    freetext: "Text box",
+    highlight: "Highlight",
+    underline: "Underline",
+    squiggly: "Squiggly",
+    strikeout: "Strikeout",
+    square: "Rectangle",
+    circle: "Ellipse",
+    line: "Line",
+    polygon: "Polygon",
+    polyline: "Polyline",
+    ink: "Drawing",
+    stamp: "Stamp",
+    caret: "Insertion",
+    fileattachment: "Attachment",
+    sound: "Sound",
+    redact: "Redaction",
+  },
+  "de-DE": {
+    text: "Notiz",
+    freetext: "Textkasten",
+    highlight: "Hervorhebung",
+    underline: "Unterstreichung",
+    squiggly: "Wellenlinie",
+    strikeout: "Durchstreichung",
+    square: "Rechteck",
+    circle: "Ellipse",
+    line: "Linie",
+    polygon: "Polygon",
+    polyline: "Linienzug",
+    ink: "Zeichnung",
+    stamp: "Stempel",
+    caret: "Einfügung",
+    fileattachment: "Anhang",
+    sound: "Ton",
+    redact: "Schwärzung",
+  },
+});
+
+const TEXT = catalog({
+  "en-US": {
+    overBudget: "more comments than tpdf will show",
+    crowdedPages: (count: number) => count === 1
+      ? "a page with more comments than tpdf will show"
+      : `${count} pages with more comments than tpdf will show`,
+    clipped: (count: number) => count === 1
+      ? "a comment too long to show whole"
+      : `${count} comments too long to show whole`,
+    unknownKinds: "marks of a kind tpdf does not read",
+    unreadable: "entries that could not be read",
+    cycles: "replies that pointed in a circle",
+    pagesMissed: (count: number) => count === 1
+      ? "a page that could not be read at all"
+      : `${count} pages that could not be read at all`,
+    incomplete: (parts: string) => `This document has ${parts} — what is shown is incomplete.`,
+    and: "and",
+    noComment: (label: string) => `${label}, no comment`,
+    unknownAuthor: "Unknown",
+  },
+  "de-DE": {
+    overBudget: "mehr Kommentare, als tpdf anzeigt",
+    crowdedPages: (count: number) => count === 1
+      ? "eine Seite mit mehr Kommentaren, als tpdf anzeigt"
+      : `${count} Seiten mit mehr Kommentaren, als tpdf anzeigt`,
+    clipped: (count: number) => count === 1
+      ? "einen Kommentar, der zu lang ist, um ganz angezeigt zu werden"
+      : `${count} Kommentare, die zu lang sind, um ganz angezeigt zu werden`,
+    unknownKinds: "Markierungen einer Art, die tpdf nicht liest",
+    unreadable: "Einträge, die nicht gelesen werden konnten",
+    cycles: "Antworten, die im Kreis aufeinander verweisen",
+    pagesMissed: (count: number) => count === 1
+      ? "eine Seite, die gar nicht gelesen werden konnte"
+      : `${count} Seiten, die gar nicht gelesen werden konnten`,
+    incomplete: (parts: string) => `Dieses Dokument hat ${parts}. Die Anzeige ist unvollständig.`,
+    and: "und",
+    noComment: (label: string) => `${label}, kein Kommentar`,
+    unknownAuthor: "Unbekannt",
+  },
+});
+
+/** "Note, no comment": what a row or a note box says for a comment with no words. */
+export function noCommentLabel(kind: CommentKind): string {
+  return TEXT().noComment(labelFor(kind));
 }
 
 /**
@@ -351,44 +405,27 @@ export function viewRect(
  * which.
  */
 export function noticeFor(limits: CommentLimits): string | null {
+  const text = TEXT();
   const parts: string[] = [];
-  if (limits.over_budget) parts.push("more comments than tpdf will show");
-  if (limits.crowded_pages > 0) {
-    parts.push(
-      limits.crowded_pages === 1
-        ? "a page with more comments than tpdf will show"
-        : `${limits.crowded_pages} pages with more comments than tpdf will show`,
-    );
-  }
-  if (limits.bodies_clipped > 0) {
-    parts.push(
-      limits.bodies_clipped === 1
-        ? "a comment too long to show whole"
-        : `${limits.bodies_clipped} comments too long to show whole`,
-    );
-  }
-  if (limits.unknown_kinds > 0) parts.push("marks of a kind tpdf does not read");
-  if (limits.unreadable > 0) parts.push("entries that could not be read");
-  if (limits.cycles > 0) parts.push("replies that pointed in a circle");
+  if (limits.over_budget) parts.push(text.overBudget);
+  if (limits.crowded_pages > 0) parts.push(text.crowdedPages(limits.crowded_pages));
+  if (limits.bodies_clipped > 0) parts.push(text.clipped(limits.bodies_clipped));
+  if (limits.unknown_kinds > 0) parts.push(text.unknownKinds);
+  if (limits.unreadable > 0) parts.push(text.unreadable);
+  if (limits.cycles > 0) parts.push(text.cycles);
   // The one entry that means "the scan could not look" rather than "it looked
   // and cut something". Both belong here: an empty list shown as complete is
   // the failure this whole notice exists to prevent, and "no comments" is
   // exactly what a scan that saw no pages produces.
-  if (limits.pages_missed > 0) {
-    parts.push(
-      limits.pages_missed === 1
-        ? "a page that could not be read at all"
-        : `${limits.pages_missed} pages that could not be read at all`,
-    );
-  }
+  if (limits.pages_missed > 0) parts.push(text.pagesMissed(limits.pages_missed));
   if (parts.length === 0) return null;
-  return `This document has ${joinList(parts)} — what is shown is incomplete.`;
+  return text.incomplete(joinList(parts));
 }
 
 /** Joins a list the way a sentence does, with an "and" before the last part. */
 function joinList(parts: readonly string[]): string {
   if (parts.length <= 1) return parts[0] ?? "";
-  return `${parts.slice(0, -1).join(", ")} and ${parts[parts.length - 1]}`;
+  return `${parts.slice(0, -1).join(", ")} ${TEXT().and} ${parts[parts.length - 1]}`;
 }
 
 /**
@@ -408,7 +445,7 @@ export function summaryOf(
   comment: Comment,
   covered = "",
 ): { text: string; own: boolean } {
-  return rowLine(comment.body, covered, `${labelFor(comment.kind)}, no comment`);
+  return rowLine(comment.body, covered, noCommentLabel(comment.kind));
 }
 
 /**
@@ -529,6 +566,6 @@ export function pagesNeedingWords(
 
 /** The line under a row's body: who wrote it, and when. */
 export function bylineOf(comment: Comment): string {
-  const who = comment.author.trim() || "Unknown";
+  const who = comment.author.trim() || TEXT().unknownAuthor;
   return comment.date ? `${who} · ${comment.date}` : who;
 }

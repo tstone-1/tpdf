@@ -225,8 +225,12 @@ describe("buildMenu", () => {
       // Open, New document from pictures, Reload, the three disk-change
       // choices, Close tab, Close all tabs, the three that close several,
       // Reopen closed tab, the next and previous PDF in the folder, Reopen
-      // the tabs from last time, the two launch choices and Clear recent
-      // documents.
+      // the tabs from last time, the two launch choices, the four language
+      // choices and Clear recent documents.
+      "command",
+      "command",
+      "command",
+      "command",
       "command",
       "command",
       "command",

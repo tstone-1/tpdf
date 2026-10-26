@@ -1,4 +1,30 @@
 import type { TextLayout, TextRun } from "./textedit";
+import { catalog } from "./i18n";
+
+const TEXT = catalog({
+  "en-US": {
+    automaticOrder: "The document's font; for characters it lacks, the same font if it is installed on this computer, otherwise Noto Sans",
+    width: "Width (pt)",
+    height: "Height (pt)",
+    fontSize: "Font size (pt)",
+    font: "Font",
+    automatic: "Original with automatic fallback",
+    originalOnly: "Original only",
+    wrap: "Wrap within box",
+    sizeRange: "Use a font size from 1 to 512 pt and a box from 0.1 to 14400 pt.",
+  },
+  "de-DE": {
+    automaticOrder: "Die Schrift des Dokuments; für Zeichen, die ihr fehlen, dieselbe Schrift, wenn sie auf diesem Computer installiert ist, sonst Noto Sans",
+    width: "Breite (pt)",
+    height: "Höhe (pt)",
+    fontSize: "Schriftgröße (pt)",
+    font: "Schrift",
+    automatic: "Original mit automatischem Ersatz",
+    originalOnly: "Nur Original",
+    wrap: "Im Kasten umbrechen",
+    sizeRange: "Verwende eine Schriftgröße von 1 bis 512 pt und einen Kasten von 0,1 bis 14400 pt.",
+  },
+});
 
 /**
  * Physical dimensions along the text axes, independent of zoom and font matrices.
@@ -32,7 +58,7 @@ export function defaultTextLayout(run: TextRun): TextLayout {
  * document's font lacks. An installed copy is used only when it is the same font
  * by exact name and agrees with the document's widths, so the same edit can come
  * out differently on a computer without it. */
-export const AUTOMATIC_ORDER = "The document's font; for characters it lacks, the same font if it is installed on this computer, otherwise Noto Sans";
+export const AUTOMATIC_ORDER = TEXT().automaticOrder;
 
 /** Native form controls also provide keyboard access to resizing and wrapping. */
 export class TextLayoutControls {
@@ -57,9 +83,10 @@ export class TextLayoutControls {
 
   constructor(change: () => void) {
     this.root.style.cssText = "display:flex;flex-wrap:wrap;gap:8px;margin:8px 0";
+    const text = TEXT();
     for (const [title, input, min, max] of [
-      ["Width (pt)", this.width, 0.1, 14400], ["Height (pt)", this.height, 0.1, 14400],
-      ["Font size (pt)", this.size, 1, 512],
+      [text.width, this.width, 0.1, 14400], [text.height, this.height, 0.1, 14400],
+      [text.fontSize, this.size, 1, 512],
     ] as const) {
       const label = document.createElement("label"); label.textContent = title;
       input.type = "number"; input.min = String(min); input.max = String(max); input.step = "0.1";
@@ -68,9 +95,9 @@ export class TextLayoutControls {
       // One listener, so `sized` is already true when `change` reads the layout.
       input.addEventListener("input", () => { if (input === this.width) this.sized = true; change(); });
     }
-    const label = document.createElement("label"); label.textContent = "Font";
-    this.font.setAttribute("aria-label", "Font"); this.font.style.cssText = "display:block;max-width:260px";
-    for (const [value, title] of [["auto", "Original with automatic fallback"], ["original", "Original only"],
+    const label = document.createElement("label"); label.textContent = text.font;
+    this.font.setAttribute("aria-label", text.font); this.font.style.cssText = "display:block;max-width:260px";
+    for (const [value, title] of [["auto", text.automatic], ["original", text.originalOnly],
       ["noto_sans", "Noto Sans"], ["noto_sans_bold", "Noto Sans Bold"],
       ["noto_sans_italic", "Noto Sans Italic"], ["noto_sans_bold_italic", "Noto Sans Bold Italic"],
       ["noto_sans_cjk_sc", "Noto Sans CJK SC"], ["noto_sans_cjk_sc_bold", "Noto Sans CJK SC Bold"]]) {
@@ -81,8 +108,8 @@ export class TextLayoutControls {
       this.font.append(option);
     }
     label.append(this.font); this.root.append(label); this.font.addEventListener("change", change);
-    const wrapping = document.createElement("label"); wrapping.textContent = "Wrap within box";
-    this.wrap.type = "checkbox"; this.wrap.setAttribute("aria-label", "Wrap within box");
+    const wrapping = document.createElement("label"); wrapping.textContent = text.wrap;
+    this.wrap.type = "checkbox"; this.wrap.setAttribute("aria-label", text.wrap);
     wrapping.append(this.wrap); this.root.append(wrapping); this.wrap.addEventListener("change", change);
   }
   read(): TextLayout {
@@ -96,6 +123,6 @@ export class TextLayoutControls {
   error(): string | null {
     const { width, height, size } = this.read();
     return ![width, height, size].every(Number.isFinite) || width < 0.1 || width > 14400 || height < 0.1 || height > 14400 || size < 1 || size > 512
-      ? "Use a font size from 1 to 512 pt and a box from 0.1 to 14400 pt." : null;
+      ? TEXT().sizeRange : null;
   }
 }

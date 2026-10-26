@@ -23,7 +23,13 @@ import {
   type Change,
   type Compared,
 } from "./comparison";
+import { catalog } from "./i18n";
 import { placeholder } from "./panelrow";
+
+const TEXT = catalog({
+  "en-US": { changes: "Changes" },
+  "de-DE": { changes: "Änderungen" },
+});
 
 /** The wash behind removed words: the left page's paint, `REMOVED_FILL` in `viewer.ts`. */
 const REMOVED_BACKGROUND = "rgba(230, 60, 60, 0.28)";
@@ -54,7 +60,7 @@ export class ChangeList {
 
     this.list = document.createElement("div");
     this.list.setAttribute("role", "group");
-    this.list.setAttribute("aria-label", "Changes");
+    this.list.setAttribute("aria-label", TEXT().changes);
     this.list.style.cssText = "flex:1;min-height:0;overflow-y:auto;";
 
     host.append(this.notice, this.list);

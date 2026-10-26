@@ -9,8 +9,67 @@
  * percentage does not say how a picture will look.
  */
 
+import { catalog } from "./i18n";
 import { basename } from "./paths";
 import { afterCopy } from "./recovery";
+
+const TEXT = catalog({
+  "en-US": {
+    keepTitle: "Keep every picture as it is",
+    keepNote: "Nothing you can see changes. Saves little unless the file was stored loosely.",
+    printTitle: "For printing",
+    balancedTitle: "For screen and office printing",
+    screenTitle: "Smallest, for reading on a screen",
+    atMost: (dpi: number) => `Pictures at most ${dpi} pixels an inch.`,
+    soft: "Soft when zoomed in.",
+    resolutionRange: (min: number, max: number) => `The resolution is a whole number from ${min} to ${max}.`,
+    qualityRange: "The JPEG quality is a whole number from 1 to 100.",
+    unknown: "unknown",
+    bytes: (bytes: number) => `${bytes} bytes`,
+    decimal: (value: number) => value.toFixed(1),
+    notSmaller: "Not smaller",
+    outcome: (size: string, percent: number) => `${size}, ${percent}% smaller`,
+    wouldNotShrink: (now: string) => `The document is ${now}, and a copy made this way would not be smaller.`,
+    noPictureChanges: "No picture changes.",
+    picturesSmaller: (changed: number, of: number) => `${changed} of ${of} pictures are stored smaller.`,
+    fromTo: (now: string, after: string) => `From ${now} to about ${after}.`,
+    sampleWhere: (page: number, zoom: number) =>
+      `Part of page ${page} at ${zoom}%: now on the left, the copy on the right.`,
+    sampleDpi: (before: number, after: number) => `Its largest picture goes from ${before} to ${after} pixels an inch.`,
+    smallerName: (stem: string) => `${stem} smaller.pdf`,
+    savedSmaller: (name: string, after: string, before: string) =>
+      `Saved ${name}, about ${after} where the document is ${before}.`,
+    saved: (name: string) => `Saved ${name}.`,
+  },
+  "de-DE": {
+    keepTitle: "Alle Bilder unverändert lassen",
+    keepNote: "Nichts Sichtbares ändert sich. Spart wenig, außer die Datei wurde ineffizient gespeichert.",
+    printTitle: "Für den Druck",
+    balancedTitle: "Für Bildschirm und Bürodruck",
+    screenTitle: "Am kleinsten, zum Lesen am Bildschirm",
+    atMost: (dpi: number) => `Bilder mit höchstens ${dpi} Pixel pro Zoll.`,
+    soft: "Unscharf beim Hineinzoomen.",
+    resolutionRange: (min: number, max: number) => `Die Auflösung ist eine ganze Zahl von ${min} bis ${max}.`,
+    qualityRange: "Die JPEG-Qualität ist eine ganze Zahl von 1 bis 100.",
+    unknown: "unbekannt",
+    bytes: (bytes: number) => `${bytes} Byte`,
+    decimal: (value: number) => value.toFixed(1).replace(".", ","),
+    notSmaller: "Nicht kleiner",
+    outcome: (size: string, percent: number) => `${size}, ${percent} % kleiner`,
+    wouldNotShrink: (now: string) => `Das Dokument hat ${now}, und eine so erstellte Kopie wäre nicht kleiner.`,
+    noPictureChanges: "Kein Bild ändert sich.",
+    picturesSmaller: (changed: number, of: number) => `${changed} von ${of} Bildern werden kleiner gespeichert.`,
+    fromTo: (now: string, after: string) => `Von ${now} auf etwa ${after}.`,
+    sampleWhere: (page: number, zoom: number) =>
+      `Ausschnitt von Seite ${page} bei ${zoom} %: links wie jetzt, rechts die Kopie.`,
+    sampleDpi: (before: number, after: number) =>
+      `Das größte Bild darin geht von ${before} auf ${after} Pixel pro Zoll.`,
+    smallerName: (stem: string) => `${stem} kleiner.pdf`,
+    savedSmaller: (name: string, after: string, before: string) =>
+      `${name} gespeichert: etwa ${after} statt ${before}.`,
+    saved: (name: string) => `${name} gespeichert.`,
+  },
+});
 
 /** How pictures are shrunk. `Pictures` in `compress.rs`. */
 export interface Pictures {
@@ -67,26 +126,26 @@ export interface Choice {
 export const CHOICES: readonly Choice[] = [
   {
     id: "keep",
-    title: "Keep every picture as it is",
-    note: "Nothing you can see changes. Saves little unless the file was stored loosely.",
+    title: TEXT().keepTitle,
+    note: TEXT().keepNote,
     pictures: null,
   },
   {
     id: "print",
-    title: "For printing",
-    note: "Pictures at most 300 pixels an inch.",
+    title: TEXT().printTitle,
+    note: TEXT().atMost(300),
     pictures: { dpi: 300, quality: 85, jpeg: true },
   },
   {
     id: "balanced",
-    title: "For screen and office printing",
-    note: "Pictures at most 150 pixels an inch.",
+    title: TEXT().balancedTitle,
+    note: TEXT().atMost(150),
     pictures: { dpi: 150, quality: 75, jpeg: true },
   },
   {
     id: "screen",
-    title: "Smallest, for reading on a screen",
-    note: "Pictures at most 110 pixels an inch. Soft when zoomed in.",
+    title: TEXT().screenTitle,
+    note: `${TEXT().atMost(110)} ${TEXT().soft}`,
     pictures: { dpi: 110, quality: 60, jpeg: true },
   },
 ];
@@ -109,19 +168,19 @@ export function custom(
     /^\d{1,5}$/.test(text.trim()) ? Number(text.trim()) : null;
   const d = whole(dpi);
   if (d === null || d < DPI_MIN || d > DPI_MAX) {
-    return { problem: `The resolution is a whole number from ${DPI_MIN} to ${DPI_MAX}.` };
+    return { problem: TEXT().resolutionRange(DPI_MIN, DPI_MAX) };
   }
   const q = whole(quality);
   if (q === null || q < 1 || q > 100) {
-    return { problem: "The JPEG quality is a whole number from 1 to 100." };
+    return { problem: TEXT().qualityRange };
   }
   return { pictures: { dpi: d, quality: q, jpeg } };
 }
 
 /** A size as a reader says it: `873 KB`, `8.7 MB`. */
 export function size(bytes: number): string {
-  if (!Number.isFinite(bytes) || bytes < 0) return "unknown";
-  if (bytes < 1024) return `${Math.round(bytes)} bytes`;
+  if (!Number.isFinite(bytes) || bytes < 0) return TEXT().unknown;
+  if (bytes < 1024) return TEXT().bytes(Math.round(bytes));
   const units = ["KB", "MB", "GB", "TB"];
   let value = bytes / 1024;
   let unit = 0;
@@ -129,7 +188,7 @@ export function size(bytes: number): string {
     value /= 1024;
     unit += 1;
   }
-  return `${value < 10 ? value.toFixed(1) : Math.round(value)} ${units[unit]}`;
+  return `${value < 10 ? TEXT().decimal(value) : Math.round(value)} ${units[unit]}`;
 }
 
 /** The share saved in whole percent, rounded down so it never overstates. */
@@ -145,37 +204,37 @@ export function isSmaller(shrinkage: Shrinkage): boolean {
 
 /** What one choice comes to, for the line beside it. */
 export function outcome(shrinkage: Shrinkage): string {
-  if (!isSmaller(shrinkage)) return "Not smaller";
-  return `${size(shrinkage.bytesAfter)}, ${savedPercent(shrinkage.bytesBefore, shrinkage.bytesAfter)}% smaller`;
+  if (!isSmaller(shrinkage)) return TEXT().notSmaller;
+  return TEXT().outcome(size(shrinkage.bytesAfter), savedPercent(shrinkage.bytesBefore, shrinkage.bytesAfter));
 }
 
 /** The sentence under the choices, about the one that is selected. */
 export function summary(shrinkage: Shrinkage): string {
   const now = size(shrinkage.bytesBefore);
   if (!isSmaller(shrinkage)) {
-    return `The document is ${now}, and a copy made this way would not be smaller.`;
+    return TEXT().wouldNotShrink(now);
   }
   const pictures =
     shrinkage.pictures === 0
       ? ""
       : shrinkage.picturesChanged === 0
-        ? " No picture changes."
-        : ` ${shrinkage.picturesChanged} of ${shrinkage.pictures} pictures are stored smaller.`;
-  return `From ${now} to about ${size(shrinkage.bytesAfter)}.${pictures}`;
+        ? ` ${TEXT().noPictureChanges}`
+        : ` ${TEXT().picturesSmaller(shrinkage.picturesChanged, shrinkage.pictures)}`;
+  return `${TEXT().fromTo(now, size(shrinkage.bytesAfter))}${pictures}`;
 }
 
 /** What the two pictures are, for the line under them. */
 export function caption(sample: SampleView): string {
-  const where = `Part of page ${sample.page} at ${sample.zoomPercent}%: now on the left, the copy on the right.`;
+  const where = TEXT().sampleWhere(sample.page, sample.zoomPercent);
   if (sample.dpiBefore > 0 && sample.dpiAfter > 0 && sample.dpiAfter < sample.dpiBefore) {
-    return `${where} Its largest picture goes from ${sample.dpiBefore} to ${sample.dpiAfter} pixels an inch.`;
+    return `${where} ${TEXT().sampleDpi(sample.dpiBefore, sample.dpiAfter)}`;
   }
   return where;
 }
 
 /** `report.pdf` gives `report smaller.pdf`. */
 export function suggestedName(path: string): string {
-  return `${basename(path).replace(/\.pdf$/i, "")} smaller.pdf`;
+  return TEXT().smallerName(basename(path).replace(/\.pdf$/i, ""));
 }
 
 /**
@@ -191,8 +250,8 @@ export function afterCompress(
 ): string {
   const said =
     shrinkage && isSmaller(shrinkage)
-      ? `Saved ${basename(path)}, about ${size(shrinkage.bytesAfter)} where the document is ${size(shrinkage.bytesBefore)}.`
-      : `Saved ${basename(path)}.`;
+      ? TEXT().savedSmaller(basename(path), size(shrinkage.bytesAfter), size(shrinkage.bytesBefore))
+      : TEXT().saved(basename(path));
   const changed = afterCopy(copied);
   return changed ? `${said} ${changed}` : said;
 }

@@ -711,3 +711,39 @@ describe("revealTitle", () => {
     expect(revealTitle()).toBe("Show in Explorer");
   });
 });
+
+describe("labelling a chord on a German keyboard", () => {
+  afterEach(() => setMacSpelling());
+
+  it("spells the Windows and Linux modifiers and named keys in German", () => {
+    setMacSpelling(false);
+    expect(label("file.open", "de-DE")).toBe("Strg+O");
+    expect(label("find.previous", "de-DE")).toBe("Strg+Umschalt+G");
+    expect(label("nav.goToPage", "de-DE")).toBe("Strg+Alt+G");
+    expect(label("nav.firstPage", "de-DE")).toBe("Pos1");
+    expect(label("nav.lastPage", "de-DE")).toBe("Ende");
+    expect(label("edit.clearSelection", "de-DE")).toBe("Esc");
+    // The control: the same bindings in English, so the German words come
+    // from the locale and not from the binding.
+    expect(label("find.previous", "en-US")).toBe("Ctrl+Shift+G");
+    expect(label("nav.firstPage", "en-US")).toBe("Home");
+  });
+
+  it("keeps the macOS modifier glyphs", () => {
+    setMacSpelling(true);
+    expect(label("find.previous", "de-DE")).toBe("⇧⌘G");
+  });
+
+  it("does not change what an event matches", () => {
+    // Matching reads `KeyboardEvent.key`, never the label.
+    expect(matches("nav.firstPage", event("Home"))).toBe(true);
+    expect(matches("nav.firstPage", event("Pos1"))).toBe(false);
+  });
+
+  it("names the file manager in German", () => {
+    setMacSpelling(false);
+    setLinux(false);
+    expect(revealTitle("de-DE")).toBe("Im Explorer zeigen");
+    setLinux();
+  });
+});

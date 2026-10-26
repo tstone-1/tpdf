@@ -33,6 +33,7 @@
  */
 
 import type { Command } from "./commands";
+import { catalog } from "./i18n";
 import { isOpenRefusal } from "./ipc";
 import { labelsFor, MAX_RECENTS, recentCommandId } from "./recents";
 import type { Place, Session, SessionWriter } from "./session";
@@ -55,8 +56,23 @@ export interface StartRow {
   removing: string;
 }
 
+const TEXT = catalog({
+  "en-US": {
+    unopened: "could not be opened",
+    page: (n: number) => `page ${n}`,
+    remove: (label: string) => `Remove ${label} from this list`,
+    open: (label: string) => `Open ${label}`,
+  },
+  "de-DE": {
+    unopened: "konnte nicht geöffnet werden",
+    page: (n: number) => `Seite ${n}`,
+    remove: (label: string) => `${label} aus dieser Liste entfernen`,
+    open: (label: string) => `${label} öffnen`,
+  },
+});
+
 /** What a row says once its document has refused to open. */
-export const UNOPENED = "could not be opened";
+export const UNOPENED = TEXT().unopened;
 
 /**
  * The folder `path` is in, as it was written.
@@ -121,7 +137,7 @@ export function shortenHome(folder: string, home: string | null | undefined): st
 
 /** "page N", counted from 1, when the place is past the first page. */
 export function pageText(place: Pick<Place, "page">): string {
-  return place.page > 0 ? `page ${place.page + 1}` : "";
+  return place.page > 0 ? TEXT().page(place.page + 1) : "";
 }
 
 /**
@@ -145,7 +161,7 @@ export function rowsFor(
       page: pageText(place),
       command: recentCommandId(index),
       trouble: unopened.has(place.path) ? UNOPENED : "",
-      removing: `Remove ${label} from this list`,
+      removing: TEXT().remove(label),
     };
   });
 }
@@ -165,7 +181,7 @@ export function recentCommands(
     // Prefixed with the verb so the row reads as a command next to "Zoom in"
     // rather than as a stray filename. Ranking is subsequence matching, so
     // typing part of the name still finds it.
-    title: `Open ${row.label}`,
+    title: TEXT().open(row.label),
     run: () => open(row.path),
   }));
 }

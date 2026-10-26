@@ -12,7 +12,7 @@ import {
   PROGRESS_EVENT,
   progressLine,
   REFUSED_MEANS,
-  SAVE_FIRST,
+  saveFirst,
   suggestedName,
   type Recognised,
 } from "./recognise";
@@ -42,7 +42,7 @@ describe("what the window shares with the backend by spelling", () => {
     const declared = /pub const UNSAVED: &str = "([^;]+)";/.exec(backend)?.[1];
     expect(declared).toBeDefined();
     // The Rust literal is wrapped with a line continuation; the sentence is not.
-    expect(declared?.replace(/\\\n\s*/g, "")).toBe(SAVE_FIRST);
+    expect(declared?.replace(/\\\n\s*/g, "")).toBe(saveFirst("en-GB"));
   });
 
   it("names every field the backend's report serialises", () => {
@@ -81,7 +81,7 @@ describe("suggestedName", () => {
 
 describe("progressLine", () => {
   it("says which page of how many", () => {
-    expect(progressLine({ page: 3, of: 12 })).toBe("Recognising text: page 3 of 12...");
+    expect(progressLine({ page: 3, of: 12 })).toBe("Recognizing text: page 3 of 12...");
   });
 });
 
@@ -97,7 +97,7 @@ describe("afterRecognition", () => {
     expect(said).toBe(
       "Saved a.pdf. Text was added to 1 of 1 page (40 words). " +
         "German (Germany), de-DE is not available on this computer, " +
-        'so the recogniser chose the language itself. ' +
+        'so the recognizer chose the language itself. ' +
         'Choose another with "Recognize text: language...".',
     );
   });
@@ -119,7 +119,7 @@ describe("afterRecognition", () => {
     expect(afterRecognition(mixed, "a.pdf")).toBe(
       "Saved a.pdf. Text was added to 1 of 5 pages (40 words). " +
         "Already had text: page 2. " +
-        "No text was recognised on pages 3, 5. " +
+        "No text was recognized on pages 3, 5. " +
         "Too large to read: page 4.",
     );
   });
@@ -128,13 +128,13 @@ describe("afterRecognition", () => {
     const one = read({ refused: [2] });
     expect(afterRecognition(one, "a.pdf")).toBe(
       "Saved a.pdf. Text was added to 1 of 2 pages (40 words). " +
-        "The recogniser refused page 2, which usually means a script it cannot read " +
+        "The recognizer refused page 2, which usually means a script it cannot read " +
         "or a scan too unclear to tell the script.",
     );
     const more = read({ nothingRead: [3], refused: [2, 4] });
     const said = afterRecognition(more, "a.pdf");
     expect(said).toContain("1 of 4 pages");
-    expect(said).toContain("No text was recognised on page 3. The recogniser refused pages 2, 4, which");
+    expect(said).toContain("No text was recognized on page 3. The recognizer refused pages 2, 4, which");
     // Nothing is said about refusing when no page was refused.
     expect(afterRecognition(read(), "a.pdf")).not.toContain("refused");
   });

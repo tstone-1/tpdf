@@ -15,7 +15,25 @@
  * largest scale that fits rather than not at all.
  */
 
+import { catalog } from "./i18n";
 import type { TileRequest, TileSource } from "./tiles";
+
+const TEXT = catalog({
+  "en-US": {
+    region: "region",
+    fileName: (stem: string, page: number) => `${stem} page ${page}.png`,
+    copied: (width: number, height: number) => `Copied the region as a picture, ${width} by ${height} pixels.`,
+    saved: (name: string, width: number, height: number) =>
+      `Saved the region as ${name}, ${width} by ${height} pixels.`,
+  },
+  "de-DE": {
+    region: "Bereich",
+    fileName: (stem: string, page: number) => `${stem} Seite ${page}.png`,
+    copied: (width: number, height: number) => `Bereich als Bild kopiert, ${width} × ${height} Pixel.`,
+    saved: (name: string, width: number, height: number) =>
+      `Bereich als ${name} gespeichert, ${width} × ${height} Pixel.`,
+  },
+});
 
 /** A rectangle on a page as it is laid out, in points: `boxQuad`'s shape. */
 export interface LaidQuad {
@@ -83,14 +101,13 @@ function pixelsOf(quad: LaidQuad, scale: number): { x: number; y: number; width:
  * folder of regions from one report says where each came from.
  */
 export function regionName(documentName: string, pageNumber: number): string {
-  const stem = documentName.replace(/\.pdf$/i, "") || "region";
-  return `${stem} page ${pageNumber}.png`;
+  const stem = documentName.replace(/\.pdf$/i, "") || TEXT().region;
+  return TEXT().fileName(stem, pageNumber);
 }
 
 /** What the window says once a region is copied or saved. */
 export function regionSaid(request: Pick<TileRequest, "width" | "height">, saved?: string): string {
-  const size = `${request.width} by ${request.height} pixels`;
   return saved === undefined
-    ? `Copied the region as a picture, ${size}.`
-    : `Saved the region as ${saved}, ${size}.`;
+    ? TEXT().copied(request.width, request.height)
+    : TEXT().saved(saved, request.width, request.height);
 }

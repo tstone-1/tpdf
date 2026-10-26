@@ -6,6 +6,7 @@ import {
   RedactList,
   UNHANDLED_KINDS,
   UNMEASURED_TEXT,
+  unhandledKinds,
   UNMEASURED_TEXT_WARNING,
   fillRedactionRegions,
   nextUnreadRegion,
@@ -391,7 +392,8 @@ describe("what a row says a removal cannot take", () => {
     const body = /fn said\([^]*?\n}\n/.exec(backend)?.[0] ?? "";
     const arms = [...body.matchAll(/"([a-z-]+)" => "([^"]+)"/g)].map((m) => [m[1], m[2]]);
     expect(arms.map(([kind]) => kind)).toContain("form");
-    const table = new Map(UNHANDLED_KINDS.map(([kind, one]) => [kind, one]));
+    // The backend writes British English, so the table is compared in it.
+    const table = new Map(unhandledKinds("en-GB").map(([kind, one]) => [kind, one]));
     for (const [kind, words] of arms) expect([kind, table.get(kind ?? "")]).toEqual([kind, words]);
     // And what it says of a kind it does not name is the table's last row.
     expect(body).toContain(`_ => "${table.get("unsupported")}"`);
@@ -412,8 +414,8 @@ describe("what a row says a removal cannot take", () => {
     expect(two("unplaced-path")).toBe(
       "Also covers 2 drawings tpdf could not find in the page's content, which a removal cannot take",
     );
-    expect(one("shading")).toBe("Also covers a colour gradient, which a removal cannot take");
-    expect(two("shading")).toBe("Also covers 2 colour gradients, which a removal cannot take");
+    expect(one("shading")).toBe("Also covers a color gradient, which a removal cannot take");
+    expect(two("shading")).toBe("Also covers 2 color gradients, which a removal cannot take");
     expect(one("form")).toBe("Also covers a reusable block of content, which a removal cannot take");
     expect(two("form")).toBe("Also covers 2 reusable blocks of content, which a removal cannot take");
     expect(one("unsupported")).toBe(

@@ -230,6 +230,9 @@ On a pin change, re-run the compatibility probes in `docs/build/pdfium-probes.md
 `pdfium-render` hides its bindings accessor; raw-interface callers go through
 `progressive::bind` ([`docs/DETAIL.md`](docs/DETAIL.md) *Stack*).
 
+Window text comes from `catalog()` in `src/lib/i18n.ts`; rules and the German glossary:
+[`docs/DETAIL.md`](docs/DETAIL.md) *Interface language*.
+
 Same shell as `screenpick`, chosen because the muscle memory transfers and Rust does the
 heavy work while the webview does the UI.
 

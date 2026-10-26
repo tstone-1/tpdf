@@ -17,6 +17,7 @@
  * opened without a viewer and take their places in the strip afterwards.
  */
 
+import { catalog } from "./i18n";
 import { call } from "./ipc";
 import type { Session, Sides } from "./session";
 
@@ -170,11 +171,23 @@ export async function openBehind(
 export function afterReopen(refused: readonly string[], name: (path: string) => string): string | null {
   if (!refused.length) return null;
   const first = name(refused[0] as string);
-  return refused.length === 1
-    ? `Could not reopen ${first}. It may have been moved, renamed or deleted.`
-    : `Could not reopen ${first} and ${refused.length - 1} more. ` +
-      "They may have been moved, renamed or deleted.";
+  return refused.length === 1 ? TEXT().one(first) : TEXT().many(first, refused.length - 1);
 }
+
+const TEXT = catalog({
+  "en-US": {
+    one: (first: string) => `Could not reopen ${first}. It may have been moved, renamed or deleted.`,
+    many: (first: string, more: number) =>
+      `Could not reopen ${first} and ${more} more. They may have been moved, renamed or deleted.`,
+  },
+  "de-DE": {
+    one: (first: string) =>
+      `${first} konnte nicht wieder geöffnet werden. Die Datei wurde vielleicht verschoben, umbenannt oder gelöscht.`,
+    many: (first: string, more: number) =>
+      `${first} und ${more} ${more === 1 ? "weiteres Dokument" : "weitere Dokumente"} konnten nicht wieder geöffnet werden. ` +
+      "Sie wurden vielleicht verschoben, umbenannt oder gelöscht.",
+  },
+});
 
 /**
  * Writes the tab list when it changes.

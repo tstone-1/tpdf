@@ -228,7 +228,7 @@ ROWS += [
         # affordance read as two.
         "marklist: name the remove control in the second line's case",
         "src/lib/marklist.ts",
-        "    const label = `Remove ${nameOf(mark.kind).toLowerCase()}`;",
+        "    const label = removeLabel(mark.kind);",
         "    const label = `Remove ${nameOf(mark.kind)}`;",
         "names the control for the kind of mark it is on",
     ),
@@ -412,15 +412,15 @@ ROWS += [
     Mutation(
         "update: spell the ready-to-restart notice with the prose dash",
         "src/lib/update.ts",
-        "return `Version ${state.version} is installed — restart tpdf to finish`;",
-        "return `Version ${state.version} is installed --- restart tpdf to finish`;",
+        "    installed: (newer: string) => `Version ${newer} is installed — restart tpdf to finish`,",
+        "    installed: (newer: string) => `Version ${newer} is installed --- restart tpdf to finish`,",
         "holds no prose dash outside the separator sentinel",
     ),
     Mutation(
         "outline: spell a refused action with the prose dash",
         "src/lib/outline.ts",
-        'return "opens a web link — not followed";',
-        'return "opens a web link --- not followed";',
+        '    uri: "opens a web link — not followed",',
+        '    uri: "opens a web link --- not followed",',
         "holds no prose dash outside the separator sentinel",
     ),
     Mutation(
@@ -474,8 +474,8 @@ ROWS += [
         # list: the second `3` names a file with no pages in it.
         "split: merge a repeated cut rather than refusing it",
         "src/lib/pageranges.ts",
-        "    if (cuts.has(page)) return { problem: `Page ${page} is named twice` };",
-        "    if (false) return { problem: `Page ${page} is named twice` };",
+        "    if (cuts.has(page)) return { problem: TEXT().namedTwice(page) };",
+        "    if (false) return { problem: TEXT().namedTwice(page) };",
         "refuses a repeated cut rather than merging it, because it makes an empty file",
     ),
     Mutation(
@@ -642,8 +642,8 @@ ROWS += [
         # and is not is worse than none.
         "redactlist: count the regions without saying nothing has been removed",
         "src/lib/redactlist.ts",
-        "  const said = `${many}. Nothing has been removed yet.`;",
-        "  const said = `${many}.`;",
+        "    nothingRemoved: (marked: string) => `${marked}. Nothing has been removed yet.`,",
+        "    nothingRemoved: (marked: string) => `${marked}.`,",
         "counts the regions and says nothing has been removed",
     ),
     Mutation(
@@ -738,8 +738,8 @@ ROWS += [
         # the list then hears six identical buttons.
         "redactlist: name the remove control without saying what it removes",
         "src/lib/redactlist.ts",
-        'remove.setAttribute("aria-label", "Remove region");',
-        'remove.setAttribute("aria-label", "Remove");',
+        '    removeRegion: "Remove region",',
+        '    removeRegion: "Remove",',
         "names the control for what it takes off",
     ),
     Mutation(
@@ -842,8 +842,10 @@ ROWS += [
         # the row saying it is the row a reader is deciding on.
         "redactlist: pluralise the phrase rather than the kind in it",
         "src/lib/redactlist.ts",
-        "      const what = many === 1 ? one : `${many} ${several}`;\n      return drawn > 0 ? `${what} drawn ${drawn} times` : what;",
-        "      const what = drawn > 0 ? `${one} drawn ${drawn} times` : one;\n      return many === 1 ? what : `${many} ${what}s`;",
+        """      const what = many === 1 ? one : TEXT().many(many, several);
+      return drawn > 0 ? TEXT().drawnTimes(what, drawn) : what;""",
+        """      const what = drawn > 0 ? TEXT().drawnTimes(one, drawn) : one;
+      return many === 1 ? what : TEXT().many(many, `${what}s`);""",
         "pluralises the kind rather than the count in the phrase",
     ),
     Mutation(
@@ -879,8 +881,8 @@ ROWS += [
         # has just destroyed content on the strength of a claim they never see.
         "recovery: stay silent after a redaction that verified",
         "src/lib/recovery.ts",
-        "    ? `Redacted ${removed}. tpdf read the file back and none of the removed words are in it.`",
-        "    ? ``",
+        "      `Redacted ${removed}. tpdf read the file back and none of the removed words are in it.`,",
+        "      ``,",
         "always says something, unlike a copy",
     ),
     Mutation(
@@ -888,8 +890,8 @@ ROWS += [
         # after it is the bare failure §6 forbids as firmly as the bare success.
         "recovery: report a redaction as unproven without saying why",
         "src/lib/recovery.ts",
-        "      `${applied.why.join(\"; \")}. Treat it as unredacted until you have checked it.`",
-        "      `. Treat it as unredacted until you have checked it.`",
+        '      TEXT().redactionNotVerified(removed, applied.why.join("; "));',
+        '      TEXT().redactionNotVerified(removed, "");',
         "names every reason it could not prove the file clean",
     ),
     Mutation(
@@ -897,8 +899,8 @@ ROWS += [
         # Two facts, and the reader needs both.
         "recovery: let the changed-source note stand in for the verdict",
         "src/lib/recovery.ts",
-        "    `${verdict} The original also changed on disk while you had it open, so this was ` +",
-        "    `The original also changed on disk while you had it open, so this was ` +",
+        "  return `${verdict}${TEXT().redactionAlsoChanged}`;",
+        "  return TEXT().redactionAlsoChanged;",
         "adds the changed-source note without dropping the verdict",
     ),
     Mutation(
@@ -1081,8 +1083,8 @@ ROWS += [
         # to take the refusal on trust.
         "redactpat: refuse without saying how many there were",
         "src/lib/search.ts",
-        "    `${count} matches is more than the ${MAX_MATCHES_TO_MARK} that can be marked at ` +",
-        "    `That is more than the ${MAX_MATCHES_TO_MARK} that can be marked at ` +",
+        "      `${count} matches is more than the ${most} that can be marked at ` +",
+        "      `That is more than the ${most} that can be marked at ` +",
         "names the count and asks for a narrower search",
     ),
     Mutation(
@@ -1156,8 +1158,8 @@ ROWS += [
         # Tell the reader "this document" has a count that is the other file's.
         "pendingimport: word a page past the end as the document's",
         "src/lib/pendingimport.ts",
-        "  if (range.problem?.startsWith(\"This document has\")) {",
-        "  if (range.problem?.startsWith(\"never\")) {",
+        "  return parsePageRange(raw, file.pages, file.name);",
+        "  return parsePageRange(raw, file.pages);",
         "names the file, not the document, when a page is past its end",
     ),
     Mutation(
@@ -1180,8 +1182,10 @@ ROWS += [
         # Read the range against the open document's page count.
         "appcommands: read the range against the document's count",
         "src/lib/appcommands.ts",
-        "          if (!file) return \"No file is waiting to be inserted\";\n          return chosenPages(raw, file).problem ?? null;",
-        "          if (!file) return \"No file is waiting to be inserted\";\n          return chosenPages(raw, { ...file, pages: actions.pageCount() }).problem ?? null;",
+        """          if (!file) return TEXT(locale).noFileWaiting;
+          return chosenPages(raw, file).problem ?? null;""",
+        """          if (!file) return TEXT(locale).noFileWaiting;
+          return chosenPages(raw, { ...file, pages: actions.pageCount() }).problem ?? null;""",
         "reads a range against the other file's count, not the document's",
     ),
     Mutation(
@@ -1228,7 +1232,7 @@ ROWS += [
         # Drop the sentence that stops "intact" meaning "trustworthy".
         "integrity: call a signature intact without saying trust was not checked",
         "src/lib/integrity.ts",
-        '  const owner = trustFollows ? "" : ` ${TRUST_NOT_CHECKED}`;',
+        '  const owner = trustFollows ? "" : ` ${said.trustNotChecked}`;',
         '  const owner = "";',
         "says after every answer that could mean trust that trust was not checked",
     ),
@@ -1244,9 +1248,8 @@ ROWS += [
         # An altered signature shown without the warning mark.
         "integrity: leave an altered signature unmarked",
         "src/lib/integrity.ts",
-        """          `changed is the document.`,
-        warn: true,""",
-        """          `changed is the document.`,""",
+        '  return row(said.integrityName, value, integrity.verdict !== "intact");',
+        '  return row(said.integrityName, value, integrity.verdict !== "intact" && integrity.verdict !== "altered");',
         "marks everything but an intact signature for a reader's attention",
     ),
     Mutation(
@@ -1254,25 +1257,24 @@ ROWS += [
         # reassuring branch, reached by not looking.
         "integrity: leave an unchecked signature unmarked",
         "src/lib/integrity.ts",
-        """          `This says nothing either way about whether the document changed.`,
-        warn: true,""",
-        """          `This says nothing either way about whether the document changed.`,""",
+        '  return row(said.integrityName, value, integrity.verdict !== "intact");',
+        '  return row(said.integrityName, value, integrity.verdict !== "intact" && integrity.verdict !== "unchecked");',
         "marks everything but an intact signature for a reader's attention",
     ),
     Mutation(
         # Say nothing about what was appended after an intact signature.
         "integrity: call a signature intact without mentioning what was appended",
         "src/lib/integrity.ts",
-        "        appended > 0\n",
-        "        false\n",
+        "  const value = said.integrity(integrity.verdict, how(integrity), appended > 0, owner, why);",
+        "  const value = said.integrity(integrity.verdict, how(integrity), false, owner, why);",
         "says an intact signature does not cover what was appended after it",
     ),
     Mutation(
         # Leave the reason out of an unchecked row.
         "integrity: refuse without the reason",
         "src/lib/integrity.ts",
-        '`not checked — ${integrity.why ? WHY[integrity.why] : "no reason was given"}. ` +',
-        '`not checked — no reason was given. ` +',
+        "  const why = integrity.why ? WHY[integrity.why] : said.noReason;",
+        "  const why = said.noReason;",
         "gives each reason its own sentence, and says an unchecked one means nothing",
     ),
     Mutation(
@@ -1312,24 +1314,24 @@ ROWS += [
         # trust row claiming what only that row may say.
         "trust: call a trusted chain unrevoked",
         "src/lib/integrity.ts",
-        "          `key belongs to the person the certificate names.`,",
-        "          `key belongs to the person the certificate names, and it has not been revoked.`,",
+        "            `key belongs to the person the certificate names.`",
+        "            `key belongs to the person the certificate names, and it has not been revoked.`",
         "leaves revocation to its own row, and no longer speaks for it",
     ),
     Mutation(
         # Say "trusts" without saying whose store.
         "trust: name no store",
         "src/lib/integrity.ts",
-        "  const chained = `the signer's certificate chains to a root ${computer} trusts`;",
-        "  const chained = `the signer's certificate chains to a trusted root`;",
+        "      const chained = `the signer's certificate chains to a root ${w.computer} trusts`;",
+        "      const chained = `the signer's certificate chains to a trusted root`;",
         "names the store that answered",
     ),
     Mutation(
         # Leave the date out of an expired standing.
         "trust: say expired without the date it ran out",
         "src/lib/integrity.ts",
-        '          `expired — ${chained}, and it ran out${until ? ` on ${until}` : ""}. The ` +',
-        '          `expired — ${chained}, and it ran out. The ` +',
+        '            `expired — ${chained}, and it ran out${w.until ? ` on ${w.until}` : ""}. The ` +',
+        "            `expired — ${chained}, and it ran out. The ` +",
         "says an expired certificate may have been in force when used, and cannot tell",
     ),
     Mutation(
@@ -1337,26 +1339,27 @@ ROWS += [
         # in Acrobat is then left with a contradiction and no explanation.
         "trust: leave Adobe's list out of an untrusted root",
         "src/lib/integrity.ts",
-        """    `issued to themselves reads this way, and so does one whose root only ` +
-    `Adobe's trust list carries`,""",
-        """    `issued to themselves reads this way`,""",
+        """            `issued to themselves reads this way, and so does one whose root only ` +
+            `Adobe's trust list carries`""",
+        "            `issued to themselves reads this way`",
         "says a root only Adobe's list carries reads as untrusted here",
     ),
     Mutation(
         # An untrusted chain shown without the warning mark.
         "trust: leave an untrusted chain unmarked",
         "src/lib/integrity.ts",
-        """          `belongs to the person the certificate names.`,
-        warn: true,""",
-        """          `belongs to the person the certificate names.`,""",
+        """  const fine = trust.standing === "trusted" || trust.standing === "trusted_at_timestamp";
+  return row(said.trustName, value, !fine);""",
+        """  const fine = trust.standing === "trusted" || trust.standing === "trusted_at_timestamp";
+  return row(said.trustName, value, !fine && trust.standing !== "untrusted");""",
         "marks everything but a trusted chain for a reader's attention",
     ),
     Mutation(
         # Read the doubt from the wrong table entry: every reason the same.
         "trust: give every doubt the same sentence",
         "src/lib/integrity.ts",
-        '  const why = trust.why ? DOUBT[trust.why](computer) : "no reason was given";',
-        '  const why = DOUBT.rejected(computer);',
+        "  const why = trust.why ? DOUBT[trust.why](computer) : said.noReason;",
+        "  const why = DOUBT.rejected(computer);",
         "gives each doubt its own sentence",
     ),
     Mutation(
@@ -1495,8 +1498,10 @@ ROWS += [
     Mutation(
         "properties: state partial coverage without marking it",
         "src/lib/properties.ts",
-        "    value: `not the whole file — ${formatBytes(short)} lie outside the signed range`,\n    warn: true,",
-        "    value: `not the whole file — ${formatBytes(short)} lie outside the signed range`,\n    warn: false,",
+        """    value: said.notWholeShort(formatBytes(short)),
+    warn: true,""",
+        """    value: said.notWholeShort(formatBytes(short)),
+    warn: false,""",
         "names how much lies outside a range that leaves the head of the file",
     ),
     Mutation(
@@ -1508,8 +1513,8 @@ ROWS += [
         # unprotected content where 9 KB of validation data was added.
         "properties: lead with everything outside the range rather than the append",
         "src/lib/properties.ts",
-        "        `everything up to the signature, and ${formatBytes(signature.appended_bytes)} ` +",
-        "        `everything up to the signature, and ${formatBytes(bytes - signature.covered_bytes)} ` +",
+        "      value: said.upToSignature(formatBytes(signature.appended_bytes)),",
+        "      value: said.upToSignature(formatBytes(bytes - signature.covered_bytes)),",
         "does not let the container reach the number a reader is shown",
     ),
     Mutation(
@@ -1519,8 +1524,8 @@ ROWS += [
         # rather than the same one, named once.
         "properties: claim a signature covers the whole file",
         "src/lib/properties.ts",
-        '      value: "the whole file, except the signature container it cannot cover",',
-        '      value: "the whole file",',
+        '    wholeFile: "the whole file, except the signature container it cannot cover",',
+        '    wholeFile: "the whole file",',
         "names the container it cannot cover, rather than claiming the whole file",
     ),
     Mutation(
@@ -1587,8 +1592,8 @@ ROWS += [
         # measurement of the file rather than as the absence of one.
         "properties: format a size that is not a number as though it were",
         "src/lib/bytes.ts",
-        "  if (!Number.isFinite(bytes) || bytes < 0) return \"unknown\";",
-        "  if (bytes < -1) return \"unknown\";",
+        "  if (!Number.isFinite(bytes) || bytes < 0) return text.unknown;",
+        "  if (bytes < -1) return text.unknown;",
         "says so rather than printing NaN for a size it was not given",
     ),
     Mutation(
@@ -1597,22 +1602,27 @@ ROWS += [
         # claim about what the signer intended.
         "properties: describe every signature as a certification",
         "src/lib/properties.ts",
-        "      return \"certified, form filling and comments permitted\";\n    default:\n      return \"\";",
-        "      return \"certified, form filling and comments permitted\";\n    default:\n      return \"certified, no changes permitted\";",
+        """            ? "certified, form filling and comments permitted"
+            : "",""",
+        """            ? "certified, form filling and comments permitted"
+            : "certified, no changes permitted",""",
         "says nothing for a level the specification does not define",
     ),
     Mutation(
         # The same for a lock: a signature that locks nothing said to lock.
         "properties: describe every signature as locking the document",
         "src/lib/properties.ts",
-        "      return \"locked by this signature, form filling, signing and comments permitted\";\n    default:\n      return \"\";",
-        "      return \"locked by this signature, form filling, signing and comments permitted\";\n    default:\n      return \"locked by this signature, no changes permitted\";",
+        """            ? "locked by this signature, form filling, signing and comments permitted"
+            : "",""",
+        """            ? "locked by this signature, form filling, signing and comments permitted"
+            : "locked by this signature, no changes permitted",""",
         "is worded by level, on certificationOf's terms, and is a row of its own",
     ),
     Mutation(
         "properties: list no row for a signature's lock",
         "src/lib/properties.ts",
-        "  if (lock) rows.push({ name: \"Lock\", value: lock });\n",
+        """  if (lock) rows.push({ name: said.lockName, value: lock });
+""",
         "",
         "is listed under the certification, and not at all for a signature that locks nothing",
     ),
@@ -1642,8 +1652,8 @@ ROWS += [
         "src/lib/properties.ts",
         """  rows.push(...certificateRows(signature));
 
-  claimed("Signer typed", signature.name);""",
-        """  claimed("Signer typed", signature.name);
+  claimed(said.signerTyped, signature.name);""",
+        """  claimed(said.signerTyped, signature.name);
 
   rows.push(...certificateRows(signature));""",
         "names the signer above what the signer typed",
@@ -1655,8 +1665,8 @@ ROWS += [
         # tell those apart from one an authority issued.
         "certificate: stop saying when a certificate vouches for itself",
         "src/lib/properties.ts",
-        """      value: "itself — self-issued, so no other party vouched for this name",""",
-        """      value: certificate.issuer_cn || certificate.issuer,""",
+        "      value: said.selfIssued,",
+        "      value: certificate.issuer_cn || certificate.issuer,",
         "says a self-issued certificate was vouched for by nobody",
     ),
     Mutation(
@@ -1665,11 +1675,11 @@ ROWS += [
         # trust store with which to reach.
         "certificate: treat self-issued as something to warn about",
         "src/lib/properties.ts",
-        """      name: "Issued by",
-      value: "itself — self-issued, so no other party vouched for this name",
+        """      name: said.issuedBy,
+      value: said.selfIssued,
     });""",
-        """      name: "Issued by",
-      value: "itself — self-issued, so no other party vouched for this name",
+        """      name: said.issuedBy,
+      value: said.selfIssued,
       warn: true,
     });""",
         "says a self-issued certificate was vouched for by nobody",
@@ -1710,11 +1720,8 @@ ROWS += [
         # tpdf's failure rendered as the document's silence.
         "certificate: drop the notice for a certificate that could not be read",
         "src/lib/properties.ts",
-        """  say(
-    "Certificates",
-    limits.certificates_unread,
-    "were present but could not be read",
-  );""",
+        """  say(said.certificatesName, limits.certificates_unread, said.certificatesUnread);
+""",
         "",
         "is reported as tpdf's failure and not as the document's silence",
     ),
@@ -1734,12 +1741,12 @@ ROWS += [
         "certificate: collapse an unstated key usage onto an empty one",
         "src/lib/properties.ts",
         """      usage === null
-        ? "not stated — the certificate places no limit on what the key is used for"
+        ? said.keyNotStated
         : usage.length > 0
           ? usage.join(", ")
-          : "nothing — the certificate names no use for its own key",""",
+          : said.keyNothing,""",
         """      usage === null || usage.length === 0
-        ? "nothing --- the certificate names no use for its own key"
+        ? said.keyNothing
         : usage.join(", "),""",
         "tells a certificate that states no use apart from one that states none",
     ),
@@ -1778,8 +1785,8 @@ ROWS += [
         # cannot.
         "conformance: state a claim without saying it is unchecked",
         "src/lib/properties.ts",
-        '      value: `${xmp.conformance.join(", ")} — the document\'s own claim, which tpdf does not check`,',
-        '      value: xmp.conformance.join(", "),',
+        "      `${claims} — the document's own claim, which tpdf does not check`,",
+        "      claims,",
         "shows a claim as a claim",
     ),
     Mutation(
@@ -1787,8 +1794,8 @@ ROWS += [
         # PDF/A and PDF/UA is reported as stating one.
         "conformance: show only the first standard a document claims",
         "src/lib/properties.ts",
-        '${xmp.conformance.join(", ")}',
-        '${xmp.conformance[0]}',
+        '      value: said.conformance(xmp.conformance.join(", ")),',
+        "      value: said.conformance(xmp.conformance[0]),",
         "lists every standard a document claims",
     ),
     Mutation(
@@ -1822,9 +1829,9 @@ ROWS += [
         # about what was checked. It then reads as a bare fact.
         "timestamp: state an attested time as a bare fact",
         "src/lib/integrity.ts",
-        """          `${when}, attested by ${authority} — the timestamp checks out under the key ` +
-          `in its certificate and covers ${subject}${how(integrity)}.`,""",
-        "          when,",
+        """            `${when}, attested by ${authority} — the timestamp checks out under the key ` +
+            `in its certificate and covers ${subject}${how}.`""",
+        "            when",
         "names the authority beside the time, and says the time is attested",
     ),
     Mutation(
@@ -1874,7 +1881,7 @@ ROWS += [
         # the row satisfied the ordering rather than breaking it.
         "timestamp: drop the signer's own date, leaving only the attested one",
         "src/lib/properties.ts",
-        '  claimed("Date given", signature.when);',
+        "  claimed(said.dateGiven, signature.when);",
         "",
         "puts the attested time under the signer's own date, not over it",
     ),
