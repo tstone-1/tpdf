@@ -35,6 +35,8 @@ have the binary.)
 
 ### Fixed
 
+- **Save a copy with page numbers** and **Save a copy with a watermark** take a size and an
+  opacity typed with a decimal comma ("10,5"). They were refused as not a number.
 - **Recognise this page** in the find bar was disabled on every document since 26.10.26.
   It is now enabled whenever the same command in the Document menu is.
 - Searching a scanned document now says "no text: scanned pages" and puts **Recognize

@@ -96,4 +96,13 @@ ROWS = [
         "    pages = parsed.slots;\n",
         "",
         "turns what was typed into the line to write"),
+    # Added 2026-10-26 with the decimal comma.
+    Mutation("add text: a decimal comma refused", "src/lib/addtext.ts",
+        '  return Number(/^\\d+,\\d+$/.test(trimmed) ? trimmed.replace(",", ".") : trimmed);',
+        "  return Number(trimmed);",
+        "takes a decimal comma, and no thousands separator"),
+    Mutation("add text: any comma taken as a decimal point", "src/lib/addtext.ts",
+        '  return Number(/^\\d+,\\d+$/.test(trimmed) ? trimmed.replace(",", ".") : trimmed);',
+        '  return Number(trimmed.replace(",", "."));',
+        "takes a decimal comma, and no thousands separator"),
 ]

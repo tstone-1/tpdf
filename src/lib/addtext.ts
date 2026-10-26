@@ -139,6 +139,16 @@ export interface Typed {
 }
 
 /**
+ * A typed decimal, with a comma taken as the decimal point: a German reader
+ * types "10,5". Only digits, one comma, digits; "1,000.5" and "1,5,0" stay
+ * unreadable rather than being guessed at.
+ */
+export function decimal(raw: string): number {
+  const trimmed = raw.trim();
+  return Number(/^\d+,\d+$/.test(trimmed) ? trimmed.replace(",", ".") : trimmed);
+}
+
+/**
  * What was typed as the line to write, or why it cannot be.
  *
  * The same refusals `addedtext::check` makes, said before a save panel is
@@ -159,11 +169,11 @@ export function judge(kind: Kind, typed: Typed, pageCount: number): AddedText | 
       return TEXT().notField(field);
     }
   }
-  const size = Number(typed.size);
+  const size = decimal(typed.size);
   if (!Number.isFinite(size) || size < MIN_SIZE || size > MAX_SIZE) {
     return TEXT().sizeRange(MIN_SIZE, MAX_SIZE);
   }
-  const extra = Number(typed.extra);
+  const extra = decimal(typed.extra);
   if (kind === "numbers") {
     if (!Number.isInteger(extra) || extra < 0 || extra > 1_000_000) {
       return TEXT().firstNumber;

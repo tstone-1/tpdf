@@ -59,6 +59,18 @@ describe("judge", () => {
     expect(judge("watermark", typed({ text: "x".repeat(200) }), 1)).toMatchObject({ text: "x".repeat(200) });
   });
 
+  it("takes a decimal comma, and no thousands separator", () => {
+    expect(judge("numbers", typed({ size: "10,5" }), 1)).toMatchObject({ size: 10.5 });
+    expect(judge("watermark", typed({ size: " 12,25 ", extra: "12,5" }), 1))
+      .toMatchObject({ size: 12.25, opacity: 0.125 });
+    // The first page number reads "1,5" as 1.5 too, and refuses it as not whole.
+    expect(judge("numbers", typed({ extra: "1,5" }), 1)).toContain("whole number");
+    // A thousands separator, or two commas, is not guessed at.
+    for (const size of ["1,000.5", "1,5,0", ",5", "5,"]) {
+      expect(judge("numbers", typed({ size }), 1), size).toContain("from 4 to 300");
+    }
+  });
+
   it("writes German text, which Latin-1 has", () => {
     expect(judge("numbers", typed({ text: "Seite {page} von {pages} für Prüfung" }), 1)).toMatchObject({
       text: "Seite {page} von {pages} für Prüfung",
