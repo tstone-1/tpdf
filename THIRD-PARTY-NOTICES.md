@@ -2703,7 +2703,7 @@ SOFTWARE.
 | crossbeam-deque | 0.8.8 | MIT OR Apache-2.0 |
 | crossbeam-epoch | 0.9.21 | MIT OR Apache-2.0 |
 | crossbeam-utils | 0.8.23 | MIT OR Apache-2.0 |
-| crypto-bigint | 0.7.6 | Apache-2.0 OR MIT |
+| crypto-bigint | 0.7.10 | Apache-2.0 OR MIT |
 | crypto-common | 0.1.7 | MIT OR Apache-2.0 |
 | crypto-common | 0.2.2 | MIT OR Apache-2.0 |
 | cryptoki | 0.12.1 | Apache-2.0 |
@@ -2711,7 +2711,7 @@ SOFTWARE.
 | cssparser | 0.37.0 | MPL-2.0 |
 | cssparser-macros | 0.7.1 | MPL-2.0 |
 | ctor | 1.0.13 | Apache-2.0 OR MIT |
-| ctutils | 0.4.5 | Apache-2.0 OR MIT |
+| ctutils | 0.4.6 | Apache-2.0 OR MIT |
 | darling | 0.24.1 | MIT |
 | darling_core | 0.24.1 | MIT |
 | darling_macro | 0.24.1 | MIT |
