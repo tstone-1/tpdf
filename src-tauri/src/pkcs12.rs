@@ -67,14 +67,13 @@ impl Refusal {
     #[must_use]
     pub fn sentence(&self) -> String {
         match self {
-            Self::WrongPassword => "The password is not the one this certificate file was saved with.".into(),
+            Self::WrongPassword => said!("The password is not the one this certificate file was saved with."),
             // linux-difference: signing
-            Self::Rsa => "This certificate file holds an RSA key, and tpdf signs from a file only with an ECDSA key. \
-                          A smart card or token with this certificate can sign."
-                .into(),
-            Self::NoKey => "This certificate file has no private key for its certificate, so it cannot sign.".into(),
-            Self::Unsupported(what) => format!("This certificate file uses {what}, which tpdf does not read."),
-            Self::Malformed(why) => format!("This is not a certificate file tpdf can read: {why}."),
+            Self::Rsa => said!("This certificate file holds an RSA key, and tpdf signs from a file only with an ECDSA key. \
+                          A smart card or token with this certificate can sign."),
+            Self::NoKey => said!("This certificate file has no private key for its certificate, so it cannot sign."),
+            Self::Unsupported(what) => said!("This certificate file uses {what}, which tpdf does not read."),
+            Self::Malformed(why) => said!("This is not a certificate file tpdf can read: {why}."),
         }
     }
 }
@@ -111,7 +110,7 @@ impl Opened {
     /// The curve library refusing, which a valid key does not.
     pub fn sign(&self, digest: &[u8; 32]) -> Result<Vec<u8>, String> {
         use ecdsa::signature::hazmat::PrehashSigner as _;
-        let refused = |e: ecdsa::Error| format!("the key did not sign: {e}");
+        let refused = |e: ecdsa::Error| said!("the key did not sign: {e}");
         Ok(match &self.key {
             EcKey::P256(key) => {
                 let signature: p256::ecdsa::Signature =
@@ -173,11 +172,11 @@ pub fn open(file: &[u8], password: &str) -> Result<Opened, Refusal> {
                     .map_err(malformed("encrypted contents"))?;
                 let info = encrypted.enc_content_info;
                 let bytes = info.encrypted_content.ok_or_else(|| {
-                    Refusal::Malformed("encrypted contents with no content".into())
+                    Refusal::Malformed(said!("encrypted contents with no content"))
                 })?;
                 decrypt(&info.content_enc_alg, bytes.as_bytes(), password)?
             }
-            other => return Err(Refusal::Unsupported(format!("contents of type {other}"))),
+            other => return Err(Refusal::Unsupported(said!("contents of type {other}"))),
         };
         let bags = pkcs12::safe_bag::SafeContents::from_der(&contents)
             .map_err(malformed("a list of bags"))?;
@@ -239,9 +238,9 @@ fn bag_value(bag: &pkcs12::safe_bag::SafeBag) -> Result<&[u8], Refusal> {
 /// The bytes of an `id-data` content: the OCTET STRING inside.
 fn data_of(info: &ContentInfo) -> Result<Vec<u8>, Refusal> {
     if info.content_type.to_string() != ID_DATA {
-        return Err(Refusal::Unsupported(format!(
-            "outer contents of type {}",
-            info.content_type
+        return Err(Refusal::Unsupported(said!(
+            "outer contents of type {kind}",
+            kind = info.content_type
         )));
     }
     Ok(info
@@ -274,9 +273,9 @@ fn check_mac(mac: &pkcs12::mac_data::MacData, auth: &[u8], password: &str) -> Re
     let rounds = mac.iterations;
     let expected = mac.mac.digest.as_bytes();
     let unreadable = |_| {
-        Refusal::Unsupported(
-            "a password with characters outside the Basic Multilingual Plane".into(),
-        )
+        Refusal::Unsupported(said!(
+            "a password with characters outside the Basic Multilingual Plane"
+        ))
     };
     macro_rules! with {
         ($digest:ty, $len:expr) => {{
@@ -285,7 +284,7 @@ fn check_mac(mac: &pkcs12::mac_data::MacData, auth: &[u8], password: &str) -> Re
                     .map_err(unreadable)?,
             );
             let mut hmac = hmac::Hmac::<$digest>::new_from_slice(&key)
-                .map_err(|_| Refusal::Malformed("a MAC key of no length".into()))?;
+                .map_err(|_| Refusal::Malformed(said!("a MAC key of no length")))?;
             hmac.update(auth);
             hmac.verify_slice(expected)
                 .map_err(|_| Refusal::WrongPassword)
@@ -296,8 +295,8 @@ fn check_mac(mac: &pkcs12::mac_data::MacData, auth: &[u8], password: &str) -> Re
         "2.16.840.1.101.3.4.2.1" => with!(sha2_10::Sha256, 32),
         "2.16.840.1.101.3.4.2.2" => with!(sha2_10::Sha384, 48),
         "2.16.840.1.101.3.4.2.3" => with!(sha2_10::Sha512, 64),
-        PBMAC1 => Err(Refusal::Unsupported("a PBMAC1 integrity check".into())),
-        other => Err(Refusal::Unsupported(format!(
+        PBMAC1 => Err(Refusal::Unsupported(said!("a PBMAC1 integrity check"))),
+        other => Err(Refusal::Unsupported(said!(
             "an integrity check with the hash {other}"
         ))),
     }
@@ -321,7 +320,7 @@ fn decrypt(
         let borrowed = x509_cert::spki::AlgorithmIdentifierRef::from_der(&encoded)
             .map_err(malformed("an encryption scheme"))?;
         let scheme = pkcs5::EncryptionScheme::try_from(borrowed)
-            .map_err(|e| Refusal::Unsupported(format!("the encryption scheme it names ({e})")))?;
+            .map_err(|e| Refusal::Unsupported(said!("the encryption scheme it names ({e})")))?;
         return scheme
             .decrypt(password.as_bytes(), data)
             .map(Zeroizing::new)
@@ -330,14 +329,14 @@ fn decrypt(
     let params = algorithm
         .parameters
         .as_ref()
-        .ok_or_else(|| Refusal::Malformed("an encryption scheme with no parameters".into()))?
+        .ok_or_else(|| Refusal::Malformed(said!("an encryption scheme with no parameters")))?
         .decode_as::<pkcs12::pbe_params::Pkcs12PbeParams>()
         .map_err(malformed("encryption parameters"))?;
     let (salt, rounds) = (params.salt.as_bytes(), params.iterations);
     let unreadable = |_| {
-        Refusal::Unsupported(
-            "a password with characters outside the Basic Multilingual Plane".into(),
-        )
+        Refusal::Unsupported(said!(
+            "a password with characters outside the Basic Multilingual Plane"
+        ))
     };
     let derive = |kind, len| -> Result<Zeroizing<Vec<u8>>, Refusal> {
         Ok(Zeroizing::new(
@@ -351,14 +350,14 @@ fn decrypt(
         "1.2.840.113549.1.12.1.3" => {
             let key = derive(Pkcs12KeyType::EncryptionKey, 24)?;
             cbc::Decryptor::<des::TdesEde3>::new_from_slices(&key, &iv)
-                .map_err(|_| Refusal::Malformed("a triple-DES key of the wrong length".into()))?
+                .map_err(|_| Refusal::Malformed(said!("a triple-DES key of the wrong length")))?
                 .decrypt_padded_vec_mut::<Pkcs7>(data)
                 .map_err(padding)?
         }
         "1.2.840.113549.1.12.1.4" => {
             let key = derive(Pkcs12KeyType::EncryptionKey, 16)?;
             cbc::Decryptor::<des::TdesEde2>::new_from_slices(&key, &iv)
-                .map_err(|_| Refusal::Malformed("a triple-DES key of the wrong length".into()))?
+                .map_err(|_| Refusal::Malformed(said!("a triple-DES key of the wrong length")))?
                 .decrypt_padded_vec_mut::<Pkcs7>(data)
                 .map_err(padding)?
         }
@@ -368,18 +367,14 @@ fn decrypt(
             let key = derive(Pkcs12KeyType::EncryptionKey, bits / 8)?;
             let cipher = rc2::Rc2::new_with_eff_key_len(&key, bits);
             cbc::Decryptor::<rc2::Rc2>::inner_iv_slice_init(cipher, &iv)
-                .map_err(|_| Refusal::Malformed("an RC2 IV of the wrong length".into()))?
+                .map_err(|_| Refusal::Malformed(said!("an RC2 IV of the wrong length")))?
                 .decrypt_padded_vec_mut::<Pkcs7>(data)
                 .map_err(padding)?
         }
         "1.2.840.113549.1.12.1.1" | "1.2.840.113549.1.12.1.2" => {
-            return Err(Refusal::Unsupported("RC4 encryption".into()))
+            return Err(Refusal::Unsupported(said!("RC4 encryption")))
         }
-        other => {
-            return Err(Refusal::Unsupported(format!(
-                "the encryption scheme {other}"
-            )))
-        }
+        other => return Err(Refusal::Unsupported(said!("the encryption scheme {other}"))),
     };
     Ok(Zeroizing::new(plain))
 }
@@ -391,7 +386,7 @@ fn ec_key(info: &[u8]) -> Result<EcKey, Refusal> {
     match info.algorithm.oid.to_string().as_str() {
         RSA => return Err(Refusal::Rsa),
         EC_PUBLIC_KEY => {}
-        other => return Err(Refusal::Unsupported(format!("a key of type {other}"))),
+        other => return Err(Refusal::Unsupported(said!("a key of type {other}"))),
     }
     let curve = info
         .algorithm
@@ -403,7 +398,7 @@ fn ec_key(info: &[u8]) -> Result<EcKey, Refusal> {
     let sec1 = EcPrivateKey::from_der(&inner).map_err(malformed("an EC private key"))?;
     let scalar = Zeroizing::new(sec1.private_key.as_bytes().to_vec());
     let curve = curve.or_else(|| sec1.parameters.map(|oid| oid.to_string()));
-    let bad = |_| Refusal::Malformed("an EC private key that is not a valid scalar".into());
+    let bad = |_| Refusal::Malformed(said!("an EC private key that is not a valid scalar"));
     match curve.as_deref() {
         Some(P256) => Ok(EcKey::P256(
             p256::ecdsa::SigningKey::from_slice(&scalar).map_err(bad)?,
@@ -411,10 +406,10 @@ fn ec_key(info: &[u8]) -> Result<EcKey, Refusal> {
         Some(P384) => Ok(EcKey::P384(
             p384::ecdsa::SigningKey::from_slice(&scalar).map_err(bad)?,
         )),
-        Some(other) => Err(Refusal::Unsupported(format!("the curve {other}"))),
-        None => Err(Refusal::Malformed(
-            "an EC private key that names no curve".into(),
-        )),
+        Some(other) => Err(Refusal::Unsupported(said!("the curve {other}"))),
+        None => Err(Refusal::Malformed(said!(
+            "an EC private key that names no curve"
+        ))),
     }
 }
 

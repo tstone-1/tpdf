@@ -107,9 +107,9 @@ pub(super) fn mark_sites(
     let mut sites = Vec::with_capacity(marks.len());
     for mark in marks {
         let page = *sheet.get(mark.at as usize).ok_or_else(|| {
-            format!(
-                "a mark names page {}, which this document does not have",
-                mark.at + 1
+            said!(
+                "a mark names page {page}, which this document does not have",
+                page = mark.at + 1
             )
         })?;
 
@@ -126,17 +126,17 @@ pub(super) fn mark_sites(
         // tpdf made is its own object and can never collide, so it answers one
         // and passes without a case of its own.
         if sheet.iter().filter(|id| **id == page).count() > 1 {
-            return Err(format!(
-                "page {} is the same page object as another page in this file, so a mark on it \
-                 would appear on both. tpdf will not write it.",
-                mark.at + 1
-            ));
+            return Err(
+                said!(
+                "page {page} is the same page object as another page in this file, so a mark on it \
+                 would appear on both. tpdf will not write it.", page = mark.at + 1),
+            );
         }
 
         let annots = match read
             .get_object(page)
             .and_then(Object::as_dict)
-            .map_err(|e| format!("page {page:?} is not a dictionary: {e}"))?
+            .map_err(|e| said!("page {page:?} is not a dictionary: {e}"))?
             .get(b"Annots")
         {
             Ok(Object::Reference(array)) => AnnotsSite::ArrayObject(*array),
@@ -200,13 +200,13 @@ pub(super) fn check_replies(
             continue;
         };
         let object = doc.get_object((parent.0, parent.1)).map_err(|e| {
-            Refusal::changed(format!(
+            Refusal::changed(said!(
                 "the comment being answered is not in this document any more: {e}"
             ))
         })?;
         let dictionary = object
             .as_dict()
-            .map_err(|_| Refusal::from("that comment is not an annotation"))?;
+            .map_err(|_| Refusal::from(said!("that comment is not an annotation")))?;
         // Not "has the subtype we expect": any annotation has one, and the check
         // that matters is that this is an annotation at all. `set_note` asks the
         // same question of the same kind of object, in the same words.
@@ -215,7 +215,7 @@ pub(super) fn check_replies(
             .and_then(Object::as_name)
             .is_err()
         {
-            return Err("that comment is not an annotation".into());
+            return Err(said!("that comment is not an annotation").into());
         }
     }
     Ok(RepliesChecked)
@@ -260,7 +260,7 @@ pub(super) fn write_marks(
             })
             || (mark.kind.holds_image() && mark.quads.len() != 1)
         {
-            return Err("Invalid signature or picture raster in save plan".into());
+            return Err(said!("Invalid signature or picture raster in save plan"));
         }
         let MarkSite {
             page,
@@ -271,9 +271,9 @@ pub(super) fn write_marks(
         let (page, shown) = (*page, *shown);
         let quads = user_quads(mark, shown);
         if quads.is_empty() {
-            return Err(format!(
-                "a mark on page {} covers no area in that page's own space",
-                mark.at + 1
+            return Err(said!(
+                "a mark on page {page} covers no area in that page's own space",
+                page = mark.at + 1
             ));
         }
 
@@ -281,10 +281,9 @@ pub(super) fn write_marks(
         // A field is a widget and a member of the document's form, so it is
         // made there and only attached here, where every mark is attached.
         if mark.kind == MarkKind::Field {
-            let placed = mark
-                .field
-                .as_ref()
-                .ok_or("a form field in the save plan names no kind of field")?;
+            let placed = mark.field.as_ref().ok_or(said!(
+                "a form field in the save plan names no kind of field"
+            ))?;
             // On a turned page the field is drawn as it is read and says how
             // far it is turned, as a text box of this writer's is.
             let turns = (shown.turns + turned_by) % 4;
@@ -329,7 +328,7 @@ pub(super) fn write_marks(
             // action, which every reader asks about before following.
             dictionary.set("Border", Object::Array(vec![0.into(), 0.into(), 0.into()]));
             match link_target(&mark.note, pages.len())
-                .map_err(|why| format!("a link on page {}: {why}", mark.at + 1))?
+                .map_err(|why| said!("a link on page {page}: {why}", page = mark.at + 1))?
             {
                 LinkTarget::Page(number) => {
                     let target = pages[number - 1];
@@ -1195,7 +1194,7 @@ pub(super) fn write_note_edits(
         incremental
             .opt_clone_object_to_new_document((note.object.0, note.object.1))
             .map_err(|e| {
-                Refusal::changed(format!(
+                Refusal::changed(said!(
                     "the comment being edited is not in this document any more: {e}"
                 ))
             })?;
@@ -1259,12 +1258,12 @@ pub(super) fn discard_notes(
         let dictionary = doc
             .get_object(id)
             .map_err(|e| {
-                Refusal::changed(format!(
+                Refusal::changed(said!(
                     "the comment being deleted is not in this document any more: {e}"
                 ))
             })?
             .as_dict()
-            .map_err(|_| Refusal::from("that comment is not an annotation"))?;
+            .map_err(|_| Refusal::from(said!("that comment is not an annotation")))?;
         if dictionary
             .get(b"Subtype")
             .and_then(Object::as_name)
@@ -1273,7 +1272,7 @@ pub(super) fn discard_notes(
             // `set_note`'s check and its reason: not "has the subtype we
             // expect", because any annotation has one and what matters is that
             // this is an annotation at all.
-            return Err("that comment is not an annotation".into());
+            return Err(said!("that comment is not an annotation").into());
         }
         doomed.insert(id);
     }
@@ -1298,13 +1297,13 @@ fn set_note(doc: &mut Document, note: &crate::edits::PlannedNoteEdit) -> Result<
     let object = doc
         .get_object_mut((note.object.0, note.object.1))
         .map_err(|e| {
-            Refusal::changed(format!(
+            Refusal::changed(said!(
                 "the comment being edited is not in this document any more: {e}"
             ))
         })?;
     let dictionary = object
         .as_dict_mut()
-        .map_err(|_| Refusal::from("that comment is not an annotation"))?;
+        .map_err(|_| Refusal::from(said!("that comment is not an annotation")))?;
     if dictionary
         .get(b"Subtype")
         .and_then(Object::as_name)
@@ -1312,7 +1311,7 @@ fn set_note(doc: &mut Document, note: &crate::edits::PlannedNoteEdit) -> Result<
     {
         // Not "has the subtype we expect": any annotation has one, and the
         // check that matters is that this is an annotation at all.
-        return Err("that comment is not an annotation".into());
+        return Err(said!("that comment is not an annotation").into());
     }
     dictionary.set("Contents", text_string(&note.body));
     dictionary.set("M", text_string(&note.made));
@@ -2016,7 +2015,7 @@ pub fn link_target(note: &str, pages: usize) -> Result<LinkTarget, String> {
     if !number.is_empty() && number.bytes().all(|b| b.is_ascii_digit()) {
         return match number.parse::<usize>() {
             Ok(page) if (1..=pages).contains(&page) => Ok(LinkTarget::Page(page)),
-            _ => Err(format!(
+            _ => Err(said!(
                 "it goes to page {number}, and the document has {pages}"
             )),
         };
@@ -2037,13 +2036,14 @@ pub fn link_target(note: &str, pages: usize) -> Result<LinkTarget, String> {
     if ok {
         Ok(LinkTarget::Web(address))
     } else if text.is_empty() {
-        Err("it goes nowhere: write a page number or a web address in its box".to_string())
+        Err(said!(
+            "it goes nowhere: write a page number or a web address in its box"
+        ))
     } else {
-        Err(
+        Err(said!(
             "a link goes to a page number, or to a web address starting with http://, \
              https:// or mailto:"
-                .to_string(),
-        )
+        ))
     }
 }
 
@@ -2077,7 +2077,7 @@ fn attach(
             let array = doc
                 .get_object_mut(*array_id)
                 .and_then(Object::as_array_mut)
-                .map_err(|e| format!("this page's /Annots is not an array: {e}"))?;
+                .map_err(|e| said!("this page's /Annots is not an array: {e}"))?;
             array.push(Object::Reference(annotation));
         }
         // Both rewrite the page dictionary, and the entries come from the site
@@ -2101,7 +2101,7 @@ fn attach(
             array.push(Object::Reference(annotation));
             doc.get_object_mut(page)
                 .and_then(Object::as_dict_mut)
-                .map_err(|e| format!("page {page:?} is not a dictionary: {e}"))?
+                .map_err(|e| said!("page {page:?} is not a dictionary: {e}"))?
                 .set("Annots", Object::Array(array));
         }
     }

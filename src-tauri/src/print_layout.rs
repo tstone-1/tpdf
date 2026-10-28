@@ -196,7 +196,7 @@ pub fn grid(per_sheet: u8, wide: bool) -> Result<(u32, u32), String> {
         6 => (3, 2),
         9 => (3, 3),
         16 => (4, 4),
-        other => return Err(format!("{other} pages to a sheet is not a choice")),
+        other => return Err(said!("{other} pages to a sheet is not a choice")),
     };
     Ok(if wide { (long, short) } else { (short, long) })
 }
@@ -231,27 +231,27 @@ pub fn lay_out(
     } = layout;
     let (area_w, area_h) = (paper.printable_width, paper.printable_height);
     if !(area_w > 0.0 && area_h > 0.0) {
-        return Err("the paper has no printable area".into());
+        return Err(said!("the paper has no printable area"));
     }
     if let Scale::Percent(percent) | Scale::Poster(percent) = scale {
         if percent == 0 || percent > MOST_PERCENT {
-            return Err(format!(
+            return Err(said!(
                 "a scale of {percent}% is not between 1% and {MOST_PERCENT}%"
             ));
         }
     }
     if let Scale::Poster(percent) = scale {
         if per_sheet != 1 {
-            return Err("a poster takes one page to a sheet".into());
+            return Err(said!("a poster takes one page to a sheet"));
         }
         let mut sheets = Vec::new();
         for &page in pages {
             let size = page_size(sizes, page)?;
             let tiles = poster(size, page, percent, area_w, area_h).map_err(|count| {
-                format!(
-                    "page {} as a poster at {percent}% takes {count} sheets, more than the \
+                said!(
+                    "page {page} as a poster at {percent}% takes {count} sheets, more than the \
                      {MOST_POSTER_SHEETS} tpdf prints of one page",
-                    page + 1,
+                    page = page + 1,
                 )
             })?;
             sheets.extend(tiles.into_iter().map(|tile| vec![tile]));
@@ -309,9 +309,9 @@ pub fn lay_out(
 fn page_size(sizes: &[PageSize], page: u32) -> Result<PageSize, String> {
     let size = *sizes
         .get(page as usize)
-        .ok_or_else(|| format!("page {} is not in this job", page + 1))?;
+        .ok_or_else(|| said!("page {page} is not in this job", page = page + 1))?;
     if !(size.width_pt > 0.0 && size.height_pt > 0.0) {
-        return Err(format!("page {} has no size", page + 1));
+        return Err(said!("page {page} has no size", page = page + 1));
     }
     Ok(size)
 }

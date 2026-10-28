@@ -21,7 +21,7 @@ use tauri::Emitter;
 
 use super::answered;
 use crate::edits;
-use crate::hidden::survey::{self, Pages, Passage, Survey, NOT_LOOKED_AT};
+use crate::hidden::survey::{self, Pages, Passage, Survey};
 use crate::render::{RenderService, TileFormat, TileOutcome, TileRequest};
 use crate::text::PageText;
 use crate::worker::TILE_CAPACITY;
@@ -32,6 +32,12 @@ pub const PROGRESS_EVENT: &str = "tpdf://hidden-progress";
 /// What a stopped check answers. A walk that did not reach the last page has
 /// no result: a list from half a document would read as the whole of it.
 pub const CANCELLED: &str = "The check was stopped before the last page, so there is no result.";
+
+/// [`CANCELLED`], written so the window can translate it. The walk's tests
+/// hold the two equal.
+fn cancelled_reply() -> String {
+    said!("The check was stopped before the last page, so there is no result.")
+}
 
 /// The side of one tile a page is asked for in, in pixels: the largest whose
 /// pixels fit a worker's reply.
@@ -60,7 +66,7 @@ pub struct HiddenText {
     pub found: Vec<Passage>,
     /// [`survey::summary`]: what was found, and what was not compared.
     pub summary: String,
-    /// [`NOT_LOOKED_AT`]: what the comparison never covers.
+    /// [`survey::NOT_LOOKED_AT`]: what the comparison never covers.
     pub not_looked_at: String,
     /// Whether the document has changes that are not saved, which were
     /// therefore not part of what was checked.
@@ -74,7 +80,13 @@ impl HiddenText {
         HiddenText {
             summary: survey::summary(&survey),
             found: survey.found,
-            not_looked_at: NOT_LOOKED_AT.into(),
+            // The CLI prints `NOT_LOOKED_AT` itself; this is the same
+            // sentence, written so the window can translate it, and the
+            // reply's test below holds the two equal.
+            not_looked_at: said!(
+                "Not looked at: comments, form values, attachments, metadata and \
+                 earlier versions kept in the file."
+            ),
             unsaved,
         }
     }
@@ -128,7 +140,7 @@ impl Pages for Held<'_> {
     type Error = String;
 
     fn text(&mut self, page: u32) -> Result<PageText, String> {
-        answered("comparing text with the pages", |reply| {
+        answered(&said!("comparing text with the pages"), |reply| {
             self.service.text(self.doc, page, None, reply)
         })
     }
@@ -161,16 +173,16 @@ impl Pages for Held<'_> {
                     height: th,
                     format: TileFormat::Raw,
                 };
-                match answered("comparing text with the pages", |reply| {
+                match answered(&said!("comparing text with the pages"), |reply| {
                     service.tile(request, reply)
                 })? {
                     TileOutcome::Rendered(tile) => Ok(tile.bytes),
                     TileOutcome::Abandoned => {
-                        Err(format!("the render of page {} was abandoned", page + 1))
+                        Err(said!("the render of page {n} was abandoned", n = page + 1))
                     }
                 }
             },
-            &|| format!("page {} was rendered at the wrong size", page + 1),
+            &|| said!("page {n} was rendered at the wrong size", n = page + 1),
         )
     }
 }
@@ -186,7 +198,7 @@ fn walk<P: Pages<Error = String>>(
     let selection: Vec<u32> = (1..=count).collect();
     survey::survey(pages, &selection, &mut |_, page| {
         if cancelled() {
-            return Err(CANCELLED.into());
+            return Err(cancelled_reply());
         }
         progress(Progress { page, of: count });
         Ok(())
@@ -243,7 +255,7 @@ pub async fn hidden_text(
         .map(|survey| HiddenText::of(survey, unsaved(&plan)))
     })
     .await
-    .map_err(|e| format!("The check did not run: {e}"))?
+    .map_err(|e| said!("The check did not run: {e}"))?
 }
 
 /// Asks check number `run` to stop before its next page.

@@ -2109,7 +2109,7 @@ ROWS += [
         '',
         "changes the list only after every place already issued has landed"),
     Mutation("start page: swallow a refused change", "src/lib/startpage.ts",
-        '    return String(e);',
+        '    return spokenError(e);',
         '    return null;',
         "hands back what a refused change said"),
     Mutation("start page: forget where home is", "src/lib/startpage.ts",

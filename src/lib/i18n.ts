@@ -1,8 +1,8 @@
 /** UI wording. Every string the window shows comes from a catalog: the shared
  * one below, for titles more than one module uses, or a module's own, made with
  * {@link catalog} beside the code that shows it. Command ids, saved data and
- * CLI/API reports stay locale-independent, and so do messages the worker writes
- * (phase 2 of German: until then they reach the window in English).
+ * CLI/API reports stay locale-independent. Sentences Rust writes reach the
+ * window in English and are translated there by `said.ts`.
  *
  * A catalog's German half has to have every key its American half has, with the
  * same parameters; the type refuses one that does not, so a string added in

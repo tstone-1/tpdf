@@ -354,6 +354,7 @@ hop through the index.
 
 - The first HTTP client a test process builds took twenty seconds, and the time was a directory listing
 - A stderr lock held for a whole command deadlocks the first diagnostic another thread writes
+- A Rust string that lost its line continuation shows the reader the next line's indentation
 ## Measuring: what a number can and cannot say
 - A documented count that is one sample of a race makes an honest run look like a defect
 - The harness prints the count so nobody has to derive it, and it was derived anyway
@@ -26990,3 +26991,16 @@ with `null`. No gate or check renders that markup, so all were green. The button
 state from `toolState`, as the header's buttons do, so it cannot disagree with the menu. A guard
 written in `App.svelte` markup instead of read from the command registry is a second copy of the
 rule, and nothing compares the two.
+
+
+### A Rust string that lost its line continuation shows the reader the next line's indentation
+
+A `\` at the end of a line inside a Rust string literal joins the next line and drops its leading
+whitespace. Delete the backslash in an edit and the string still compiles, and the newline and
+the indentation become part of the text. Three messages a reader can see were shipped like that:
+`edits.rs` ("so this gesture was" followed by 18 spaces), `ocr_gate.rs` and `sign_cms.rs` ("on
+disk," followed by 21 spaces). No test pinned the sentences, and clippy and rustfmt do not look
+inside a literal. The German conversion of 2026-10-28 found them, because its catalog keys are the
+English sentences byte for byte. The `said!` gate in `src/lib/said.test.ts` now refuses a template
+with three spaces in a row. Literals outside `said!` (the command-line usage texts, the probes)
+are not checked; most of them indent continuation lines on purpose.

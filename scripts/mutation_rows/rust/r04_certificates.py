@@ -804,11 +804,8 @@ ROWS += [
         # did nothing is indistinguishable from a viewer that has stopped working.
         "displace: take a non-finite offset as no offset at all",
         "src/edits.rs",
-        """        if !dx.is_finite() || !dy.is_finite() {
-            return Err(format!("a mark cannot be moved by ({dx}, {dy})"));
-        }""",
-        """        let dx = if dx.is_finite() { dx } else { 0.0 };
-        let dy = if dy.is_finite() { dy } else { 0.0 };""",
+        '        if !dx.is_finite() || !dy.is_finite() {\n            return Err(said!("a mark cannot be moved by ({dx}, {dy})"));\n        }',
+        '        let dx = if dx.is_finite() { dx } else { 0.0 };\n        let dy = if dy.is_finite() { dy } else { 0.0 };',
         "a_move_by_a_non_finite_offset_is_refused_rather_than_ignored",
     ),
 ]
@@ -1080,9 +1077,8 @@ ROWS += [
         # every earlier entry.
         "certificate files: read a damaged list as empty and write over it",
         "src/certfiles.rs",
-        "    let mut list = load(store)\n"
-        '        .map_err(|why| format!("{why} Nothing was added; move it aside to start a new list."))?;',
-        "    let mut list = load(store).unwrap_or_default();",
+        '    let mut list = load(store)\n        .map_err(|why| said!("{why} Nothing was added; move it aside to start a new list."))?;',
+        '    let mut list = load(store).unwrap_or_default();',
         "a_damaged_list_is_left_as_it_is_and_nothing_is_added",
         only_on="linux",
     ),
@@ -1142,8 +1138,8 @@ ROWS += [
     Mutation(
         "token: say a wrong PIN in the library's words",
         "src/pkcs11.rs",
-        "        Error::Pkcs11(RvError::PinIncorrect, _) => format!(",
-        "        Error::Pkcs11(RvError::PinIncorrect, _) if false => format!(",
+        '        Error::Pkcs11(RvError::PinIncorrect, _) => said!(',
+        '        Error::Pkcs11(RvError::PinIncorrect, _) if false => said!(',
         "a_refused_login_is_said_in_words_a_reader_can_act_on",
         only_on="linux",
     ),
@@ -1327,8 +1323,8 @@ ROWS += [
         # apply -- and the reader has an undo step for it.
         "notes: accept a comment with no object of its own",
         "src/edits.rs",
-        "        if object.0 == 0 {\n            return Err(\"that comment has no object to write over\".to_string());",
-        "        if false {\n            return Err(\"that comment has no object to write over\".to_string());",
+        '        if object.0 == 0 {\n            return Err(said!("that comment has no object to write over"));',
+        '        if false {\n            return Err(said!("that comment has no object to write over"));',
         "a_comment_with_no_object_of_its_own_is_refused_here_and_spends_nothing",
     ),
     Mutation(
@@ -1395,7 +1391,7 @@ ROWS += [
         # a reply onto it.
         "reply: let a reply name something that is not an annotation",
         "src/save/marks.rs",
-        '            return Err("that comment is not an annotation".into());\n'
+        '            return Err(said!("that comment is not an annotation").into());\n'
         "        }\n"
         "    }\n"
         "    Ok(RepliesChecked)",
@@ -1855,8 +1851,8 @@ ROWS += [
         # The wrong sentence: a document with no encryption has no restrictions either.
         'protect: tell a plain document it opens without a password',
         'src/protect.rs',
-        '        Protection::Remove if !had => {',
-        '        Protection::Remove if false => {',
+        '        Protection::Remove if !had => Err(said!(',
+        '        Protection::Remove if false => Err(said!(',
         'a_removal_needs_a_document_that_a_password_opens',
     ),
     Mutation(
@@ -1887,7 +1883,7 @@ ROWS += [
         # The key stays all zeroes, so every protected copy is encrypted with the same one.
         'protect: one file key for every copy',
         'src/protect.rs',
-        '    getrandom::fill(&mut key)\n        .map_err(|e| format!("tpdf could not get random bytes for the encryption key: {e}"))?;',
+        '    getrandom::fill(&mut key)\n        .map_err(|e| said!("tpdf could not get random bytes for the encryption key: {e}"))?;',
         '',
         'two_copies_get_two_keys',
     ),
@@ -2127,8 +2123,8 @@ ROWS += [
         # --dpi 0 divides by zero into an infinite page.
         'images: accept any resolution',
         'src/imagepages.rs',
-        '            Some(dpi) if !PLAUSIBLE_DPI.contains(&f64::from(dpi)) => Err(format!(',
-        '            Some(dpi) if false => Err(format!(',
+        '            Some(dpi) if !PLAUSIBLE_DPI.contains(&f64::from(dpi)) => Err(said!(',
+        '            Some(dpi) if false => Err(said!(',
         'a_resolution_nobody_prints_at_is_refused',
     ),
     Mutation(
@@ -2262,8 +2258,8 @@ ROWS += [
         # reads as nothing, and reading nothing is the answer that certifies.
         "mask: blank a region that is not on the page at all",
         "src/ocr_gate.rs",
-        "    if left >= right {\n        return Err(format!(",
-        "    if false {\n        return Err(format!(",
+        '    if left >= right {\n        return Err(said!(',
+        '    if false {\n        return Err(said!(',
         "a_region_beside_the_page_is_refused_rather_than_blanked",
     ),
     Mutation(
@@ -2363,8 +2359,8 @@ ROWS += [
         # from whichever form happens to be at that position.
         "form: remove from whichever form is at that position",
         "src/redact.rs",
-        "    let text_objects = forms[which].1;\n\n    let data = doc\n        .get_page_content_with_limit(page, MAX_CONTENT_BYTES)\n        .map_err(|why| format!(\"the page's content stream could not be read: {why}\"))?;\n    let content = Content::decode(&data)\n        .map_err(|why| format!(\"the content stream will not decode: {why}\"))?;\n\n    let names = form_draws(doc, page, &content)?;\n    if names.len() != forms.len() {",
-        "    let text_objects = forms[which].1;\n\n    let data = doc\n        .get_page_content_with_limit(page, MAX_CONTENT_BYTES)\n        .map_err(|why| format!(\"the page's content stream could not be read: {why}\"))?;\n    let content = Content::decode(&data)\n        .map_err(|why| format!(\"the content stream will not decode: {why}\"))?;\n\n    let names = form_draws(doc, page, &content)?;\n    if false {",
+        "    let text_objects = forms[which].1;\n\n    let data = doc\n        .get_page_content_with_limit(page, MAX_CONTENT_BYTES)\n        .map_err(|why| said!(\"the page's content stream could not be read: {why}\"))?;\n    let content =\n        Content::decode(&data).map_err(|why| said!(\"the content stream will not decode: {why}\"))?;\n\n    let names = form_draws(doc, page, &content)?;\n    if names.len() != forms.len() {",
+        "    let text_objects = forms[which].1;\n\n    let data = doc\n        .get_page_content_with_limit(page, MAX_CONTENT_BYTES)\n        .map_err(|why| said!(\"the page's content stream could not be read: {why}\"))?;\n    let content =\n        Content::decode(&data).map_err(|why| said!(\"the content stream will not decode: {why}\"))?;\n\n    let names = form_draws(doc, page, &content)?;\n    if false {",
         "a_form_count_that_disagrees_with_pdfium_removes_nothing",
     ),
     Mutation(
@@ -2372,8 +2368,8 @@ ROWS += [
         # what PDFium counted inside it.
         "form: remove by position without checking the count",
         "src/redact.rs",
-        "    if shows.len() != text_objects {\n        return Err(format!(\n            \"this form has {} text-showing operator(s) and PDFium reported {text_objects} text \\\n             object(s). Removing by position needs those to agree, so nothing was removed.\",",
-        "    if false {\n        return Err(format!(\n            \"this form has {} text-showing operator(s) and PDFium reported {text_objects} text \\\n             object(s). Removing by position needs those to agree, so nothing was removed.\",",
+        "    if shows.len() != text_objects {\n        return Err(said!(\n            \"this form has {count} text-showing operator(s) and PDFium reported {text_objects} text \\\n             object(s). Removing by position needs those to agree, so nothing was removed.\",",
+        "    if false {\n        return Err(said!(\n            \"this form has {count} text-showing operator(s) and PDFium reported {text_objects} text \\\n             object(s). Removing by position needs those to agree, so nothing was removed.\",",
         "a_show_count_that_disagrees_with_pdfium_removes_nothing",
     ),
 ]

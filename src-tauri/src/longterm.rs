@@ -205,11 +205,11 @@ fn named(certificate: &Certificate, whose: Whose) -> String {
         cn = crate::docinfo::distinguished_name(&certificate.tbs_certificate.subject);
     }
     match whose {
-        Whose::Signer => format!("the signer's certificate ({cn})"),
-        Whose::SignerIssuer => format!("the certificate above the signer's ({cn})"),
-        Whose::Authority => format!("the timestamp authority's certificate ({cn})"),
+        Whose::Signer => said!("the signer's certificate ({cn})"),
+        Whose::SignerIssuer => said!("the certificate above the signer's ({cn})"),
+        Whose::Authority => said!("the timestamp authority's certificate ({cn})"),
         Whose::AuthorityIssuer => {
-            format!("the certificate above the timestamp authority's ({cn})")
+            said!("the certificate above the timestamp authority's ({cn})")
         }
     }
 }
@@ -284,53 +284,58 @@ impl Refusal {
     pub fn sentence(&self) -> String {
         match self {
             Refusal::Unreadable(why) => {
-                format!("the signature just made could not be read to gather its data: {why}")
+                said!("the signature just made could not be read to gather its data: {why}")
             }
             Refusal::NoTimestamp => {
-                "long-term validation data needs a timestamp: choose a timestamp authority too"
-                    .into()
+                said!(
+                    "long-term validation data needs a timestamp: choose a timestamp authority too"
+                )
             }
-            Refusal::NotPublished(name) => format!(
+            Refusal::NotPublished(name) => said!(
                 "{name} does not say where its revocation data is published, so tpdf cannot \
                  add long-term validation data for it: that needs a certificate from a \
                  certificate authority that publishes revocation data (an OCSP responder or \
                  a revocation list over http or https). A timestamp alone works with this \
                  certificate"
             ),
-            Refusal::NoIssuer(name) => format!(
+            Refusal::NoIssuer(name) => said!(
                 "tpdf could not find the certificate that issued {name}, so it cannot ask about \
                  its revocation"
             ),
-            Refusal::Untrusted { name, why } => format!(
+            Refusal::Untrusted { name, why } => said!(
                 "the timestamp authority {name} is not trusted by this computer, so tpdf will \
                  not fetch revocation data for it: {why}"
             ),
-            Refusal::Unanswered { name, attempts } => format!(
-                "tpdf could not get revocation data for {name}: {}",
-                attempts.join("; ")
+            Refusal::Unanswered { name, attempts } => said!(
+                "tpdf could not get revocation data for {name}: {attempts}",
+                attempts = attempts.join("; ")
             ),
-            Refusal::Unknown { name, host } => format!(
+            Refusal::Unknown { name, host } => said!(
                 "the OCSP responder at {host} says it does not know {name}, so there is no \
                  revocation data to keep for it"
             ),
-            Refusal::Revoked { name, at, by } => format!(
-                "{name} has been revoked{} according to {by}. tpdf will not write a signature \
-                 made with a revoked certificate",
+            Refusal::Revoked { name, at, by } => {
                 if at.is_empty() {
-                    String::new()
+                    said!(
+                        "{name} has been revoked according to {by}. tpdf will not write a \
+                         signature made with a revoked certificate"
+                    )
                 } else {
-                    format!(" since {at}")
+                    said!(
+                        "{name} has been revoked since {at} according to {by}. tpdf will not \
+                         write a signature made with a revoked certificate"
+                    )
                 }
-            ),
-            Refusal::DoesNotCheck { name, by, why } => {
-                format!("{by} about {name} does not check out: {why}")
             }
-            Refusal::Bound(why) => format!("the long-term validation data {why}"),
-            Refusal::Written(why) => format!(
+            Refusal::DoesNotCheck { name, by, why } => {
+                said!("{by} about {name} does not check out: {why}")
+            }
+            Refusal::Bound(why) => said!("the long-term validation data {why}"),
+            Refusal::Written(why) => said!(
                 "tpdf's own check of the signed document with its long-term validation data \
                  did not pass: {why}"
             ),
-            Refusal::Archive(why) => format!(
+            Refusal::Archive(why) => said!(
                 "the archive timestamp, which keeps the signature checkable after the \
                  timestamp authority's own certificate expires, could not be added: {why}"
             ),
@@ -541,16 +546,16 @@ fn unvouched(trust: &crate::trust::Trust, blob: &[u8], whose: &str) -> (String, 
     let computer = crate::words::computer(trust.store);
     let why = match (trust.standing, trust.why) {
         (Standing::Expired | Standing::NotYetValid, _) => {
-            "its certificate is not in force now".to_string()
+            said!("its certificate is not in force now")
         }
         (_, Some(doubt)) => crate::words::doubt_about(doubt, computer, whose),
-        (_, None) => "no reason was given".to_string(),
+        (_, None) => said!("no reason was given"),
     };
     let name = signed_data(blob)
         .ok()
         .and_then(|signed| signer_of(&signed))
         .map_or_else(
-            || "whose certificate is not identified".to_string(),
+            || said!("whose certificate is not identified"),
             |certificate| {
                 let cn = crate::docinfo::common_name(&certificate.tbs_certificate.subject);
                 if cn.is_empty() {
@@ -639,11 +644,11 @@ fn planned(
 ) -> Result<(Vec<Subject>, Vec<Vec<u8>>), Refusal> {
     let signed = signed_data(cms).map_err(Refusal::Unreadable)?;
     let signer = signer_of(&signed)
-        .ok_or_else(|| Refusal::Unreadable("its certificate is not identified".into()))?;
+        .ok_or_else(|| Refusal::Unreadable(said!("its certificate is not identified")))?;
     let token = token_of(&signed).ok_or(Refusal::NoTimestamp)?;
     let token = signed_data(&token).map_err(Refusal::Unreadable)?;
     let authority = signer_of(&token).ok_or_else(|| {
-        Refusal::Unreadable("the timestamp's certificate is not identified".into())
+        Refusal::Unreadable(said!("the timestamp's certificate is not identified"))
     })?;
 
     let encoded = |certificates: Vec<&Certificate>| -> Vec<Vec<u8>> {
@@ -800,16 +805,15 @@ fn walked(
         match (&walked.end, &walked.anchor) {
             (End::Root, Some(anchor)) => carry(anchor),
             (End::Loop, _) => {
-                return Err(Refusal::Bound(
+                return Err(Refusal::Bound(said!(
                     "would follow a chain of certificates that loops back on itself, which no \
                      verifier can end at a root"
-                        .into(),
-                ))
+                )))
             }
             _ => {}
         }
         if walked.dropped > 0 || subjects.len() > MAX_SUBJECTS {
-            return Err(Refusal::Bound(format!(
+            return Err(Refusal::Bound(said!(
                 "would cover more than {MAX_SUBJECTS} certificates, more than any real chain has"
             )));
         }
@@ -857,20 +861,47 @@ fn ocsp_request(subject: &Subject) -> Result<Vec<u8>, String> {
     request.to_der().map_err(|e| e.to_string())
 }
 
-/// A transport refusal, as a clause about the address it came from.
-fn failed(what: &str, url: &url::Url, why: &tsa::Refusal, limits: &tsa::Limits) -> String {
+/// A transport refusal, as a clause about the address it came from: the OCSP
+/// responder's when `ocsp`, the revocation list's otherwise. Each clause is
+/// written out whole for each, so the window can say it in German.
+fn failed(ocsp: bool, url: &url::Url, why: &tsa::Refusal, limits: &tsa::Limits) -> String {
     let host = url.host_str().unwrap_or_default();
-    let said = match why {
-        tsa::Refusal::Unreachable(why) => format!("could not be reached ({why})"),
-        tsa::Refusal::TimedOut => format!(
-            "did not answer within {} seconds",
-            limits.total.as_secs().max(1)
-        ),
-        tsa::Refusal::Http(code) => format!("answered with HTTP status {code}"),
-        tsa::Refusal::TooLarge => format!("answered with more than {} KiB", limits.body / 1024),
-        other => other.sentence(host),
-    };
-    format!("{what} at {host} {said}")
+    let secs = limits.total.as_secs().max(1);
+    let kib = limits.body / 1024;
+    match (ocsp, why) {
+        (true, tsa::Refusal::Unreachable(why)) => {
+            said!("the OCSP responder at {host} could not be reached ({why})")
+        }
+        (false, tsa::Refusal::Unreachable(why)) => {
+            said!("the revocation list at {host} could not be reached ({why})")
+        }
+        (true, tsa::Refusal::TimedOut) => {
+            said!("the OCSP responder at {host} did not answer within {secs} seconds")
+        }
+        (false, tsa::Refusal::TimedOut) => {
+            said!("the revocation list at {host} did not answer within {secs} seconds")
+        }
+        (true, tsa::Refusal::Http(code)) => {
+            said!("the OCSP responder at {host} answered with HTTP status {code}")
+        }
+        (false, tsa::Refusal::Http(code)) => {
+            said!("the revocation list at {host} answered with HTTP status {code}")
+        }
+        (true, tsa::Refusal::TooLarge) => {
+            said!("the OCSP responder at {host} answered with more than {kib} KiB")
+        }
+        (false, tsa::Refusal::TooLarge) => {
+            said!("the revocation list at {host} answered with more than {kib} KiB")
+        }
+        (ocsp, other) => {
+            let what = if ocsp {
+                "the OCSP responder"
+            } else {
+                "the revocation list"
+            };
+            format!("{what} at {host} {}", other.sentence(host))
+        }
+    }
 }
 
 /// A revocation `Gap`, as a clause.
@@ -981,15 +1012,15 @@ pub fn gather(
     let mut next = |limits: tsa::Limits| -> Result<tsa::Limits, Refusal> {
         requests += 1;
         if requests > MAX_REQUESTS {
-            return Err(Refusal::Bound(format!(
+            return Err(Refusal::Bound(said!(
                 "would take more than {MAX_REQUESTS} requests"
             )));
         }
         let left = total.saturating_sub(started.elapsed());
         if left.is_zero() {
-            return Err(Refusal::Bound(format!(
-                "took longer than {} seconds to gather",
-                total.as_secs()
+            return Err(Refusal::Bound(said!(
+                "took longer than {secs} seconds to gather",
+                secs = total.as_secs()
             )));
         }
         Ok(tsa::Limits {
@@ -1000,9 +1031,9 @@ pub fn gather(
     };
     let room = |gathered: &Gathered, more: usize| {
         if gathered.bytes() + more > MAX_GATHERED {
-            Err(Refusal::Bound(format!(
-                "would be more than {} MiB, more than tpdf adds to a document",
-                MAX_GATHERED >> 20
+            Err(Refusal::Bound(said!(
+                "would be more than {mib} MiB, more than tpdf adds to a document",
+                mib = MAX_GATHERED >> 20
             )))
         } else {
             Ok(())
@@ -1025,7 +1056,7 @@ pub fn gather(
             let answer = match fetch(url, Some(("application/ocsp-request", body)), &limits) {
                 Ok(answer) => answer,
                 Err(why) => {
-                    attempts.push(failed("the OCSP responder", url, &why, &limits));
+                    attempts.push(failed(true, url, &why, &limits));
                     continue;
                 }
             };
@@ -1036,14 +1067,14 @@ pub fn gather(
             match status {
                 Ok(OcspResponseStatus::Successful) => {}
                 Ok(other) => {
-                    attempts.push(format!(
-                        "the OCSP responder at {host} answered {}",
-                        format!("{other:?}").to_lowercase()
+                    attempts.push(said!(
+                        "the OCSP responder at {host} answered {status}",
+                        status = format!("{other:?}").to_lowercase()
                     ));
                     continue;
                 }
                 Err(_) => {
-                    attempts.push(format!(
+                    attempts.push(said!(
                         "the OCSP responder at {host} answered with something that is not an \
                          OCSP response"
                     ));
@@ -1055,7 +1086,7 @@ pub fn gather(
                 material.certificate(certificate.clone());
             }
             material.response(&answer);
-            let by = format!("the OCSP response from {host}");
+            let by = said!("the OCSP response from {host}");
             room(&gathered, answer.len())?;
             judged(subject, &candidates, &material, &by, &host, now)?;
             gathered.responses.push(answer);
@@ -1071,13 +1102,13 @@ pub fn gather(
             let answer = match fetch(url, None, &limits) {
                 Ok(answer) => answer,
                 Err(why) => {
-                    attempts.push(failed("the revocation list", url, &why, &limits));
+                    attempts.push(failed(false, url, &why, &limits));
                     continue;
                 }
             };
             let mut material = crate::revocation::Material::default();
             material.list(answer.clone());
-            let by = format!("the revocation list from {host}");
+            let by = said!("the revocation list from {host}");
             // Measured before it is parsed: a list is the large half.
             room(&gathered, answer.len())?;
             judged(subject, &candidates, &material, &by, &host, now)?;
@@ -1111,9 +1142,9 @@ pub fn gather(
 /// [`Refusal::Written`] with what was found instead.
 pub fn check(ours: Option<&crate::docinfo::Signature>) -> Result<(), Refusal> {
     use crate::integrity::{Verdict, Why};
-    let written = |why: &str| Err(Refusal::Written(why.to_string()));
+    let written = |why: String| Err(Refusal::Written(why));
     let Some(ours) = ours else {
-        return written("the new signature is not in it");
+        return written(said!("the new signature is not in it"));
     };
     match ours.integrity.as_ref() {
         Some(found) if found.verdict == Verdict::Intact => {}
@@ -1124,37 +1155,36 @@ pub fn check(ours: Option<&crate::docinfo::Signature>) -> Result<(), Refusal> {
         // a budget of its own --- and until 2026-10-09 it was reported as
         // tpdf's own check not passing, with the tool's exit code for that.
         Some(found) if found.verdict == Verdict::Unchecked && found.why == Some(Why::Budget) => {
-            return Err(Refusal::Bound(
+            return Err(Refusal::Bound(said!(
                 "cannot be checked before it is written: the document's signatures \
                  together cover more data than tpdf checks at once, so the new signature \
                  was not checked again with the data added"
-                    .into(),
-            ))
+            )))
         }
-        _ => return written("the new signature does not read as intact"),
+        _ => return written(said!("the new signature does not read as intact")),
     }
     let Some(stamp) = &ours.timestamp else {
-        return written("the new signature's timestamp is not in it");
+        return written(said!("the new signature's timestamp is not in it"));
     };
     if stamp.integrity.as_ref().map(|i| i.verdict) != Some(Verdict::Intact) {
-        return written("the new signature's timestamp does not read as intact");
+        return written(said!(
+            "the new signature's timestamp does not read as intact"
+        ));
     }
-    let name = |certificate: Option<&crate::docinfo::Certificate>, whose: &str| {
-        certificate.map_or_else(
-            || whose.to_string(),
-            |c| format!("{whose} ({})", c.subject_cn),
-        )
+    // With a certificate, the name reads as `Whose`'s templates do.
+    let name = |certificate: Option<&crate::docinfo::Certificate>, whose: String| {
+        certificate.map_or_else(|| whose.clone(), |c| format!("{whose} ({})", c.subject_cn))
     };
     leaves_good(&[
         (
             ours.revocation.as_ref(),
-            name(ours.certificate.as_ref(), "the signer's certificate"),
+            name(ours.certificate.as_ref(), said!("the signer's certificate")),
         ),
         (
             stamp.revocation.as_ref(),
             name(
                 stamp.authority.as_ref(),
-                "the timestamp authority's certificate",
+                said!("the timestamp authority's certificate"),
             ),
         ),
     ])?;
@@ -1181,9 +1211,7 @@ fn leaves_good(leaves: &[(Option<&crate::revocation::Revocation>, String)]) -> R
     for (revocation, whose) in leaves {
         let whose = whose.clone();
         let Some(revocation) = revocation else {
-            return Err(Refusal::Written(format!(
-                "no revocation answer for {whose}"
-            )));
+            return Err(Refusal::Written(said!("no revocation answer for {whose}")));
         };
         match revocation.standing {
             Status::Good => {}
@@ -1192,8 +1220,8 @@ fn leaves_good(leaves: &[(Option<&crate::revocation::Revocation>, String)]) -> R
                     name: whose,
                     at: revocation.revoked.clone(),
                     by: match revocation.source {
-                        Some(Source::Crl) => "the revocation list in the document".into(),
-                        _ => "the OCSP response in the document".into(),
+                        Some(Source::Crl) => said!("the revocation list in the document"),
+                        _ => said!("the OCSP response in the document"),
                     },
                 })
             }
@@ -1220,10 +1248,9 @@ fn leaves_good(leaves: &[(Option<&crate::revocation::Revocation>, String)]) -> R
 ///
 /// As [`leaves_good`].
 fn chains_good(chains: &[(Option<&crate::revocation::chain::Chain>, &str)]) -> Result<(), Refusal> {
-    let written = |why: &str| Err(Refusal::Written(why.to_string()));
     for (chain, above) in chains {
         let Some(chain) = chain else {
-            return written("no revocation answer for a chain");
+            return Err(Refusal::Written(said!("no revocation answer for a chain")));
         };
         let name = |judged: &crate::revocation::chain::Judged| {
             format!("the certificate above {above} ({})", judged.subject_cn)
@@ -1237,8 +1264,8 @@ fn chains_good(chains: &[(Option<&crate::revocation::chain::Chain>, &str)]) -> R
                 name: name(judged),
                 at: judged.revocation.revoked.clone(),
                 by: match judged.revocation.source {
-                    Some(Source::Crl) => "the revocation list in the document".into(),
-                    _ => "the OCSP response in the document".into(),
+                    Some(Source::Crl) => said!("the revocation list in the document"),
+                    _ => said!("the OCSP response in the document"),
                 },
             });
         }
@@ -1253,7 +1280,7 @@ fn chains_good(chains: &[(Option<&crate::revocation::chain::Chain>, &str)]) -> R
             )));
         }
         if chain.dropped > 0 {
-            return Err(Refusal::Written(format!(
+            return Err(Refusal::Written(said!(
                 "the chain above {above} certificate is longer than tpdf judges"
             )));
         }
@@ -1359,10 +1386,11 @@ pub fn extend(
         .validation(bytes, &gathered)
         .map_err(Refusal::Written)?;
     if extended.built_against != bytes.len() {
-        return Err(Refusal::Written(format!(
-            "the worker built its revision against {} bytes, and the signed document is {}",
-            extended.built_against,
-            bytes.len()
+        return Err(Refusal::Written(said!(
+            "the worker built its revision against {built} bytes, and the signed document is \
+             {len}",
+            built = extended.built_against,
+            len = bytes.len()
         )));
     }
     // The revision just built is all that follows the new signature's own.
@@ -1409,9 +1437,9 @@ fn archived(
         let mut staged = whole.clone();
         staged.extend_from_slice(&unsigned.update);
         let (Some(before), Some(after)) = (staged.get(..hole), staged.get(rest..)) else {
-            return Err(Refusal::Written(
-                "the archive timestamp's revision states a range outside itself".into(),
-            ));
+            return Err(Refusal::Written(said!(
+                "the archive timestamp's revision states a range outside itself"
+            )));
         };
         archive(&[before, after]).map_err(Refusal::Archive)?
     };

@@ -8,7 +8,7 @@ use super::super::filters;
 use lopdf::{Document, Object, Stream};
 
 fn invalid() -> String {
-    "unsupported stencil mask on an editable page".into()
+    said!("unsupported stencil mask on an editable page")
 }
 
 pub(super) fn check(doc: &Document, image: &Stream, remaining: usize) -> Result<usize, String> {
@@ -65,7 +65,7 @@ pub(super) fn check(doc: &Document, image: &Stream, remaining: usize) -> Result<
     let height = dimension(b"Height")?;
     let bytes = width.div_ceil(8) * height;
     if bytes > remaining {
-        return Err("decoded images exceed the editable page budget".into());
+        return Err(said!("decoded images exceed the editable page budget"));
     }
     if ccitt {
         parameters(doc, image, width, height)?;
@@ -78,7 +78,9 @@ pub(super) fn check(doc: &Document, image: &Stream, remaining: usize) -> Result<
             return Err(invalid());
         }
         if filters::decode(image, bytes)?.len() != bytes {
-            return Err("image samples do not match dimensions and colour components".into());
+            return Err(said!(
+                "image samples do not match dimensions and colour components"
+            ));
         }
     }
     Ok(bytes)
@@ -123,7 +125,7 @@ fn parameters(doc: &Document, image: &Stream, width: usize, height: usize) -> Re
 // end-of-block before the last row, is refused rather than padded with white.
 fn group4(data: &[u8], width: usize, height: usize) -> Result<(), String> {
     use fax::decoder::{DecodeStatus, Group4Decoder};
-    let failed = || "incomplete or unsupported CCITT image".to_string();
+    let failed = || said!("incomplete or unsupported CCITT image");
     let reader = data.iter().copied().map(Ok::<u8, std::convert::Infallible>);
     let mut decoder = Group4Decoder::new(reader, width as u32).map_err(|_| failed())?;
     for _ in 0..height {

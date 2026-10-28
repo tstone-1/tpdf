@@ -3,6 +3,7 @@ import type { Anchor } from "./popup";
 import type { FieldEdited, FieldProps } from "./savedfields";
 import { isEmptySignature } from "./signfield";
 import { catalog } from "./i18n";
+import { spoken } from "./said";
 
 const TEXT = catalog({
   "en-US": {
@@ -184,7 +185,7 @@ export function shownAlign(
 
 /** Reports unsupported input before a tab switch or save can close its editor. */
 export function answerError(widget: FormWidget, value: FormValue): string | null {
-  if (widget.reason) return widget.reason;
+  if (widget.reason) return spoken(widget.reason);
   const control = widget.control;
   if (Array.isArray(value)) {
     if (control.kind !== "radio" && control.kind !== "choice") return TEXT().answerMismatch;
@@ -331,7 +332,7 @@ export class FormLayer {
       input.autocomplete = "off";
       input.spellcheck = false;
       input.disabled = widget.reason !== null;
-      input.title = widget.reason ?? (widget.tooltip || widget.name);
+      input.title = widget.reason === null ? (widget.tooltip || widget.name) : spoken(widget.reason);
       if (widget.required) input.required = true;
       input.style.cssText = "position:absolute;box-sizing:border-box;margin:0;pointer-events:auto;border:1px solid #4674be88;border-radius:1px;background:#f4f7ff;color:#171717;padding:2px;font:12px Helvetica,Arial,sans-serif;resize:none;min-width:0;min-height:0";
       if (widget.align && widget.align !== "left") input.style.textAlign = widget.align;

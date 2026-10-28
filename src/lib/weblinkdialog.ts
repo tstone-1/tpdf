@@ -44,6 +44,7 @@
 
 import type { Target, WebTarget } from "./outline";
 import { catalog } from "./i18n";
+import { spoken } from "./said";
 
 const TEXT = catalog({
   "en-US": {
@@ -139,10 +140,11 @@ export async function confirmAndOpen(
     // composed here would have to guess between them. `String(e)` alone is
     // `[object Object]` for a structured refusal --- the trap of that name ---
     // so a `message` is preferred where there is one.
-    const said =
+    const said = spoken(
       e && typeof e === "object" && "message" in e
         ? String((e as { message: unknown }).message)
-        : String(e);
+        : String(e),
+    );
     deps.onError(said || TEXT().couldNotOpen);
     return false;
   }

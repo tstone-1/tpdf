@@ -62,18 +62,18 @@ const SHA256_DIGEST_INFO: [u8; 19] = [
 fn login_refused(token: &str, error: &cryptoki::error::Error) -> String {
     use cryptoki::error::{Error, RvError};
     match error {
-        Error::Pkcs11(RvError::PinIncorrect, _) => format!(
+        Error::Pkcs11(RvError::PinIncorrect, _) => said!(
             "the PIN for the token {token:?} is not correct, and nothing was signed. \
              A token locks itself after a few wrong PINs."
         ),
-        Error::Pkcs11(RvError::PinLocked, _) => format!(
+        Error::Pkcs11(RvError::PinLocked, _) => said!(
             "the token {token:?} is locked after too many wrong PINs, and nothing was signed. \
              Its unblocking code (PUK) or its issuer can unlock it."
         ),
-        Error::Pkcs11(RvError::PinLenRange, _) => format!(
+        Error::Pkcs11(RvError::PinLenRange, _) => said!(
             "the PIN has the wrong number of characters for the token {token:?}, and nothing was signed"
         ),
-        other => format!("the token {token:?} did not accept the PIN: {other}"),
+        other => said!("the token {token:?} did not accept the PIN: {other}"),
     }
 }
 
@@ -107,10 +107,10 @@ pub fn set_pin_asker(asker: Box<PinAsker>) {
 pub fn ask(question: Asked<'_>) -> Result<Option<AuthPin>, String> {
     let asker = ASKER.get().ok_or_else(|| match question {
         Asked::Pin(token) => {
-            format!("the token {token:?} needs its PIN, and nothing here can ask for it")
+            said!("the token {token:?} needs its PIN, and nothing here can ask for it")
         }
         Asked::Password(file) => {
-            format!(
+            said!(
                 "the certificate file {file:?} needs its password, and nothing here can ask for it"
             )
         }
@@ -147,10 +147,10 @@ pub fn proxy() -> Result<&'static Pkcs11, String> {
                     Err(why) => tried.push(why),
                 }
             }
-            Err(format!(
+            Err(said!(
                 "signing with a smart card or token needs p11-kit (the package p11-kit-modules on \
-                 Ubuntu and Debian), and it could not be loaded: {}",
-                tried.join("; ")
+                 Ubuntu and Debian), and it could not be loaded: {tried}",
+                tried = tried.join("; ")
             ))
         })
         .as_ref()
@@ -181,7 +181,7 @@ pub fn open(path: &str) -> Result<Pkcs11, String> {
 pub fn certificates(context: &Pkcs11) -> Result<Vec<Found>, String> {
     let slots = context
         .get_slots_with_token()
-        .map_err(|e| format!("listing smart cards and tokens: {e}"))?;
+        .map_err(|e| said!("listing smart cards and tokens: {e}"))?;
     let mut found = Vec::new();
     for slot in slots {
         let Ok(info) = context.get_token_info(slot) else {
@@ -247,10 +247,10 @@ pub fn sign(
 ) -> Result<Vec<u8>, String> {
     let session = context
         .open_ro_session(found.slot)
-        .map_err(|e| format!("opening the token {:?}: {e}", found.token))?;
+        .map_err(|e| said!("opening the token {token:?}: {e}", token = found.token))?;
     let info = context
         .get_token_info(found.slot)
-        .map_err(|e| format!("reading the token {:?}: {e}", found.token))?;
+        .map_err(|e| said!("reading the token {token:?}: {e}", token = found.token))?;
     // Logged in already when another session of this process logged in and is
     // still open: PKCS#11 keeps the login per token, not per session. Asking
     // again would only be refused (CKR_USER_ALREADY_LOGGED_IN).
@@ -264,10 +264,7 @@ pub fn sign(
         let pin = if info.protected_authentication_path() {
             None
         } else {
-            Some(
-                ask(Asked::Pin(&found.token))?
-                    .ok_or_else(|| "signing was cancelled".to_string())?,
-            )
+            Some(ask(Asked::Pin(&found.token))?.ok_or_else(|| said!("signing was cancelled"))?)
         };
         session
             .login(UserType::User, pin.as_ref())
@@ -278,11 +275,11 @@ pub fn sign(
             Attribute::Class(ObjectClass::PRIVATE_KEY),
             Attribute::Id(found.id.clone()),
         ])
-        .map_err(|e| format!("finding the key on {:?}: {e}", found.token))?;
+        .map_err(|e| said!("finding the key on {token:?}: {e}", token = found.token))?;
     let key = keys.first().copied().ok_or_else(|| {
-        format!(
-            "the token {:?} has this certificate but no key for it",
-            found.token
+        said!(
+            "the token {token:?} has this certificate but no key for it",
+            token = found.token
         )
     })?;
     sign_with(&session, key, kind, digest)
@@ -303,7 +300,7 @@ pub fn sign_with(
     kind: KeyKind,
     digest: &[u8; 32],
 ) -> Result<Vec<u8>, String> {
-    let refused = |e: cryptoki::error::Error| format!("the token did not sign: {e}");
+    let refused = |e: cryptoki::error::Error| said!("the token did not sign: {e}");
     match kind {
         KeyKind::Rsa(_) => {
             let mut data = SHA256_DIGEST_INFO.to_vec();

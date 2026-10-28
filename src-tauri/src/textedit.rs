@@ -300,7 +300,7 @@ impl Layout {
 /// Whether a change without a layout was refused for a reason another font
 /// answers: the run's font forbids editing, or lacks a typed character.
 pub(crate) fn wants_fallback(refusal: &str) -> bool {
-    refusal == fonts::RESTRICTED || refusal == LATIN_ONLY
+    refusal == fonts::forbidden() || refusal == latin_only()
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Serialize, Deserialize)]
@@ -318,7 +318,7 @@ pub enum EditFont {
 }
 
 fn dictionary<'a>(doc: &'a Document, value: &'a Object) -> Result<&'a Dictionary, String> {
-    crate::encoding::resolve_dict(doc, value).map_err(|()| "invalid text resources".into())
+    crate::encoding::resolve_dict(doc, value).map_err(|()| said!("invalid text resources"))
 }
 
 fn resources(doc: &Document, page: ObjectId) -> Result<&Dictionary, String> {
@@ -337,13 +337,13 @@ fn resources(doc: &Document, page: ObjectId) -> Result<&Dictionary, String> {
             .and_then(Object::as_reference)
             .map_err(|e| e.to_string())?;
     }
-    Err("text resource inheritance exceeds its limit".into())
+    Err(said!("text resource inheritance exceeds its limit"))
 }
 
 // A layer named in the page's Properties resource: an optional content group
 // or membership dictionary, as a form's /OC must be.
 fn optional_content(doc: &Document, resources: &Dictionary, name: &[u8]) -> Result<(), String> {
-    let invalid = || "unsupported optional content".to_string();
+    let invalid = || said!("unsupported optional content");
     let properties = dictionary(doc, resources.get(b"Properties").map_err(|_| invalid())?)?;
     let group = dictionary(doc, properties.get(name).map_err(|_| invalid())?)?;
     match group.get(b"Type").and_then(Object::as_name).ok() {
@@ -357,7 +357,7 @@ fn optional_content(doc: &Document, resources: &Dictionary, name: &[u8]) -> Resu
 // sequence directly inside. The property list names that file's XMP packet and
 // nothing else, so it says nothing about the page's text or structure.
 fn placed_content(doc: &Document, resources: &Dictionary, name: &[u8]) -> Result<(), String> {
-    let invalid = || "unsupported placed-artwork marked content".to_string();
+    let invalid = || said!("unsupported placed-artwork marked content");
     let properties = dictionary(doc, resources.get(b"Properties").map_err(|_| invalid())?)?;
     let list = dictionary(doc, properties.get(name).map_err(|_| invalid())?)?;
     let packet = list.get(b"Metadata").map_err(|_| invalid())?;
@@ -441,13 +441,14 @@ fn font(doc: &Document, resources: &Dictionary, name: &[u8]) -> Result<fonts::Me
     {
         return fonts::type1(doc, font);
     }
-    let unsupported = || "text editing requires a standard font or a supported embedded font";
+    let unsupported =
+        || said!("text editing requires a standard font or a supported embedded font");
     for (key, expected) in [
         (b"Type".as_slice(), b"Font".as_slice()),
         (b"Subtype", b"Type1"),
     ] {
         if font.get(key).and_then(Object::as_name).ok() != Some(expected) {
-            return Err(unsupported().into());
+            return Err(unsupported());
         }
     }
     // Any of the twelve Latin standard fonts: every arXiv paper's side stamp
@@ -463,12 +464,14 @@ fn font(doc: &Document, resources: &Dictionary, name: &[u8]) -> Result<fonts::Me
             b"Type" | b"Subtype" | b"BaseFont" | b"Encoding" | b"Name"
         )
     }) {
-        return Err("custom font metrics or character mappings are not editable yet".into());
+        return Err(said!(
+            "custom font metrics or character mappings are not editable yet"
+        ));
     }
     match font.get(b"Encoding").ok() {
         None => Ok(metrics.standard_encoding()),
         Some(Object::Name(name)) if name == b"WinAnsiEncoding" => Ok(metrics),
-        _ => Err("unsupported standard font encoding".into()),
+        _ => Err(said!("unsupported standard font encoding")),
     }
 }
 
@@ -476,10 +479,10 @@ fn number(value: &Object) -> Result<f64, String> {
     let value = match value {
         Object::Integer(value) => *value as f64,
         Object::Real(value) => f64::from(*value),
-        _ => return Err("invalid text position or size".into()),
+        _ => return Err(said!("invalid text position or size")),
     };
     if !value.is_finite() || value.abs() > 1_000_000.0 {
-        return Err("text position or size exceeds its limit".into());
+        return Err(said!("text position or size exceeds its limit"));
     }
     Ok(value)
 }
@@ -547,12 +550,15 @@ fn slot_character(slot: u8) -> char {
     }
 }
 
-const LATIN_ONLY: &str =
-    "text editing currently supports printable Latin-1, WinAnsi punctuation and minus only";
+fn latin_only() -> String {
+    said!("text editing currently supports printable Latin-1, WinAnsi punctuation and minus only")
+}
 
 fn decode_text(bytes: &[u8]) -> Result<String, String> {
     if bytes.len() > MAX_TEXT || !bytes.iter().all(|&byte| text_byte(byte)) {
-        return Err("text editing currently supports printable Latin-1 only".into());
+        return Err(said!(
+            "text editing currently supports printable Latin-1 only"
+        ));
     }
     Ok(bytes.iter().map(|&byte| char::from(byte)).collect())
 }
@@ -561,14 +567,14 @@ fn encode_text(text: &str) -> Result<Vec<u8>, String> {
     // The en dash uses three UTF-8 bytes. This returns metric slots; a custom
     // font maps them back to its own one- or two-byte PDF codes when writing.
     if text.len() > MAX_TEXT * 3 {
-        return Err("text replacement exceeds its limit".into());
+        return Err(said!("text replacement exceeds its limit"));
     }
     let bytes = text
         .chars()
-        .map(|ch| character_slot(ch).ok_or(LATIN_ONLY))
+        .map(|ch| character_slot(ch).ok_or_else(latin_only))
         .collect::<Result<Vec<_>, _>>()?;
     if bytes.len() > MAX_TEXT {
-        return Err("text replacement exceeds its limit".into());
+        return Err(said!("text replacement exceeds its limit"));
     }
     Ok(bytes)
 }
@@ -585,7 +591,7 @@ pub(crate) fn page_content(doc: &Document, id: ObjectId) -> Result<Vec<u8>, Stri
         value => std::slice::from_ref(value),
     };
     if streams.len() > 128 {
-        return Err("too many page content streams".into());
+        return Err(said!("too many page content streams"));
     }
     let mut bytes = Vec::new();
     for value in streams {
@@ -597,7 +603,7 @@ pub(crate) fn page_content(doc: &Document, id: ObjectId) -> Result<Vec<u8>, Stri
         bytes.extend(decoded);
         bytes.push(b'\n');
         if bytes.len() > MAX_CONTENT {
-            return Err("page content exceeds its limit".into());
+            return Err(said!("page content exceeds its limit"));
         }
     }
     Ok(bytes)
@@ -622,7 +628,7 @@ fn shift_position(matrix: &mut [f64; 6], x: f64, y: f64) -> Result<(), String> {
         .iter()
         .any(|v| !v.is_finite() || v.abs() > 1_000_000.0)
     {
-        return Err("text position exceeds its limit".into());
+        return Err(said!("text position exceeds its limit"));
     }
     Ok(())
 }
@@ -640,7 +646,7 @@ fn orthogonal(matrix: [f64; 6]) -> bool {
 fn compose_orthogonal(outer: [f64; 6], inner: [f64; 6]) -> Result<[f64; 6], String> {
     let result = compose_affine(outer, inner)?;
     if !orthogonal(result) {
-        return Err("composed text transform exceeds its limit".into());
+        return Err(said!("composed text transform exceeds its limit"));
     }
     Ok(result)
 }
@@ -663,7 +669,7 @@ fn compose_affine(outer: [f64; 6], inner: [f64; 6]) -> Result<[f64; 6], String> 
         .any(|v| !v.is_finite() || v.abs() > 1_000_000.0)
         || result[0] * result[3] - result[1] * result[2] == 0.
     {
-        return Err("composed text transform exceeds its limit".into());
+        return Err(said!("composed text transform exceeds its limit"));
     }
     Ok(result)
 }
@@ -817,7 +823,7 @@ fn array_text<'a>(
         || values.len() > MAX_TEXT
         || !matches!(values.first(), Some(Object::String(..)))
     {
-        return Err("unsupported kerning array shape or size".into());
+        return Err(said!("unsupported kerning array shape or size"));
     }
     let mut text = String::new();
     let mut characters = 0;
@@ -844,7 +850,7 @@ fn array_text<'a>(
             pending = 0.0;
             characters += fragment.chars().count();
             if characters > MAX_TEXT {
-                return Err("kerning array text exceeds its limit".into());
+                return Err(said!("kerning array text exceeds its limit"));
             }
             bounds[0] = bounds[0].min(advance + left);
             bounds[1] = bounds[1].max(advance + right);
@@ -862,7 +868,7 @@ fn array_text<'a>(
             advance -= value * size / 1000.0;
         }
         if !advance.is_finite() || advance.abs() > 1_000_000.0 {
-            return Err("kerning position exceeds its limit".into());
+            return Err(said!("kerning position exceeds its limit"));
         }
     }
     // A trailing number that pulls the cursor back behind the last string's
@@ -909,16 +915,16 @@ fn inspect_pinning(
     let pages = crate::pagetree::ordered_pages(doc);
     let id = *pages
         .get(page as usize)
-        .ok_or("text page is not in this document")?;
+        .ok_or_else(|| said!("text page is not in this document"))?;
     if pages.iter().filter(|&&other| other == id).count() != 1 {
-        return Err("a repeated page object is not editable".into());
+        return Err(said!("a repeated page object is not editable"));
     }
     let mut tags = tagging::Tags::read(doc, id, &pages)?;
     tags.pin(pinned);
     let bytes = page_content(doc, id)?;
     let content = Content::decode_strict(&bytes).map_err(|e| e.to_string())?;
     if content.operations.len() > MAX_OPERATIONS {
-        return Err("text operator count exceeds its limit".into());
+        return Err(said!("text operator count exceeds its limit"));
     }
     // Discovery promises that deletion can use the byte-preserving writer too.
     streams::rewrite(&bytes, &content, &BTreeSet::new())?;
@@ -1030,26 +1036,26 @@ fn inspect_pinning(
         }
     }
     if marked.actual.is_some() || marked.spacer.is_some() {
-        return Err("unterminated ActualText marked content".into());
+        return Err(said!("unterminated ActualText marked content"));
     }
     if marked.placed > 0 {
-        return Err("unterminated placed-artwork marked content".into());
+        return Err(said!("unterminated placed-artwork marked content"));
     }
     if marked.filled {
-        return Err("unterminated Fill & Sign marked content".into());
+        return Err(said!("unterminated Fill & Sign marked content"));
     }
     if object.inside {
-        return Err("unterminated text block".into());
+        return Err(said!("unterminated text block"));
     }
     if !saved.is_empty() {
-        return Err("unterminated graphics-state save".into());
+        return Err(said!("unterminated graphics-state save"));
     }
     marked.tags.finish()?;
     if found.runs.runs.is_empty() && !found.preserved.is_empty() {
         // Transformed, pattern-filled and tagged read-only text all land here.
         return Err(checked
             .unusable_font
-            .unwrap_or_else(|| "page contains only read-only text".into()));
+            .unwrap_or_else(|| said!("page contains only read-only text")));
     }
     // Discovery promises that every offered run can be deleted. Check the
     // actual f32 TJ compensation before offering implicit-advance text.
@@ -1100,7 +1106,7 @@ fn inspect_pinning(
     if inspection.runs.runs.is_empty() && !inspection.preserved.is_empty() {
         return Err(checked
             .unusable_font
-            .unwrap_or_else(|| "page contains only read-only text".into()));
+            .unwrap_or_else(|| said!("page contains only read-only text")));
     }
     grouping::collect(&mut inspection);
     if inspection.blocks.is_empty() || blocks::FORCE.load(std::sync::atomic::Ordering::Relaxed) {
@@ -1125,9 +1131,9 @@ fn annotation_rects(doc: &Document, page: ObjectId) -> Result<Vec<Annotation>, S
     };
     let list = crate::encoding::resolve(doc, list)
         .as_array()
-        .map_err(|_| "page annotations are not an array")?;
+        .map_err(|_| said!("page annotations are not an array"))?;
     if list.len() > MAX_ANNOTATIONS {
-        return Err("page annotation count exceeds its limit".into());
+        return Err(said!("page annotation count exceeds its limit"));
     }
     let geometry = crate::pagetree::displayed_page(doc, page);
     let (ox, oy) = (f64::from(geometry.origin.0), f64::from(geometry.origin.1));
@@ -1135,7 +1141,7 @@ fn annotation_rects(doc: &Document, page: ObjectId) -> Result<Vec<Annotation>, S
     for entry in list {
         let annotation = crate::encoding::resolve(doc, entry)
             .as_dict()
-            .map_err(|_| "page annotation is not a dictionary")?;
+            .map_err(|_| said!("page annotation is not a dictionary"))?;
         if annotation
             .get(b"Subtype")
             .and_then(Object::as_name)
@@ -1147,12 +1153,12 @@ fn annotation_rects(doc: &Document, page: ObjectId) -> Result<Vec<Annotation>, S
             doc,
             annotation
                 .get(b"Rect")
-                .map_err(|_| "page annotation has no rectangle")?,
+                .map_err(|_| said!("page annotation has no rectangle"))?,
         )
         .as_array()
-        .map_err(|_| "page annotation rectangle is not an array")?;
+        .map_err(|_| said!("page annotation rectangle is not an array"))?;
         let [a, b, c, d] = rect.as_slice() else {
-            return Err("page annotation rectangle is not four numbers".into());
+            return Err(said!("page annotation rectangle is not four numbers"));
         };
         let [a, b, c, d] = [
             number(crate::encoding::resolve(doc, a))?,
@@ -1164,7 +1170,7 @@ fn annotation_rects(doc: &Document, page: ObjectId) -> Result<Vec<Annotation>, S
             .iter()
             .all(|n| n.is_finite() && n.abs() <= 1_000_000.)
         {
-            return Err("page annotation rectangle exceeds its limit".into());
+            return Err(said!("page annotation rectangle exceeds its limit"));
         }
         let user = [a.min(c), b.min(d), a.max(c), b.max(d)];
         let link = match entry {
@@ -1206,7 +1212,9 @@ fn led(lead: Option<&Object>, items: Vec<Object>) -> Object {
 fn continuation_adjustment(run: &Run, replacement_advance: f64) -> Result<Vec<Object>, String> {
     let wanted = (replacement_advance - run.advance) * 1000. / run.size;
     if !wanted.is_finite() || wanted.abs() > 1_000_000.0 {
-        return Err("cannot preserve following text at PDF number precision".into());
+        return Err(said!(
+            "cannot preserve following text at PDF number precision"
+        ));
     }
     let whole = wanted.trunc();
     let fraction = (wanted - whole) as f32;
@@ -1221,7 +1229,9 @@ fn continuation_adjustment(run: &Run, replacement_advance: f64) -> Result<Vec<Ob
     let saved_advance = replacement_advance - emitted * run.size / 1000.;
     let drift = (saved_advance - run.advance).abs() * run.matrix[0].abs().max(run.matrix[1].abs());
     if emitted > 0. || drift > 0.000_001 {
-        return Err("cannot preserve following text at PDF number precision".into());
+        return Err(said!(
+            "cannot preserve following text at PDF number precision"
+        ));
     }
     Ok(parts)
 }
@@ -1319,7 +1329,7 @@ pub(crate) fn placements(
 /// decoded content. It reads the document and nothing else.
 fn prepare_batch(doc: &Document, changes: &[Change]) -> Result<BTreeMap<u32, Inspection>, String> {
     if changes.len() > MAX_CHANGES {
-        return Err("too many text replacements".into());
+        return Err(said!("too many text replacements"));
     }
     let mut prepared = BTreeMap::new();
     let mut seen = BTreeSet::new();
@@ -1348,7 +1358,7 @@ fn prepare_batch(doc: &Document, changes: &[Change]) -> Result<BTreeMap<u32, Ins
     let mut pushes: BTreeMap<(u32, u32), f64> = BTreeMap::new();
     for change in ordered {
         if !seen.insert((change.page, change.operator)) {
-            return Err("duplicate text replacement".into());
+            return Err(said!("duplicate text replacement"));
         }
         if change.replacement.chars().count() > MAX_TEXT
             || change.replacement.chars().any(|ch| {
@@ -1356,19 +1366,21 @@ fn prepare_batch(doc: &Document, changes: &[Change]) -> Result<BTreeMap<u32, Ins
                     || matches!(ch, '\u{2028}' | '\u{2029}')
             })
         {
-            return Err("invalid or oversized replacement text".into());
+            return Err(said!("invalid or oversized replacement text"));
         }
         if change.original == change.replacement && change.layout.is_none() {
-            return Err("text replacement is unchanged".into());
+            return Err(said!("text replacement is unchanged"));
         }
         if let std::collections::btree_map::Entry::Vacant(entry) = prepared.entry(change.page) {
             entry.insert(inspect(doc, change.page)?);
         }
         if change.layout.is_none() && prepared[&change.page].centred.contains(&change.operator) {
-            return Err(centred::NEEDS_LAYOUT.into());
+            return Err(centred::needs_layout());
         }
         if change.layout.is_some() {
-            let page = prepared.get_mut(&change.page).ok_or("missing text page")?;
+            let page = prepared
+                .get_mut(&change.page)
+                .ok_or_else(|| said!("missing text page"))?;
             let placement = layout::Placement {
                 inherited: shifts
                     .get(&(change.page, change.operator))
@@ -1381,7 +1393,7 @@ fn prepare_batch(doc: &Document, changes: &[Change]) -> Result<BTreeMap<u32, Ins
                 || page.structure_actual.contains_key(&change.operator))
                 && replacement.lines > 1
             {
-                return Err("ActualText editing currently requires a single line".into());
+                return Err(said!("ActualText editing currently requires a single line"));
             }
             // Every show this edit pushes, told where it ended up. The ones
             // this batch also replaces are in here without being in `moved`:
@@ -1411,14 +1423,14 @@ fn prepare_batch(doc: &Document, changes: &[Change]) -> Result<BTreeMap<u32, Ins
             // holds the underlines a wrap moves, which is the same collision.
             for (show, operations) in &replacement.lowered {
                 if shifts.contains_key(&(change.page, *show)) {
-                    return Err(layout::WRAP_CONFLICT.into());
+                    return Err(layout::wrap_conflict());
                 }
                 if page
                     .lowered
                     .insert(*show as usize, operations.clone())
                     .is_some()
                 {
-                    return Err(layout::WRAP_CONFLICT.into());
+                    return Err(layout::wrap_conflict());
                 }
                 page.patched.insert(*show as usize);
             }
@@ -1440,7 +1452,7 @@ fn prepare_batch(doc: &Document, changes: &[Change]) -> Result<BTreeMap<u32, Ins
                             .filter(|(id, _)| id == link)
                             .map(|(_, u)| (a.rect, u))
                     }) else {
-                        return Err("missing link annotation".into());
+                        return Err(said!("missing link annotation"));
                     };
                     // The move in user space, from the displayed rectangle
                     // before and after, applied to the source's own numbers.
@@ -1491,20 +1503,22 @@ fn prepare_batch(doc: &Document, changes: &[Change]) -> Result<BTreeMap<u32, Ins
             patched,
             groups,
             ..
-        } = prepared.get_mut(&change.page).ok_or("missing text page")?;
+        } = prepared
+            .get_mut(&change.page)
+            .ok_or_else(|| said!("missing text page"))?;
         let run = runs
             .runs
             .iter()
             .find(|run| run.operator == change.operator)
-            .ok_or("text run no longer exists")?;
+            .ok_or_else(|| said!("text run no longer exists"))?;
         if change.revision != runs.revision || change.original != run.text {
-            return Err("text changed since this run was inspected".into());
+            return Err(said!("text changed since this run was inspected"));
         }
         // Use the original operand bytes, not the lossy display name, to resolve
         // a resource. Font names are PDF names and need not be valid UTF-8.
         let font_operator = font_operators
             .get(&change.operator)
-            .ok_or("missing text font")?;
+            .ok_or_else(|| said!("missing text font"))?;
         let name = content.operations[*font_operator].operands[0]
             .as_name()
             .map_err(|e| e.to_string())?;
@@ -1515,11 +1529,11 @@ fn prepare_batch(doc: &Document, changes: &[Change]) -> Result<BTreeMap<u32, Ins
         ));
         let (spacing, word_spacing) = *text_spacing
             .get(&change.operator)
-            .ok_or("missing text spacing")?;
+            .ok_or_else(|| said!("missing text spacing"))?;
         let gap = gaps.get(&change.operator).copied().unwrap_or(DEFAULT_GAP);
         let original = *horizontal_bounds
             .get(&change.operator)
-            .ok_or("missing text ink bounds")?;
+            .ok_or_else(|| said!("missing text ink bounds"))?;
         let (mut items, replacement_advance, replacement_bounds) = own_items(
             &content.operations[change.operator as usize],
             groups.contains_key(&change.operator),
@@ -1535,7 +1549,7 @@ fn prepare_batch(doc: &Document, changes: &[Change]) -> Result<BTreeMap<u32, Ins
             },
         )?;
         if replacement_advance > run.advance + 0.000_001 {
-            return Err("replacement would exceed the original text advance".into());
+            return Err(said!("replacement would exceed the original text advance"));
         }
         // The right edge gets the advance's rounding allowance: the scan sums a
         // run's widths glyph by glyph, the layout in its own order, so an
@@ -1543,7 +1557,9 @@ fn prepare_batch(doc: &Document, changes: &[Change]) -> Result<BTreeMap<u32, Ins
         // against 337.73999999999995 on the arXiv stamp). The left edge is one
         // glyph's overhang, summed from nothing, and needs none.
         if replacement_bounds[0] < original[0] || replacement_bounds[1] > original[1] + 0.000_001 {
-            return Err("replacement ink would exceed the original text bounds".into());
+            return Err(said!(
+                "replacement ink would exceed the original text bounds"
+            ));
         }
         patched.insert(change.operator as usize);
         let show = &mut content.operations[change.operator as usize];
@@ -1579,12 +1595,14 @@ fn prepare_batch(doc: &Document, changes: &[Change]) -> Result<BTreeMap<u32, Ins
     // from the source's own array, so that two edits on one line do not add
     // their displacements to each other's output.
     for ((page, operator), shift) in &pushes {
-        let page = prepared.get_mut(page).ok_or("missing text page")?;
+        let page = prepared
+            .get_mut(page)
+            .ok_or_else(|| said!("missing text page"))?;
         // A later edit pushed a line an earlier one moved down: the push would
         // be written into the source's array while the wrap draws that show
         // from its own copy of it.
         if page.lowered.contains_key(&(*operator as usize)) {
-            return Err(layout::WRAP_CONFLICT.into());
+            return Err(layout::wrap_conflict());
         }
         let moved = layout::push(page, *operator, *shift)?;
         let show = &mut page.content.operations[*operator as usize];
@@ -1595,7 +1613,9 @@ fn prepare_batch(doc: &Document, changes: &[Change]) -> Result<BTreeMap<u32, Ins
     // Logical replacement strings are patched with their owning show, and a
     // structure Span's ActualText is rewritten with the run it describes.
     for change in changes {
-        let page = prepared.get_mut(&change.page).ok_or("missing text page")?;
+        let page = prepared
+            .get_mut(&change.page)
+            .ok_or_else(|| said!("missing text page"))?;
         actual::patch(page, change.operator, &change.replacement)?;
         actual::rewrite(page, change.operator, &change.replacement);
     }
@@ -1639,7 +1659,7 @@ fn commit_batch(doc: &mut Document, prepared: BTreeMap<u32, Inspection>) -> Resu
                     }
                 }
                 if font_names.len() > 32 {
-                    return Err("Text edits would exceed the page's 32-font limit".into());
+                    return Err(said!("Text edits would exceed the page's 32-font limit"));
                 }
                 let expansions = expanded
                     .iter()

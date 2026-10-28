@@ -81,18 +81,18 @@ impl Metrics {
                 let at = usize::from(code) * 2;
                 let pair = mapping
                     .get(at..at + 2)
-                    .ok_or("missing composite glyph mapping")?;
+                    .ok_or_else(|| said!("missing composite glyph mapping"))?;
                 u16::from_be_bytes([pair[0], pair[1]])
             } else {
                 code
             };
             let glyph = GlyphId(glyph_index);
             if glyph_index == 0 || glyph_index >= face.number_of_glyphs() {
-                return Err("invalid composite glyph index".into());
+                return Err(said!("invalid composite glyph index"));
             }
             let advance = f64::from(
                 face.glyph_hor_advance(glyph)
-                    .ok_or("missing glyph advance")?,
+                    .ok_or_else(|| said!("missing glyph advance"))?,
             ) * unit;
             let ink = super::outlines::bounds(face, glyph).map(|ink| ink.map(|value| value * unit));
             Ok(Some(Glyph {
@@ -131,7 +131,9 @@ impl Metrics {
             };
             let width = widths.get(&code).copied().unwrap_or(default);
             if width < 0. {
-                return Err("composite font widths disagree with its glyph metrics".into());
+                return Err(said!(
+                    "composite font widths disagree with its glyph metrics"
+                ));
             }
             // A zero width is a combining mark set over the glyph before it
             // (Typst's macron, under `DW 0`): measured, never written. So is
@@ -269,7 +271,7 @@ impl Metrics {
 
     fn slots(&self, text: &str) -> Result<Vec<u16>, String> {
         if text.chars().count() > crate::textedit::MAX_TEXT || text.chars().any(char::is_control) {
-            return Err("invalid replacement text".into());
+            return Err(said!("invalid replacement text"));
         }
         let mut rest = text;
         let mut result = Vec::new();
@@ -283,9 +285,11 @@ impl Metrics {
                 .ok_or_else(|| {
                     let first = rest.chars().next().map(String::from).unwrap_or_default();
                     if self.ambiguous.contains(&first) {
-                        "the font has several glyphs for this character and cannot choose one"
+                        said!(
+                            "the font has several glyphs for this character and cannot choose one"
+                        )
                     } else {
-                        "the font has no validated glyph for this character"
+                        said!("the font has no validated glyph for this character")
                     }
                 })?;
             result.push(code);
@@ -299,7 +303,7 @@ impl Metrics {
             return self
                 .slots(text)?
                 .into_iter()
-                .map(|code| u8::try_from(code).map_err(|_| "invalid single-byte glyph code".into()))
+                .map(|code| u8::try_from(code).map_err(|_| said!("invalid single-byte glyph code")))
                 .collect();
         }
         Ok(self
@@ -326,7 +330,7 @@ impl Metrics {
     ) -> Result<(String, f64, [f64; 2]), String> {
         let code_size = if self.single_byte { 1 } else { 2 };
         if bytes.len() % code_size != 0 || bytes.len() / code_size > crate::textedit::MAX_TEXT {
-            return Err("invalid or oversized encoded text".into());
+            return Err(said!("invalid or oversized encoded text"));
         }
         let slots: Vec<_> = bytes
             .chunks_exact(code_size)
@@ -340,7 +344,10 @@ impl Metrics {
             .collect();
         let mut text = String::new();
         for code in &slots {
-            let mapped = self.codes.get(code).ok_or("unmapped font code")?;
+            let mapped = self
+                .codes
+                .get(code)
+                .ok_or_else(|| said!("unmapped font code"))?;
             if self.opaque.contains(code) {
                 text.push(super::OPAQUE);
             } else {
@@ -348,7 +355,7 @@ impl Metrics {
             }
         }
         if text.chars().count() > crate::textedit::MAX_TEXT {
-            return Err("expanded text exceeds its limit".into());
+            return Err(said!("expanded text exceeds its limit"));
         }
         let (advance, bounds) = self.layout(&slots, size, spacing, word_spacing)?;
         Ok((text, advance, bounds))
@@ -377,7 +384,7 @@ impl Metrics {
             || word_spacing < -size * 0.25
             || word_spacing > 1_000_000.
         {
-            return Err("text spacing exceeds editable limits".into());
+            return Err(said!("text spacing exceeds editable limits"));
         }
         let mut cursor = 0_f64;
         let mut bounds = [0_f64; 2];
@@ -385,7 +392,7 @@ impl Metrics {
             let (width, [left, right]) = self
                 .glyphs
                 .get(code)
-                .ok_or("the font has no validated glyph for this character")?;
+                .ok_or_else(|| said!("the font has no validated glyph for this character"))?;
             let step = width * size / 1000.
                 + spacing
                 + if self.single_byte && *code == 32 {
@@ -395,13 +402,13 @@ impl Metrics {
                 };
             // Only a read-only mark may stand still; writable text advances.
             if step < 0. || (step == 0. && !self.opaque.contains(code)) {
-                return Err("backtracking character spacing is not editable yet".into());
+                return Err(said!("backtracking character spacing is not editable yet"));
             }
             bounds[0] = bounds[0].min(cursor + left * size / 1000.);
             bounds[1] = bounds[1].max(cursor + (width + right) * size / 1000.);
             cursor += step;
             if !cursor.is_finite() || cursor > 1_000_000. {
-                return Err("spaced text advance exceeds its limit".into());
+                return Err(said!("spaced text advance exceeds its limit"));
             }
         }
         Ok((cursor, bounds))
@@ -446,7 +453,7 @@ mod tests {
         ] {
             assert_eq!(
                 metrics(glyphs).encode("SA").unwrap_err(),
-                "the font has several glyphs for this character and cannot choose one"
+                said!("the font has several glyphs for this character and cannot choose one")
             );
         }
     }

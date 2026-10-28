@@ -85,16 +85,16 @@ fn load(store: &Path) -> Result<Vec<Remembered>, String> {
         Ok(bytes) => bytes,
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
         Err(e) => {
-            return Err(format!(
-                "The list of certificate files {} could not be read: {e}.",
-                store.display()
+            return Err(said!(
+                "The list of certificate files {path} could not be read: {e}.",
+                path = store.display()
             ))
         }
     };
     serde_json::from_slice(&bytes).map_err(|e| {
-        format!(
-            "The list of certificate files {} is damaged ({e}).",
-            store.display()
+        said!(
+            "The list of certificate files {path} is damaged ({e}).",
+            path = store.display()
         )
     })
 }
@@ -110,9 +110,9 @@ fn load(store: &Path) -> Result<Vec<Remembered>, String> {
 /// written.
 pub fn add(store: &Path, path: &Path, password: &str) -> Result<Remembered, String> {
     let mut list = load(store)
-        .map_err(|why| format!("{why} Nothing was added; move it aside to start a new list."))?;
+        .map_err(|why| said!("{why} Nothing was added; move it aside to start a new list."))?;
     let bytes =
-        std::fs::read(path).map_err(|e| format!("The certificate file could not be read: {e}."))?;
+        std::fs::read(path).map_err(|e| said!("The certificate file could not be read: {e}."))?;
     let opened = pkcs12::open(&bytes, password).map_err(|why| why.sentence())?;
     let path = path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
     let entry = Remembered {
@@ -125,13 +125,13 @@ pub fn add(store: &Path, path: &Path, password: &str) -> Result<Remembered, Stri
     list.push(entry.clone());
     if let Some(dir) = store.parent() {
         std::fs::create_dir_all(dir)
-            .map_err(|e| format!("The list of certificate files could not be saved: {e}."))?;
+            .map_err(|e| said!("The list of certificate files could not be saved: {e}."))?;
     }
     let text = serde_json::to_vec_pretty(&list).map_err(|e| e.to_string())?;
     let part = store.with_extension("json.part");
     std::fs::write(&part, text)
         .and_then(|()| std::fs::rename(&part, store))
-        .map_err(|e| format!("The list of certificate files could not be saved: {e}."))?;
+        .map_err(|e| said!("The list of certificate files could not be saved: {e}."))?;
     Ok(entry)
 }
 
@@ -144,16 +144,16 @@ pub fn add(store: &Path, path: &Path, password: &str) -> Result<Remembered, Stri
 /// The file gone, its [`Refusal`], or a different certificate.
 pub fn reopen(entry: &Remembered, password: &str) -> Result<pkcs12::Opened, String> {
     let bytes = std::fs::read(&entry.path).map_err(|e| {
-        format!(
-            "The certificate file {} could not be read: {e}.",
-            entry.path.display()
+        said!(
+            "The certificate file {path} could not be read: {e}.",
+            path = entry.path.display()
         )
     })?;
     let opened = pkcs12::open(&bytes, password).map_err(|why: Refusal| why.sentence())?;
     if opened.certificate != entry.certificate() {
-        return Err(format!(
-            "The certificate file {} now holds a different certificate from the one added; add it again.",
-            entry.path.display()
+        return Err(said!(
+            "The certificate file {path} now holds a different certificate from the one added; add it again.",
+            path = entry.path.display()
         ));
     }
     Ok(opened)

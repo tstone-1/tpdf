@@ -14,7 +14,7 @@ mod tests;
 /// Preserve the operators, including q/Q scoping, instead of recreating paths.
 /// Dash arrays follow PDF 1.7 section 4.3.2; the 32-entry limit bounds validation.
 pub(super) fn stroke(operator: &str, values: &[Object]) -> Result<(), String> {
-    let invalid = || "unsupported line stroke state".to_string();
+    let invalid = || said!("unsupported line stroke state");
     match (operator, values) {
         ("J" | "j", [Object::Integer(0..=2)]) => Ok(()),
         ("M", [value]) if number(value)? >= 1. => Ok(()),
@@ -49,7 +49,7 @@ pub(super) fn tolerance(key: &[u8], value: &Object) -> Result<(), String> {
     let value = number(value)?;
     let limit = if key == b"SM" { 1. } else { 100. };
     if !(0. ..=limit).contains(&value) {
-        return Err("unsupported rendering tolerance".into());
+        return Err(said!("unsupported rendering tolerance"));
     }
     Ok(())
 }
@@ -61,7 +61,7 @@ pub(super) fn normal(
     resources: &Dictionary,
     name: &[u8],
 ) -> Result<Option<f64>, String> {
-    let invalid = || "unsupported external text graphics state".to_string();
+    let invalid = || said!("unsupported external text graphics state");
     let states = dictionary(doc, resources.get(b"ExtGState").map_err(|_| invalid())?)?;
     let state = dictionary(doc, states.get(name).map_err(|_| invalid())?)?;
     let mut width = None;

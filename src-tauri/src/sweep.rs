@@ -119,7 +119,10 @@ pub fn references(object: &Object, out: &mut Vec<ObjectId>) -> Result<(), String
 /// [`references`], carrying how deep it already is.
 fn descend(object: &Object, out: &mut Vec<ObjectId>, depth: usize) -> Result<(), String> {
     if depth > MAX_NESTING {
-        return Err(format!("an object nests deeper than {MAX_NESTING} levels"));
+        return Err(said!(
+            "an object nests deeper than {limit} levels",
+            limit = MAX_NESTING
+        ));
     }
     match object {
         Object::Reference(id) => out.push(*id),

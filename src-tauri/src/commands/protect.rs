@@ -56,7 +56,7 @@ pub async fn protect_copy(
         )
     })
     .await
-    .map_err(|e| format!("the save did not run: {e}"))?
+    .map_err(|e| said!("the save did not run: {e}"))?
     .map_err(|why| why.message)
 }
 

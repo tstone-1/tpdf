@@ -5,7 +5,9 @@
 use super::{colors, dictionary, number};
 use lopdf::{Dictionary, Document, Object};
 
-const INVALID: &str = "unsupported shading pattern on editable page";
+fn invalid() -> String {
+    said!("unsupported shading pattern on editable page")
+}
 
 #[derive(Clone, Copy)]
 pub(super) enum Colour {
@@ -26,14 +28,14 @@ impl Colour {
             Self::Solid(count) => colors::values(values, *count),
             Self::Pattern { selected } => {
                 let [Object::Name(name)] = values else {
-                    return Err(INVALID.into());
+                    return Err(invalid());
                 };
                 if !matches!(operator, "scn" | "SCN") {
-                    return Err(INVALID.into());
+                    return Err(invalid());
                 }
                 if !checked.contains(name) {
                     if checked.len() >= 32 {
-                        return Err("too many shading patterns".into());
+                        return Err(said!("too many shading patterns"));
                     }
                     check(doc, resources, name)?;
                     checked.insert(name.clone());
@@ -46,7 +48,7 @@ impl Colour {
 
     fn ready(self) -> Result<(), String> {
         if matches!(self, Self::Pattern { selected: false }) {
-            Err("painting with an unselected shading pattern".into())
+            Err(said!("painting with an unselected shading pattern"))
         } else {
             Ok(())
         }
@@ -68,7 +70,7 @@ fn keys(dict: &Dictionary, allowed: &[&[u8]]) -> Result<(), String> {
         .iter()
         .any(|(key, _)| !allowed.contains(&key.as_slice()))
     {
-        return Err(INVALID.into());
+        return Err(invalid());
     }
     Ok(())
 }
@@ -77,9 +79,9 @@ fn numbers<const N: usize>(dict: &Dictionary, key: &[u8]) -> Result<[f64; N], St
     let values = dict
         .get(key)
         .and_then(Object::as_array)
-        .map_err(|_| INVALID)?;
+        .map_err(|_| invalid())?;
     if values.len() != N {
-        return Err(INVALID.into());
+        return Err(invalid());
     }
     let mut result = [0.; N];
     for (out, value) in result.iter_mut().zip(values) {
@@ -89,24 +91,24 @@ fn numbers<const N: usize>(dict: &Dictionary, key: &[u8]) -> Result<[f64; N], St
 }
 
 fn check(doc: &Document, resources: &Dictionary, name: &[u8]) -> Result<(), String> {
-    let patterns = dictionary(doc, resources.get(b"Pattern").map_err(|_| INVALID)?)?;
-    let pattern = dictionary(doc, patterns.get(name).map_err(|_| INVALID)?)?;
+    let patterns = dictionary(doc, resources.get(b"Pattern").map_err(|_| invalid())?)?;
+    let pattern = dictionary(doc, patterns.get(name).map_err(|_| invalid())?)?;
     keys(pattern, &[b"Type", b"PatternType", b"Shading", b"Matrix"])?;
     if pattern.get(b"PatternType").and_then(Object::as_i64).ok() != Some(2)
         || pattern
             .get(b"Type")
             .is_ok_and(|v| v.as_name().ok() != Some(b"Pattern"))
     {
-        return Err(INVALID.into());
+        return Err(invalid());
     }
     if pattern.has(b"Matrix") {
         let m = numbers::<6>(pattern, b"Matrix")?;
         let determinant = m[0] * m[3] - m[1] * m[2];
         if determinant == 0. || !determinant.is_finite() {
-            return Err(INVALID.into());
+            return Err(invalid());
         }
     }
-    let shading = dictionary(doc, pattern.get(b"Shading").map_err(|_| INVALID)?)?;
+    let shading = dictionary(doc, pattern.get(b"Shading").map_err(|_| invalid())?)?;
     keys(
         shading,
         &[
@@ -119,32 +121,32 @@ fn check(doc: &Document, resources: &Dictionary, name: &[u8]) -> Result<(), Stri
         ],
     )?;
     if shading.get(b"ShadingType").and_then(Object::as_i64).ok() != Some(2) {
-        return Err(INVALID.into());
+        return Err(invalid());
     }
     let components = match shading
         .get(b"ColorSpace")
         .and_then(Object::as_name)
-        .map_err(|_| INVALID)?
+        .map_err(|_| invalid())?
     {
         b"DeviceGray" => 1,
         b"DeviceRGB" => 3,
         b"DeviceCMYK" => 4,
-        _ => return Err(INVALID.into()),
+        _ => return Err(invalid()),
     };
     let coords = numbers::<4>(shading, b"Coords")?;
     if coords[..2] == coords[2..] {
-        return Err(INVALID.into());
+        return Err(invalid());
     }
     if shading.has(b"Domain") && numbers::<2>(shading, b"Domain")? != [0., 1.] {
-        return Err(INVALID.into());
+        return Err(invalid());
     }
     if let Ok(extend) = shading.get(b"Extend") {
         if !matches!(extend, Object::Array(v) if matches!(v.as_slice(), [Object::Boolean(_), Object::Boolean(_)]))
         {
-            return Err(INVALID.into());
+            return Err(invalid());
         }
     }
-    let function = shading.get(b"Function").map_err(|_| INVALID)?;
+    let function = shading.get(b"Function").map_err(|_| invalid())?;
     if let Ok(stream) = crate::encoding::resolve(doc, function).as_stream() {
         return sampled(stream, components);
     }
@@ -153,18 +155,18 @@ fn check(doc: &Document, resources: &Dictionary, name: &[u8]) -> Result<(), Stri
     if function.get(b"FunctionType").and_then(Object::as_i64).ok() != Some(2)
         || numbers::<2>(function, b"Domain")? != [0., 1.]
     {
-        return Err(INVALID.into());
+        return Err(invalid());
     }
-    let exponent = number(function.get(b"N").map_err(|_| INVALID)?)?;
+    let exponent = number(function.get(b"N").map_err(|_| invalid())?)?;
     if !(0.0..=128.).contains(&exponent) || exponent == 0. {
-        return Err(INVALID.into());
+        return Err(invalid());
     }
     for key in [b"C0", b"C1"] {
         colors::values(
             function
                 .get(key)
                 .and_then(Object::as_array)
-                .map_err(|_| INVALID)?,
+                .map_err(|_| invalid())?,
             components,
         )?;
     }
@@ -202,17 +204,17 @@ fn sampled(stream: &lopdf::Stream, components: usize) -> Result<(), String> {
         function
             .get(key)
             .and_then(Object::as_i64)
-            .map_err(|_| INVALID)
+            .map_err(|_| invalid())
     };
     let [size] = function
         .get(b"Size")
         .and_then(Object::as_array)
-        .map_err(|_| INVALID)?
+        .map_err(|_| invalid())?
         .as_slice()
     else {
-        return Err(INVALID.into());
+        return Err(invalid());
     };
-    let size = size.as_i64().map_err(|_| INVALID)?;
+    let size = size.as_i64().map_err(|_| invalid())?;
     let bits = integer(b"BitsPerSample")?;
     if integer(b"FunctionType")? != 0
         || numbers::<2>(function, b"Domain")? != [0., 1.]
@@ -222,25 +224,25 @@ fn sampled(stream: &lopdf::Stream, components: usize) -> Result<(), String> {
             .get(b"Order")
             .is_ok_and(|order| !matches!(order.as_i64(), Ok(1 | 3)))
     {
-        return Err(INVALID.into());
+        return Err(invalid());
     }
     // Range has two numbers per output, and the outputs are the colour
     // space's components; Decode, when present, has the same shape.
     for key in [b"Range".as_slice(), b"Decode"] {
         let Ok(values) = function.get(key) else {
             if key == b"Range" {
-                return Err(INVALID.into());
+                return Err(invalid());
             }
             continue;
         };
-        let values = values.as_array().map_err(|_| INVALID)?;
+        let values = values.as_array().map_err(|_| invalid())?;
         if values.len() != 2 * components {
-            return Err(INVALID.into());
+            return Err(invalid());
         }
         for pair in values.chunks_exact(2) {
             let [low, high] = [number(&pair[0])?, number(&pair[1])?];
             if key == b"Range" && low > high {
-                return Err(INVALID.into());
+                return Err(invalid());
             }
         }
     }
@@ -248,13 +250,13 @@ fn sampled(stream: &lopdf::Stream, components: usize) -> Result<(), String> {
         numbers::<2>(function, b"Encode")?;
     }
     let length = usize::try_from(size * components as i64 * bits)
-        .map_err(|_| INVALID)?
+        .map_err(|_| invalid())?
         .div_ceil(8);
     // Exactly that many bytes: a longer stream is refused by the decoding
     // bound, a shorter one by the comparison.
-    let samples = super::filters::decode(stream, length).map_err(|_| INVALID)?;
+    let samples = super::filters::decode(stream, length).map_err(|_| invalid())?;
     if samples.len() < length {
-        return Err(INVALID.into());
+        return Err(invalid());
     }
     Ok(())
 }

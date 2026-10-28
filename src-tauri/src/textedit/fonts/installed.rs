@@ -74,16 +74,19 @@ pub(in crate::textedit) enum Refusal {
 
 impl Refusal {
     pub(in crate::textedit) fn reason(self, name: &str) -> String {
-        let why = match self {
-            Refusal::Unreadable => "could not be read",
-            Refusal::Cff2 => "has CFF2 outlines, which cannot be embedded",
-            Refusal::Variable => "is a variable or colour font",
-            Refusal::Rights => "does not permit editing",
-            Refusal::Widths => "differs from the document's copy",
-            Refusal::Missing => "lacks a character",
-            Refusal::Shared => "draws two of the characters with one glyph",
-        };
-        format!("the installed {name} {why}")
+        match self {
+            Refusal::Unreadable => said!("the installed {name} could not be read"),
+            Refusal::Cff2 => {
+                said!("the installed {name} has CFF2 outlines, which cannot be embedded")
+            }
+            Refusal::Variable => said!("the installed {name} is a variable or colour font"),
+            Refusal::Rights => said!("the installed {name} does not permit editing"),
+            Refusal::Widths => said!("the installed {name} differs from the document's copy"),
+            Refusal::Missing => said!("the installed {name} lacks a character"),
+            Refusal::Shared => {
+                said!("the installed {name} draws two of the characters with one glyph")
+            }
+        }
     }
 }
 
@@ -226,7 +229,7 @@ pub(in crate::textedit) fn accept(
     Ok(Accepted {
         font,
         metrics,
-        label: format!("{} (installed)", display_name(&face, wanted)),
+        label: said!("{font} (installed)", font = display_name(&face, wanted)),
         program: Installed {
             name: wanted.to_owned(),
             index: None,

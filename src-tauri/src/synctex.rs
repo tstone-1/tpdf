@@ -101,18 +101,18 @@ pub fn beside(pdf: &Path) -> Option<PathBuf> {
 /// source, two inputs it could be, or nothing at all from that file.
 pub fn forward(pdf: &Path, source: &Path, line: u32) -> Result<Forward, String> {
     let map = beside(pdf).ok_or_else(|| {
-        format!(
-            "there is no SyncTeX file beside {}; compile it with -synctex=1",
-            pdf.display()
+        said!(
+            "there is no SyncTeX file beside {path}; compile it with -synctex=1",
+            path = pdf.display()
         )
     })?;
     let folder = map.parent().unwrap_or_else(|| Path::new("")).to_path_buf();
     let inputs = inputs(&mut open(&map)?)?;
     let tags = source_tags(&inputs, &folder, source)?;
     scan(&mut open(&map)?, &tags, line)?.ok_or_else(|| {
-        format!(
-            "nothing on any page came from {}",
-            source.file_name().map_or_else(
+        said!(
+            "nothing on any page came from {name}",
+            name = source.file_name().map_or_else(
                 || source.display().to_string(),
                 |name| name.to_string_lossy().into_owned()
             )
@@ -122,15 +122,15 @@ pub fn forward(pdf: &Path, source: &Path, line: u32) -> Result<Forward, String> 
 
 /// The file's text, decompressed when it ends in `.gz`, held to the bounds.
 fn open(map: &Path) -> Result<Box<dyn BufRead>, String> {
-    let file =
-        std::fs::File::open(map).map_err(|e| format!("could not read {}: {e}", map.display()))?;
+    let file = std::fs::File::open(map)
+        .map_err(|e| said!("could not read {path}: {e}", path = map.display()))?;
     let size = file.metadata().map(|meta| meta.len()).unwrap_or(0);
     if size > MAX_FILE {
-        return Err(format!(
-            "{} is {} MB, more than the {} MB tpdf reads",
-            map.display(),
-            size / 1_048_576,
-            MAX_FILE / 1_048_576
+        return Err(said!(
+            "{path} is {size} MB, more than the {most} MB tpdf reads",
+            path = map.display(),
+            size = size / 1_048_576,
+            most = MAX_FILE / 1_048_576
         ));
     }
     let raw = file.take(MAX_FILE);
@@ -152,19 +152,19 @@ fn lines(reader: &mut dyn BufRead, mut each: impl FnMut(&str) -> bool) -> Result
         let read = (&mut *reader)
             .take(MAX_LINE + 1)
             .read_until(b'\n', &mut buffer)
-            .map_err(|e| format!("the SyncTeX file could not be read: {e}"))?;
+            .map_err(|e| said!("the SyncTeX file could not be read: {e}"))?;
         if read == 0 {
             return Ok(());
         }
         total += read as u64;
         if total > MAX_TEXT {
-            return Err(format!(
-                "the SyncTeX file is more than {} MB decompressed",
-                MAX_TEXT / 1_048_576
+            return Err(said!(
+                "the SyncTeX file is more than {most} MB decompressed",
+                most = MAX_TEXT / 1_048_576
             ));
         }
         if buffer.len() as u64 > MAX_LINE {
-            return Err("the SyncTeX file has a line longer than 64 KB".into());
+            return Err(said!("the SyncTeX file has a line longer than 64 KB"));
         }
         let text = String::from_utf8_lossy(&buffer);
         if !each(text.trim_end_matches(['\n', '\r'])) {
@@ -237,7 +237,7 @@ fn source_tags(
     }
     let name = source
         .file_name()
-        .ok_or_else(|| format!("{} names no file", source.display()))?;
+        .ok_or_else(|| said!("{path} names no file", path = source.display()))?;
     let named: Vec<&(u32, String)> = inputs
         .iter()
         .filter(|(_, path)| lexical(&resolved(path)).file_name() == Some(name))
@@ -247,15 +247,16 @@ fn source_tags(
         .map(|(_, path)| lexical(&resolved(path)))
         .collect();
     match paths.len() {
-        0 => Err(format!(
-            "the SyncTeX file names no input called {}",
-            name.to_string_lossy()
+        0 => Err(said!(
+            "the SyncTeX file names no input called {name}",
+            name = name.to_string_lossy()
         )),
         1 => Ok(named.iter().map(|(tag, _)| *tag).collect()),
-        _ => Err(format!(
-            "the SyncTeX file names {} different inputs called {}; give the source's full path",
-            paths.len(),
-            name.to_string_lossy()
+        _ => Err(said!(
+            "the SyncTeX file names {count} different inputs called {name}; give the source's \
+             full path",
+            count = paths.len(),
+            name = name.to_string_lossy()
         )),
     }
 }
@@ -444,7 +445,7 @@ fn scan(
         true
     })?;
     if deep {
-        return Err(format!(
+        return Err(said!(
             "the SyncTeX file nests boxes more than {MAX_DEPTH} deep"
         ));
     }

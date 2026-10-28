@@ -87,6 +87,7 @@ import {
 import { LOCK_ANSWERS, LOCK_NAME, LOCK_QUESTION, LOCK_UNANSWERED, lockOf } from "./signlock";
 import { button, footer as buttons, option, paragraph, section } from "./dialogparts";
 import { catalog } from "./i18n";
+import { spoken } from "./said";
 
 /** A verdict as a list of signatures names it; `none` is a signature nothing checked. */
 type ListedVerdict = Integrity["verdict"] | "none";
@@ -484,7 +485,7 @@ export function nothingToChoose(choices: Choices, linux = isLinux()): string {
   const none = linux ? TEXT().noneLinux(NO_CERTIFICATE) : TEXT().noneStore(NO_CERTIFICATE);
   if (choices.skipped.length === 0) return none + WITHOUT_CERTIFICATE;
   // Each reason is the backend's clause (`sign_cms::Skipped`), as it came.
-  const reasons = choices.skipped.map((s) => `${s.subject}: ${s.why}`).join("; ");
+  const reasons = choices.skipped.map((s) => `${s.subject}: ${spoken(s.why)}`).join("; ");
   return `${none}${TEXT().notOffered(reasons)}${WITHOUT_CERTIFICATE}`;
 }
 
@@ -978,7 +979,7 @@ function askAfter(question: AfterQuestion): Promise<AfterStamp> {
   const heading = document.createElement("h2");
   heading.textContent = question.heading;
   // The reason is the backend's sentence, as it came.
-  const reason = paragraph("", `${question.why}.`);
+  const reason = paragraph("", `${spoken(question.why)}.`);
   const help = paragraph("tpdf-dialog-intro", question.help);
   const cancel = button(TEXT().cancel);
   const without = button(question.without);

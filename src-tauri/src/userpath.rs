@@ -146,7 +146,7 @@ mod windows {
         match status {
             ERROR_SUCCESS => Ok(Some(Key(key))),
             ERROR_FILE_NOT_FOUND => Ok(None),
-            _ => Err(format!("your PATH could not be opened (error {status})")),
+            _ => Err(said!("your PATH could not be opened (error {status})")),
         }
     }
 
@@ -171,7 +171,7 @@ mod windows {
         if status == ERROR_SUCCESS {
             Ok(Key(key))
         } else {
-            Err(format!("your PATH could not be opened (error {status})"))
+            Err(said!("your PATH could not be opened (error {status})"))
         }
     }
 
@@ -198,13 +198,15 @@ mod windows {
             return Ok((String::new(), REG_EXPAND_SZ));
         }
         if status != ERROR_SUCCESS {
-            return Err(format!("your PATH could not be read (error {status})"));
+            return Err(said!("your PATH could not be read (error {status})"));
         }
         if kind != REG_SZ && kind != REG_EXPAND_SZ {
-            return Err("your PATH is not stored as text, so tpdf leaves it alone".into());
+            return Err(said!(
+                "your PATH is not stored as text, so tpdf leaves it alone"
+            ));
         }
         let mut data = vec![0u16; (bytes as usize).div_ceil(2) + 1];
-        let mut held = u32::try_from(data.len() * 2).map_err(|_| "your PATH is too long")?;
+        let mut held = u32::try_from(data.len() * 2).map_err(|_| said!("your PATH is too long"))?;
         // SAFETY: `data` is `held` bytes long and both outlive the call.
         let status = unsafe {
             RegQueryValueExW(
@@ -217,7 +219,7 @@ mod windows {
             )
         };
         if status != ERROR_SUCCESS {
-            return Err(format!("your PATH could not be read (error {status})"));
+            return Err(said!("your PATH could not be read (error {status})"));
         }
         data.truncate((held as usize) / 2);
         while data.last() == Some(&0) {
@@ -225,7 +227,7 @@ mod windows {
         }
         // Not lossy: a value that is not UTF-16 is refused, never rewritten.
         let value = String::from_utf16(&data)
-            .map_err(|_| "your PATH holds text tpdf cannot read, so tpdf leaves it alone")?;
+            .map_err(|_| said!("your PATH holds text tpdf cannot read, so tpdf leaves it alone"))?;
         Ok((value, kind))
     }
 
@@ -236,7 +238,7 @@ mod windows {
     /// Sets one text value through `key`.
     fn set(key: &Key, name: &str, value: &str, kind: u32) -> Result<(), String> {
         let data = wide(value);
-        let bytes = u32::try_from(data.len() * 2).map_err(|_| "your PATH is too long")?;
+        let bytes = u32::try_from(data.len() * 2).map_err(|_| said!("your PATH is too long"))?;
         // SAFETY: `data` is `bytes` bytes long, NUL included, and outlives the
         // call.
         let status = unsafe {
@@ -252,7 +254,7 @@ mod windows {
         if status == ERROR_SUCCESS {
             Ok(())
         } else {
-            Err(format!("your PATH could not be written (error {status})"))
+            Err(said!("your PATH could not be written (error {status})"))
         }
     }
 

@@ -380,9 +380,9 @@ pub(crate) fn open_slot_mut<T>(slots: &mut [Option<T>], doc: u32) -> Result<&mut
 /// it closed itself.
 pub(crate) fn not_open(doc: u32, in_range: bool) -> String {
     if in_range {
-        format!("document {doc} has been closed")
+        said!("document {doc} has been closed")
     } else {
-        format!("no such document: {doc}")
+        said!("no such document: {doc}")
     }
 }
 
@@ -845,7 +845,7 @@ impl RenderService {
             // since nothing will ever dequeue it.
             self.queue.with(|queue| queue.forget(rid));
             if let Job::Tile { reply, .. } = job {
-                reply(Err("the render service has stopped".to_string()));
+                reply(Err(said!("the render service has stopped")));
             }
         }
     }
@@ -1862,9 +1862,7 @@ pub(crate) fn render_tile_into(
         // tile is worth putting on screen is not measured (AGENTS.md), so it is
         // dropped rather than shipped on a guess.
         Outcome::Cancelled => return Ok(TileFill::Abandoned),
-        Outcome::Failed(status) => {
-            return Err(format!("render failed with Pdfium status {status}"))
-        }
+        Outcome::Failed(status) => return Err(said!("render failed with Pdfium status {status}")),
     }
 
     // Before the encode either caller may do, so PNG and raw ship the same
@@ -1993,7 +1991,7 @@ pub(crate) fn text_edit_runs(
             };
             match render_tile(bindings, view, &request, &CancelToken::new())? {
                 TileOutcome::Rendered(tile) => preview.png = tile.bytes,
-                TileOutcome::Abandoned => return Err("text preview was cancelled".into()),
+                TileOutcome::Abandoned => return Err(said!("text preview was cancelled")),
             }
             runs.preview = Some(preview);
         }
@@ -2701,8 +2699,12 @@ pub fn run_signature_preview(
     visible: &crate::sign_prepare::Visible,
 ) -> Result<crate::sign_prepare::Preview, String> {
     let bytes = crate::sign_prepare::preview(at, visible)?;
-    let document = OpenDocument::open_owned(bindings, bytes.into())
-        .map_err(|refusal| format!("the preview could not be drawn: {}", refusal.reason))?;
+    let document = OpenDocument::open_owned(bindings, bytes.into()).map_err(|refusal| {
+        said!(
+            "the preview could not be drawn: {reason}",
+            reason = refusal.reason
+        )
+    })?;
     let scale = crate::sign_prepare::PREVIEW_SCALE;
     let (width, height) = {
         let page = document.page(0)?;
@@ -2732,7 +2734,7 @@ pub fn run_signature_preview(
             width: u32::from(width),
             height: u32::from(height),
         }),
-        TileOutcome::Abandoned => Err("the preview was cancelled".into()),
+        TileOutcome::Abandoned => Err(said!("the preview was cancelled")),
     }
 }
 
@@ -2899,7 +2901,7 @@ fn page_sample(
     let drawn = |of: &OpenDocument| -> Result<Vec<u8>, String> {
         match render_tile(bindings, of, &request, &CancelToken::default())? {
             TileOutcome::Rendered(tile) => Ok(tile.bytes),
-            TileOutcome::Abandoned => Err("the drawing was abandoned".to_string()),
+            TileOutcome::Abandoned => Err(said!("the drawing was abandoned")),
         }
     };
     let (before, after) = (drawn(document)?, drawn(&copy)?);

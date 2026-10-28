@@ -18,11 +18,19 @@
 /// the macOS sentence for [`said`]'s tests and never says it: its [`apply`]
 /// opens Settings and does not read the default back.
 #[cfg(any(target_os = "macos", windows))]
-const CHANGE_BACK: &str = "To change that, select a PDF in Finder, choose Get Info, and pick \
-                           another application under \"Open with\".";
+fn change_back() -> String {
+    said!(
+        "To change that, select a PDF in Finder, choose Get Info, and pick another \
+         application under \"Open with\"."
+    )
+}
 #[cfg(target_os = "linux")]
-const CHANGE_BACK: &str = "To change that, open a PDF's properties in your file manager and \
-                           choose another application under \"Open With\".";
+fn change_back() -> String {
+    said!(
+        "To change that, open a PDF's properties in your file manager and choose another \
+         application under \"Open With\"."
+    )
+}
 
 /// What to tell the reader, from which application the system names for PDFs
 /// after the change and which one this is. Both are paths to an application.
@@ -37,16 +45,17 @@ pub fn said(handler: Option<&str>, ours: &str, already: bool) -> Result<String, 
             .eq_ignore_ascii_case(ours.trim_end_matches('/'))
     };
     match handler {
-        Some(handler) if same(handler) && already => Ok("tpdf already opens PDF documents.".into()),
-        Some(handler) if same(handler) => {
-            Ok(format!("tpdf now opens PDF documents. {CHANGE_BACK}"))
-        }
-        Some(handler) => Err(format!(
+        Some(handler) if same(handler) && already => Ok(said!("tpdf already opens PDF documents.")),
+        Some(handler) if same(handler) => Ok(said!(
+            "tpdf now opens PDF documents. {change}",
+            change = change_back()
+        )),
+        Some(handler) => Err(said!(
             "tpdf is not the default: PDF documents still open with {handler}"
         )),
-        None => {
-            Err("tpdf is not the default: the system names no application for PDF documents".into())
-        }
+        None => Err(said!(
+            "tpdf is not the default: the system names no application for PDF documents"
+        )),
     }
 }
 
@@ -75,9 +84,11 @@ fn bundle_of(executable: &std::path::Path) -> Option<&std::path::Path> {
 /// system's question, or the system names another application afterwards.
 #[cfg(target_os = "macos")]
 pub fn apply(_identifier: &str) -> Result<String, String> {
-    let executable = std::env::current_exe().map_err(|e| format!("where tpdf runs from: {e}"))?;
+    let executable = std::env::current_exe().map_err(|e| said!("where tpdf runs from: {e}"))?;
     let bundle = bundle_of(&executable)
-        .ok_or("this copy of tpdf is not an application: open tpdf from the Applications folder")?
+        .ok_or_else(|| {
+            said!("this copy of tpdf is not an application: open tpdf from the Applications folder")
+        })?
         .to_string_lossy()
         .into_owned();
     apply_for(&bundle)
@@ -91,7 +102,7 @@ fn apply_for(bundle: &str) -> Result<String, String> {
 
     let bundle = bundle.to_string();
     let sample = std::env::temp_dir().join(format!("tpdf-default-{}.pdf", std::process::id()));
-    std::fs::write(&sample, b"%PDF-1.4\n").map_err(|e| format!("a sample document: {e}"))?;
+    std::fs::write(&sample, b"%PDF-1.4\n").map_err(|e| said!("a sample document: {e}"))?;
 
     let workspace = NSWorkspace::sharedWorkspace();
     let sample_url = NSURL::fileURLWithPath(&NSString::from_str(&sample.to_string_lossy()));
@@ -125,7 +136,7 @@ fn apply_for(bundle: &str) -> Result<String, String> {
             // Declining arrives as an error too; either way the answer is the
             // application the system names now.
             Ok(Some(_)) | Err(_) => said(current().as_deref(), &bundle, false)
-                .map_err(|still| format!("{still}. The system's question was not confirmed.")),
+                .map_err(|still| said!("{still}. The system's question was not confirmed.")),
         }
     })();
     let _ = std::fs::remove_file(&sample);
@@ -140,13 +151,12 @@ fn apply_for(bundle: &str) -> Result<String, String> {
 #[cfg(windows)]
 pub fn apply(_identifier: &str) -> Result<String, String> {
     crate::opener::open_settings("ms-settings:defaultapps").map_err(|_| {
-        "Settings did not open. Choose tpdf for .pdf under Apps, Default apps.".to_string()
+        said!("Settings did not open. Choose tpdf for .pdf under Apps, Default apps.")
     })?;
-    Ok(
+    Ok(said!(
         "Windows lets only you choose the default. Settings is open at Default apps: \
         choose tpdf, then set it for .pdf."
-            .into(),
-    )
+    ))
 }
 
 /// The desktop entry the Linux package installs, and the id GIO knows tpdf by.
@@ -176,12 +186,14 @@ pub fn apply(_identifier: &str) -> Result<String, String> {
     if let Ok(done) = said(current().as_deref(), DESKTOP_ID, true) {
         return Ok(done);
     }
-    let ours = gtk::gio::DesktopAppInfo::new(DESKTOP_ID).ok_or(
-        "this copy of tpdf is not installed, so there is no tpdf.desktop to name: install \
-         the tpdf package and run it from the applications menu",
-    )?;
+    let ours = gtk::gio::DesktopAppInfo::new(DESKTOP_ID).ok_or_else(|| {
+        said!(
+            "this copy of tpdf is not installed, so there is no tpdf.desktop to name: install \
+             the tpdf package and run it from the applications menu"
+        )
+    })?;
     ours.set_as_default_for_type("application/pdf")
-        .map_err(|e| format!("tpdf is not the default: {e}"))?;
+        .map_err(|e| said!("tpdf is not the default: {e}"))?;
     said(current().as_deref(), DESKTOP_ID, false)
 }
 

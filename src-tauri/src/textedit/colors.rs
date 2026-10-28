@@ -23,7 +23,7 @@ fn device(name: &[u8]) -> Option<usize> {
 pub(super) fn intent(name: &[u8]) -> Result<(), String> {
     match name {
         b"AbsoluteColorimetric" | b"RelativeColorimetric" | b"Saturation" | b"Perceptual" => Ok(()),
-        _ => Err("unsupported text rendering intent".into()),
+        _ => Err(said!("unsupported text rendering intent")),
     }
 }
 
@@ -38,13 +38,15 @@ pub(super) fn named(doc: &Document, resources: &Dictionary, name: &[u8]) -> Resu
             .iter()
             .any(|key| spaces.has(key))
         {
-            return Err("default colour-space substitution is not editable yet".into());
+            return Err(said!(
+                "default colour-space substitution is not editable yet"
+            ));
         }
     }
     if let Some(components) = device(name) {
         return Ok(components);
     }
-    let invalid = || "unsupported text colour space or ICC profile header".to_string();
+    let invalid = || said!("unsupported text colour space or ICC profile header");
     space(
         doc,
         spaces
@@ -55,7 +57,7 @@ pub(super) fn named(doc: &Document, resources: &Dictionary, name: &[u8]) -> Resu
 }
 
 pub(super) fn space(doc: &Document, value: &Object) -> Result<usize, String> {
-    let invalid = || "unsupported text colour space or ICC profile header".to_string();
+    let invalid = || said!("unsupported text colour space or ICC profile header");
     let value = crate::encoding::resolve(doc, value);
     if let Object::Name(name) = value {
         return device(name).ok_or_else(invalid);
@@ -110,11 +112,11 @@ pub(super) fn space(doc: &Document, value: &Object) -> Result<usize, String> {
 
 pub(super) fn values(values: &[Object], components: usize) -> Result<(), String> {
     if values.len() != components {
-        return Err("wrong text colour component count".into());
+        return Err(said!("wrong text colour component count"));
     }
     for value in values {
         if !(0.0..=1.0).contains(&number(value)?) {
-            return Err("text colour component is out of range".into());
+            return Err(said!("text colour component is out of range"));
         }
     }
     Ok(())

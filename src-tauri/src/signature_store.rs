@@ -22,7 +22,7 @@ pub enum Action {
 
 fn encode(image: &Image) -> Result<Vec<u8>, String> {
     if !image.valid() {
-        return Err("invalid signature pixels".into());
+        return Err(said!("invalid signature pixels"));
     }
     let mut bytes = image.width.to_le_bytes().to_vec();
     bytes.extend(image.height.to_le_bytes());
@@ -32,7 +32,7 @@ fn encode(image: &Image) -> Result<Vec<u8>, String> {
 
 fn decode(bytes: &[u8]) -> Result<Image, String> {
     if bytes.len() < 8 || bytes.len() > MAX_BYTES {
-        return Err("invalid saved signature size".into());
+        return Err(said!("invalid saved signature size"));
     }
     let image = Image {
         width: u32::from_le_bytes(bytes[..4].try_into().unwrap()),
@@ -40,7 +40,7 @@ fn decode(bytes: &[u8]) -> Result<Image, String> {
         rgba: bytes[8..].to_vec(),
     };
     if !image.valid() {
-        return Err("invalid saved signature pixels".into());
+        return Err(said!("invalid saved signature pixels"));
     }
     Ok(image)
 }
@@ -77,20 +77,20 @@ mod platform {
         match get_generic_password(service, ACCOUNT) {
             Ok(bytes) => Ok(Some(bytes)),
             Err(error) if error.code() == -25300 => Ok(None),
-            Err(error) => Err(format!(
+            Err(error) => Err(said!(
                 "Keychain could not read the saved signature: {error}"
             )),
         }
     }
     pub fn save(service: &str, _path: &Path, bytes: &[u8]) -> Result<(), String> {
         set_generic_password(service, ACCOUNT, bytes)
-            .map_err(|e| format!("Keychain could not save the signature: {e}"))
+            .map_err(|e| said!("Keychain could not save the signature: {e}"))
     }
     pub fn forget(service: &str, _path: &Path) -> Result<(), String> {
         match delete_generic_password(service, ACCOUNT) {
             Ok(()) => Ok(()),
             Err(error) if error.code() == -25300 => Ok(()),
-            Err(error) => Err(format!("Keychain could not remove the signature: {error}")),
+            Err(error) => Err(said!("Keychain could not remove the signature: {error}")),
         }
     }
 }
@@ -141,13 +141,13 @@ mod platform {
                 )
             };
             if ok == 0 {
-                return Err(format!(
-                    "Windows could not protect or unlock the signature: {}",
-                    std::io::Error::last_os_error()
+                return Err(said!(
+                    "Windows could not protect or unlock the signature: {e}",
+                    e = std::io::Error::last_os_error()
                 ));
             }
             let result = if output.pbData.is_null() || output.cbData as usize > MAX_BYTES + 4096 {
-                Err("invalid protected signature size".into())
+                Err(said!("invalid protected signature size"))
             } else {
                 Ok(std::slice::from_raw_parts(output.pbData, output.cbData as usize).to_vec())
             };
@@ -166,15 +166,18 @@ mod platform {
             .read_to_end(&mut bytes)
             .map_err(|e| e.to_string())?;
         if bytes.len() > MAX_BYTES + 4096 {
-            return Err("saved signature exceeds its size limit".into());
+            return Err(said!("saved signature exceeds its size limit"));
         }
         protect(&bytes, false).map(Some)
     }
     pub fn save(_service: &str, path: &Path, bytes: &[u8]) -> Result<(), String> {
         use std::os::windows::ffi::OsStrExt;
         let encrypted = protect(bytes, true)?;
-        std::fs::create_dir_all(path.parent().ok_or("missing signature directory")?)
-            .map_err(|e| e.to_string())?;
+        std::fs::create_dir_all(
+            path.parent()
+                .ok_or_else(|| said!("missing signature directory"))?,
+        )
+        .map_err(|e| e.to_string())?;
         let temporary = path.with_extension("tmp");
         let mut file = std::fs::File::create(&temporary).map_err(|e| e.to_string())?;
         file.write_all(&encrypted)
@@ -216,7 +219,9 @@ mod platform {
         Ok(None)
     }
     pub fn save(_: &str, _: &Path, _: &[u8]) -> Result<(), String> {
-        Err("tpdf does not keep a signature on Linux yet; draw it or import it each time".into())
+        Err(said!(
+            "tpdf does not keep a signature on Linux yet; draw it or import it each time"
+        ))
     }
     pub fn forget(_: &str, _: &Path) -> Result<(), String> {
         Ok(())

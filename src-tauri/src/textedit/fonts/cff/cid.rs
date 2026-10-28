@@ -13,6 +13,10 @@ use ttf_parser::{cff::Table, GlyphId};
 #[cfg(test)]
 mod tests;
 
+fn invalid() -> String {
+    said!("unsupported CID-keyed CFF program")
+}
+#[cfg(test)]
 const INVALID: &str = "unsupported CID-keyed CFF program";
 const MAX_FDS: usize = 256;
 // Type 2 charstrings allow 48 operands (Adobe TN 5177, Appendix B).
@@ -219,42 +223,43 @@ pub(super) fn width(charstring: &[u8], (default, nominal): (f64, f64)) -> Option
 
 pub(in crate::textedit::fonts) fn parse(bytes: &[u8]) -> Result<Program<'_>, String> {
     if bytes.len() < 4 || bytes[0] != 1 || bytes[2] < 4 || !(1..=4).contains(&bytes[3]) {
-        return Err(INVALID.into());
+        return Err(invalid());
     }
     let mut pos = usize::from(bytes[2]);
-    let names = index(bytes, &mut pos).ok_or(INVALID)?;
-    let tops = index(bytes, &mut pos).ok_or(INVALID)?;
-    let strings = index(bytes, &mut pos).ok_or(INVALID)?;
-    index(bytes, &mut pos).ok_or(INVALID)?; // Global subroutines, read by ttf-parser.
+    let names = index(bytes, &mut pos).ok_or_else(invalid)?;
+    let tops = index(bytes, &mut pos).ok_or_else(invalid)?;
+    let strings = index(bytes, &mut pos).ok_or_else(invalid)?;
+    index(bytes, &mut pos).ok_or_else(invalid)?; // Global subroutines, read by ttf-parser.
     if names.len() != 1 || names[0].is_empty() || names[0].len() > 127 || tops.len() != 1 {
-        return Err(INVALID.into());
+        return Err(invalid());
     }
-    let dict_of = dict(tops[0]).ok_or(INVALID)?;
-    top(&dict_of, &strings).ok_or(INVALID)?;
+    let dict_of = dict(tops[0]).ok_or_else(invalid)?;
+    top(&dict_of, &strings).ok_or_else(invalid)?;
     let offset = |op: u16| dict_of[&op][0] as usize;
-    let charstrings = index(bytes, &mut offset(17)).ok_or(INVALID)?;
-    let fds = index(bytes, &mut offset(1236)).ok_or(INVALID)?;
+    let charstrings = index(bytes, &mut offset(17)).ok_or_else(invalid)?;
+    let fds = index(bytes, &mut offset(1236)).ok_or_else(invalid)?;
     if charstrings.is_empty() || fds.is_empty() || fds.len() > MAX_FDS {
-        return Err(INVALID.into());
+        return Err(invalid());
     }
     let dicts = fds
         .iter()
         .map(|fd| font_dict(bytes, fd))
         .collect::<Option<Vec<_>>>()
-        .ok_or(INVALID)?;
-    let selected = select(bytes, offset(1237), charstrings.len(), dicts.len()).ok_or(INVALID)?;
-    let table = Table::parse(bytes).ok_or(INVALID)?;
+        .ok_or_else(invalid)?;
+    let selected =
+        select(bytes, offset(1237), charstrings.len(), dicts.len()).ok_or_else(invalid)?;
+    let table = Table::parse(bytes).ok_or_else(invalid)?;
     if usize::from(table.number_of_glyphs()) != charstrings.len() {
-        return Err(INVALID.into());
+        return Err(invalid());
     }
     let count = dict_of.get(&1234).map_or(8720., |v| v[0]); // TN 5176's default.
     let mut glyphs = BTreeMap::new();
     for index in 0..table.number_of_glyphs() {
         // A charset never lists glyph 0, which is CID 0; a later glyph
         // claiming CID 0 is therefore a duplicate.
-        let cid = table.glyph_cid(GlyphId(index)).ok_or(INVALID)?;
+        let cid = table.glyph_cid(GlyphId(index)).ok_or_else(invalid)?;
         if f64::from(cid) >= count || glyphs.insert(cid, GlyphId(index)).is_some() {
-            return Err(INVALID.into());
+            return Err(invalid());
         }
     }
     let widths = charstrings

@@ -217,14 +217,14 @@ pub enum RecogniseError {
 
 impl fmt::Display for RecogniseError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let (kind, detail) = match self {
-            Self::Unavailable(d) => ("no engine available", d),
-            Self::Crashed(d) => ("the engine crashed", d),
-            Self::TimedOut(d) => ("the engine timed out", d),
-            Self::Rejected(d) => ("the engine rejected the image", d),
-            Self::MalformedInput(d) => ("the image buffer is malformed", d),
+        let text = match self {
+            Self::Unavailable(detail) => said!("no engine available: {detail}"),
+            Self::Crashed(detail) => said!("the engine crashed: {detail}"),
+            Self::TimedOut(detail) => said!("the engine timed out: {detail}"),
+            Self::Rejected(detail) => said!("the engine rejected the image: {detail}"),
+            Self::MalformedInput(detail) => said!("the image buffer is malformed: {detail}"),
         };
-        write!(f, "{kind}: {detail}")
+        f.write_str(&text)
     }
 }
 
@@ -452,10 +452,11 @@ fn size_no_easier_than(boxes: &[[f32; 4]]) -> Result<f32, ControlTooEasy> {
         .fold(f32::INFINITY, f32::min);
     if !smallest.is_finite() {
         return Err(ControlTooEasy(
-            "the selected area has no extracted word boxes with a usable height (for example, \
+            said!(
+                "the selected area has no extracted word boxes with a usable height (for example, \
              its visible words may be images), leaving nothing to size a control against; \
              OCR verification cannot certify this removal"
-                .into(),
+            ),
             NotVerifiedCause::ControlNoSize,
         ));
     }
@@ -485,7 +486,7 @@ impl Control {
         let token = token.into();
         if token.trim().is_empty() {
             return Err(ControlTooEasy(
-                "an empty control token is read back by every engine and by none".into(),
+                said!("an empty control token is read back by every engine and by none"),
                 NotVerifiedCause::ControlEmptyToken,
             ));
         }
@@ -710,9 +711,10 @@ pub fn control_from_page(
         .collect();
     if survivors.is_empty() {
         return Err(ControlTooEasy(
-            "the regions cover every word on this page, so there is nothing left for the \
+            said!(
+                "the regions cover every word on this page, so there is nothing left for the \
              engine to read back and nothing here can be certified"
-                .into(),
+            ),
             NotVerifiedCause::ControlNoSurvivor,
         ));
     }
@@ -744,7 +746,7 @@ pub fn control_from_page(
         .collect();
     if small.is_empty() {
         return Err(ControlTooEasy(
-            format!(
+            said!(
                 "every word left on this page is set larger than the {size_pt:.1} pt that was \
                  removed, so reading one back would say nothing about the small print"
             ),
@@ -777,7 +779,7 @@ pub fn control_from_page(
     }
     let chosen = best.ok_or_else(|| {
         ControlTooEasy(
-            format!(
+            said!(
                 "no word left on this page draws {MIN_CONTROL_CHARS} characters at \
                  {size_pt:.1} pt or smaller, and a shorter control is read back by accident"
             ),
@@ -1116,11 +1118,12 @@ pub fn adjudicate(
             .map(|i| control.overshoot(&i.rect))
             .min_by(|a, b| (a[0] + a[1]).total_cmp(&(b[0] + b[1])));
         return Legibility::NotVerified {
-            why: format!(
-                "the control token {:?}, drawn at {:.1} pt, was not read back from the probe \
+            why: said!(
+                "the control token {token:?}, drawn at {size:.1} pt, was not read back from the probe \
                  image. The engine is not able to read text of that size here, so its finding \
                  nothing else says nothing about what survived.",
-                control.token, control.size_pt
+                token = control.token,
+                size = control.size_pt
             ),
             cause: NotVerifiedCause::ControlUnread,
             evidence: Some(Unread {
@@ -1311,13 +1314,13 @@ pub fn hold_to_scripts(verdict: Legibility, control: &Control, covered: &[&str])
         return verdict;
     }
     Legibility::NotVerified {
-        why: format!(
-            "the text removed here was written in {}, and the control word {:?} only shows that \
-             the engine reads {} on this page. Its finding nothing in a script it was not shown \
-             to read says nothing about what survived.",
-            listed(&unproven),
-            control.token,
-            listed(&proven)
+        why: said!(
+            "the text removed here was written in {removed}, and the control word {token:?} only \
+             shows that the engine reads {shown} on this page. Its finding nothing in a script it \
+             was not shown to read says nothing about what survived.",
+            removed = listed(&unproven),
+            token = control.token,
+            shown = listed(&proven)
         ),
         cause: NotVerifiedCause::ScriptUnproven,
         evidence: None,
@@ -1370,12 +1373,12 @@ impl<'a> RedactedPixels<'a> {
                 pixels,
                 engine: engine.clone(),
             }),
-            Legibility::Legible { found } => Err(format!(
-                "{} legible span(s) survive; these pixels are not redacted",
-                found.len()
+            Legibility::Legible { found } => Err(said!(
+                "{count} legible span(s) survive; these pixels are not redacted",
+                count = found.len()
             )),
             Legibility::NotVerified { why, .. } => {
-                Err(format!("not verified, so not certified: {why}"))
+                Err(said!("not verified, so not certified: {why}"))
             }
         }
     }

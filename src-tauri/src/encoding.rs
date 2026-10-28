@@ -253,7 +253,7 @@ pub fn load(bytes: &[u8], password: Option<&str>) -> Result<Document, String> {
             ..Default::default()
         },
     )
-    .map_err(|e| format!("could not parse the document: {e}"))
+    .map_err(|e| said!("could not parse the document: {e}"))
 }
 
 /// [`scan`] over a document somebody else parsed.

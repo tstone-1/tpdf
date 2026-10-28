@@ -374,7 +374,7 @@ pub async fn annot_picture(
     request: tauri::ipc::Request<'_>,
 ) -> Result<edits::EditState, String> {
     let tauri::ipc::InvokeBody::Raw(body) = request.body() else {
-        return Err("a picture is sent as bytes".into());
+        return Err(said!("a picture is sent as bytes"));
     };
     let upload = crate::picture::parse(body)?;
     edits.annotate_in(
@@ -404,11 +404,11 @@ pub async fn picture_open(
         let mut bytes = Vec::new();
         std::fs::File::open(&path)
             .and_then(|file| file.take(limit + 1).read_to_end(&mut bytes))
-            .map_err(|e| format!("the picture could not be read: {e}"))?;
+            .map_err(|e| said!("the picture could not be read: {e}"))?;
         decoded(&*outside, &bytes)
     })
     .await
-    .map_err(|e| format!("the picture was not read: {e}"))?
+    .map_err(|e| said!("the picture was not read: {e}"))?
 }
 
 /// Decodes a pasted picture in a worker: [`picture_open`] for bytes the
@@ -424,13 +424,13 @@ pub async fn picture_decode(
     request: tauri::ipc::Request<'_>,
 ) -> Result<tauri::ipc::Response, String> {
     let tauri::ipc::InvokeBody::Raw(body) = request.body() else {
-        return Err("a picture is sent as bytes".into());
+        return Err(said!("a picture is sent as bytes"));
     };
     let bytes = body.clone();
     let outside = super::outside_of(&app, service.backend());
     tauri::async_runtime::spawn_blocking(move || decoded(&*outside, &bytes))
         .await
-        .map_err(|e| format!("the picture was not read: {e}"))?
+        .map_err(|e| said!("the picture was not read: {e}"))?
 }
 
 /// Saves a region of a page as a PNG file at `path` (*Save a region as a
@@ -443,12 +443,12 @@ pub async fn region_save(
 ) -> Result<(), String> {
     let png = region_png(&service, &tile)
         .await
-        .map_err(|why| format!("The picture was not saved: {why}"))?;
+        .map_err(|why| said!("The picture was not saved: {why}"))?;
     tauri::async_runtime::spawn_blocking(move || {
         crate::region::write_png(std::path::Path::new(&path), &png)
     })
     .await
-    .map_err(|e| format!("The picture was not saved: {e}"))?
+    .map_err(|e| said!("The picture was not saved: {why}", why = e))?
 }
 
 /// Copies a region of a page to the clipboard as a PNG (*Copy a region as a
@@ -471,7 +471,7 @@ pub async fn region_copy(
     use objc2_app_kit::{NSPasteboard, NSPasteboardTypePNG};
     let png = region_png(&service, &tile)
         .await
-        .map_err(|why| format!("The region was not copied: {why}"))?;
+        .map_err(|why| said!("The region was not copied: {why}"))?;
     objc2::rc::autoreleasepool(|_| {
         let board = NSPasteboard::generalPasteboard();
         board.clearContents();
@@ -481,7 +481,9 @@ pub async fn region_copy(
         if board.setData_forType(Some(&data), png_type) {
             Ok(())
         } else {
-            Err("The region was not copied: the clipboard refused it.".into())
+            Err(said!(
+                "The region was not copied: the clipboard refused it."
+            ))
         }
     })
 }
@@ -505,7 +507,7 @@ pub async fn region_copy(
 ) -> Result<(), String> {
     let png = region_png(&service, &tile)
         .await
-        .map_err(|why| format!("The region was not copied: {why}"))?;
+        .map_err(|why| said!("The region was not copied: {why}"))?;
     let (sent, answer) = std::sync::mpsc::channel::<Result<(), String>>();
     app.run_on_main_thread(move || {
         use gtk::gdk_pixbuf::prelude::*;
@@ -514,18 +516,20 @@ pub async fn region_copy(
                 gtk::gdk_pixbuf::PixbufLoader::with_type("png").map_err(|e| e.to_string())?;
             loader.write(&png).map_err(|e| e.to_string())?;
             loader.close().map_err(|e| e.to_string())?;
-            let picture = loader.pixbuf().ok_or("the picture could not be read")?;
+            let picture = loader
+                .pixbuf()
+                .ok_or_else(|| said!("the picture could not be read"))?;
             gtk::Clipboard::get(&gtk::gdk::SELECTION_CLIPBOARD).set_image(&picture);
             Ok(())
         })();
         let _ = sent.send(copied);
     })
-    .map_err(|e| format!("The region was not copied: {e}"))?;
+    .map_err(|e| said!("The region was not copied: {why}", why = e))?;
     tauri::async_runtime::spawn_blocking(move || answer.recv())
         .await
-        .map_err(|e| format!("The region was not copied: {e}"))?
-        .map_err(|_| "The region was not copied: the main thread did not answer.".to_string())?
-        .map_err(|why| format!("The region was not copied: {why}"))
+        .map_err(|e| said!("The region was not copied: {why}", why = e))?
+        .map_err(|_| said!("The region was not copied: the main thread did not answer."))?
+        .map_err(|why| said!("The region was not copied: {why}"))
 }
 
 /// The Windows answer: the web view copies the region itself, with
@@ -534,7 +538,9 @@ pub async fn region_copy(
 #[tauri::command]
 pub async fn region_copy(tile: String) -> Result<(), String> {
     let _ = tile;
-    Err("The region is copied by the web view on this platform.".into())
+    Err(said!(
+        "The region is copied by the web view on this platform."
+    ))
 }
 
 /// Saves the embedded file at `index` of the open document to `path`
@@ -565,7 +571,7 @@ pub async fn attachment_save(
         )
     })
     .await
-    .map_err(|e| format!("The attachment was not saved: {e}"))?
+    .map_err(|e| said!("The attachment was not saved: {e}"))?
 }
 
 /// A region rendered and PNG-encoded by a worker: one tile, named as the
@@ -580,7 +586,7 @@ async fn region_png(service: &crate::render::RenderService, tile: &str) -> Resul
     service.tile(request, reply);
     match super::await_reply::<_, String>("region", rx).await? {
         crate::render::TileOutcome::Rendered(tile) => Ok(tile.bytes),
-        crate::render::TileOutcome::Abandoned => Err("its render was abandoned.".into()),
+        crate::render::TileOutcome::Abandoned => Err(said!("its render was abandoned.")),
     }
 }
 
@@ -588,14 +594,14 @@ async fn region_png(service: &crate::render::RenderService, tile: &str) -> Resul
 /// file's 50 MiB: a file is read one byte past it to tell, a paste arrives whole.
 fn decoded(outside: &dyn save::Outside, bytes: &[u8]) -> Result<tauri::ipc::Response, String> {
     if bytes.len() as u64 > crate::signature_import::PICTURE.bytes {
-        return Err(format!(
-            "the picture was not used: {}",
-            crate::signature_import::PICTURE.invalid
+        return Err(said!(
+            "the picture was not used: {why}",
+            why = crate::signature_import::PICTURE.invalid
         ));
     }
     let image = outside
         .picture(bytes)
-        .map_err(|why| format!("the picture was not used: {}", why.message))?;
+        .map_err(|why| said!("the picture was not used: {why}", why = why.message))?;
     Ok(tauri::ipc::Response::new(picture_reply(&image)))
 }
 

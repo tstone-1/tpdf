@@ -226,7 +226,7 @@ impl Vision {
         // SAFETY: the request is a live object that answers to the selector, and
         // the method takes nothing but the error slot the binding supplies.
         let listed = unsafe { request.supportedRecognitionLanguagesAndReturnError() }
-            .map_err(|e| RecogniseError::Unavailable(format!("listing languages: {e}")))?;
+            .map_err(|e| RecogniseError::Unavailable(said!("listing languages: {e}")))?;
         Ok(listed.iter().map(|tag| tag.to_string()).collect())
     }
 }
@@ -341,12 +341,12 @@ impl Vision {
         handler.performRequests_error(&requests).map_err(|e| {
             // Said apart because they have different causes: asked for any script,
             // Vision also fails on a script whose model it could not load.
-            let asked = if any_script {
-                "Vision refused the image when asked to read any script"
+            let why = if any_script {
+                said!("Vision refused the image when asked to read any script: {e}")
             } else {
-                "Vision refused the image"
+                said!("Vision refused the image: {e}")
             };
-            RecogniseError::Rejected(format!("{asked}: {e}"))
+            RecogniseError::Rejected(why)
         })?;
 
         // `None` here is Vision reporting no results object at all, which is different from

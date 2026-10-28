@@ -1352,15 +1352,15 @@ ROWS += [
     Mutation(
         "existing: say of a revoked certificate what a signing says",
         "src/longterm/existing.rs",
-        "        super::Refusal::Revoked { name, at, by } => format!(",
-        "        super::Refusal::Revoked { name, at, by } if false => format!(",
+        "        super::Refusal::Revoked { name, at, by } => {\n            if at.is_empty() {",
+        "        super::Refusal::Revoked { name, at, by } if false => {\n            if at.is_empty() {",
         "revocation_data_that_cannot_be_had_writes_nothing",
     ),
     Mutation(
         "existing: say of a certificate publishing nothing what a signing says",
         "src/longterm/existing.rs",
-        "        super::Refusal::NotPublished(name) => format!(",
-        "        super::Refusal::NotPublished(name) if false => format!(",
+        '        super::Refusal::NotPublished(name) => said!(',
+        '        super::Refusal::NotPublished(name) if false => said!(',
         "revocation_data_that_cannot_be_had_writes_nothing",
     ),
     Mutation(
@@ -1471,15 +1471,17 @@ ROWS += [
     Mutation(
         "validation: say nothing was written about a copy that was",
         "src/commands/validation.rs",
-        '            Stopped::Refused(why) => format!("{} --- nothing was written", why.sentence()),\n'
+        "            Stopped::Refused(why) => {\n"
+        '                said!("{why} --- nothing was written", why = why.sentence())\n'
+        "            }\n"
         "            Stopped::Unwritten(why) | Stopped::Unread(why) => why.clone(),\n"
-        "            Stopped::ReadBack(why) => format!(\n"
-        '                "{name} was written, but reading it back did not find what was added: {}. Do \\\n'
+        "            Stopped::ReadBack(why) => said!(\n"
+        '                "{name} was written, but reading it back did not find what was added: {why}. Do \\\n'
         '                 not rely on that copy.",\n'
-        "                why.sentence()\n"
+        "                why = why.sentence()\n"
         "            ),",
         "            Stopped::Refused(why) | Stopped::ReadBack(why) => {\n"
-        '                format!("{} --- nothing was written{}", why.sentence(), &name[..0])\n'
+        '                said!("{why} --- nothing was written{}", &name[..0], why = why.sentence())\n'
         "            }\n"
         "            Stopped::Unwritten(why) | Stopped::Unread(why) => why.clone(),",
         "a_copy_that_does_not_read_back_as_built_is_named_and_is_tpdfs_failure",
@@ -1487,23 +1489,19 @@ ROWS += [
     Mutation(
         "validation: add to a document with unsaved edits",
         "src/commands/validation.rs",
-        "    if dirty {\n"
-        "        return Err(\n"
-        '            "Save your changes first: validation data',
-        "    if false && dirty {\n"
-        "        return Err(\n"
-        '            "Save your changes first: validation data',
+        '    if dirty {\n        return Err(said!(\n            "Save your changes first: validation data',
+        '    if false && dirty {\n        return Err(said!(\n            "Save your changes first: validation data',
         "unsaved_edits_and_a_document_too_large_are_refused",
     ),
     Mutation(
         "validation: add to a document of any size",
         "src/commands/validation.rs",
         "    if len > save::APPEND_MAX_BYTES {\n"
-        "        return Err(format!(\n"
-        '            "This document is {} MB, and tpdf adds validation data',
+        "        return Err(said!(\n"
+        '            "This document is {mb} MB, and tpdf adds validation data',
         "    if false {\n"
-        "        return Err(format!(\n"
-        '            "This document is {} MB, and tpdf adds validation data',
+        "        return Err(said!(\n"
+        '            "This document is {mb} MB, and tpdf adds validation data',
         "unsaved_edits_and_a_document_too_large_are_refused",
     ),
     Mutation(
@@ -1796,10 +1794,10 @@ ROWS += [
         "validation: take the original's own name for the copy",
         "src/commands/validation.rs",
         "    if save::same_file(source, out) {\n"
-        "        return Err(\n"
+        "        return Err(said!(\n"
         '            "The document with the data added',
         "    if false {\n"
-        "        return Err(\n"
+        "        return Err(said!(\n"
         '            "The document with the data added',
         "the_originals_own_name_is_refused_before_anybody_is_asked",
     ),

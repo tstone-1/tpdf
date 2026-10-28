@@ -211,18 +211,18 @@ const STATE_NAME: &str = "TpdfTextGS";
 pub fn check(added: &AddedText) -> Result<(), String> {
     let text = &added.text;
     if text.trim().is_empty() {
-        return Err("the text to add is empty".into());
+        return Err(said!("the text to add is empty"));
     }
     if text.chars().count() > MAX_CHARS {
-        return Err(format!(
+        return Err(said!(
             "the text to add is longer than {MAX_CHARS} characters"
         ));
     }
     if text.chars().any(char::is_control) {
-        return Err(format!("the text {text:?} has a control character in it"));
+        return Err(said!("the text {text:?} has a control character in it"));
     }
     if !crate::textbox::encodable(text) && !crate::textedit::AddedFont::covers(text) {
-        return Err(format!(
+        return Err(said!(
             "the text {text:?} has characters tpdf has no font for: it writes Latin, Greek, \
              Cyrillic, Chinese, Japanese and Korean, and not scripts that join or reorder \
              their letters, such as Arabic, Hebrew, Hindi or Thai"
@@ -232,41 +232,44 @@ pub fn check(added: &AddedText) -> Result<(), String> {
     while let Some(open) = rest.find('{') {
         let after = &rest[open..];
         let Some(close) = after.find('}') else {
-            return Err(format!(
+            return Err(said!(
                 "the text {text:?} opens a field with `{{` and does not close it"
             ));
         };
         let field = &after[..=close];
         if field != "{page}" && field != "{pages}" {
-            return Err(format!(
-                "the text {text:?} names the field {field}, and the fields are {{page}} and \
-                 {{pages}}"
+            // The two field names go in as arguments: written as `{{page}}`
+            // the template is one `said.test.ts` cannot render a sample of.
+            return Err(said!(
+                "the text {text:?} names the field {field}, and the fields are {page} and {pages}",
+                page = "{page}",
+                pages = "{pages}"
             ));
         }
         rest = &after[close + 1..];
     }
     if !SIZES.contains(&added.size) {
-        return Err(format!(
-            "a font size of {} points is outside {} to {}",
-            added.size,
-            SIZES.start(),
-            SIZES.end()
+        return Err(said!(
+            "a font size of {size} points is outside {low} to {high}",
+            size = added.size,
+            low = SIZES.start(),
+            high = SIZES.end()
         ));
     }
     if !added.color.iter().all(|c| (0.0..=1.0).contains(c)) {
-        return Err("a colour is red, green and blue, each from 0 to 1".into());
+        return Err(said!("a colour is red, green and blue, each from 0 to 1"));
     }
     if !(added.opacity > 0.0 && added.opacity <= 1.0) {
-        return Err("the opacity is more than 0 and at most 1".into());
+        return Err(said!("the opacity is more than 0 and at most 1"));
     }
     if !(added.angle.is_finite() && added.angle.abs() <= 360.0) {
-        return Err("the angle is in degrees, from -360 to 360".into());
+        return Err(said!("the angle is in degrees, from -360 to 360"));
     }
     if !(0.0..=MAX_MARGIN).contains(&added.margin) {
-        return Err(format!("the margin is from 0 to {MAX_MARGIN} points"));
+        return Err(said!("the margin is from 0 to {MAX_MARGIN} points"));
     }
     if added.first_number > MAX_FIRST {
-        return Err(format!("the first number is at most {MAX_FIRST}"));
+        return Err(said!("the first number is at most {MAX_FIRST}"));
     }
     Ok(())
 }
@@ -290,9 +293,9 @@ pub fn write(doc: &mut Document, lines: &[AddedText]) -> Result<(), String> {
         return Ok(());
     }
     if lines.len() > MAX_LINES {
-        return Err(format!(
-            "{} lines of text to add, and one write takes {MAX_LINES}",
-            lines.len()
+        return Err(said!(
+            "{count} lines of text to add, and one write takes {MAX_LINES}",
+            count = lines.len()
         ));
     }
     let pages = pagetree::ordered_pages(doc);
@@ -305,9 +308,9 @@ pub fn write(doc: &mut Document, lines: &[AddedText]) -> Result<(), String> {
             None => (0..count).collect(),
             Some(asked) => {
                 if let Some(past) = asked.iter().find(|p| **p >= count) {
-                    return Err(format!(
-                        "the text is to go on page {}, and the document has {count}",
-                        past + 1
+                    return Err(said!(
+                        "the text is to go on page {page}, and the document has {count}",
+                        page = past + 1
                     ));
                 }
                 let mut sorted = asked.clone();
@@ -323,11 +326,11 @@ pub fn write(doc: &mut Document, lines: &[AddedText]) -> Result<(), String> {
         let mut seen: std::collections::HashMap<ObjectId, u32> = std::collections::HashMap::new();
         for page in &chosen {
             if let Some(first) = seen.insert(pages[*page as usize], *page) {
-                return Err(format!(
-                    "pages {} and {} are one page in this file, listed twice, so a line cannot \
-                     be written on each",
-                    first + 1,
-                    page + 1
+                return Err(said!(
+                    "pages {first} and {second} are one page in this file, listed twice, so a \
+                     line cannot be written on each",
+                    first = first + 1,
+                    second = page + 1
                 ));
             }
         }
@@ -414,7 +417,7 @@ pub fn write(doc: &mut Document, lines: &[AddedText]) -> Result<(), String> {
         let mut fonts: Vec<(ObjectId, &str)> = Vec::new();
         for (slot, name) in font_names.iter().enumerate() {
             if used[slot] {
-                let id = ids[slot].ok_or("no font was made for a line of text")?;
+                let id = ids[slot].ok_or_else(|| said!("no font was made for a line of text"))?;
                 fonts.push((id, name.as_str()));
             }
         }
@@ -658,7 +661,7 @@ fn attach(
     let existing = doc
         .get_object(page)
         .and_then(Object::as_dict)
-        .map_err(|e| format!("page {page:?} is not a dictionary: {e}"))?
+        .map_err(|e| said!("page {page:?} is not a dictionary: {e}"))?
         .get(b"Contents")
         .ok()
         .cloned();
@@ -676,7 +679,7 @@ fn attach(
     let dict = doc
         .get_object_mut(page)
         .and_then(Object::as_dict_mut)
-        .map_err(|e| format!("page {page:?} is not a dictionary: {e}"))?;
+        .map_err(|e| said!("page {page:?} is not a dictionary: {e}"))?;
     dict.set("Contents", Object::Array(contents));
     dict.set("Resources", Object::Dictionary(resources));
     Ok(())

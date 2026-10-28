@@ -242,8 +242,8 @@ ROWS += [
         # function makes an existing anchor ambiguous without the anchor moving,
         # and an ambiguous anchor is refused, so the mutation stops being able to
         # fail. The page's message is what distinguishes them.
-        "    if shows.len() != text_objects {\n        return Err(format!(\n            \"the page has",
-        "    if false {\n        return Err(format!(\n            \"the page has",
+        '    if shows.len() != text_objects {\n        return Err(said!(\n            "the page has',
+        '    if false {\n        return Err(said!(\n            "the page has',
         "a_count_that_disagrees_with_pdfium_refuses_and_removes_nothing",
     ),
     # The colour of a redaction's boxes, 2026-10-07.
@@ -495,8 +495,8 @@ ROWS += [
     Mutation(
         "glyph cut: cut by position when the two counts disagree",
         "src/redact/glyph_cut.rs",
-        "    if shows.len() != text_objects {\n        return Err(format!(\n            \"the page has {} text-showing operator(s) and PDFium reported {text_objects} text \\\n             object(s). Cutting",
-        "    if false {\n        return Err(format!(\n            \"the page has {} text-showing operator(s) and PDFium reported {text_objects} text \\\n             object(s). Cutting",
+        "    if shows.len() != text_objects {\n        return Err(said!(\n            \"the page has {count} text-showing operator(s) and PDFium reported {text_objects} text \\\n             object(s). Cutting",
+        "    if false {\n        return Err(said!(\n            \"the page has {count} text-showing operator(s) and PDFium reported {text_objects} text \\\n             object(s). Cutting",
         "a_cut_that_does_not_fit_its_show_is_refused_and_writes_nothing",
     ),
     Mutation(
@@ -1277,8 +1277,8 @@ ROWS += [
         # Accept a file with no %%EOF at all.
         "verify: let a file with no %%EOF pass the structural check",
         "src/verify.rs",
-        "            wrong.push(\"the file has no %%EOF marker\".to_string());\n",
-        "",
+        '            wrong.push(said!("the file has no %%EOF marker"));\n',
+        '',
         "a_file_with_no_eof_marker_is_refused",
     ),
     Mutation(
@@ -1314,24 +1314,24 @@ ROWS += [
         # Accept a startxref pointing past the end of the file.
         "verify: accept a startxref offset past the end of the file",
         "src/verify.rs",
-        "            Some(offset) if offset >= bytes.len() => wrong.push(format!(",
-        "            Some(offset) if false && offset >= bytes.len() => wrong.push(format!(",
+        '            Some(offset) if offset >= bytes.len() => wrong.push(said!(',
+        '            Some(offset) if false && offset >= bytes.len() => wrong.push(said!(',
         "a_startxref_pointing_past_the_end_of_the_file_is_refused",
     ),
     Mutation(
         # Accept a startxref with no number after it.
         "verify: accept a startxref with no offset after it",
         "src/verify.rs",
-        "            None => wrong.push(\"the file's startxref has no offset after it\".to_string()),",
-        "            None => {}",
+        '            None => wrong.push(said!("the file\'s startxref has no offset after it")),',
+        '            None => {}',
         "a_startxref_with_no_number_after_it_is_refused",
     ),
     Mutation(
         # Accept a file with no startxref at all.
         "verify: accept a file with no startxref",
         "src/verify.rs",
-        "        None => wrong.push(\"the file has no startxref\".to_string()),",
-        "        None => {}",
+        '        None => wrong.push(said!("the file has no startxref")),',
+        '        None => {}',
         "a_file_with_no_startxref_is_refused",
     ),
     Mutation(
@@ -1621,8 +1621,8 @@ ROWS += [
         # own spike report three passes over a document with nothing in it.
         "save: ignore the password the reader supplied",
         "src/save.rs",
-        "            password: password.map(str::to_string),\n            ..Default::default()\n        },\n    )\n    .map_err(|e| format!(\"could not parse the document: {e}\"))?;",
-        "            password: None,\n            ..Default::default()\n        },\n    )\n    .map_err(|e| format!(\"could not parse the document: {e}\"))?;",
+        '            password: password.map(str::to_string),\n            ..Default::default()\n        },\n    )\n    .map_err(|e| said!("could not parse the document: {e}"))?;',
+        '            password: None,\n            ..Default::default()\n        },\n    )\n    .map_err(|e| said!("could not parse the document: {e}"))?;',
         "a_rewrite_of_an_encrypted_document_stays_encrypted",
     ),
     Mutation(
@@ -1630,8 +1630,8 @@ ROWS += [
         # objects for it, so a rewrite would write out an empty document.
         "save: rewrite a document nothing unlocked",
         "src/save.rs",
-        "    if doc.is_encrypted() {\n        return Err(\n            \"This document is encrypted and tpdf could not unlock it, so it cannot be \\\n             rewritten. Open it with its password first.\"",
-        "    if false {\n        return Err(\n            \"This document is encrypted and tpdf could not unlock it, so it cannot be \\\n             rewritten. Open it with its password first.\"",
+        "    if doc.is_encrypted() {\n        return Err(said!(\n            \"This document is encrypted and tpdf could not unlock it, so it cannot be \\\n             rewritten. Open it with its password first.\"",
+        "    if false {\n        return Err(said!(\n            \"This document is encrypted and tpdf could not unlock it, so it cannot be \\\n             rewritten. Open it with its password first.\"",
         "an_encrypted_document_is_refused_rather_than_quietly_decrypted",
     ),
     Mutation(
@@ -1651,8 +1651,8 @@ ROWS += [
         # refusal is about the baseline rather than about the password.
         "save: build an append without the password",
         "src/save.rs",
-        "            max_decompressed_size: Some(MAX_DECODE),\n            password: password.map(str::to_string),\n            ..Default::default()\n        },\n    )\n    .map_err(|e| format!(\"this document could not be parsed: {e}\"))?;",
-        "            max_decompressed_size: Some(MAX_DECODE),\n            ..Default::default()\n        },\n    )\n    .map_err(|e| format!(\"this document could not be parsed: {e}\"))?;",
+        '            max_decompressed_size: Some(MAX_DECODE),\n            password: password.map(str::to_string),\n            ..Default::default()\n        },\n    )\n    .map_err(|e| said!("this document could not be parsed: {e}"))?;',
+        '            max_decompressed_size: Some(MAX_DECODE),\n            ..Default::default()\n        },\n    )\n    .map_err(|e| said!("this document could not be parsed: {e}"))?;',
         "an_encrypted_document_can_be_appended_to_and_stays_encrypted",
     ),
     Mutation(
@@ -1669,10 +1669,10 @@ ROWS += [
         # baseline that no longer exists.
         "save: allow writing over the source",
         "src/save.rs",
-        '    if same_file(source, out) {\n        return Err(\n'
-        '            "tpdf cannot save over the document it is reading --- choose another name".into(),',
-        '    if false {\n        return Err(\n'
-        '            "tpdf cannot save over the document it is reading --- choose another name".into(),',
+        '    if same_file(source, out) {\n        return Err(said!(\n'
+        '            "tpdf cannot save over the document it is reading --- choose another name"\n',
+        '    if false {\n        return Err(said!(\n'
+        '            "tpdf cannot save over the document it is reading --- choose another name"\n',
         "saving_over_the_open_document_is_refused",
     ),
     Mutation(
@@ -1779,8 +1779,8 @@ ROWS += [
         # apart.
         "edits: report every unknown page as deleted",
         "src/edits.rs",
-        "        Refusal::NoSuchPage(_) => \"no such page\".into(),",
-        "        Refusal::NoSuchPage(_) => \"that page has been deleted\".into(),",
+        '        Refusal::NoSuchPage(_) => said!("no such page"),',
+        '        Refusal::NoSuchPage(_) => said!("that page has been deleted"),',
         "an_id_no_document_ever_had_is_refused_by_name",
     ),
     Mutation(

@@ -74,7 +74,7 @@ impl save_order::Saving for LiveSave<'_> {
                 save::append_ready(Path::new(&checking), &asking)
             })
             .await
-            .map_err(|e| save::Refusal::from(format!("the save did not run: {e}")))??;
+            .map_err(|e| save::Refusal::from(said!("the save did not run: {e}")))??;
 
             let (reply, rx) = reply_channel();
             self.service.append(self.doc, plan, reply);
@@ -104,7 +104,7 @@ impl save_order::Saving for LiveSave<'_> {
                 save::stage_in_place(Path::new(&staging), &plan, password.as_deref(), &*writing)
             })
             .await
-            .map_err(|e| save::Refusal::from(format!("the save did not run: {e}")))?
+            .map_err(|e| save::Refusal::from(said!("the save did not run: {e}")))?
             .map(Prepared::Rewrite)
         }
     }
@@ -257,7 +257,7 @@ pub async fn save_document(
             // the document is gone whatever happened to the file. It leaves as the
             // outer result, which is what keeps the close note off it; see
             // `save_order::save_over`.
-            .map_err(|e| SaveFailure::after_close(format!("the save did not finish: {e}")))
+            .map_err(|e| SaveFailure::after_close(said!("the save did not finish: {e}")))
         },
     )
     .await
@@ -331,7 +331,7 @@ pub async fn save_copy(
         )
     })
     .await
-    .map_err(|e| format!("the save did not run: {e}"))?
+    .map_err(|e| said!("the save did not run: {e}"))?
     .map_err(|why| why.message)
 }
 
@@ -380,7 +380,7 @@ pub async fn extract_pages(
         )
     })
     .await
-    .map_err(|e| format!("the extract did not run: {e}"))?
+    .map_err(|e| said!("the extract did not run: {e}"))?
     .map_err(|why| why.message)
 }
 
@@ -434,7 +434,7 @@ pub async fn split_document(
         )
     })
     .await
-    .map_err(|e| format!("the split did not run: {e}"))?
+    .map_err(|e| said!("the split did not run: {e}"))?
     .map_err(|why| why.message)
 }
 
@@ -488,7 +488,7 @@ pub async fn merge_documents(
         )
     })
     .await
-    .map_err(|e| format!("the merge did not run: {e}"))?
+    .map_err(|e| said!("the merge did not run: {e}"))?
     .map_err(|why| why.message)
 }
 
@@ -515,6 +515,6 @@ pub async fn images_to_pdf(
         )
     })
     .await
-    .map_err(|e| format!("the document was not made: {e}"))?
+    .map_err(|e| said!("the document was not made: {e}"))?
     .map_err(|why| why.message)
 }

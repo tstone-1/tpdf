@@ -158,69 +158,78 @@ impl Refusal {
     pub fn sentence(&self) -> String {
         match self {
             Refusal::Failed(why) => {
-                format!("tpdf could not read this document's signatures: {why}")
+                said!("tpdf could not read this document's signatures: {why}")
             }
             Refusal::Document(why) => why.clone(),
             Refusal::Unsigned => {
-                "this document has no signature, so there is nothing to add long-term validation \
-                 data for"
-                    .into()
+                said!(
+                    "this document has no signature, so there is nothing to add long-term \
+                     validation data for"
+                )
             }
             Refusal::Incomplete => {
-                "tpdf could not read every signature in this document, so it cannot say that the \
-                 data would cover them all"
-                    .into()
+                said!(
+                    "tpdf could not read every signature in this document, so it cannot say \
+                     that the data would cover them all"
+                )
             }
-            Refusal::Certified(field) => format!(
-                "{} with no changes permitted, and tpdf appends nothing to such a document: \
-                 how readers judge validation data and a timestamp added after that \
-                 certification has not been measured",
-                match field {
-                    Some(field) => format!("the signature {field} certifies this document"),
-                    None => "this document is certified".to_string(),
-                }
+            Refusal::Certified(Some(field)) => said!(
+                "the signature {field} certifies this document with no changes permitted, and \
+                 tpdf appends nothing to such a document: how readers judge validation data \
+                 and a timestamp added after that certification has not been measured"
+            ),
+            Refusal::Certified(None) => said!(
+                "this document is certified with no changes permitted, and tpdf appends nothing \
+                 to such a document: how readers judge validation data and a timestamp added \
+                 after that certification has not been measured"
             ),
             Refusal::NotIntact {
                 field,
                 timestamp,
                 reads,
-            } => format!(
-                "{} {field} does not verify (it reads {reads}), and long-term validation data \
-                 cannot make it verify",
+            } => {
                 if *timestamp {
-                    "the timestamp of the signature"
+                    said!(
+                        "the timestamp of the signature {field} does not verify (it reads \
+                         {reads}), and long-term validation data cannot make it verify"
+                    )
                 } else {
-                    "the signature"
+                    said!(
+                        "the signature {field} does not verify (it reads {reads}), and \
+                         long-term validation data cannot make it verify"
+                    )
                 }
-            ),
-            Refusal::Budget => {
-                "this document's signatures together cover more data than tpdf checks at once, \
-                 so it could not check the result before writing it"
-                    .into()
             }
-            Refusal::Untrusted { field, name, why } => format!(
+            Refusal::Budget => {
+                said!(
+                    "this document's signatures together cover more data than tpdf checks at \
+                     once, so it could not check the result before writing it"
+                )
+            }
+            Refusal::Untrusted { field, name, why } => said!(
                 "the signer of {field} ({name}) is not trusted by this computer, so tpdf will \
                  not fetch revocation data for it: {why}"
             ),
-            Refusal::TooMany => format!(
+            Refusal::TooMany => said!(
                 "this document's signatures name more than {MAX_SUBJECTS} certificates to ask \
                  about, more than tpdf asks about in one run"
             ),
             Refusal::Full => {
-                "this document already carries as much validation data as tpdf reads, so \
-                 tpdf could not read back what it would add"
-                    .into()
+                said!(
+                    "this document already carries as much validation data as tpdf reads, so \
+                     tpdf could not read back what it would add"
+                )
             }
             Refusal::About { field, why } => match field {
-                Some(field) => format!("for the signature {field}: {}", said(why)),
+                Some(field) => said!("for the signature {field}: {why}", why = said(why)),
                 None => said(why),
             },
-            Refusal::Changed { field, what } => format!(
+            Refusal::Changed { field, what } => said!(
                 "tpdf's own check of the document with the data added did not pass: the \
                  signature {field} {what}"
             ),
             Refusal::Archive(why) => {
-                format!("tpdf's own check of the document with the data added did not pass: {why}")
+                said!("tpdf's own check of the document with the data added did not pass: {why}")
             }
         }
     }
@@ -246,21 +255,25 @@ impl Refusal {
 fn said(why: &super::Refusal) -> String {
     match why {
         super::Refusal::Unreadable(why) => {
-            format!("its value could not be read to find its certificates: {why}")
+            said!("its value could not be read to find its certificates: {why}")
         }
-        super::Refusal::NotPublished(name) => format!(
+        super::Refusal::NotPublished(name) => said!(
             "{name} does not say where its revocation data is published (an OCSP responder or \
              a revocation list over http or https), so there is none to add for it"
         ),
-        super::Refusal::Revoked { name, at, by } => format!(
-            "{name} has been revoked{} according to {by}, and tpdf adds long-term validation \
-             data only for certificates that are not revoked",
+        super::Refusal::Revoked { name, at, by } => {
             if at.is_empty() {
-                String::new()
+                said!(
+                    "{name} has been revoked according to {by}, and tpdf adds long-term \
+                     validation data only for certificates that are not revoked"
+                )
             } else {
-                format!(" since {at}")
+                said!(
+                    "{name} has been revoked since {at} according to {by}, and tpdf adds \
+                     long-term validation data only for certificates that are not revoked"
+                )
             }
-        ),
+        }
         other => other.sentence(),
     }
 }
@@ -303,9 +316,9 @@ fn bounded(survey: &crate::sign_dss::Survey) -> Result<(), Refusal> {
             .any(|der| der.len() > crate::trust::MAX_CERTIFICATE_BYTES)
         || survey.bytes() > crate::sign_dss::MAX_BYTES;
     if over {
-        return Err(Refusal::Failed(
-            "the worker's answer holds more signatures or certificates than a worker's may".into(),
-        ));
+        return Err(Refusal::Failed(said!(
+            "the worker's answer holds more signatures or certificates than a worker's may"
+        )));
     }
     Ok(())
 }
@@ -453,7 +466,7 @@ fn plan_one(
         why,
     };
     let unreadable = |why: String| about(super::Refusal::Unreadable(why));
-    let unidentified = || unreadable("its certificate is not identified".into());
+    let unidentified = || unreadable(said!("its certificate is not identified"));
     let encoded = |certificates: Vec<&Certificate>| -> Vec<Vec<u8>> {
         certificates
             .iter()
@@ -487,7 +500,7 @@ fn plan_one(
             Some(der) => {
                 let parsed = signed_data(&der).map_err(unreadable)?;
                 let authority = signer_of(&parsed).ok_or_else(|| {
-                    unreadable("its timestamp's certificate is not identified".into())
+                    unreadable(said!("its timestamp's certificate is not identified"))
                 })?;
                 let chain = authority_chain(&der)?;
                 let set = encoded(crate::docinfo::certificates_of(&parsed));
@@ -646,9 +659,9 @@ pub fn covered(before: &[Signature], after: &[Signature], appended: u64) -> Resu
     };
     for was in before.iter().filter(|s| s.signed) {
         let field = was.field.clone();
-        let changed = |what: &str| Refusal::Changed {
+        let changed = |what: String| Refusal::Changed {
             field: field.clone(),
-            what: what.to_string(),
+            what,
         };
         // By what was written, as `sign_cms::ours` finds a new signature:
         // the same name, and exactly the appended bytes more after it.
@@ -657,7 +670,7 @@ pub fn covered(before: &[Signature], after: &[Signature], appended: u64) -> Resu
                 && s.field == was.field
                 && s.appended_bytes == was.appended_bytes.saturating_add(appended)
         }) else {
-            return Err(changed("is not in it where it was"));
+            return Err(changed(said!("is not in it where it was")));
         };
         match now.integrity.as_ref() {
             Some(found) if found.verdict == Verdict::Intact => {}
@@ -666,17 +679,21 @@ pub fn covered(before: &[Signature], after: &[Signature], appended: u64) -> Resu
             {
                 return Err(Refusal::Budget)
             }
-            _ => return Err(changed("does not read as intact")),
+            _ => return Err(changed(said!("does not read as intact"))),
         }
         // Bytes follow it now, so there is an appendix to have read.
         match now.appendix.as_ref() {
             Some(appendix) if !appendix.unread => {}
-            _ => return Err(changed("is followed by a revision tpdf could not read")),
+            _ => {
+                return Err(changed(said!(
+                    "is followed by a revision tpdf could not read"
+                )))
+            }
         }
         let (pages_were, removed_were) = disturbed(was);
         let (pages, removed) = disturbed(now);
         if pages > pages_were || removed > removed_were {
-            return Err(changed("reads as followed by a change to a page"));
+            return Err(changed(said!("reads as followed by a change to a page")));
         }
 
         let about = |why: super::Refusal| Refusal::About {
@@ -686,15 +703,15 @@ pub fn covered(before: &[Signature], after: &[Signature], appended: u64) -> Resu
         let document_timestamp = now.kind == DOCUMENT_TIMESTAMP;
         let (leaf, above) = if document_timestamp {
             (
-                "the timestamp authority's certificate",
+                said!("the timestamp authority's certificate"),
                 "the timestamp authority's",
             )
         } else {
-            ("the signer's certificate", "the signer's")
+            (said!("the signer's certificate"), "the signer's")
         };
         let mut leaves = vec![(
             now.revocation.as_ref(),
-            name(now.certificate.as_ref(), leaf),
+            name(now.certificate.as_ref(), &leaf),
         )];
         let mut chains = vec![(now.revocation_chain.as_ref(), above)];
         // The signature's own token, when it carries one: its authority is
@@ -703,18 +720,20 @@ pub fn covered(before: &[Signature], after: &[Signature], appended: u64) -> Resu
         // them twice and to nothing else.)
         if let Some(stamp) = now.timestamp.as_ref() {
             if stamp.integrity.as_ref().map(|i| i.verdict) != Some(Verdict::Intact) {
-                return Err(changed("has a timestamp that does not read as intact"));
+                return Err(changed(said!(
+                    "has a timestamp that does not read as intact"
+                )));
             }
             leaves.push((
                 stamp.revocation.as_ref(),
                 name(
                     stamp.authority.as_ref(),
-                    "the timestamp authority's certificate",
+                    &said!("the timestamp authority's certificate"),
                 ),
             ));
             chains.push((stamp.revocation_chain.as_ref(), "the timestamp authority's"));
         } else if was.timestamp.is_some() {
-            return Err(changed("no longer carries its timestamp"));
+            return Err(changed(said!("no longer carries its timestamp")));
         }
         leaves_good(&leaves).map_err(about)?;
         chains_good(&chains).map_err(about)?;
@@ -744,23 +763,23 @@ pub fn archive_of(after: &[Signature]) -> Option<&Signature> {
 pub fn read_back(before: &[Signature], after: &[Signature], appended: u64) -> Result<(), Refusal> {
     covered(before, after, appended)?;
     let Some(archive) = archive_of(after) else {
-        return Err(Refusal::Archive(
-            "the archive timestamp is not in it".into(),
-        ));
+        return Err(Refusal::Archive(said!(
+            "the archive timestamp is not in it"
+        )));
     };
     if !archive.covers_whole_file {
-        return Err(Refusal::Archive(
-            "the archive timestamp does not cover the whole file".into(),
-        ));
+        return Err(Refusal::Archive(said!(
+            "the archive timestamp does not cover the whole file"
+        )));
     }
     match archive.integrity.as_ref() {
         Some(found) if found.verdict == Verdict::Intact => Ok(()),
         Some(found) if found.verdict == Verdict::Unchecked && found.why == Some(Why::Budget) => {
             Err(Refusal::Budget)
         }
-        _ => Err(Refusal::Archive(
-            "the archive timestamp does not read as intact".into(),
-        )),
+        _ => Err(Refusal::Archive(said!(
+            "the archive timestamp does not read as intact"
+        ))),
     }
 }
 
@@ -814,10 +833,10 @@ pub fn add(
         .validation(original, &gathered)
         .map_err(|why| whole(super::Refusal::Written(why)))?;
     if extended.built_against != original.len() {
-        return Err(whole(super::Refusal::Written(format!(
-            "the worker built its revision against {} bytes, and the document is {}",
-            extended.built_against,
-            original.len()
+        return Err(whole(super::Refusal::Written(said!(
+            "the worker built its revision against {built} bytes, and the document is {len}",
+            built = extended.built_against,
+            len = original.len()
         ))));
     }
     covered(
@@ -835,7 +854,7 @@ pub fn add(
         let token = archive(pieces)?;
         match vouched_chain(&token, Purpose::Timestamping, "the authority's", now, vouch) {
             Ok(_) => Ok(token),
-            Err((name, why)) => Err(format!(
+            Err((name, why)) => Err(said!(
                 "the timestamp authority {name} is not trusted by this computer, so its \
                  timestamp would not keep the document checkable here: {why}"
             )),

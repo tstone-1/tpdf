@@ -355,7 +355,7 @@ fn words(pages: &[PageCodes], which: &str) -> Result<Vec<Word>, String> {
                 }
             }
             if out.len() > MAX_WORDS {
-                return Err(format!(
+                return Err(said!(
                     "the {which} document has more than {MAX_WORDS} words, which is more \
                      than tpdf compares"
                 ));
@@ -366,7 +366,7 @@ fn words(pages: &[PageCodes], which: &str) -> Result<Vec<Word>, String> {
         }
     }
     if out.len() > MAX_WORDS {
-        return Err(format!(
+        return Err(said!(
             "the {which} document has more than {MAX_WORDS} words, which is more than tpdf \
              compares"
         ));

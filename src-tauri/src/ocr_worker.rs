@@ -421,7 +421,7 @@ impl OcrWorker {
         unsafe {
             command.pre_exec(move || crate::worker_handover::remap_fds(&[(fd, PIXELS_FD)]));
         }
-        let mut child = command.spawn().map_err(|e| format!("spawn failed: {e}"))?;
+        let mut child = command.spawn().map_err(|e| said!("spawn failed: {e}"))?;
         let stdin = child.stdin.take().ok_or("the OCR worker has no stdin")?;
         let stdout = child.stdout.take().ok_or("the OCR worker has no stdout")?;
         let replies = reply_thread(stdout);
@@ -533,7 +533,7 @@ impl OcrWorker {
             RecogniseError::MalformedInput(format!("the request will not encode: {e}"))
         })?;
         if let Err(e) = writeln!(self.stdin, "{line}").and_then(|()| self.stdin.flush()) {
-            return Err(self.give_up(format!("the OCR worker stopped listening: {e}")));
+            return Err(self.give_up(said!("the OCR worker stopped listening: {e}")));
         }
 
         let deadline = if self.answered {
@@ -543,14 +543,14 @@ impl OcrWorker {
         };
         let reply = match self.replies.recv_timeout(deadline) {
             Ok(Ok(line)) => line,
-            Ok(Err(e)) => return Err(self.give_up(format!("the OCR worker's reply broke: {e}"))),
+            Ok(Err(e)) => return Err(self.give_up(said!("the OCR worker's reply broke: {e}"))),
             Err(RecvTimeoutError::Disconnected) => {
-                return Err(self.give_up("the OCR worker stopped without answering".into()))
+                return Err(self.give_up(said!("the OCR worker stopped without answering")))
             }
             Err(RecvTimeoutError::Timeout) => {
-                let why = format!(
-                    "the OCR worker did not answer within {} seconds",
-                    deadline.as_secs()
+                let why = said!(
+                    "the OCR worker did not answer within {secs} seconds",
+                    secs = deadline.as_secs()
                 );
                 let why = self.give_up(why);
                 return Err(match why {
@@ -562,7 +562,7 @@ impl OcrWorker {
 
         self.answered = true;
         match serde_json::from_str::<Said>(&reply) {
-            Err(e) => Err(self.give_up(format!("the OCR worker's reply did not parse: {e}"))),
+            Err(e) => Err(self.give_up(said!("the OCR worker's reply did not parse: {e}"))),
             Ok(Said::Failed(why)) => Err(why),
             Ok(Said::Read { engine, items }) => match engine.resolve() {
                 Ok(id) => Ok((id, items)),

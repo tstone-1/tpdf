@@ -2,51 +2,44 @@
 use lopdf::Object;
 
 pub(super) fn operation(name: &str, operands: &[Object], inside: bool, positioned: bool) -> String {
-    let reason = match name {
-        "BMC" if inside => {
-            return format!("inline {name} marked content is not editable yet");
+    match name {
+        "BMC" if inside => said!("inline {name} marked content is not editable yet"),
+        "BT" if inside => said!("nested text blocks are not editable"),
+        "ET" if !inside => said!("text block ends without a matching beginning"),
+        "Tj" | "TJ" if !inside => said!("text appears outside a text block"),
+        "Tj" | "TJ" if !positioned => said!("text has no explicit initial position"),
+        "Tj" | "TJ" => said!("text-show operands have an unsupported shape"),
+        "'" | "\"" => said!("text positioning shorthand {name} is not editable yet"),
+        "Ts" if operands.len() == 1 => said!("text rise must be zero for editing"),
+        "Tz" if operands.len() == 1 => {
+            said!("text horizontal scaling must be 100 percent for editing")
         }
-        "BT" if inside => "nested text blocks are not editable",
-        "ET" if !inside => "text block ends without a matching beginning",
-        "Tj" | "TJ" if !inside => "text appears outside a text block",
-        "Tj" | "TJ" if !positioned => "text has no explicit initial position",
-        "Tj" | "TJ" => "text-show operands have an unsupported shape",
-        "'" | "\"" => {
-            return format!("text positioning shorthand {name} is not editable yet");
-        }
-        "Ts" if operands.len() == 1 => "text rise must be zero for editing",
-        "Tz" if operands.len() == 1 => "text horizontal scaling must be 100 percent for editing",
         "Tr" if matches!(operands, [Object::Integer(_)]) => {
-            "text that adds to the clipping path is not editable"
+            said!("text that adds to the clipping path is not editable")
         }
         "q" | "Q" | "cm" | "re" | "m" | "n" | "Do" if inside => {
-            return format!("graphics operation {name} inside a text block is not editable yet");
+            said!("graphics operation {name} inside a text block is not editable yet")
         }
         "Tm" | "Td" | "TD" | "T*" if !inside => {
-            return format!("text setup operation {name} outside a text block is not editable yet");
+            said!("text setup operation {name} outside a text block is not editable yet")
         }
         // Only fixed PDF keywords may be echoed. An unknown keyword could be
         // arbitrarily long, contain control characters or carry document text.
         "BMC" | "BDC" | "EMC" | "BT" | "ET" | "q" | "Q" | "cm" | "n" | "Do" | "w" | "Tc" | "Tw"
         | "Ts" | "Tz" | "Tr" | "ri" | "i" | "gs" | "cs" | "CS" | "Tf" | "TL" | "Tm" | "Td"
-        | "TD" | "T*" => {
-            return format!(
-                "unsupported operands for {name} (count: {})",
-                operands.len()
-            );
-        }
+        | "TD" | "T*" => said!(
+            "unsupported operands for {name} (count: {count})",
+            count = operands.len()
+        ),
         "l" | "c" | "v" | "y" | "h" | "S" | "s" | "f" | "F" | "f*" | "B" | "B*" | "b" | "b*"
-        | "W" | "W*" => {
-            return format!("path operation {name} is outside a supported complete path");
-        }
-        "sh" => "shading patterns are not editable yet",
-        "BI" | "ID" | "EI" => "inline images are not editable yet",
+        | "W" | "W*" => said!("path operation {name} is outside a supported complete path"),
+        "sh" => said!("shading patterns are not editable yet"),
+        "BI" | "ID" | "EI" => said!("inline images are not editable yet"),
         "MP" | "DP" | "BX" | "EX" | "d0" | "d1" => {
-            return format!("content operation {name} is not editable yet");
+            said!("content operation {name} is not editable yet")
         }
-        _ => "unrecognized content operator is not editable yet",
-    };
-    reason.into()
+        _ => said!("unrecognized content operator is not editable yet"),
+    }
 }
 
 #[cfg(test)]

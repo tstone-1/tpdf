@@ -25,10 +25,10 @@ have the binary.)
   messages, with German key names (Strg, Umschalt, Entf). It follows the system language, and
   **Language: Deutsch**, **Language: English (US)**, **Language: English (UK)** and
   **Language: follow the system** choose one; the choice takes effect at the next start.
-  Messages from the document worker and the command-line tool are still English.
+  Messages from the document worker and the application's own checks are German too. The
+  command-line tool stays English.
 - The command palette finds a command by its English title in the German window too.
 
-### Changed
 ### Security
 
 - The updater refuses an update whose signature does not name the version on offer. Before,
@@ -37,6 +37,7 @@ have the binary.)
 - The updater is 2.14.1, which brings `zip` 9.1.3. The three `zip` 4.6.1 advisories excepted
   in the audit since 2026-10-17 no longer apply.
 
+### Changed
 
 - The window uses American spelling ("Color", "Favorites", "Recognize") unless the system or
   the Language setting asks for British English.

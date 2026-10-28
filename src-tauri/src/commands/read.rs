@@ -83,13 +83,13 @@ pub async fn search_text(
     carry: Option<search::Carry>,
 ) -> Result<search::PageMatches, String> {
     if codes.len() > 1_000_000 {
-        return Err("The recognised text exceeds the page limit.".into());
+        return Err(said!("The recognised text exceeds the page limit."));
     }
     tauri::async_runtime::spawn_blocking(move || {
         search::search_codes(&codes, page, &query, options, carry.as_ref())
     })
     .await
-    .map_err(|e| format!("Recognised text search stopped: {e}"))
+    .map_err(|e| said!("Recognised text search stopped: {e}"))
 }
 
 /// Compares the words of two documents, page by page as the caller read them.
@@ -108,7 +108,7 @@ pub async fn compare_texts(
 ) -> Result<compare::Comparison, String> {
     tauri::async_runtime::spawn_blocking(move || compare::compare(&left, &right))
         .await
-        .map_err(|e| format!("the comparison stopped: {e}"))?
+        .map_err(|e| said!("the comparison stopped: {e}"))?
 }
 
 /// Reads a document's outline --- its bookmarks --- as a bounded tree.
@@ -209,11 +209,11 @@ pub async fn open_web_link(
         // has just been closed and one who meets an entry the boundary check
         // rejected are in the same position: there is nothing to open, and the
         // difference between the two is not theirs to act on.
-        return Err("this link is no longer available".into());
+        return Err(said!("this link is no longer available"));
     };
     tauri::async_runtime::spawn_blocking(move || opener::open(&address))
         .await
-        .map_err(|e| format!("could not reach the system opener: {e}"))?
+        .map_err(|e| said!("could not reach the system opener: {e}"))?
 }
 
 /// Reads what a document says about itself: properties, encryption, signatures.
@@ -288,7 +288,7 @@ pub async fn form_fill(
     let form: crate::forms::Form = await_reply("form_fill", rx).await?;
     let widgets: Vec<_> = form.widgets.iter().filter(|w| w.object == object).collect();
     if widgets.is_empty() {
-        return Err("This field is no longer available".into());
+        return Err(said!("This field is no longer available"));
     }
     for widget in widgets {
         crate::forms::validate(widget, &value)?;
@@ -312,7 +312,7 @@ pub async fn document_text_runs(
     let outlines = change.is_none();
     if let Some(change) = change {
         if change.page != at.page {
-            return Err("Text no longer belongs to this page".into());
+            return Err(said!("Text no longer belongs to this page"));
         }
         changes = crate::sysfont::batch(changes, change).0;
     }
@@ -383,7 +383,7 @@ fn text_address(edits: &crate::edits::Edits, doc: u32, page: u64) -> Result<Text
         .iter()
         .find(|p| p.id == page)
         .map(|p| p.source)
-        .ok_or("This page is no longer in the document")?;
+        .ok_or_else(|| said!("This page is no longer in the document"))?;
     page_text_address(doc, source, &state.sources)
 }
 
@@ -424,7 +424,7 @@ fn page_text_address(
                 // state does not carry: reading the opened document's page of
                 // the same number would answer a question about a different
                 // page and look like an answer about this one.
-                None => return Err("The file this page came from is no longer open".into()),
+                None => return Err(said!("The file this page came from is no longer open")),
             };
             Ok(TextAddress {
                 doc: held,
@@ -432,7 +432,7 @@ fn page_text_address(
                 source: Some(file),
             })
         }
-        PageSource::Blank(_) => Err("This page has no editable original text".into()),
+        PageSource::Blank(_) => Err(said!("This page has no editable original text")),
     }
 }
 
@@ -447,7 +447,7 @@ pub async fn text_replace(
 ) -> Result<crate::edits::EditState, String> {
     let at = text_address(&edits, doc, page)?;
     if change.page != at.page {
-        return Err("Text no longer belongs to this page".into());
+        return Err(said!("Text no longer belongs to this page"));
     }
     let change = crate::sysfont::replacement(
         change,

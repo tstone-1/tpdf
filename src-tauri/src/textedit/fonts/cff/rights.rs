@@ -16,7 +16,9 @@
 //! it is used (`fallback::Font::installed`).
 use super::profile::{index, number};
 
-const INVALID: &str = "unsupported CFF program for an installed font";
+fn invalid() -> String {
+    said!("unsupported CFF program for an installed font")
+}
 
 /// Top DICT operators whose operand is an absolute offset into the program.
 const OFFSETS: [u16; 4] = [15, 17, 1236, 1237];
@@ -106,7 +108,7 @@ pub(in crate::textedit::fonts) fn with_rights(
     cff: &[u8],
     rights: Option<u16>,
 ) -> Result<Vec<u8>, String> {
-    build(cff, rights).ok_or_else(|| INVALID.into())
+    build(cff, rights).ok_or_else(invalid)
 }
 
 fn build(cff: &[u8], rights: Option<u16>) -> Option<Vec<u8>> {

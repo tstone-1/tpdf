@@ -73,29 +73,30 @@ pub fn doubt(doubt: Doubt, computer: &str) -> String {
 /// or `"the authority's"`. `integrity.ts`'s `DOUBT` with its second argument.
 #[must_use]
 pub fn doubt_about(doubt: Doubt, computer: &str, whose: &str) -> String {
+    // `said!`: long-term validation data puts these in a refusal the window shows.
     match doubt {
-        Doubt::Incomplete => format!(
+        Doubt::Incomplete => said!(
             "a certificate between {whose} and a root is in neither the signature \
              nor on {computer}, and tpdf does not look it up"
         ),
-        Doubt::Root => format!(
+        Doubt::Root => said!(
             "its chain ends at a root {computer} does not trust. A certificate somebody \
              issued to themselves reads this way, and so does one whose root only \
              Adobe's trust list carries"
         ),
-        Doubt::Dates => format!("a certificate above {whose} is outside its dates"),
+        Doubt::Dates => said!("a certificate above {whose} is outside its dates"),
         Doubt::Purpose => {
-            "the signer's certificate was issued for something other than signing documents".into()
+            said!("the signer's certificate was issued for something other than signing documents")
         }
-        Doubt::Timestamping => "the authority's certificate was not issued for timestamping".into(),
+        Doubt::Timestamping => said!("the authority's certificate was not issued for timestamping"),
         // Only ever said with the moment in the verdict's own words, which is
         // where "then" points: the moment is stated once, as the verdict's.
-        Doubt::NotInForce => format!("{whose} certificate was not in force then"),
-        Doubt::Rejected => format!("{computer} refused its chain"),
+        Doubt::NotInForce => said!("{whose} certificate was not in force then"),
+        Doubt::Rejected => said!("{computer} refused its chain"),
         Doubt::Certificate => {
-            "the signature's certificates could not be prepared for the check".into()
+            said!("the signature's certificates could not be prepared for the check")
         }
-        Doubt::Unavailable => "the operating system's trust check could not be run".into(),
+        Doubt::Unavailable => said!("the operating system's trust check could not be run"),
     }
 }
 
@@ -797,12 +798,12 @@ pub fn after_long_term(name: &str, covered: &[(String, bool)], archive: &str) ->
         [(_, true)] => "that timestamp is",
         _ => "each of them is",
     };
-    format!(
-        "Added long-term validation data for {}, then the archive timestamp {archive} over the \
-         whole, and saved the result to {name}. Read back after writing: {each} intact, every \
-         certificate asked about reads as not revoked from the document's own data, and the \
-         archive timestamp covers the whole file.",
-        listed.join(" and ")
+    said!(
+        "Added long-term validation data for {listed}, then the archive timestamp {archive} over \
+         the whole, and saved the result to {name}. Read back after writing: {each} intact, \
+         every certificate asked about reads as not revoked from the document's own data, and \
+         the archive timestamp covers the whole file.",
+        listed = listed.join(" and ")
     )
 }
 

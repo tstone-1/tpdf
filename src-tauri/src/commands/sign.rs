@@ -94,12 +94,13 @@ pub fn baseline_page(plan: &edits::Plan, id: u64) -> Result<u32, String> {
         .map(|view| &view.source)
     {
         Some(PageSource::Baseline(page)) => Ok(*page),
-        Some(_) => Err(
+        Some(_) => Err(said!(
             "the page chosen for the signature is not a page of the file on disk \
-                        --- save the document and sign again"
-                .into(),
-        ),
-        None => Err("the page chosen for the signature is no longer in the document".into()),
+             --- save the document and sign again"
+        )),
+        None => Err(said!(
+            "the page chosen for the signature is no longer in the document"
+        )),
     }
 }
 
@@ -225,7 +226,11 @@ impl Pending {
         let mut held = self.0.lock();
         match held.as_ref() {
             Some(found) if found.number == number => judge(&found.stage)?,
-            _ => return Err("this signature is no longer held --- sign the document again".into()),
+            _ => {
+                return Err(said!(
+                    "this signature is no longer held --- sign the document again"
+                ))
+            }
         }
         Ok(held.take().expect("held: matched under this lock"))
     }
@@ -366,15 +371,15 @@ impl ReadBack {
         let what = match self {
             // The window words these two from what was read: `afterSigning`.
             ReadBack::Holds | ReadBack::Signature | ReadBack::Unchecked => return None,
-            ReadBack::Timestamp => format!(
+            ReadBack::Timestamp => said!(
                 "reading it back did not find the timestamp of the new signature {field} intact"
             ),
             ReadBack::LongTerm(why) => why.sentence(),
-            ReadBack::Lock => format!(
-                "reading it back did not find the new signature {field} locking the document"
-            ),
+            ReadBack::Lock => {
+                said!("reading it back did not find the new signature {field} locking the document")
+            }
         };
-        Some(format!(
+        Some(said!(
             "{name} was written, but {what}. Do not rely on that copy."
         ))
     }
@@ -556,14 +561,14 @@ pub(crate) fn finish(
     write(&bytes).map_err(Stopped::Unwritten)?;
 
     let mut written = std::fs::File::open(out).map_err(|e| {
-        Stopped::Unread(format!(
+        Stopped::Unread(said!(
             "the signed file was written and could not be reopened: {e}"
         ))
     })?;
     let signatures = checking
         .signatures(&mut written, bytes.len())
         .map_err(|e| {
-            Stopped::Unread(format!(
+            Stopped::Unread(said!(
                 "the signed file was written and could not be checked: {e}"
             ))
         })?;
@@ -651,7 +656,7 @@ fn conclude(
         // A revoked certificate: nothing is kept to be written without the
         // data, because that would be the same revoked signature.
         Err(Stopped::Unextended { why, .. }) if why.revoked() => {
-            Err(format!("{} --- nothing was written", why.sentence()))
+            Err(said!("{why} --- nothing was written", why = why.sentence()))
         }
         Err(Stopped::Unextended { sealed, why }) => {
             let number = pending.keep(*sealed, source, out);
@@ -695,7 +700,7 @@ async fn signer_name(identity: &str, at: u64) -> Result<String, String> {
         sign_cms::usable(&identity.certificate, at).map(|offer| offer.subject)
     })
     .await
-    .map_err(|e| format!("the certificate search did not run: {e}"))?
+    .map_err(|e| said!("the certificate search did not run: {e}"))?
 }
 
 /// Draws what a visible signature would look like, before anything is signed.
@@ -745,7 +750,7 @@ pub async fn sign_identities() -> Result<sign_cms::Choices, String> {
         Ok(sign_cms::choices(&found, now()))
     })
     .await
-    .map_err(|e| format!("the certificate search did not run: {e}"))?
+    .map_err(|e| said!("the certificate search did not run: {e}"))?
 }
 
 /// Linux: remembers the certificate file at `path` for signing (`certfiles.rs`),
@@ -760,9 +765,9 @@ pub async fn sign_add_certificate_file(path: String) -> Result<Option<String>, S
         tauri::async_runtime::spawn_blocking(move || {
             use secrecy::ExposeSecret as _;
             let path = std::path::PathBuf::from(path);
-            let store = crate::certfiles::store().ok_or(
-                "There is no home folder to keep the list of certificate files in.".to_string(),
-            )?;
+            let store = crate::certfiles::store().ok_or_else(|| {
+                said!("There is no home folder to keep the list of certificate files in.")
+            })?;
             let name = path.file_name().map_or_else(
                 || path.display().to_string(),
                 |n| n.to_string_lossy().into_owned(),
@@ -774,21 +779,20 @@ pub async fn sign_add_certificate_file(path: String) -> Result<Option<String>, S
             let certificate = entry.certificate();
             let subject = sign_cms::usable(&certificate, now())
                 .map_or_else(|_| sign_cms::named(&certificate), |offer| offer.subject);
-            Ok(Some(format!(
+            Ok(Some(said!(
                 "{subject} can sign now: choose it when you sign a document."
             )))
         })
         .await
-        .map_err(|e| format!("adding the certificate file did not run: {e}"))?
+        .map_err(|e| said!("adding the certificate file did not run: {e}"))?
     }
     #[cfg(any(target_os = "macos", windows))]
     {
         let _ = path;
-        Err(
+        Err(said!(
             "Certificate files are added to tpdf on Linux; on macOS and Windows, import the \
              file into your keychain or certificate store, and tpdf finds it there."
-                .into(),
-        )
+        ))
     }
 }
 
@@ -833,13 +837,14 @@ pub async fn sign_document(
     }
     sign_cms::refuse_unsaved(edits.state(doc)?.dirty)?;
     let opened_as = edits.plan(doc)?.opened_as.ok_or_else(|| {
-        "tpdf could not record what this file looked like when it was opened, so it \
-         cannot tell that what it signs is that file --- reopen it and sign again"
-            .to_string()
+        said!(
+            "tpdf could not record what this file looked like when it was opened, so it \
+             cannot tell that what it signs is that file --- reopen it and sign again"
+        )
     })?;
 
     let len = std::fs::metadata(&source)
-        .map_err(|e| format!("could not measure {source}: {e}"))?
+        .map_err(|e| said!("could not measure {source}: {e}"))?
         .len();
     sign_cms::refuse_too_large(len)?;
 
@@ -902,7 +907,7 @@ pub async fn sign_document(
         })
     })
     .await
-    .map_err(|e| format!("the signing did not run: {e}"))?
+    .map_err(|e| said!("the signing did not run: {e}"))?
 }
 
 /// Finishes a signing whose timestamp did not come, as the reader chose: with
@@ -947,7 +952,7 @@ pub async fn sign_resume(
         })
     })
     .await
-    .map_err(|e| format!("the signing did not run: {e}"))?
+    .map_err(|e| said!("the signing did not run: {e}"))?
 }
 
 /// The signature held under `pending`, taken for [`sign_resume`] once the

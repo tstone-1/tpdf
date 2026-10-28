@@ -100,11 +100,11 @@ pub fn stage(bytes: &[u8]) -> Result<(PathBuf, std::fs::File), String> {
         .and_then(|mut file| file.write_all(bytes));
     if let Err(e) = written {
         let _ = std::fs::remove_file(&path);
-        return Err(format!("the print job could not be written: {e}"));
+        return Err(said!("the print job could not be written: {e}"));
     }
     let file = std::fs::File::open(&path).map_err(|e| {
         let _ = std::fs::remove_file(&path);
-        format!("the print job could not be read back: {e}")
+        said!("the print job could not be read back: {e}")
     })?;
     Ok((path, file))
 }
@@ -133,7 +133,7 @@ pub fn present(path: PathBuf, title: &str, parent: Option<&gtk::Window>) -> Resu
         // toplevel, owned by GTK until destroyed below.
         let raw = unsafe { gtk_print_unix_dialog_new(heading.as_ptr(), parent_ptr) };
         if raw.is_null() {
-            return Err("GTK would not make a print dialog".to_string());
+            return Err(said!("GTK would not make a print dialog"));
         }
         // SAFETY: `raw` is a GtkPrintUnixDialog, which is a GtkDialog.
         let dialog: gtk::Dialog =
@@ -197,7 +197,7 @@ fn send(dialog: *mut GtkWidget, path: &Path, title: &str) -> Result<bool, String
     // (transfer full) and released below.
     let printer = unsafe { gtk_print_unix_dialog_get_selected_printer(dialog) };
     if printer.is_null() {
-        return Err("no printer was chosen".to_string());
+        return Err(said!("no printer was chosen"));
     }
     let settings = unsafe { gtk_print_unix_dialog_get_settings(dialog) };
     let setup = unsafe { gtk_print_unix_dialog_get_page_setup(dialog) };
@@ -223,9 +223,9 @@ fn submit(
     if unsafe { gtk_printer_accepts_pdf(printer) } == 0 {
         // SAFETY: as above; GTK owns the name.
         let name = unsafe { CStr::from_ptr(gtk_printer_get_name(printer)) };
-        return Err(format!(
-            "the printer {:?} cannot take a PDF, and tpdf prints only the PDF itself",
-            name.to_string_lossy()
+        return Err(said!(
+            "the printer {name:?} cannot take a PDF, and tpdf prints only the PDF itself",
+            name = name.to_string_lossy()
         ));
     }
     // SAFETY: `printer` and `settings` are live for the call.
@@ -234,7 +234,7 @@ fn submit(
     // SAFETY: every argument is live; the job takes its own references.
     let job = unsafe { gtk_print_job_new(title.as_ptr(), printer, settings, setup) };
     if job.is_null() {
-        return Err("GTK would not make a print job".to_string());
+        return Err(said!("GTK would not make a print job"));
     }
     let file = CString::new(path.as_os_str().as_encoded_bytes())
         .map_err(|_| "the print job's path has a NUL in it".to_string())?;
@@ -248,7 +248,7 @@ fn submit(
         }
         // SAFETY: the job is ours and was never sent.
         unsafe { gtk::glib::gobject_ffi::g_object_unref(job.cast()) };
-        return Err(format!("GTK would not take the print job: {why}"));
+        return Err(said!("GTK would not take the print job: {why}"));
     }
     let state = Box::into_raw(Box::new(Sending {
         path: path.to_path_buf(),
@@ -308,10 +308,10 @@ unsafe fn hand_over_pages(
     if !is_cups {
         // SAFETY: as above; GTK owns the name.
         let name = unsafe { CStr::from_ptr(gtk_printer_get_name(printer)) };
-        return Err(format!(
-            "{:?} prints every page of the document, so it cannot print only the pages chosen; \
+        return Err(said!(
+            "{name:?} prints every page of the document, so it cannot print only the pages chosen; \
              choose All Pages, or a printer",
-            name.to_string_lossy()
+            name = name.to_string_lossy()
         ));
     }
     if let Some(ranges) = ranges {
@@ -447,14 +447,14 @@ pub fn print_to(
                     return answer;
                 }
                 Err(std::sync::mpsc::TryRecvError::Disconnected) => {
-                    return Err("GTK dropped the print job without an answer".to_string());
+                    return Err(said!("GTK dropped the print job without an answer"));
                 }
                 Err(std::sync::mpsc::TryRecvError::Empty) => {}
             }
             if std::time::Instant::now() >= until {
-                return Err(format!(
-                    "GTK did not say the job was sent within {} s",
-                    within.as_secs()
+                return Err(said!(
+                    "GTK did not say the job was sent within {secs} s",
+                    secs = within.as_secs()
                 ));
             }
             std::thread::sleep(std::time::Duration::from_millis(10));
@@ -498,9 +498,9 @@ fn find_printer(name: &str) -> Result<*mut c_void, String> {
     // while `search` is alive.
     unsafe { gtk_enumerate_printers(each, std::ptr::from_mut(&mut search).cast(), None, 1) };
     if search.found.is_null() {
-        return Err(format!(
-            "no printer named {name:?}; GTK listed {:?}",
-            search.seen
+        return Err(said!(
+            "no printer named {name:?}; GTK listed {seen:?}",
+            seen = search.seen
         ));
     }
     Ok(search.found)
@@ -510,7 +510,7 @@ fn find_printer(name: &str) -> Result<*mut c_void, String> {
 /// one [`sent`] is given.
 fn gerror_message(error: *const GError) -> String {
     if error.is_null() {
-        return "no reason was given".to_string();
+        return said!("no reason was given");
     }
     // SAFETY: a set GError has a valid message.
     unsafe { CStr::from_ptr((*error).message) }

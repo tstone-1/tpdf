@@ -252,12 +252,12 @@ pub fn prepare_noted(
     let note = |what: &str, text: &str| -> Result<Option<String>, String> {
         let text = text.trim();
         if text.chars().count() > MAX_NOTE_CHARS {
-            return Err(format!(
+            return Err(said!(
                 "the {what} is longer than the {MAX_NOTE_CHARS} characters a signature carries"
             ));
         }
         if text.chars().any(char::is_control) {
-            return Err(format!(
+            return Err(said!(
                 "the {what} has a control character in it, which a signature does not carry"
             ));
         }
@@ -351,32 +351,32 @@ struct Target {
 /// everywhere else, so a form it refuses is one this refuses.
 fn empty_field(document: &Document, pages: &[ObjectId], name: &str) -> Result<Target, String> {
     let form = crate::forms::scan(document)
-        .map_err(|why| format!("this document's form could not be read: {why}"))?;
+        .map_err(|why| said!("this document's form could not be read: {why}"))?;
     let found: Vec<_> = form.widgets.iter().filter(|w| w.name == name).collect();
     let [widget] = found.as_slice() else {
         return Err(if found.is_empty() {
-            format!("this document has no field called `{name}`")
+            said!("this document has no field called `{name}`")
         } else {
-            format!(
-                "`{name}` is shown in {} places, and a signature goes in one",
-                found.len()
+            said!(
+                "`{name}` is shown in {count} places, and a signature goes in one",
+                count = found.len()
             )
         });
     };
     match widget.control {
         crate::forms::Control::Signature { signed: false } => {}
         crate::forms::Control::Signature { signed: true } => {
-            return Err(format!("`{name}` already holds a signature"))
+            return Err(said!("`{name}` already holds a signature"))
         }
-        _ => return Err(format!("`{name}` is not a signature field")),
+        _ => return Err(said!("`{name}` is not a signature field")),
     }
     if crate::forms::integer(document, widget.object, b"Ff") & 1 != 0 {
-        return Err(format!("`{name}` is read-only, so it cannot be signed"));
+        return Err(said!("`{name}` is read-only, so it cannot be signed"));
     }
     asked_of_the_signer(document, (widget.widget.0, widget.widget.1), name)?;
     let page = *pages
         .get(widget.page as usize)
-        .ok_or("the page the signature field is on is not in this document")?;
+        .ok_or_else(|| said!("the page the signature field is on is not in this document"))?;
     Ok(Target {
         field: (widget.object.0, widget.object.1),
         widget: (widget.widget.0, widget.widget.1),
@@ -412,7 +412,7 @@ fn asked_of_the_signer(document: &Document, widget: ObjectId, name: &str) -> Res
         crate::forms::inherited(document, widget, key).filter(|o| !matches!(o, Object::Null))
     };
     if asked(b"Lock").is_some() {
-        return Err(format!(
+        return Err(said!(
             "`{name}` asks its signer to lock other fields of the form, which tpdf does not \
              do, so it does not sign this field"
         ));
@@ -427,7 +427,7 @@ fn asked_of_the_signer(document: &Document, widget: ObjectId, name: &str) -> Res
                 .is_some_and(|flags| flags.as_i64().map_or(true, |flags| flags != 0))
         });
         if required {
-            return Err(format!(
+            return Err(said!(
                 "`{name}` sets requirements its signature has to meet, which tpdf does not \
                  check, so it does not sign this field"
             ));
@@ -488,9 +488,9 @@ pub fn preview(signed_at: u64, visible: &Visible) -> Result<Vec<u8>, String> {
         side.is_finite() && f64::from(side) >= appearance::MIN_SIDE && side <= PREVIEW_MAX_SIDE
     };
     if !sized(width) || !sized(height) {
-        return Err(format!(
-            "a signature preview is between {} and {PREVIEW_MAX_SIDE} points a side",
-            appearance::MIN_SIDE
+        return Err(said!(
+            "a signature preview is between {least} and {PREVIEW_MAX_SIDE} points a side",
+            least = appearance::MIN_SIDE
         ));
     }
     let mut blank = Document::with_version("1.7");
@@ -513,7 +513,7 @@ pub fn preview(signed_at: u64, visible: &Visible) -> Result<Vec<u8>, String> {
     let mut bytes = Vec::new();
     blank
         .save_to(&mut bytes)
-        .map_err(|e| format!("could not build the preview's page: {e}"))?;
+        .map_err(|e| said!("could not build the preview's page: {e}"))?;
     let whole = Visible {
         page: 0,
         rect: [0.0, 0.0, width, height],
@@ -543,42 +543,38 @@ fn build(
             ..Default::default()
         },
     )
-    .map_err(|e| format!("this document could not be parsed: {e}"))?;
+    .map_err(|e| said!("this document could not be parsed: {e}"))?;
 
     if prev.is_encrypted() || prev.was_encrypted() {
-        return Err(
+        return Err(said!(
             "tpdf cannot sign an encrypted document yet: the signature's value \
-                    would be encrypted with the document, and no reader could check it."
-                .into(),
-        );
+             would be encrypted with the document, and no reader could check it."
+        ));
     }
     if certified_without_changes(&prev) {
-        return Err(
+        return Err(said!(
             "This document is certified with no changes permitted, so a further \
-                    signature would break its certification."
-                .into(),
-        );
+             signature would break its certification."
+        ));
     }
     // A signature that locked the document said what a `/P 1` certification
     // says, and a further signature breaks it the same way. A document
     // timestamp is not a change in that sense (PDF 32000-2 §12.8.2.2.2), and is
     // what keeps a locked signature verifiable.
     if !details.document_timestamp && crate::docinfo::locked(&prev)? {
-        return Err(
+        return Err(said!(
             "A signature locked this document with no changes permitted, so a further \
              signature would break that lock."
-                .into(),
-        );
+        ));
     }
     // A lock in a certified document is two signatures each stating what may
     // change. No reader has been measured on the pair, so it is not written.
     if details.lock && certification(&prev) > 0 {
-        return Err(
+        return Err(said!(
             "This document is certified, and its certification already says which \
              changes are permitted. tpdf does not add a second statement beside it: \
              sign it without locking."
-                .into(),
-        );
+        ));
     }
     // A *visible* signature after any certification: measured with pyHanko,
     // whose difference analysis reads the new widget as a change the
@@ -594,25 +590,27 @@ fn build(
     // violation of somebody's certification is the direction not to guess in.
     if visible.is_some() && certification(&prev) > 0 {
         return Err(if details.field.is_some() {
-            "This document is certified, and tpdf draws no visible signature on a \
-             certified document: one added as a new field is read by at least one widely \
-             used validator as a change the certification does not permit, and whether \
-             one drawn in a field the document already has is read the same way has not \
-             been measured. Sign the field without a visible appearance."
-                .into()
+            said!(
+                "This document is certified, and tpdf draws no visible signature on a \
+                 certified document: one added as a new field is read by at least one widely \
+                 used validator as a change the certification does not permit, and whether \
+                 one drawn in a field the document already has is read the same way has not \
+                 been measured. Sign the field without a visible appearance."
+            )
         } else {
-            "This document is certified, and a visible signature added after a \
-             certification is read by at least one widely used validator as a change \
-             the certification does not permit. Sign it without a visible appearance --- \
-             an invisible signature is accepted."
-                .into()
+            said!(
+                "This document is certified, and a visible signature added after a \
+                 certification is read by at least one widely used validator as a change \
+                 the certification does not permit. Sign it without a visible appearance --- \
+                 an invisible signature is accepted."
+            )
         });
     }
 
     let pages = ordered_pages(&prev);
     let first = *pages
         .first()
-        .ok_or("this document has no page to put a signature on")?;
+        .ok_or_else(|| said!("this document has no page to put a signature on"))?;
     let target = match &details.field {
         Some(name) => Some(empty_field(&prev, &pages, name)?),
         None => None,
@@ -625,20 +623,20 @@ fn build(
             let [left, bottom, right, top] = target.rect;
             let least = appearance::MIN_SIDE;
             if right - left < least || top - bottom < least {
-                return Err(format!(
-                    "the field is {} by {} points, smaller than the {least} a side a visible \
-                     signature is drawn in --- sign it without an appearance",
-                    right - left,
-                    top - bottom
+                return Err(said!(
+                    "the field is {width} by {height} points, smaller than the {least} a side a \
+                     visible signature is drawn in --- sign it without an appearance",
+                    width = right - left,
+                    height = top - bottom
                 ));
             }
             let shown = crate::pagetree::displayed_page(&prev, target.page);
             Some((target.page, target.rect, shown.turns, visible))
         }
         (Some(visible), None) => {
-            let page = *pages
-                .get(visible.page as usize)
-                .ok_or("the page chosen for the signature is not in this document")?;
+            let page = *pages.get(visible.page as usize).ok_or_else(|| {
+                said!("the page chosen for the signature is not in this document")
+            })?;
             let shown = crate::pagetree::displayed_page(&prev, page);
             Some((
                 page,
@@ -656,7 +654,7 @@ fn build(
         .trailer
         .get(b"Root")
         .and_then(Object::as_reference)
-        .map_err(|_| "this document's catalog is not an object of its own".to_string())?;
+        .map_err(|_| said!("this document's catalog is not an object of its own"))?;
     let field = match &details.field {
         Some(name) => name.clone(),
         None => field_name(&prev)?,
@@ -688,7 +686,7 @@ fn build(
         for id in [target.field, target.widget] {
             incremental
                 .opt_clone_object_to_new_document(id)
-                .map_err(|e| format!("could not bring the signature field across: {e}"))?;
+                .map_err(|e| said!("could not bring the signature field across: {e}"))?;
         }
         incremental
             .new_document
@@ -740,7 +738,7 @@ fn build(
     crate::save::written_whole(&incremental)?;
     incremental
         .save_to(&mut sink)
-        .map_err(|e| format!("could not build the signature's revision: {e}"))?;
+        .map_err(|e| said!("could not build the signature's revision: {e}"))?;
     let mut update = sink.tail;
 
     let range = fill_range(&mut update, was)?;
@@ -805,7 +803,7 @@ pub(crate) fn certification(document: &Document) -> u8 {
 /// all be known, so none is picked.
 fn field_name(document: &Document) -> Result<String, String> {
     let taken = crate::fields::one_part_names(document)
-        .map_err(|why| format!("{why}, and a new signature field needs a name none has"))?;
+        .map_err(|why| said!("{why}, and a new signature field needs a name none has"))?;
     Ok((1..)
         .map(|n| format!("Signature{n}"))
         .find(|name| !taken.contains(name))
@@ -826,12 +824,12 @@ enum Site {
 fn annots_site(document: &Document, page: ObjectId) -> Result<Site, String> {
     let dict = document
         .get_dictionary(page)
-        .map_err(|_| "the page the signature goes on is not a dictionary".to_string())?;
+        .map_err(|_| said!("the page the signature goes on is not a dictionary"))?;
     array_site(
         document,
         dict,
         b"Annots",
-        "the annotation list of the page the signature goes on",
+        &said!("the annotation list of the page the signature goes on"),
     )
 }
 
@@ -847,7 +845,7 @@ struct Form {
 fn form_site(document: &Document, root: ObjectId) -> Result<Form, String> {
     let catalog = document
         .get_dictionary(root)
-        .map_err(|_| "this document's catalog is not a dictionary".to_string())?;
+        .map_err(|_| said!("this document's catalog is not a dictionary"))?;
     let (at, dict) = match catalog.get(b"AcroForm") {
         Err(_) => {
             return Ok(Form {
@@ -859,16 +857,16 @@ fn form_site(document: &Document, root: ObjectId) -> Result<Form, String> {
             Site::Object(*id),
             document
                 .get_dictionary(*id)
-                .map_err(|_| "this document's form is not a dictionary".to_string())?,
+                .map_err(|_| said!("this document's form is not a dictionary"))?,
         ),
         Ok(Object::Dictionary(dict)) => (Site::Inline, dict),
-        Ok(_) => return Err("this document's form is not a dictionary".into()),
+        Ok(_) => return Err(said!("this document's form is not a dictionary")),
     };
     let fields = array_site(
         document,
         dict,
         b"Fields",
-        "this document's list of form fields",
+        &said!("this document's list of form fields"),
     )?;
     Ok(Form { at, fields })
 }
@@ -885,9 +883,9 @@ fn array_site(
         Ok(Object::Array(_)) => Ok(Site::Inline),
         Ok(Object::Reference(id)) => match document.get_object(*id) {
             Ok(Object::Array(_)) => Ok(Site::Object(*id)),
-            _ => Err(format!("{what} is not an array")),
+            _ => Err(said!("{what} is not an array")),
         },
-        Ok(_) => Err(format!("{what} is not an array")),
+        Ok(_) => Err(said!("{what} is not an array")),
     }
 }
 
@@ -1046,7 +1044,7 @@ fn add_to_page(
     };
     incremental
         .opt_clone_object_to_new_document(changed)
-        .map_err(|e| format!("could not bring the signature's page across: {e}"))?;
+        .map_err(|e| said!("could not bring the signature's page across: {e}"))?;
     let object = incremental
         .new_document
         .get_object_mut(changed)
@@ -1092,7 +1090,7 @@ fn add_to_form(
     if let (Site::Object(array), Some(widget)) = (form.fields, widget) {
         incremental
             .opt_clone_object_to_new_document(array)
-            .map_err(|e| format!("could not bring the field list across: {e}"))?;
+            .map_err(|e| said!("could not bring the field list across: {e}"))?;
         let object = incremental
             .new_document
             .get_object_mut(array)
@@ -1106,7 +1104,7 @@ fn add_to_form(
     };
     incremental
         .opt_clone_object_to_new_document(owner)
-        .map_err(|e| format!("could not bring the form across: {e}"))?;
+        .map_err(|e| said!("could not bring the form across: {e}"))?;
     let object = incremental
         .new_document
         .get_object_mut(owner)
@@ -1186,7 +1184,7 @@ fn fill_range(update: &mut [u8], was: usize) -> Result<[u64; 4], String> {
     hole.resize(hole.len() + RESERVED * 2, b'0');
     hole.push(b'>');
     let placed = |what: &str| {
-        format!(
+        said!(
             "tpdf could not find the signature's {what} exactly once in the revision it \
              built, so it will not guess where to sign"
         )
@@ -1204,7 +1202,7 @@ fn fill_range(update: &mut [u8], was: usize) -> Result<[u64; 4], String> {
     let width = RANGE_TEXT.len() - b"/ByteRange".len();
     let mut text = format!("[0 {} {} {}", range[1], range[2], range[3]).into_bytes();
     if text.len() + 1 > width {
-        return Err("this document is too large for tpdf to sign".into());
+        return Err(said!("this document is too large for tpdf to sign"));
     }
     text.resize(width - 1, b' ');
     text.push(b']');

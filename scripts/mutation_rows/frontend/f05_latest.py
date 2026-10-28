@@ -117,7 +117,7 @@ ROWS += [
         'export const PROGRESS_EVENT = "tpdf://hidden";',
         'listens for the event the backend emits'),
     Mutation('hidden text: leave out what the check never looks at', 'src/lib/hiddentext.ts',
-        '  said.push(checked.notLookedAt);\n',
+        '  said.push(spoken(checked.notLookedAt));\n',
         '',
         'never says nothing was found without what was not looked at'),
     Mutation('hidden text: never say unsaved changes were not checked', 'src/lib/hiddentext.ts',

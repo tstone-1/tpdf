@@ -43,11 +43,11 @@ async fn finish_redaction_fill(
         )
     })
     .await
-    .map_err(|e| format!("The fill did not run: {e}"))?
+    .map_err(|e| said!("The fill did not run: {e}"))?
     .map_err(|e| {
-        format!(
-            "Content removal finished, but the fill could not be saved: {}",
-            e.message
+        said!(
+            "Content removal finished, but the fill could not be saved: {why}",
+            why = e.message
         )
     })
 }
@@ -87,15 +87,15 @@ pub(crate) fn scan_written_file(
     password: Option<&str>,
 ) -> Result<verify::Report, String> {
     let mut file = std::fs::File::open(at)
-        .map_err(|why| format!("the redacted file could not be read back: {why}"))?;
+        .map_err(|why| said!("the redacted file could not be read back: {why}"))?;
     // From the handle rather than from the name: the two can be different files
     // by now, and it is the one that was opened that is about to be mapped.
     let len = file
         .metadata()
-        .map_err(|why| format!("the redacted file could not be measured: {why}"))?
+        .map_err(|why| said!("the redacted file could not be measured: {why}"))?
         .len();
     let len = usize::try_from(len)
-        .map_err(|_| format!("the redacted file is {len} bytes, which is more than fits here"))?;
+        .map_err(|_| said!("the redacted file is {len} bytes, which is more than fits here"))?;
     scanning.scan(&mut file, len, needles, password)
 }
 
@@ -212,7 +212,7 @@ pub async fn ask_redactions(
 ) -> Result<Asked, String> {
     let targets = edits.redaction_targets(doc)?;
     if targets.is_empty() {
-        return Err("nothing in this document is marked for removal".into());
+        return Err(said!("nothing in this document is marked for removal"));
     }
 
     let mut planned: Vec<edits::PlannedRedaction> = Vec::new();
@@ -288,7 +288,7 @@ pub async fn ask_redactions(
                 ));
             }
         }
-        Err(why) => concerns.push(format!(
+        Err(why) => concerns.push(said!(
             "the form fields could not be read, so an answer under a marked area \
              cannot be checked: {why}"
         )),
@@ -364,7 +364,7 @@ async fn gate_written_file(
     tauri::async_runtime::spawn_blocking(move || ocr_gate::run(&service, &path, password, &pages))
         .await
         .unwrap_or_else(|e| {
-            vec![format!(
+            vec![said!(
                 "the removed areas could not be checked, so the file cannot be shown clean: {e}"
             )]
         })
@@ -399,7 +399,7 @@ pub async fn redact_raster_copy(
         )
     })
     .await
-    .map_err(|e| format!("The image-only copy did not run: {e}"))?
+    .map_err(|e| said!("The image-only copy did not run: {e}"))?
     .map_err(|why| why.message)?;
     Ok(redact::Applied {
         regions,
@@ -598,7 +598,7 @@ pub async fn redact_copy_asked(
     })
     .await
     .map_err(|e| Stopped::Failed {
-        message: format!("the redaction did not run: {e}"),
+        message: said!("the redaction did not run: {e}"),
         written: false,
     })?
     .map_err(|why| Stopped::Refused(why.message))?;
@@ -627,7 +627,7 @@ pub async fn redact_copy_asked(
     })
     .await
     .map_err(|e| Stopped::Failed {
-        message: format!("the verification did not run: {e}"),
+        message: said!("the verification did not run: {e}"),
         written: true,
     })?
     .map_err(|message| Stopped::Failed {
@@ -760,7 +760,7 @@ pub async fn redact_document(
         save::stage_in_place(Path::new(&staging), &plan, password.as_deref(), &*writing)
     })
     .await
-    .map_err(|e| SaveFailure::refused(format!("the redaction did not run: {e}")))?
+    .map_err(|e| SaveFailure::refused(said!("the redaction did not run: {e}")))?
     .map_err(SaveFailure::refused_by)?;
 
     // Past this line every failure is an `after_close`, for `save_document`'s
@@ -810,14 +810,14 @@ pub async fn redact_document(
             crate::fingerprint::Fingerprint::of(at).map_err(SaveFailure::after_close)?;
         let report =
             scan_written_file(&*scanning, at, &needles, verifying.as_deref()).map_err(|why| {
-                SaveFailure::after_close(format!(
+                SaveFailure::after_close(said!(
                     "the file was written but could not be read back to check it: {why}"
                 ))
             })?;
         Ok::<_, SaveFailure>((report, fingerprint))
     })
     .await
-    .map_err(|e| SaveFailure::after_close(format!("the redaction did not finish: {e}")))?;
+    .map_err(|e| SaveFailure::after_close(said!("the redaction did not finish: {e}")))?;
 
     let (report, fingerprint) = landed.map_err(|why| with_close_note(why, closed))?;
 

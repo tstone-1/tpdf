@@ -179,9 +179,9 @@ pub fn codes_for(asked: &[String], offered: &[String]) -> Result<String, Recogni
     if asked.is_empty() {
         let all: Vec<&str> = offered.iter().filter_map(|tag| code(tag)).collect();
         if all.is_empty() {
-            return Err(RecogniseError::Unavailable(
-                "no text-recognition language data is installed".into(),
-            ));
+            return Err(RecogniseError::Unavailable(said!(
+                "no text-recognition language data is installed"
+            )));
         }
         return Ok(all.join("+"));
     }
@@ -189,10 +189,10 @@ pub fn codes_for(asked: &[String], offered: &[String]) -> Result<String, Recogni
         .and_then(|tag| code(&tag))
         .map(str::to_string)
         .ok_or_else(|| {
-            RecogniseError::Unavailable(format!(
-                "tpdf has no text-recognition data for {}; it reads {}",
-                asked.join(", "),
-                offered.join(", ")
+            RecogniseError::Unavailable(said!(
+                "tpdf has no text-recognition data for {asked}; it reads {offered}",
+                asked = asked.join(", "),
+                offered = offered.join(", ")
             ))
         })
 }
@@ -305,10 +305,10 @@ impl Api {
     fn load() -> Result<Self, RecogniseError> {
         // linux-difference: tesseract
         let unavailable = |e: libloading::Error| {
-            RecogniseError::Unavailable(format!(
-                "text recognition needs Tesseract 5, and {} could not be loaded ({e}); \
+            RecogniseError::Unavailable(said!(
+                "text recognition needs Tesseract 5, and {library} could not be loaded ({e}); \
                  on Ubuntu and Debian it is the package libtesseract5, on Fedora tesseract-libs",
-                LIBRARIES[0]
+                library = LIBRARIES[0]
             ))
         };
         // SAFETY: opening a shared library runs its initialisers. This is
@@ -389,11 +389,10 @@ impl Tesseract {
     /// [`RecogniseError::Unavailable`] when either is missing, saying which.
     pub fn load() -> Result<Self, RecogniseError> {
         let dir = data_dir().ok_or_else(|| {
-            RecogniseError::Unavailable(
+            RecogniseError::Unavailable(said!(
                 "tpdf's text-recognition language data is not where tpdf looks for it; \
                  reinstalling should fix it"
-                    .into(),
-            )
+            ))
         })?;
         let offered = offered_in(&dir);
         let api = Api::load()?;
@@ -504,9 +503,9 @@ impl Recogniser for Tesseract {
                 0,
             );
             if started != 0 {
-                return Err(RecogniseError::Unavailable(format!(
-                    "Tesseract could not start with {codes} from {}",
-                    self.dir.display()
+                return Err(RecogniseError::Unavailable(said!(
+                    "Tesseract could not start with {codes} from {dir}",
+                    dir = self.dir.display()
                 )));
             }
             (self.api.set_page_seg_mode)(base.handle, PSM_SPARSE_TEXT);
@@ -516,15 +515,15 @@ impl Recogniser for Tesseract {
             let ppi = (pixels.scale * 72.0).round() as c_int;
             (self.api.set_source_resolution)(base.handle, ppi.max(70));
             if (self.api.recognize)(base.handle, std::ptr::null_mut()) != 0 {
-                return Err(RecogniseError::Rejected(
-                    "Tesseract could not read the image".into(),
-                ));
+                return Err(RecogniseError::Rejected(said!(
+                    "Tesseract could not read the image"
+                )));
             }
             let iterator = (self.api.get_iterator)(base.handle);
             if iterator.is_null() {
-                return Err(RecogniseError::Crashed(
-                    "Tesseract recognised the image and returned no results".into(),
-                ));
+                return Err(RecogniseError::Crashed(said!(
+                    "Tesseract recognised the image and returned no results"
+                )));
             }
             let results = Results {
                 api: &self.api,

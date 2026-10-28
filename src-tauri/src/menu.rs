@@ -138,10 +138,10 @@ pub async fn install<R: Runtime>(app: &AppHandle<R>, spec: Vec<SectionSpec>) -> 
     app.run_on_main_thread(move || {
         let _ = tx.blocking_send(build(&handle, &spec));
     })
-    .map_err(|e| format!("could not reach the main thread to build the menu: {e}"))?;
+    .map_err(|e| said!("could not reach the main thread to build the menu: {e}"))?;
     rx.recv()
         .await
-        .ok_or_else(|| "the menu builder did not answer".to_string())?
+        .ok_or_else(|| said!("the menu builder did not answer"))?
 }
 
 /// Sets each named command's item enabled or disabled.
@@ -178,17 +178,17 @@ pub async fn set_enabled<R: Runtime>(
         let _ = tx.blocking_send(if failed.is_empty() {
             Ok(())
         } else {
-            Err(format!(
-                "could not update {} menu item(s): {}",
-                failed.len(),
-                failed.join(", ")
+            Err(said!(
+                "could not update {count} menu item(s): {items}",
+                count = failed.len(),
+                items = failed.join(", ")
             ))
         });
     })
-    .map_err(|e| format!("could not reach the main thread to update the menu: {e}"))?;
+    .map_err(|e| said!("could not reach the main thread to update the menu: {e}"))?;
     rx.recv()
         .await
-        .ok_or_else(|| "the menu updater did not answer".to_string())?
+        .ok_or_else(|| said!("the menu updater did not answer"))?
 }
 
 /// Builds and sets the menu. Main thread only.
@@ -231,8 +231,9 @@ fn build<R: Runtime>(app: &AppHandle<R>, spec: &[SectionSpec]) -> Result<(), Str
                         // The accelerator is named because it is the only part
                         // of an item that can be rejected, and the message the
                         // parser gives does not say which item it came from.
-                        format!(
-                            "could not build the menu item {title:?} (accelerator {accelerator:?}): {e}"
+                        said!(
+                            "could not build the menu item {title:?} (accelerator \
+                             {accelerator:?}): {e}"
                         )
                     })?;
                     built.insert(id.clone(), entry.clone());
@@ -275,7 +276,7 @@ fn build<R: Runtime>(app: &AppHandle<R>, spec: &[SectionSpec]) -> Result<(), Str
 }
 
 fn why(e: tauri::Error) -> String {
-    format!("could not build the menu: {e}")
+    said!("could not build the menu: {e}")
 }
 
 /// Forwards a chosen item to the frontend, which runs it through the registry.

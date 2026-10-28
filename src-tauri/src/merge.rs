@@ -102,10 +102,10 @@ use crate::sweep;
 pub fn append(into: &mut Document, from: &Document) -> Result<usize, String> {
     let root = into
         .catalog()
-        .map_err(|e| format!("no document catalog: {e}"))?
+        .map_err(|e| said!("no document catalog: {e}"))?
         .get(b"Pages")
         .and_then(Object::as_reference)
-        .map_err(|e| format!("no page tree: {e}"))?;
+        .map_err(|e| said!("no page tree: {e}"))?;
 
     // Asked here rather than left to [`import`], which asks the same question,
     // so that a document with nothing in it is refused in those words. `import`
@@ -113,7 +113,7 @@ pub fn append(into: &mut Document, from: &Document) -> Result<usize, String> {
     // which is true and describes the caller rather than the file.
     let pages = pagetree::ordered_pages(from);
     if pages.is_empty() {
-        return Err("it has no pages".into());
+        return Err(said!("it has no pages"));
     }
 
     let want: Vec<usize> = (0..pages.len()).collect();
@@ -159,17 +159,17 @@ pub fn import(
 ) -> Result<Vec<ObjectId>, String> {
     let root = into
         .catalog()
-        .map_err(|e| format!("no document catalog: {e}"))?
+        .map_err(|e| said!("no document catalog: {e}"))?
         .get(b"Pages")
         .and_then(Object::as_reference)
-        .map_err(|e| format!("no page tree: {e}"))?;
+        .map_err(|e| said!("no page tree: {e}"))?;
 
     let pages = pagetree::ordered_pages(from);
     if pages.is_empty() {
-        return Err("it has no pages".into());
+        return Err(said!("it has no pages"));
     }
     if want.is_empty() {
-        return Err("no pages were asked for".into());
+        return Err(said!("no pages were asked for"));
     }
 
     // The pages asked for, in the order asked for, before anything is walked.
@@ -182,14 +182,14 @@ pub fn import(
     let mut taking: Vec<ObjectId> = Vec::with_capacity(want.len());
     for &at in want {
         let id = *pages.get(at).ok_or_else(|| {
-            format!(
-                "it has {} pages, so there is no page {}",
-                pages.len(),
-                at + 1
+            said!(
+                "it has {count} pages, so there is no page {page}",
+                count = pages.len(),
+                page = at + 1
             )
         })?;
         if taking.contains(&id) {
-            return Err(format!("page {} was asked for twice", at + 1));
+            return Err(said!("page {page} was asked for twice", page = at + 1));
         }
         taking.push(id);
     }
@@ -342,9 +342,9 @@ fn needed(
 fn shifted_id(id: ObjectId, by: u32) -> Result<ObjectId, String> {
     match id.0.checked_add(by) {
         Some(number) => Ok((number, id.1)),
-        None => Err(format!(
-            "object {} cannot be renumbered past {by} without overflowing",
-            id.0
+        None => Err(said!(
+            "object {object} cannot be renumbered past {by} without overflowing",
+            object = id.0
         )),
     }
 }
@@ -358,9 +358,9 @@ fn shifted_id(id: ObjectId, by: u32) -> Result<ObjectId, String> {
 /// rather than any input.
 fn shifted(object: &Object, by: u32, depth: usize) -> Result<Object, String> {
     if depth > sweep::MAX_NESTING {
-        return Err(format!(
-            "an object nests deeper than {} levels",
-            sweep::MAX_NESTING
+        return Err(said!(
+            "an object nests deeper than {limit} levels",
+            limit = sweep::MAX_NESTING
         ));
     }
     Ok(match object {
@@ -414,11 +414,11 @@ fn graft(into: &mut Document, root: ObjectId, kids: &[ObjectId]) -> Result<(), S
     let tree = into
         .get_object_mut(root)
         .and_then(Object::as_dict_mut)
-        .map_err(|e| format!("the page tree root is not a dictionary: {e}"))?;
+        .map_err(|e| said!("the page tree root is not a dictionary: {e}"))?;
     let mut order = tree
         .get(b"Kids")
         .and_then(Object::as_array)
-        .map_err(|e| format!("the page tree root has no kids: {e}"))?
+        .map_err(|e| said!("the page tree root has no kids: {e}"))?
         .clone();
     order.extend(kids.iter().map(|&id| Object::Reference(id)));
     tree.set("Kids", order);
@@ -427,7 +427,7 @@ fn graft(into: &mut Document, root: ObjectId, kids: &[ObjectId]) -> Result<(), S
     let count = into.get_pages().len() as i64;
     into.get_object_mut(root)
         .and_then(Object::as_dict_mut)
-        .map_err(|e| format!("the page tree root is not a dictionary: {e}"))?
+        .map_err(|e| said!("the page tree root is not a dictionary: {e}"))?
         .set("Count", count);
     Ok(())
 }

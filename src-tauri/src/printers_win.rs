@@ -75,7 +75,7 @@ pub fn list() -> Result<Vec<String>, String> {
             &mut returned,
         )
     }
-    .map_err(|e| format!("the printers could not be listed: {e}"))?;
+    .map_err(|e| said!("the printers could not be listed: {e}"))?;
     // SAFETY: the spooler wrote `returned` records at the start of the buffer.
     let records = unsafe {
         std::slice::from_raw_parts(buffer.as_ptr().cast::<PRINTER_INFO_4W>(), returned as usize)
@@ -125,7 +125,7 @@ impl Opened {
         let mut handle = PRINTER_HANDLE::default();
         // SAFETY: a wide name and a handle slot that outlive the call.
         unsafe { OpenPrinterW(name, &mut handle, None) }
-            .map_err(|e| format!("the printer {name} could not be opened: {e}"))?;
+            .map_err(|e| said!("the printer {name} could not be opened: {e}"))?;
         Ok(Self(handle))
     }
 }
@@ -151,7 +151,7 @@ impl Printer {
         let size = usize::try_from(size)
             .ok()
             .filter(|&size| size >= std::mem::size_of::<DEVMODEW>())
-            .ok_or_else(|| format!("the driver of {name} gives no settings"))?;
+            .ok_or_else(|| said!("the driver of {name} gives no settings"))?;
         let mut mode = vec![0u64; size.div_ceil(8)];
         // SAFETY: a buffer of the size the driver asked for.
         let got = unsafe {
@@ -165,7 +165,7 @@ impl Printer {
             )
         };
         if got != IDOK {
-            return Err(format!("the driver of {name} gives no settings ({got})"));
+            return Err(said!("the driver of {name} gives no settings ({got})"));
         }
         let port = port_of(&opened).unwrap_or_default();
         Ok(Self {
@@ -277,9 +277,9 @@ impl Printer {
                 Ok(true)
             }
             IDCANCEL if prompt => Ok(false),
-            other => Err(format!(
-                "the driver of {} refused the settings ({other})",
-                self.name
+            other => Err(said!(
+                "the driver of {name} refused the settings ({other})",
+                name = self.name
             )),
         }
     }
@@ -354,10 +354,10 @@ impl Printer {
             }
         };
         if dc.is_invalid() {
-            return Err(format!(
-                "the printer {} could not be prepared: {}",
-                self.name,
-                std::io::Error::last_os_error()
+            return Err(said!(
+                "the printer {name} could not be prepared: {e}",
+                name = self.name,
+                e = std::io::Error::last_os_error()
             ));
         }
         Ok(dc)

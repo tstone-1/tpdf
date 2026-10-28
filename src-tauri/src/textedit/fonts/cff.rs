@@ -16,10 +16,16 @@ pub(super) mod rights;
 #[cfg(test)]
 mod tests;
 
-const INVALID: &str = "unsupported embedded CFF font";
+fn invalid() -> String {
+    said!("unsupported embedded CFF font")
+}
 /// A PDF encoding naming a glyph outside the Latin set this path writes, such
 /// as a Cyrillic `uni0410`. `fonts::type1` reads such a font by glyph name
 /// instead (`type1::compact`), where the letter measures read-only text.
+pub(super) fn unnamed() -> String {
+    said!("unsupported CFF glyph name")
+}
+#[cfg(test)]
 pub(super) const UNNAMED: &str = "unsupported CFF glyph name";
 // Adobe glyph names for WinAnsi's printable ASCII range, ISO 32000-1 Annex D.
 pub(super) const ASCII_NAMES: [&str; 95] = [
@@ -126,7 +132,7 @@ pub(super) const ASCII_NAMES: [&str; 95] = [
 // leaves out a charstring it cannot interpret.
 pub(super) fn named(bytes: &[u8]) -> Result<Program, String> {
     let rights = profile::validate(bytes)?;
-    let face = Table::parse(bytes).ok_or(INVALID)?;
+    let face = Table::parse(bytes).ok_or_else(invalid)?;
     let matrix = face.matrix();
     if [
         matrix.sx, matrix.ky, matrix.kx, matrix.sy, matrix.tx, matrix.ty,
@@ -134,15 +140,15 @@ pub(super) fn named(bytes: &[u8]) -> Result<Program, String> {
         || face.number_of_glyphs() > 4096
         || face.glyph_name(GlyphId(0)) != Some(".notdef")
     {
-        return Err(INVALID.into());
+        return Err(invalid());
     }
     let mut seen = BTreeSet::new();
     let mut glyphs = BTreeMap::new();
     for index in 1..face.number_of_glyphs() {
         let glyph = GlyphId(index);
-        let name = face.glyph_name(glyph).ok_or(INVALID)?;
+        let name = face.glyph_name(glyph).ok_or_else(invalid)?;
         if name.is_empty() || name.len() > 127 || !seen.insert(name) {
-            return Err(INVALID.into());
+            return Err(invalid());
         }
         let (Some(width), Ok(bounds)) = (
             face.glyph_width(glyph),
@@ -185,65 +191,66 @@ pub(in crate::textedit) fn embedded(doc: &Document, font: &Dictionary) -> Result
             )
         })
     {
-        return Err(INVALID.into());
+        return Err(invalid());
     }
-    let descriptor = dictionary(doc, font.get(b"FontDescriptor").map_err(|_| INVALID)?)?;
+    let descriptor = dictionary(doc, font.get(b"FontDescriptor").map_err(|_| invalid())?)?;
     let flags = descriptor
         .get(b"Flags")
         .and_then(Object::as_i64)
-        .map_err(|_| INVALID)?;
+        .map_err(|_| invalid())?;
     if flags & (4 | 32 | 262144) != 32
         || descriptor.get(b"Type").and_then(Object::as_name).ok() != Some(b"FontDescriptor")
         || descriptor.get(b"FontName").ok() != font.get(b"BaseFont").ok()
         || descriptor.has(b"FontFile")
         || descriptor.has(b"FontFile2")
     {
-        return Err(INVALID.into());
+        return Err(invalid());
     }
-    let stream = crate::encoding::resolve(doc, descriptor.get(b"FontFile3").map_err(|_| INVALID)?)
-        .as_stream()
-        .map_err(|_| INVALID)?;
+    let stream =
+        crate::encoding::resolve(doc, descriptor.get(b"FontFile3").map_err(|_| invalid())?)
+            .as_stream()
+            .map_err(|_| invalid())?;
     if stream.dict.get(b"Subtype").and_then(Object::as_name).ok() != Some(b"Type1C") {
-        return Err(INVALID.into());
+        return Err(invalid());
     }
     let bytes = filters::decode(stream, super::super::MAX_CONTENT)?;
     let restricted = profile::validate(&bytes)?.is_some_and(super::restricts);
-    let face = Table::parse(&bytes).ok_or(INVALID)?;
+    let face = Table::parse(&bytes).ok_or_else(invalid)?;
     let matrix = face.matrix();
     if [
         matrix.sx, matrix.ky, matrix.kx, matrix.sy, matrix.tx, matrix.ty,
     ] != [0.001, 0., 0., 0.001, 0., 0.]
         || face.number_of_glyphs() > 4096
     {
-        return Err(INVALID.into());
+        return Err(invalid());
     }
     let mut names = BTreeMap::new();
     for index in 0..face.number_of_glyphs() {
         let glyph = GlyphId(index);
-        let name = face.glyph_name(glyph).ok_or(INVALID)?; // CID fonts have no glyph names.
+        let name = face.glyph_name(glyph).ok_or_else(invalid)?; // CID fonts have no glyph names.
         if name.is_empty() || name.len() > 127 || names.insert(name, glyph).is_some() {
-            return Err(INVALID.into());
+            return Err(invalid());
         }
     }
     if names.get(".notdef") != Some(&GlyphId(0)) {
-        return Err(INVALID.into());
+        return Err(invalid());
     }
     let first = font
         .get(b"FirstChar")
         .and_then(Object::as_i64)
-        .map_err(|_| INVALID)?;
+        .map_err(|_| invalid())?;
     let last = font
         .get(b"LastChar")
         .and_then(Object::as_i64)
-        .map_err(|_| INVALID)?;
+        .map_err(|_| invalid())?;
     if first < 0 || last > 255 || first > last {
-        return Err(INVALID.into());
+        return Err(invalid());
     }
-    let widths = crate::encoding::resolve(doc, font.get(b"Widths").map_err(|_| INVALID)?)
+    let widths = crate::encoding::resolve(doc, font.get(b"Widths").map_err(|_| invalid())?)
         .as_array()
-        .map_err(|_| INVALID)?;
+        .map_err(|_| invalid())?;
     if widths.len() != (last - first + 1) as usize {
-        return Err(INVALID.into());
+        return Err(invalid());
     }
     let encoding = encoding::slots(doc, font)?;
     let mut result = Box::new([None; 256]);
@@ -265,9 +272,9 @@ pub(in crate::textedit) fn embedded(doc: &Document, font: &Dictionary) -> Result
             continue;
         }
         let width = number(&widths[code - first as usize])?;
-        let advance = f64::from(face.glyph_width(glyph).ok_or(INVALID)?);
+        let advance = f64::from(face.glyph_width(glyph).ok_or_else(invalid)?);
         if width <= 0. || width > 2000. || (width - advance).abs() > 1. {
-            return Err("CFF font widths disagree with its glyph metrics".into());
+            return Err(said!("CFF font widths disagree with its glyph metrics"));
         }
         match super::outlines::cff_bounds(&face, glyph) {
             Ok(Some([left, bottom, right, top]))
@@ -281,7 +288,7 @@ pub(in crate::textedit) fn embedded(doc: &Document, font: &Dictionary) -> Result
             _ => continue,
         }
         if result[slot].is_some() {
-            return Err("ambiguous duplicate CFF glyph encoding".into());
+            return Err(said!("ambiguous duplicate CFF glyph encoding"));
         }
         result[slot] = Some(width);
         codes[code] = Some(slot as u8);

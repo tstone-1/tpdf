@@ -95,10 +95,10 @@ fn awaited_then<T>(
         Err(_) => {
             end();
             let _ = rx.recv_timeout(released_within);
-            Err(format!(
-                "the worker checking the saved file did not answer within {:.0} s, so the \
+            Err(said!(
+                "the worker checking the saved file did not answer within {seconds:.0} s, so the \
                  save could not be confirmed",
-                within.as_secs_f64()
+                seconds = within.as_secs_f64()
             ))
         }
     }
@@ -182,9 +182,9 @@ impl InWorker {
                 password: password.to_string(),
             })?;
             if !answered.ok {
-                return Err(format!(
-                    "the worker could not take the document's password: {}",
-                    answered.error
+                return Err(said!(
+                    "the worker could not take the document's password: {error}",
+                    error = answered.error
                 ));
             }
         }
@@ -199,11 +199,11 @@ impl InWorker {
             // the protocol checks that a reply matches its request --- `Reply`'s
             // own documentation says so --- so the caller does, and says which it
             // got rather than reporting a parse failure for a protocol one.
-            other => Err(format!(
-                "the worker answered the re-read with {}",
-                match other {
+            other => Err(said!(
+                "the worker answered the re-read with {reply}",
+                reply = match other {
                     Some(reply) => reply.described(),
-                    None => "no payload at all".to_string(),
+                    None => said!("no payload at all"),
                 }
             )),
         }
@@ -270,11 +270,11 @@ impl Verifier for InWorker {
             }
             match answered.reply {
                 Some(Reply::Validated(extended)) => Ok(*extended),
-                other => Err(format!(
-                    "the worker answered the validation data with {}",
-                    match other {
+                other => Err(said!(
+                    "the worker answered the validation data with {reply}",
+                    reply = match other {
                         Some(reply) => reply.described(),
-                        None => "no payload at all".to_string(),
+                        None => said!("no payload at all"),
                     }
                 )),
             }
@@ -297,11 +297,11 @@ impl Verifier for InWorker {
             }
             match answered.reply {
                 Some(Reply::PreparedSignature(unsigned)) => Ok(unsigned),
-                other => Err(format!(
-                    "the worker answered the document timestamp with {}",
-                    match other {
+                other => Err(said!(
+                    "the worker answered the document timestamp with {reply}",
+                    reply = match other {
                         Some(reply) => reply.described(),
-                        None => "no payload at all".to_string(),
+                        None => said!("no payload at all"),
                     }
                 )),
             }
@@ -331,11 +331,11 @@ impl Verifier for InWorker {
             }
             match answered.reply {
                 Some(Reply::Surveyed(survey)) => Ok(*survey),
-                other => Err(format!(
-                    "the worker answered the survey of the signatures with {}",
-                    match other {
+                other => Err(said!(
+                    "the worker answered the survey of the signatures with {reply}",
+                    reply = match other {
                         Some(reply) => reply.described(),
-                        None => "no payload at all".to_string(),
+                        None => said!("no payload at all"),
                     }
                 )),
             }
@@ -358,11 +358,11 @@ impl InWorker {
         }
         match answered.reply {
             Some(Reply::Properties(properties)) => Ok(properties.signatures),
-            other => Err(format!(
-                "the worker answered the signature check with {}",
-                match other {
+            other => Err(said!(
+                "the worker answered the signature check with {reply}",
+                reply = match other {
                     Some(reply) => reply.described(),
-                    None => "no payload at all".to_string(),
+                    None => said!("no payload at all"),
                 }
             )),
         }
@@ -386,9 +386,9 @@ impl InWorker {
                 password: password.to_string(),
             })?;
             if !answered.ok {
-                return Err(format!(
-                    "the worker could not take the document's password: {}",
-                    answered.error
+                return Err(said!(
+                    "the worker could not take the document's password: {error}",
+                    error = answered.error
                 ));
             }
         }
@@ -404,11 +404,11 @@ impl InWorker {
             // A well-formed message answering a different question --- see
             // `InWorker::ask`, which says why the caller checks this rather than
             // the protocol.
-            other => Err(format!(
-                "the worker answered the verification with {}",
-                match other {
+            other => Err(said!(
+                "the worker answered the verification with {reply}",
+                reply = match other {
                     Some(reply) => reply.described(),
-                    None => "no payload at all".to_string(),
+                    None => said!("no payload at all"),
                 }
             )),
         }
@@ -509,9 +509,9 @@ impl InWorker {
             })? {
                 Reply::Unlocked => {}
                 other => {
-                    return Err(Declined::Failed(format!(
-                        "the worker answered a password with {}",
-                        other.described()
+                    return Err(Declined::Failed(said!(
+                        "the worker answered a password with {reply}",
+                        reply = other.described()
                     )))
                 }
             }
@@ -596,7 +596,7 @@ impl Session {
                 return Err(Declined::Refused(response.error));
             }
             if response.abandoned {
-                return Err(Declined::Failed("the worker abandoned the render".into()));
+                return Err(Declined::Failed(said!("the worker abandoned the render")));
             }
             let expected = usize::from(request.width) * usize::from(request.height) * 4;
             let length = raw_tile_length(response.bytes, expected, worker.tile.len())?;
@@ -617,9 +617,9 @@ impl Session {
         action: impl FnOnce(&mut Worker) -> Result<T, Declined> + Send + 'static,
     ) -> Result<T, Declined> {
         let Some(worker) = self.worker.take() else {
-            return Err(Declined::Failed(
-                "the worker holding this document is gone".into(),
-            ));
+            return Err(Declined::Failed(said!(
+                "the worker holding this document is gone"
+            )));
         };
         let (tx, rx) = std::sync::mpsc::channel();
         std::thread::spawn(move || {
@@ -634,9 +634,9 @@ impl Session {
             }
             Err(_) => {
                 kill_pid(self.pid);
-                Err(Declined::Failed(format!(
-                    "the worker reading the document did not answer within {:.0} s",
-                    deadline.as_secs_f64()
+                Err(Declined::Failed(said!(
+                    "the worker reading the document did not answer within {seconds:.0} s",
+                    seconds = deadline.as_secs_f64()
                 )))
             }
         }
@@ -645,7 +645,7 @@ impl Session {
 
 fn raw_tile_length(stated: usize, expected: usize, capacity: usize) -> Result<usize, Declined> {
     if stated != expected || stated > capacity {
-        return Err(Declined::Failed(format!(
+        return Err(Declined::Failed(said!(
             "worker returned {stated} tile bytes; expected {expected} within {capacity}"
         )));
     }
@@ -694,17 +694,17 @@ impl InWorker {
                 },
             ) {
                 Ok(Reply::Open { page_count, .. }) => Ok(page_count),
-                Ok(other) => Err(format!(
-                    "the worker answered the print job's read-back with {}",
-                    other.described()
+                Ok(other) => Err(said!(
+                    "the worker answered the print job's read-back with {reply}",
+                    reply = other.described()
                 )),
                 Err(why) => Err(why.message().to_string()),
             }
         });
         awaited(&rx, DEFAULT_DEADLINE, pid).map_err(|_| {
-            format!(
-                "the worker reading the print job back did not answer within {} s",
-                DEFAULT_DEADLINE.as_secs()
+            said!(
+                "the worker reading the print job back did not answer within {seconds} s",
+                seconds = DEFAULT_DEADLINE.as_secs()
             )
         })?
     }
@@ -732,9 +732,9 @@ impl InWorker {
         let rx = asked_on_a_thread(worker, |worker| {
             match Self::asked(worker, &Request::Properties)? {
                 Reply::Properties(properties) => Ok(*properties),
-                other => Err(Declined::Failed(format!(
-                    "the worker answered the properties request with {}",
-                    other.described()
+                other => Err(Declined::Failed(said!(
+                    "the worker answered the properties request with {reply}",
+                    reply = other.described()
                 ))),
             }
         });
@@ -766,9 +766,9 @@ impl InWorker {
         let rx = asked_on_a_thread(worker, |worker| {
             match Self::asked(worker, &Request::SignatureImage)? {
                 Reply::SignatureImage(image) => Ok(image),
-                other => Err(Declined::Failed(format!(
-                    "the worker answered the image request with {}",
-                    other.described()
+                other => Err(Declined::Failed(said!(
+                    "the worker answered the image request with {reply}",
+                    reply = other.described()
                 ))),
             }
         });
@@ -807,9 +807,9 @@ impl InWorker {
         };
         let rx = asked_on_a_thread(worker, move |worker| match Self::asked(worker, &request)? {
             Reply::PreparedSignature(unsigned) => Ok(unsigned),
-            other => Err(Declined::Failed(format!(
-                "the worker answered the signature request with {}",
-                other.described()
+            other => Err(Declined::Failed(said!(
+                "the worker answered the signature request with {reply}",
+                reply = other.described()
             ))),
         });
         awaited(&rx, DEFAULT_DEADLINE, pid).map_err(Declined::Failed)?
@@ -826,7 +826,7 @@ impl InWorker {
         }
         answered
             .reply
-            .ok_or_else(|| Declined::Failed("the worker answered with no payload at all".into()))
+            .ok_or_else(|| Declined::Failed(said!("the worker answered with no payload at all")))
     }
 }
 
@@ -838,10 +838,12 @@ fn raster_snapshot(source: &mut std::fs::File, len: usize, plan: &Plan) -> Resul
     use sha2::{Digest, Sha256};
     use std::io::{Read, Seek, SeekFrom};
     let expected = plan.opened_as.as_ref().ok_or_else(|| {
-        Refusal::from("Reopen the source before creating an image-only redaction")
+        Refusal::from(said!(
+            "Reopen the source before creating an image-only redaction"
+        ))
     })?;
     if len > 512 * 1024 * 1024 || len as u64 != expected.len {
-        return Err("The source is too large or has changed since it was opened".into());
+        return Err(said!("The source is too large or has changed since it was opened").into());
     }
     let mut mapped = Shm::create(len)?;
     source.seek(SeekFrom::Start(0)).map_err(|e| e.to_string())?;
@@ -850,9 +852,9 @@ fn raster_snapshot(source: &mut std::fs::File, len: usize, plan: &Plan) -> Resul
         .map_err(|e| e.to_string())?;
     let digest: [u8; 32] = Sha256::digest(mapped.as_slice()).into();
     if digest != expected.digest {
-        return Err(Refusal::changed(
-            "The source changed. Reopen it and mark the regions again",
-        ));
+        return Err(Refusal::changed(said!(
+            "The source changed. Reopen it and mark the regions again"
+        )));
     }
     Ok(mapped)
 }
@@ -981,12 +983,10 @@ impl Rewriter for InWorker {
             }
             match answered.reply {
                 Some(Reply::Merged { bytes, pages }) => Ok((bytes, pages)),
-                other => Err(format!(
-                    "the worker answered the pictures with {}",
-                    other.map_or_else(
-                        || "no payload at all".to_string(),
-                        |reply| reply.described()
-                    )
+                other => Err(said!(
+                    "the worker answered the pictures with {reply}",
+                    reply =
+                        other.map_or_else(|| said!("no payload at all"), |reply| reply.described())
                 )
                 .into()),
             }
@@ -1013,12 +1013,12 @@ impl Rewriter for InWorker {
                 return Err(Refusal::from(answered.error));
             }
             let Some(Reply::Picture { width, height }) = answered.reply else {
-                return Err("the worker answered the picture with something else".into());
+                return Err(said!("the worker answered the picture with something else").into());
             };
             let expected = (width as usize)
                 .checked_mul(height as usize)
                 .and_then(|n| n.checked_mul(4))
-                .ok_or("the worker stated a picture too large to hold")?;
+                .ok_or(said!("the worker stated a picture too large to hold"))?;
             let length = raw_tile_length(answered.bytes, expected, worker.tile.len())
                 .map_err(|declined| Refusal::from(declined.message().to_string()))?;
             let image = crate::signature::Image {
@@ -1028,7 +1028,7 @@ impl Rewriter for InWorker {
             };
             // Held to the model's own limits before anything else sees it.
             if !image.valid_picture() {
-                return Err("the worker answered with a picture past its limits".into());
+                return Err(said!("the worker answered with a picture past its limits").into());
             }
             Ok(image)
         });
@@ -1098,9 +1098,9 @@ impl InWorker {
                 password: password.to_string(),
             })?;
             if !answered.ok {
-                return Err(format!(
-                    "the worker could not take the document's password: {}",
-                    answered.error
+                return Err(said!(
+                    "the worker could not take the document's password: {error}",
+                    error = answered.error
                 )
                 .into());
             }
@@ -1124,11 +1124,11 @@ impl InWorker {
             // A well-formed message answering a different question --- see
             // [`InWorker::ask`], which says why the caller checks this rather
             // than the protocol.
-            other => Err(format!(
-                "the worker answered the rewrite with {}",
-                match other {
+            other => Err(said!(
+                "the worker answered the rewrite with {reply}",
+                reply = match other {
                     Some(reply) => reply.described(),
-                    None => "no payload at all".to_string(),
+                    None => said!("no payload at all"),
                 }
             )
             .into()),
@@ -1154,9 +1154,9 @@ impl InWorker {
                 password: password.to_string(),
             })?;
             if !answered.ok {
-                return Err(format!(
-                    "the worker could not take the document's password: {}",
-                    answered.error
+                return Err(said!(
+                    "the worker could not take the document's password: {error}",
+                    error = answered.error
                 )
                 .into());
             }
@@ -1174,11 +1174,11 @@ impl InWorker {
         }
         match answered.reply {
             Some(Reply::Merged { bytes, pages }) => Ok((bytes, pages)),
-            other => Err(format!(
-                "the worker answered the merge with {}",
-                match other {
+            other => Err(said!(
+                "the worker answered the merge with {reply}",
+                reply = match other {
                     Some(reply) => reply.described(),
-                    None => "no payload at all".to_string(),
+                    None => said!("no payload at all"),
                 }
             )
             .into()),
@@ -1205,9 +1205,9 @@ impl InWorker {
                 password: password.to_string(),
             })?;
             if !answered.ok {
-                return Err(format!(
-                    "the worker could not take the document's password: {}",
-                    answered.error
+                return Err(said!(
+                    "the worker could not take the document's password: {error}",
+                    error = answered.error
                 )
                 .into());
             }
@@ -1218,12 +1218,9 @@ impl InWorker {
         }
         match answered.reply {
             Some(Reply::Rewrote(bytes)) => Ok(bytes),
-            other => Err(format!(
-                "the worker answered the attachment with {}",
-                other.map_or_else(
-                    || "no payload at all".to_string(),
-                    |reply| reply.described()
-                )
+            other => Err(said!(
+                "the worker answered the attachment with {reply}",
+                reply = other.map_or_else(|| said!("no payload at all"), |reply| reply.described())
             )
             .into()),
         }
@@ -1239,11 +1236,11 @@ impl InWorker {
         }
         match answered.reply {
             Some(Reply::Rewrote(bytes)) => Ok(bytes),
-            other => Err(format!(
-                "the worker answered the print job with {}",
-                match other {
+            other => Err(said!(
+                "the worker answered the print job with {reply}",
+                reply = match other {
                     Some(reply) => reply.described(),
-                    None => "no payload at all".to_string(),
+                    None => said!("no payload at all"),
                 }
             )
             .into()),

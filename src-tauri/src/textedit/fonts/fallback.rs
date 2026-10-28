@@ -83,12 +83,12 @@ impl Font {
     }
 
     fn bundled(style: u8, text: &str, subset: bool) -> Result<(Self, super::Metrics), String> {
-        let face = super::face(data(style), false).map_err(|e| format!("Bundled font: {e}"))?;
+        let face = super::face(data(style), false).map_err(|e| said!("Bundled font: {e}"))?;
         let (mut font, metrics) = Self::measure(&face, style, text, false)?;
         if subset {
             font.program_key = font.glyphs.clone();
             let (program, glyphs) = super::fallback_subset::build(data(style), &font.glyphs)
-                .map_err(|e| format!("Bundled font subset: {e}"))?;
+                .map_err(|e| said!("Bundled font subset: {e}"))?;
             // Revalidate the remapped outlines and advances, not just the text map.
             let face = super::face(&program, false)?;
             let (remapped, _) = super::unicode::Metrics::with_glyphs(
@@ -135,19 +135,21 @@ impl Font {
                 .map(|os2| {
                     os2.get(8..10)
                         .map(|pair| u16::from_be_bytes([pair[0], pair[1]]))
-                        .ok_or("invalid installed font rights")
+                        .ok_or_else(|| said!("invalid installed font rights"))
                 })
                 .transpose()?;
             let table = face
                 .raw_face()
                 .table(ttf_parser::Tag::from_bytes(b"CFF "))
-                .ok_or("missing installed CFF program")?;
+                .ok_or_else(|| said!("missing installed CFF program"))?;
             let compact = super::cff::rights::with_rights(table, rights)?;
             let read = super::cff::cid::parse(&compact)?;
             for (&code, &width) in &font.widths {
-                let glyph = read.glyph(code)?.ok_or("unreadable installed CFF glyph")?;
+                let glyph = read
+                    .glyph(code)?
+                    .ok_or_else(|| said!("unreadable installed CFF glyph"))?;
                 if (glyph.advance - width).abs() > super::installed::TOLERANCE {
-                    return Err("installed CFF widths disagree with its metrics".into());
+                    return Err(said!("installed CFF widths disagree with its metrics"));
                 }
             }
             font.compact = Some(compact);
@@ -171,7 +173,7 @@ impl Font {
         let characters: std::collections::BTreeSet<_> =
             text.chars().filter(|ch| *ch != '\n').collect();
         if characters.len() > crate::textedit::MAX_TEXT {
-            return Err("too many replacement characters".into());
+            return Err(said!("too many replacement characters"));
         }
         let mut font = Self {
             style,
@@ -184,10 +186,9 @@ impl Font {
             program_key: Vec::new(),
         };
         for (index, ch) in characters.into_iter().enumerate() {
-            let glyph = face
-                .glyph_index(ch)
-                .filter(|id| id.0 != 0)
-                .ok_or("The selected fallback font does not contain a required character")?;
+            let glyph = face.glyph_index(ch).filter(|id| id.0 != 0).ok_or_else(|| {
+                said!("The selected fallback font does not contain a required character")
+            })?;
             // Two characters drawn by one glyph would share an identity code;
             // the later would take the code's text, and the layout below, which
             // must encode every character, refuses the earlier.
@@ -198,7 +199,7 @@ impl Font {
             };
             let width = f64::from(
                 face.glyph_hor_advance(glyph)
-                    .ok_or("missing fallback glyph width")?,
+                    .ok_or_else(|| said!("missing fallback glyph width"))?,
             ) * 1000.
                 / f64::from(face.units_per_em());
             font.codes.insert(code, ch.to_string());

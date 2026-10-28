@@ -201,7 +201,7 @@ impl DocumentGraph {
             .get_or_init(|| {
                 let bytes = self
                     .bytes()
-                    .ok_or_else(|| "the document's bytes could not be read".to_string())?;
+                    .ok_or_else(|| said!("the document's bytes could not be read"))?;
                 self.parses.set(self.parses.get() + 1);
                 encoding::load(&bytes, self.password())
             })
@@ -303,7 +303,7 @@ impl DocumentGraph {
                 // file, paid only by a caller that opens the properties dialog.
                 let bytes = self
                     .bytes()
-                    .ok_or_else(|| "the document's bytes could not be read".to_string())?;
+                    .ok_or_else(|| said!("the document's bytes could not be read"))?;
                 docinfo::scan_from(self.parsed()?, &bytes, pages, self.password())
             })
             .clone()
@@ -326,7 +326,7 @@ impl DocumentGraph {
     pub fn append(&self, plan: &crate::edits::Plan) -> Result<crate::save::Update, String> {
         let bytes = self
             .bytes()
-            .ok_or_else(|| "the document's bytes could not be read".to_string())?;
+            .ok_or_else(|| said!("the document's bytes could not be read"))?;
         // `into_owned` is the one copy this path makes, and it is the same copy
         // the coordinator used to make with `std::fs::read`. The document
         // arrives as a read-only mapping and `lopdf` needs an owned buffer, so
@@ -354,7 +354,7 @@ impl DocumentGraph {
     ) -> Result<crate::sign_prepare::Unsigned, String> {
         let bytes = self
             .bytes()
-            .ok_or_else(|| "the document's bytes could not be read".to_string())?;
+            .ok_or_else(|| said!("the document's bytes could not be read"))?;
         crate::sign_prepare::prepare_noted(bytes.into_owned(), at, self.password(), visible, notes)
     }
 
@@ -370,7 +370,7 @@ impl DocumentGraph {
     pub fn prepare_document_timestamp(&self) -> Result<crate::sign_prepare::Unsigned, String> {
         let bytes = self
             .bytes()
-            .ok_or_else(|| "the document's bytes could not be read".to_string())?;
+            .ok_or_else(|| said!("the document's bytes could not be read"))?;
         crate::sign_prepare::prepare_document_timestamp(bytes.into_owned(), self.password())
     }
 
@@ -388,7 +388,7 @@ impl DocumentGraph {
     ) -> Result<crate::sign_dss::Extended, String> {
         let bytes = self
             .bytes()
-            .ok_or_else(|| "the document's bytes could not be read".to_string())?;
+            .ok_or_else(|| said!("the document's bytes could not be read"))?;
         crate::sign_dss::extend(&bytes, gathered, pages)
     }
 
@@ -405,7 +405,7 @@ impl DocumentGraph {
     pub fn survey_signatures(&self, pages: u32) -> Result<crate::sign_dss::Survey, String> {
         let bytes = self
             .bytes()
-            .ok_or_else(|| "the document's bytes could not be read".to_string())?;
+            .ok_or_else(|| said!("the document's bytes could not be read"))?;
         Ok(crate::sign_dss::survey(&bytes, pages))
     }
 
@@ -438,9 +438,9 @@ impl DocumentGraph {
         job: crate::save::Job,
         inputs: Option<crate::save::Inputs<'_>>,
     ) -> Result<Vec<u8>, crate::save::Refusal> {
-        let bytes = self
-            .bytes()
-            .ok_or_else(|| crate::save::Refusal::from("the document's bytes could not be read"))?;
+        let bytes = self.bytes().ok_or_else(|| {
+            crate::save::Refusal::from(said!("the document's bytes could not be read"))
+        })?;
         crate::save::rewrite_update_with(&bytes, plan, job, self.password(), inputs)
     }
 
@@ -459,9 +459,9 @@ impl DocumentGraph {
         plan: &crate::edits::Plan,
         inputs: crate::save::Inputs<'_>,
     ) -> Result<(Vec<u8>, u32), crate::save::Refusal> {
-        let bytes = self
-            .bytes()
-            .ok_or_else(|| crate::save::Refusal::from("the document's bytes could not be read"))?;
+        let bytes = self.bytes().ok_or_else(|| {
+            crate::save::Refusal::from(said!("the document's bytes could not be read"))
+        })?;
         crate::save::merge_update(&bytes, plan, inputs, self.password())
     }
 
@@ -491,7 +491,7 @@ impl DocumentGraph {
     pub fn print_range(&self, job: &crate::print::Job) -> Result<Vec<u8>, String> {
         let bytes = self
             .bytes()
-            .ok_or_else(|| "the document's bytes could not be read".to_string())?;
+            .ok_or_else(|| said!("the document's bytes could not be read"))?;
         crate::print::build_update(&bytes, job)
     }
 
@@ -510,7 +510,7 @@ impl DocumentGraph {
     pub fn reread_pages(&self) -> Result<usize, String> {
         let bytes = self
             .bytes()
-            .ok_or_else(|| "the document's bytes could not be read".to_string())?;
+            .ok_or_else(|| said!("the document's bytes could not be read"))?;
         crate::save::reread_pages(&bytes, self.password())
     }
 
@@ -536,7 +536,7 @@ impl DocumentGraph {
     pub fn verify(&self, needles: &[String]) -> Result<crate::verify::Report, String> {
         let bytes = self
             .bytes()
-            .ok_or_else(|| "the document's bytes could not be read".to_string())?;
+            .ok_or_else(|| said!("the document's bytes could not be read"))?;
         Ok(crate::verify::scan(&bytes, needles, self.password()))
     }
 

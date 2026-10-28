@@ -29,7 +29,7 @@ fn skip(bytes: &[u8], pos: &mut usize) {
 
 // Iteration is bounded by the content limit; recursive containers by 32 levels.
 fn token(bytes: &[u8], pos: &mut usize, depth: usize) -> Result<bool, String> {
-    let invalid = || "cannot preserve text stream tokens".to_string();
+    let invalid = || said!("cannot preserve text stream tokens");
     if depth > 32 {
         return Err(invalid());
     }
@@ -123,7 +123,7 @@ pub(super) fn rewrite_expanded(
     if changed.operations.len() + expansions.values().map(Vec::len).sum::<usize>()
         > super::MAX_OPERATIONS
     {
-        return Err("edited page exceeds the text operator limit".into());
+        return Err(said!("edited page exceeds the text operator limit"));
     }
     let mut spans: Vec<Range<usize>> = Vec::new();
     let mut pos = 0;
@@ -135,14 +135,18 @@ pub(super) fn rewrite_expanded(
         }
         start.get_or_insert(pos);
         if token(bytes, &mut pos, 0)? {
-            spans.push(start.take().ok_or("missing operator start")?..pos);
+            spans.push(
+                start
+                    .take()
+                    .ok_or_else(|| said!("missing operator start"))?..pos,
+            );
             if spans.len() > changed.operations.len() {
-                return Err("text operator boundaries disagree".into());
+                return Err(said!("text operator boundaries disagree"));
             }
         }
     }
     if start.is_some() || spans.len() != changed.operations.len() {
-        return Err("text operator boundaries disagree".into());
+        return Err(said!("text operator boundaries disagree"));
     }
     let mut output = Vec::new();
     let mut copied = 0;
@@ -154,14 +158,14 @@ pub(super) fn rewrite_expanded(
         let original = Content::decode_strict(&bytes[span.clone()]).map_err(|e| e.to_string())?;
         let next = &changed.operations[index];
         if original.operations.len() != 1 {
-            return Err("text operator boundaries disagree".into());
+            return Err(said!("text operator boundaries disagree"));
         }
         let same_operator = original.operations[0].operator == next.operator;
         let compensated_show = edits.contains(&index)
             && original.operations[0].operator == "Tj"
             && next.operator == "TJ";
         if !same_operator && !compensated_show {
-            return Err("text operator boundaries disagree".into());
+            return Err(said!("text operator boundaries disagree"));
         }
         if edits.contains(&index) {
             let actual_text = next.operator == "BDC"
@@ -209,7 +213,7 @@ pub(super) fn rewrite_expanded(
             match moved_path {
                 Some(true) if open_path.replace(index).is_none() => {}
                 Some(false) if open_path.take().is_some() => {}
-                Some(_) => return Err("invalid text patch".into()),
+                Some(_) => return Err(said!("invalid text patch")),
                 None => {}
             }
             let moved_path = moved_path.is_some();
@@ -217,7 +221,7 @@ pub(super) fn rewrite_expanded(
                 && !moved_path
                 && (!matches!(next.operator.as_str(), "Tj" | "TJ") || next.operands.len() != 1)
             {
-                return Err("invalid text patch".into());
+                return Err(said!("invalid text patch"));
             }
             output.extend_from_slice(&bytes[copied..span.start]);
             let encoded = Content {
@@ -241,15 +245,15 @@ pub(super) fn rewrite_expanded(
             output.extend(encoded);
             copied = span.end;
         } else if original.operations[0].operands != next.operands {
-            return Err("untouched text operator changed".into());
+            return Err(said!("untouched text operator changed"));
         }
     }
     if open_path.is_some() {
-        return Err("invalid text patch".into());
+        return Err(said!("invalid text patch"));
     }
     output.extend_from_slice(&bytes[copied..]);
     if output.len() > MAX_CONTENT {
-        return Err("text page content exceeds its limit".into());
+        return Err(said!("text page content exceeds its limit"));
     }
     Ok(output)
 }

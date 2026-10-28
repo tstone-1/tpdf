@@ -304,12 +304,15 @@ pub const SANDBOX_PROFILE: &str = "\
 fn epitaph_of(child: &mut Child) -> String {
     use std::os::unix::process::ExitStatusExt;
     match child.try_wait() {
-        Ok(None) => "still running".into(),
+        Ok(None) => said!("still running"),
         Ok(Some(status)) => match status.signal() {
-            Some(signal) => format!("killed by signal {signal}"),
-            None => format!("exited with code {}", status.code().unwrap_or(-1)),
+            Some(signal) => said!("killed by signal {signal}"),
+            None => said!(
+                "exited with code {code}",
+                code = status.code().unwrap_or(-1)
+            ),
         },
-        Err(e) => format!("could not be waited on: {e}"),
+        Err(e) => said!("could not be waited on: {e}"),
     }
 }
 
@@ -716,7 +719,7 @@ impl Worker {
             command.pre_exec(move || remap_fds(&[(tile_fd, TILE_FD), (sock_fd, SOCK_FD)]));
         }
 
-        let mut child = command.spawn().map_err(|e| format!("spawn failed: {e}"))?;
+        let mut child = command.spawn().map_err(|e| said!("spawn failed: {e}"))?;
         let stdin = child.stdin.take().ok_or("worker has no stdin")?;
         let stdout = BufReader::new(child.stdout.take().ok_or("worker has no stdout")?);
         Ok(PreWorker {
@@ -1033,7 +1036,7 @@ impl Worker {
             });
         }
 
-        let mut child = command.spawn().map_err(|e| format!("spawn failed: {e}"))?;
+        let mut child = command.spawn().map_err(|e| said!("spawn failed: {e}"))?;
         let stdin = child.stdin.take().ok_or("worker has no stdin")?;
         let stdout = BufReader::new(child.stdout.take().ok_or("worker has no stdout")?);
         Ok(Self {
@@ -1080,9 +1083,10 @@ impl Worker {
                     crate::worker_proto::unreadable_reply(&reply)
                 )
             }),
-            Err(ReplyError::Closed) => {
-                Err(format!("worker stopped answering ({})", self.epitaph()))
-            }
+            Err(ReplyError::Closed) => Err(said!(
+                "worker stopped answering ({why})",
+                why = self.epitaph()
+            )),
             Err(ReplyError::TooLong(limit)) => {
                 self.kill();
                 Err(format!("worker sent a reply longer than {limit} bytes"))

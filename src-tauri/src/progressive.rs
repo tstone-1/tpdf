@@ -134,8 +134,12 @@ pub fn bind_library(path: &Path) -> Result<&'static BoundPdfium, String> {
         return Ok(pdfium);
     }
     let load = || {
-        Pdfium::bind_to_library(path)
-            .map_err(|e| format!("could not load Pdfium from {}: {e}", path.display()))
+        Pdfium::bind_to_library(path).map_err(|e| {
+            said!(
+                "could not load Pdfium from {path}: {e}",
+                path = path.display()
+            )
+        })
     };
     let safe = load()?;
     let raw = load()?;
@@ -354,14 +358,14 @@ mod err {
 /// become a route for a string the file wrote.
 pub fn open_failure(code: std::os::raw::c_ulong) -> String {
     match code {
-        err::PASSWORD => "This document is locked, and needs a password.".into(),
-        err::SECURITY => "This document uses a security scheme tpdf cannot read.".into(),
-        err::FORMAT => "This file is not a PDF, or it is damaged beyond reading.".into(),
-        err::FILE => "This file could not be read from disk.".into(),
+        err::PASSWORD => said!("This document is locked, and needs a password."),
+        err::SECURITY => said!("This document uses a security scheme tpdf cannot read."),
+        err::FORMAT => said!("This file is not a PDF, or it is damaged beyond reading."),
+        err::FILE => said!("This file could not be read from disk."),
         // Including `FPDF_ERR_SUCCESS`, which is reachable: PDFium can return a
         // null handle with no error set, and reporting "no error" for a document
         // that did not open is worse than admitting the reason is unknown.
-        _ => "This document could not be opened, and PDFium did not say why.".into(),
+        _ => said!("This document could not be opened, and PDFium did not say why."),
     }
 }
 
@@ -522,7 +526,7 @@ impl RawDocument {
     /// model. Both end at the same `FPDF_DOCUMENT`.
     pub fn open(bindings: Bindings, path: &Path, password: Option<&str>) -> Result<Self, Refusal> {
         let text = path.to_str().ok_or_else(|| Refusal {
-            reason: format!("path is not UTF-8: {}", path.display()),
+            reason: said!("path is not UTF-8: {path}", path = path.display()),
             locked: false,
         })?;
 
@@ -703,7 +707,7 @@ impl RawDocument {
         // 44 ms is this line, and a miss that then fails to load is not a load.
         self.loads.set(self.loads.get() + 1);
         if handle.is_null() {
-            return Err(format!("no such page: {index}"));
+            return Err(said!("no such page: {index}"));
         }
         if let Some(form) = &self.form {
             // SAFETY: both handles are live and owned by this document.
@@ -749,7 +753,7 @@ impl RawDocument {
         }
         let want = match to {
             Some(box_pt) if box_pt.iter().all(|value| value.is_finite()) => box_pt,
-            Some(_) => return Err(format!("page {index}: the crop box is not a number")),
+            Some(_) => return Err(said!("page {index}: the crop box is not a number")),
             None => *self
                 .original_crops
                 .borrow()
@@ -1065,9 +1069,9 @@ impl<'buf> RawBitmap<'buf> {
         let stride = width as usize * 4;
         let needed = stride * height as usize;
         if buffer.len() != needed {
-            return Err(format!(
-                "buffer is {} bytes, need exactly {needed} for {width}x{height}",
-                buffer.len()
+            return Err(said!(
+                "buffer is {have} bytes, need exactly {needed} for {width}x{height}",
+                have = buffer.len()
             ));
         }
 
@@ -1083,7 +1087,7 @@ impl<'buf> RawBitmap<'buf> {
             )
         };
         if handle.is_null() {
-            return Err(format!("could not create a {width}x{height} bitmap"));
+            return Err(said!("could not create a {width}x{height} bitmap"));
         }
 
         Ok(Self {
@@ -1552,7 +1556,7 @@ pub fn render_tile_into_with(
     let want = tile_bytes(spec);
     let buffer = buffer
         .get_mut(..want)
-        .ok_or_else(|| format!("a {width}x{height} tile needs {want} bytes"))?;
+        .ok_or_else(|| said!("a {width}x{height} tile needs {want} bytes"))?;
     buffer.fill(0);
     let placement = Placement::tile(page, scale, turns, x, y);
 

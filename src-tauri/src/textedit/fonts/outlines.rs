@@ -63,7 +63,7 @@ pub(super) fn cff_bounds(
     match face.outline(glyph, &mut bounds) {
         Ok(_) if bounds.finite => Ok(bounds.rect),
         Err(ttf_parser::CFFError::ZeroBBox) if bounds.finite && bounds.rect.is_none() => Ok(None),
-        _ => Err("invalid CFF glyph outline".into()),
+        _ => Err(said!("invalid CFF glyph outline")),
     }
 }
 

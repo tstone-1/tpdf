@@ -232,7 +232,7 @@ fn shrunk(mapped: u64, backing: Option<u64>) -> Option<String> {
     if backing >= mapped {
         return None;
     }
-    Some(format!(
+    Some(said!(
         "{OUTLIVED_MARK}: it was {mapped} bytes when it was opened and is {backing} now, so the \
          part of the document past that point is gone. Open it again to read the new file."
     ))
@@ -965,7 +965,7 @@ impl Workers {
                     }
                 });
             if let Err(e) = sent {
-                let e = format!("a replacement worker could not unlock the document: {e}");
+                let e = said!("a replacement worker could not unlock the document: {e}");
                 self.give_back(doc);
                 return Err(e);
             }
@@ -1329,7 +1329,7 @@ impl Workers {
                 "[render] document {doc}: worker killed for exceeding its deadline"
             ));
             self.discard(doc, worker);
-            return Err(format!("{error} --- the request exceeded its deadline"));
+            return Err(said!("{error} --- the request exceeded its deadline"));
         }
 
         // Said out loud, once, because a successful retry makes the death
@@ -1708,13 +1708,22 @@ impl Engine for Workers {
             Some(file) => {
                 let len = file
                     .metadata()
-                    .map_err(|e| format!("could not measure {path:?}: {e}"))?
+                    .map_err(|e| {
+                        said!(
+                            "could not measure {source}: {e}",
+                            source = format!("{path:?}")
+                        )
+                    })?
                     .len();
                 if len == 0 {
-                    return Err(format!("{path:?} is empty").into());
+                    return Err(said!("{path:?} is empty").into());
                 }
-                let len = usize::try_from(len)
-                    .map_err(|_| format!("{path:?} is larger than this machine can map"))?;
+                let len = usize::try_from(len).map_err(|_| {
+                    said!(
+                        "{label} is larger than this machine can map",
+                        label = format!("{path:?}")
+                    )
+                })?;
                 Shm::map_open_file(&file, len)?
             }
             None => Shm::map_file(path)?,
@@ -1770,7 +1779,7 @@ impl Engine for Workers {
             Ok(response) => response,
             Err(e) => {
                 let e = if killed {
-                    format!("{e} --- the document did not open within the deadline")
+                    said!("{e} --- the document did not open within the deadline")
                 } else {
                     e
                 };

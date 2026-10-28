@@ -140,9 +140,7 @@ pub fn find(id: &str) -> Result<Identity, String> {
     identities()?
         .into_iter()
         .find(|identity| identity.id() == id)
-        .ok_or_else(|| {
-            "that certificate is no longer in your keychain or certificate store".to_string()
-        })
+        .ok_or_else(|| said!("that certificate is no longer in your keychain or certificate store"))
 }
 
 #[cfg(target_os = "macos")]
@@ -168,7 +166,7 @@ mod platform {
         {
             Ok(found) => found,
             Err(error) if error.code() == NOT_FOUND => return Ok(Vec::new()),
-            Err(error) => return Err(format!("the keychain could not be searched: {error}")),
+            Err(error) => return Err(said!("the keychain could not be searched: {error}")),
         };
         let mut out = Vec::new();
         for result in found {
@@ -210,7 +208,7 @@ mod platform {
         let key = handle
             .0
             .private_key()
-            .map_err(|e| format!("the keychain would not give access to this key: {e}"))?;
+            .map_err(|e| said!("the keychain would not give access to this key: {e}"))?;
         sign_with(&key, kind, digest)
     }
 
@@ -222,7 +220,7 @@ mod platform {
             KeyKind::P256 | KeyKind::P384 => Algorithm::ECDSASignatureDigestX962SHA256,
         };
         key.create_signature(algorithm, digest)
-            .map_err(|e| format!("macOS did not sign: {e}"))
+            .map_err(|e| said!("macOS did not sign: {e}"))
     }
 }
 
@@ -262,9 +260,9 @@ mod platform {
         // their minidriver has propagated them.
         let store = unsafe { CertOpenSystemStoreW(0, name.as_ptr()) };
         if store.is_null() {
-            return Err(format!(
-                "the certificate store could not be opened: {}",
-                std::io::Error::last_os_error()
+            return Err(said!(
+                "the certificate store could not be opened: {e}",
+                e = std::io::Error::last_os_error()
             ));
         }
         let mut out = Vec::new();
@@ -350,16 +348,18 @@ mod platform {
             )
         } != 0;
         if !acquired {
-            return Err(format!(
+            return Err(said!(
                 "Windows would not give access to this certificate's key (only keys held \
-                 through CNG can sign): {}",
-                std::io::Error::last_os_error()
+                 through CNG can sign): {e}",
+                e = std::io::Error::last_os_error()
             ));
         }
         let result = if spec == CERT_NCRYPT_KEY_SPEC {
             sign_with(key, kind, digest)
         } else {
-            Err("this certificate's key is held by a provider tpdf does not use".into())
+            Err(said!(
+                "this certificate's key is held by a provider tpdf does not use"
+            ))
         };
         if free != 0 {
             unsafe {
@@ -394,7 +394,7 @@ mod platform {
             )
         };
         if status != 0 {
-            return Err(format!("Windows did not sign (0x{status:08X})"));
+            return Err(said!("Windows did not sign (0x{status:08X})"));
         }
         let mut signature = vec![0u8; size as usize];
         let status = unsafe {
@@ -410,7 +410,7 @@ mod platform {
             )
         };
         if status != 0 {
-            return Err(format!("Windows did not sign (0x{status:08X})"));
+            return Err(said!("Windows did not sign (0x{status:08X})"));
         }
         signature.truncate(size as usize);
         match kind {
@@ -489,13 +489,13 @@ mod platform {
             |n| n.to_string_lossy().into_owned(),
         );
         let password = pkcs11::ask(pkcs11::Asked::Password(&name))?
-            .ok_or_else(|| "signing was cancelled".to_string())?;
+            .ok_or_else(|| said!("signing was cancelled"))?;
         let opened = certfiles::reopen(entry, password.expose_secret())?;
         if opened.kind() != kind {
-            return Err(format!(
-                "the certificate file holds a {} key, and the signature asked for {}",
-                opened.kind().name(),
-                kind.name()
+            return Err(said!(
+                "the certificate file holds a {held} key, and the signature asked for {asked}",
+                held = opened.kind().name(),
+                asked = kind.name()
             ));
         }
         opened.sign(digest)

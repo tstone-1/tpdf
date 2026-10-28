@@ -183,6 +183,7 @@ import {
   type FitMode,
   type Fitted,
 } from "./zoom";
+import { spokenError } from "./said";
 
 /** What the viewer says to the reader through `onError` and thrown errors. */
 const TEXT = catalog({
@@ -6777,7 +6778,7 @@ export class Viewer {
       // know the clipboard does not hold what they asked for. The webview can
       // reject this --- permission, or a window that is not focused --- and
       // every caller here voids the promise, so nothing else would ever see it.
-      this.opts.onError?.(TEXT().clipboard(String(e)));
+      this.opts.onError?.(TEXT().clipboard(spokenError(e)));
       return null;
     }
     return text;

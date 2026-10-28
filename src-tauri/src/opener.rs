@@ -56,13 +56,13 @@ fn open_url(url: &str) -> Result<(), String> {
     // invisible to every gate, which is `check_windows.py`'s trap with the
     // platforms swapped.
     let Some(target) = NSURL::URLWithString(&text) else {
-        return Err("this link is not an address the system could read".into());
+        return Err(said!("this link is not an address the system could read"));
     };
     let workspace = objc2_app_kit::NSWorkspace::sharedWorkspace();
     if workspace.openURL(&target) {
         Ok(())
     } else {
-        Err("the system could not open this link".into())
+        Err(said!("the system could not open this link"))
     }
 }
 
@@ -110,7 +110,7 @@ fn open_url(url: &str) -> Result<(), String> {
     if result as usize > 32 {
         Ok(())
     } else {
-        Err("the system could not open this link".into())
+        Err(said!("the system could not open this link"))
     }
 }
 
@@ -121,7 +121,7 @@ fn open_url(url: &str) -> Result<(), String> {
 #[cfg(target_os = "linux")]
 fn open_url(url: &str) -> Result<(), String> {
     gtk::gio::AppInfo::launch_default_for_uri(url, None::<&gtk::gio::AppLaunchContext>)
-        .map_err(|e| format!("the system could not open this link: {e}"))
+        .map_err(|e| said!("the system could not open this link: {e}"))
 }
 
 #[cfg(test)]

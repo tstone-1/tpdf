@@ -9,7 +9,9 @@
 
 use std::collections::BTreeMap;
 
-const INVALID: &str = "unsupported embedded Type 1 font program";
+fn invalid() -> String {
+    said!("unsupported embedded Type 1 font program")
+}
 // Type 1 charstrings are at most 65,535 bytes; the font is already bounded by
 // the 1 MiB decoded-stream limit, so these bound the index sizes and the work.
 const MAX_GLYPHS: usize = 4096;
@@ -54,9 +56,9 @@ pub(super) fn parse(
     length3: usize,
 ) -> Result<Program, String> {
     let clear_end = length1;
-    let private_end = length1.checked_add(length2).ok_or(INVALID)?;
+    let private_end = length1.checked_add(length2).ok_or_else(invalid)?;
     if length1 == 0 || length2 < 4 || private_end > bytes.len() {
-        return Err(INVALID.into());
+        return Err(invalid());
     }
     // Length3 counts the 512 zeros and cleartomark of the original file. A
     // producer may keep them or drop them (pdfTeX writes 0); whatever remains
@@ -69,14 +71,14 @@ pub(super) fn parse(
             .all(|b| b.is_ascii_whitespace() || *b == b'0')
             || trailer_is_cleartomark(trailer))
     {
-        return Err(INVALID.into());
+        return Err(invalid());
     }
     let (rights, encoding) = cleartext(&bytes[..clear_end])?;
     let encrypted = &bytes[clear_end..private_end];
     // ISO 32000-1 9.9: the private part is embedded in binary. A hexadecimal
     // private part starts with four hex digits; refuse rather than guess.
     if encrypted[..4].iter().all(u8::is_ascii_hexdigit) {
-        return Err("hexadecimal Type 1 private data is not editable yet".into());
+        return Err(said!("hexadecimal Type 1 private data is not editable yet"));
     }
     let private = decrypt(encrypted, 55665);
     let private = &private[4..];
@@ -243,11 +245,11 @@ impl<'a> Tokens<'a> {
 // PDF widths and the editor's bounds are thousandths of text space.
 fn cleartext(bytes: &[u8]) -> Result<(Option<i64>, Builtin), String> {
     if !(bytes.starts_with(b"%!PS-AdobeFont-1.") || bytes.starts_with(b"%!FontType1-1.")) {
-        return Err(INVALID.into());
+        return Err(invalid());
     }
     let trimmed = bytes.trim_ascii_end();
     if !trimmed.ends_with(b"currentfile eexec") {
-        return Err(INVALID.into());
+        return Err(invalid());
     }
     let mut tokens = Tokens::new(bytes);
     let mut matrix = None;
@@ -261,18 +263,18 @@ fn cleartext(bytes: &[u8]) -> Result<(Option<i64>, Builtin), String> {
             match key {
                 b"FontMatrix" => {
                     if token != Token::Open {
-                        return Err(INVALID.into());
+                        return Err(invalid());
                     }
                     let mut values = Vec::new();
                     loop {
-                        match tokens.next().ok_or(INVALID)? {
+                        match tokens.next().ok_or_else(invalid)? {
                             Token::Number(value) if values.len() < 6 => values.push(value),
                             Token::Close => break,
-                            _ => return Err(INVALID.into()),
+                            _ => return Err(invalid()),
                         }
                     }
                     if matrix.replace(values).is_some() {
-                        return Err(INVALID.into());
+                        return Err(invalid());
                     }
                     previous = None;
                     continue;
@@ -280,17 +282,17 @@ fn cleartext(bytes: &[u8]) -> Result<(Option<i64>, Builtin), String> {
                 b"Encoding" => {
                     let value = builtin(token, &mut tokens)?;
                     if encoding.replace(value).is_some() {
-                        return Err(INVALID.into());
+                        return Err(invalid());
                     }
                     previous = None;
                     continue;
                 }
                 b"FontType" | b"PaintType" | b"FSType" => {
                     let Token::Number(value) = token else {
-                        return Err(INVALID.into());
+                        return Err(invalid());
                     };
                     if value.fract() != 0. || tokens.next() != Some(Token::Word(b"def")) {
-                        return Err(INVALID.into());
+                        return Err(invalid());
                     }
                     let slot = match key {
                         b"FontType" => &mut font_type,
@@ -298,7 +300,7 @@ fn cleartext(bytes: &[u8]) -> Result<(Option<i64>, Builtin), String> {
                         _ => &mut rights,
                     };
                     if slot.replace(value as i64).is_some() {
-                        return Err(INVALID.into());
+                        return Err(invalid());
                     }
                     previous = None;
                     continue;
@@ -314,9 +316,9 @@ fn cleartext(bytes: &[u8]) -> Result<(Option<i64>, Builtin), String> {
         || paint_type.is_some_and(|value| value != 0)
         || matrix.as_deref() != Some(&[0.001, 0., 0., 0.001, 0., 0.][..])
     {
-        return Err(INVALID.into());
+        return Err(invalid());
     }
-    Ok((rights, encoding.ok_or(INVALID)?))
+    Ok((rights, encoding.ok_or_else(invalid)?))
 }
 
 // Adobe Type 1 Font Format 2.3: `/Encoding StandardEncoding def`, or a literal
@@ -325,15 +327,15 @@ fn cleartext(bytes: &[u8]) -> Result<(Option<i64>, Builtin), String> {
 fn builtin<'a>(first: Token<'a>, tokens: &mut Tokens<'a>) -> Result<Builtin, String> {
     if first == Token::Word(b"StandardEncoding") {
         if tokens.next() != Some(Token::Word(b"def")) {
-            return Err(INVALID.into());
+            return Err(invalid());
         }
         return Ok(Builtin::Standard);
     }
     if first != Token::Number(256.) || tokens.next() != Some(Token::Word(b"array")) {
-        return Err(INVALID.into());
+        return Err(invalid());
     }
     let mut names: Box<[Option<Vec<u8>>; 256]> = Box::new(std::array::from_fn(|_| None));
-    let mut token = tokens.next().ok_or(INVALID)?;
+    let mut token = tokens.next().ok_or_else(invalid)?;
     if token == Token::Number(0.) {
         for expected in [
             Token::Number(1.),
@@ -348,10 +350,10 @@ fn builtin<'a>(first: Token<'a>, tokens: &mut Tokens<'a>) -> Result<Builtin, Str
             Token::Word(b"for"),
         ] {
             if tokens.next() != Some(expected) {
-                return Err(INVALID.into());
+                return Err(invalid());
             }
         }
-        token = tokens.next().ok_or(INVALID)?;
+        token = tokens.next().ok_or_else(invalid)?;
     }
     loop {
         match token {
@@ -362,26 +364,26 @@ fn builtin<'a>(first: Token<'a>, tokens: &mut Tokens<'a>) -> Result<Builtin, Str
                     {
                         code as usize
                     }
-                    _ => return Err(INVALID.into()),
+                    _ => return Err(invalid()),
                 };
                 let Some(Token::Name(name)) = tokens.next() else {
-                    return Err(INVALID.into());
+                    return Err(invalid());
                 };
                 if tokens.next() != Some(Token::Word(b"put")) || name.len() > 127 {
-                    return Err(INVALID.into());
+                    return Err(invalid());
                 }
                 names[code] = (name != b".notdef").then(|| name.to_vec());
             }
             Token::Word(b"readonly") => {
                 if tokens.next() != Some(Token::Word(b"def")) {
-                    return Err(INVALID.into());
+                    return Err(invalid());
                 }
                 break;
             }
             Token::Word(b"def") => break,
-            _ => return Err(INVALID.into()),
+            _ => return Err(invalid()),
         }
-        token = tokens.next().ok_or(INVALID)?;
+        token = tokens.next().ok_or_else(invalid)?;
     }
     Ok(Builtin::Custom(names))
 }
@@ -412,12 +414,12 @@ impl Private {
                     {
                         Some(value as usize)
                     }
-                    _ => return Err(INVALID.into()),
+                    _ => return Err(invalid()),
                 }
             }
         };
         let mut subrs = Vec::new();
-        let charstrings_at = find_token(bytes, b"/CharStrings").ok_or(INVALID)?;
+        let charstrings_at = find_token(bytes, b"/CharStrings").ok_or_else(invalid)?;
         if let Some(at) = find_token(&bytes[..charstrings_at], b"/Subrs") {
             let mut cursor = Cursor { bytes, at };
             let count = cursor.count(b"array", MAX_SUBRS)?;
@@ -427,13 +429,13 @@ impl Private {
                 cursor.word(b"dup")?;
                 let index = cursor.integer()?;
                 if index >= count || std::mem::replace(&mut seen[index], true) {
-                    return Err(INVALID.into());
+                    return Err(invalid());
                 }
                 subrs[index] = plain(len_iv, cursor.binary()?).ok();
                 cursor.word_of(&[b"NP", b"|"], Some(b"noaccess put"))?;
             }
             if cursor.at > charstrings_at {
-                return Err(INVALID.into());
+                return Err(invalid());
             }
         }
         let mut cursor = Cursor {
@@ -451,20 +453,20 @@ impl Private {
                 Token::Word(b"end") => break,
                 Token::Name(name) => {
                     if name.is_empty() || name.len() > 127 || !names.insert(name.to_vec()) {
-                        return Err(INVALID.into());
+                        return Err(invalid());
                     }
                     let program = cursor.binary()?.to_vec();
                     cursor.word_of(&[b"ND", b"|-"], Some(b"noaccess def"))?;
                     charstrings.push((name.to_vec(), program));
                     if charstrings.len() > count {
-                        return Err(INVALID.into());
+                        return Err(invalid());
                     }
                 }
-                _ => return Err(INVALID.into()),
+                _ => return Err(invalid()),
             }
         }
         if !names.contains(b".notdef".as_slice()) {
-            return Err(INVALID.into());
+            return Err(invalid());
         }
         Ok(Self {
             len_iv,
@@ -484,7 +486,7 @@ fn plain(len_iv: Option<usize>, bytes: &[u8]) -> Result<Vec<u8>, String> {
         None => Ok(bytes.to_vec()),
         Some(skip) => {
             if bytes.len() < skip {
-                return Err(INVALID.into());
+                return Err(invalid());
             }
             Ok(decrypt(bytes, 4330)[skip..].to_vec())
         }
@@ -519,14 +521,14 @@ impl<'a> Cursor<'a> {
     fn token(&mut self) -> Result<Token<'a>, String> {
         let mut tokens = Tokens::new(self.bytes);
         tokens.at = self.at;
-        let token = tokens.next().ok_or(INVALID)?;
+        let token = tokens.next().ok_or_else(invalid)?;
         self.at = tokens.at;
         Ok(token)
     }
 
     fn word(&mut self, word: &[u8]) -> Result<(), String> {
         if self.token()? != Token::Word(word) {
-            return Err(INVALID.into());
+            return Err(invalid());
         }
         Ok(())
     }
@@ -537,17 +539,17 @@ impl<'a> Cursor<'a> {
             Token::Word(word) if words.contains(&word) => Ok(()),
             Token::Word(first) if expanded.is_some_and(|text| text.starts_with(first)) => {
                 let Token::Word(second) = self.token()? else {
-                    return Err(INVALID.into());
+                    return Err(invalid());
                 };
                 let mut joined = first.to_vec();
                 joined.push(b' ');
                 joined.extend_from_slice(second);
                 if Some(joined.as_slice()) != expanded {
-                    return Err(INVALID.into());
+                    return Err(invalid());
                 }
                 Ok(())
             }
-            _ => Err(INVALID.into()),
+            _ => Err(invalid()),
         }
     }
 
@@ -556,7 +558,7 @@ impl<'a> Cursor<'a> {
             Token::Number(value) if value.fract() == 0. && (0. ..=65_535.).contains(&value) => {
                 Ok(value as usize)
             }
-            _ => Err(INVALID.into()),
+            _ => Err(invalid()),
         }
     }
 
@@ -565,7 +567,7 @@ impl<'a> Cursor<'a> {
         let count = self.integer()?;
         self.word(kind)?;
         if count > limit {
-            return Err(INVALID.into());
+            return Err(invalid());
         }
         Ok(count)
     }
@@ -575,14 +577,14 @@ impl<'a> Cursor<'a> {
         let length = self.integer()?;
         match self.token()? {
             Token::Word(b"RD" | b"-|") => {}
-            _ => return Err(INVALID.into()),
+            _ => return Err(invalid()),
         }
         if self.bytes.get(self.at) != Some(&b' ') {
-            return Err(INVALID.into());
+            return Err(invalid());
         }
         let start = self.at + 1;
-        let end = start.checked_add(length).ok_or(INVALID)?;
-        let data = self.bytes.get(start..end).ok_or(INVALID)?;
+        let end = start.checked_add(length).ok_or_else(invalid)?;
+        let data = self.bytes.get(start..end).ok_or_else(invalid)?;
         self.at = end;
         Ok(data)
     }
@@ -616,9 +618,9 @@ impl<'a> Interpreter<'a> {
             operations: 0,
         };
         if !machine.execute(program, 0)? {
-            return Err(INVALID.into()); // Ran off the end without endchar.
+            return Err(invalid()); // Ran off the end without endchar.
         }
-        let width = machine.width.ok_or(INVALID)?;
+        let width = machine.width.ok_or_else(invalid)?;
         Ok(Glyph {
             width,
             bounds: machine.bounds,
@@ -636,7 +638,7 @@ impl<'a> Interpreter<'a> {
 
     fn draw(&mut self, points: &[(f64, f64)]) -> Result<(), String> {
         if self.width.is_none() || self.flex.is_some() {
-            return Err(INVALID.into());
+            return Err(invalid());
         }
         if let Some(start) = self.pending.take() {
             self.include(start);
@@ -646,11 +648,11 @@ impl<'a> Interpreter<'a> {
                 || point.0.abs() > 100_000.
                 || point.1.abs() > 100_000.
             {
-                return Err(INVALID.into());
+                return Err(invalid());
             }
             self.include(point);
         }
-        self.point = *points.last().ok_or(INVALID)?;
+        self.point = *points.last().ok_or_else(invalid)?;
         Ok(())
     }
 
@@ -660,7 +662,7 @@ impl<'a> Interpreter<'a> {
 
     fn move_to(&mut self, point: (f64, f64)) -> Result<(), String> {
         if self.width.is_none() {
-            return Err(INVALID.into());
+            return Err(invalid());
         }
         self.point = point;
         // Adobe Type 1 Font Format 8.3: inside a flex, rmoveto only records
@@ -676,7 +678,7 @@ impl<'a> Interpreter<'a> {
 
     fn take<const N: usize>(&mut self) -> Result<[f64; N], String> {
         if self.stack.len() != N {
-            return Err(INVALID.into());
+            return Err(invalid());
         }
         let mut values = [0.; N];
         values.copy_from_slice(&self.stack);
@@ -687,13 +689,13 @@ impl<'a> Interpreter<'a> {
     // Returns true when the glyph ended (endchar), false on `return`.
     fn execute(&mut self, program: &[u8], depth: usize) -> Result<bool, String> {
         if depth > MAX_DEPTH {
-            return Err(INVALID.into());
+            return Err(invalid());
         }
         let mut at = 0;
         while at < program.len() {
             self.operations += 1;
             if self.operations > MAX_OPERATIONS {
-                return Err(INVALID.into());
+                return Err(invalid());
             }
             let byte = program[at];
             at += 1;
@@ -701,29 +703,29 @@ impl<'a> Interpreter<'a> {
                 let value = match byte {
                     32..=246 => f64::from(byte) - 139.,
                     247..=250 => {
-                        let next = *program.get(at).ok_or(INVALID)?;
+                        let next = *program.get(at).ok_or_else(invalid)?;
                         at += 1;
                         f64::from(byte - 247) * 256. + f64::from(next) + 108.
                     }
                     251..=254 => {
-                        let next = *program.get(at).ok_or(INVALID)?;
+                        let next = *program.get(at).ok_or_else(invalid)?;
                         at += 1;
                         -(f64::from(byte - 251) * 256.) - f64::from(next) - 108.
                     }
                     _ => {
-                        let bytes = program.get(at..at + 4).ok_or(INVALID)?;
+                        let bytes = program.get(at..at + 4).ok_or_else(invalid)?;
                         at += 4;
-                        f64::from(i32::from_be_bytes(bytes.try_into().map_err(|_| INVALID)?))
+                        f64::from(i32::from_be_bytes(bytes.try_into().map_err(|_| invalid())?))
                     }
                 };
                 if self.stack.len() >= MAX_STACK {
-                    return Err(INVALID.into());
+                    return Err(invalid());
                 }
                 self.stack.push(value);
                 continue;
             }
             let operator = if byte == 12 {
-                let next = *program.get(at).ok_or(INVALID)?;
+                let next = *program.get(at).ok_or_else(invalid)?;
                 at += 1;
                 1200 + u16::from(next)
             } else {
@@ -734,7 +736,7 @@ impl<'a> Interpreter<'a> {
                 13 => {
                     let [sbx, wx] = self.take()?;
                     if self.width.replace(wx).is_some() {
-                        return Err(INVALID.into());
+                        return Err(invalid());
                     }
                     self.point = (sbx, 0.);
                 }
@@ -742,7 +744,7 @@ impl<'a> Interpreter<'a> {
                 1207 => {
                     let [sbx, sby, wx, wy] = self.take()?;
                     if wy != 0. || self.width.replace(wx).is_some() {
-                        return Err(INVALID.into());
+                        return Err(invalid());
                     }
                     self.point = (sbx, sby);
                 }
@@ -795,13 +797,13 @@ impl<'a> Interpreter<'a> {
                 9 => {
                     self.take::<0>()?;
                     if self.width.is_none() {
-                        return Err(INVALID.into());
+                        return Err(invalid());
                     }
                 }
                 14 => {
                     self.take::<0>()?;
                     if self.width.is_none() || self.flex.is_some() || !self.returns.is_empty() {
-                        return Err(INVALID.into());
+                        return Err(invalid());
                     }
                     return Ok(true);
                 }
@@ -809,50 +811,50 @@ impl<'a> Interpreter<'a> {
                     return Ok(false);
                 }
                 10 => {
-                    let index = self.stack.pop().ok_or(INVALID)?;
+                    let index = self.stack.pop().ok_or_else(invalid)?;
                     if index.fract() != 0. || index < 0. {
-                        return Err(INVALID.into());
+                        return Err(invalid());
                     }
                     let private = self.private;
-                    let subr = private.subrs.get(index as usize).ok_or(INVALID)?;
-                    let subr = subr.as_deref().ok_or(INVALID)?;
+                    let subr = private.subrs.get(index as usize).ok_or_else(invalid)?;
+                    let subr = subr.as_deref().ok_or_else(invalid)?;
                     if self.execute(subr, depth + 1)? {
                         return Ok(true);
                     }
                 }
                 // div
                 1212 => {
-                    let b = self.stack.pop().ok_or(INVALID)?;
-                    let a = self.stack.pop().ok_or(INVALID)?;
+                    let b = self.stack.pop().ok_or_else(invalid)?;
+                    let a = self.stack.pop().ok_or_else(invalid)?;
                     if b == 0. {
-                        return Err(INVALID.into());
+                        return Err(invalid());
                     }
                     self.stack.push(a / b);
                 }
                 // callothersubr: only the flex and hint-replacement entries
                 // every Type 1 font carries (Adobe Type 1 Font Format 8).
                 1216 => {
-                    let number = self.stack.pop().ok_or(INVALID)?;
-                    let count = self.stack.pop().ok_or(INVALID)?;
+                    let number = self.stack.pop().ok_or_else(invalid)?;
+                    let count = self.stack.pop().ok_or_else(invalid)?;
                     if count.fract() != 0. || count < 0. || count as usize > self.stack.len() {
-                        return Err(INVALID.into());
+                        return Err(invalid());
                     }
                     let args = self.stack.split_off(self.stack.len() - count as usize);
                     match (number as i64, args.as_slice()) {
                         (1, []) => {
                             if self.flex.replace(Vec::new()).is_some() {
-                                return Err(INVALID.into());
+                                return Err(invalid());
                             }
                         }
                         (2, []) => {
                             if self.flex.is_none() {
-                                return Err(INVALID.into());
+                                return Err(invalid());
                             }
                         }
                         (0, [_, x, y]) => {
-                            let points = self.flex.take().ok_or(INVALID)?;
+                            let points = self.flex.take().ok_or_else(invalid)?;
                             if points.len() != 7 {
-                                return Err(INVALID.into());
+                                return Err(invalid());
                             }
                             // Point 0 is the reference point; the six after
                             // it are two curves' controls and end points.
@@ -862,14 +864,14 @@ impl<'a> Interpreter<'a> {
                             self.returns = vec![*y, *x];
                         }
                         (3, [subr]) => self.returns = vec![*subr],
-                        _ => return Err(INVALID.into()),
+                        _ => return Err(invalid()),
                     }
                 }
                 // pop
                 1217 => {
-                    let value = self.returns.pop().ok_or(INVALID)?;
+                    let value = self.returns.pop().ok_or_else(invalid)?;
                     if self.stack.len() >= MAX_STACK {
-                        return Err(INVALID.into());
+                        return Err(invalid());
                     }
                     self.stack.push(value);
                 }
@@ -879,7 +881,7 @@ impl<'a> Interpreter<'a> {
                     self.point = (x, y);
                 }
                 // seac and anything else: not followed yet.
-                _ => return Err(INVALID.into()),
+                _ => return Err(invalid()),
             }
         }
         Ok(false)

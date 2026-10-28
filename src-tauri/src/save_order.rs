@@ -142,9 +142,9 @@ where
     // it would rewrite every object id in a file the reader did not change.
     let state = saving.state().map_err(SaveFailure::refused)?;
     if !state.dirty {
-        return Err(SaveFailure::refused(
-            "there is nothing to save --- this document has no unsaved changes",
-        ));
+        return Err(SaveFailure::refused(said!(
+            "there is nothing to save --- this document has no unsaved changes"
+        )));
     }
     let plan = saving.plan().map_err(SaveFailure::refused)?;
 

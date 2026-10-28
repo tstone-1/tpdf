@@ -1,7 +1,9 @@
 //! Preserve bounded inline ActualText separators without offering them for editing.
 use lopdf::Object;
 
-const INVALID: &str = "unsupported inline spacing sequence";
+fn invalid() -> String {
+    said!("unsupported inline spacing sequence")
+}
 
 pub(super) struct Spacer {
     count: usize,
@@ -11,32 +13,32 @@ pub(super) struct Spacer {
 
 impl Spacer {
     pub(super) fn new(tag: &Object, properties: &Object) -> Result<Self, String> {
-        let invalid = "inline BDC marked content is not editable yet";
-        let dict = properties.as_dict().map_err(|_| invalid)?;
+        let inline = || said!("inline BDC marked content is not editable yet");
+        let dict = properties.as_dict().map_err(|_| inline())?;
         if tag.as_name().ok() != Some(b"Span") || dict.len() != 1 {
-            return Err(invalid.into());
+            return Err(inline());
         }
         let bytes = dict
             .get(b"ActualText")
             .and_then(Object::as_str)
-            .map_err(|_| invalid)?;
+            .map_err(|_| inline())?;
         let count = if let Some(units) = bytes.strip_prefix(&[0xfe, 0xff]) {
             if units.len() % 2 != 0
                 || !units
                     .chunks_exact(2)
                     .all(|unit| unit[0] == 0 && matches!(unit[1], 7 | 9))
             {
-                return Err(invalid.into());
+                return Err(inline());
             }
             units.len() / 2
         } else {
             if !bytes.iter().all(|byte| matches!(byte, 7 | 9)) {
-                return Err(invalid.into());
+                return Err(inline());
             }
             bytes.len()
         };
         if !(1..=32).contains(&count) {
-            return Err(invalid.into());
+            return Err(inline());
         }
         Ok(Self {
             count,
@@ -52,7 +54,7 @@ impl Spacer {
             "Tm" | "Td" if !self.positioned && !self.shown => self.positioned = true,
             "Tj" | "TJ" if !self.shown => self.shown = true,
             "EMC" if self.shown => {}
-            _ => return Err(INVALID.into()),
+            _ => return Err(invalid()),
         }
         Ok(())
     }
@@ -68,7 +70,7 @@ impl Spacer {
                 .chars()
                 .all(|character| character == ' ' || character == super::fonts::OPAQUE)
         {
-            return Err(INVALID.into());
+            return Err(invalid());
         }
         Ok(())
     }

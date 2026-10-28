@@ -146,7 +146,11 @@ function findingsIn(module: string, text: string): Finding[] {
       ts.isTemplateHead(node) ||
       ts.isTemplateMiddle(node) ||
       ts.isTemplateTail(node);
-    if (literal && node.text.includes(PROSE_DASH)) {
+    // A key of a `said/` catalog is Rust's English template, byte for byte, so
+    // it holds Rust's `---` to match; the German beside it is what is shown.
+    const templateKey =
+      module.startsWith("said/") && node.parent !== undefined && ts.isPropertyAssignment(node.parent) && node.parent.name === node;
+    if (literal && !templateKey && node.text.includes(PROSE_DASH)) {
       const { line } = source.getLineAndCharacterOfPosition(node.getStart(source));
       found.push({ module, line: line + 1, text: node.text });
     }

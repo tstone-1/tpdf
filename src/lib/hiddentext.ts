@@ -16,6 +16,7 @@
  */
 
 import { catalog } from "./i18n";
+import { spoken } from "./said";
 
 /**
  * The event that says which page is being compared.
@@ -62,7 +63,7 @@ export interface HiddenText {
 
 /**
  * The window's own words. The backend's summary and `notLookedAt` arrive in
- * English and are shown as they are (phase 2 of German).
+ * English and go through `spoken` (`said.ts`).
  */
 const TEXT = catalog({
   "en-US": {
@@ -120,12 +121,12 @@ export const MAX_ROWS = 500;
  * it, which is the case it is for.
  */
 export function sentences(checked: HiddenText): string[] {
-  const said = [checked.summary];
+  const said = [spoken(checked.summary)];
   if (checked.found.length > MAX_ROWS) {
     said.push(TEXT().firstRows(MAX_ROWS, checked.found.length));
   }
   if (checked.unsaved) said.push(UNSAVED);
-  said.push(checked.notLookedAt);
+  said.push(spoken(checked.notLookedAt));
   return said;
 }
 

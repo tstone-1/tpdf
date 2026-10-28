@@ -452,9 +452,10 @@ fn cut_one(
     continues: bool,
 ) -> Result<Vec<Operation>, String> {
     let wrong = || {
-        "a line of text is not shaped the way it was when it was measured, so nothing was \
+        said!(
+            "a line of text is not shaped the way it was when it was measured, so nothing was \
          removed"
-            .to_string()
+        )
     };
     let mut out: Vec<Operation> = Vec::new();
     let parts: Vec<Object> = match (operation.operator.as_str(), &operation.operands[..]) {
@@ -548,9 +549,8 @@ fn take_all(
     if !continues {
         return Ok(out);
     }
-    let wrong = || {
-        "a line of text was not measured to the show after it, so nothing was removed".to_string()
-    };
+    let wrong =
+        || said!("a line of text was not measured to the show after it, so nothing was removed");
     let (first, tail) = cut.pens.first().copied().zip(cut.tail).ok_or_else(wrong)?;
     let mut shown: Vec<Object> = match (operation.operator.as_str(), &operation.operands[..]) {
         ("TJ", [Object::Array(parts)]) => parts
@@ -609,8 +609,8 @@ pub fn cut_shows(
 ) -> Result<Removed, String> {
     let data = doc
         .get_page_content_with_limit(page, MAX_CONTENT_BYTES)
-        .map_err(|why| format!("the page's content stream could not be read: {why}"))?;
-    let mut content = decode_whole(&data, "the page's content stream")?;
+        .map_err(|why| said!("the page's content stream could not be read: {why}"))?;
+    let mut content = decode_whole(&data, &said!("the page's content stream"))?;
     let shows: Vec<usize> = content
         .operations
         .iter()
@@ -619,27 +619,25 @@ pub fn cut_shows(
         .map(|(at, _)| at)
         .collect();
     if shows.len() != text_objects {
-        return Err(format!(
-            "the page has {} text-showing operator(s) and PDFium reported {text_objects} text \
-             object(s). Cutting by position needs those to agree, so nothing was removed.",
-            shows.len()
-        ));
+        return Err(said!(
+            "the page has {count} text-showing operator(s) and PDFium reported {text_objects} text \
+             object(s). Cutting by position needs those to agree, so nothing was removed.", count = shows.len()));
     }
     let lengths = code_lengths(doc, page, &content.operations);
 
     let mut work: Vec<(usize, &ShowCut)> = Vec::with_capacity(cuts.len());
     for cut in cuts {
         let at = *shows.get(cut.ordinal).ok_or_else(|| {
-            format!(
-                "there is no show operator {} on this page, which has {}",
-                cut.ordinal,
-                shows.len()
+            said!(
+                "there is no show operator {ordinal} on this page, which has {count}",
+                ordinal = cut.ordinal,
+                count = shows.len()
             )
         })?;
         if work.iter().any(|(have, _)| *have == at) {
-            return Err(format!(
-                "show operator {} is cut twice, so nothing was removed",
-                cut.ordinal
+            return Err(said!(
+                "show operator {ordinal} is cut twice, so nothing was removed",
+                ordinal = cut.ordinal
             ));
         }
         work.push((at, cut));
@@ -667,8 +665,7 @@ pub fn cut_shows(
             take_all(&content.operations[at], cut, continues)?
         } else {
             let length = lengths[at].ok_or_else(|| {
-                "a line of text is in a font whose codes this cannot count, so nothing was removed"
-                    .to_string()
+                said!("a line of text is in a font whose codes this cannot count, so nothing was removed")
             })?;
             cut_one(&content.operations[at], length, cut, continues)?
         };
@@ -678,7 +675,7 @@ pub fn cut_shows(
     let struct_carriers = clear_struct_shadow_text(doc, page, &carriers.mcids);
     let encoded = content
         .encode()
-        .map_err(|why| format!("the rewritten content stream will not encode: {why}"))?;
+        .map_err(|why| said!("the rewritten content stream will not encode: {why}"))?;
     replace_page_content(doc, page, encoded)?;
     Ok(Removed {
         shows_before: shows.len(),

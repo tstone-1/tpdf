@@ -4,7 +4,7 @@ use lopdf::content::Operation;
 
 mod wrap;
 
-pub(super) use wrap::CONFLICT as WRAP_CONFLICT;
+pub(super) use wrap::conflict as wrap_conflict;
 
 pub(super) struct Context {
     // The operator that last set the line matrix (BT or Tm) before the run,
@@ -125,10 +125,12 @@ fn restore_line(
     (origin, leading): (usize, f64),
     run: usize,
 ) -> Result<Vec<Operation>, String> {
-    let start = operations.get(origin).ok_or("missing text line origin")?;
+    let start = operations
+        .get(origin)
+        .ok_or_else(|| said!("missing text line origin"))?;
     let moves = operations
         .get(origin + 1..run)
-        .ok_or("missing text line origin")?;
+        .ok_or_else(|| said!("missing text line origin"))?;
     let mut restored = Vec::new();
     if moves.iter().any(|op| op.operator == "T*") {
         restored.push(numeric("TL", &[leading]));
@@ -136,13 +138,13 @@ fn restore_line(
     restored.push(match start.operator.as_str() {
         "Tm" => start.clone(),
         "BT" => Operation::new("Tm", [1, 0, 0, 1, 0, 0].map(Object::Integer).to_vec()),
-        _ => return Err("missing text line origin".into()),
+        _ => return Err(said!("missing text line origin")),
     });
     for op in moves {
         match op.operator.as_str() {
             "Td" | "TD" | "T*" | "TL" => restored.push(op.clone()),
             "Tm" | "BT" | "ET" | "'" | "\"" => {
-                return Err("Cannot preserve the following line origin precisely".into())
+                return Err(said!("Cannot preserve the following line origin precisely"))
             }
             _ => {}
         }
@@ -153,7 +155,9 @@ fn restore_line(
 /// The refusal for text that would leave the bounds its table states any other
 /// way than by growing along its line, which `Room::Table` names: a further
 /// line, another size, or a run the edit moves (`Context::table`).
-const TABLE_BOUNDS: &str = "The table states its bounds, and this text would leave them. Reduce the box or font size to keep the text inside.";
+fn table_bounds() -> String {
+    said!("The table states its bounds, and this text would leave them. Reduce the box or font size to keep the text inside.")
+}
 
 /// What stops the editing box from growing, and so what to say when the text
 /// the reader typed no longer fits the room after the run.
@@ -183,15 +187,15 @@ pub(super) enum Room {
 impl Room {
     /// Every one of these says the line is full rather than naming a box the
     /// reader never set, which is the whole point of growing it for them.
-    fn refusal(self) -> &'static str {
+    fn refusal(self) -> String {
         match self {
-            Room::Line => "There is no room for more text on this line: other text follows it. Shorten the text or reduce the font size.",
-            Room::Fixed => "There is no room for more text on this line: the text after it cannot be moved. Shorten the text or reduce the font size.",
-            Room::Drawn => "There is no room for more text on this line: a picture or a drawing follows it. Shorten the text or reduce the font size.",
-            Room::Page => "There is no room for more text on this line: it reaches the edge of the page. Shorten the text or reduce the font size.",
-            Room::Clip => "There is no room for more text on this line: the document clips the space after it. Shorten the text or reduce the font size.",
-            Room::Table => "There is no room for more text on this line: the table states its bounds, and the text would leave them. Shorten the text or reduce the font size.",
-            Room::Column => "There is no room for more text on this line: it reaches the next column. Shorten the text or reduce the font size.",
+            Room::Line => said!("There is no room for more text on this line: other text follows it. Shorten the text or reduce the font size."),
+            Room::Fixed => said!("There is no room for more text on this line: the text after it cannot be moved. Shorten the text or reduce the font size."),
+            Room::Drawn => said!("There is no room for more text on this line: a picture or a drawing follows it. Shorten the text or reduce the font size."),
+            Room::Page => said!("There is no room for more text on this line: it reaches the edge of the page. Shorten the text or reduce the font size."),
+            Room::Clip => said!("There is no room for more text on this line: the document clips the space after it. Shorten the text or reduce the font size."),
+            Room::Table => said!("There is no room for more text on this line: the table states its bounds, and the text would leave them. Shorten the text or reduce the font size."),
+            Room::Column => said!("There is no room for more text on this line: it reaches the next column. Shorten the text or reduce the font size."),
         }
     }
 }
@@ -978,7 +982,7 @@ fn drag(
                     }
                     displaced = true;
                 } else if displaced && !free.carry.contains(&show) {
-                    return Err(Room::Fixed.refusal().into());
+                    return Err(Room::Fixed.refusal());
                 }
             }
             _ => {}
@@ -1005,16 +1009,16 @@ fn drag(
 /// second, which is also what keeps the displacement exact rather than
 /// accumulating: it is always measured from the source's own bytes.
 pub(super) fn push(page: &Inspection, operator: u32, shift: f64) -> Result<Object, String> {
-    let imprecise = || "Cannot move the following text at PDF number precision".to_string();
+    let imprecise = || said!("Cannot move the following text at PDF number precision");
     let context = page
         .contexts
         .get(&operator)
-        .ok_or("missing text layout context")?;
+        .ok_or_else(|| said!("missing text layout context"))?;
     let show = page
         .content
         .operations
         .get(operator as usize)
-        .ok_or("text run no longer exists")?;
+        .ok_or_else(|| said!("text run no longer exists"))?;
     // A TJ number is in thousandths of an em of the show's own font size, before
     // its own matrix, so this is what one of them is worth in page points. It is
     // positive and finite for every discovered show -- the scanner refuses a
@@ -1025,7 +1029,7 @@ pub(super) fn push(page: &Inspection, operator: u32, shift: f64) -> Result<Objec
     let items = match (show.operator.as_str(), show.operands.as_slice()) {
         ("TJ", [Object::Array(items)]) => items.clone(),
         ("Tj", [string @ Object::String(..)]) => vec![string.clone()],
-        _ => return Err("invalid text patch".into()),
+        _ => return Err(said!("invalid text patch")),
     };
     let leading = matches!(items.first(), Some(Object::Integer(_) | Object::Real(_)));
     let existing = if leading { number(&items[0])? } else { 0. };
@@ -1089,12 +1093,12 @@ fn line_breaks(
             result.push(remaining[..end].to_owned());
             remaining = &remaining[end..];
             if result.len() > 128 {
-                return Err("Text exceeds 128 lines".into());
+                return Err(said!("Text exceeds 128 lines"));
             }
         }
     }
     if result.len() > 128 {
-        return Err("Text exceeds 128 lines".into());
+        return Err(said!("Text exceeds 128 lines"));
     }
     Ok(result)
 }
@@ -1270,7 +1274,7 @@ fn left_behind(
             let shared = old[cross + 2].min(other[cross + 2]) - old[cross].max(other[cross]);
             let smaller = (old[cross + 2] - old[cross]).min(other[cross + 2] - other[cross]);
             if shared > smaller / 2. {
-                return Err(wrap::UNMOVABLE.into());
+                return Err(wrap::unmovable());
             }
         }
     }
@@ -1884,14 +1888,15 @@ fn wrap_room(
             .iter()
             .any(|(other, moves)| !*moves && lands((old, shift(old, by), paragraph), *other, rule))
         {
-            return Err(wrap::NO_ROOM.into());
+            return Err(wrap::no_room());
         }
     }
     let moving: Vec<_> = moves
         .iter()
         .zip(reach)
         .map(|((operator, rect, by), reach)| {
-            let context = context_of(page, *operator).ok_or("missing text layout context")?;
+            let context =
+                context_of(page, *operator).ok_or_else(|| said!("missing text layout context"))?;
             Ok((
                 *operator,
                 *rect,
@@ -1907,23 +1912,23 @@ fn wrap_room(
     for (operator, old, by, reach, clip, table) in &moving {
         let new = shift(*old, *by);
         if new[0] < -0.001 || new[1] < -0.001 || new[2] > width + 0.001 || new[3] > depth + 0.001 {
-            return Err(wrap::NO_ROOM.into());
+            return Err(wrap::no_room());
         }
         if clip.is_some_and(|clip| !wrap::holds(clip, new)) {
-            return Err(wrap::NO_ROOM.into());
+            return Err(wrap::no_room());
         }
         // The hit rectangle and not the ink, as for the clip: it reaches a
         // quarter em below the baseline and an em above, so a moved line is
         // refused a little before its ink would leave the bounds its table
         // states, never after.
         if table.is_some_and(|table| !wrap::holds(table, new)) {
-            return Err(TABLE_BOUNDS.into());
+            return Err(table_bounds());
         }
         if hits
             .iter()
             .any(|(other, moves)| !*moves && lands((*old, new, *reach), *other, rule))
         {
-            return Err(wrap::NO_ROOM.into());
+            return Err(wrap::no_room());
         }
         if geometric
             && (hits.iter().any(|(other, moves)| {
@@ -1933,7 +1938,7 @@ fn wrap_room(
                 !carried.contains_key(&index) && level(*old, drawing) != level(new, drawing)
             }))
         {
-            return Err(wrap::BESIDE.into());
+            return Err(wrap::beside());
         }
         // A run cut across two lines is outlined as one rectangle holding
         // both pieces.
@@ -1963,7 +1968,7 @@ fn wrap_room(
         })
         .collect();
     // An annotation list the scan could not read may hold one over the lines.
-    let annotations = page.annotations.as_deref().ok_or(wrap::DRAWN)?;
+    let annotations = page.annotations.as_deref().ok_or_else(wrap::drawn_over)?;
     // A link over one moved run goes with it: the run's hit rectangle holds
     // it, to `LINK_SLACK`, and it moves as far as the run does.
     let mut links = Vec::new();
@@ -2005,7 +2010,7 @@ fn wrap_room(
         });
         match under {
             Some(moved) => links.push(moved),
-            None => return Err(wrap::DRAWN.into()),
+            None => return Err(wrap::drawn_over()),
         }
     }
     Ok((placed, links, carried))
@@ -2125,11 +2130,15 @@ impl Shape {
     }
 }
 
-const CENTRED_ONE_LINE: &str = "A centred line cannot be wrapped yet. Keep the text on one line.";
-const CENTRED_NO_ROOM: &str =
-    "There is no room to keep this line centred. Shorten the text or reduce the font size.";
-const RESTRICTED_ORIGINAL: &str =
-    "This text's font does not permit editing. Choose automatic fallback or a Noto font.";
+fn centred_one_line() -> String {
+    said!("A centred line cannot be wrapped yet. Keep the text on one line.")
+}
+fn centred_no_room() -> String {
+    said!("There is no room to keep this line centred. Shorten the text or reduce the font size.")
+}
+fn restricted_original() -> String {
+    said!("This text's font does not permit editing. Choose automatic fallback or a Noto font.")
+}
 
 pub(super) fn prepare(
     doc: &Document,
@@ -2142,11 +2151,14 @@ pub(super) fn prepare(
         .runs
         .iter()
         .find(|run| run.operator == change.operator)
-        .ok_or("text run no longer exists")?;
+        .ok_or_else(|| said!("text run no longer exists"))?;
     if change.revision != page.runs.revision || change.original != run.text {
-        return Err("text changed since this run was inspected".into());
+        return Err(said!("text changed since this run was inspected"));
     }
-    let settings = change.layout.as_ref().ok_or("missing text layout")?;
+    let settings = change
+        .layout
+        .as_ref()
+        .ok_or_else(|| said!("missing text layout"))?;
     if [settings.width, settings.height, settings.size]
         .iter()
         .any(|n| !n.is_finite())
@@ -2154,12 +2166,14 @@ pub(super) fn prepare(
         || !(0.1..=14400.).contains(&settings.height)
         || !(1.0..=512.).contains(&settings.size)
     {
-        return Err("Use a font size from 1 to 512 pt and a box from 0.1 to 14400 pt".into());
+        return Err(said!(
+            "Use a font size from 1 to 512 pt and a box from 0.1 to 14400 pt"
+        ));
     }
     let context = page
         .contexts
         .get(&run.operator)
-        .ok_or("missing text layout context")?;
+        .ok_or_else(|| said!("missing text layout context"))?;
     let xscale = run.matrix[0].hypot(run.matrix[1]);
     let yscale = run.matrix[2].hypot(run.matrix[3]);
     let width = settings.width / xscale;
@@ -2170,12 +2184,12 @@ pub(super) fn prepare(
             .iter()
             .all(|n| n.is_finite() && *n <= 1_000_000.)
     {
-        return Err("Text transformation exceeds its limit".into());
+        return Err(said!("Text transformation exceeds its limit"));
     }
     let font_at = *page
         .font_operators
         .get(&run.operator)
-        .ok_or("missing text font")?;
+        .ok_or_else(|| said!("missing text font"))?;
     let original_name = page.content.operations[font_at].operands[0]
         .as_name()
         .map_err(|e| e.to_string())?;
@@ -2195,7 +2209,7 @@ pub(super) fn prepare(
         .and_then(Object::as_name)
         .ok()
         .map(|name| String::from_utf8_lossy(name).into_owned())
-        .unwrap_or_else(|| "Original font".into());
+        .unwrap_or_else(|| said!("Original font"));
     // The run's own word gap, for a font that shows spaces as displacements.
     let gap = page
         .gaps
@@ -2261,7 +2275,7 @@ pub(super) fn prepare(
     let chosen = match settings.font {
         _ if change.replacement.is_empty() => None,
         EditFont::Auto if encodable => None,
-        EditFont::Original if restricted => return Err(RESTRICTED_ORIGINAL.into()),
+        EditFont::Original if restricted => return Err(restricted_original()),
         EditFont::Original => None,
         EditFont::Auto => {
             let name = original_label.to_ascii_lowercase();
@@ -2283,7 +2297,7 @@ pub(super) fn prepare(
         while font_table.has(&name) {
             name.push(b'_');
             if name.len() > 256 {
-                return Err("too many replacement font resources".into());
+                return Err(said!("too many replacement font resources"));
             }
         }
         Ok(name)
@@ -2306,9 +2320,9 @@ pub(super) fn prepare(
             metrics,
             resource_name()?,
             if restricted {
-                format!(
-                    "{} (the document's font does not permit editing)",
-                    fonts::fallback::label(style)
+                said!(
+                    "{font} (the document's font does not permit editing)",
+                    font = fonts::fallback::label(style)
                 )
             } else if let Some(reason) = &declined {
                 format!("{} ({reason})", fonts::fallback::label(style))
@@ -2348,7 +2362,7 @@ pub(super) fn prepare(
     // own text-space units: everything below is written that much further along.
     let inherited = placement.inherited / xscale;
     if !inherited.is_finite() || inherited.abs() > 1_000_000. {
-        return Err("text position exceeds its limit".into());
+        return Err(said!("text position exceeds its limit"));
     }
     // A box the reader has not sized follows what they type, as far as the room
     // after the run allows, and then as far as the text after it on the line can
@@ -2374,8 +2388,8 @@ pub(super) fn prepare(
         (stop.refusal(), stop.refusal())
     } else {
         (
-            "Text exceeds the box width. Widen the box, reduce the font size, or enable wrapping.",
-            "Text ink exceeds the box. Increase its width or choose another font.",
+            said!("Text exceeds the box width. Widen the box, reduce the font size, or enable wrapping."),
+            said!("Text ink exceeds the box. Increase its width or choose another font."),
         )
     };
     let source_at = |limit: f64| {
@@ -2406,7 +2420,7 @@ pub(super) fn prepare(
         || rect[2] > geometry.width + 0.001
         || rect[3] > geometry.height + 0.001
     {
-        return Err("The editing box extends beyond the page".into());
+        return Err(said!("The editing box extends beyond the page"));
     }
     // One writer: the replacement either at the source's own positioning
     // (`kept`) or laid out afresh, in the lines `shape` describes. `prepare`
@@ -2441,7 +2455,7 @@ pub(super) fn prepare(
                 &change.replacement,
                 (shape.first, shape.rest),
                 shape.wrap,
-                too_wide,
+                &too_wide,
                 // Where a line may break, the ink as well as the advance, as
                 // the lines are held to below: a last glyph that reaches a
                 // tenth of a point past its advance refused a wrap whose line
@@ -2469,9 +2483,9 @@ pub(super) fn prepare(
             && (minimum < run.size - height - 0.000001
                 || first_baseline + top * size / 1000. > run.size + 0.000001)
         {
-            return Err(
-                "Text exceeds the box height. Enlarge the box or reduce the font size.".into(),
-            );
+            return Err(said!(
+                "Text exceeds the box height. Enlarge the box or reduce the font size."
+            ));
         }
         let mut operations = vec![
             Operation::new(
@@ -2516,7 +2530,7 @@ pub(super) fn prepare(
                 )?;
                 let inset = (-ink[0]).max(0.);
                 if ink[1] + inset > limit + 0.001 {
-                    return Err(too_wide_ink.into());
+                    return Err(too_wide_ink.clone());
                 }
                 used = used.max(start + advance.max(ink[1] + inset));
                 end = start + (inset + advance).max(ink[1] + inset);
@@ -2539,10 +2553,10 @@ pub(super) fn prepare(
             ];
             if !text.is_empty() {
                 if !kept.is_some_and(|(_, _, _, inside)| *inside) {
-                    clipping::contains(context.clip, ink).map_err(|_| "The document clips this area. Reduce the box or font size to keep the text visible.")?;
+                    clipping::contains(context.clip, ink).map_err(|_| said!("The document clips this area. Reduce the box or font size to keep the text visible."))?;
                     // Ink within the source's own is within `table` as well,
                     // which is the stated bounds and that ink.
-                    clipping::contains(context.table, ink).map_err(|_| TABLE_BOUNDS)?;
+                    clipping::contains(context.table, ink).map_err(|_| table_bounds())?;
                 }
                 for region in &context.regions {
                     region.contains(ink)?;
@@ -2560,11 +2574,10 @@ pub(super) fn prepare(
                         || shown[3] > f64::from(geometry.height) + 0.001)
                 {
                     return Err(if shape.pitch.is_some() {
-                        wrap::NO_ROOM
+                        wrap::no_room()
                     } else {
-                        CENTRED_NO_ROOM
-                    }
-                    .into());
+                        centred_no_room()
+                    });
                 }
                 for (other, moves) in hits {
                     // A run this plan pushes along is not in the way: it ends up
@@ -2577,7 +2590,7 @@ pub(super) fn prepare(
                         continue;
                     }
                     if strikes(shown, *other, free.own) {
-                        return Err("Text would overlap another line. Reduce the font size or change the box dimensions.".into());
+                        return Err(said!("Text would overlap another line. Reduce the font size or change the box dimensions."));
                     }
                 }
             }
@@ -2619,7 +2632,7 @@ pub(super) fn prepare(
     // writer away. `--compare` over the corpus is what says so.
     let centred = page.centred.contains(&run.operator);
     if centred && (settings.wrap || change.replacement.contains('\n')) {
-        return Err(CENTRED_ONE_LINE.into());
+        return Err(centred_one_line());
     }
     let mut back = 0.;
     let plans: &[(f64, bool)] = if ceiling > width {
@@ -2632,7 +2645,7 @@ pub(super) fn prepare(
     } else {
         &[(width, true), (width, false)]
     };
-    let mut outcome = Err("missing text layout".to_string());
+    let mut outcome = Err(said!("missing text layout"));
     for &(limit, positioned) in plans {
         let kept = positioned.then(|| source_at(limit)).flatten();
         if positioned && kept.is_none() {
@@ -2680,8 +2693,8 @@ pub(super) fn prepare(
     // The page edge, or the next column on a page without tags, which ends a
     // line the same way; `had` is the refusal the edit keeps if it cannot wrap.
     let had = match &outcome {
-        Err(error) if error == Room::Page.refusal() => Some(Room::Page),
-        Err(error) if error == Room::Column.refusal() => Some(Room::Column),
+        Err(error) if *error == Room::Page.refusal() => Some(Room::Page),
+        Err(error) if *error == Room::Column.refusal() => Some(Room::Column),
         _ => None,
     };
     let full = had.is_some();
@@ -2721,7 +2734,7 @@ pub(super) fn prepare(
         let whole = free.whole.min((14400. / xscale).max(width)).max(width);
         match wrap::plan(page, run, (room.max(width), whole), &free.line) {
             Err(wrap::Refused::NotApplicable) => {}
-            Err(wrap::Refused::Blocked(reason)) if full => return Err(reason.into()),
+            Err(wrap::Refused::Blocked(reason)) if full => return Err(reason),
             Err(wrap::Refused::Blocked(_)) => {}
             // Within the measure: the line grows along itself, as before.
             Ok(plan) if grown.is_some_and(|used| used <= plan.first + 0.001) => {}
@@ -2762,7 +2775,7 @@ pub(super) fn prepare(
                         .flat_map(|edited| shows_of(page, *edited))
                         .any(|show| moving.contains(&show))
                     {
-                        return Err(wrap::CONFLICT.into());
+                        return Err(wrap::conflict());
                     }
                     // The hit list with every run that moves flagged. The blocks
                     // below that may move with the paragraph are flagged too until
@@ -2798,7 +2811,7 @@ pub(super) fn prepare(
                     let (operations, lines, used, end, inks) =
                         lay_out(None, &shape, true, &hits, 0.).map_err(|error| {
                             if error.starts_with("Text would overlap another line") {
-                                wrap::NO_ROOM.to_string()
+                                wrap::no_room()
                             } else {
                                 error
                             }
@@ -2814,7 +2827,7 @@ pub(super) fn prepare(
                         cuts.iter().map(|(spans, _)| spans.clone()).collect();
                     let places =
                         wrap::flow(&plan, &spans, run.advance, (lines.saturating_sub(1), end))
-                            .ok_or_else(|| had.unwrap_or(Room::Page).refusal().to_string())?;
+                            .ok_or_else(|| had.unwrap_or(Room::Page).refusal())?;
                     // How far the block's lines below go: the lines this edit and
                     // the text after it added, at the block's own pitch, down the
                     // run's own text axis.
@@ -2884,10 +2897,14 @@ pub(super) fn prepare(
                         // Cut: one show (`unit_words`), drawn once per piece.
                         let show = unit.shows[0];
                         let (spans, items) = &cuts[index];
-                        let source = whole(show).ok_or("text run no longer exists")?;
+                        let source =
+                            whole(show).ok_or_else(|| said!("text run no longer exists"))?;
                         let mut drawn = Vec::new();
                         for piece in &mine {
-                            let words = piece.words.clone().ok_or("invalid text patch")?;
+                            let words = piece
+                                .words
+                                .clone()
+                                .ok_or_else(|| said!("invalid text patch"))?;
                             let (from, to) = (spans[words.start].0, spans[words.end - 1].1);
                             // The piece's own stretch of the run's rectangle.
                             let at = |x: f64| {
@@ -2933,7 +2950,7 @@ pub(super) fn prepare(
                             (&inks, free.own, edge),
                             (corner(0., -drop), corner(0., -plan.pitch), give),
                         )
-                        .ok_or(wrap::NO_ROOM)?;
+                        .ok_or_else(wrap::no_room)?;
                         let hits = if carried.is_empty() {
                             flag(&below.union(&flowing).copied().collect())
                         } else {
@@ -2943,7 +2960,7 @@ pub(super) fn prepare(
                                 .flat_map(|edited| shows_of(page, *edited))
                                 .any(|show| carried.contains_key(&show))
                             {
-                                return Err(wrap::CONFLICT.into());
+                                return Err(wrap::conflict());
                             }
                             for (show, part) in &carried {
                                 lowered.push((
@@ -2998,7 +3015,7 @@ pub(super) fn prepare(
                         Ok((placed, links, lowered))
                     };
                     let (placed, links, lowered) = match settle(0.) {
-                        Err(error) if error == wrap::NO_ROOM => settle(BREAK_GIVE),
+                        Err(error) if error == wrap::no_room() => settle(BREAK_GIVE),
                         settled => settled,
                     }?;
                     let rect = display(text_bounds(
@@ -3149,7 +3166,9 @@ pub(super) fn prepare(
         || ((-f64::from(adjustment) * run.size / 1000. - context.cursor_after) * xscale).abs()
             > 0.0001
     {
-        return Err("Cannot preserve the following text position precisely".into());
+        return Err(said!(
+            "Cannot preserve the following text position precisely"
+        ));
     }
     operations.push(Operation::new(
         "TJ",

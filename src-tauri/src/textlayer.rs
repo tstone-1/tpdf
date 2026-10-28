@@ -119,23 +119,23 @@ pub fn write(doc: &mut Document, layers: &[Layer]) -> Result<(), String> {
     let mut planned = Vec::new();
     for layer in layers {
         let id = *pages.get(layer.page as usize).ok_or_else(|| {
-            format!(
-                "the text layer names page {}, and the document has {}",
-                layer.page + 1,
-                pages.len()
+            said!(
+                "the text layer names page {page}, and the document has {count}",
+                page = layer.page + 1,
+                count = pages.len()
             )
         })?;
         if !seen.insert(layer.page) {
-            return Err(format!(
-                "the text layer names page {} twice",
-                layer.page + 1
+            return Err(said!(
+                "the text layer names page {page} twice",
+                page = layer.page + 1
             ));
         }
         if layer.words.len() > MAX_WORDS {
-            return Err(format!(
-                "the text layer for page {} has {} words, over the limit of {MAX_WORDS}",
-                layer.page + 1,
-                layer.words.len()
+            return Err(said!(
+                "the text layer for page {page} has {count} words, over the limit of {MAX_WORDS}",
+                page = layer.page + 1,
+                count = layer.words.len()
             ));
         }
         let shown = pagetree::displayed_page(doc, id);
@@ -178,9 +178,9 @@ fn show(shown: DisplayedPage, word: &Word) -> Result<Option<String>, String> {
         .encode_utf16()
         .collect();
     if units.len() > MAX_UNITS {
-        return Err(format!(
-            "a word in the text layer is {} characters long, over the limit of {MAX_UNITS}",
-            units.len()
+        return Err(said!(
+            "a word in the text layer is {count} characters long, over the limit of {MAX_UNITS}",
+            count = units.len()
         ));
     }
     let [left, top, right, bottom] = word.rect;
@@ -261,7 +261,7 @@ fn attach(
     let existing = doc
         .get_object(page)
         .and_then(Object::as_dict)
-        .map_err(|e| format!("page {page:?} is not a dictionary: {e}"))?
+        .map_err(|e| said!("page {page:?} is not a dictionary: {e}"))?
         .get(b"Contents")
         .ok()
         .cloned();
@@ -280,7 +280,7 @@ fn attach(
     let dict = doc
         .get_object_mut(page)
         .and_then(Object::as_dict_mut)
-        .map_err(|e| format!("page {page:?} is not a dictionary: {e}"))?;
+        .map_err(|e| said!("page {page:?} is not a dictionary: {e}"))?;
     dict.set("Contents", Object::Array(contents));
     dict.set("Resources", Object::Dictionary(resources));
     Ok(())

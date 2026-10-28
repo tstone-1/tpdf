@@ -45,7 +45,7 @@ impl Region {
                     .map(|(_, direction)| direction)
                     .sum();
                 if winding == 0 || (self.even_odd && winding % 2 == 0) {
-                    return Err("partly clipped text is not editable yet".into());
+                    return Err(said!("partly clipped text is not editable yet"));
                 }
             }
         }
@@ -162,7 +162,7 @@ pub(super) fn compound(
             || exact[0] >= exact[2]
             || exact[1] >= exact[3]
         {
-            return Err("compound clip coordinates exceed their limit".into());
+            return Err(said!("compound clip coordinates exceed their limit"));
         }
         let direction = if (b[0] - a[0]) * (c[1] - b[1]) - (b[1] - a[1]) * (c[0] - b[0]) > 0. {
             1
@@ -171,7 +171,7 @@ pub(super) fn compound(
         };
         rectangles.push((exact, direction));
         if rectangles.len() > 32 {
-            return Err("too many compound clip rectangles".into());
+            return Err(said!("too many compound clip rectangles"));
         }
     }
     if inexact && rectangles.len() != 1 {
@@ -224,7 +224,7 @@ pub(super) fn quadrilateral(ops: &[Operation], ctm: [f64; 6]) -> Result<Option<u
         index += 1;
     }
     for corner in &points {
-        bounded(*corner, "clip coordinates exceed their limit")?;
+        bounded(*corner, || said!("clip coordinates exceed their limit"))?;
     }
     if let Some(op) = ops
         .get(index)
@@ -276,7 +276,7 @@ pub(super) fn apply(
     ops: &[Operation],
     ctm: [f64; 6],
 ) -> Result<Rect, String> {
-    let invalid = || "only complete unpainted rectangular clips are editable".to_string();
+    let invalid = || said!("only complete unpainted rectangular clips are editable");
     let [rect, rule, end, ..] = ops else {
         return Err(invalid());
     };
@@ -299,7 +299,7 @@ pub(super) fn apply(
         ];
     }
     if next[0] >= next[2] || next[1] >= next[3] {
-        return Err("empty text clipping intersection".into());
+        return Err(said!("empty text clipping intersection"));
     }
     Ok(next)
 }
@@ -319,7 +319,7 @@ pub(super) fn painted(ops: &[Operation], ctm: [f64; 6]) -> Result<Option<usize>,
         return Ok(None);
     }
     if !end.operands.is_empty() {
-        return Err("invalid rectangle paint operands".into());
+        return Err(said!("invalid rectangle paint operands"));
     }
     for rect in &ops[..count] {
         if super::diagonal(ctm) {
@@ -328,12 +328,12 @@ pub(super) fn painted(ops: &[Operation], ctm: [f64; 6]) -> Result<Option<usize>,
             // Painting only: under a rotated or skewed CTM the rectangle is a
             // parallelogram, and all that is needed is its corners in range.
             if rect.operands.len() != 4 {
-                return Err("invalid rectangle operands".into());
+                return Err(said!("invalid rectangle operands"));
             }
             let [x, y, width, height] = [0, 1, 2, 3].map(|i| super::number(&rect.operands[i]));
             let (x, y, width, height) = (x?, y?, width?, height?);
             if width == 0. || height == 0. {
-                return Err("empty rectangle is not editable".into());
+                return Err(said!("empty rectangle is not editable"));
             }
             for (px, py) in [
                 (x, y),
@@ -341,10 +341,9 @@ pub(super) fn painted(ops: &[Operation], ctm: [f64; 6]) -> Result<Option<usize>,
                 (x, y + height),
                 (x + width, y + height),
             ] {
-                bounded(
-                    point(ctm, px, py),
-                    "rectangle coordinates exceed their limit",
-                )?;
+                bounded(point(ctm, px, py), || {
+                    said!("rectangle coordinates exceed their limit")
+                })?;
             }
         }
     }
@@ -359,12 +358,12 @@ fn point(ctm: [f64; 6], x: f64, y: f64) -> [f64; 2] {
     ]
 }
 
-fn bounded(point: [f64; 2], message: &str) -> Result<(), String> {
+fn bounded(point: [f64; 2], message: impl FnOnce() -> String) -> Result<(), String> {
     if point
         .iter()
         .any(|value| !value.is_finite() || value.abs() > 1_000_000.)
     {
-        return Err(message.into());
+        return Err(message());
     }
     Ok(())
 }
@@ -379,7 +378,7 @@ fn bounded(point: [f64; 2], message: &str) -> Result<(), String> {
 // 8.5.3.2 paints a lone point only when it is a closed subpath) and is kept
 // byte for byte; the path as a whole still has to draw a segment.
 pub(super) fn path(ops: &[Operation], ctm: [f64; 6]) -> Result<usize, String> {
-    let invalid = || "only complete bounded painted paths are editable".to_string();
+    let invalid = || said!("only complete bounded painted paths are editable");
     let mut segments = 0;
     let mut drawn = false;
     let mut closed = false;
@@ -418,7 +417,9 @@ pub(super) fn path(ops: &[Operation], ctm: [f64; 6]) -> Result<usize, String> {
         for pair in op.operands.chunks_exact(2) {
             let x = super::number(&pair[0])?;
             let y = super::number(&pair[1])?;
-            bounded(point(ctm, x, y), "path coordinates exceed their limit")?;
+            bounded(point(ctm, x, y), || {
+                said!("path coordinates exceed their limit")
+            })?;
         }
     }
     Err(invalid())
@@ -441,7 +442,7 @@ pub(super) fn drawn(
     let end = consumed
         .checked_sub(1)
         .and_then(|last| ops.get(last))
-        .ok_or("invalid painted path")?;
+        .ok_or_else(|| said!("invalid painted path"))?;
     if end.operator == "n" {
         return Ok(None);
     }
@@ -451,7 +452,7 @@ pub(super) fn drawn(
         if op.operator == "re" {
             let mut values = [0.; 4];
             if op.operands.len() != 4 {
-                return Err("invalid rectangle operands".into());
+                return Err(said!("invalid rectangle operands"));
             }
             for (dest, value) in values.iter_mut().zip(&op.operands) {
                 *dest = super::number(value)?;
@@ -476,7 +477,7 @@ pub(super) fn drawn(
 
 fn rectangle(rect: &Operation, ctm: [f64; 6]) -> Result<Rect, String> {
     if rect.operator != "re" || rect.operands.len() != 4 {
-        return Err("invalid rectangle operands".into());
+        return Err(said!("invalid rectangle operands"));
     }
     let mut values = [0.; 4];
     for (dest, value) in values.iter_mut().zip(&rect.operands) {
@@ -487,7 +488,7 @@ fn rectangle(rect: &Operation, ctm: [f64; 6]) -> Result<Rect, String> {
     // Table 4.9). A single reversed rectangle has the same clipping interior;
     // retain its winding and all authored operators in the saved stream.
     if width == 0. || height == 0. {
-        return Err("empty rectangle is not editable".into());
+        return Err(said!("empty rectangle is not editable"));
     }
     let next = [
         x * ctm[0] + ctm[4],
@@ -496,7 +497,7 @@ fn rectangle(rect: &Operation, ctm: [f64; 6]) -> Result<Rect, String> {
         (y + height) * ctm[3] + ctm[5],
     ];
     if next.iter().any(|v| !v.is_finite() || v.abs() > 1_000_000.) {
-        return Err("rectangle coordinates exceed their limit".into());
+        return Err(said!("rectangle coordinates exceed their limit"));
     }
     // A reflected CTM reverses corners, not the rectangle's interior. Normalize
     // in page space before intersecting with the already established clip.
@@ -511,7 +512,7 @@ fn rectangle(rect: &Operation, ctm: [f64; 6]) -> Result<Rect, String> {
 pub(super) fn contains(clip: Option<Rect>, text: Rect) -> Result<(), String> {
     if let Some(clip) = clip {
         if text[0] < clip[0] || text[1] < clip[1] || text[2] > clip[2] || text[3] > clip[3] {
-            return Err("partly clipped text is not editable yet".into());
+            return Err(said!("partly clipped text is not editable yet"));
         }
     }
     Ok(())
@@ -521,7 +522,7 @@ pub(super) fn line_width(value: &Object) -> Result<(), String> {
     // Stroked text (Tr 1 and 2) reaches half the width beyond its outlines;
     // the scanner widens its ink by that. The authored setting is kept.
     if super::number(value)? < 0. {
-        return Err("negative line width is not editable".into());
+        return Err(said!("negative line width is not editable"));
     }
     Ok(())
 }

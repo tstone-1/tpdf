@@ -121,14 +121,13 @@ impl Shm {
     ///
     /// The file not opening, being empty, or not mapping.
     pub fn map_file(path: &Path) -> Result<Self, String> {
-        let file =
-            std::fs::File::open(path).map_err(|e| format!("could not open {path:?}: {e}"))?;
+        let file = std::fs::File::open(path).map_err(|e| said!("could not open {path:?}: {e}"))?;
         let len = file
             .metadata()
-            .map_err(|e| format!("could not stat {path:?}: {e}"))?
+            .map_err(|e| said!("could not stat {path:?}: {e}"))?
             .len() as usize;
         if len == 0 {
-            return Err(format!("{path:?} is empty"));
+            return Err(said!("{path:?} is empty"));
         }
         // Read-only, and not merely because `File::open` gives a read-only
         // descriptor that `mmap` then refuses `PROT_WRITE` on --- which is how
@@ -368,16 +367,15 @@ impl Shm {
     ///
     /// The file not opening, being empty, or not mapping.
     pub fn map_file(path: &Path) -> Result<Self, String> {
-        let file =
-            std::fs::File::open(path).map_err(|e| format!("could not open {path:?}: {e}"))?;
+        let file = std::fs::File::open(path).map_err(|e| said!("could not open {path:?}: {e}"))?;
         let len = file
             .metadata()
-            .map_err(|e| format!("could not stat {path:?}: {e}"))?
+            .map_err(|e| said!("could not stat {path:?}: {e}"))?
             .len() as usize;
         if len == 0 {
-            return Err(format!("{path:?} is empty"));
+            return Err(said!("{path:?} is empty"));
         }
-        Self::section(file, len).map_err(|e| format!("could not map {path:?}: {e}"))
+        Self::section(file, len).map_err(|e| said!("could not map {path:?}: {e}"))
     }
 
     /// Maps a file that is already open, without naming it again.

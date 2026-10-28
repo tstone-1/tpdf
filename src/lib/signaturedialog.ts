@@ -4,6 +4,7 @@ import { isLinux } from "./keys";
 import { prepareSignatureStorage, loadSignature, rememberSignature, forgetSignature } from "./signaturestore";
 import { button, footer, option, paragraph, row } from "./dialogparts";
 import { catalog } from "./i18n";
+import { spokenError } from "./said";
 
 const TEXT = catalog({
   "en-US": {
@@ -85,7 +86,7 @@ export class SignatureDialog {
   private generation = 0;
 
   constructor(host: HTMLElement) {
-    void prepareSignatureStorage().catch((error: unknown) => { this.message.textContent = String(error); });
+    void prepareSignatureStorage().catch((error: unknown) => { this.message.textContent = spokenError(error); });
     this.dialog.className = "signature-dialog tpdf-dialog";
     const said = TEXT();
     this.dialog.setAttribute("aria-label", PLACE_WORDS.title);
@@ -255,7 +256,7 @@ export class SignatureDialog {
       if (generation !== this.generation || !this.isOpen) return;
       if (saved) { this.source = signatureCanvas(saved); this.render(); }
       else this.message.textContent = TEXT().noneSaved;
-    } catch (error) { if (generation === this.generation) this.message.textContent = String(error); }
+    } catch (error) { if (generation === this.generation) this.message.textContent = spokenError(error); }
   }
   private async forgetSaved(): Promise<void> {
     try { await forgetSignature(); this.remember.checked = false; this.message.textContent = TEXT().removed; }

@@ -98,12 +98,14 @@ impl Stopped {
     /// What the reader is told. `name` is the copy's file name.
     pub(crate) fn sentence(&self, name: &str) -> String {
         match self {
-            Stopped::Refused(why) => format!("{} --- nothing was written", why.sentence()),
+            Stopped::Refused(why) => {
+                said!("{why} --- nothing was written", why = why.sentence())
+            }
             Stopped::Unwritten(why) | Stopped::Unread(why) => why.clone(),
-            Stopped::ReadBack(why) => format!(
-                "{name} was written, but reading it back did not find what was added: {}. Do \
+            Stopped::ReadBack(why) => said!(
+                "{name} was written, but reading it back did not find what was added: {why}. Do \
                  not rely on that copy.",
-                why.sentence()
+                why = why.sentence()
             ),
         }
     }
@@ -161,16 +163,12 @@ pub(crate) fn finish(
     write(&added.bytes).map_err(Stopped::Unwritten)?;
 
     let mut written = std::fs::File::open(out).map_err(|e| {
-        Stopped::Unread(format!(
-            "the copy was written and could not be reopened: {e}"
-        ))
+        Stopped::Unread(said!("the copy was written and could not be reopened: {e}"))
     })?;
     let signatures = checking
         .signatures(&mut written, added.bytes.len())
         .map_err(|e| {
-            Stopped::Unread(format!(
-                "the copy was written and could not be checked: {e}"
-            ))
+            Stopped::Unread(said!("the copy was written and could not be checked: {e}"))
         })?;
     let appended = (added.bytes.len() - original.len()) as u64;
     existing::read_back(&added.before, &signatures, appended).map_err(Stopped::ReadBack)?;
@@ -204,10 +202,11 @@ pub(crate) fn finish(
 /// `len` is over the bound.
 pub(crate) fn refuse_too_large(len: u64) -> Result<(), String> {
     if len > save::APPEND_MAX_BYTES {
-        return Err(format!(
-            "This document is {} MB, and tpdf adds validation data to documents of up to {} MB.",
-            len / 1_000_000,
-            save::APPEND_MAX_BYTES / 1_000_000
+        return Err(said!(
+            "This document is {mb} MB, and tpdf adds validation data to documents of up to \
+             {most} MB.",
+            mb = len / 1_000_000,
+            most = save::APPEND_MAX_BYTES / 1_000_000
         ));
     }
     Ok(())
@@ -222,11 +221,10 @@ pub(crate) fn refuse_too_large(len: u64) -> Result<(), String> {
 /// `dirty` is true.
 pub(crate) fn refuse_unsaved(dirty: bool) -> Result<(), String> {
     if dirty {
-        return Err(
+        return Err(said!(
             "Save your changes first: validation data is added to the file as it is on disk, \
              and this document has edits that are not in it yet."
-                .into(),
-        );
+        ));
     }
     Ok(())
 }
@@ -239,11 +237,10 @@ pub(crate) fn refuse_unsaved(dirty: bool) -> Result<(), String> {
 /// `out` is `source`, under this name or another.
 pub(crate) fn refuse_same_file(source: &Path, out: &Path) -> Result<(), String> {
     if save::same_file(source, out) {
-        return Err(
+        return Err(said!(
             "The document with the data added is written as a new file --- choose a name other \
              than the original's."
-                .into(),
-        );
+        ));
     }
     Ok(())
 }
@@ -281,12 +278,13 @@ pub async fn add_validation_data(
     let authority = crate::tsa::authority(&timestamp).map_err(|why| why.sentence(""))?;
     refuse_unsaved(edits.state(doc)?.dirty)?;
     let opened_as = edits.plan(doc)?.opened_as.ok_or_else(|| {
-        "tpdf could not record what this file looked like when it was opened, so it cannot \
-         tell that what it adds to is that file --- reopen it and try again"
-            .to_string()
+        said!(
+            "tpdf could not record what this file looked like when it was opened, so it cannot \
+             tell that what it adds to is that file --- reopen it and try again"
+        )
     })?;
     let len = std::fs::metadata(&source)
-        .map_err(|e| format!("could not measure {source}: {e}"))?
+        .map_err(|e| said!("could not measure {source}: {e}"))?
         .len();
     refuse_too_large(len)?;
     // Before anybody is asked: `write_signed` refuses the original's own
@@ -303,9 +301,10 @@ pub async fn add_validation_data(
         // against exactly these, and the survey a worker makes is of them.
         let original = save::read_to_sign(&source, &opened_as).map_err(|why| {
             if why.changed {
-                "the file on disk is not the one that was opened, so nothing was added to it \
-                 --- reopen it and try again"
-                    .to_string()
+                said!(
+                    "the file on disk is not the one that was opened, so nothing was added to it \
+                     --- reopen it and try again"
+                )
             } else {
                 why.message
             }
@@ -324,7 +323,7 @@ pub async fn add_validation_data(
         .map_err(|stopped| stopped.sentence(&name_of(&out)))
     })
     .await
-    .map_err(|e| format!("adding the validation data did not run: {e}"))?
+    .map_err(|e| said!("adding the validation data did not run: {e}"))?
 }
 
 #[cfg(test)]

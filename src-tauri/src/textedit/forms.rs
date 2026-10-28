@@ -9,6 +9,10 @@ use std::collections::BTreeSet;
 #[cfg(test)]
 mod tests;
 
+fn invalid() -> String {
+    said!("unsupported preserved Form XObject")
+}
+#[cfg(test)]
 const INVALID: &str = "unsupported preserved Form XObject";
 
 // A form is only read, never rewritten, so it may be larger than the page
@@ -38,11 +42,11 @@ pub(super) fn check(
     name: &[u8],
     remaining: usize,
 ) -> Result<Option<Form>, String> {
-    let objects = dictionary(doc, resources.get(b"XObject").map_err(|_| INVALID)?)?;
-    let value = objects.get(name).map_err(|_| INVALID)?;
+    let objects = dictionary(doc, resources.get(b"XObject").map_err(|_| invalid())?)?;
+    let value = objects.get(name).map_err(|_| invalid())?;
     let stream = crate::encoding::resolve(doc, value)
         .as_stream()
-        .map_err(|_| INVALID)?;
+        .map_err(|_| invalid())?;
     if stream.dict.get(b"Subtype").and_then(Object::as_name).ok() != Some(b"Form") {
         return Ok(None);
     }
@@ -81,14 +85,14 @@ fn visit(
     budget: &mut Budget,
 ) -> Result<(Option<[f64; 4]>, [f64; 4]), String> {
     budget.calls += 1;
-    let id = value.as_reference().map_err(|_| INVALID)?;
+    let id = value.as_reference().map_err(|_| invalid())?;
     if depth >= 8 || budget.calls > 32 || !budget.active.insert(id) {
-        return Err(INVALID.into());
+        return Err(invalid());
     }
     let form = doc
         .get_object(id)
         .and_then(Object::as_stream)
-        .map_err(|_| INVALID)?;
+        .map_err(|_| invalid())?;
     for (key, value) in &form.dict {
         match (key.as_slice(), value) {
             (b"Type", Object::Name(name)) if name == b"XObject" => {}
@@ -112,7 +116,7 @@ fn visit(
             (b"ADBE_FillSign", _) => {
                 let data = dictionary(doc, value)?;
                 if data.get(b"Type").and_then(Object::as_name).ok() != Some(b"FillSignData") {
-                    return Err(INVALID.into());
+                    return Err(invalid());
                 }
             }
             // pdfTeX's record of an included figure: the file, its page and
@@ -133,22 +137,22 @@ fn visit(
                     group.get(b"Type").and_then(Object::as_name).ok(),
                     Some(b"OCG") | Some(b"OCMD")
                 ) {
-                    return Err(INVALID.into());
+                    return Err(invalid());
                 }
             }
             (b"Group", _) => group(doc, value)?,
             (b"BBox" | b"Matrix" | b"Resources" | b"Length" | b"Filter", _) => {}
-            _ => return Err(INVALID.into()),
+            _ => return Err(invalid()),
         }
     }
     if form.dict.get(b"Subtype").and_then(Object::as_name).ok() != Some(b"Form") {
-        return Err(INVALID.into());
+        return Err(invalid());
     }
-    let bounds = crate::encoding::resolve(doc, form.dict.get(b"BBox").map_err(|_| INVALID)?)
+    let bounds = crate::encoding::resolve(doc, form.dict.get(b"BBox").map_err(|_| invalid())?)
         .as_array()
-        .map_err(|_| INVALID)?;
+        .map_err(|_| invalid())?;
     if bounds.len() != 4 {
-        return Err(INVALID.into());
+        return Err(invalid());
     }
     let bounds = bounds.iter().map(number).collect::<Result<Vec<_>, _>>()?;
     // ISO 32000-1 7.9.5: a rectangle may name either pair of opposite corners,
@@ -161,15 +165,15 @@ fn visit(
         bounds[1].max(bounds[3]),
     ];
     if bounds[0] >= bounds[2] || bounds[1] >= bounds[3] {
-        return Err(INVALID.into());
+        return Err(invalid());
     }
     let mut matrix = [1., 0., 0., 1., 0., 0.];
     if let Ok(value) = form.dict.get(b"Matrix") {
         let values = crate::encoding::resolve(doc, value)
             .as_array()
-            .map_err(|_| INVALID)?;
+            .map_err(|_| invalid())?;
         if values.len() != 6 {
-            return Err(INVALID.into());
+            return Err(invalid());
         }
         for (dest, value) in matrix.iter_mut().zip(values) {
             *dest = number(value)?;
@@ -184,10 +188,10 @@ fn visit(
     let bytes = filters::decode(form, budget.content.min(budget.remaining))?;
     budget.content -= bytes.len();
     budget.remaining -= bytes.len();
-    let content = Content::decode_strict(&bytes).map_err(|_| INVALID)?;
+    let content = Content::decode_strict(&bytes).map_err(|_| invalid())?;
     budget.operations += content.operations.len();
     if budget.operations > MAX_FORM_OPERATIONS {
-        return Err(INVALID.into());
+        return Err(invalid());
     }
     let mut has_text = false;
     let mut inside = false;
@@ -205,18 +209,18 @@ fn visit(
                 super::graphics::normal(doc, resources, name)?;
             }
             ("Do", [Object::Name(name)]) if !inside => {
-                let objects = dictionary(doc, resources.get(b"XObject").map_err(|_| INVALID)?)?;
-                let child = objects.get(name).map_err(|_| INVALID)?;
+                let objects = dictionary(doc, resources.get(b"XObject").map_err(|_| invalid())?)?;
+                let child = objects.get(name).map_err(|_| invalid())?;
                 let stream = crate::encoding::resolve(doc, child)
                     .as_stream()
-                    .map_err(|_| INVALID)?;
+                    .map_err(|_| invalid())?;
                 if stream.dict.get(b"Subtype").and_then(Object::as_name).ok() == Some(b"Form") {
                     has_text |= visit(doc, resources, child, depth + 1, budget)?.0.is_some();
                 } else {
                     let image = images::check(doc, resources, name, budget.remaining)?;
                     // A form's fill colour is not tracked, and a stencil paints it.
                     if image.stencil {
-                        return Err(INVALID.into());
+                        return Err(invalid());
                     }
                     budget.remaining -= image.bytes;
                 }
@@ -237,11 +241,11 @@ fn visit(
             // object, whose own state this form restores on return either way.
             ("Tc" | "Tw" | "Tz" | "TL" | "Tf" | "Tr" | "Ts", _) => {}
             ("Td" | "TD" | "Tm" | "T*" | "Tj" | "TJ" | "'" | "\"", _) if inside => {}
-            _ => return Err(INVALID.into()),
+            _ => return Err(invalid()),
         }
     }
     if inside || stack != 0 {
-        return Err(INVALID.into());
+        return Err(invalid());
     }
     budget.active.remove(&id);
     let box_bounds = super::text_bounds(matrix, [bounds[0], bounds[1], bounds[2], bounds[3]]);
@@ -256,7 +260,7 @@ fn visit(
 fn group(doc: &Document, value: &Object) -> Result<(), String> {
     let group = dictionary(doc, value)?;
     if group.get(b"S").and_then(Object::as_name).ok() != Some(b"Transparency") {
-        return Err(INVALID.into());
+        return Err(invalid());
     }
     for (key, value) in group {
         match (key.as_slice(), value) {
@@ -266,7 +270,7 @@ fn group(doc: &Document, value: &Object) -> Result<(), String> {
                 colors::space(doc, value)?;
             }
             (b"I" | b"K", Object::Boolean(_)) => {}
-            _ => return Err(INVALID.into()),
+            _ => return Err(invalid()),
         }
     }
     Ok(())

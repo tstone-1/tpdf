@@ -36,7 +36,7 @@ impl OwnedPdf {
         // declaration order: RawDocument closes its pages/document before bytes.
         let view = unsafe { std::slice::from_raw_parts(bytes.as_ptr(), bytes.len()) };
         let raw = RawDocument::open_bytes(bindings, view, password)
-            .map_err(|e| format!("raster document could not be read: {e:?}"))?;
+            .map_err(|e| said!("raster document could not be read: {e:?}"))?;
         Ok(Self { raw, _bytes: bytes })
     }
 }
@@ -51,12 +51,14 @@ struct Pixels {
 
 fn dimensions(width: f64, height: f64) -> Result<(usize, usize), String> {
     if !width.is_finite() || !height.is_finite() || width <= 0.0 || height <= 0.0 {
-        return Err("raster redaction requires finite positive page dimensions".into());
+        return Err(said!(
+            "raster redaction requires finite positive page dimensions"
+        ));
     }
     let w = (width * DPI / 72.0).ceil();
     let h = (height * DPI / 72.0).ceil();
     if w > f64::from(u16::MAX) || h > f64::from(i32::MAX) || w * h > MAX_PIXELS as f64 {
-        return Err("page exceeds the raster redaction pixel limit".into());
+        return Err(said!("page exceeds the raster redaction pixel limit"));
     }
     Ok((w as usize, h as usize))
 }
@@ -66,24 +68,24 @@ fn pixel_bounds(points: &[(i32, i32)], width: usize, height: usize) -> Result<Pi
         .iter()
         .map(|p| p.0)
         .min()
-        .ok_or("missing region corners")?;
+        .ok_or(said!("missing region corners"))?;
     let right = points
         .iter()
         .map(|p| p.0)
         .max()
-        .ok_or("missing region corners")?;
+        .ok_or(said!("missing region corners"))?;
     let top = points
         .iter()
         .map(|p| p.1)
         .min()
-        .ok_or("missing region corners")?;
+        .ok_or(said!("missing region corners"))?;
     let bottom = points
         .iter()
         .map(|p| p.1)
         .max()
-        .ok_or("missing region corners")?;
+        .ok_or(said!("missing region corners"))?;
     if right <= 0 || bottom <= 0 || left >= width as i32 || top >= height as i32 {
-        return Err("a marked region lies outside its output page".into());
+        return Err(said!("a marked region lies outside its output page"));
     }
     // Integer PageToDevice rounding and antialiasing are covered by a two-pixel
     // outward margin. Never mask less than the requested area.
@@ -102,7 +104,7 @@ fn map_area(
     height: usize,
 ) -> Result<Pixels, String> {
     if !area.iter().all(|n| n.is_finite()) || area[0] >= area[2] || area[1] >= area[3] {
-        return Err("a marked region has invalid or zero dimensions".into());
+        return Err(said!("a marked region has invalid or zero dimensions"));
     }
     let mut points = Vec::with_capacity(4);
     for (x, y) in [
@@ -128,7 +130,7 @@ fn map_area(
             )
         };
         if ok == 0 {
-            return Err("PDFium could not locate a marked region".into());
+            return Err(said!("PDFium could not locate a marked region"));
         }
         points.push((dx, dy));
     }
@@ -171,12 +173,12 @@ fn render_strip(
         &CancelToken::new(),
     );
     if !progress.outcome.is_done() {
-        return Err("a raster redaction render did not complete".into());
+        return Err(said!("a raster redaction render did not complete"));
     }
     let mut rgb = Vec::with_capacity(width * rows * 3);
     for pixel in bitmap.pixels().chunks_exact(4) {
         if pixel[3] != 255 {
-            return Err("a raster redaction pixel was not opaque".into());
+            return Err(said!("a raster redaction pixel was not opaque"));
         }
         rgb.extend_from_slice(&pixel[..3]);
     }
@@ -198,7 +200,7 @@ fn load(bytes: &[u8], password: Option<&str>) -> Result<Document, String> {
             ..Default::default()
         },
     )
-    .map_err(|e| format!("could not read raster PDF: {e}"))
+    .map_err(|e| said!("could not read raster PDF: {e}"))
 }
 
 fn same_object(a: &Object, b: &Object) -> bool {
@@ -228,7 +230,9 @@ fn verify_graph(
 ) -> Result<(), String> {
     let actual = load(bytes, password)?;
     if actual.is_encrypted() {
-        return Err("raster output could not be unlocked for verification".into());
+        return Err(said!(
+            "raster output could not be unlocked for verification"
+        ));
     }
     let allowed_trailer: &[&[u8]] = &[b"Root", b"Size", b"ID"];
     if actual
@@ -240,7 +244,7 @@ fn verify_graph(
         || actual.trailer.get(b"Size").and_then(Object::as_i64).ok()
             != Some(i64::from(expected.max_id) + 1)
     {
-        return Err("unexpected raster output trailer".into());
+        return Err(said!("unexpected raster output trailer"));
     }
     // lopdf removes the encryption dictionary on a successful decryption.
     let encrypted_id = expected
@@ -250,10 +254,10 @@ fn verify_graph(
         .and_then(|v| v.as_reference().ok());
     let expected_count = expected.objects.len() - usize::from(encrypted_id.is_some());
     if actual.objects.len() != expected_count {
-        return Err(format!(
-            "raster output object inventory changed: expected {}, read {}",
-            expected_count,
-            actual.objects.len()
+        return Err(said!(
+            "raster output object inventory changed: expected {expected}, read {read}",
+            expected = expected_count,
+            read = actual.objects.len()
         ));
     }
     for (&id, object) in &expected.objects {
@@ -278,12 +282,12 @@ fn verify_graph(
                 .iter()
                 .any(|(key, _)| !allowed.contains(&key.as_slice()))
             {
-                return Err("unexpected raster image carrier".into());
+                return Err(said!("unexpected raster image carrier"));
             }
             let wanted = object.as_stream().map_err(|e| e.to_string())?;
             for (key, value) in &wanted.dict {
                 if key != b"Length" && stream.dict.get(key).ok() != Some(value) {
-                    return Err("raster image geometry or encoding changed".into());
+                    return Err(said!("raster image geometry or encoding changed"));
                 }
             }
             let data = if stream.dict.has(b"Filter") {
@@ -295,7 +299,7 @@ fn verify_graph(
             };
             let found: [u8; 32] = Sha256::digest(&data).into();
             if &found != hash {
-                return Err("raster pixels changed during serialization".into());
+                return Err(said!("raster pixels changed during serialization"));
             }
         } else if matches!(object, Object::Stream(_)) {
             // Content streams are generated from fixed numeric transforms and
@@ -304,10 +308,10 @@ fn verify_graph(
             let found = got.as_stream().map_err(|e| e.to_string())?;
             if wanted.content != found.content || found.dict.iter().any(|(key, _)| key != b"Length")
             {
-                return Err("raster drawing commands changed".into());
+                return Err(said!("raster drawing commands changed"));
             }
         } else if !same_object(object, got) {
-            return Err("raster page graph changed".into());
+            return Err(said!("raster page graph changed"));
         }
     }
     Ok(())
@@ -321,13 +325,13 @@ pub fn rewrite(document: &OpenDocument, plan: &Plan, fill: Fill) -> Result<Vec<u
 fn rewrite_inner(document: &OpenDocument, plan: &Plan, colour: [u8; 3]) -> Result<Vec<u8>, String> {
     let started = Instant::now();
     if !plan.text_edits.is_empty() {
-        return Err("save text edits before applying redactions".into());
+        return Err(said!("save text edits before applying redactions"));
     }
     if plan.redactions.is_empty() || plan.redactions.iter().any(|r| r.areas.is_empty()) {
-        return Err("no complete redaction regions were supplied".into());
+        return Err(said!("no complete redaction regions were supplied"));
     }
     if plan.pages.is_empty() || plan.pages.len() > MAX_PAGES {
-        return Err("raster redaction page limit exceeded".into());
+        return Err(said!("raster redaction page limit exceeded"));
     }
     // **The one step of a redaction that an inserted page genuinely blocks, and
     // since 2026-09-20 the only place that says so.** Every output page is
@@ -343,12 +347,11 @@ fn rewrite_inner(document: &OpenDocument, plan: &Plan, colour: [u8; 3]) -> Resul
     // because a reader who reaches it has a redaction that would work by the
     // other route.
     if !plan.sources.is_empty() {
-        return Err(
+        return Err(said!(
             "An image-only copy is drawn from this document's own pages, and some of \
                     these came from another document. Redact without the image-only option, or \
                     save this document, reopen it, and make an image-only copy there."
-                .into(),
-        );
+        ));
     }
     let mut clean = plan.clone();
     clean.redactions.clear();
@@ -357,19 +360,21 @@ fn rewrite_inner(document: &OpenDocument, plan: &Plan, colour: [u8; 3]) -> Resul
         .rewrite(&clean, Job::Save, None)
         .map_err(|e| e.message)?;
     if bytes.len() > MAX_BYTES {
-        return Err("working PDF exceeds raster redaction size limit".into());
+        return Err(said!("working PDF exceeds raster redaction size limit"));
     }
     let password = document.graph().password();
     let mut source_graph = load(&bytes, password)?;
     if source_graph.is_encrypted() {
-        return Err("cannot preserve an encryption policy without its key".into());
+        return Err(said!(
+            "cannot preserve an encryption policy without its key"
+        ));
     }
     let encryption = source_graph.encryption_state.take();
     let page_boxes = crate::pagetree::displayed_boxes_from(&source_graph, plan.pages.len())?;
     drop(source_graph);
     let working = OwnedPdf::open(document.pdfium().bindings(), bytes, password)?;
     if working.raw.page_count() as usize != plan.pages.len() {
-        return Err("raster working page count disagrees with the plan".into());
+        return Err(said!("raster working page count disagrees with the plan"));
     }
     let mut regions = vec![Vec::new(); plan.pages.len()];
     for redaction in &plan.redactions {
@@ -381,7 +386,9 @@ fn rewrite_inner(document: &OpenDocument, plan: &Plan, colour: [u8; 3]) -> Resul
             .map(|(slot, _)| slot)
             .collect();
         if slots.len() != 1 {
-            return Err("a marked source does not name exactly one output page".into());
+            return Err(said!(
+                "a marked source does not name exactly one output page"
+            ));
         }
         regions[slots[0]].extend_from_slice(&redaction.areas);
     }
@@ -397,7 +404,7 @@ fn rewrite_inner(document: &OpenDocument, plan: &Plan, colour: [u8; 3]) -> Resul
     let mut encoded_total = 0usize;
     for (slot, areas) in regions.iter().enumerate() {
         if started.elapsed() > DEADLINE {
-            return Err("raster redaction exceeded its time limit".into());
+            return Err(said!("raster redaction exceeded its time limit"));
         }
         let page = working.raw.page_cropped(slot as u32, None, &|index| {
             page_boxes.get(index as usize).copied()
@@ -406,9 +413,9 @@ fn rewrite_inner(document: &OpenDocument, plan: &Plan, colour: [u8; 3]) -> Resul
         let (width, height) = dimensions(pw, ph)?;
         total = total
             .checked_add(width * height)
-            .ok_or("raster size overflow")?;
+            .ok_or(said!("raster size overflow"))?;
         if total > MAX_DOCUMENT_PIXELS {
-            return Err("document exceeds raster redaction pixel budget".into());
+            return Err(said!("document exceeds raster redaction pixel budget"));
         }
         let masks = areas
             .iter()
@@ -418,7 +425,7 @@ fn rewrite_inner(document: &OpenDocument, plan: &Plan, colour: [u8; 3]) -> Resul
         let mut commands = String::new();
         for y in (0..height).step_by(STRIP) {
             if started.elapsed() > DEADLINE {
-                return Err("raster redaction exceeded its time limit".into());
+                return Err(said!("raster redaction exceeded its time limit"));
             }
             let rows = STRIP.min(height - y);
             let mut rgb = render_strip(&page, width, height, y, rows)?;
@@ -431,9 +438,9 @@ fn rewrite_inner(document: &OpenDocument, plan: &Plan, colour: [u8; 3]) -> Resul
             image.compress().map_err(|e| e.to_string())?;
             encoded_total = encoded_total
                 .checked_add(image.content.len())
-                .ok_or("raster stream size overflow")?;
+                .ok_or(said!("raster stream size overflow"))?;
             if encoded_total > MAX_BYTES / 4 {
-                return Err("compressed raster images exceed the memory budget".into());
+                return Err(said!("compressed raster images exceed the memory budget"));
             }
             let image_id = out.add_object(image);
             images.insert(image_id, hash);
@@ -465,14 +472,14 @@ fn rewrite_inner(document: &OpenDocument, plan: &Plan, colour: [u8; 3]) -> Resul
     let expected = out.clone();
     if let Some(state) = &encryption {
         out.encrypt(state)
-            .map_err(|e| format!("could not preserve raster output encryption: {e}"))?;
+            .map_err(|e| said!("could not preserve raster output encryption: {e}"))?;
     }
     // The crypt filter lengths `lopdf` leaves out; see `protect::finish`.
     crate::protect::finish(&mut out, &crate::protect::Protection::Keep)?;
     let mut result = Vec::new();
     out.save_to(&mut result).map_err(|e| e.to_string())?;
     if result.len() > MAX_BYTES {
-        return Err("raster output exceeds the file size limit".into());
+        return Err(said!("raster output exceeds the file size limit"));
     }
     // The encryption dictionary is the only extra object the serializer owns.
     let mut expected = expected;
@@ -490,7 +497,9 @@ fn rewrite_inner(document: &OpenDocument, plan: &Plan, colour: [u8; 3]) -> Resul
     verify_graph(&result, password, &expected, &images)?;
     let verified = OwnedPdf::open(document.pdfium().bindings(), result.clone(), password)?;
     if verified.raw.page_count() as usize != proofs.len() {
-        return Err("PDFium reported a different raster output page count".into());
+        return Err(said!(
+            "PDFium reported a different raster output page count"
+        ));
     }
     for (slot, proof) in proofs.iter().enumerate() {
         let page = verified.raw.page_cropped(slot as u32, None, &|_| None)?;
@@ -498,7 +507,9 @@ fn rewrite_inner(document: &OpenDocument, plan: &Plan, colour: [u8; 3]) -> Resul
             != (proof.width, proof.height)
             || !crate::text::extract(&page)?.codes.is_empty()
         {
-            return Err("raster output page geometry or text layer is inconsistent".into());
+            return Err(said!(
+                "raster output page geometry or text layer is inconsistent"
+            ));
         }
         if proof.areas.is_empty() {
             verified.raw.evict_page(slot as u32);
@@ -506,7 +517,7 @@ fn rewrite_inner(document: &OpenDocument, plan: &Plan, colour: [u8; 3]) -> Resul
         }
         for y in (0..proof.height).step_by(STRIP) {
             if started.elapsed() > DEADLINE {
-                return Err("raster verification exceeded its time limit".into());
+                return Err(said!("raster verification exceeded its time limit"));
             }
             let rows = STRIP.min(proof.height - y);
             let rgb = render_strip(&page, proof.width, proof.height, y, rows)?;
@@ -525,8 +536,7 @@ fn rewrite_inner(document: &OpenDocument, plan: &Plan, colour: [u8; 3]) -> Resul
                     let end = ((row - y) * proof.width + inside.right) * 3;
                     if rgb[start..end].chunks_exact(3).any(|pixel| pixel != colour) {
                         return Err(
-                            "PDFium found pixels of another colour than the fill inside a redacted region"
-                                .into(),
+                            said!("PDFium found pixels of another colour than the fill inside a redacted region"),
                         );
                     }
                 }

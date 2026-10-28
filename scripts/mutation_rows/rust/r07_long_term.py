@@ -147,7 +147,7 @@ ROWS += [
     Mutation(
         "longterm: write a signature that does not read back intact",
         "src/longterm.rs",
-        '        _ => return written("the new signature does not read as intact"),',
+        '        _ => return written(said!("the new signature does not read as intact")),',
         "        _ => {}",
         "the_check_before_writing_wants_good_for_both_and_names_a_revocation",
     ),
@@ -438,8 +438,8 @@ ROWS += [
     Mutation(
         "archive: seal a document timestamp that does not read back intact",
         "src/sign_cms.rs",
-        "    if verdict.verdict != crate::integrity::Verdict::Intact {\n        return Err(format!(\n            \"tpdf's own check of the document timestamp",
-        "    if false {\n        return Err(format!(\n            \"tpdf's own check of the document timestamp",
+        '    if verdict.verdict != crate::integrity::Verdict::Intact {\n        return Err(said!(\n            "tpdf\'s own check of the document timestamp',
+        '    if false {\n        return Err(said!(\n            "tpdf\'s own check of the document timestamp',
         "a_document_timestamp_is_sealed_only_when_it_reads_back_intact",
     ),
     Mutation(
@@ -832,15 +832,15 @@ ROWS += [
     Mutation(
         "default app: already the default is said as that",
         "src/defaultapp.rs",
-        '        Some(handler) if same(handler) && already => Ok("tpdf already opens PDF documents.".into()),',
-        '        Some(handler) if same(handler) => Ok("tpdf already opens PDF documents.".into()),',
+        '        Some(handler) if same(handler) && already => Ok(said!("tpdf already opens PDF documents.")),',
+        '        Some(handler) if same(handler) => Ok(said!("tpdf already opens PDF documents.")),',
         "the_sentence_is_read_from_what_the_system_names_afterwards",
     ),
     Mutation(
         "cli tool: removing says both links",
         "src/clitool.rs",
-        'format!("Removed {LINK} and {ALIAS}. The application is unchanged.")',
-        'format!("Removed {LINK}. The application is unchanged.")',
+        'said!("Removed {LINK} and {ALIAS}. The application is unchanged.")',
+        'said!("Removed {LINK}. The application is unchanged.")',
         "the_reader_is_told_what_is_there_afterwards_not_what_was_attempted",
     ),
 ]
@@ -911,7 +911,7 @@ ROWS += [
     Mutation("checked copy: publish what failed its check", "src/save.rs", "            let _ = std::fs::remove_file(&staged);\n            return Err(why);\n", "            let _ = why;\n", "a_checked_copy_that_fails_its_check_leaves_nothing_and_replaces_nothing"),
     Mutation("checked copy: leave the staged file behind", "src/save.rs", "            let _ = std::fs::remove_file(&staged);\n            return Err(why);\n", "            return Err(why);\n", "a_checked_copy_that_fails_its_check_leaves_nothing_and_replaces_nothing"),
     Mutation("checked copy: write a layer into a changed source", "src/save.rs", "    let on_change = if check.is_some() {\n        OnChange::Refuse", "    let on_change = if check.is_none() {\n        OnChange::Refuse", "a_checked_copy_refuses_a_changed_source_where_a_plain_copy_proceeds"),
-    Mutation("recognise: blame the engine for pages that had text", "src/commands/ocr.rs", "        (true, false, false) => \"Every page already has text", "        (false, true, true) => \"Every page already has text", "the_reason_nothing_was_added_names_the_one_cause_when_there_is_one"),
+    Mutation("recognise: blame the engine for pages that had text", "src/commands/ocr.rs", "        (true, false, false) => said!(\"Every page already has text", "        (false, true, true) => said!(\"Every page already has text", "the_reason_nothing_was_added_names_the_one_cause_when_there_is_one"),
     Mutation("recognise: send the report in Rust's spelling", "src/commands/ocr.rs", "#[derive(Debug, Clone, Default, PartialEq, Eq, serde::Serialize)]\n#[serde(rename_all = \"camelCase\")]\npub struct Recognised {", "#[derive(Debug, Clone, Default, PartialEq, Eq, serde::Serialize)]\npub struct Recognised {", "the_report_reaches_the_window_in_its_own_spelling"),
     Mutation('drawings: take any drawing the region touches', 'src/redact.rs', 'object.kind == "path" && contains(region, object.bounds)', 'object.kind == "path" && overlaps(object.bounds, region)', 'a_drawing_the_region_holds_all_of_is_removed_and_one_reaching_beyond_is_left'),
     Mutation('drawings: name a path by its place among all objects', 'src/redact.rs', '        let path_ordinal = paths;', '        let path_ordinal = at;', 'a_drawing_the_region_holds_all_of_is_removed_and_one_reaching_beyond_is_left'),
@@ -933,7 +933,7 @@ ROWS += [
     Mutation('drawings: the writer never asks for them', 'src/save.rs', '            &redaction.paths,\n            &redaction.cuts,', '            &[],\n            &redaction.cuts,', 'a_rewrite_takes_a_planned_drawing_out_of_the_page'),
     Mutation('drawings: say a rule is of kind path', 'src/redact.rs', '            ("path", None) => {', '            ("no such kind", None) => {', 'an_object_this_cannot_remove_makes_the_plan_incomplete'),
     Mutation('what is left: print the kind as the program spells it', 'src/redact.rs', '        let what = said(kind);', '        let what = kind;', 'a_repeated_object_says_why_it_stayed_and_an_ordinary_one_does_not'),
-    Mutation('what is left: have no words for a drawing that clips', 'src/redact.rs', '        CLIP_PATH | UNPLACED_PATH => "a drawing",', '', 'a_repeated_object_says_why_it_stayed_and_an_ordinary_one_does_not'),
+    Mutation('what is left: have no words for a drawing that clips', 'src/redact.rs', '        CLIP_PATH | UNPLACED_PATH => said!("a drawing"),\n', '', 'a_repeated_object_says_why_it_stayed_and_an_ordinary_one_does_not'),
     Mutation('gate: refuse every region that held no text', 'src/ocr.rs', '    let from_page = covered.is_empty();', '    let from_page = false;', 'a_region_over_no_words_is_sized_from_the_smallest_word_left_that_can_be_a_control'),
     Mutation('gate: size a wordless region from a word too short to read back', 'src/ocr.rs', '            .filter(|word| longest_run(&word.text).chars().count() >= MIN_CONTROL_CHARS)\n            .map(|word| word.rect)', '            .map(|word| word.rect)', 'a_region_over_no_words_is_sized_from_the_smallest_word_left_that_can_be_a_control'),
     Mutation("gate: forget that the size was the page's", 'src/ocr.rs', '        size_pt,\n        from_page,\n    })', '        size_pt,\n        from_page: false,\n    })', 'a_region_over_no_words_is_sized_from_the_smallest_word_left_that_can_be_a_control'),
@@ -996,7 +996,7 @@ ROWS += [
     Mutation('compress: sample a page that did not change', 'src/compress.rs', '        if most == 0 {', '        if false {', 'a_sample_is_the_part_of_the_page_that_differs_most'),
     Mutation('compress: look at the page that lost least', 'src/compress.rs', '        .max_by_key(|(_, _, old, new)| (old.0 * old.1 - new.0 * new.1, old.0 * old.1))?;', '        .min_by_key(|(_, _, old, new)| (old.0 * old.1 - new.0 * new.1, old.0 * old.1))?;', 'an_estimate_writes_nothing_and_names_the_page_that_loses_most'),
     Mutation('compress: the rewrite never makes the copy smaller', 'src/save.rs', '    let _ = crate::compress::apply(&mut doc, plan.compress);', '    let _ = crate::compress::apply(&mut doc, crate::compress::Compress::No);', 'a_smaller_copy_is_packed_shrinks_its_pictures_and_keeps_every_page'),
-    Mutation('compress: write a smaller copy without object streams', 'src/save.rs', '        serialise_packed(&mut doc, "the document")?', '        serialise(&mut doc, "the document")?', 'a_smaller_copy_is_packed_shrinks_its_pictures_and_keeps_every_page'),
+    Mutation('compress: write a smaller copy without object streams', 'src/save.rs', '        serialise_packed(&mut doc, &said!("the document"))?', '        serialise(&mut doc, &said!("the document"))?', 'a_smaller_copy_is_packed_shrinks_its_pictures_and_keeps_every_page'),
     Mutation('compress: call a plan for a smaller copy the file itself', 'src/edits.rs', '        if self.compress != crate::compress::Compress::No {\n            return false;\n        }\n', '', 'a_plan_that_asks_for_a_smaller_copy_is_neither_the_file_nor_an_append'),
     Mutation('compress: append a smaller copy', 'src/edits.rs', '            && self.compress == crate::compress::Compress::No\n', '', 'a_plan_that_asks_for_a_smaller_copy_is_neither_the_file_nor_an_append'),
     Mutation('compress: start a lone number from another preset', 'src/cli/compress.rs', '        let mut pictures = Pictures::from(preset.unwrap_or(Preset::Balanced));', '        let mut pictures = Pictures::from(preset.unwrap_or(Preset::Print));', 'a_preset_names_three_numbers_and_each_can_be_given_alone'),
@@ -1079,8 +1079,8 @@ ROWS += [
         # still holds, and the work behind one operation is the Subr's length.
         "charstrings: make a subroutine plain at every call",
         "src/textedit/fonts/type1/program.rs",
-        "                    let subr = subr.as_deref().ok_or(INVALID)?;\n                    if self.execute(subr, depth + 1)? {",
-        "                    let subr = plain(None, subr.as_deref().ok_or(INVALID)?)?;\n                    if self.execute(&subr, depth + 1)? {",
+        "                    let subr = subr.as_deref().ok_or_else(invalid)?;\n                    if self.execute(subr, depth + 1)? {",
+        "                    let subr = plain(None, subr.as_deref().ok_or_else(invalid)?)?;\n                    if self.execute(&subr, depth + 1)? {",
         "a_glyph_that_calls_a_large_subroutine_many_times_is_parsed_in_bounded_work",
     ),
     Mutation(
@@ -1495,8 +1495,8 @@ ROWS += [
     Mutation(
         "fill and sign: a sequence left open is accepted",
         "src/textedit.rs",
-        '    if marked.filled {\n        return Err("unterminated Fill & Sign marked content".into());\n    }\n',
-        "",
+        '    if marked.filled {\n        return Err(said!("unterminated Fill & Sign marked content"));\n    }\n',
+        '',
         "textedit_fill_and_sign_additions_are_kept_and_the_page_is_edited",
     ),
     Mutation(
@@ -1584,7 +1584,7 @@ ROWS += [
     Mutation(
         "kept code: its width is not held to its glyph",
         "src/textedit/fonts.rs",
-        "            if width <= 0. || width > 2000. || (width - advance).abs() > 1. {\n                return Err(\"embedded font widths disagree with its glyph metrics\".into());\n            }\n            let (overhang",
+        "            if width <= 0. || width > 2000. || (width - advance).abs() > 1. {\n                return Err(said!(\n                    \"embedded font widths disagree with its glyph metrics\"\n                ));\n            }\n            let (overhang",
         "            let (overhang",
         "textedit_symbolic_codes_keep_a_character_they_cannot_write_read_only",
     ),
@@ -1900,8 +1900,8 @@ ROWS += [
         # An edit accepted before is refused.
         "margin: a wrap that cannot be planned refuses the words",
         "src/textedit/layout.rs",
-        "            Err(wrap::Refused::Blocked(reason)) if full => return Err(reason.into()),",
-        "            Err(wrap::Refused::Blocked(reason)) if true => return Err(reason.into()),",
+        "            Err(wrap::Refused::Blocked(reason)) if full => return Err(reason),",
+        "            Err(wrap::Refused::Blocked(reason)) if true => return Err(reason),",
         "text_that_stays_in_the_middle_of_a_read_only_line_refuses_the_wrap",
     ),
     Mutation(
@@ -2318,15 +2318,15 @@ ROWS += [
     Mutation(
         'hidden: leave the pages without text out of the last line',
         'src/hidden/survey.rs',
-        '    if !survey.without_text.is_empty() {\n        line.push_str',
-        '    if false {\n        line.push_str',
+        '    if !survey.without_text.is_empty() {\n        rest = said!(',
+        '    if false {\n        rest = said!(',
         'the_last_line_says_what_was_found_and_what_was_not_checked',
     ),
     Mutation(
         'hidden: leave the pages too large to compare out of the last line',
         'src/hidden/survey.rs',
-        '    if !survey.not_compared.is_empty() {\n        line.push_str',
-        '    if false {\n        line.push_str',
+        '    if !survey.not_compared.is_empty() {\n        rest = said!(',
+        '    if false {\n        rest = said!(',
         'the_last_line_says_what_was_found_and_what_was_not_checked',
     ),
     Mutation(
@@ -2416,8 +2416,8 @@ ROWS += [
     Mutation(
         'hidden window: never ask whether to stop',
         'src/commands/hidden.rs',
-        '        if cancelled() {\n            return Err(CANCELLED.into());',
-        '        if false {\n            return Err(CANCELLED.into());',
+        '        if cancelled() {\n            return Err(cancelled_reply());',
+        '        if false {\n            return Err(cancelled_reply());',
         'a_stop_ends_the_walk_before_the_next_page_and_leaves_no_result',
     ),
     Mutation(
@@ -2458,14 +2458,14 @@ ROWS += [
     Mutation(
         'hidden window: never say there were unsaved changes',
         'src/commands/hidden.rs',
-        '            not_looked_at: NOT_LOOKED_AT.into(),\n            unsaved,',
-        '            not_looked_at: NOT_LOOKED_AT.into(),\n            unsaved: false,',
+        'not_looked_at: said!(\n                "Not looked at: comments, form values, attachments, metadata and \\\n                 earlier versions kept in the file."\n            ),\n            unsaved,',
+        'not_looked_at: said!(\n                "Not looked at: comments, form values, attachments, metadata and \\\n                 earlier versions kept in the file."\n            ),\n            unsaved: false,',
         'the_reply_reaches_the_window_in_its_own_spelling',
     ),
     Mutation(
         'hidden window: leave out what the check never looks at',
         'src/commands/hidden.rs',
-        '            not_looked_at: NOT_LOOKED_AT.into(),\n            unsaved,',
+        '            not_looked_at: said!(\n                "Not looked at: comments, form values, attachments, metadata and \\\n                 earlier versions kept in the file."\n            ),\n            unsaved,',
         '            not_looked_at: String::new(),\n            unsaved,',
         'the_reply_reaches_the_window_in_its_own_spelling',
     ),

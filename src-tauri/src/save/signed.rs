@@ -31,13 +31,13 @@ use crate::fingerprint::Fingerprint;
 /// recorded --- the document changed on disk since it was opened.
 pub fn read_to_sign(source: &Path, opened_as: &Fingerprint) -> Result<Vec<u8>, Refusal> {
     let bytes = std::fs::read(source)
-        .map_err(|e| Refusal::from(format!("could not read {}: {e}", source.display())))?;
+        .map_err(|e| Refusal::from(said!("could not read {path}: {e}", path = source.display())))?;
     let digest: [u8; 32] = Sha256::digest(&bytes).into();
     if bytes.len() as u64 != opened_as.len || digest != opened_as.digest {
-        return Err(Refusal::changed(
+        return Err(Refusal::changed(said!(
             "the file on disk is not the one that was opened, so it was not signed --- \
-             reopen it to sign what is there now",
-        ));
+             reopen it to sign what is there now"
+        )));
     }
     Ok(bytes)
 }
@@ -54,16 +54,16 @@ pub fn write_signed(source: &Path, out: &Path, bytes: &[u8]) -> Result<(), Refus
     use std::io::Write as _;
 
     if same_file(source, out) {
-        return Err(
+        return Err(said!(
             "the signed document is written as a new file --- choose a name other than \
              the original's"
-                .into(),
-        );
+        )
+        .into());
     }
     let staged = stage(out, |file| {
         file.write_all(bytes)
             .and_then(|()| file.flush())
-            .map_err(|e| Refusal::from(format!("could not write the signed document: {e}")))
+            .map_err(|e| Refusal::from(said!("could not write the signed document: {e}")))
     })?;
     commit(&staged, out)?;
     Ok(())

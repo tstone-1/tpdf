@@ -417,10 +417,10 @@ pub fn print_ready(source: &Path, plan: &Plan) -> Result<(), Refusal> {
         // clause that says why a print is the operation being refused is added
         // where it is known.
         .map_err(|why| {
-            Refusal::changed(format!(
-                "{} A print job is built from the file on disk, so the paper would carry \
+            Refusal::changed(said!(
+                "{reason} A print job is built from the file on disk, so the paper would carry \
                  that document with your edits placed on the pages of the one you opened.",
-                why.message
+                reason = why.message
             ))
         })
 }
@@ -563,7 +563,7 @@ fn into_scratch(
     let (at, mut into) = job_scratch()?;
     let built = build(&mut reading, len, &mut into).and_then(|wrote| {
         read_whole(&mut into, wrote)
-            .map_err(|e| Refusal::from(format!("the print job could not be read back: {e}")))
+            .map_err(|e| Refusal::from(said!("the print job could not be read back: {e}")))
     });
     // Whatever happened. The scratch file holds a decrypted, reordered copy of
     // the reader's document, so leaving one behind on a refusal would be worse
@@ -639,14 +639,14 @@ fn job_scratch() -> Result<(PathBuf, std::fs::File), Refusal> {
             Ok(file) => return Ok((at, file)),
             Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => continue,
             Err(e) => {
-                return Err(Refusal::from(format!(
+                return Err(Refusal::from(said!(
                     "the print job needs somewhere to be built and {at:?} could not be \
                      created: {e}"
                 )))
             }
         }
     }
-    Err(Refusal::from(format!(
+    Err(Refusal::from(said!(
         "could not find an unused temporary name in {dir:?} after {STAGING_ATTEMPTS} tries"
     )))
 }
@@ -728,9 +728,10 @@ fn copy_with(
     check: Option<Check<'_>>,
 ) -> Result<Copied, Refusal> {
     if same_file(source, out) {
-        return Err(
-            "tpdf cannot save over the document it is reading --- choose another name".into(),
-        );
+        return Err(said!(
+            "tpdf cannot save over the document it is reading --- choose another name"
+        )
+        .into());
     }
     // `Proceed` rather than `Refuse`, which is the one place a copy and a save
     // in place differ on purpose: a copy IS the fallback the in-place refusal
@@ -789,19 +790,22 @@ pub fn write_raster_copy(
     fill: crate::redaction_fill::Fill,
 ) -> Result<Copied, Refusal> {
     if same_file(source, out) {
-        return Err(
-            "Choose a different name for the image-only copy; the original must be kept".into(),
-        );
+        return Err(said!(
+            "Choose a different name for the image-only copy; the original must be kept"
+        )
+        .into());
     }
     let expected = plan.opened_as.as_ref().ok_or_else(|| {
-        Refusal::from("The source could not be fingerprinted. Reopen it before redacting")
+        Refusal::from(said!(
+            "The source could not be fingerprinted. Reopen it before redacting"
+        ))
     })?;
     let (mut reading, len) = opened_to_rewrite(source)?;
     let actual = Fingerprint::of_open(&reading, source)?;
     if actual.len != expected.len || actual.digest != expected.digest {
-        return Err(Refusal::changed(
-            "The source changed since it was opened. Reopen it and mark the regions again",
-        ));
+        return Err(Refusal::changed(said!(
+            "The source changed since it was opened. Reopen it and mark the regions again"
+        )));
     }
     let staged = stage(out, |writing| {
         staged_rewrite(
@@ -837,9 +841,9 @@ pub fn fill_redactions(
     let (mut reading, len) = opened_to_rewrite(path)?;
     let actual = Fingerprint::of_open(&reading, path)?;
     if actual.len != expected.len || actual.digest != expected.digest {
-        return Err(Refusal::changed(
-            "The redaction output changed before its fill was written",
-        ));
+        return Err(Refusal::changed(said!(
+            "The redaction output changed before its fill was written"
+        )));
     }
     let staged = stage(path, |writing| {
         staged_rewrite(
@@ -940,19 +944,20 @@ pub fn write_split(
     rewriter: &dyn Rewriter,
 ) -> Result<Split, Refusal> {
     if plans.len() < 2 {
-        return Err("a split writes at least two files".into());
+        return Err(said!("a split writes at least two files").into());
     }
     let targets = split_paths(out, plans.len());
     for target in &targets {
         if same_file(source, target) {
-            return Err(
-                "tpdf cannot save over the document it is reading --- choose another name".into(),
-            );
+            return Err(said!(
+                "tpdf cannot save over the document it is reading --- choose another name"
+            )
+            .into());
         }
         if target.exists() {
-            return Err(format!(
-                "{} already exists, and a split would replace it --- choose another name",
-                target.display()
+            return Err(said!(
+                "{path} already exists, and a split would replace it --- choose another name",
+                path = target.display()
             )
             .into());
         }
@@ -987,11 +992,11 @@ pub fn write_split(
         })
         .and_then(|staged| Ok(commit(&staged, target)?))
         .map_err(|why| Refusal {
-            message: format!(
-                "{} ({} of {} written)",
-                why.message,
-                written.len(),
-                plans.len()
+            message: said!(
+                "{reason} ({written} of {total} written)",
+                reason = why.message,
+                written = written.len(),
+                total = plans.len()
             ),
             changed: why.changed,
         });
@@ -1063,7 +1068,7 @@ pub fn write_merged(
     merger: &dyn Rewriter,
 ) -> Result<Merged, Refusal> {
     if others.is_empty() {
-        return Err("choose at least one document to merge in".into());
+        return Err(said!("choose at least one document to merge in").into());
     }
     // The open document and every file going in, against the one destination.
     // A merge reads several files and writes one, so "do not write over an
@@ -1089,14 +1094,12 @@ pub fn write_merged(
             // `write_copy`'s wording, deliberately: it is the same refusal
             // about the same file, and a reader who meets it in two commands
             // should not have to work out whether they are the same rule.
-            Refusal::from(
-                "tpdf cannot save over the document it is reading --- choose another name",
-            )
-        } else {
-            Refusal::from(format!(
-                "tpdf cannot write the merge over {}, which is one of the documents going into it",
-                name_of(input)
+            Refusal::from(said!(
+                "tpdf cannot save over the document it is reading --- choose another name"
             ))
+        } else {
+            Refusal::from(said!(
+                "tpdf cannot write the merge over {name}, which is one of the documents going into it", name = name_of(input)))
         });
     }
 
@@ -1191,13 +1194,11 @@ pub fn write_images(
     maker: &dyn Rewriter,
 ) -> Result<Made, Refusal> {
     if images.is_empty() {
-        return Err("choose at least one picture".into());
+        return Err(said!("choose at least one picture").into());
     }
     if let Some(same) = images.iter().find(|image| same_file(image, out)) {
-        return Err(format!(
-            "tpdf cannot write the document over {}, which is one of the pictures going into it",
-            name_of(same)
-        )
+        return Err(said!(
+            "tpdf cannot write the document over {name}, which is one of the pictures going into it", name = name_of(same))
         .into());
     }
     // Said in words about pictures before `concatenated` says it about a merge.
@@ -1206,12 +1207,9 @@ pub fn write_images(
         .filter_map(|image| std::fs::metadata(image).ok())
         .fold(0, |sum, found| sum.saturating_add(found.len()));
     if total > MAX_MERGE_BYTES {
-        return Err(format!(
-            "the pictures come to {} MB, and tpdf takes at most {} MB at once --- make the \
-             document in two passes and merge them",
-            total / (1 << 20),
-            MAX_MERGE_BYTES / (1 << 20)
-        )
+        return Err(said!(
+            "the pictures come to {total} MB, and tpdf takes at most {limit} MB at once --- make the \
+             document in two passes and merge them", total = total / (1 << 20), limit = MAX_MERGE_BYTES / (1 << 20))
         .into());
     }
     let (whole, incoming) = concatenated(images)?;
@@ -1252,7 +1250,7 @@ pub fn images_update(
     }
     let mut doc = crate::imagepages::document(&pictures, options)?;
     let pages = doc.get_pages().len() as u32;
-    Ok((serialise(&mut doc, "the document")?, pages))
+    Ok((serialise(&mut doc, &said!("the document"))?, pages))
 }
 
 /// Reads every incoming document into one shared mapping, and says where each
@@ -1300,25 +1298,22 @@ fn concatenated_within(others: &[PathBuf], ceiling: u64) -> Result<(Shm, Vec<Inc
     for other in others {
         let label = name_of(other);
         let file = std::fs::File::open(other)
-            .map_err(|e| Refusal::from(format!("could not read {label}: {e}")))?;
+            .map_err(|e| Refusal::from(said!("could not read {path}: {e}", path = label)))?;
         let len = file
             .metadata()
-            .map_err(|e| Refusal::from(format!("could not measure {label}: {e}")))?
+            .map_err(|e| Refusal::from(said!("could not measure {source}: {e}", source = label)))?
             .len();
         // Saturating and checked per file rather than at the end: the sum of
         // enough `u64` lengths wraps, and a wrapped total is a small number that
         // passes.
         total = total.saturating_add(len);
         if total > ceiling {
-            return Err(Refusal::from(format!(
-                "the documents to merge come to at least {} MB, and tpdf merges at most {} MB \
-                 at once --- merge fewer files, or merge them in two passes",
-                total / (1 << 20),
-                ceiling / (1 << 20)
-            )));
+            return Err(Refusal::from(said!(
+                "the documents to merge come to at least {total} MB, and tpdf merges at most {limit} MB \
+                 at once --- merge fewer files, or merge them in two passes", total = total / (1 << 20), limit = ceiling / (1 << 20))));
         }
         let len = usize::try_from(len)
-            .map_err(|_| Refusal::from(format!("{label} is larger than this machine can map")))?;
+            .map_err(|_| Refusal::from(said!("{label} is larger than this machine can map")))?;
         opened.push((file, len, label));
     }
 
@@ -1326,7 +1321,9 @@ fn concatenated_within(others: &[PathBuf], ceiling: u64) -> Result<(Shm, Vec<Inc
     // nothing is refused by `merge_update` in words about the request. Reaching
     // the refusal needs somewhere to put it.
     let total = usize::try_from(total).map_err(|_| {
-        Refusal::from("the documents to merge are larger than this machine can map")
+        Refusal::from(said!(
+            "the documents to merge are larger than this machine can map"
+        ))
     })?;
     let mut carried = Shm::create(total.max(1))?;
 
@@ -1334,7 +1331,7 @@ fn concatenated_within(others: &[PathBuf], ceiling: u64) -> Result<(Shm, Vec<Inc
     let mut at = 0;
     for (mut file, len, label) in opened {
         let read = read_into(&mut file, &mut carried.as_mut_slice()[at..at + len])
-            .map_err(|e| Refusal::from(format!("could not read {label}: {e}")))?;
+            .map_err(|e| Refusal::from(said!("could not read {path}: {e}", path = label)))?;
         incoming.push(Incoming {
             at,
             // What was actually read, not what was measured. The two differ only
@@ -1430,11 +1427,11 @@ pub fn stage_in_place(
     // original, writing in place risks the original. So the fallback the message
     // names has to keep working, or the refusal strands the reader.
     if plan.opened_as.is_none() {
-        return Err(
+        return Err(said!(
             "tpdf could not record what this file looked like when it was opened, \
                     so it cannot tell whether saving over it is safe --- use Save a copy"
-                .into(),
-        );
+        )
+        .into());
     }
     let ready = rewrite_ready(source, plan, OnChange::Refuse)?;
     // Refused rather than unwrapped. It cannot fire --- `rewrite_ready` derives
@@ -1445,7 +1442,7 @@ pub fn stage_in_place(
     // into the safe answer costs three lines and is not the unreachable guard the
     // repository has a rule about deleting.
     let verified = ready.verified.ok_or_else(|| {
-        "tpdf could not confirm what this file was when it read it --- use Save a copy".to_string()
+        said!("tpdf could not confirm what this file was when it read it --- use Save a copy")
     })?;
 
     // The document, not the name it was reached by --- see `resolved`. Staging
@@ -1549,7 +1546,7 @@ fn held_sources(plan: &Plan) -> Result<Option<(Shm, Vec<Incoming>)>, Refusal> {
     for (source, one) in plan.sources.iter().zip(&each) {
         let label = &one.label;
         let expected = source.opened_as.as_ref().ok_or_else(|| {
-            Refusal::from(format!(
+            Refusal::from(said!(
                 "tpdf did not record what {label} was when its pages were inserted, so it \
                  cannot tell whether they are still those pages --- undo the insert and insert \
                  them again"
@@ -1562,7 +1559,7 @@ fn held_sources(plan: &Plan) -> Result<Option<(Shm, Vec<Incoming>)>, Refusal> {
         // second answer to the same question that no input could separate
         // from the first --- a mutation of either would survive.
         if digest != expected.digest {
-            return Err(Refusal::from(format!(
+            return Err(Refusal::from(said!(
                 "{label} has changed since its pages were inserted, so they may no longer be \
                  the pages you placed --- undo the insert and insert them again"
             )));
@@ -1589,10 +1586,10 @@ fn held_sources(plan: &Plan) -> Result<Option<(Shm, Vec<Incoming>)>, Refusal> {
 fn landed_is(out: &std::fs::File, wrote: usize) -> Result<usize, Refusal> {
     let landed = out
         .metadata()
-        .map_err(|e| format!("could not measure the staged file: {e}"))?
+        .map_err(|e| said!("could not measure the staged file: {e}"))?
         .len();
     if landed != wrote as u64 {
-        return Err(format!(
+        return Err(said!(
             "the rewritten document was reported as {wrote} bytes and the staged file is \
              {landed} --- the save was not completed"
         )
@@ -1662,10 +1659,15 @@ fn staged_merge(
 /// The file cannot be opened or measured.
 fn opened_to_rewrite(source: &Path) -> Result<(std::fs::File, usize), Refusal> {
     let file = std::fs::File::open(source)
-        .map_err(|e| format!("could not open {source:?} to read it: {e}"))?;
+        .map_err(|e| said!("could not open {source:?} to read it: {e}"))?;
     let len = file
         .metadata()
-        .map_err(|e| format!("could not measure {source:?}: {e}"))?
+        .map_err(|e| {
+            said!(
+                "could not measure {source}: {e}",
+                source = format!("{source:?}")
+            )
+        })?
         .len() as usize;
     Ok((file, len))
 }
@@ -1856,7 +1858,8 @@ pub fn append_bytes(
     password: Option<&str>,
 ) -> Result<Appended, Refusal> {
     let ready = append_ready(source, plan)?;
-    let original = std::fs::read(source).map_err(|e| format!("could not read {source:?}: {e}"))?;
+    let original = std::fs::read(source)
+        .map_err(|e| said!("could not read {path}: {e}", path = format!("{source:?}")))?;
     appended(ready, append_update(original, plan, password)?)
 }
 
@@ -1898,7 +1901,12 @@ impl Ready {
 /// it was opened; or it cannot be measured.
 pub fn append_ready(source: &Path, plan: &Plan) -> Result<Ready, Refusal> {
     let was = std::fs::metadata(source)
-        .map_err(|e| format!("could not measure {source:?}: {e}"))?
+        .map_err(|e| {
+            said!(
+                "could not measure {source}: {e}",
+                source = format!("{source:?}")
+            )
+        })?
         .len();
     // **Asks [`mode_for`] rather than repeating its rule.** This used to test
     // `is_appendable` itself, which was one condition and therefore harmless
@@ -1907,12 +1915,13 @@ pub fn append_ready(source: &Path, plan: &Plan) -> Result<Ready, Refusal> {
     // does to a differential. The measurement moved above the guard for the
     // same reason --- the guard needs the number.
     if mode_for(plan, was) != Mode::Append {
-        return Err("this document needs a full rewrite rather than an append".into());
+        return Err(said!("this document needs a full rewrite rather than an append").into());
     }
     let opened_as = plan.opened_as.as_ref().ok_or_else(|| {
-        "tpdf could not record what this file looked like when it was opened, \
+        said!(
+            "tpdf could not record what this file looked like when it was opened, \
          so it cannot tell whether saving over it is safe --- use Save a copy"
-            .to_string()
+        )
     })?;
     let verified = opened_as.agrees_with(source).map_err(Refusal::changed)?;
     Ok(Ready { was, verified })
@@ -1941,10 +1950,11 @@ pub fn append_ready(source: &Path, plan: &Plan) -> Result<Ready, Refusal> {
 /// The builder worked from a different number of bytes than the caller checked.
 pub fn appended(ready: Ready, update: Update) -> Result<Appended, Refusal> {
     if update.built_against as u64 != ready.was {
-        return Err(Refusal::changed(format!(
-            "these edits were built against {} bytes and the file is {} --- \
+        return Err(Refusal::changed(said!(
+            "these edits were built against {built} bytes and the file is {size} --- \
              reopen it before saving",
-            update.built_against, ready.was
+            built = update.built_against,
+            size = ready.was
         )));
     }
     Ok(Appended {
@@ -2014,7 +2024,7 @@ pub fn append_update(
         // chooses it, and a caller reaching here with the wrong plan has a
         // defect rather than a document problem. Refused rather than
         // debug-asserted, because the safe answer exists and is the rewrite.
-        return Err("this document needs a full rewrite rather than an append".into());
+        return Err(said!("this document needs a full rewrite rather than an append").into());
     }
     let was = original.len() as u64;
     let built_against = original.len();
@@ -2030,7 +2040,7 @@ pub fn append_update(
             ..Default::default()
         },
     )
-    .map_err(|e| format!("this document could not be parsed: {e}"))?;
+    .map_err(|e| said!("this document could not be parsed: {e}"))?;
 
     // An append preserves the existing encrypted bytes and encrypts its new
     // objects with the key the load recorded. A full rewrite instead restores
@@ -2043,21 +2053,18 @@ pub fn append_update(
     // the same fact and not a reason to skip the first --- its message names an
     // issue number.
     if prev.is_encrypted() {
-        return Err(
+        return Err(said!(
             "This document is encrypted and tpdf could not unlock it, so it cannot be \
              saved. Open it with its password first."
-                .into(),
-        );
+        )
+        .into());
     }
 
     let pages = ordered_pages(&prev);
     if pages.len() != plan.baseline as usize {
-        return Err(Refusal::changed(format!(
-            "the document on disk has {} page(s) and the edits were made against {} --- it has \
-             changed since it was opened, so reopen it before saving",
-            pages.len(),
-            plan.baseline
-        )));
+        return Err(Refusal::changed(said!(
+            "the document on disk has {pages} page(s) and the edits were made against {baseline} --- it has \
+             changed since it was opened, so reopen it before saving", pages = pages.len(), baseline = plan.baseline)));
     }
 
     // **Built from the plan rather than taken to be `pages`, which it is.**
@@ -2075,19 +2082,19 @@ pub fn append_update(
         .iter()
         .map(|page| match page.source {
             PageSource::Baseline(number) => pages.get(number as usize).copied().ok_or_else(|| {
-                Refusal::from(format!(
-                    "a mark names page {}, which this document does not have",
-                    number + 1
+                Refusal::from(said!(
+                    "a mark names page {page}, which this document does not have",
+                    page = number + 1
                 ))
             }),
-            PageSource::Blank(_) => Err(Refusal::from(
-                "a save that only adds marks cannot carry a page tpdf made".to_string(),
-            )),
+            PageSource::Blank(_) => Err(Refusal::from(said!(
+                "a save that only adds marks cannot carry a page tpdf made"
+            ))),
             // The same answer for the same reason: `is_appendable` says no to
             // a page that is not the file's, and this is its second reader.
-            PageSource::Imported { .. } => Err(Refusal::from(
-                "a save that only adds marks cannot carry a page from another document".to_string(),
-            )),
+            PageSource::Imported { .. } => Err(Refusal::from(said!(
+                "a save that only adds marks cannot carry a page from another document"
+            ))),
         })
         .collect::<Result<_, Refusal>>()?;
     let sites = mark_sites(&prev, &sheet, &plan.marks)?;
@@ -2151,10 +2158,10 @@ pub fn append_update(
         match &site.annots {
             AnnotsSite::ArrayObject(array) => incremental
                 .opt_clone_object_to_new_document(*array)
-                .map_err(|e| format!("could not bring this page's /Annots across: {e}"))?,
+                .map_err(|e| said!("could not bring this page's /Annots across: {e}"))?,
             AnnotsSite::Inline(_) | AnnotsSite::Absent => incremental
                 .opt_clone_object_to_new_document(site.page)
-                .map_err(|e| format!("could not bring this page across: {e}"))?,
+                .map_err(|e| said!("could not bring this page across: {e}"))?,
         }
     }
 
@@ -2192,7 +2199,7 @@ pub fn append_update(
     written_whole(&incremental)?;
     incremental
         .save_to(&mut sink)
-        .map_err(|e| format!("could not build the update section: {e}"))?;
+        .map_err(|e| said!("could not build the update section: {e}"))?;
 
     Ok(Update {
         update: sink.tail,
@@ -2228,12 +2235,12 @@ pub(crate) fn written_whole(incremental: &IncrementalDocument) -> Result<(), Str
             continue;
         };
         if LEFT_OUT.contains(&kind) {
-            return Err(format!(
-                "this change has to rewrite object {} of the document, and that object is \
-                 marked as part of the file's own structure (/{}): the update would be \
+            return Err(said!(
+                "this change has to rewrite object {object} of the document, and that object is \
+                 marked as part of the file's own structure (/{kind}): the update would be \
                  written without it and look complete, so tpdf does not write one",
-                id.0,
-                String::from_utf8_lossy(kind)
+                object = id.0,
+                kind = String::from_utf8_lossy(kind)
             ));
         }
     }
@@ -2307,12 +2314,12 @@ pub(crate) fn reached_whole(doc: &Document, packed: bool) -> Result<(), String> 
     let reachable = sweep::reachable(doc)?;
     match left_out.iter().find(|(id, _)| reachable.contains(id)) {
         None => Ok(()),
-        Some((id, kind)) => Err(format!(
-            "this document describes one of its own objects, number {}, as part of the \
-             file's layout (/{}): a copy would be written without it and look complete, \
+        Some((id, kind)) => Err(said!(
+            "this document describes one of its own objects, number {object}, as part of the \
+             file's layout (/{kind}): a copy would be written without it and look complete, \
              so tpdf does not write one",
-            id.0,
-            String::from_utf8_lossy(kind)
+            object = id.0,
+            kind = String::from_utf8_lossy(kind)
         )),
     }
 }
@@ -2400,7 +2407,7 @@ pub fn verify_before_commit(staged: &Staged, source: &Path) -> Result<(), Refusa
         // as the two-moments message this file was caught on the same week, one
         // layer up: the producer states what happened, and the caller, which is
         // the only one that knows what it did next, owns what to do about it.
-        return Err(Refusal::changed(format!(
+        return Err(Refusal::changed(said!(
             "{why} --- nothing was written, so the file on disk is untouched. \
              Your document has been closed and the edits you had made are gone."
         )));
@@ -2494,7 +2501,7 @@ pub fn append_in_place(
         .read(true)
         .write(true)
         .open(source)
-        .map_err(|e| format!("could not open {source:?} to save it: {e}"))?;
+        .map_err(|e| said!("could not open {source:?} to save it: {e}"))?;
     append_through(&mut file, appended, source, password, reread)
 }
 
@@ -2518,15 +2525,18 @@ fn append_through(
     // Which file this is, taken before a byte is written and compared after the
     // last one. See `FileId`, and the failure it reports at the end.
     let writing_to = FileId::of(file).ok_or_else(|| {
-        format!(
+        said!(
             "tpdf could not tell which file {source:?} is, so it cannot promise a save would \
              land there --- nothing was written. Use Save a copy."
         )
     })?;
 
-    let meta = file
-        .metadata()
-        .map_err(|e| format!("could not measure {source:?}: {e}"))?;
+    let meta = file.metadata().map_err(|e| {
+        said!(
+            "could not measure {source}: {e}",
+            source = format!("{source:?}")
+        )
+    })?;
     // **Length *and* modification time, against the file as it was when the
     // update section was built against it.** The length is what the update's
     // byte offsets and `/Prev` depend on, so it is the one that has to match ---
@@ -2542,9 +2552,7 @@ fn append_through(
     appended
         .verified
         .agrees_with_metadata(&meta, source)
-        .map_err(|why| {
-            format!("{why} --- nothing was written, so the file on disk is untouched")
-        })?;
+        .map_err(|why| said!("{why} --- nothing was written, so the file on disk is untouched"))?;
 
     // The split point: the last `startxref` in the update section. Found in the
     // bytes rather than computed from a length, because what has to be in the
@@ -2557,16 +2565,13 @@ fn append_through(
 
     let cut_back = |file: &std::fs::File, why: String| -> String {
         match file.set_len(appended.was) {
-            Ok(()) => format!("{why} --- the file has been put back as it was"),
-            Err(also) => format!("{why} --- and it could not be put back: {also}"),
+            Ok(()) => said!("{why} --- the file has been put back as it was"),
+            Err(also) => said!("{why} --- and it could not be put back: {also}"),
         }
     };
 
     if let Err(e) = write_in_two(file, body, trailer) {
-        return Err(cut_back(
-            file,
-            format!("could not append to {source:?}: {e}"),
-        ));
+        return Err(cut_back(file, said!("could not append to {source:?}: {e}")));
     }
 
     // The re-read, and the reason the roll-back above is reachable rather than
@@ -2589,16 +2594,16 @@ fn append_through(
         Ok(pages) => {
             return Err(cut_back(
                 file,
-                format!(
-                    "the saved file has {pages} page(s) and should have {}",
-                    appended.pages
+                said!(
+                    "the saved file has {pages} page(s) and should have {expected}",
+                    expected = appended.pages
                 ),
             ))
         }
         Err(e) => {
             return Err(cut_back(
                 file,
-                format!("the saved file could not be read back: {e}"),
+                said!("the saved file could not be read back: {e}"),
             ))
         }
     }
@@ -2615,7 +2620,7 @@ fn append_through(
         // Covers a deletion as well as a rename: `at` answers `None` for a name
         // that resolves to nothing, and both mean the same thing here --- this
         // handle's file is no longer what that name reaches.
-        return Err(format!(
+        return Err(said!(
             "{source:?} stopped being the file it was while it was being saved --- \
              something else renamed or removed it. The edits were written to the file that \
              had that name when the save began, and nothing that has the name now was touched."
@@ -3097,7 +3102,7 @@ impl Rewriter for Here {
         let bytes = rewrite_update_with(&original, plan, job, password, inputs)?;
         out.write_all(&bytes)
             .and_then(|()| out.flush())
-            .map_err(|e| format!("the rewritten document could not be written: {e}"))?;
+            .map_err(|e| said!("the rewritten document could not be written: {e}"))?;
         Ok(bytes.len())
     }
 
@@ -3114,7 +3119,7 @@ impl Rewriter for Here {
         let bytes = print::build_update(&original, job)?;
         out.write_all(&bytes)
             .and_then(|()| out.flush())
-            .map_err(|e| format!("the print job could not be written: {e}"))?;
+            .map_err(|e| said!("the print job could not be written: {e}"))?;
         Ok(bytes.len())
     }
 
@@ -3133,7 +3138,7 @@ impl Rewriter for Here {
         let (bytes, pages) = merge_update(&original, plan, inputs, password)?;
         out.write_all(&bytes)
             .and_then(|()| out.flush())
-            .map_err(|e| format!("the merged document could not be written: {e}"))?;
+            .map_err(|e| said!("the merged document could not be written: {e}"))?;
         Ok((bytes.len(), pages))
     }
 
@@ -3148,7 +3153,7 @@ impl Rewriter for Here {
         let (bytes, pages) = images_update(inputs, options)?;
         out.write_all(&bytes)
             .and_then(|()| out.flush())
-            .map_err(|e| format!("the document could not be written: {e}"))?;
+            .map_err(|e| said!("the document could not be written: {e}"))?;
         Ok((bytes.len(), pages))
     }
 
@@ -3171,7 +3176,7 @@ impl Rewriter for Here {
         let bytes = crate::attachments::content(&document, index)?;
         out.write_all(&bytes)
             .and_then(|()| out.flush())
-            .map_err(|e| format!("the attachment could not be written: {e}"))?;
+            .map_err(|e| said!("the attachment could not be written: {e}"))?;
         Ok(bytes.len())
     }
 }
@@ -3498,7 +3503,7 @@ pub fn rewrite_update_with(
     inputs: Option<Inputs<'_>>,
 ) -> Result<Vec<u8>, Refusal> {
     if matches!(job, Job::RasterRedact { .. }) {
-        return Err("Image-only redaction requires the sandboxed rendering worker".into());
+        return Err(said!("Image-only redaction requires the sandboxed rendering worker").into());
     }
     let checked = checked(original, plan, job.view(), password, inputs)?;
     // **Between the phases, which is where the answer is.** `checked` holds the
@@ -3513,12 +3518,12 @@ pub fn rewrite_update_with(
     // already taken. A guard whose neighbour refuses the same input cannot be
     // reached by it.
     if job.is_print() && checked.encryption.is_some() {
-        return Err(
+        return Err(said!(
             "This document is encrypted, and printing part of it would have to write a copy \
              the printer could not read. Print the whole document instead --- that is handed \
              over unchanged."
-                .into(),
-        );
+        )
+        .into());
     }
     rewrite(plan, checked, job)
 }
@@ -3586,13 +3591,8 @@ impl<'a> Inputs<'a> {
             .checked_add(one.len)
             .filter(|end| *end <= self.whole.len())
             .ok_or_else(|| {
-                Refusal::from(format!(
-                    "{} is named as {} bytes at {} in the merge, and only {} were handed over",
-                    one.label,
-                    one.len,
-                    one.at,
-                    self.whole.len()
-                ))
+                Refusal::from(said!(
+                    "{label} is named as {length} bytes at {offset} in the merge, and only {handed} were handed over", label = one.label, length = one.len, offset = one.at, handed = self.whole.len()))
             })?;
         Ok(&self.whole.as_slice()[one.at..end])
     }
@@ -3634,7 +3634,7 @@ pub fn merge_update(
     // pipe into a sentence that reads as their mistake. Two copies of one string
     // would also be two things to drift.
     if inputs.each.is_empty() {
-        return Err("a merge was asked for with no documents to merge in".into());
+        return Err(said!("a merge was asked for with no documents to merge in").into());
     }
     // **Refused rather than half done.** `inputs` here are the files being
     // merged in, and the base's own imported pages need files of their own ---
@@ -3642,11 +3642,11 @@ pub fn merge_update(
     // would refuse anyway, saying the other document "was not handed to the
     // save": true, and a sentence about the wrong operation.
     if !plan.sources.is_empty() {
-        return Err(
+        return Err(said!(
             "save this document before merging it --- it holds pages inserted from another \
              document, and a merge cannot carry those yet"
-                .into(),
-        );
+        )
+        .into());
     }
     let base = rewrite_update(base, plan, Job::Save, password)?;
     let mut merged = Document::load_mem_with_options(
@@ -3667,7 +3667,7 @@ pub fn merge_update(
     )
     // Not a refusal a reader can act on, and it should be unreachable: these are
     // bytes this module wrote a line ago.
-    .map_err(|e| format!("tpdf could not read back the document it just built: {e}"))?;
+    .map_err(|e| said!("tpdf could not read back the document it just built: {e}"))?;
 
     // **Off the document before the merge, and back on after it.** That is
     // `rewrite`'s constraint for `rewrite`'s reason: `Document::encrypt` walks
@@ -3687,20 +3687,20 @@ pub fn merge_update(
                 ..Default::default()
             },
         )
-        .map_err(|e| format!("could not read {label}: {e}"))?;
+        .map_err(|e| said!("could not read {path}: {e}", path = label))?;
         // Both shapes, for `checked`'s reason: `lopdf` removes the trailer entry
         // the moment it authenticates -- and it tries the empty password
         // unprompted -- so asking whether the trailer says `/Encrypt` reports a
         // permission-restricted document as plain.
         if incoming.was_encrypted() || incoming.is_encrypted() {
-            return Err(format!(
+            return Err(said!(
                 "{label} is encrypted, and merging rewrites it --- which would silently \
                  remove that. Leave it out, or save an unencrypted copy of it first."
             )
             .into());
         }
         merge::append(&mut merged, &incoming)
-            .map_err(|why| format!("could not merge {label}: {why}"))?;
+            .map_err(|why| said!("could not merge {label}: {why}"))?;
     }
 
     // Last, after every incoming file has been appended --- see the `take` above.
@@ -3711,13 +3711,16 @@ pub fn merge_update(
         merged.encrypt(state).map_err(|e| {
             // Not a sentence about the reader's document: the state came out of
             // this same file a moment ago, so a failure here is tpdf's.
-            format!("tpdf could not restore this document's encryption: {e}")
+            said!("tpdf could not restore this document's encryption: {e}")
         })?;
     }
     crate::protect::finish(&mut merged, &plan.protection)?;
 
     let pages = merged.get_pages().len() as u32;
-    Ok((serialise(&mut merged, "the merged document")?, pages))
+    Ok((
+        serialise(&mut merged, &said!("the merged document"))?,
+        pages,
+    ))
 }
 
 /// Checks a plan against a document's bytes, writing nothing.
@@ -3738,7 +3741,7 @@ fn checked(
     inputs: Option<Inputs<'_>>,
 ) -> Result<Checked, Refusal> {
     if plan.pages.is_empty() {
-        return Err("a document must keep at least one page".into());
+        return Err(said!("a document must keep at least one page").into());
     }
     let incoming = incoming_documents(plan, inputs)?;
 
@@ -3758,7 +3761,7 @@ fn checked(
             ..Default::default()
         },
     )
-    .map_err(|e| format!("could not parse the document: {e}"))?;
+    .map_err(|e| said!("could not parse the document: {e}"))?;
 
     // Before anything is written, and before the page walk: a refusal that
     // arrives after a temporary file exists has to clean up, and a refusal that
@@ -3806,11 +3809,11 @@ fn checked(
     // called a pass. `is_encrypted` reads the trailer's `/Encrypt`, which a
     // successful authentication removes, so it is true only for the locked case.
     if doc.is_encrypted() {
-        return Err(
+        return Err(said!(
             "This document is encrypted and tpdf could not unlock it, so it cannot be \
              rewritten. Open it with its password first."
-                .into(),
-        );
+        )
+        .into());
     }
     // Below the locked refusal, which is the truer sentence about a document
     // nobody unlocked, and above the page walk: a removal the document does not
@@ -3825,12 +3828,9 @@ fn checked(
         // *not* wave through, so a copy lands here rather than being written
         // from pages the plan cannot name. A reader who reaches it needs the
         // same Reload the fingerprint refusal offers.
-        return Err(Refusal::changed(format!(
-            "the document on disk has {} page(s) and the edits were made against {} --- it has \
-             changed since it was opened, so reopen it before saving",
-            pages.len(),
-            plan.baseline
-        )));
+        return Err(Refusal::changed(said!(
+            "the document on disk has {pages} page(s) and the edits were made against {baseline} --- it has \
+             changed since it was opened, so reopen it before saving", pages = pages.len(), baseline = plan.baseline)));
     }
 
     // The baseline pages the plan keeps, in the reader's order. **A page tpdf
@@ -3865,9 +3865,9 @@ fn checked(
     // the zero-based baseline page, and `ordered_pages` is that same order, so
     // the two line up by position rather than by anything either of them stores.
     let kept: Vec<u32> = baselines.iter().map(|number| number + 1).collect();
-    if let Some(past) = kept.iter().find(|&&number| number as usize > pages.len()) {
-        return Err(Refusal::changed(format!(
-            "the edits name page {past}, which this document does not have"
+    if let Some(page) = kept.iter().find(|&&number| number as usize > pages.len()) {
+        return Err(Refusal::changed(said!(
+            "the edits name page {page}, which this document does not have"
         )));
     }
 
@@ -3894,10 +3894,8 @@ fn checked(
             let slot = match page.source {
                 PageSource::Baseline(number) => {
                     Slot::Kept(*pages.get(number as usize).ok_or_else(|| {
-                        Refusal::changed(format!(
-                            "the edits name page {}, which this document does not have",
-                            number + 1
-                        ))
+                        Refusal::changed(said!(
+                            "the edits name page {page}, which this document does not have", page = number + 1))
                     })?)
                 }
                 PageSource::Blank(size) => {
@@ -3924,11 +3922,9 @@ fn checked(
                         || size.width > MAX_PAGE_POINTS
                         || size.height > MAX_PAGE_POINTS
                     {
-                        return Err(Refusal::changed(format!(
-                            "the edits ask for a page {} by {} points, which is not a page \
-                             this can write",
-                            size.width, size.height
-                        )));
+                        return Err(Refusal::changed(said!(
+                            "the edits ask for a page {width} by {height} points, which is not a page \
+                             this can write", width = size.width, height = size.height)));
                     }
                     Slot::Made(size)
                 }
@@ -3947,18 +3943,14 @@ fn checked(
                         .iter()
                         .position(|one| one.id == source.get())
                         .ok_or_else(|| {
-                            Refusal::from(format!(
-                                "the edits place a page from document {}, which the save was not \
-                                 given",
-                                source.get()
-                            ))
+                            Refusal::from(said!(
+                                "the edits place a page from document {document}, which the save was not \
+                                 given", document = source.get()))
                         })?;
                     let has = ordered_pages(&incoming[from]).len();
                     if number as usize >= has {
-                        return Err(Refusal::from(format!(
-                            "the edits place page {} of a document with {has} page(s)",
-                            number + 1
-                        )));
+                        return Err(Refusal::from(said!(
+                            "the edits place page {page} of a document with {has} page(s)", page = number + 1)));
                     }
                     Slot::Imported { from, page: number }
                 }
@@ -4032,18 +4024,15 @@ fn incoming_documents(plan: &Plan, inputs: Option<Inputs<'_>>) -> Result<Vec<Doc
         return Ok(Vec::new());
     }
     let Some(inputs) = inputs else {
-        return Err(
+        return Err(said!(
             "the edits place pages from another document, and that document was not handed to \
              the save"
-                .into(),
-        );
+        )
+        .into());
     };
     if inputs.each.len() != plan.sources.len() {
-        return Err(format!(
-            "the edits place pages from {} other document(s), and the save was handed {}",
-            plan.sources.len(),
-            inputs.each.len()
-        )
+        return Err(said!(
+            "the edits place pages from {count} other document(s), and the save was handed {handed}", count = plan.sources.len(), handed = inputs.each.len())
         .into());
     }
     let mut out = Vec::with_capacity(inputs.each.len());
@@ -4056,9 +4045,9 @@ fn incoming_documents(plan: &Plan, inputs: Option<Inputs<'_>>) -> Result<Vec<Doc
                 ..Default::default()
             },
         )
-        .map_err(|e| format!("could not read {label}: {e}"))?;
+        .map_err(|e| said!("could not read {path}: {e}", path = label))?;
         if document.was_encrypted() || document.is_encrypted() {
-            return Err(format!(
+            return Err(said!(
                 "{label} is encrypted, and inserting its pages would write them without that \
                  --- save an unencrypted copy of it and insert from that instead"
             )
@@ -4109,7 +4098,7 @@ fn rewrite(plan: &Plan, checked: Checked, job: Job) -> Result<Vec<u8>, Refusal> 
     // reaches a page that is being kept -- unless the reader deleted it in the
     // same breath, which is the case this ordering forgives.
     if !plan.text_edits.is_empty() && !plan.redactions.is_empty() {
-        return Err("save text edits before applying redactions".into());
+        return Err(said!("save text edits before applying redactions").into());
     }
     // **The other files first, and they are edited rather than the pages they
     // become.** A replacement on an inserted page was validated by that file's
@@ -4130,9 +4119,9 @@ fn rewrite(plan: &Plan, checked: Checked, job: Job) -> Result<Vec<u8>, Refusal> 
     // import, and no caller sees them.
     let split = text_by_document(plan, &slots)?;
     for (at, changes) in split.by_file {
-        let into = incoming
-            .get_mut(at)
-            .ok_or("the edits change text in a document this save was not given")?;
+        let into = incoming.get_mut(at).ok_or(said!(
+            "the edits change text in a document this save was not given"
+        ))?;
         textedit::write(into, &changes)?;
     }
     textedit::write(&mut doc, &split.base)?;
@@ -4418,7 +4407,7 @@ fn rewrite(plan: &Plan, checked: Checked, job: Job) -> Result<Vec<u8>, Refusal> 
             // Not a sentence about the reader's document: the state came out of
             // this same file a moment ago, so a failure here is tpdf's. Said
             // plainly rather than dressed up as something to act on.
-            format!("tpdf could not restore this document's encryption: {e}")
+            said!("tpdf could not restore this document's encryption: {e}")
         })?;
     }
 
@@ -4426,9 +4415,9 @@ fn rewrite(plan: &Plan, checked: Checked, job: Job) -> Result<Vec<u8>, Refusal> 
 
     let kept = doc.get_pages().len();
     let bytes = if plan.compress == crate::compress::Compress::No {
-        serialise(&mut doc, "the document")?
+        serialise(&mut doc, &said!("the document"))?
     } else {
-        serialise_packed(&mut doc, "the document")?
+        serialise_packed(&mut doc, &said!("the document"))?
     };
     crate::protect::written_as_asked(&plan.protection, &bytes, kept)?;
     Ok(bytes)
@@ -4503,18 +4492,18 @@ fn apply_redactions(
     let mut targets: Vec<(lopdf::ObjectId, &edits::PlannedRedaction)> = Vec::new();
     for redaction in redactions {
         if seen.contains(&redaction.source) {
-            return Err(format!(
-                "page {} is named twice by the redaction plan",
-                redaction.source + 1
+            return Err(said!(
+                "page {page} is named twice by the redaction plan",
+                page = redaction.source + 1
             )
             .into());
         }
         seen.push(redaction.source);
         let Some(page) = pages.get(redaction.source as usize) else {
-            return Err(format!(
-                "a redaction names page {} of a document that has {}",
-                redaction.source + 1,
-                pages.len()
+            return Err(said!(
+                "a redaction names page {page} of a document that has {count}",
+                page = redaction.source + 1,
+                count = pages.len()
             )
             .into());
         };
@@ -4872,7 +4861,7 @@ fn serialise_as(doc: &mut Document, what: &str, packed: bool) -> Result<Vec<u8>,
     } else {
         doc.save_to(&mut bytes)
     }
-    .map_err(|e| format!("could not serialise {what}: {e}"))?;
+    .map_err(|e| said!("could not serialise {what}: {e}"))?;
     let wrong = verify::structure(&bytes);
     if wrong.is_empty() {
         return Ok(bytes);
@@ -4880,9 +4869,9 @@ fn serialise_as(doc: &mut Document, what: &str, packed: bool) -> Result<Vec<u8>,
     // The fact, and no instruction. Nothing was written, and there is nothing
     // for the reader to do about a defect in bytes this process built --- the
     // same position `verify_before_commit`'s message takes for the same reason.
-    Err(format!(
-        "tpdf built {what} and then found it malformed, so nothing was written: {}",
-        wrong.join("; ")
+    Err(said!(
+        "tpdf built {what} and then found it malformed, so nothing was written: {problems}",
+        problems = wrong.join("; ")
     ))
 }
 
@@ -4966,9 +4955,10 @@ fn unshared(pages: &[lopdf::ObjectId], kept: &[u32], dropped: &[u32]) -> Result<
         let Some(shared) = kept.iter().find(|keep| at(keep) == Some(id)) else {
             continue;
         };
-        return Err(format!(
-            "pages {gone} and {shared} are the same page in this file, so page {gone} cannot be \
-             removed on its own. Remove both, or keep both."
+        return Err(said!(
+            "pages {gone} and {shared} are the same page in this file, so page {again} cannot be \
+             removed on its own. Remove both, or keep both.",
+            again = gone
         ));
     }
     Ok(())
@@ -5014,7 +5004,10 @@ fn make_blank_pages(
             // defect there, refused rather than unwrapped: a page left out of
             // the order is a document one page short that says nothing.
             Slot::Imported { .. } => imported.get(at).copied().flatten().ok_or_else(|| {
-                Refusal::from(format!("page {} of the edits was not imported", at + 1))
+                Refusal::from(said!(
+                    "page {page} of the edits was not imported",
+                    page = at + 1
+                ))
             })?,
             Slot::Made(size) => doc.add_object(lopdf::Dictionary::from_iter([
                 ("Type", Object::Name(b"Page".to_vec())),
@@ -5075,7 +5068,7 @@ fn text_by_document(plan: &Plan, slots: &[(Slot, u8)]) -> Result<TextSplit, Refu
             .iter()
             .position(|one| one.id == file)
             .ok_or_else(|| {
-                Refusal::from(format!(
+                Refusal::from(said!(
                     "the edits change text on a page from document {file}, which the save was \
                      not given"
                 ))
@@ -5089,19 +5082,19 @@ fn text_by_document(plan: &Plan, slots: &[(Slot, u8)]) -> Result<TextSplit, Refu
             .count();
         match placed {
             0 => {
-                return Err(Refusal::from(format!(
-                    "the edits change text on page {} of another document, which this save does \
+                return Err(Refusal::from(said!(
+                "the edits change text on page {page} of another document, which this save does \
                      not place",
-                    edit.change.page + 1
-                )))
+                page = edit.change.page + 1
+            )))
             }
             1 => {}
             _ => {
-                return Err(Refusal::from(format!(
-                    "page {} of another document is in this one {placed} times, and editing its \
+                return Err(Refusal::from(said!(
+                "page {page} of another document is in this one {placed} times, and editing its \
                      text would change every one of them",
-                    edit.change.page + 1
-                )))
+                page = edit.change.page + 1
+            )))
             }
         }
         match by_file.iter_mut().find(|(at, _)| *at == from) {
@@ -5174,9 +5167,8 @@ fn import_pages(
         }
         for round in rounds {
             let want: Vec<usize> = round.iter().map(|&(_, page)| page as usize).collect();
-            let ids = merge::import(doc, other, &want).map_err(|why| {
-                format!("could not insert the pages from another document: {why}")
-            })?;
+            let ids = merge::import(doc, other, &want)
+                .map_err(|why| said!("could not insert the pages from another document: {why}"))?;
             for (&(at, _), id) in round.iter().zip(ids) {
                 answer[at] = Some(id);
             }
@@ -5219,12 +5211,9 @@ fn agreed_crops(plan: &Plan) -> Result<Vec<(u32, [f64; 4])>, String> {
                 order.push(source);
             }
             Some(&(first, first_at)) if first != want => {
-                return Err(format!(
-                    "pages {} and {} are the same page in this file, so they cannot be cropped \
-                     differently. Crop them the same way, or leave both as they are.",
-                    first_at + 1,
-                    at + 1
-                ));
+                return Err(said!(
+                    "pages {first} and {second} are the same page in this file, so they cannot be cropped \
+                     differently. Crop them the same way, or leave both as they are.", first = first_at + 1, second = at + 1));
             }
             Some(_) => {}
         }
@@ -5331,7 +5320,7 @@ fn stage(
     let dir = dir.unwrap_or(Path::new("."));
     let stem = out
         .file_name()
-        .ok_or_else(|| Refusal::from(format!("{out:?} does not name a file to save to")))?;
+        .ok_or_else(|| Refusal::from(said!("{out:?} does not name a file to save to")))?;
 
     for attempt in 0..STAGING_ATTEMPTS {
         let partial = dir.join(staging_name(stem, attempt));
@@ -5342,7 +5331,7 @@ fn stage(
         {
             Ok(file) => file,
             Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => continue,
-            Err(e) => return Err(Refusal::from(format!("could not create {partial:?}: {e}"))),
+            Err(e) => return Err(Refusal::from(said!("could not create {partial:?}: {e}"))),
         };
         // **Before the bytes, not after them.** A staged file is created with
         // the process umask, usually `0644`, so a document a reader keeps at
@@ -5377,7 +5366,7 @@ fn stage(
             // the kernel and stops there; the file is the same file, so the sync
             // here is what covers them too.
             file.sync_data()
-                .map_err(|e| Refusal::from(format!("could not flush {partial:?}: {e}")))
+                .map_err(|e| Refusal::from(said!("could not flush {partial:?}: {e}")))
         });
         if let Err(why) = written {
             drop(file);
@@ -5386,7 +5375,7 @@ fn stage(
         }
         return Ok(partial);
     }
-    Err(Refusal::from(format!(
+    Err(Refusal::from(said!(
         "could not find an unused temporary name beside {out:?} after {STAGING_ATTEMPTS} tries"
     )))
 }
@@ -5419,7 +5408,7 @@ fn commit(staged: &Path, out: &Path) -> Result<(), String> {
             }
             Err(e) => {
                 let _ = std::fs::remove_file(staged);
-                return Err(format!("could not put {out:?} in place: {e}"));
+                return Err(said!("could not put {out:?} in place: {e}"));
             }
         }
     }

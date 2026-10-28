@@ -49,14 +49,16 @@ impl<'a> Graphics<'a> {
 
     pub fn save(&self, saved: &mut Vec<Self>) -> Result<(), String> {
         if saved.len() >= 64 {
-            return Err("text graphics-state stack exceeds its limit".into());
+            return Err(said!("text graphics-state stack exceeds its limit"));
         }
         saved.push(self.clone());
         Ok(())
     }
 
     pub fn restore(&mut self, saved: &mut Vec<Self>) -> Result<(), String> {
-        *self = saved.pop().ok_or("unmatched graphics-state restore")?;
+        *self = saved
+            .pop()
+            .ok_or_else(|| said!("unmatched graphics-state restore"))?;
         Ok(())
     }
 
@@ -97,7 +99,7 @@ impl<'a> Graphics<'a> {
             }
             path_until = index + rectangles_consumed;
         } else if !diagonal(self.page_transform) {
-            return Err("non-diagonal clips are not editable yet".into());
+            return Err(said!("non-diagonal clips are not editable yet"));
         } else {
             self.clip = Some(clipping::apply(
                 self.clip,
@@ -126,7 +128,7 @@ impl<'a> Graphics<'a> {
             .flatten()
         {
             if self.compound_clips.len() >= 32 {
-                return Err("too many compound clipping intersections".into());
+                return Err(said!("too many compound clipping intersections"));
             }
             self.compound_clips.push(region);
             return Ok(index + consumed);
@@ -229,7 +231,7 @@ impl<'a> Graphics<'a> {
         checked.font(name)?;
         let size = number(size)?;
         if !(0.0..=1000.0).contains(&size) || size == 0.0 {
-            return Err("unsupported text size".into());
+            return Err(said!("unsupported text size"));
         }
         self.selected_font = Some((name, size, index));
         Ok(())
@@ -366,19 +368,27 @@ impl Marked {
     ) -> Result<(), String> {
         let inside = object.inside;
         if self.actual.is_some() && matches!(op.operator.as_str(), "BDC" | "BMC") {
-            return Err("nested ActualText marked content is not editable yet".into());
+            return Err(said!(
+                "nested ActualText marked content is not editable yet"
+            ));
         }
         if self.layer && matches!(op.operator.as_str(), "BDC" | "BMC") {
-            return Err("marked content inside optional content is not editable yet".into());
+            return Err(said!(
+                "marked content inside optional content is not editable yet"
+            ));
         }
         let metadata = self.placed == 1
             && op.operator == "BDC"
             && op.operands.first().and_then(|tag| tag.as_name().ok()) == Some(b"Metadata");
         if self.placed > 0 && !metadata && matches!(op.operator.as_str(), "BDC" | "BMC") {
-            return Err("marked content inside placed artwork is not editable yet".into());
+            return Err(said!(
+                "marked content inside placed artwork is not editable yet"
+            ));
         }
         if self.filled && matches!(op.operator.as_str(), "BDC" | "BMC") {
-            return Err("marked content inside a Fill & Sign addition is not editable yet".into());
+            return Err(said!(
+                "marked content inside a Fill & Sign addition is not editable yet"
+            ));
         }
         match (op.operator.as_str(), op.operands.as_slice()) {
             // Marked content and text objects are independently balanced (ISO
@@ -435,7 +445,7 @@ impl Marked {
             }
             ("EMC", []) if self.actual.is_some() => {
                 if self.actual_spans.len() >= 128 {
-                    return Err("too many ActualText spans".into());
+                    return Err(said!("too many ActualText spans"));
                 }
                 self.actual_spans.push(self.actual.take().unwrap());
             }
@@ -516,7 +526,7 @@ impl<'a> Checked<'a> {
     fn graphics_state(&mut self, name: &[u8]) -> Result<Option<f64>, String> {
         if !self.graphics_states.contains_key(name) {
             if self.graphics_states.len() >= 32 {
-                return Err("too many external text graphics states".into());
+                return Err(said!("too many external text graphics states"));
             }
             let width = graphics::normal(self.doc, self.resources, name)?;
             self.graphics_states.insert(name.to_vec(), width);
@@ -527,7 +537,7 @@ impl<'a> Checked<'a> {
     fn colour_space(&mut self, name: &[u8]) -> Result<patterns::Colour, String> {
         if !self.colour_spaces.contains_key(name) {
             if self.colour_spaces.len() >= 32 {
-                return Err("too many text colour spaces".into());
+                return Err(said!("too many text colour spaces"));
             }
             self.colour_spaces.insert(
                 name.to_vec(),
@@ -544,7 +554,7 @@ impl<'a> Checked<'a> {
     fn font(&mut self, name: &[u8]) -> Result<(), String> {
         if !self.font_metrics.contains_key(name) {
             if self.font_metrics.len() >= 32 {
-                return Err("too many fonts on an editable page".into());
+                return Err(said!("too many fonts on an editable page"));
             }
             // A simple font the editor cannot write with keeps its
             // text read-only (`fonts::read_only`) rather than refusing
@@ -588,7 +598,7 @@ impl<'a> Checked<'a> {
     pub fn draw(&mut self, name: &[u8], state: &Graphics, found: &mut Found) -> Result<(), String> {
         if !self.image_names.contains(name) {
             if self.image_names.len() >= 32 {
-                return Err("too many images on an editable page".into());
+                return Err(said!("too many images on an editable page"));
             }
             if let Some(form) = forms::check(
                 self.doc,
@@ -766,17 +776,22 @@ impl Found {
         if marked.tags.label() {
             self.labels.insert(index as u32);
         }
-        let (name, size, font_operator) = state.selected_font.ok_or("text has no explicit font")?;
+        let (name, size, font_operator) = state
+            .selected_font
+            .ok_or_else(|| said!("text has no explicit font"))?;
         if !object.positioned {
             self.continued.insert(
                 object
                     .previous_show
-                    .ok_or("text has no preceding position")?,
+                    .ok_or_else(|| said!("text has no preceding position"))?,
             );
         }
         object.positioned = false;
         object.previous_show = Some(index as u32);
-        let metrics = checked.font_metrics.get(name).ok_or("missing text font")?;
+        let metrics = checked
+            .font_metrics
+            .get(name)
+            .ok_or_else(|| said!("missing text font"))?;
         let (text, advance, horizontal, backtracks) =
             self.measure(index, op, metrics, size, state, object)?;
         let mut shown_matrix = object.matrix;
@@ -826,7 +841,7 @@ impl Found {
         };
         object.cursor += advance;
         if !object.cursor.is_finite() || object.cursor > 1_000_000.0 {
-            return Err("continued text advance exceeds its limit".into());
+            return Err(said!("continued text advance exceeds its limit"));
         }
         let shown = Shown {
             index,
@@ -846,7 +861,7 @@ impl Found {
         let bounds = self.bounds(&shown, state, checked)?;
         let display_rect = self.to_display(bounds);
         if display_rect.iter().any(|v| !v.is_finite()) {
-            return Err("text bounds exceed the display range".into());
+            return Err(said!("text bounds exceed the display range"));
         }
         self.record(shown, display_rect, state, object, marked)
     }
@@ -879,7 +894,7 @@ impl Found {
             if let Some(lead) = lead {
                 object.cursor -= number(lead)? * size / 1000.0;
                 if !object.cursor.is_finite() || object.cursor.abs() > 1_000_000.0 {
-                    return Err("kerning position exceeds its limit".into());
+                    return Err(said!("kerning position exceeds its limit"));
                 }
                 self.leads.insert(index as u32, lead.clone());
             }
@@ -930,7 +945,7 @@ impl Found {
                     (left.abs().max(right.abs()), bottom, top)
                 }
                 (None, None) => {
-                    return Err("read-only text requires validated glyph outlines".into())
+                    return Err(said!("read-only text requires validated glyph outlines"))
                 }
             };
             let reach = reach * size / 1000.;
@@ -963,7 +978,7 @@ impl Found {
         if !text.is_empty() && (state.clip.is_some() || !state.compound_clips.is_empty()) {
             let [bottom, top] = metrics
                 .vertical_bounds
-                .ok_or("clipped text requires validated embedded glyph outlines")?;
+                .ok_or_else(|| said!("clipped text requires validated embedded glyph outlines"))?;
             let ink_bounds = text_bounds(
                 page_matrix,
                 [

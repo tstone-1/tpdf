@@ -156,14 +156,15 @@ pub fn sort(doc: &mut Document, page: ObjectId) -> Result<bool, String> {
         .zip(&listed)
         .any(|(to, now)| *to != now.widget);
     if changed {
-        let entries = match held(doc, page).ok_or("the page lists no annotations")? {
-            Held::Object(id) => doc.get_object_mut(id).and_then(Object::as_array_mut),
-            Held::Page => doc
-                .get_dictionary_mut(page)
-                .and_then(|dict| dict.get_mut(b"Annots"))
-                .and_then(Object::as_array_mut),
-        }
-        .map_err(|e| e.to_string())?;
+        let entries =
+            match held(doc, page).ok_or_else(|| said!("the page lists no annotations"))? {
+                Held::Object(id) => doc.get_object_mut(id).and_then(Object::as_array_mut),
+                Held::Page => doc
+                    .get_dictionary_mut(page)
+                    .and_then(|dict| dict.get_mut(b"Annots"))
+                    .and_then(Object::as_array_mut),
+            }
+            .map_err(|e| e.to_string())?;
         for (to, now) in wanted.iter().zip(&listed) {
             entries[now.slot] = Object::Reference(*to);
         }

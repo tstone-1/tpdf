@@ -181,7 +181,7 @@ ROWS += [
         "sign: leave the signing certificate unnamed",
         "src/sign_cms.rs",
         """    info.add_signed_attribute(signing_certificate(&signer, certificate)?)
-        .map_err(|e| failed("the signing certificate could not be named", &e))?;""",
+        .map_err(|e| said!("the signing certificate could not be named: {e}"))?;""",
         "",
         "the_signed_attributes_are_exactly_the_three_pades_b_b_names",
     ),
@@ -946,7 +946,7 @@ ROWS += [
     Mutation('sign text: a date format one character past the bound', 'src/sign_prepare/appearance.rs', '    if format.chars().count() > MAX_FORMAT_CHARS {', '    if format.chars().count() > MAX_FORMAT_CHARS + 1 {', 'a_text_is_drawn_in_place_of_the_standard_lines'),
     Mutation('sign text: a date format one character short of the bound', 'src/sign_prepare/appearance.rs', '    if format.chars().count() > MAX_FORMAT_CHARS {', '    if format.chars().count() >= MAX_FORMAT_CHARS {', 'a_text_is_drawn_in_place_of_the_standard_lines'),
     Mutation('sign text: a line of any length', 'src/sign_prepare/appearance.rs', '        if own.chars().count() > MAX_NOTE_CHARS {', '        if false {', 'a_text_is_drawn_in_place_of_the_standard_lines'),
-    Mutation('sign text: a text with no words is drawn', 'src/sign_prepare/appearance.rs', '    if !drawn {\n        return Err("the text has no words', '    if false {\n        return Err("the text has no words', 'a_text_is_drawn_in_place_of_the_standard_lines'),
+    Mutation('sign text: a text with no words is drawn', 'src/sign_prepare/appearance.rs', '    if !drawn {\n        return Err(said!(\n            "the text has no words', '    if false {\n        return Err(said!(\n            "the text has no words', 'a_text_is_drawn_in_place_of_the_standard_lines'),
     Mutation('sign text: a doubled brace stays doubled', 'src/sign_prepare/appearance.rs', "            words.push('{');\n            rest = after;", '            words.push_str("{{");\n            rest = after;', 'a_text_is_drawn_in_place_of_the_standard_lines'),
     Mutation('sign text: the reason is left out of a line that asks for it', 'src/sign_prepare/appearance.rs', '            Part::Reason => out.push_str(options.reason().unwrap_or_default()),', '            Part::Reason => {}', 'a_text_is_drawn_in_place_of_the_standard_lines'),
     Mutation('sign date: minutes where the hours go', 'src/sign_prepare/appearance.rs', '        ("HH", part(8, 10)),', '        ("HH", part(10, 12)),', 'a_date_is_written_token_by_token'),
@@ -966,9 +966,9 @@ ROWS += [
     Mutation("sign notes: a visible signature takes the note's reason", 'src/sign_prepare.rs', '                reason: visible.options.reason().map(str::to_string),\n                location: visible.options.location().map(str::to_string),\n                contact,', '                reason: note("reason", &notes.reason)?,\n                location: visible.options.location().map(str::to_string),\n                contact,', 'an_invisible_signature_carries_its_notes_and_a_visible_one_its_contact'),
     Mutation('sign notes: a visible signature drops the contact', 'src/sign_prepare.rs', '                location: visible.options.location().map(str::to_string),\n                contact,', '                location: visible.options.location().map(str::to_string),\n                contact: None,', 'an_invisible_signature_carries_its_notes_and_a_visible_one_its_contact'),
     Mutation('sign notes: a visible signature is not checked', 'src/sign_prepare.rs', '        Some(visible) => {\n            appearance::check(visible)?;', '        Some(visible) => {', 'an_invisible_signature_carries_its_notes_and_a_visible_one_its_contact'),
-    Mutation('sign notes: a note of any length', 'src/sign_prepare.rs', '        if text.chars().count() > MAX_NOTE_CHARS {\n            return Err(format!(\n                "the {what} is longer', '        if false {\n            return Err(format!(\n                "the {what} is longer', 'an_invisible_signature_carries_its_notes_and_a_visible_one_its_contact'),
-    Mutation('sign notes: one character short of the bound', 'src/sign_prepare.rs', '        if text.chars().count() > MAX_NOTE_CHARS {\n            return Err(format!(\n                "the {what} is longer', '        if text.chars().count() >= MAX_NOTE_CHARS {\n            return Err(format!(\n                "the {what} is longer', 'an_invisible_signature_carries_its_notes_and_a_visible_one_its_contact'),
-    Mutation('sign notes: a control character is carried', 'src/sign_prepare.rs', '        if text.chars().any(char::is_control) {\n            return Err(format!(\n                "the {what} has a control', '        if false {\n            return Err(format!(\n                "the {what} has a control', 'an_invisible_signature_carries_its_notes_and_a_visible_one_its_contact'),
+    Mutation('sign notes: a note of any length', 'src/sign_prepare.rs', '        if text.chars().count() > MAX_NOTE_CHARS {\n            return Err(said!(\n                "the {what} is longer', '        if false {\n            return Err(said!(\n                "the {what} is longer', 'an_invisible_signature_carries_its_notes_and_a_visible_one_its_contact'),
+    Mutation('sign notes: one character short of the bound', 'src/sign_prepare.rs', '        if text.chars().count() > MAX_NOTE_CHARS {\n            return Err(said!(\n                "the {what} is longer', '        if text.chars().count() >= MAX_NOTE_CHARS {\n            return Err(said!(\n                "the {what} is longer', 'an_invisible_signature_carries_its_notes_and_a_visible_one_its_contact'),
+    Mutation('sign notes: a control character is carried', 'src/sign_prepare.rs', '        if text.chars().any(char::is_control) {\n            return Err(said!(\n                "the {what} has a control', '        if false {\n            return Err(said!(\n                "the {what} has a control', 'an_invisible_signature_carries_its_notes_and_a_visible_one_its_contact'),
     Mutation('sign notes: a note is written untrimmed', 'src/sign_prepare.rs', '        let text = text.trim();\n        if text.chars().count() > MAX_NOTE_CHARS {', '        if text.chars().count() > MAX_NOTE_CHARS {', 'an_invisible_signature_carries_its_notes_and_a_visible_one_its_contact'),
     Mutation('sign lock: --lock is read and dropped', 'src/cli/sign.rs', '            (false, "--lock") => lock = true,', '            (false, "--lock") => lock = false,', 'lock_is_a_flag_of_sign_that_its_help_explains'),
     Mutation('sign lock: a locked document is signed again', 'src/sign_prepare.rs', 'if !details.document_timestamp && crate::docinfo::locked(&prev)? {', 'if false {', 'a_locked_document_takes_a_document_timestamp_and_no_further_signature'),
@@ -987,7 +987,7 @@ ROWS += [
     # The lock needs no hashing, so a read-back out of budget still says it.
     Mutation('lock read-back: a budget answer hides a missing lock', 'src/commands/sign.rs', '            return if unlocked {', '            return if false {', 'a_copy_that_does_not_read_back_as_written_is_refused_in_the_window_too'),
     # A form past the walk is no answer, and a lock behind an inherited type is a lock.
-    Mutation('lock read: a walk cut short reads as not locked', 'src/docinfo.rs', '    if cut.dropped > 0 || cut.too_deep > 0 {\n        return Err(\n            "this form has more fields, or groups nested deeper, than tpdf reads, so it \\\n             cannot tell whether a signature locked', '    if false {\n        return Err(\n            "this form has more fields, or groups nested deeper, than tpdf reads, so it \\\n             cannot tell whether a signature locked', 'a_lock_behind_an_inherited_type_or_past_the_walk_is_not_missed'),
+    Mutation('lock read: a walk cut short reads as not locked', 'src/docinfo.rs', '    if cut.dropped > 0 || cut.too_deep > 0 {\n        return Err(said!(\n            "this form has more fields, or groups nested deeper, than tpdf reads, so it \\\n             cannot tell whether a signature locked', '    if false {\n        return Err(said!(\n            "this form has more fields, or groups nested deeper, than tpdf reads, so it \\\n             cannot tell whether a signature locked', 'a_lock_behind_an_inherited_type_or_past_the_walk_is_not_missed'),
     Mutation('lock read: the type read on the node alone', 'src/docinfo.rs', '        let typed = inherited(document, field, b"FT")', '        let typed = field.get(b"FT").ok()', 'a_lock_behind_an_inherited_type_or_past_the_walk_is_not_missed'),
     Mutation('lock read: groups walked only eight deep', 'src/docinfo.rs', 'pub(crate) fn locked(document: &Document) -> Result<bool, String> {\n    let bounds = fields::Bounds {\n        nodes: MAX_FIELD_NODES,\n        depth: Some(32),', 'pub(crate) fn locked(document: &Document) -> Result<bool, String> {\n    let bounds = fields::Bounds {\n        nodes: MAX_FIELD_NODES,\n        depth: Some(8),', 'a_form_too_deep_to_read_every_name_of_is_not_given_a_guessed_one'),
     Mutation('sign notes: --contact is read as the location', 'src/cli/sign.rs', '            (false, "--contact") => contact = Some(value(arg, &mut rest)?.clone()),', '            (false, "--contact") => location = Some(value(arg, &mut rest)?.clone()),', 'a_reason_a_location_and_a_contact_need_no_visible_signature'),
@@ -1097,15 +1097,15 @@ ROWS += [
     Mutation(
         "cli edit: no hint for a font that forbids editing",
         "src/textedit.rs",
-        "refusal == fonts::RESTRICTED || refusal == LATIN_ONLY",
-        "refusal == LATIN_ONLY",
+        "refusal == fonts::forbidden() || refusal == latin_only()",
+        "refusal == latin_only()",
         "a_named_font_sends_the_box_the_editor_opens_on_that_run",
     ),
     Mutation(
         "cli edit: no hint for a character the font lacks",
         "src/textedit.rs",
-        "refusal == fonts::RESTRICTED || refusal == LATIN_ONLY",
-        "refusal == fonts::RESTRICTED",
+        "refusal == fonts::forbidden() || refusal == latin_only()",
+        "refusal == fonts::forbidden()",
         "a_named_font_sends_the_box_the_editor_opens_on_that_run",
     ),
     Mutation(
@@ -1797,8 +1797,8 @@ ROWS += [
     Mutation(
         "cli tool link: report success whatever is there afterwards",
         "src/clitool.rs",
-        "        (true, Step::Present) => format!(",
-        "        (true, _) => format!(",
+        '        (true, Step::Present) => said!(',
+        '        (true, _) => said!(',
         "the_reader_is_told_what_is_there_afterwards_not_what_was_attempted",
     ),
 ]
@@ -1867,10 +1867,8 @@ ROWS += [
     Mutation(
         "tsa: send the same nonce every time",
         "src/tsa.rs",
-        """        .fill(&mut nonce)
-        .map_err(|_| Refusal::Unreachable("the system's random source failed".into()))?;""",
-        """        .fill(&mut [0u8; 16])
-        .map_err(|_| Refusal::Unreachable("the system's random source failed".into()))?;""",
+        '        .fill(&mut nonce)\n        .map_err(|_| Refusal::Unreachable(said!("the system\'s random source failed")))?;',
+        '        .fill(&mut [0u8; 16])\n        .map_err(|_| Refusal::Unreachable(said!("the system\'s random source failed")))?;',
         "every_request_carries_a_nonce_of_its_own",
     ),
     Mutation(

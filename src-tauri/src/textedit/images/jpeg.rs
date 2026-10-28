@@ -9,7 +9,7 @@ use zune_jpeg::JpegDecoder;
 // framing separately, without attempting to implement Huffman decoding here.
 // This is bounded preservation, not a claim that every JPEG sample is valid.
 pub(super) fn framing(input: &[u8]) -> Result<(), String> {
-    let invalid = || "incomplete or unsupported JPEG framing".to_string();
+    let invalid = || said!("incomplete or unsupported JPEG framing");
     if input.len() > 2 * super::super::MAX_CONTENT || !input.starts_with(&[0xff, 0xd8]) {
         return Err(invalid());
     }
@@ -49,7 +49,7 @@ pub(super) fn framing(input: &[u8]) -> Result<(), String> {
         if marker == 0xda {
             scans += 1;
             if scans > 64 {
-                return Err("too many JPEG scans".into());
+                return Err(said!("too many JPEG scans"));
             }
             let mut samples = false;
             while position < input.len() {
@@ -87,7 +87,7 @@ pub(super) fn check(
     height: usize,
     components: usize,
 ) -> Result<(), String> {
-    let invalid = || "incomplete or unsupported JPEG image".to_string();
+    let invalid = || said!("incomplete or unsupported JPEG image");
     framing(input)?;
     // Framing proved everything after EOI is NUL padding; EOI ends in 0xd9,
     // so this is exactly the JPEG the decoder must consume in full.
@@ -117,7 +117,9 @@ pub(super) fn check(
         || usize::from(info.height) != height
         || usize::from(info.components) != components
     {
-        return Err("JPEG dimensions or components disagree with the image dictionary".into());
+        return Err(said!(
+            "JPEG dimensions or components disagree with the image dictionary"
+        ));
     }
     if decoder.output_buffer_size() != Some(bytes) {
         return Err(invalid());

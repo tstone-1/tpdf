@@ -37,6 +37,7 @@ import { catalog } from "./i18n";
 import { isOpenRefusal } from "./ipc";
 import { labelsFor, MAX_RECENTS, recentCommandId } from "./recents";
 import type { Place, Session, SessionWriter } from "./session";
+import { spokenError } from "./said";
 
 /** One remembered document, as the page shows it. */
 export interface StartRow {
@@ -255,7 +256,7 @@ export async function behindWrites(
     await change();
     return null;
   } catch (e) {
-    return String(e);
+    return spokenError(e);
   }
 }
 

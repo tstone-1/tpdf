@@ -105,8 +105,8 @@ ROWS += [
         # then reported to the reader as a clean redaction.
         "gate: stay silent about a region that could not be checked",
         "src/ocr_gate.rs",
-        "        Legibility::NotVerified { why, .. } => Some(format!(",
-        "        Legibility::NotVerified { why, .. } => (false).then(|| format!(",
+        '        Legibility::NotVerified { why, .. } => Some(said!(',
+        '        Legibility::NotVerified { why, .. } => (false).then(|| said!(',
         "a_not_verified_verdict_carries_its_own_reason_through",
     ),
     Mutation(
@@ -692,7 +692,7 @@ ROWS += [
         # document rather than by finding one.
         "merge: let one page be asked for twice",
         "src/merge.rs",
-        "        if taking.contains(&id) {\n            return Err(format!(\"page {} was asked for twice\", at + 1));\n        }\n",
+        "        if taking.contains(&id) {\n            return Err(said!(\"page {page} was asked for twice\", page = at + 1));\n        }\n",
         "",
         "the_same_page_asked_for_twice_is_refused",
     ),
@@ -835,7 +835,7 @@ ROWS += [
         # let a caller delete a font, a page or the catalog out of the file.
         "save: delete whatever object a plan names",
         "src/save/marks.rs",
-        "            return Err(\"that comment is not an annotation\".into());\n        }\n        doomed.insert(id);",
+        "            return Err(said!(\"that comment is not an annotation\").into());\n        }\n        doomed.insert(id);",
         "        }\n        doomed.insert(id);",
         "a_deletion_naming_something_that_is_not_an_annotation_is_refused",
     ),
@@ -1111,11 +1111,8 @@ ROWS += [
         # forbids, and it is one `?` away at all times.
         "verify: certify a file that could not be opened at all",
         "src/commands/redact.rs",
-        "    let mut file = std::fs::File::open(at)\n"
-        '        .map_err(|why| format!("the redacted file could not be read back: {why}"))?;',
-        "    let Ok(mut file) = std::fs::File::open(at) else {\n"
-        "        return Ok(verify::Report::default());\n"
-        "    };",
+        '    let mut file = std::fs::File::open(at)\n        .map_err(|why| said!("the redacted file could not be read back: {why}"))?;',
+        '    let Ok(mut file) = std::fs::File::open(at) else {\n        return Ok(verify::Report::default());\n    };',
         "a_read_back_of_a_file_that_is_not_there_is_an_error",
     ),
     Mutation(
@@ -1142,8 +1139,8 @@ ROWS += [
         # that hides the worst files best.
         "verify: report nothing left over when the object list is shortened",
         "src/verify.rs",
-        "                    blind_objects - MAX_OBJECT_REASONS",
-        "                    0",
+        '                    count = blind_objects - MAX_OBJECT_REASONS',
+        '                    count = 0',
         "a_report_lists_a_bounded_number_of_objects_and_counts_the_rest",
     ),
 ]
@@ -1518,10 +1515,10 @@ ROWS += [
     Mutation(
         "raster: allow overwriting the source with an image-only copy",
         "src/save.rs",
-        '    if same_file(source, out) {\n        return Err(\n'
-        '            "Choose a different name for the image-only copy; the original must be kept".into(),',
-        '    if false {\n        return Err(\n'
-        '            "Choose a different name for the image-only copy; the original must be kept".into(),',
+        '    if same_file(source, out) {\n        return Err(said!(\n'
+        '            "Choose a different name for the image-only copy; the original must be kept"\n',
+        '    if false {\n        return Err(said!(\n'
+        '            "Choose a different name for the image-only copy; the original must be kept"\n',
         "raster_copy_never_overwrites_its_source",
     ),
 ]
@@ -1849,8 +1846,8 @@ ROWS += [
         # the wrong-page picture `PageAddress` exists to refuse.
         "commands: fall back to the opened document for an unopened file",
         "src/commands/read.rs",
-        "                None => return Err(\"The file this page came from is no longer open\".into()),",
-        "                None => doc,",
+        '                None => return Err(said!("The file this page came from is no longer open")),',
+        '                None => doc,',
         "an_imported_page_whose_file_is_not_open_is_refused",
     ),
     Mutation(
@@ -1909,8 +1906,8 @@ ROWS += [
         # `lopdf` empties the moment the empty password opens it.
         "save: import: miss encryption the empty password opened",
         "src/save.rs",
-        "        if document.was_encrypted() || document.is_encrypted() {\n            return Err(format!(\n                \"{label} is encrypted, and inserting",
-        "        if document.is_encrypted() {\n            return Err(format!(\n                \"{label} is encrypted, and inserting",
+        '        if document.was_encrypted() || document.is_encrypted() {\n            return Err(said!(\n                "{label} is encrypted, and inserting',
+        '        if document.is_encrypted() {\n            return Err(said!(\n                "{label} is encrypted, and inserting',
         "a_source_an_empty_password_opens_is_refused_rather_than_decrypted",
     ),
     Mutation(
@@ -1925,8 +1922,8 @@ ROWS += [
         # Let a merge reach the rewrite's refusal about a file it was not given.
         "save: import: merge a document holding imported pages",
         "src/save.rs",
-        "    if !plan.sources.is_empty() {\n        return Err(\n            \"save this document before merging it",
-        "    if false {\n        return Err(\n            \"save this document before merging it",
+        "    if !plan.sources.is_empty() {\n        return Err(said!(\n            \"save this document before merging it",
+        "    if false {\n        return Err(said!(\n            \"save this document before merging it",
         "a_merge_of_a_document_holding_imported_pages_says_why_it_is_refused",
     ),
     Mutation(
@@ -1972,8 +1969,8 @@ ROWS += [
         # change the position nobody edited as well as the one they did.
         "save: import: accept a replacement on a page placed twice",
         "src/save.rs",
-        "            1 => {}\n            _ => {\n                return Err(Refusal::from(format!(",
-        "            _ => {}\n            #[allow(unreachable_patterns)]\n            _ => {\n                return Err(Refusal::from(format!(",
+        '            1 => {}\n            _ => {\n                return Err(Refusal::from(said!(',
+        '            _ => {}\n            #[allow(unreachable_patterns)]\n            _ => {\n                return Err(Refusal::from(said!(',
         "replacements_a_save_cannot_place_are_refused_with_the_reason",
     ),
 ]
@@ -2077,8 +2074,8 @@ ROWS += [
         # Commit whatever is waiting, whatever id the answer names.
         "edits: pending: commit an answer to another question",
         "src/edits.rs",
-        "            if open.pending.as_ref().map(|waiting| waiting.id) != Some(pending) {\n                return Err(format!(",
-        "            if open.pending.is_none() {\n                return Err(format!(",
+        '            if open.pending.as_ref().map(|waiting| waiting.id) != Some(pending) {\n                return Err(said!(',
+        '            if open.pending.is_none() {\n                return Err(said!(',
         "a_commit_naming_an_import_nobody_is_waiting_on_is_refused",
     ),
     Mutation(

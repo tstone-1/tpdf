@@ -80,7 +80,10 @@ pub fn open_refused(refusal: &progressive::Refusal, name: &str) -> String {
     if refusal.locked {
         return locked(name);
     }
-    format!("Could not insert pages from {name}: {}", refusal.reason)
+    said!(
+        "Could not insert pages from {name}: {why}",
+        why = refusal.reason
+    )
 }
 
 /// What a reader is told when the file they chose is encrypted.
@@ -90,7 +93,7 @@ pub fn open_refused(refusal: &progressive::Refusal, name: &str) -> String {
 /// refuses to import from an encrypted file. Asked at insert rather than left to
 /// the save, which would refuse after the reader had arranged the pages.
 pub fn locked(name: &str) -> String {
-    format!(
+    said!(
         "{name} is encrypted, and tpdf cannot insert pages from an encrypted file yet. \
          Save an unencrypted copy of it first."
     )
@@ -113,8 +116,7 @@ pub fn display_name(path: &std::path::Path) -> String {
 ///
 /// A count past what a page number can hold, which the model cannot represent.
 pub fn page_count(count: usize) -> Result<u32, String> {
-    u32::try_from(count)
-        .map_err(|_| format!("a file of {count} pages is past what tpdf can insert"))
+    u32::try_from(count).map_err(|_| said!("a file of {count} pages is past what tpdf can insert"))
 }
 
 #[cfg(test)]

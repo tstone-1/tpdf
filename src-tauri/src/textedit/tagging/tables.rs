@@ -1,16 +1,18 @@
 //! Preserve header identity and associations, without reconstructing a table.
-use super::{array, get, integer, keys, name, reference, INVALID};
+use super::{array, get, integer, invalid, keys, name, reference};
 use crate::encoding::resolve;
 use lopdf::{Dictionary, Document, Object, ObjectId};
 use std::collections::{BTreeMap, BTreeSet};
 
-const ID_TREE_ERROR: &str = "unsupported IDTree metadata in tagged structure root";
+fn id_tree_error() -> String {
+    said!("unsupported IDTree metadata in tagged structure root")
+}
 const MAX_CONTENT_ITEMS: usize = 128;
 
 fn identifier(value: &Object) -> Result<&[u8], String> {
-    let bytes = value.as_str().map_err(|_| INVALID)?;
+    let bytes = value.as_str().map_err(|_| invalid())?;
     if bytes.is_empty() || bytes.len() > 127 {
-        return Err(INVALID.into());
+        return Err(invalid());
     }
     Ok(bytes)
 }
@@ -28,7 +30,7 @@ impl Tables {
         if let Ok(tree) = root.get(b"IDTree") {
             let mut visited = BTreeSet::new();
             read_names(doc, tree, 0, &mut visited, &mut result.index, &mut 0)
-                .map_err(|_| ID_TREE_ERROR.to_string())?;
+                .map_err(|_| id_tree_error())?;
         }
         Ok(result)
     }
@@ -47,7 +49,7 @@ impl Tables {
                 || self.index.get(key) != Some(&id)
                 || self.headers.insert(key.to_vec(), table).is_some()
             {
-                return Err("tagged header and IDTree disagree on ownership".into());
+                return Err(said!("tagged header and IDTree disagree on ownership"));
             }
         }
         let Ok(attributes) = cell.get(b"A") else {
@@ -59,21 +61,19 @@ impl Tables {
             value => std::slice::from_ref(value),
         };
         if attributes.is_empty() || attributes.len() > 4 {
-            return Err(INVALID.into());
+            return Err(invalid());
         }
         let mut seen = BTreeSet::new();
         for value in attributes {
-            let value = resolve(doc, value).as_dict().map_err(|_| INVALID)?;
+            let value = resolve(doc, value).as_dict().map_err(|_| invalid())?;
             // ISO 32000-1 Table 343: a cell's authored size and its placement
             // in the row, which LibreOffice 26.2 writes beside the Table
             // object. They are the cell's allocation and not the ink of its
             // text, so an edit inside the cell leaves them true.
             if value.get(b"O").and_then(Object::as_name).ok() == Some(b"Layout") {
-                keys(
-                    value,
-                    &[b"O", b"Placement", b"Width", b"Height"],
-                    "table cell layout attributes",
-                )?;
+                keys(value, &[b"O", b"Placement", b"Width", b"Height"], || {
+                    said!("table cell layout attributes")
+                })?;
                 if !seen.insert(b"Layout".as_slice())
                     || value.get(b"Placement").is_ok_and(|placement| {
                         !matches!(placement.as_name(), Ok(b"Inline" | b"Block"))
@@ -86,22 +86,22 @@ impl Tables {
                         })
                     })
                 {
-                    return Err(INVALID.into());
+                    return Err(invalid());
                 }
                 continue;
             }
             keys(
                 value,
                 &[b"O", b"RowSpan", b"ColSpan", b"Headers", b"Scope"],
-                "table cell attributes",
+                || said!("table cell attributes"),
             )?;
             if name(get(value, b"O")?)? != b"Table" {
-                return Err(INVALID.into());
+                return Err(invalid());
             }
             for key in [b"RowSpan".as_slice(), b"ColSpan"] {
                 if let Ok(span) = value.get(key) {
                     if !(1..=128).contains(&integer(span)?) || !seen.insert(key) {
-                        return Err(INVALID.into());
+                        return Err(invalid());
                     }
                 }
             }
@@ -110,7 +110,7 @@ impl Tables {
                     || !matches!(name(scope)?, b"Row" | b"Column" | b"Both")
                     || !seen.insert(b"Scope")
                 {
-                    return Err(INVALID.into());
+                    return Err(invalid());
                 }
             }
             if let Ok(headers) = value.get(b"Headers") {
@@ -118,13 +118,13 @@ impl Tables {
                 // Header-to-header graphs need a separate cycle/meaning check.
                 if !seen.insert(b"Headers") || headers.len() > 16 || (header && !headers.is_empty())
                 {
-                    return Err(INVALID.into());
+                    return Err(invalid());
                 }
                 let mut unique = BTreeSet::new();
                 for value in headers {
                     let key = identifier(value)?;
                     if !unique.insert(key) {
-                        return Err(INVALID.into());
+                        return Err(invalid());
                     }
                     self.links.push((table, key.to_vec()));
                 }
@@ -137,11 +137,11 @@ impl Tables {
         // Checking only referenced headers misses stale or detached IDTree
         // entries. Every indexed identifier must belong to a visited TH.
         if self.headers.len() != self.index.len() {
-            return Err("tagged header and IDTree disagree on ownership".into());
+            return Err(said!("tagged header and IDTree disagree on ownership"));
         }
         for (table, key) in &self.links {
             if self.headers.get(key) != Some(table) {
-                return Err("tagged cell references an unknown or foreign header".into());
+                return Err(said!("tagged cell references an unknown or foreign header"));
             }
         }
         Ok(())
@@ -160,17 +160,17 @@ fn read_names(
     nodes: &mut usize,
 ) -> Result<(Vec<u8>, Vec<u8>), String> {
     if depth > 8 || *nodes >= 128 {
-        return Err(INVALID.into());
+        return Err(invalid());
     }
     *nodes += 1;
     if let Object::Reference(id) = value {
         if !visited.insert(*id) {
-            return Err(INVALID.into());
+            return Err(invalid());
         }
     } else if depth != 0 {
-        return Err(INVALID.into());
+        return Err(invalid());
     }
-    let node = resolve(doc, value).as_dict().map_err(|_| INVALID)?;
+    let node = resolve(doc, value).as_dict().map_err(|_| invalid())?;
     keys(
         node,
         if depth == 0 {
@@ -178,10 +178,10 @@ fn read_names(
         } else {
             &[b"Names", b"Kids", b"Limits"]
         },
-        "IDTree node",
+        || said!("IDTree node"),
     )?;
     if node.has(b"Names") == node.has(b"Kids") {
-        return Err(INVALID.into());
+        return Err(invalid());
     }
     let mut first = Vec::new();
     let mut last = Vec::new();
@@ -191,13 +191,13 @@ fn read_names(
             || names.len() % 2 != 0
             || names.len() / 2 + index.len() > MAX_CONTENT_ITEMS
         {
-            return Err(INVALID.into());
+            return Err(invalid());
         }
         for pair in names.chunks_exact(2) {
             let key = identifier(&pair[0])?;
             if key <= last.as_slice() || index.insert(key.to_vec(), reference(&pair[1])?).is_some()
             {
-                return Err(INVALID.into());
+                return Err(invalid());
             }
             if first.is_empty() {
                 first = key.to_vec();
@@ -207,12 +207,12 @@ fn read_names(
     } else {
         let kids = array(resolve(doc, get(node, b"Kids")?))?;
         if kids.is_empty() || kids.len() > 128 {
-            return Err(INVALID.into());
+            return Err(invalid());
         }
         for kid in kids {
             let (low, high) = read_names(doc, kid, depth + 1, visited, index, nodes)?;
             if low <= last {
-                return Err(INVALID.into());
+                return Err(invalid());
             }
             if first.is_empty() {
                 first = low;
@@ -224,7 +224,7 @@ fn read_names(
         let limits = array(resolve(doc, get(node, b"Limits")?))?;
         if limits.len() != 2 || identifier(&limits[0])? != first || identifier(&limits[1])? != last
         {
-            return Err(INVALID.into());
+            return Err(invalid());
         }
     }
     Ok((first, last))

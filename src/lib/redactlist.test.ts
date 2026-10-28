@@ -390,13 +390,13 @@ describe("what a row says a removal cannot take", () => {
   it("uses the words the backend's sentence uses for a kind", () => {
     // `said` in `redact.rs`, read as text: each arm that writes a kind out.
     const body = /fn said\([^]*?\n}\n/.exec(backend)?.[0] ?? "";
-    const arms = [...body.matchAll(/"([a-z-]+)" => "([^"]+)"/g)].map((m) => [m[1], m[2]]);
+    const arms = [...body.matchAll(/"([a-z-]+)" => said!\("([^"]+)"\)/g)].map((m) => [m[1], m[2]]);
     expect(arms.map(([kind]) => kind)).toContain("form");
     // The backend writes British English, so the table is compared in it.
     const table = new Map(unhandledKinds("en-GB").map(([kind, one]) => [kind, one]));
     for (const [kind, words] of arms) expect([kind, table.get(kind ?? "")]).toEqual([kind, words]);
     // And what it says of a kind it does not name is the table's last row.
-    expect(body).toContain(`_ => "${table.get("unsupported")}"`);
+    expect(body).toContain(`_ => said!("${table.get("unsupported")}")`);
   });
 
   it("says each kind in words a reader has, one and several", () => {

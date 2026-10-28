@@ -43,7 +43,7 @@ pub async fn synctex_forward(
         )
     })
     .await
-    .map_err(|e| format!("the forward search did not finish: {e}"))?
+    .map_err(|e| said!("the forward search did not finish: {e}"))?
 }
 
 /// The running version, so that a reader can find out which one they have.
@@ -91,7 +91,7 @@ pub fn take_launch_paths(launch: tauri::State<'_, launch::Launch>) -> Vec<launch
 pub async fn command_line_tool(install: bool) -> Result<String, String> {
     tauri::async_runtime::spawn_blocking(move || crate::clitool::apply(install))
         .await
-        .map_err(|e| format!("the command-line tool change did not run: {e}"))?
+        .map_err(|e| said!("the command-line tool change did not run: {e}"))?
 }
 
 /// What the two commands above would find, so the window can grey the one
@@ -107,7 +107,7 @@ pub async fn command_line_tool(install: bool) -> Result<String, String> {
 pub async fn command_line_tool_state() -> Result<Option<crate::clitool::ToolState>, String> {
     tauri::async_runtime::spawn_blocking(crate::clitool::state)
         .await
-        .map_err(|e| format!("the command-line tool could not be looked for: {e}"))?
+        .map_err(|e| said!("the command-line tool could not be looked for: {e}"))?
 }
 
 /// Who answers Explorer for PDF thumbnails and the preview pane: tpdf,
@@ -122,7 +122,7 @@ pub async fn explorer_state() -> Result<Option<crate::explorer::Handlers>, Strin
         crate::explorer::run(None).map(|(_, state)| Some(state))
     })
     .await
-    .map_err(|e| format!("Explorer's handlers could not be read: {e}"))?
+    .map_err(|e| said!("Explorer's handlers could not be read: {e}"))?
 }
 
 /// *Show PDFs in Explorer with tpdf* (`on`) and *Stop showing PDFs in Explorer
@@ -136,7 +136,7 @@ pub async fn explorer_set(on: bool, replace: bool) -> Result<String, String> {
         crate::explorer::run(Some((on, replace))).map(|(said, _)| said)
     })
     .await
-    .map_err(|e| format!("Explorer's handlers could not be changed: {e}"))?
+    .map_err(|e| said!("Explorer's handlers could not be changed: {e}"))?
 }
 
 /// *Make tpdf the default PDF app*.
@@ -149,5 +149,5 @@ pub async fn default_pdf_app(app: tauri::AppHandle) -> Result<String, String> {
     let identifier = app.config().identifier.clone();
     tauri::async_runtime::spawn_blocking(move || crate::defaultapp::apply(&identifier))
         .await
-        .map_err(|e| format!("the default application change did not run: {e}"))?
+        .map_err(|e| said!("the default application change did not run: {e}"))?
 }

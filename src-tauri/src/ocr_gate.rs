@@ -261,7 +261,7 @@ pub fn scale_for(
     // are refused by the same clause that refuses a zero one.
     let unusable = |v: f32| !v.is_finite() || v <= 0.0;
     if unusable(size_pt) || unusable(width_pt) || unusable(probe_height_pt) {
-        return Err(format!(
+        return Err(said!(
             "the probe image would be {width_pt} x {probe_height_pt} pt and the control is \
              {size_pt} pt, so no render scale can be chosen"
         ));
@@ -272,7 +272,7 @@ pub fn scale_for(
     }
     let at_floor = bytes_at(width_pt, probe_height_pt, scale);
     if at_floor > capacity {
-        return Err(format!(
+        return Err(said!(
             "the probe image for this region is {width_pt:.0} x {probe_height_pt:.0} pt, which at \
              the smallest scale the engine can read at is {at_floor} bytes against a {capacity} \
              byte buffer, so it could not be rendered for the check"
@@ -397,8 +397,10 @@ pub fn geometry_for(
     let wanted = scale_wanted(control_pt);
     if wanted > MAX_SCALE {
         return Err((
-            format!(
-                "the smallest thing this page removed is {control_pt:.1} pt, and a control that                  size needs {wanted:.1}x to reach {MIN_CONTROL_PX:.0} px \u{2014} past the {MAX_SCALE:.0}x                  ceiling, so no rendering of this page can prove the removal"
+            said!(
+                "the smallest thing this page removed is {control_pt:.1} pt, and a control that \
+                 size needs {wanted:.1}x to reach {MIN_CONTROL_PX:.0} px \u{2014} past the \
+                 {MAX_SCALE:.0}x ceiling, so no rendering of this page can prove the removal"
             ),
             crate::ocr::NotVerifiedCause::ControlTooSmall,
         ));
@@ -603,7 +605,7 @@ pub fn mask_columns(
     let left = (rect[0].min(rect[2]) * scale).floor().max(0.0) as usize;
     let right = ((rect[0].max(rect[2]) * scale).ceil().max(0.0) as usize).min(width_px as usize);
     if left >= right {
-        return Err(format!(
+        return Err(said!(
             "the area at {rect:?} pt is not on a page {width_px} px wide, so there was nothing to \
              read for the check"
         ));
@@ -649,16 +651,16 @@ pub fn reason(page: u32, verdict: &Legibility) -> Option<String> {
         Legibility::Legible { found } => {
             let mut read: Vec<&str> = found.iter().map(|i| i.text.trim()).collect();
             read.retain(|s| !s.is_empty());
-            Some(format!(
-                "page {}: the removed area still reads as text when the written page is \
-                 rendered \u{2014} {}",
-                page + 1,
-                sample(&read)
+            Some(said!(
+                "page {page}: the removed area still reads as text when the written page is \
+                 rendered \u{2014} {read}",
+                page = page + 1,
+                read = sample(&read)
             ))
         }
-        Legibility::NotVerified { why, .. } => Some(format!(
-            "page {}: the removed area could not be shown unreadable. {why}",
-            page + 1
+        Legibility::NotVerified { why, .. } => Some(said!(
+            "page {page}: the removed area could not be shown unreadable. {why}",
+            page = page + 1
         )),
     }
 }
@@ -672,7 +674,7 @@ fn sample(read: &[&str]) -> String {
     let quoted: Vec<String> = read.iter().take(SHOWN).map(|s| format!("{s:?}")).collect();
     match read.len().checked_sub(SHOWN) {
         Some(rest) if rest > 0 => format!("{} and {rest} more", quoted.join(", ")),
-        _ if quoted.is_empty() => "something the engine could not quote".to_string(),
+        _ if quoted.is_empty() => said!("something the engine could not quote"),
         _ => quoted.join(", "),
     }
 }
@@ -743,12 +745,12 @@ pub fn sizing_notes(pages: &[GatePage]) -> Vec<String> {
             let survivors = surviving(&page.words, &page.regions, &page.taking);
             let choice = crate::ocr::control_from_page(&survivors, &page.regions).ok()?;
             choice.from_page.then(|| {
-                format!(
-                    "page {}: the marked areas held no text, so the check was sized from the \
-                     smallest print left on the page: nothing {:.1} pt or larger is readable \
+                said!(
+                    "page {page}: the marked areas held no text, so the check was sized from the \
+                     smallest print left on the page: nothing {size:.1} pt or larger is readable \
                      there",
-                    page.page + 1,
-                    choice.size_pt
+                    page = page.page + 1,
+                    size = choice.size_pt
                 )
             })
         })
@@ -818,7 +820,7 @@ pub fn judge_all(
     let mut engine = match crate::ocr_worker::OcrWorker::spawn() {
         Ok(worker) => worker,
         Err(why) => {
-            return Judged::Refused(format!("the removed areas could not be read back. {why}"))
+            return Judged::Refused(said!("the removed areas could not be read back. {why}"))
         }
     };
 
@@ -826,10 +828,10 @@ pub fn judge_all(
         match wait(|reply| service.open(std::path::PathBuf::from(path), false, password, reply)) {
             Ok(info) => info,
             Err(refusal) => {
-                return Judged::Refused(format!(
+                return Judged::Refused(said!(
                     "the written file could not be reopened to read the removed areas back, so \
-                     they could not be shown unreadable: {}",
-                    refusal.reason
+                     they could not be shown unreadable: {reason}",
+                    reason = refusal.reason
                 ))
             }
         };
@@ -1080,16 +1082,16 @@ fn strip(
     scale: f32,
 ) -> Result<Vec<u8>, String> {
     let (top, rows) = rows_of(rect, height_px, scale).ok_or_else(|| {
-        format!(
+        said!(
             "the area at {rect:?} pt is not on a page of {height_px} px, so there was nothing to \
              render for the check"
         )
     })?;
     let width = u16::try_from(width_px).map_err(|_| {
-        format!("this page is {width_px} px wide at scale {scale}, too wide to render as one strip")
+        said!("this page is {width_px} px wide at scale {scale}, too wide to render as one strip")
     })?;
     let height = u16::try_from(rows).map_err(|_| {
-        format!("this area is {rows} px tall at scale {scale}, too tall to render as one strip")
+        said!("this area is {rows} px tall at scale {scale}, too tall to render as one strip")
     })?;
     let request = crate::render::TileRequest {
         annotations: true,
@@ -1108,9 +1110,9 @@ fn strip(
     };
     match wait(|reply| service.tile(request, reply))? {
         crate::render::TileOutcome::Rendered(tile) => Ok(tile.bytes),
-        crate::render::TileOutcome::Abandoned => {
-            Err("the render of this area was abandoned, so it could not be checked".into())
-        }
+        crate::render::TileOutcome::Abandoned => Err(said!(
+            "the render of this area was abandoned, so it could not be checked"
+        )),
     }
 }
 
@@ -1133,12 +1135,12 @@ fn wait<T: Send + 'static, E: Send + 'static + From<String>>(
     }));
     match rx.recv_timeout(ANSWER_BOUND) {
         Ok(result) => result,
-        Err(std::sync::mpsc::RecvTimeoutError::Timeout) => Err(E::from(format!(
-            "the render service did not answer within {} s while checking the removed areas",
-            ANSWER_BOUND.as_secs()
+        Err(std::sync::mpsc::RecvTimeoutError::Timeout) => Err(E::from(said!(
+            "the render service did not answer within {secs} s while checking the removed areas",
+            secs = ANSWER_BOUND.as_secs()
         ))),
         Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => {
-            Err(E::from("the render service stopped".to_string()))
+            Err(E::from(said!("the render service stopped")))
         }
     }
 }

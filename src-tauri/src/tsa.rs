@@ -178,38 +178,38 @@ impl Refusal {
     #[must_use]
     pub fn sentence(&self, host: &str) -> String {
         let at = if host.is_empty() {
-            "the timestamp authority".to_string()
+            said!("the timestamp authority")
         } else {
-            format!("the timestamp authority at {host}")
+            said!("the timestamp authority at {host}")
         };
         match self {
-            Refusal::Address(why) => format!("tpdf does not ask {why}"),
-            Refusal::Unreachable(why) => format!("tpdf could not reach {at}: {why}"),
-            Refusal::TimedOut => format!(
-                "{at} did not answer within {} seconds",
-                LIMITS.total.as_secs()
+            Refusal::Address(why) => said!("tpdf does not ask {why}"),
+            Refusal::Unreachable(why) => said!("tpdf could not reach {at}: {why}"),
+            Refusal::TimedOut => said!(
+                "{at} did not answer within {secs} seconds",
+                secs = LIMITS.total.as_secs()
             ),
-            Refusal::Http(code) => format!("{at} answered with HTTP status {code}"),
-            Refusal::TooLarge => format!(
-                "{at} answered with more than {} KiB, which no timestamp needs",
-                LIMITS.body / 1024
+            Refusal::Http(code) => said!("{at} answered with HTTP status {code}"),
+            Refusal::TooLarge => said!(
+                "{at} answered with more than {kib} KiB, which no timestamp needs",
+                kib = LIMITS.body / 1024
             ),
-            Refusal::Unreadable => format!("{at} answered with something that is not a timestamp"),
-            Refusal::Declined(why) => format!("{at} declined: {why}"),
-            Refusal::NoToken => format!("{at} said it granted a timestamp and sent none"),
-            Refusal::Token(integrity) => format!(
-                "{at} sent a timestamp that does not check out ({})",
-                verdict_words(integrity)
+            Refusal::Unreadable => said!("{at} answered with something that is not a timestamp"),
+            Refusal::Declined(why) => said!("{at} declined: {why}"),
+            Refusal::NoToken => said!("{at} said it granted a timestamp and sent none"),
+            Refusal::Token(integrity) => said!(
+                "{at} sent a timestamp that does not check out ({why})",
+                why = verdict_words(integrity)
             ),
-            Refusal::Imprint => format!(
+            Refusal::Imprint => said!(
                 "{at} sent a timestamp that is not of this signature as it was asked for \
                  (SHA-256)"
             ),
-            Refusal::Nonce => format!(
+            Refusal::Nonce => said!(
                 "{at} sent a timestamp that does not answer this request (its nonce is not the \
                  one sent)"
             ),
-            Refusal::Fit(why) => format!("the timestamp from {at} could not be added: {why}"),
+            Refusal::Fit(why) => said!("the timestamp from {at} could not be added: {why}"),
         }
     }
 }
@@ -217,14 +217,14 @@ impl Refusal {
 /// A token's verdict, briefly, for [`Refusal::sentence`].
 fn verdict_words(integrity: &crate::integrity::Integrity) -> String {
     match integrity.verdict {
-        Verdict::Intact => "intact".into(),
-        Verdict::Weak => format!("it rests on {}", integrity.digest),
-        Verdict::Altered => "it is of something other than this signature".into(),
-        Verdict::Broken => "its own signature fails".into(),
-        Verdict::Unchecked => format!(
-            "it could not be checked: {}",
-            integrity.why.map_or_else(
-                || "no reason".to_string(),
+        Verdict::Intact => said!("intact"),
+        Verdict::Weak => said!("it rests on {digest}", digest = integrity.digest),
+        Verdict::Altered => said!("it is of something other than this signature"),
+        Verdict::Broken => said!("its own signature fails"),
+        Verdict::Unchecked => said!(
+            "it could not be checked: {why}",
+            why = integrity.why.map_or_else(
+                || said!("no reason"),
                 |why| format!("{why:?}").to_lowercase()
             )
         ),
@@ -251,26 +251,26 @@ pub fn authority(text: &str) -> Result<url::Url, Refusal> {
         return url::Url::parse(server.url).map_err(|e| Refusal::Address(e.to_string()));
     }
     let url = url::Url::parse(text).map_err(|_| {
-        Refusal::Address(format!(
-            "`{text}` for a timestamp: it is not a URL, nor one of {}",
-            SERVERS.map(|s| s.name).join(", ")
+        Refusal::Address(said!(
+            "`{text}` for a timestamp: it is not a URL, nor one of {servers}",
+            servers = SERVERS.map(|s| s.name).join(", ")
         ))
     })?;
     if !matches!(url.scheme(), "http" | "https") {
-        return Err(Refusal::Address(format!(
-            "a timestamp authority over `{}:` --- only http and https",
-            url.scheme()
+        return Err(Refusal::Address(said!(
+            "a timestamp authority over `{scheme}:` --- only http and https",
+            scheme = url.scheme()
         )));
     }
     if url.host_str().is_none_or(str::is_empty) {
-        return Err(Refusal::Address(format!(
+        return Err(Refusal::Address(said!(
             "`{text}` for a timestamp: it names no server"
         )));
     }
     if !url.username().is_empty() || url.password().is_some() {
-        return Err(Refusal::Address(
-            "a timestamp authority with a user name or password in its address".into(),
-        ));
+        return Err(Refusal::Address(said!(
+            "a timestamp authority with a user name or password in its address"
+        )));
     }
     Ok(url)
 }
@@ -499,7 +499,7 @@ fn fresh_nonce() -> Result<[u8; 16], Refusal> {
     rustls::crypto::ring::default_provider()
         .secure_random
         .fill(&mut nonce)
-        .map_err(|_| Refusal::Unreachable("the system's random source failed".into()))?;
+        .map_err(|_| Refusal::Unreachable(said!("the system's random source failed")))?;
     Ok(nonce)
 }
 

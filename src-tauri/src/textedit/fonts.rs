@@ -34,7 +34,7 @@ pub(super) fn type1(doc: &Document, font: &Dictionary) -> Result<Metrics, String
     let descriptor = dictionary(
         doc,
         font.get(b"FontDescriptor")
-            .map_err(|_| "invalid Type1 font descriptor")?,
+            .map_err(|_| said!("invalid Type1 font descriptor"))?,
     )?;
     // PDF Type1 is a font dictionary subtype, not the embedded program format.
     // ISO 32000-1 Table 126 distinguishes FontFile (PostScript) from Type1C in
@@ -46,19 +46,19 @@ pub(super) fn type1(doc: &Document, font: &Dictionary) -> Result<Metrics, String
         return unembedded(doc, font);
     };
     if carriers.next().is_some() {
-        return Err("Type1 font has conflicting embedded font programs".into());
+        return Err(said!("Type1 font has conflicting embedded font programs"));
     }
     let program = crate::encoding::resolve(
         doc,
         descriptor
             .get(carrier)
-            .map_err(|_| "invalid embedded program in Type1 font")?,
+            .map_err(|_| said!("invalid embedded program in Type1 font"))?,
     )
     .as_stream()
-    .map_err(|_| "invalid embedded program in Type1 font")?;
+    .map_err(|_| said!("invalid embedded program in Type1 font"))?;
     match carrier {
         b"FontFile" => return type1::embedded(doc, font),
-        b"FontFile2" => return Err("FontFile2 is not supported in Type1 fonts".into()),
+        b"FontFile2" => return Err(said!("FontFile2 is not supported in Type1 fonts")),
         _ => {}
     }
     // A nonsymbolic font with a PDF encoding keeps the WinAnsi CFF path; a
@@ -75,11 +75,13 @@ pub(super) fn type1(doc: &Document, font: &Dictionary) -> Result<Metrics, String
         // and its Latin text editable. Only a font the WinAnsi path refused
         // takes this route, so no verdict it gave changes.
         Some(b"Type1C") => match cff::embedded(doc, font) {
-            Err(error) if error == cff::UNNAMED => type1::compact(doc, font),
+            Err(error) if error == cff::unnamed() => type1::compact(doc, font),
             result => result,
         },
-        Some(b"OpenType") => Err("OpenType programs in Type1 fonts are not editable yet".into()),
-        _ => Err("unsupported embedded program subtype in Type1 font".into()),
+        Some(b"OpenType") => Err(said!(
+            "OpenType programs in Type1 fonts are not editable yet"
+        )),
+        _ => Err(said!("unsupported embedded program subtype in Type1 font")),
     }
 }
 
@@ -88,6 +90,10 @@ enum Codes {
     Double(std::collections::BTreeMap<u16, u8>),
 }
 
+pub(super) fn gap_spaces() -> String {
+    said!("This font shows spaces as gaps between words; use single spaces between words")
+}
+#[cfg(test)]
 pub(super) const GAP_SPACES: &str =
     "This font shows spaces as gaps between words; use single spaces between words";
 
@@ -127,7 +133,9 @@ pub(super) struct Metrics {
 }
 
 /// The message for a font whose embedding rights forbid editing with it.
-pub(super) const RESTRICTED: &str = "embedded font does not permit this editable use";
+pub(super) fn forbidden() -> String {
+    said!("embedded font does not permit this editable use")
+}
 
 /// Whether OS/2 `fsType` rights, or a Type 1 or CFF program's `FSType`, forbid
 /// editing with the font: anything beyond the editable-embedding bit (0x8) and
@@ -308,14 +316,14 @@ impl Metrics {
         };
         if let Codes::Double(codes) = codes {
             if bytes.len() % 2 != 0 || bytes.len() / 2 > super::MAX_TEXT {
-                return Err("invalid or oversized two-byte text".into());
+                return Err(said!("invalid or oversized two-byte text"));
             }
             let mut text = String::new();
             let mut characters = 0;
             for pair in bytes.chunks_exact(2) {
                 let slot = *codes
                     .get(&u16::from_be_bytes([pair[0], pair[1]]))
-                    .ok_or("text contains an unmapped font code")?;
+                    .ok_or_else(|| said!("text contains an unmapped font code"))?;
                 if let Some(sequence) = ligatures::text(slot) {
                     text.push_str(sequence);
                     characters += sequence.len();
@@ -324,7 +332,7 @@ impl Metrics {
                     characters += 1;
                 }
                 if characters > super::MAX_TEXT {
-                    return Err("expanded two-byte text exceeds its limit".into());
+                    return Err(said!("expanded two-byte text exceeds its limit"));
                 }
             }
             return Ok(text);
@@ -333,14 +341,14 @@ impl Metrics {
             unreachable!()
         };
         if bytes.len() > super::MAX_TEXT {
-            return Err("mapped text exceeds its limit".into());
+            return Err(said!("mapped text exceeds its limit"));
         }
         let mut text = String::new();
         let mut characters = 0;
         for &code in bytes {
             let Some(slot) = codes[code as usize] else {
                 if self.opaque(code).is_none() {
-                    return Err("text contains an unmapped font code".into());
+                    return Err(said!("text contains an unmapped font code"));
                 }
                 text.push(OPAQUE);
                 characters += 1;
@@ -354,7 +362,7 @@ impl Metrics {
                 characters += 1;
             }
             if characters > super::MAX_TEXT {
-                return Err("expanded text exceeds its limit".into());
+                return Err(said!("expanded text exceeds its limit"));
             }
         }
         Ok(text)
@@ -395,7 +403,7 @@ impl Metrics {
         let mut items = Vec::new();
         for (index, word) in text.split(' ').enumerate() {
             if word.is_empty() {
-                return Err(GAP_SPACES.into());
+                return Err(gap_spaces());
             }
             if index > 0 {
                 items.push(lopdf::Object::Real(-gap as f32));
@@ -422,7 +430,7 @@ impl Metrics {
         let mut bounds = [0_f64; 2];
         for (index, word) in text.split(' ').enumerate() {
             if word.is_empty() {
-                return Err(GAP_SPACES.into());
+                return Err(gap_spaces());
             }
             if index > 0 {
                 cursor += shift;
@@ -442,7 +450,7 @@ impl Metrics {
         // An empty show paints no glyph, so it is no use of the font: a
         // deletion, or a writer restoring the cursor after a replacement.
         if self.restricted && !text.is_empty() {
-            return Err(RESTRICTED.into());
+            return Err(forbidden());
         }
         self.codes_for(text)
     }
@@ -463,13 +471,10 @@ impl Metrics {
         if let Codes::Double(codes) = codes {
             let mut result = Vec::with_capacity(bytes.len() * 2);
             for byte in bytes {
-                let (&code, _) =
-                    codes
-                        .iter()
-                        .find(|(_, value)| **value == byte)
-                        .ok_or_else(|| {
-                            "the font has no validated glyph for this character".to_string()
-                        })?;
+                let (&code, _) = codes
+                    .iter()
+                    .find(|(_, value)| **value == byte)
+                    .ok_or_else(|| said!("the font has no validated glyph for this character"))?;
                 result.extend(code.to_be_bytes());
             }
             return Ok(result);
@@ -484,14 +489,14 @@ impl Metrics {
                     .iter()
                     .position(|value| value.as_ref() == Some(byte))
                     .map(|code| code as u8)
-                    .ok_or_else(|| "the font has no validated glyph for this character".to_string())
+                    .ok_or_else(|| said!("the font has no validated glyph for this character"))
             })
             .collect()
     }
 
     fn width(&self, byte: u8) -> Result<f64, String> {
-        Ok(self.widths[byte as usize]
-            .ok_or("the font has no validated glyph for this character")?)
+        self.widths[byte as usize]
+            .ok_or_else(|| said!("the font has no validated glyph for this character"))
     }
 
     pub(super) fn advance(&self, text: &str, size: f64) -> Result<f64, String> {
@@ -572,7 +577,7 @@ impl Metrics {
                     None => self
                         .opaque(code)
                         .map(|glyph| (glyph.width, glyph.overhang, code == 32))
-                        .ok_or_else(|| "text contains an unmapped font code".to_string()),
+                        .ok_or_else(|| said!("text contains an unmapped font code")),
                 })
                 .collect::<Result<Vec<_>, _>>()?;
             self.spaced_glyphs(&glyphs, size, spacing, word_spacing)?
@@ -635,13 +640,15 @@ impl Metrics {
         word_spacing: f64,
     ) -> Result<(f64, [f64; 2]), String> {
         if !spacing.is_finite() || spacing.abs() > size * 0.25 {
-            return Err("character spacing exceeds a quarter of the font size".into());
+            return Err(said!(
+                "character spacing exceeds a quarter of the font size"
+            ));
         }
         // Positive Tw can encode a tab-sized gap with Tf=1 and a scaled Tm.
         // Bound its value and the resulting cursor separately. Keep the
         // existing negative-spacing subset and positive per-glyph steps.
         if !word_spacing.is_finite() || word_spacing < -size * 0.25 || word_spacing > 1_000_000. {
-            return Err("word spacing exceeds editable limits".into());
+            return Err(said!("word spacing exceeds editable limits"));
         }
         let mut cursor = 0.;
         let mut bounds = [0_f64; 2];
@@ -649,13 +656,13 @@ impl Metrics {
             let width = width * size / 1000.;
             let step = width + spacing + if word { word_spacing } else { 0. };
             if step <= 0. {
-                return Err("backtracking character spacing is not editable yet".into());
+                return Err(said!("backtracking character spacing is not editable yet"));
             }
             bounds[0] = bounds[0].min(cursor + left * size / 1000.);
             bounds[1] = bounds[1].max(cursor + width + right * size / 1000.);
             cursor += step;
             if !cursor.is_finite() || cursor > 1_000_000. {
-                return Err("spaced text advance exceeds its limit".into());
+                return Err(said!("spaced text advance exceeds its limit"));
             }
         }
         Ok((cursor, bounds))
@@ -702,7 +709,7 @@ fn empty_glyph(face: &Face<'_>, glyph: GlyphId) -> Option<bool> {
 /// a code with no width is not offered. There are no outlines; the
 /// descriptor's FontBBox stands in for every glyph's ink.
 pub(super) fn unembedded(doc: &Document, font: &Dictionary) -> Result<Metrics, String> {
-    let invalid = || "unsupported unembedded font".to_string();
+    let invalid = || said!("unsupported unembedded font");
     if font.get(b"Type").and_then(Object::as_name).ok() != Some(b"Font")
         || !matches!(
             font.get(b"Subtype").and_then(Object::as_name).ok(),
@@ -918,7 +925,7 @@ pub(super) fn is_unembedded(doc: &Document, font: &Dictionary) -> bool {
 }
 
 pub(super) fn embedded(doc: &Document, font: &Dictionary) -> Result<Metrics, String> {
-    let invalid = || "unsupported embedded TrueType font or character mapping".to_string();
+    let invalid = || said!("unsupported embedded TrueType font or character mapping");
     let custom = !font.has(b"Encoding") && font.has(b"ToUnicode");
     let mac_roman =
         font.get(b"Encoding").and_then(Object::as_name).ok() == Some(b"MacRomanEncoding");
@@ -1057,7 +1064,9 @@ pub(super) fn embedded(doc: &Document, font: &Dictionary) -> Result<Metrics, Str
             let width = number(&widths[(i64::from(code_byte) - first) as usize])?;
             let advance = f64::from(face.glyph_hor_advance(glyph).ok_or_else(invalid)?) * unit;
             if width <= 0. || width > 2000. || (width - advance).abs() > 1. {
-                return Err("embedded font widths disagree with its glyph metrics".into());
+                return Err(said!(
+                    "embedded font widths disagree with its glyph metrics"
+                ));
             }
             let (overhang, [low, high]) =
                 kept_ink(&face, glyph, width, unit).ok_or_else(invalid)?;
@@ -1114,7 +1123,9 @@ pub(super) fn embedded(doc: &Document, font: &Dictionary) -> Result<Metrics, Str
         }
         let advance = f64::from(face.glyph_hor_advance(glyph).ok_or_else(invalid)?) * unit;
         if width <= 0. || width > 2000. || (width - advance).abs() > 1. {
-            return Err("embedded font widths disagree with its glyph metrics".into());
+            return Err(said!(
+                "embedded font widths disagree with its glyph metrics"
+            ));
         }
         // Match the other embedded-font paths: bounded excursions are allowed,
         // then each source/replacement is checked against its actual ink bounds.
@@ -1169,7 +1180,7 @@ fn kept_ink(
 }
 
 fn program(doc: &Document, descriptor: &Dictionary) -> Result<Vec<u8>, String> {
-    let invalid = || "unsupported embedded TrueType program".to_string();
+    let invalid = || said!("unsupported embedded TrueType program");
     if descriptor.has(b"FontFile") || descriptor.has(b"FontFile3") {
         return Err(invalid());
     }
@@ -1190,7 +1201,7 @@ fn program(doc: &Document, descriptor: &Dictionary) -> Result<Vec<u8>, String> {
 fn face(bytes: &[u8], allow_apple: bool) -> Result<Face<'_>, String> {
     let (face, restricted) = rights_face(bytes, allow_apple)?;
     if restricted {
-        return Err(RESTRICTED.into());
+        return Err(forbidden());
     }
     Ok(face)
 }
@@ -1207,14 +1218,14 @@ pub(super) fn installed_face(bytes: &[u8]) -> Result<Face<'_>, String> {
     Face::parse(bytes, 0)
         .ok()
         .filter(|face| face.tables().cff.is_some())
-        .ok_or_else(|| "unsupported installed OpenType program".into())
+        .ok_or_else(|| said!("unsupported installed OpenType program"))
 }
 
 // A validated program, and whether its OS/2 rights forbid editing with it.
 // A document font is read either way; `Metrics::restricted` keeps new text
 // out of one that forbids it.
 fn rights_face(bytes: &[u8], allow_apple: bool) -> Result<(Face<'_>, bool), String> {
-    let invalid = || "unsupported embedded TrueType program".to_string();
+    let invalid = || said!("unsupported embedded TrueType program");
     let apple_true = allow_apple && bytes.get(..4) == Some(b"true");
     if !apple_true && bytes.get(..4) != Some(&[0, 1, 0, 0]) {
         return Err(invalid()); // No collections, CFF or alternate sfnt flavours.

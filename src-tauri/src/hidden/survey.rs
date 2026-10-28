@@ -174,52 +174,65 @@ pub fn survey<P: Pages>(
 
 /// The sentence a walk ends on. What was not checked is in it, so the result
 /// is never read without its limits.
+///
+/// Built from the end: each clause carries the rest of the line, down to the
+/// full stop, as its last argument, so that the window can recognise every
+/// clause as a sentence of its own and translate the line whole.
 #[must_use]
 pub fn summary(survey: &Survey) -> String {
-    let mut line = if survey.found.is_empty() {
-        format!(
-            "No hidden text found: {} characters on {} compared with the rendered page",
-            survey.compared,
-            pages_of(
+    // Each clause starts with its count, and the `; ` before it travels at the
+    // front of that count: a clause template that began with `; ` would leave
+    // the head below with `{pages}` and `{rest}` side by side, which no
+    // reader of the finished line can split.
+    let mut rest = ".".to_string();
+    if !survey.not_compared.is_empty() {
+        rest = said!(
+            "{pages} too large to compare ({numbers}){rest}",
+            pages = format!("; {}", pages_of(survey.not_compared.len())),
+            numbers = numbers(&survey.not_compared)
+        );
+    }
+    if !survey.without_text.is_empty() {
+        rest = said!(
+            "{pages} without text not checked ({numbers}){rest}",
+            pages = format!("; {}", pages_of(survey.without_text.len())),
+            numbers = numbers(&survey.without_text)
+        );
+    }
+    if survey.unjudged > 0 {
+        rest = said!(
+            "{count} characters could not be judged{rest}",
+            count = format!("; {}", survey.unjudged)
+        );
+    }
+    if survey.found.is_empty() {
+        return said!(
+            "No hidden text found: {count} characters on {pages} compared with the rendered \
+             page{rest}",
+            count = survey.compared,
+            pages = pages_of(
                 survey
                     .selected
                     .saturating_sub(survey.without_text.len() + survey.not_compared.len())
             ),
-        )
-    } else {
-        let on: std::collections::BTreeSet<u32> = survey.found.iter().map(|f| f.page).collect();
-        format!(
-            "{} in the file and not visible on the page, on {}",
-            if survey.found.len() == 1 {
-                "1 passage is".to_string()
-            } else {
-                format!("{} passages are", survey.found.len())
-            },
-            pages_of(on.len()),
-        )
-    };
-    if survey.unjudged > 0 {
-        line.push_str(&format!(
-            "; {} characters could not be judged",
-            survey.unjudged
-        ));
+        );
     }
-    if !survey.without_text.is_empty() {
-        line.push_str(&format!(
-            "; {} without text not checked ({})",
-            pages_of(survey.without_text.len()),
-            numbers(&survey.without_text)
-        ));
+    let on: std::collections::BTreeSet<u32> = survey.found.iter().map(|f| f.page).collect();
+    let pages = pages_of(on.len());
+    // The clauses after a found passage, without the first `; `, or `None`.
+    let more = rest.strip_prefix("; ");
+    match (survey.found.len(), more) {
+        (1, None) => said!("1 passage is in the file and not visible on the page, on {pages}."),
+        (1, Some(more)) => {
+            said!("1 passage is in the file and not visible on the page, on {pages}; {more}")
+        }
+        (count, None) => {
+            said!("{count} passages are in the file and not visible on the page, on {pages}.")
+        }
+        (count, Some(more)) => said!(
+            "{count} passages are in the file and not visible on the page, on {pages}; {more}"
+        ),
     }
-    if !survey.not_compared.is_empty() {
-        line.push_str(&format!(
-            "; {} too large to compare ({})",
-            pages_of(survey.not_compared.len()),
-            numbers(&survey.not_compared)
-        ));
-    }
-    line.push('.');
-    line
 }
 
 fn pages_of(count: usize) -> String {

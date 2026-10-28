@@ -8,6 +8,10 @@
 //! `AGENTS.md` is reproduced. Do not delete one because nothing calls it: the
 //! caller is a shell command in `BUILD.md`.
 
+// First, so that `said!` is in scope in every module below it.
+#[macro_use]
+mod said;
+
 /// Text written onto every page: page numbers, headers, footers, watermarks.
 pub mod addedtext;
 pub mod annots;
@@ -508,9 +512,9 @@ pub(crate) use crate::failure::Failure as SaveFailure;
 /// is the one part of a `SaveFailure` written for a human.
 pub(crate) fn with_close_note(mut why: SaveFailure, closed: Result<(), String>) -> SaveFailure {
     if let Err(also) = closed {
-        why.message = format!(
-            "{} --- and the document did not close cleanly: {also}",
-            why.message
+        why.message = said!(
+            "{message} --- and the document did not close cleanly: {also}",
+            message = why.message
         );
     }
     why
@@ -1709,10 +1713,6 @@ mod tests {
         }
     }
 
-    /// Where the bundler puts PDFium, checked against where the app looks for it.
-    ///
-    /// **A trailing slash in a Tauri resource map is a rename, not a directory**,
-    /// and `docs/TRAPS.md` records that from the macOS side --- which is why the
     /// The updater refuses a signature that does not name the version it offers.
     ///
     /// `latest.json` is not signed, so with this off whoever serves it can pair a
@@ -1732,6 +1732,10 @@ mod tests {
         );
     }
 
+    /// Where the bundler puts PDFium, checked against where the app looks for it.
+    ///
+    /// **A trailing slash in a Tauri resource map is a rename, not a directory**,
+    /// and `docs/TRAPS.md` records that from the macOS side --- which is why the
     /// macOS config names `pdfium/libpdfium.dylib` in full. The Windows twin was
     /// written as `"pdfium/"` and shipped the runtime DLL as a file called
     /// `pdfium`, with no extension. `pdfium_library_dir` then found no

@@ -108,7 +108,7 @@ fn read_inner(bytes: &[u8], with_text: bool) -> Option<Reading> {
 ///
 /// PDFKit refusing the document, or declining to build an operation for it.
 pub fn present(bytes: &[u8], title: &str, mtm: MainThreadMarker) -> Result<bool, String> {
-    let document = parse(bytes).ok_or("PDFKit could not read the print job")?;
+    let document = parse(bytes).ok_or_else(|| said!("PDFKit could not read the print job"))?;
     let info = NSPrintInfo::sharedPrintInfo();
 
     // PDFKit auto-rotates a page to fill the sheet. On a page that carries a
@@ -135,7 +135,7 @@ pub fn present(bytes: &[u8], title: &str, mtm: MainThreadMarker) -> Result<bool,
             mtm,
         )
     }
-    .ok_or("PDFKit would not build a print operation for this document")?;
+    .ok_or_else(|| said!("PDFKit would not build a print operation for this document"))?;
 
     operation.setJobTitle(Some(&NSString::from_str(title)));
     operation.setShowsPrintPanel(true);

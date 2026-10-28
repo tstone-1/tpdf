@@ -57,25 +57,23 @@ impl std::fmt::Debug for Protection {
 /// password may not.
 pub fn acceptable(password: &str) -> Result<(), String> {
     if password.is_empty() {
-        return Err(
+        return Err(said!(
             "The password is empty; a document protected with it would open for \
                     anybody."
-                .into(),
-        );
+        ));
     }
     if password.len() > MAX_BYTES {
-        return Err(format!(
+        return Err(said!(
             "The password is too long: a PDF password is at most {MAX_BYTES} bytes, and this \
-             one is {}.",
-            password.len()
+             one is {length}.",
+            length = password.len()
         ));
     }
     if password.chars().any(char::is_control) {
-        return Err(
+        return Err(said!(
             "The password holds a control character, such as a tab or a line break, \
                     which most readers cannot type back."
-                .into(),
-        );
+        ));
     }
     Ok(())
 }
@@ -92,9 +90,9 @@ pub fn allowed(protection: &Protection, had: bool, original: &[u8]) -> Result<()
     match protection {
         Protection::Keep => Ok(()),
         Protection::Set(password) => acceptable(password),
-        Protection::Remove if !had => {
-            Err("This document has no password, so there is none to remove.".into())
-        }
+        Protection::Remove if !had => Err(said!(
+            "This document has no password, so there is none to remove."
+        )),
         Protection::Remove => {
             // Asked of the bytes rather than of the password that was given:
             // `lopdf` tries the empty password by itself, so a wrong password
@@ -103,12 +101,11 @@ pub fn allowed(protection: &Protection, had: bool, original: &[u8]) -> Result<()
             if plain.is_ok_and(|doc| doc.is_encrypted()) {
                 Ok(())
             } else {
-                Err(
+                Err(said!(
                     "This document opens without a password. What it restricts was set by \
                      whoever made it, and tpdf removes a password only from a document that \
                      needs one to open."
-                        .into(),
-                )
+                ))
             }
         }
     }
@@ -135,7 +132,7 @@ fn state(password: &str) -> Result<EncryptionState, String> {
     acceptable(password)?;
     let mut key = [0u8; 32];
     getrandom::fill(&mut key)
-        .map_err(|e| format!("tpdf could not get random bytes for the encryption key: {e}"))?;
+        .map_err(|e| said!("tpdf could not get random bytes for the encryption key: {e}"))?;
     let filter: Arc<dyn CryptFilter> = Arc::new(Aes256CryptFilter);
     EncryptionState::try_from(EncryptionVersion::V5 {
         encrypt_metadata: true,
@@ -147,7 +144,7 @@ fn state(password: &str) -> Result<EncryptionState, String> {
         user_password: password,
         permissions: Permissions::all(),
     })
-    .map_err(|e| format!("tpdf could not use this password: {e}"))
+    .map_err(|e| said!("tpdf could not use this password: {e}"))
 }
 
 /// Completes what `Document::encrypt` wrote. Call it after every `encrypt`.
@@ -180,7 +177,7 @@ pub fn finish(doc: &mut Document, protection: &Protection) -> Result<(), String>
     };
     let dictionary = doc
         .get_dictionary_mut(at)
-        .map_err(|e| format!("tpdf could not complete the encryption it wrote: {e}"))?;
+        .map_err(|e| said!("tpdf could not complete the encryption it wrote: {e}"))?;
     let version = dictionary.get(b"V").and_then(lopdf::Object::as_i64);
     if version.is_ok_and(|v| v == 5) && !dictionary.has(b"Length") {
         dictionary.set("Length", 256);
@@ -220,7 +217,7 @@ pub fn finish(doc: &mut Document, protection: &Protection) -> Result<(), String>
     if !identified {
         let mut id = [0u8; 16];
         getrandom::fill(&mut id)
-            .map_err(|e| format!("tpdf could not get random bytes for the file identifier: {e}"))?;
+            .map_err(|e| said!("tpdf could not get random bytes for the file identifier: {e}"))?;
         let one = || lopdf::Object::String(id.to_vec(), lopdf::StringFormat::Hexadecimal);
         doc.trailer.set("ID", vec![one(), one()]);
     }
@@ -245,16 +242,16 @@ pub fn written_as_asked(protection: &Protection, bytes: &[u8], pages: usize) -> 
                 ..Default::default()
             },
         )
-        .map_err(|e| format!("tpdf could not read back the copy it built: {e}"))
+        .map_err(|e| said!("tpdf could not read back the copy it built: {e}"))
     };
     match protection {
         Protection::Keep => Ok(()),
         Protection::Remove => {
             let plain = load(None)?;
             if plain.is_encrypted() || plain.was_encrypted() || plain.get_pages().len() != pages {
-                return Err(
-                    "The copy tpdf built is still encrypted, so it was not written.".into(),
-                );
+                return Err(said!(
+                    "The copy tpdf built is still encrypted, so it was not written."
+                ));
             }
             Ok(())
         }
@@ -262,18 +259,17 @@ pub fn written_as_asked(protection: &Protection, bytes: &[u8], pages: usize) -> 
             // `lopdf` parses no objects for a document it cannot authenticate
             // and still answers `Ok`, so the lock is read from `is_encrypted`.
             if !load(None)?.is_encrypted() {
-                return Err(
-                    "The copy tpdf built opens without the password, so it was not written.".into(),
-                );
+                return Err(said!(
+                    "The copy tpdf built opens without the password, so it was not written."
+                ));
             }
             // A password that does not open it is an `Err` from the load.
             let opens = load(Some(password))
                 .is_ok_and(|doc| !doc.is_encrypted() && doc.get_pages().len() == pages);
             if !opens {
-                return Err(
+                return Err(said!(
                     "The copy tpdf built does not open with the password, so it was not written."
-                        .into(),
-                );
+                ));
             }
             Ok(())
         }

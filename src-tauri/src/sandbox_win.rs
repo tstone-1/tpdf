@@ -599,9 +599,9 @@ impl Contained {
     #[must_use]
     pub fn epitaph(&self) -> String {
         match self.wait_timeout(EPITAPH_GRACE) {
-            Ok(None) => "still running".into(),
-            Ok(Some(code)) => format!("exited with {}", describe_exit(code)),
-            Err(e) => format!("could not be waited on: {e}"),
+            Ok(None) => said!("still running"),
+            Ok(Some(code)) => said!("exited with {how}", how = describe_exit(code)),
+            Err(e) => said!("could not be waited on: {e}"),
         }
     }
 
@@ -1210,7 +1210,7 @@ pub fn describe_exit(code: u32) -> String {
         0 => return "0".to_owned(),
         // Ours, and named so an epitaph can say a worker was killed rather than
         // leaving a reader to recognise a magic number. See [`KILLED_EXIT`].
-        KILLED_EXIT => return "killed by its parent".to_owned(),
+        KILLED_EXIT => return said!("killed by its parent"),
         0xC000_0135 => "STATUS_DLL_NOT_FOUND",
         0xC000_0142 => "STATUS_DLL_INIT_FAILED",
         0xC000_0022 => "STATUS_ACCESS_DENIED",

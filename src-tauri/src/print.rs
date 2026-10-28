@@ -277,7 +277,7 @@ pub fn build_update(original: &[u8], job: &Job) -> Result<Vec<u8>, String> {
             ..Default::default()
         },
     )
-    .map_err(|e| format!("could not parse the document: {e}"))?;
+    .map_err(|e| said!("could not parse the document: {e}"))?;
 
     // **An encrypted document is printed whole or not at all**, and the reason
     // is that this branch reserialises: `lopdf`'s full writer emits every object
@@ -300,12 +300,11 @@ pub fn build_update(original: &[u8], job: &Job) -> Result<Vec<u8>, String> {
     // both are refused: even with the key, this writer cannot put the encryption
     // back. An append could, and a page selection is not appendable.
     if doc.was_encrypted() || doc.is_encrypted() {
-        return Err(
+        return Err(said!(
             "This document is encrypted, and printing a selection of it would produce \
              an unencrypted copy. Print the whole document instead --- that is handed over \
              unchanged."
-                .to_string(),
-        );
+        ));
     }
 
     let table = doc.get_pages();
@@ -369,10 +368,10 @@ pub fn build_update(original: &[u8], job: &Job) -> Result<Vec<u8>, String> {
 /// A count that disagrees, or an empty job.
 pub fn expect_pages(found: usize, expected: Option<usize>) -> Result<(), String> {
     match expected {
-        Some(expected) if found != expected => Err(format!(
+        Some(expected) if found != expected => Err(said!(
             "the print job has {found} pages, not the {expected} asked for"
         )),
-        None if found == 0 => Err("the print job came out empty".into()),
+        None if found == 0 => Err(said!("the print job came out empty")),
         _ => Ok(()),
     }
 }
@@ -412,13 +411,13 @@ pub fn sheets(range: Option<(u32, u32)>, count: u32) -> Result<Vec<u32>, String>
         return Ok((0..count).collect());
     };
     if first > last {
-        return Err(format!("pages {first} to {last} run backwards"));
+        return Err(said!("pages {first} to {last} run backwards"));
     }
     if first < 1 {
-        return Err("there is no page 0 to print from".into());
+        return Err(said!("there is no page 0 to print from"));
     }
     if last > count {
-        return Err(format!("page {last} is not in this job, which has {count}"));
+        return Err(said!("page {last} is not in this job, which has {count}"));
     }
     Ok((first - 1..last).collect())
 }
@@ -559,11 +558,11 @@ pub fn watched<T>(
 #[must_use]
 pub fn stalled_message(sheets: u32) -> String {
     let sent = match sheets {
-        0 => "No page has reached the printer".to_string(),
-        1 => "1 page reached the printer, and none since".to_string(),
-        many => format!("{many} pages reached the printer, and none since"),
+        0 => said!("No page has reached the printer"),
+        1 => said!("1 page reached the printer, and none since"),
+        many => said!("{many} pages reached the printer, and none since"),
     };
-    format!(
+    said!(
         "{sent} for a minute. The print queue may be stuck: open Settings, Printers & scanners, \
          choose the printer and open its print queue. If the queue starts again, the rest \
          will print."
@@ -580,19 +579,19 @@ fn resolve(pages: &Pages, present: &[u32]) -> Result<Vec<PagePlan>, String> {
         // Unreachable, and kept because the type carries the constraint rather
         // than a comment: `route` sends any plan that produces this to
         // `Route::Working`, which never reaches `build`. See `Pages::Unlistable`.
-        Pages::Unlistable => {
-            Err("this document has a page tpdf made, which a page range cannot name".into())
-        }
+        Pages::Unlistable => Err(said!(
+            "this document has a page tpdf made, which a page range cannot name"
+        )),
         Pages::Only(wanted) => {
             if wanted.is_empty() {
-                return Err("no pages selected".into());
+                return Err(said!("no pages selected"));
             }
             for page in wanted {
                 if !present.contains(&page.number) {
-                    return Err(format!(
-                        "page {} is not in this document, which has {}",
-                        page.number,
-                        present.len()
+                    return Err(said!(
+                        "page {page} is not in this document, which has {count}",
+                        page = page.number,
+                        count = present.len()
                     ));
                 }
             }

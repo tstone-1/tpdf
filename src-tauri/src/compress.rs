@@ -153,17 +153,17 @@ impl Pictures {
     /// what is offered.
     pub fn checked(self) -> Result<Self, String> {
         if !DPI_RANGE.contains(&self.dpi) {
-            return Err(format!(
-                "the resolution is {} pixels an inch; it may be {} to {}",
-                self.dpi,
-                DPI_RANGE.start(),
-                DPI_RANGE.end()
+            return Err(said!(
+                "the resolution is {dpi} pixels an inch; it may be {low} to {high}",
+                dpi = self.dpi,
+                low = DPI_RANGE.start(),
+                high = DPI_RANGE.end()
             ));
         }
         if !(1..=100).contains(&self.quality) {
-            return Err(format!(
-                "the JPEG quality is {}; it may be 1 to 100",
-                self.quality
+            return Err(said!(
+                "the JPEG quality is {quality}; it may be 1 to 100",
+                quality = self.quality
             ));
         }
         Ok(self)
@@ -1129,7 +1129,7 @@ pub fn estimate(doc: &Document, compress: Compress) -> Result<Estimated, String>
     };
     let done = apply(&mut copy, compress);
     let focus = focus(doc, &copy, &shown);
-    let bytes = crate::save::serialise_packed(&mut copy, "the smaller copy")?;
+    let bytes = crate::save::serialise_packed(&mut copy, &said!("the smaller copy"))?;
     Ok(Estimated {
         estimate: Estimate {
             bytes_after: bytes.len() as u64,

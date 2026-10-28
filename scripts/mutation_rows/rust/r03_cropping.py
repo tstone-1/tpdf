@@ -327,8 +327,8 @@ ROWS += [
         # damaged, and the reader goes looking for another copy of a good file.
         "progressive: give every open failure the same reason",
         "src/progressive.rs",
-        '        err::PASSWORD => "This document is locked, and needs a password.".into(),',
-        '        err::PASSWORD => "This file is not a PDF, or it is damaged beyond reading.".into(),',
+        '        err::PASSWORD => said!("This document is locked, and needs a password."),',
+        '        err::PASSWORD => said!("This file is not a PDF, or it is damaged beyond reading."),',
         "each_reason_says_something_different",
     ),
     Mutation(
@@ -382,8 +382,8 @@ ROWS += [
         # handle with no error set --- and it reads as though the open worked.
         "progressive: report no-error as the reason a document did not open",
         "src/progressive.rs",
-        '        _ => "This document could not be opened, and PDFium did not say why.".into(),',
-        '        0 => "No error.".into(),\n        _ => "This document could not be opened, and PDFium did not say why.".into(),',
+        '        _ => said!("This document could not be opened, and PDFium did not say why."),',
+        '        0 => said!("No error."),\n        _ => said!("This document could not be opened, and PDFium did not say why."),',
         "success_is_not_reported_as_a_reason",
     ),
     Mutation(
@@ -554,8 +554,8 @@ ROWS += [
         # a guard whose caller nothing tests.
         "save: append without checking the file at all",
         "src/save.rs",
-        "    appended\n        .verified\n        .agrees_with_metadata(&meta, source)\n        .map_err(|why| {",
-        "    Ok::<(), String>(())\n        .map_err(|why: String| {",
+        "    appended\n        .verified\n        .agrees_with_metadata(&meta, source)\n        .map_err(|why| said!(",
+        "    Ok::<(), String>(())\n        .map_err(|why: String| said!(",
         "an_append_refuses_a_replacement_that_kept_the_length",
     ),
     Mutation(
@@ -1557,8 +1557,8 @@ ROWS += [
         # cropping one page crops every page hanging under that node.
         "pagetree: write a crop where every page inherits it",
         "src/pagetree.rs",
-        "        doc.get_object_mut(*id)\n            .and_then(Object::as_dict_mut)\n            .map_err(|e| format!(\"page {id:?} is not a dictionary: {e}\"))?\n            .set(\n                \"CropBox\",",
-        "        let parent = doc\n            .get_object(*id)\n            .and_then(Object::as_dict)\n            .and_then(|d| d.get(b\"Parent\"))\n            .and_then(Object::as_reference)\n            .unwrap_or(*id);\n        doc.get_object_mut(parent)\n            .and_then(Object::as_dict_mut)\n            .map_err(|e| format!(\"page {id:?} is not a dictionary: {e}\"))?\n            .set(\n                \"CropBox\",",
+        '        doc.get_object_mut(*id)\n            .and_then(Object::as_dict_mut)\n            .map_err(|e| said!("page {page:?} is not a dictionary: {e}", page = id))?\n            .set(\n                "CropBox",',
+        '        let parent = doc\n            .get_object(*id)\n            .and_then(Object::as_dict)\n            .and_then(|d| d.get(b"Parent"))\n            .and_then(Object::as_reference)\n            .unwrap_or(*id);\n        doc.get_object_mut(parent)\n            .and_then(Object::as_dict_mut)\n            .map_err(|e| said!("page {page:?} is not a dictionary: {e}", page = id))?\n            .set(\n                "CropBox",',
         "a_crop_lands_on_the_page_and_not_on_its_parent",
     ),
     Mutation(

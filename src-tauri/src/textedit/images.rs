@@ -27,7 +27,7 @@ pub(super) fn check(
     name: &[u8],
     remaining: usize,
 ) -> Result<Image, String> {
-    let invalid = || "unsupported image on an editable page".to_string();
+    let invalid = || said!("unsupported image on an editable page");
     let entries = dictionary(doc, resources.get(b"XObject").map_err(|_| invalid())?)?;
     let image = crate::encoding::resolve(doc, entries.get(name).map_err(|_| invalid())?)
         .as_stream()
@@ -74,7 +74,7 @@ fn samples(
     remaining: usize,
     parent: Option<usize>,
 ) -> Result<(usize, Option<usize>), String> {
-    let invalid = || "unsupported image on an editable page".to_string();
+    let invalid = || said!("unsupported image on an editable page");
     for (key, value) in &image.dict {
         match (key.as_slice(), value) {
             (b"Type", Object::Name(name)) if name == b"XObject" => {}
@@ -208,7 +208,7 @@ fn samples(
     let samples = width * height * components;
     let bytes = samples + palette_bytes;
     if bytes > remaining {
-        return Err("decoded images exceed the editable page budget".into());
+        return Err(said!("decoded images exceed the editable page budget"));
     }
     let jpeg = match image.dict.get(b"Filter") {
         Ok(Object::Name(name)) if name == b"DCTDecode" => Some(image.content.clone()),
@@ -234,7 +234,9 @@ fn samples(
     if decoded.len() != samples
         || high_index.is_some_and(|high| decoded.iter().any(|&sample| sample > high))
     {
-        return Err("image samples do not match dimensions and colour components".into());
+        return Err(said!(
+            "image samples do not match dimensions and colour components"
+        ));
     }
     Ok((bytes, high_index.is_none().then_some(components)))
 }
@@ -243,7 +245,7 @@ fn samples(
 // the sample data, and the remaining entries then describe nothing. Any other
 // predictor would have to be undone before those samples could be read.
 fn parameters(doc: &Document, value: &Object) -> Result<(), String> {
-    let invalid = || "unsupported image on an editable page".to_string();
+    let invalid = || said!("unsupported image on an editable page");
     let value = crate::encoding::resolve(doc, value);
     let value = match value {
         Object::Array(values) if values.len() == 1 => crate::encoding::resolve(doc, &values[0]),

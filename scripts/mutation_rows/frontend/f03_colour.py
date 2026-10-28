@@ -890,7 +890,7 @@ ROWS += [
         # after it is the bare failure §6 forbids as firmly as the bare success.
         "recovery: report a redaction as unproven without saying why",
         "src/lib/recovery.ts",
-        '      TEXT().redactionNotVerified(removed, applied.why.join("; "));',
+        '      TEXT().redactionNotVerified(removed, applied.why.map((w) => spoken(w)).join("; "));',
         '      TEXT().redactionNotVerified(removed, "");',
         "names every reason it could not prove the file clean",
     ),

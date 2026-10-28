@@ -37,6 +37,7 @@
 import type { SignatureImage } from "./signature";
 import { button, footer, option, paragraph, row, section } from "./dialogparts";
 import { catalog } from "./i18n";
+import { spokenError } from "./said";
 
 /**
  * The panel's words. The appearance itself --- *Digitally signed by*, the
@@ -312,7 +313,7 @@ export class AppearancePanel {
       this.state = { kind: "shown" };
     } catch (error) {
       if (this.#closed || generation !== this.#generation) return;
-      this.state = { kind: "refused", why: error instanceof Error ? error.message : String(error) };
+      this.state = { kind: "refused", why: spokenError(error) };
     }
   }
 

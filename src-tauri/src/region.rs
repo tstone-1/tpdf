@@ -28,18 +28,20 @@ pub fn write_png(path: &Path, png: &[u8]) -> Result<(), String> {
         .extension()
         .is_some_and(|ext| ext.eq_ignore_ascii_case("png"));
     if !named_png {
-        return Err(format!(
-            "The picture was not saved: {} does not end in .png.",
-            path.display()
+        return Err(said!(
+            "The picture was not saved: {path} does not end in .png.",
+            path = path.display()
         ));
     }
     if !png.starts_with(&SIGNATURE) {
-        return Err("The picture was not saved: the render did not come back as a PNG.".into());
+        return Err(said!(
+            "The picture was not saved: the render did not come back as a PNG."
+        ));
     }
     let name = path.file_name().ok_or_else(|| {
-        format!(
-            "The picture was not saved: {} names no file.",
-            path.display()
+        said!(
+            "The picture was not saved: {path} names no file.",
+            path = path.display()
         )
     })?;
     let staged = path.with_file_name(format!(
@@ -55,7 +57,10 @@ pub fn write_png(path: &Path, png: &[u8]) -> Result<(), String> {
         .and_then(|()| std::fs::rename(&staged, path));
     written.map_err(|why| {
         let _ = std::fs::remove_file(&staged);
-        format!("The picture was not saved to {}: {why}", path.display())
+        said!(
+            "The picture was not saved to {path}: {why}",
+            path = path.display()
+        )
     })
 }
 

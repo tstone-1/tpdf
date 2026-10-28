@@ -11,6 +11,10 @@ use ttf_parser::GlyphId;
 #[cfg(test)]
 mod tests;
 
+fn invalid() -> String {
+    said!("unsupported composite font or character mapping")
+}
+#[cfg(test)]
 const INVALID: &str = "unsupported composite font or character mapping";
 const MAX_WIDTHS: usize = 4096;
 
@@ -19,14 +23,14 @@ fn keys(dict: &Dictionary, allowed: &[&[u8]]) -> Result<(), String> {
         .iter()
         .any(|(key, _)| !allowed.contains(&key.as_slice()))
     {
-        return Err(INVALID.into());
+        return Err(invalid());
     }
     Ok(())
 }
 
 fn name(dict: &Dictionary, key: &[u8], expected: &[u8]) -> Result<(), String> {
     if dict.get(key).and_then(Object::as_name).ok() != Some(expected) {
-        return Err(INVALID.into());
+        return Err(invalid());
     }
     Ok(())
 }
@@ -37,12 +41,12 @@ fn widths(doc: &Document, font: &Dictionary) -> Result<(f64, BTreeMap<u16, f64>)
     let width = |value: &Object| -> Result<f64, String> {
         let value = number(value)?;
         if !(0.0..=2000.0).contains(&value) {
-            return Err(INVALID.into());
+            return Err(invalid());
         }
         Ok(value)
     };
     let cid = |value: &Object| -> Result<u16, String> {
-        u16::try_from(value.as_i64().map_err(|_| INVALID)?).map_err(|_| INVALID.into())
+        u16::try_from(value.as_i64().map_err(|_| invalid())?).map_err(|_| invalid())
     };
     let default = font.get(b"DW").map_or(Ok(1000.), width)?;
     let mut result = BTreeMap::new();
@@ -51,45 +55,45 @@ fn widths(doc: &Document, font: &Dictionary) -> Result<(f64, BTreeMap<u16, f64>)
     };
     let mut values = crate::encoding::resolve(doc, values)
         .as_array()
-        .map_err(|_| INVALID)?
+        .map_err(|_| invalid())?
         .as_slice();
     while let [first, rest @ ..] = values {
         let first = cid(first)?;
         let Some(next) = rest.first() else {
-            return Err(INVALID.into());
+            return Err(invalid());
         };
-        let (last, widths, remaining) = if let Object::Array(array) =
-            crate::encoding::resolve(doc, next)
-        {
-            if array.is_empty() || array.len() > MAX_WIDTHS {
-                return Err(INVALID.into());
-            }
-            let last = u16::try_from(usize::from(first) + array.len() - 1).map_err(|_| INVALID)?;
-            (
-                last,
-                array.iter().map(width).collect::<Result<Vec<_>, _>>()?,
-                &rest[1..],
-            )
-        } else {
-            let [last, value, tail @ ..] = rest else {
-                return Err(INVALID.into());
+        let (last, widths, remaining) =
+            if let Object::Array(array) = crate::encoding::resolve(doc, next) {
+                if array.is_empty() || array.len() > MAX_WIDTHS {
+                    return Err(invalid());
+                }
+                let last =
+                    u16::try_from(usize::from(first) + array.len() - 1).map_err(|_| invalid())?;
+                (
+                    last,
+                    array.iter().map(width).collect::<Result<Vec<_>, _>>()?,
+                    &rest[1..],
+                )
+            } else {
+                let [last, value, tail @ ..] = rest else {
+                    return Err(invalid());
+                };
+                let last = cid(last)?;
+                if last < first || usize::from(last - first) + 1 > MAX_WIDTHS {
+                    return Err(invalid());
+                }
+                (
+                    last,
+                    vec![width(value)?; usize::from(last - first) + 1],
+                    tail,
+                )
             };
-            let last = cid(last)?;
-            if last < first || usize::from(last - first) + 1 > MAX_WIDTHS {
-                return Err(INVALID.into());
-            }
-            (
-                last,
-                vec![width(value)?; usize::from(last - first) + 1],
-                tail,
-            )
-        };
         if result.len() + widths.len() > MAX_WIDTHS
             || result
                 .last_key_value()
                 .is_some_and(|(previous, _)| *previous >= first)
         {
-            return Err(INVALID.into());
+            return Err(invalid());
         }
         result.extend((first..=last).zip(widths));
         values = remaining;
@@ -101,13 +105,14 @@ fn widths(doc: &Document, font: &Dictionary) -> Result<(f64, BTreeMap<u16, f64>)
 // same decoded bound as page content.
 fn cid_program(doc: &Document, descriptor: &Dictionary) -> Result<Vec<u8>, String> {
     if descriptor.has(b"FontFile") || descriptor.has(b"FontFile2") {
-        return Err(INVALID.into());
+        return Err(invalid());
     }
-    let stream = crate::encoding::resolve(doc, descriptor.get(b"FontFile3").map_err(|_| INVALID)?)
-        .as_stream()
-        .map_err(|_| INVALID)?;
+    let stream =
+        crate::encoding::resolve(doc, descriptor.get(b"FontFile3").map_err(|_| invalid())?)
+            .as_stream()
+            .map_err(|_| invalid())?;
     if stream.dict.get(b"Subtype").and_then(Object::as_name).ok() != Some(b"CIDFontType0C") {
-        return Err(INVALID.into());
+        return Err(invalid());
     }
     super::filters::decode(stream, crate::textedit::MAX_CONTENT)
 }
@@ -132,13 +137,13 @@ pub(in crate::textedit) fn embedded(doc: &Document, font: &Dictionary) -> Result
     // subset tag there. The descendant and its descriptor are what must agree.
     font.get(b"BaseFont")
         .and_then(Object::as_name)
-        .map_err(|_| INVALID)?;
+        .map_err(|_| invalid())?;
     let children =
-        crate::encoding::resolve(doc, font.get(b"DescendantFonts").map_err(|_| INVALID)?)
+        crate::encoding::resolve(doc, font.get(b"DescendantFonts").map_err(|_| invalid())?)
             .as_array()
-            .map_err(|_| INVALID)?;
+            .map_err(|_| invalid())?;
     let [child] = children.as_slice() else {
-        return Err(INVALID.into());
+        return Err(invalid());
     };
     let child = dictionary(doc, child)?;
     keys(
@@ -164,23 +169,23 @@ pub(in crate::textedit) fn embedded(doc: &Document, font: &Dictionary) -> Result
     let base = child
         .get(b"BaseFont")
         .and_then(Object::as_name)
-        .map_err(|_| INVALID)?;
+        .map_err(|_| invalid())?;
     let glyph_mapping = match child.get(b"CIDToGIDMap") {
         Err(_) if cff => None,
         Ok(value) if !cff => match crate::encoding::resolve(doc, value) {
             Object::Name(name) if name == b"Identity" => None,
             Object::Stream(stream) => Some(super::filters::decode(stream, 131072)?),
-            _ => return Err(INVALID.into()),
+            _ => return Err(invalid()),
         },
-        _ => return Err(INVALID.into()),
+        _ => return Err(invalid()),
     };
     if glyph_mapping
         .as_ref()
         .is_some_and(|bytes| bytes.is_empty() || bytes.len() % 2 != 0)
     {
-        return Err(INVALID.into());
+        return Err(invalid());
     }
-    let info = dictionary(doc, child.get(b"CIDSystemInfo").map_err(|_| INVALID)?)?;
+    let info = dictionary(doc, child.get(b"CIDSystemInfo").map_err(|_| invalid())?)?;
     keys(info, &[b"Registry", b"Ordering", b"Supplement"])?;
     // Microsoft Print to PDF writes the two strings as indirect objects.
     let entry = |key: &[u8]| {
@@ -191,15 +196,15 @@ pub(in crate::textedit) fn embedded(doc: &Document, font: &Dictionary) -> Result
         || entry(b"Ordering").and_then(Object::as_str).ok() != Some(b"Identity")
         || entry(b"Supplement").and_then(Object::as_i64).ok() != Some(0)
     {
-        return Err(INVALID.into());
+        return Err(invalid());
     }
-    let descriptor = dictionary(doc, child.get(b"FontDescriptor").map_err(|_| INVALID)?)?;
+    let descriptor = dictionary(doc, child.get(b"FontDescriptor").map_err(|_| invalid())?)?;
     name(descriptor, b"Type", b"FontDescriptor")?;
     name(descriptor, b"FontName", base)?;
     let flags = descriptor
         .get(b"Flags")
         .and_then(Object::as_i64)
-        .map_err(|_| INVALID)?;
+        .map_err(|_| invalid())?;
     // Identity-H and CIDToGIDMap explicitly select glyph indices; unlike a
     // simple TrueType font, the symbolic flag does not choose a cmap here.
     // Keep contradictory flags and synthetic bold rendering refused. A CFF
@@ -207,11 +212,11 @@ pub(in crate::textedit) fn embedded(doc: &Document, font: &Dictionary) -> Result
     // replacement's glyphs included; xdvipdfmx sets it on every bold face.
     let force_bold = if cff { 0 } else { 262144 };
     if !matches!(flags & (4 | 32 | force_bold), 4 | 32) {
-        return Err(INVALID.into());
+        return Err(invalid());
     }
-    let stream = crate::encoding::resolve(doc, font.get(b"ToUnicode").map_err(|_| INVALID)?)
+    let stream = crate::encoding::resolve(doc, font.get(b"ToUnicode").map_err(|_| invalid())?)
         .as_stream()
-        .map_err(|_| INVALID)?;
+        .map_err(|_| invalid())?;
     let (default, widths) = widths(doc, child)?;
     if cff {
         let bytes = cid_program(doc, descriptor)?;
@@ -282,12 +287,14 @@ pub(in crate::textedit) fn embedded(doc: &Document, font: &Dictionary) -> Result
         // Identity-H and an explicit Identity CIDToGIDMap make cmap irrelevant.
         let glyph = GlyphId(code);
         if code == 0 || code >= face.number_of_glyphs() {
-            return Err(INVALID.into());
+            return Err(invalid());
         }
         let width = widths.get(&code).copied().unwrap_or(default);
-        let advance = f64::from(face.glyph_hor_advance(glyph).ok_or(INVALID)?) * unit;
+        let advance = f64::from(face.glyph_hor_advance(glyph).ok_or_else(invalid)?) * unit;
         if width <= 0. || (width - advance).abs() > 1. {
-            return Err("composite font widths disagree with its glyph metrics".into());
+            return Err(said!(
+                "composite font widths disagree with its glyph metrics"
+            ));
         }
         match super::outlines::bounds(&face, glyph) {
             Some([left, bottom, right, top])

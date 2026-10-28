@@ -95,9 +95,9 @@ fn dialog(app: &tauri::AppHandle, asked: Asked<'_>) -> Result<Option<AuthPin>, S
         app.run_on_main_thread(move || {
             let _ = tx.send(ask());
         })
-        .map_err(|e| format!("the PIN dialog could not be shown: {e}"))?;
+        .map_err(|e| said!("the PIN dialog could not be shown: {e}"))?;
         rx.recv()
-            .map_err(|_| "the PIN dialog closed without an answer".to_string())?
+            .map_err(|_| said!("the PIN dialog closed without an answer"))?
     };
     Ok(answer.map(|pin| secret(&pin)))
 }

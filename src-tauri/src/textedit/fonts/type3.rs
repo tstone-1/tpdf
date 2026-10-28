@@ -6,15 +6,17 @@ use crate::encoding::resolve;
 use lopdf::{content::Content, Dictionary, Document, Object};
 use std::collections::BTreeMap;
 
-const INVALID: &str = "unsupported or inconsistent Type3 outline font";
+fn invalid() -> String {
+    said!("unsupported or inconsistent Type3 outline font")
+}
 
 fn get<'a>(dict: &'a Dictionary, key: &[u8]) -> Result<&'a Object, String> {
-    dict.get(key).map_err(|_| INVALID.into())
+    dict.get(key).map_err(|_| invalid())
 }
 
 fn numbers<const N: usize>(values: &[Object]) -> Result<[f64; N], String> {
     if values.len() != N {
-        return Err(INVALID.into());
+        return Err(invalid());
     }
     let mut result = [0.; N];
     for (target, value) in result.iter_mut().zip(values) {
@@ -28,7 +30,7 @@ fn keys(dict: &Dictionary, allowed: &[&[u8]]) -> Result<(), String> {
         .iter()
         .any(|(key, _)| !allowed.contains(&key.as_slice()))
     {
-        return Err(INVALID.into());
+        return Err(invalid());
     }
     Ok(())
 }
@@ -67,18 +69,18 @@ fn glyph_content(bytes: &[u8]) -> Result<Content, String> {
                     .iter()
                     .all(|b| b.is_ascii_digit() || matches!(b, b'+' | b'-' | b'.'))
             {
-                return Err("invalid Type3 glyph header".into());
+                return Err(said!("invalid Type3 glyph header"));
             }
             normalized.extend_from_slice(token);
             normalized.push(b' ');
         } else {
             if token != b"d1" {
-                return Err("Type3 glyph must start with d1".into());
+                return Err(said!("Type3 glyph must start with d1"));
             }
             normalized.extend_from_slice(b"dX ");
             normalized.extend_from_slice(&bytes[at..]);
             return Content::decode_strict(&normalized)
-                .map_err(|_| "cannot parse Type3 glyph program".into());
+                .map_err(|_| said!("cannot parse Type3 glyph program"));
         }
     }
     unreachable!()
@@ -92,30 +94,30 @@ fn outline(
     bytes_left: &mut usize,
     ops_left: &mut usize,
 ) -> Result<(f64, [f64; 4]), String> {
-    let stream = resolve(doc, value).as_stream().map_err(|_| INVALID)?;
+    let stream = resolve(doc, value).as_stream().map_err(|_| invalid())?;
     keys(&stream.dict, &[b"Length", b"Filter"])
-        .map_err(|_| "unsupported Type3 glyph stream dictionary")?;
+        .map_err(|_| said!("unsupported Type3 glyph stream dictionary"))?;
     let bytes = filters::decode(stream, (*bytes_left).min(64 * 1024))?;
     *bytes_left -= bytes.len();
     let content = glyph_content(&bytes)?;
     if content.operations.is_empty() || content.operations.len() > *ops_left {
-        return Err("Type3 outline operations exceed their limit".into());
+        return Err(said!("Type3 outline operations exceed their limit"));
     }
     *ops_left -= content.operations.len();
     let first = &content.operations[0];
     if first.operator != "dX" {
-        return Err("Type3 glyph must start with d1".into());
+        return Err(said!("Type3 glyph must start with d1"));
     }
     let [width, dy, x0, y0, x1, y1] = numbers(&first.operands)?;
     if width <= 0. || dy != 0. || x0 > x1 || y0 > y1 {
-        return Err("invalid Type3 d1 metrics".into());
+        return Err(said!("invalid Type3 d1 metrics"));
     }
     let mut bounds = [x0, y0, x1, y1];
     let mut open = false;
     let mut painted = false;
     for operation in &content.operations[1..] {
         if painted {
-            return Err(INVALID.into());
+            return Err(invalid());
         }
         let points: &[Object] = match (operation.operator.as_str(), operation.operands.as_slice()) {
             ("m", points) if points.len() == 2 => {
@@ -132,7 +134,7 @@ fn outline(
                 painted = true;
                 &[]
             }
-            _ => return Err("Type3 glyph uses unsupported painting operations".into()),
+            _ => return Err(said!("Type3 glyph uses unsupported painting operations")),
         };
         for point in points.chunks_exact(2) {
             let [x, y] = numbers(point)?;
@@ -145,7 +147,7 @@ fn outline(
         }
     }
     if !painted && (content.operations.len() != 1 || bounds != [0.; 4]) {
-        return Err(INVALID.into());
+        return Err(invalid());
     }
     Ok((width, bounds))
 }
@@ -171,18 +173,18 @@ pub fn embedded(doc: &Document, font: &Dictionary) -> Result<Metrics, String> {
         ],
     )?;
     if get(font, b"Type")?.as_name().ok() != Some(b"Font") {
-        return Err(INVALID.into());
+        return Err(invalid());
     }
     if let Ok(value) = font.get(b"CIDToGIDMap") {
         // Some producers attach this irrelevant CID-font entry to Type3.
         // Only the inert name is retained; never interpret an external map.
         if value.as_name().ok() != Some(b"Identity") {
-            return Err(INVALID.into());
+            return Err(invalid());
         }
     }
     if let Ok(value) = font.get(b"Resources") {
         if !dictionary(doc, value)?.is_empty() {
-            return Err(INVALID.into());
+            return Err(invalid());
         }
     }
     if let Ok(value) = font.get(b"FontDescriptor") {
@@ -215,37 +217,37 @@ pub fn embedded(doc: &Document, font: &Dictionary) -> Result<Metrics, String> {
             .get(b"Type")
             .is_ok_and(|value| value.as_name().ok() != Some(b"FontDescriptor"))
         {
-            return Err(INVALID.into());
+            return Err(invalid());
         }
     }
     let matrix = resolve(doc, get(font, b"FontMatrix")?)
         .as_array()
-        .map_err(|_| INVALID)?;
+        .map_err(|_| invalid())?;
     let [sx, b, c, sy, x, y] = numbers(matrix)?;
     if sx <= 0. || sy == 0. || b != 0. || c != 0. || x != 0. || y != 0. {
-        return Err("unsupported Type3 font matrix".into());
+        return Err(said!("unsupported Type3 font matrix"));
     }
     // FontBBox is metadata, never the authority for ink. Some exporters invert
     // its y corners when sy is negative. Validate numbers and measure the paths.
     let _: [f64; 4] = numbers(
         resolve(doc, get(font, b"FontBBox")?)
             .as_array()
-            .map_err(|_| INVALID)?,
+            .map_err(|_| invalid())?,
     )?;
-    let first = get(font, b"FirstChar")?.as_i64().map_err(|_| INVALID)?;
-    let last = get(font, b"LastChar")?.as_i64().map_err(|_| INVALID)?;
+    let first = get(font, b"FirstChar")?.as_i64().map_err(|_| invalid())?;
+    let last = get(font, b"LastChar")?.as_i64().map_err(|_| invalid())?;
     if !(0..=255).contains(&first) || !(first..=255).contains(&last) {
-        return Err(INVALID.into());
+        return Err(invalid());
     }
     let values = resolve(doc, get(font, b"Widths")?)
         .as_array()
-        .map_err(|_| INVALID)?;
+        .map_err(|_| invalid())?;
     if values.len() != (last - first + 1) as usize {
-        return Err(INVALID.into());
+        return Err(invalid());
     }
     let widths = values.iter().map(number).collect::<Result<Vec<_>, _>>()?;
     if widths.iter().any(|width| *width < 0.) {
-        return Err(INVALID.into());
+        return Err(invalid());
     }
 
     let encoding = dictionary(doc, get(font, b"Encoding")?)?;
@@ -254,13 +256,13 @@ pub fn embedded(doc: &Document, font: &Dictionary) -> Result<Metrics, String> {
         .get(b"Type")
         .is_ok_and(|value| value.as_name().ok() != Some(b"Encoding"))
     {
-        return Err(INVALID.into());
+        return Err(invalid());
     }
     let differences = resolve(doc, get(encoding, b"Differences")?)
         .as_array()
-        .map_err(|_| INVALID)?;
+        .map_err(|_| invalid())?;
     if differences.len() > 512 {
-        return Err(INVALID.into());
+        return Err(invalid());
     }
     let mut names = BTreeMap::new();
     let mut next = None;
@@ -268,18 +270,18 @@ pub fn embedded(doc: &Document, font: &Dictionary) -> Result<Metrics, String> {
         match value {
             Object::Integer(code) if (first..=last).contains(code) => next = Some(*code),
             Object::Name(name) if !name.is_empty() && name.len() <= 127 => {
-                let code = next.ok_or(INVALID)?;
+                let code = next.ok_or_else(invalid)?;
                 if code > last || names.insert(code as u16, name.as_slice()).is_some() {
-                    return Err(INVALID.into());
+                    return Err(invalid());
                 }
                 next = Some(code + 1);
             }
-            _ => return Err(INVALID.into()),
+            _ => return Err(invalid()),
         }
     }
     let procs = dictionary(doc, get(font, b"CharProcs")?)?;
     if procs.is_empty() || procs.len() > 256 {
-        return Err(INVALID.into());
+        return Err(invalid());
     }
     let mut decoded = super::super::MAX_CONTENT;
     let mut operations = super::super::MAX_OPERATIONS;
@@ -292,21 +294,21 @@ pub fn embedded(doc: &Document, font: &Dictionary) -> Result<Metrics, String> {
     }
     let cmap = resolve(doc, get(font, b"ToUnicode")?)
         .as_stream()
-        .map_err(|_| INVALID)?;
+        .map_err(|_| invalid())?;
     let codes = mapping::unicode_single(cmap)?;
     if codes.is_empty() {
-        return Err(INVALID.into());
+        return Err(invalid());
     }
     let mut glyphs = BTreeMap::new();
     let mut vertical = [0_f64; 2];
     for &code in codes.keys() {
-        let name = names.get(&code).ok_or(INVALID)?;
-        let &(advance, bounds) = outlines.get(name).ok_or(INVALID)?;
+        let name = names.get(&code).ok_or_else(invalid)?;
+        let &(advance, bounds) = outlines.get(name).ok_or_else(invalid)?;
         let width = *widths
             .get(usize::from(code) - first as usize)
-            .ok_or(INVALID)?;
+            .ok_or_else(invalid)?;
         if width != advance {
-            return Err("Type3 width disagrees with glyph program".into());
+            return Err(said!("Type3 width disagrees with glyph program"));
         }
         let width = width * sx * 1000.;
         let [left, bottom, right, top] = [
@@ -322,7 +324,7 @@ pub fn embedded(doc: &Document, font: &Dictionary) -> Result<Metrics, String> {
             || bottom < -1000.
             || top > 2000.
         {
-            return Err("Type3 glyph bounds exceed editable limits".into());
+            return Err(said!("Type3 glyph bounds exceed editable limits"));
         }
         vertical = [vertical[0].min(bottom), vertical[1].max(top)];
         glyphs.insert(code, (width, [left.min(0.), (right - width).max(0.)]));

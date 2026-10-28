@@ -721,7 +721,7 @@ pub fn outline_targets(bytes: &[u8], page_count: usize) -> Result<Vec<Target>, S
             ..Default::default()
         },
     )
-    .map_err(|e| format!("could not parse the document: {e}"))?;
+    .map_err(|e| said!("could not parse the document: {e}"))?;
 
     let pages = document.get_pages();
     let numbers: HashMap<ObjectId, u32> = pages

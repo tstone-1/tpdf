@@ -21,7 +21,7 @@ use crate::{edits, imports, progressive, recentdocs, render, startup, webopen};
 pub async fn reveal_file(path: String) -> Result<(), String> {
     let path = PathBuf::from(path);
     if !path.is_absolute() || !path.is_file() {
-        return Err("The file no longer exists at this location".into());
+        return Err(said!("The file no longer exists at this location"));
     }
     reveal_local_file(&path)
 }
@@ -42,9 +42,11 @@ pub async fn folder_pdfs(path: String) -> Result<Vec<String>, String> {
 }
 
 fn pdfs_beside(path: &Path) -> Result<Vec<String>, String> {
-    let folder = path.parent().ok_or("The document has no folder")?;
+    let folder = path
+        .parent()
+        .ok_or_else(|| said!("The document has no folder"))?;
     let entries =
-        std::fs::read_dir(folder).map_err(|error| format!("Could not read the folder: {error}"))?;
+        std::fs::read_dir(folder).map_err(|error| said!("Could not read the folder: {error}"))?;
     let mut found = Vec::new();
     for entry in entries.take(FOLDER_ENTRIES).flatten() {
         let candidate = entry.path();
@@ -65,15 +67,17 @@ fn reveal_local_file(path: &Path) -> Result<(), String> {
     use std::os::windows::process::CommandExt;
     // Explorer parses /select and its quoted path as one argument. Rust's normal
     // argument quoting quotes that whole argument and opens Documents instead.
-    let text = path.to_str().ok_or("The file path is not valid Unicode")?;
+    let text = path
+        .to_str()
+        .ok_or_else(|| said!("The file path is not valid Unicode"))?;
     if text.contains(['"', '\0']) {
-        return Err("The file path is invalid".into());
+        return Err(said!("The file path is invalid"));
     }
     std::process::Command::new("explorer.exe")
         .raw_arg(format!("/select,\"{text}\""))
         .spawn()
         .map(|_| ())
-        .map_err(|error| format!("Could not show the file in Explorer: {error}"))
+        .map_err(|error| said!("Could not show the file in Explorer: {error}"))
 }
 
 #[cfg(target_os = "macos")]
@@ -82,11 +86,11 @@ fn reveal_local_file(path: &Path) -> Result<(), String> {
         .arg("-R")
         .arg(path)
         .status()
-        .map_err(|error| format!("Could not show the file in Finder: {error}"))?;
+        .map_err(|error| said!("Could not show the file in Finder: {error}"))?;
     if status.success() {
         Ok(())
     } else {
-        Err("Finder could not show the file".into())
+        Err(said!("Finder could not show the file"))
     }
 }
 
@@ -115,7 +119,9 @@ fn reveal_local_file(path: &Path) -> Result<(), String> {
     if shown.is_ok_and(|status| status.success()) {
         return Ok(());
     }
-    let folder = path.parent().ok_or("The file is in no folder")?;
+    let folder = path
+        .parent()
+        .ok_or_else(|| said!("The file is in no folder"))?;
     let mut child = Command::new("xdg-open")
         .arg(folder)
         .stdin(Stdio::null())
@@ -123,7 +129,7 @@ fn reveal_local_file(path: &Path) -> Result<(), String> {
         .stderr(Stdio::null())
         .spawn()
         .map_err(|error| {
-            format!("No file manager answered, and the folder could not be opened: {error}")
+            said!("No file manager answered, and the folder could not be opened: {error}")
         })?;
     // Reaped on a thread of its own: some desktops' `xdg-open` waits for the
     // window it opened, and the command must not.
@@ -149,7 +155,7 @@ const SHOW_ITEMS_TIMEOUT: &str = "5";
 #[cfg(target_os = "linux")]
 fn show_items_uri(path: &Path) -> Result<String, String> {
     let uri = tauri::Url::from_file_path(path)
-        .map_err(|()| "The file path cannot be named as a URI".to_string())?;
+        .map_err(|()| said!("The file path cannot be named as a URI"))?;
     Ok(String::from(uri).replace('\\', "%5C").replace('\'', "%27"))
 }
 
@@ -332,9 +338,9 @@ pub async fn open_document(
         await_reply("open_document", rx).await?
     };
     let pages = u32::try_from(info.page_count).map_err(|_| {
-        format!(
-            "a document of {} pages is past what tpdf can edit",
-            info.page_count
+        said!(
+            "a document of {count} pages is past what tpdf can edit",
+            count = info.page_count
         )
     })?;
     // The handle, not the fingerprint: `edits` starts the hash on a thread and
@@ -412,14 +418,14 @@ pub async fn page_import_prepare(
     // Before anything is opened. A command for a document that is not open
     // would otherwise start a worker pool only to release it.
     if !edits.is_open(doc) {
-        return Err(format!("no document is open under {doc}"));
+        return Err(said!("no document is open under {doc}"));
     }
     let wanted = PathBuf::from(&path);
     let name = imports::display_name(&wanted);
-    let file = std::fs::File::open(&wanted).map_err(|e| format!("Could not open {name}: {e}"))?;
+    let file = std::fs::File::open(&wanted).map_err(|e| said!("Could not open {name}: {e}"))?;
     let hashing = file
         .try_clone()
-        .map_err(|e| format!("Could not open {name}: {e}"))?;
+        .map_err(|e| said!("Could not open {name}: {e}"))?;
 
     let (reply, rx) = reply_channel();
     service.open_handed(wanted.clone(), Some(file), lazy_geometry(), None, reply);
@@ -435,7 +441,7 @@ pub async fn page_import_prepare(
     service.properties(held.id(), reply);
     let properties = await_reply("page_import_prepare", rx)
         .await
-        .map_err(|why| format!("Could not insert pages from {name}: {why}"))?;
+        .map_err(|why| said!("Could not insert pages from {name}: {why}"))?;
     if properties.encryption.is_some() {
         return Err(imports::locked(&name));
     }
@@ -445,7 +451,7 @@ pub async fn page_import_prepare(
         crate::fingerprint::Fingerprint::of_open(&hashing, &what)
     })
     .await
-    .map_err(|e| format!("Could not read {name}: {e}"))??;
+    .map_err(|e| said!("Could not read {name}: {e}"))??;
 
     let pages = imports::page_count(info.page_count)?;
     let source = crate::docmodel::SourceFile {
@@ -821,7 +827,7 @@ pub async fn document_stamp(
         vec![opened, now]
     })
     .await
-    .map_err(|e| format!("the file check did not run: {e}"))
+    .map_err(|e| said!("the file check did not run: {e}"))
 }
 
 /// Whether a document's file now holds different bytes than it was opened with.
@@ -848,7 +854,7 @@ pub async fn document_differs(
             .map(|same| !same)
     })
     .await
-    .map_err(|e| format!("the file check did not run: {e}"))
+    .map_err(|e| said!("the file check did not run: {e}"))
 }
 
 #[cfg(test)]

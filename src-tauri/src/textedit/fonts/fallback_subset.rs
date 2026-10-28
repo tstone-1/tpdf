@@ -10,15 +10,17 @@ pub(super) fn build(source: &[u8], codes: &[u8]) -> Result<(Vec<u8>, Vec<u8>), S
         mapper.remap(u16::from_be_bytes([pair[0], pair[1]]));
     }
     let subset = subsetter::subset(source, 0, &mapper)
-        .map_err(|_| "Could not subset the bundled editing font")?;
+        .map_err(|_| said!("Could not subset the bundled editing font"))?;
     let face = super::face(source, false)?;
     let rights = face
         .raw_face()
         .table(Tag::from_bytes(b"OS/2"))
-        .ok_or("Missing bundled font embedding rights")?;
+        .ok_or_else(|| said!("Missing bundled font embedding rights"))?;
     let program = restore_rights(&subset, rights)?;
     if program.len() > crate::textedit::MAX_CONTENT {
-        return Err("The replacement needs too many font outlines; shorten the text".into());
+        return Err(said!(
+            "The replacement needs too many font outlines; shorten the text"
+        ));
     }
     super::face(&program, false)?;
     let glyphs = codes
@@ -26,7 +28,7 @@ pub(super) fn build(source: &[u8], codes: &[u8]) -> Result<(Vec<u8>, Vec<u8>), S
         .map(|pair| {
             mapper
                 .get(u16::from_be_bytes([pair[0], pair[1]]))
-                .ok_or("Missing subset glyph")
+                .ok_or_else(|| said!("Missing subset glyph"))
                 .map(u16::to_be_bytes)
         })
         .collect::<Result<Vec<_>, _>>()?
@@ -51,13 +53,13 @@ fn restore_rights(subset: &[u8], rights: &[u8]) -> Result<Vec<u8>, String> {
 /// carries the embedding rights, and a character map, which a later edit
 /// reads the subset through.
 pub(super) fn with_tables(subset: &[u8], extra: &[([u8; 4], &[u8])]) -> Result<Vec<u8>, String> {
-    let invalid = "Invalid bundled font subset";
-    let face = ttf_parser::RawFace::parse(subset, 0).map_err(|_| invalid)?;
+    let invalid = || said!("Invalid bundled font subset");
+    let face = ttf_parser::RawFace::parse(subset, 0).map_err(|_| invalid())?;
     let mut tables = BTreeMap::new();
     for record in face.table_records {
         tables.insert(
             record.tag.to_bytes(),
-            face.table(record.tag).ok_or(invalid)?.to_vec(),
+            face.table(record.tag).ok_or_else(invalid)?.to_vec(),
         );
     }
     for (tag, bytes) in extra {
@@ -66,18 +68,18 @@ pub(super) fn with_tables(subset: &[u8], extra: &[([u8; 4], &[u8])]) -> Result<V
     tables
         .get_mut(b"head")
         .and_then(|head| head.get_mut(8..12))
-        .ok_or(invalid)?
+        .ok_or_else(invalid)?
         .fill(0);
-    let count = u16::try_from(tables.len()).map_err(|_| invalid)?;
+    let count = u16::try_from(tables.len()).map_err(|_| invalid())?;
     if count == 0 || count > 64 {
-        return Err(invalid.into());
+        return Err(invalid());
     }
     let power = count.ilog2() as u16;
     let search = (1u16 << power) * 16;
     // TrueType or, for an installed font's CFF subset, OpenType ('OTTO').
     let mut result = match subset.get(..4) {
         Some(version @ ([0, 1, 0, 0] | b"OTTO")) => version.to_vec(),
-        _ => return Err(invalid.into()),
+        _ => return Err(invalid()),
     };
     for value in [count, search, power, count * 16 - search] {
         result.extend(value.to_be_bytes());

@@ -49,27 +49,27 @@ pub struct Upload {
 /// Reads an upload. Refuses a body whose parts do not add up, a mark that is
 /// not a picture, and a JSON mark that brings pixels of its own.
 pub fn parse(body: &[u8]) -> Result<Upload, String> {
-    let bad = |why: &str| format!("not a picture upload: {why}");
+    let bad = |why: String| said!("not a picture upload: {why}");
     let (length, rest) = body
         .split_first_chunk::<4>()
-        .ok_or_else(|| bad("too short"))?;
+        .ok_or_else(|| bad(said!("too short")))?;
     let length = u32::from_le_bytes(*length) as usize;
     if length > HEADER_MAX || length > rest.len() {
-        return Err(bad("the header length is out of range"));
+        return Err(bad(said!("the header length is out of range")));
     }
     let (json, rgba) = rest.split_at(length);
-    let header: Header = serde_json::from_slice(json).map_err(|e| bad(&e.to_string()))?;
+    let header: Header = serde_json::from_slice(json).map_err(|e| bad(e.to_string()))?;
     if header.mark.kind != MarkKind::Picture {
-        return Err(bad("the mark is not a picture"));
+        return Err(bad(said!("the mark is not a picture")));
     }
     if header.mark.image.is_some() {
-        return Err(bad("the pixels came twice"));
+        return Err(bad(said!("the pixels came twice")));
     }
     let expected = (header.width as usize)
         .checked_mul(header.height as usize)
         .and_then(|n| n.checked_mul(4));
     if expected != Some(rgba.len()) {
-        return Err(bad("the pixel count does not match the size"));
+        return Err(bad(said!("the pixel count does not match the size")));
     }
     let mut mark = header.mark;
     mark.image = Some(Arc::new(signature::Image {

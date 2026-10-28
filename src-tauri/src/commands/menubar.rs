@@ -30,10 +30,10 @@ pub async fn keyboard_positions(
     app.run_on_main_thread(move || {
         let _ = tx.blocking_send(keylayout::positions());
     })
-    .map_err(|e| format!("could not reach the main thread to read the keyboard: {e}"))?;
+    .map_err(|e| said!("could not reach the main thread to read the keyboard: {e}"))?;
     rx.recv()
         .await
-        .ok_or_else(|| "the keyboard layout reader did not answer".to_string())
+        .ok_or_else(|| said!("the keyboard layout reader did not answer"))
 }
 
 /// The Windows and Linux answer: no layout lookup, so every label stays its character.
@@ -81,7 +81,7 @@ pub async fn paste(webview: tauri::Webview) -> Result<bool, String> {
                     objc2::msg_send![view, paste: Option::<&objc2::runtime::AnyObject>::None];
             }
         })
-        .map_err(|e| format!("could not reach the web view to paste: {e}"))?;
+        .map_err(|e| said!("could not reach the web view to paste: {e}"))?;
     Ok(true)
 }
 

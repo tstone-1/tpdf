@@ -76,7 +76,7 @@ pub struct WindowsOcr {
 /// [`RecogniseError::Unavailable`] when the platform will not list them.
 pub fn installed_languages() -> Result<Vec<String>, RecogniseError> {
     let installed = OcrEngine::AvailableRecognizerLanguages()
-        .map_err(|e| RecogniseError::Unavailable(format!("listing languages: {e}")))?;
+        .map_err(|e| RecogniseError::Unavailable(said!("listing languages: {e}")))?;
     Ok(installed
         .into_iter()
         .filter_map(|lang| lang.LanguageTag().ok().map(|t| t.to_string()))
@@ -106,7 +106,7 @@ impl WindowsOcr {
     fn engine_in(tag: &str) -> Result<OcrEngine, RecogniseError> {
         Language::CreateLanguage(&HSTRING::from(tag))
             .and_then(|l| OcrEngine::TryCreateFromLanguage(&l))
-            .map_err(|e| RecogniseError::Unavailable(format!("no engine for {tag}: {e}")))
+            .map_err(|e| RecogniseError::Unavailable(said!("no engine for {tag}: {e}")))
     }
 
     /// Creates one, or says why the platform cannot.
@@ -126,9 +126,9 @@ impl WindowsOcr {
     pub fn new() -> Result<Self, RecogniseError> {
         let tags = installed_languages()?;
         if tags.is_empty() {
-            return Err(RecogniseError::Unavailable(
-                "no OCR recogniser language pack is installed on this machine".into(),
-            ));
+            return Err(RecogniseError::Unavailable(said!(
+                "no OCR recogniser language pack is installed on this machine"
+            )));
         }
 
         let engine = match OcrEngine::TryCreateFromUserProfileLanguages() {
@@ -138,7 +138,7 @@ impl WindowsOcr {
                 Language::CreateLanguage(&HSTRING::from(tag.as_str()))
                     .and_then(|l| OcrEngine::TryCreateFromLanguage(&l))
                     .map_err(|e| {
-                        RecogniseError::Unavailable(format!(
+                        RecogniseError::Unavailable(said!(
                             "no engine from the profile ({profile}) and none from {tag} ({e})"
                         ))
                     })?
@@ -247,9 +247,10 @@ impl Recogniser for WindowsOcr {
         }
         if let Some(max) = Self::max_edge() {
             if pixels.width > max || pixels.height > max {
-                return Err(RecogniseError::Rejected(format!(
-                    "{}x{} exceeds this engine's largest edge of {max} px",
-                    pixels.width, pixels.height
+                return Err(RecogniseError::Rejected(said!(
+                    "{width}x{height} exceeds this engine's largest edge of {max} px",
+                    width = pixels.width,
+                    height = pixels.height
                 )));
             }
         }

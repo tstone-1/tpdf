@@ -162,7 +162,7 @@ fn serve(args: &[String]) -> Result<(), String> {
         Ok(pdfium) => pdfium,
         Err(e) => {
             let _ = establish_boundary();
-            return refuse(&format!(
+            return refuse(&said!(
                 "tpdf could not load its PDF engine. Reinstalling should fix it. ({e})"
             ));
         }
@@ -473,7 +473,7 @@ fn unlock(
                 return Ok(document);
             }
             Err(refusal) if refusal.locked => {
-                reason = "That password did not open this document.".into();
+                reason = said!("That password did not open this document.");
                 reply(&mut out, &Response::locked(&reason))?;
             }
             // No longer a password problem, so no password will fix it.
@@ -833,7 +833,7 @@ fn rewrite(
     // well would cost a second flush of the same data for nothing.
     match out.write_all(&bytes).and_then(|()| out.flush()) {
         Ok(()) => Response::reply(Reply::Rewrote(bytes.len())),
-        Err(e) => Response::err(format!("the rewritten document could not be written: {e}")),
+        Err(e) => Response::err(said!("the rewritten document could not be written: {e}")),
     }
 }
 
@@ -882,7 +882,7 @@ fn merge(
             bytes: bytes.len(),
             pages,
         }),
-        Err(e) => Response::err(format!("the merged document could not be written: {e}")),
+        Err(e) => Response::err(said!("the merged document could not be written: {e}")),
     }
 }
 
@@ -919,7 +919,7 @@ fn images(
             bytes: bytes.len(),
             pages,
         }),
-        Err(e) => Response::err(format!("the document could not be written: {e}")),
+        Err(e) => Response::err(said!("the document could not be written: {e}")),
     }
 }
 
@@ -949,7 +949,7 @@ fn print_range(
     };
     match out.write_all(&bytes).and_then(|()| out.flush()) {
         Ok(()) => Response::reply(Reply::Rewrote(bytes.len())),
-        Err(e) => Response::err(format!("the print job could not be written: {e}")),
+        Err(e) => Response::err(said!("the print job could not be written: {e}")),
     }
 }
 
@@ -967,7 +967,7 @@ fn attachment(document: &OpenDocument, out: Option<&mut std::fs::File>, index: u
     };
     match out.write_all(&bytes).and_then(|()| out.flush()) {
         Ok(()) => Response::reply(Reply::Rewrote(bytes.len())),
-        Err(e) => Response::err(format!("the attachment could not be written: {e}")),
+        Err(e) => Response::err(said!("the attachment could not be written: {e}")),
     }
 }
 

@@ -352,9 +352,9 @@ pub fn displayed_boxes_from(
 fn pages_of(document: &Document, page_count: usize) -> Result<Vec<ObjectId>, String> {
     let pages = document.get_pages();
     if pages.len() != page_count {
-        return Err(format!(
-            "the page tree holds {} pages and the renderer sees {page_count}",
-            pages.len()
+        return Err(said!(
+            "the page tree holds {count} pages and the renderer sees {page_count}",
+            count = pages.len()
         ));
     }
     Ok(pages.values().copied().collect())
@@ -440,12 +440,9 @@ pub fn agreed_turns(plan: &[(ObjectId, u8)]) -> Result<Vec<(ObjectId, u8)>, Stri
                 order.push(*id);
             }
             Some(&(first, first_at)) if first != extra => {
-                return Err(format!(
-                    "pages {} and {} are the same page in this file, so they cannot be turned \
-                     differently. Turn them the same way, or leave both as they are.",
-                    first_at + 1,
-                    at + 1
-                ));
+                return Err(said!(
+                    "pages {first} and {second} are the same page in this file, so they cannot be turned \
+                     differently. Turn them the same way, or leave both as they are.", first = first_at + 1, second = at + 1));
             }
             Some(_) => {}
         }
@@ -478,7 +475,7 @@ pub fn apply_turns(doc: &mut Document, turns: &[(ObjectId, u8)]) -> Result<(), S
         let composed = (effective_rotation(doc, *id) + extra * 90).rem_euclid(360);
         doc.get_object_mut(*id)
             .and_then(Object::as_dict_mut)
-            .map_err(|e| format!("page {id:?} is not a dictionary: {e}"))?
+            .map_err(|e| said!("page {page:?} is not a dictionary: {e}", page = id))?
             .set("Rotate", composed);
     }
     Ok(())
@@ -521,13 +518,13 @@ pub fn apply_crops(doc: &mut Document, crops: &[(ObjectId, [f64; 4])]) -> Result
             want[3].min(media[3]),
         ];
         if box_pt[2] <= box_pt[0] || box_pt[3] <= box_pt[1] {
-            return Err(format!(
+            return Err(said!(
                 "page {id:?}: the crop {want:?} is outside the page {media:?}"
             ));
         }
         doc.get_object_mut(*id)
             .and_then(Object::as_dict_mut)
-            .map_err(|e| format!("page {id:?} is not a dictionary: {e}"))?
+            .map_err(|e| said!("page {page:?} is not a dictionary: {e}", page = id))?
             .set(
                 "CropBox",
                 Object::Array(box_pt.iter().map(|v| Object::Real(*v as f32)).collect()),
@@ -719,10 +716,10 @@ pub fn forget(doc: &mut Document, doomed: &HashSet<ObjectId>) -> Result<(), Stri
 pub fn reorder_pages(doc: &mut Document, order: &[ObjectId]) -> Result<(), String> {
     let root = doc
         .catalog()
-        .map_err(|e| format!("no document catalog: {e}"))?
+        .map_err(|e| said!("no document catalog: {e}"))?
         .get(b"Pages")
         .and_then(Object::as_reference)
-        .map_err(|e| format!("no page tree: {e}"))?;
+        .map_err(|e| said!("no page tree: {e}"))?;
 
     // What each page would inherit *after* the move: the root is about to be its
     // only ancestor. Read before anything is written, so that a page pushed down
@@ -759,7 +756,7 @@ pub fn reorder_pages(doc: &mut Document, order: &[ObjectId]) -> Result<(), Strin
     for (page, key, value) in pushes {
         doc.get_object_mut(page)
             .and_then(Object::as_dict_mut)
-            .map_err(|e| format!("page {page:?} is not a dictionary: {e}"))?
+            .map_err(|e| said!("page {page:?} is not a dictionary: {e}"))?
             .set(key.to_vec(), value);
     }
 
@@ -767,7 +764,7 @@ pub fn reorder_pages(doc: &mut Document, order: &[ObjectId]) -> Result<(), Strin
     let tree = doc
         .get_object_mut(root)
         .and_then(Object::as_dict_mut)
-        .map_err(|e| format!("the page tree root is not a dictionary: {e}"))?;
+        .map_err(|e| said!("the page tree root is not a dictionary: {e}"))?;
     tree.set("Kids", kids);
     // Entries in the tree, not distinct objects: a page reached twice is two
     // pages to every reader, which is the same unit `drop_pages` decrements in.
@@ -776,7 +773,7 @@ pub fn reorder_pages(doc: &mut Document, order: &[ObjectId]) -> Result<(), Strin
     for &page in order {
         doc.get_object_mut(page)
             .and_then(Object::as_dict_mut)
-            .map_err(|e| format!("page {page:?} is not a dictionary: {e}"))?
+            .map_err(|e| said!("page {page:?} is not a dictionary: {e}"))?
             .set("Parent", Object::Reference(root));
     }
     Ok(())
@@ -818,7 +815,7 @@ pub fn detached_page(doc: &Document, page: ObjectId) -> Result<Dictionary, Strin
     let mut dictionary = doc
         .get_object(page)
         .and_then(Object::as_dict)
-        .map_err(|e| format!("page {page:?} is not a dictionary: {e}"))?
+        .map_err(|e| said!("page {page:?} is not a dictionary: {e}"))?
         .clone();
     for key in INHERITABLE {
         if dictionary.has(key) {
@@ -850,7 +847,7 @@ pub fn detached_page(doc: &Document, page: ObjectId) -> Result<Dictionary, Strin
 /// The document has no catalog, which means it is not a document.
 pub fn drop_outline(doc: &mut Document) -> Result<(), String> {
     doc.catalog_mut()
-        .map_err(|e| format!("no document catalog: {e}"))?
+        .map_err(|e| said!("no document catalog: {e}"))?
         .remove(b"Outlines");
     Ok(())
 }
@@ -875,9 +872,9 @@ fn forget_in_object(
     depth: usize,
 ) -> Result<(), String> {
     if depth > sweep::MAX_NESTING {
-        return Err(format!(
-            "an object nests deeper than {} levels",
-            sweep::MAX_NESTING
+        return Err(said!(
+            "an object nests deeper than {limit} levels",
+            limit = sweep::MAX_NESTING
         ));
     }
     match object {
@@ -901,9 +898,9 @@ fn forget_in_dictionary(
     depth: usize,
 ) -> Result<(), String> {
     if depth > sweep::MAX_NESTING {
-        return Err(format!(
-            "an object nests deeper than {} levels",
-            sweep::MAX_NESTING
+        return Err(said!(
+            "an object nests deeper than {limit} levels",
+            limit = sweep::MAX_NESTING
         ));
     }
     let dead: Vec<Vec<u8>> = dictionary

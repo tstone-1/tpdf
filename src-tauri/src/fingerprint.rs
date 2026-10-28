@@ -94,8 +94,12 @@ impl Fingerprint {
     /// The file cannot be opened, its metadata cannot be read, or a read fails
     /// part way through.
     pub fn of(path: &Path) -> Result<Fingerprint, String> {
-        let file = File::open(path)
-            .map_err(|e| format!("could not open {} to fingerprint it: {e}", path.display()))?;
+        let file = File::open(path).map_err(|e| {
+            said!(
+                "could not open {path} to fingerprint it: {e}",
+                path = path.display()
+            )
+        })?;
         Self::of_open(&file, path)
     }
 
@@ -122,16 +126,23 @@ impl Fingerprint {
     ///
     /// The metadata cannot be read, or a read fails part way through.
     pub fn of_open(file: &File, what: &Path) -> Result<Fingerprint, String> {
-        let meta = file
-            .metadata()
-            .map_err(|e| format!("could not read {}'s metadata: {e}", what.display()))?;
+        let meta = file.metadata().map_err(|e| {
+            said!(
+                "could not read {path}'s metadata: {e}",
+                path = what.display()
+            )
+        })?;
 
         let mut hasher = Sha256::new();
         let mut buffer = vec![0_u8; CHUNK];
         let mut at = 0_u64;
         loop {
-            let read = read_at(file, &mut buffer, at)
-                .map_err(|e| format!("could not read {} to fingerprint it: {e}", what.display()))?;
+            let read = read_at(file, &mut buffer, at).map_err(|e| {
+                said!(
+                    "could not read {path} to fingerprint it: {e}",
+                    path = what.display()
+                )
+            })?;
             if read == 0 {
                 break;
             }
@@ -166,8 +177,12 @@ impl Fingerprint {
     /// promised the opposite until 2026-08-19, and the shared advice it referred
     /// to was untrue at one of the two call sites.
     pub fn agrees_shallowly(&self, path: &Path) -> Result<(), String> {
-        let meta = std::fs::metadata(path)
-            .map_err(|e| format!("{} could not be checked before saving: {e}", path.display()))?;
+        let meta = std::fs::metadata(path).map_err(|e| {
+            said!(
+                "{path} could not be checked before saving: {e}",
+                path = path.display()
+            )
+        })?;
         self.agrees_with_metadata(&meta, path)
     }
 
@@ -201,7 +216,7 @@ impl Fingerprint {
         // that cannot report the time gives no evidence either way, and the
         // digest comparison is what carries the answer there.
         if now.is_some() && self.modified_ns.is_some() && now != self.modified_ns {
-            return Err(changed(path, "it was modified"));
+            return Err(changed(path, &said!("it was modified")));
         }
         Ok(())
     }
@@ -237,8 +252,7 @@ impl Fingerprint {
         // The advice is added here rather than inside the comparisons, because
         // this is the call site where it is true: nothing has been staged, the
         // document is open, and the journal holds every edit.
-        self.compare_deeply(path)
-            .map_err(|fact| format!("{fact}. {WAY_OUT}"))
+        self.compare_deeply(path).map_err(|fact| way_out(&fact))
     }
 
     /// [`Self::agrees_with`] without the advice, so the advice has one home.
@@ -258,7 +272,7 @@ impl Fingerprint {
         if now.digest != self.digest {
             return Err(changed(
                 path,
-                "its contents changed while keeping the same length",
+                &said!("its contents changed while keeping the same length"),
             ));
         }
         Ok(now)
@@ -292,8 +306,12 @@ impl Fingerprint {
     /// point of [`Self::agrees_with_metadata`] --- so the only reader left
     /// discards it.
     fn len_agrees(&self, path: &Path) -> Result<(), String> {
-        let meta = std::fs::metadata(path)
-            .map_err(|e| format!("{} could not be checked before saving: {e}", path.display()))?;
+        let meta = std::fs::metadata(path).map_err(|e| {
+            said!(
+                "{path} could not be checked before saving: {e}",
+                path = path.display()
+            )
+        })?;
         self.len_matches(&meta, path)
     }
 
@@ -305,7 +323,11 @@ impl Fingerprint {
         if meta.len() != self.len {
             return Err(changed(
                 path,
-                &format!("its length went from {} to {}", self.len, meta.len()),
+                &said!(
+                    "its length went from {was} to {now}",
+                    was = self.len,
+                    now = meta.len()
+                ),
             ));
         }
         Ok(())
@@ -405,9 +427,9 @@ fn identity(file: &File) -> Option<FileId> {
 /// So [`Fingerprint::agrees_shallowly`] returns facts and its caller supplies the
 /// advice that is true at its own call site. See `docs/TRAPS.md`.
 fn changed(path: &Path, how: &str) -> String {
-    format!(
-        "{} changed on disk since you opened it --- {how}",
-        path.display()
+    said!(
+        "{path} changed on disk since you opened it --- {how}",
+        path = path.display()
     )
 }
 
@@ -416,8 +438,12 @@ fn changed(path: &Path, how: &str) -> String {
 /// Appended by [`Fingerprint::agrees_with`], which is the check that runs before
 /// anything is disturbed. A reader told their file changed and offered nothing
 /// has to guess whether their edits still exist, and here they do.
-const WAY_OUT: &str = "Your edits are still here: save them under another name, \
-                       or open the file again to start from what is on disk now.";
+fn way_out(fact: &str) -> String {
+    said!(
+        "{fact}. Your edits are still here: save them under another name, or open the file \
+         again to start from what is on disk now."
+    )
+}
 
 /// A file's modification time as nanoseconds since the epoch.
 ///

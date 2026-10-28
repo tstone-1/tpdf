@@ -325,13 +325,17 @@ impl Placed {
             .map(|slot| (slot + 1).to_string())
             .collect();
         if self.more > 0 {
-            return format!("pages {}, and {} more", numbers.join(", "), self.more);
+            return said!(
+                "pages {pages}, and {more} more",
+                pages = numbers.join(", "),
+                more = self.more
+            );
         }
         match numbers.as_slice() {
-            [] => "no page".to_string(),
+            [] => said!("no page"),
             [one] => format!("page {one}"),
-            [first, second] => format!("pages {first} and {second}"),
-            [rest @ .., last] => format!("pages {} and {last}", rest.join(", ")),
+            [first, second] => said!("pages {first} and {last}", last = second),
+            [rest @ .., last] => said!("pages {first} and {last}", first = rest.join(", ")),
         }
     }
 }
@@ -615,16 +619,19 @@ impl Report {
             why.push(match self.located.get(needle) {
                 // What this said before attribution existed, and what it still
                 // says whenever the walk did not run or would not answer.
-                None => format!("{needle} is still in the file"),
+                None => said!("{needle} is still in the file"),
                 Some(Located::Pages(placed)) => {
-                    format!("{needle} is still in the file, on {}", placed.sentence())
+                    said!(
+                        "{needle} is still in the file, on {pages}",
+                        pages = placed.sentence()
+                    )
                 }
-                Some(Located::Shared(placed)) => format!(
+                Some(Located::Shared(placed)) => said!(
                     "{needle} is still in the file, carried by something more than one page \
-                     draws ({}), so which page it is on could not be established",
-                    placed.sentence()
+                     draws ({pages}), so which page it is on could not be established",
+                    pages = placed.sentence()
                 ),
-                Some(Located::Unplaced) => format!(
+                Some(Located::Unplaced) => said!(
                     "{needle} is still in the file, in something no page of it reaches, so \
                      which page it is on could not be established"
                 ),
@@ -717,20 +724,19 @@ pub fn structure(bytes: &[u8]) -> Vec<String> {
     let mut wrong = Vec::new();
 
     if !bytes.starts_with(b"%PDF-") {
-        wrong.push("the file does not begin with a PDF header".to_string());
+        wrong.push(said!("the file does not begin with a PDF header"));
     }
 
     match revision_ends(bytes) {
         0 if count(bytes, b"%%EOF") == 0 => {
-            wrong.push("the file has no %%EOF marker".to_string());
+            wrong.push(said!("the file has no %%EOF marker"));
         }
         0 => wrong.push(
-            "the file has a %%EOF marker and none that ends a revision: none follows a \
-             startxref and its offset"
-                .to_string(),
+            said!("the file has a %%EOF marker and none that ends a revision: none follows a \
+             startxref and its offset"),
         ),
         1 => {}
-        many => wrong.push(format!(
+        many => wrong.push(said!(
             "the file has {many} %%EOF markers, so it holds more than one revision \u{2014} a rewrite writes exactly one, and an earlier revision is content no parser will show and no scan can decode"
         )),
     }
@@ -741,7 +747,7 @@ pub fn structure(bytes: &[u8]) -> Vec<String> {
             .filter(|byte| !byte.is_ascii_whitespace())
             .count();
         if trailing > 0 {
-            wrong.push(format!(
+            wrong.push(said!(
                 "{trailing} byte(s) follow the last %%EOF, which belong to no object and which nothing here put there"
             ));
         }
@@ -753,12 +759,12 @@ pub fn structure(bytes: &[u8]) -> Vec<String> {
     // file is a file no reader can open, which is the failure this is between
     // the reader and.
     match rfind(bytes, b"startxref") {
-        None => wrong.push("the file has no startxref".to_string()),
+        None => wrong.push(said!("the file has no startxref")),
         Some(at) => match start_offset(&bytes[at + 9..]) {
-            None => wrong.push("the file's startxref has no offset after it".to_string()),
-            Some(offset) if offset >= bytes.len() => wrong.push(format!(
-                "startxref points at byte {offset} of a {}-byte file",
-                bytes.len()
+            None => wrong.push(said!("the file's startxref has no offset after it")),
+            Some(offset) if offset >= bytes.len() => wrong.push(said!(
+                "startxref points at byte {offset} of a {size}-byte file",
+                size = bytes.len()
             )),
             Some(_) => {}
         },
@@ -814,10 +820,10 @@ pub fn scan(bytes: &[u8], needles: &[String], password: Option<&str>) -> Report 
     }
 
     if report.eofs > 1 {
-        report.blind.push(format!(
-            "the file has {} %%EOF markers, so earlier revisions exist that no parser will \
+        report.blind.push(said!(
+            "the file has {count} %%EOF markers, so earlier revisions exist that no parser will \
              resolve and no scan can decode",
-            report.eofs
+            count = report.eofs
         ));
     }
 
@@ -828,9 +834,7 @@ pub fn scan(bytes: &[u8], needles: &[String], password: Option<&str>) -> Report 
                 .filter(|byte| !byte.is_ascii_whitespace())
                 .count();
         }
-        None => report
-            .blind
-            .push("the file has no %%EOF marker".to_string()),
+        None => report.blind.push(said!("the file has no %%EOF marker")),
     }
 
     match Document::load_mem_with_options(
@@ -841,7 +845,7 @@ pub fn scan(bytes: &[u8], needles: &[String], password: Option<&str>) -> Report 
             ..Default::default()
         },
     ) {
-        Err(why) => report.blind.push(format!(
+        Err(why) => report.blind.push(said!(
             "the file could not be parsed, so nothing in it was accounted for: {why}"
         )),
         Ok(doc) => {
@@ -857,16 +861,14 @@ pub fn scan(bytes: &[u8], needles: &[String], password: Option<&str>) -> Report 
             // `docs/PLAN.md` §6 forbids reporting a redaction clean that was not
             // proved clean, and this is the one scanner that claim rests on.
             if doc.is_encrypted() {
-                report.blind.push(
+                report.blind.push(said!(
                     "the file is encrypted and no password opened it, so nothing in it was \
                      decoded and nothing it contains was checked"
-                        .to_string(),
-                );
+                ));
             } else if doc.objects.is_empty() {
-                report.blind.push(
+                report.blind.push(said!(
                     "the file parsed to no objects at all, so nothing in it was accounted for"
-                        .to_string(),
-                );
+                ));
             }
             // Counted in full and listed in part: see `MAX_OBJECT_REASONS`.
             // `blind` also carries reasons that are about the *file* rather than
@@ -895,73 +897,69 @@ pub fn scan(bytes: &[u8], needles: &[String], password: Option<&str>) -> Report 
                     Carrier::Image { filter } => {
                         deferred_objects += 1;
                         if deferred_objects <= MAX_OBJECT_REASONS {
-                            report.deferred.push(format!(
-                                "object {} is a {filter} image, so its encoded bytes were \
+                            report.deferred.push(said!(
+                                "object {object} is a {filter} image, so its encoded bytes were \
                                  scanned and its picture was not read \u{2014} text visible only as \
-                                 pixels needs OCR",
-                                id.0
-                            ));
+                                 pixels needs OCR", object = id.0));
                         }
                     }
                     Carrier::Undecodable { filter } => {
                         blind_objects += 1;
                         if blind_objects <= MAX_OBJECT_REASONS {
-                            report.blind.push(format!(
-                                "object {} is {filter}, which this build cannot decode, so its \
-                                 contents are unknown",
-                                id.0
-                            ));
+                            report.blind.push(said!(
+                                "object {object} is {filter}, which this build cannot decode, so its \
+                                 contents are unknown", object = id.0));
                         }
                     }
                     Carrier::Unrecognised { filter } => {
                         blind_objects += 1;
                         if blind_objects <= MAX_OBJECT_REASONS {
-                            report.blind.push(format!(
-                                "object {} uses {filter}, which nothing here recognises",
-                                id.0
+                            report.blind.push(said!(
+                                "object {object} uses {filter}, which nothing here recognises",
+                                object = id.0
                             ));
                         }
                     }
-                    Carrier::Scanned => match stream.decompressed_content_with_limit(MAX_DECODE) {
-                        Ok(decoded) => {
-                            for needle in needles {
-                                if find(&decoded, needle.as_bytes()) {
-                                    report.found.insert(needle.clone());
-                                    carriers.entry(needle.clone()).or_default().note(*id);
+                    Carrier::Scanned => {
+                        match stream.decompressed_content_with_limit(MAX_DECODE) {
+                            Ok(decoded) => {
+                                for needle in needles {
+                                    if find(&decoded, needle.as_bytes()) {
+                                        report.found.insert(needle.clone());
+                                        carriers.entry(needle.clone()).or_default().note(*id);
+                                    }
+                                }
+                            }
+                            // Classified as decodable and then would not decode: a
+                            // bomb over the bound, or damage. Blind either way, and
+                            // it must not be mistaken for the filter cases above ---
+                            // those are decided before any decoding is attempted.
+                            Err(why) => {
+                                blind_objects += 1;
+                                if blind_objects <= MAX_OBJECT_REASONS {
+                                    report.blind.push(said!(
+                                    "object {object} could not be decoded, so its contents are \
+                                     unknown: {why}", object = id.0));
                                 }
                             }
                         }
-                        // Classified as decodable and then would not decode: a
-                        // bomb over the bound, or damage. Blind either way, and
-                        // it must not be mistaken for the filter cases above ---
-                        // those are decided before any decoding is attempted.
-                        Err(why) => {
-                            blind_objects += 1;
-                            if blind_objects <= MAX_OBJECT_REASONS {
-                                report.blind.push(format!(
-                                    "object {} could not be decoded, so its contents are \
-                                     unknown: {why}",
-                                    id.0
-                                ));
-                            }
-                        }
-                    },
+                    }
                 }
             }
             // The suppressed ones, said once. A count is still a reason, so the
             // verdict a file with a million bad objects earns is the verdict it
             // gets --- only the enumeration is shortened.
             if deferred_objects > MAX_OBJECT_REASONS {
-                report.deferred.push(format!(
-                    "{} further images were not read, and are not listed individually",
-                    deferred_objects - MAX_OBJECT_REASONS
+                report.deferred.push(said!(
+                    "{count} further images were not read, and are not listed individually",
+                    count = deferred_objects - MAX_OBJECT_REASONS
                 ));
             }
             if blind_objects > MAX_OBJECT_REASONS {
-                report.blind.push(format!(
-                    "{} further objects could not be accounted for, and are not listed \
+                report.blind.push(said!(
+                    "{count} further objects could not be accounted for, and are not listed \
                      individually",
-                    blind_objects - MAX_OBJECT_REASONS
+                    count = blind_objects - MAX_OBJECT_REASONS
                 ));
             }
 

@@ -71,7 +71,7 @@ impl<'page> RawTextPage<'page> {
         // SAFETY: the handle is valid for the borrow of `page`.
         let handle = unsafe { bindings.FPDFText_LoadPage(page.handle()) };
         if handle.is_null() {
-            return Err("could not load the page's text".to_string());
+            return Err(said!("could not load the page's text"));
         }
         Ok(Self {
             bindings,

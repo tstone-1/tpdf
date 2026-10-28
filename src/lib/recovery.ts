@@ -30,6 +30,7 @@
  */
 
 import { catalog } from "./i18n";
+import { spoken } from "./said";
 
 const TEXT = catalog({
   "en-US": {
@@ -364,12 +365,12 @@ export function afterRedaction(applied: {
   const verdict = applied.verified
     ? TEXT().redactedClean(removed) +
       // What the clean verdict covers less of than usual: `redact::Applied::notes`.
-      (applied.notes?.length ? TEXT().redactionNote(applied.notes.join("; ")) : "")
+      (applied.notes?.length ? TEXT().redactionNote(applied.notes.map((n) => spoken(n)).join("; ")) : "")
     : // Named as a failure to *prove* rather than as a failure to remove,
       // because those are different and only one of them is known. A blind spot
       // is a scan that could not look, and telling a reader their words are
       // still there when nothing said so would be its own confident lie.
-      TEXT().redactionNotVerified(removed, applied.why.join("; "));
+      TEXT().redactionNotVerified(removed, applied.why.map((w) => spoken(w)).join("; "));
   if (!applied.changed) return verdict;
   return `${verdict}${TEXT().redactionAlsoChanged}`;
 }

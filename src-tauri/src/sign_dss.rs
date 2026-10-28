@@ -150,11 +150,10 @@ impl Survey {
     /// over it with no password and answered that it is locked.
     #[must_use]
     pub fn encrypted() -> Self {
-        Survey::refusing(
+        Survey::refusing(said!(
             "this document is encrypted, and tpdf adds long-term validation data only to a \
-             document that is not"
-                .into(),
-        )
+                 document that is not"
+        ))
     }
 
     /// A document that can take no validation data, and why.
@@ -197,7 +196,7 @@ fn survey_within(signed: &[u8], pages: u32, bound: usize) -> Survey {
         },
     ) {
         Ok(document) => document,
-        Err(e) => return Survey::refusing(format!("this document could not be parsed: {e}")),
+        Err(e) => return Survey::refusing(said!("this document could not be parsed: {e}")),
     };
     if document.is_encrypted() || document.was_encrypted() {
         return Survey::encrypted();
@@ -210,7 +209,7 @@ fn survey_within(signed: &[u8], pages: u32, bound: usize) -> Survey {
     };
     let found = match crate::docinfo::scan_from(&document, signed, pages, None) {
         Ok(found) => found,
-        Err(why) => return Survey::refusing(format!("this document could not be read: {why}")),
+        Err(why) => return Survey::refusing(said!("this document could not be read: {why}")),
     };
     let values = crate::docinfo::signature_values(&document);
     let survey = Survey {
@@ -224,10 +223,10 @@ fn survey_within(signed: &[u8], pages: u32, bound: usize) -> Survey {
         certified: crate::sign_prepare::certification(&document),
     };
     if survey.bytes() > bound {
-        return Survey::refusing(format!(
-            "this document's signatures and the certificates it already carries are {} bytes \
+        return Survey::refusing(said!(
+            "this document's signatures and the certificates it already carries are {bytes} bytes \
              together, more than the {bound} tpdf reads to add validation data",
-            survey.bytes()
+            bytes = survey.bytes()
         ));
     }
     survey
@@ -285,7 +284,7 @@ fn earlier(document: &Document) -> Result<Earlier, String> {
         Some(found) => Some(
             resolve(document, found)
                 .as_dict()
-                .map_err(|_| "this document's /DSS is not a dictionary".to_string())?
+                .map_err(|_| said!("this document's /DSS is not a dictionary"))?
                 .clone(),
         ),
     };
@@ -296,9 +295,9 @@ fn earlier(document: &Document) -> Result<Earlier, String> {
         match dss.get(key) {
             Err(_) => Ok(Vec::new()),
             Ok(found) => resolve(document, found).as_array().cloned().map_err(|_| {
-                format!(
-                    "this document's /DSS /{} is not an array",
-                    String::from_utf8_lossy(key)
+                said!(
+                    "this document's /DSS /{key} is not an array",
+                    key = String::from_utf8_lossy(key)
                 )
             }),
         }
@@ -331,12 +330,12 @@ fn contents(document: &Document, array: &[Object], bound: usize) -> Vec<Vec<u8>>
 /// cannot extend.
 pub fn append(signed: &[u8], gathered: &Gathered) -> Result<Vec<u8>, String> {
     if gathered.responses.is_empty() && gathered.lists.is_empty() {
-        return Err("there is no revocation data to add".into());
+        return Err(said!("there is no revocation data to add"));
     }
     if gathered.bytes() > MAX_BYTES {
-        return Err(format!(
-            "the validation data is {} bytes, more than the {MAX_BYTES} tpdf adds",
-            gathered.bytes()
+        return Err(said!(
+            "the validation data is {bytes} bytes, more than the {MAX_BYTES} tpdf adds",
+            bytes = gathered.bytes()
         ));
     }
     let was = signed.len();
@@ -349,19 +348,21 @@ pub fn append(signed: &[u8], gathered: &Gathered) -> Result<Vec<u8>, String> {
             ..Default::default()
         },
     )
-    .map_err(|e| format!("the signed document could not be parsed: {e}"))?;
+    .map_err(|e| said!("the signed document could not be parsed: {e}"))?;
     if prev.is_encrypted() || prev.was_encrypted() {
-        return Err("an encrypted document is not signed by tpdf, and gets no /DSS".into());
+        return Err(said!(
+            "an encrypted document is not signed by tpdf, and gets no /DSS"
+        ));
     }
     let root = prev
         .trailer
         .get(b"Root")
         .and_then(Object::as_reference)
-        .map_err(|_| "the document's catalog is not an object of its own".to_string())?;
+        .map_err(|_| said!("the document's catalog is not an object of its own"))?;
     let mut catalog = prev
         .get_object(root)
         .and_then(Object::as_dict)
-        .map_err(|_| "the document's catalog is not a dictionary".to_string())?
+        .map_err(|_| said!("the document's catalog is not a dictionary"))?
         .clone();
     // What an earlier writer left: its arrays, each resolved to the array it
     // is, so the new dictionary carries them over by value.
@@ -416,7 +417,7 @@ pub fn append(signed: &[u8], gathered: &Gathered) -> Result<Vec<u8>, String> {
     crate::save::written_whole(&incremental)?;
     incremental
         .save_to(&mut sink)
-        .map_err(|e| format!("could not build the validation data's revision: {e}"))?;
+        .map_err(|e| said!("could not build the validation data's revision: {e}"))?;
     Ok(sink.tail)
 }
 

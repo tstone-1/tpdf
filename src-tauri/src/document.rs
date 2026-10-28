@@ -108,7 +108,9 @@ impl OpenDocument {
             *cached = None;
             *cached = Some(crate::textview::Preview::build(self, view)?);
         }
-        let held = cached.as_ref().ok_or("text preview is unavailable")?;
+        let held = cached
+            .as_ref()
+            .ok_or_else(|| said!("text preview is unavailable"))?;
         // Field changes that could not be drawn: the source, as the file has it.
         read(held.document.as_deref().unwrap_or(self))
     }

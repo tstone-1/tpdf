@@ -230,6 +230,9 @@ pub const XFA_REFUSAL: &str = "XFA forms are not supported";
 /// order they are tested; until 2026-09-27 the four shared one sentence, which
 /// told a reader a field was "password, file, comb or rich-text" without saying
 /// which.
+///
+/// [`scan`] writes each of these with `said!`, the same words as a literal, so
+/// the window can translate them; a change to one is a change to both.
 pub const UNSUPPORTED: &str = "This field type is not supported yet";
 /// `/Ff` bit 1.
 pub const READ_ONLY: &str = "This field is read-only";
@@ -287,9 +290,9 @@ fn option_text(doc: &Document, value: &Object) -> Result<String, String> {
         .map_err(|e| e.to_string())?
         .1
         .as_str()
-        .map_err(|_| "A choice option is not a text string")?;
+        .map_err(|_| said!("A choice option is not a text string"))?;
     if raw.len() > 16384 {
-        return Err("This form contains an oversized option".into());
+        return Err(said!("This form contains an oversized option"));
     }
     Ok(crate::annots::decode_text_string(raw))
 }
@@ -298,9 +301,11 @@ fn choice_options(doc: &Document, id: ObjectId) -> Result<Vec<Choice>, String> {
     let Some(raw) = inherited(doc, id, b"Opt") else {
         return Ok(Vec::new());
     };
-    let values = raw.as_array().map_err(|_| "Invalid choice options")?;
+    let values = raw
+        .as_array()
+        .map_err(|_| said!("Invalid choice options"))?;
     if values.len() > 4096 {
-        return Err("This form exceeds the option limit".into());
+        return Err(said!("This form exceeds the option limit"));
     }
     let mut bytes = 0;
     values
@@ -309,7 +314,7 @@ fn choice_options(doc: &Document, id: ObjectId) -> Result<Vec<Choice>, String> {
             let raw = doc.dereference(raw).map_err(|e| e.to_string())?.1;
             let choice = if let Ok(pair) = raw.as_array() {
                 if pair.len() != 2 {
-                    return Err("Invalid choice export/label pair".into());
+                    return Err(said!("Invalid choice export/label pair"));
                 }
                 Choice {
                     export: option_text(doc, &pair[0])?,
@@ -324,7 +329,7 @@ fn choice_options(doc: &Document, id: ObjectId) -> Result<Vec<Choice>, String> {
             };
             bytes += choice.export.len() + choice.label.len() + 32;
             if bytes > 1_048_576 {
-                return Err("This form exceeds the option text limit".into());
+                return Err(said!("This form exceeds the option text limit"));
             }
             Ok(choice)
         })
@@ -341,7 +346,7 @@ fn choice_value(
         None => Vec::new(),
         Some(Object::Array(values)) => {
             if values.len() > 4096 {
-                return Err("This form exceeds the selection limit".into());
+                return Err(said!("This form exceeds the selection limit"));
             }
             values
                 .iter()
@@ -353,7 +358,7 @@ fn choice_value(
     // I disambiguates duplicate export values, but V takes precedence over stale I.
     if let Some(Object::Array(indices)) = inherited(doc, id, b"I") {
         if indices.len() > 4096 {
-            return Err("This form exceeds the selection limit".into());
+            return Err(said!("This form exceeds the selection limit"));
         }
         let indices: Option<Vec<usize>> = indices
             .iter()
@@ -374,9 +379,9 @@ fn choice_value(
     let mut selected = Vec::new();
     for value in &values {
         if options.iter().filter(|o| &o.export == value).count() > 1 {
-            return Err(
-                "A choice with duplicate export values has no valid selection indices".into(),
-            );
+            return Err(said!(
+                "A choice with duplicate export values has no valid selection indices"
+            ));
         }
         let Some(index) = options.iter().position(|o| &o.export == value) else {
             if value.is_empty() && values.len() == 1 {
@@ -385,7 +390,7 @@ fn choice_value(
             if editable && values.len() == 1 {
                 return Ok(Value::Text(value.clone()));
             }
-            return Err("The saved choice is absent from its options".into());
+            return Err(said!("The saved choice is absent from its options"));
         };
         selected.push(index);
     }
@@ -433,23 +438,23 @@ fn button_state(doc: &Document, id: ObjectId) -> Result<Vec<u8>, String> {
         .and_then(|a| a.get(b"N").ok())
         .and_then(|o| doc.dereference(o).ok())
         .and_then(|(_, o)| o.as_dict().ok())
-        .ok_or("A radio button has no appearance states")?;
+        .ok_or_else(|| said!("A radio button has no appearance states"))?;
     let states: Vec<_> = normal
         .iter()
         .filter(|(k, _)| k.as_slice() != b"Off")
         .collect();
     if states.len() != 1 || states[0].0.len() > 1024 {
-        return Err("A radio button has ambiguous appearance states".into());
+        return Err(said!("A radio button has ambiguous appearance states"));
     }
     for state in [b"Off".as_slice(), states[0].0.as_slice()] {
         let ap = normal
             .get(state)
-            .map_err(|_| "A radio button is missing an appearance")?;
+            .map_err(|_| said!("A radio button is missing an appearance"))?;
         doc.dereference(ap)
             .map_err(|e| e.to_string())?
             .1
             .as_stream()
-            .map_err(|_| "A radio button appearance is not a stream")?;
+            .map_err(|_| said!("A radio button appearance is not a stream"))?;
     }
     Ok(states[0].0.clone())
 }
@@ -460,7 +465,7 @@ pub fn scan(doc: &Document) -> Result<Form, String> {
         return Ok(Form::default());
     };
     if form.has(b"XFA") {
-        return Err(XFA_REFUSAL.into());
+        return Err(said!("XFA forms are not supported"));
     }
     let mut members = HashSet::new();
     let cut = crate::fields::walk(
@@ -480,7 +485,7 @@ pub fn scan(doc: &Document) -> Result<Form, String> {
         },
     );
     if cut.dropped > 0 || cut.too_deep > 0 {
-        return Err("This form exceeds the field-tree limit".into());
+        return Err(said!("This form exceeds the field-tree limit"));
     }
     let mut result = Form::default();
     let mut visited = 0;
@@ -499,7 +504,7 @@ pub fn scan(doc: &Document) -> Result<Form, String> {
         for annotation in annotations {
             visited += 1;
             if visited > 20000 {
-                return Err("This form exceeds the annotation limit".into());
+                return Err(said!("This form exceeds the annotation limit"));
             }
             let Ok(widget) = annotation.as_reference() else {
                 continue;
@@ -515,10 +520,10 @@ pub fn scan(doc: &Document) -> Result<Form, String> {
             } else {
                 w.get(b"Parent")
                     .and_then(Object::as_reference)
-                    .map_err(|_| "A widget has no field")?
+                    .map_err(|_| said!("A widget has no field"))?
             };
             if !members.contains(&object) {
-                return Err("A widget is outside the form field tree".into());
+                return Err(said!("A widget is outside the form field tree"));
             }
             let flags = integer(doc, object, b"Ff");
             let kind = inherited(doc, object, b"FT").and_then(|v| v.as_name().ok());
@@ -557,7 +562,7 @@ pub fn scan(doc: &Document) -> Result<Form, String> {
                 .and_then(|v| v.as_str().ok())
                 .is_some_and(|raw| raw.len() > 16384)
             {
-                return Err("This form contains an oversized answer".into());
+                return Err(said!("This form contains an oversized answer"));
             }
             let value = if let Control::Choice {
                 options, editable, ..
@@ -582,16 +587,16 @@ pub fn scan(doc: &Document) -> Result<Form, String> {
             let numbers = w
                 .get(b"Rect")
                 .and_then(Object::as_array)
-                .map_err(|_| "A form widget has no rectangle")?;
+                .map_err(|_| said!("A form widget has no rectangle"))?;
             if numbers.len() != 4 {
-                return Err("Invalid form widget rectangle".into());
+                return Err(said!("Invalid form widget rectangle"));
             }
             let mut rect = [0.0; 4];
             for (out, value) in rect.iter_mut().zip(numbers) {
                 *out = f64::from(
                     value
                         .as_float()
-                        .map_err(|_| "Invalid form widget coordinate")?,
+                        .map_err(|_| said!("Invalid form widget coordinate"))?,
                 );
             }
             if !rect.iter().all(|v| v.is_finite())
@@ -600,21 +605,21 @@ pub fn scan(doc: &Document) -> Result<Form, String> {
                 || (kind != Some(b"Sig") && (rect[2] == rect[0] || rect[3] == rect[1]))
                 || rect.iter().any(|v| v.abs() > 100000.0)
             {
-                return Err("Invalid form widget bounds".into());
+                return Err(said!("Invalid form widget bounds"));
             }
             let mut names = Vec::new();
             let mut at = Some(object);
             let mut seen = HashSet::new();
             while let Some(id) = at {
                 if !seen.insert(id) || seen.len() > 32 {
-                    return Err("Cyclic form field ancestry".into());
+                    return Err(said!("Cyclic form field ancestry"));
                 }
                 let d = doc
                     .get_dictionary(id)
-                    .map_err(|_| "Unreadable form field")?;
+                    .map_err(|_| said!("Unreadable form field"))?;
                 if let Ok(raw) = d.get(b"T").and_then(Object::as_str) {
                     if raw.len() > 1024 {
-                        return Err("This form contains an oversized field name".into());
+                        return Err(said!("This form contains an oversized field name"));
                     }
                     names.push(crate::annots::decode_text_string(raw));
                 }
@@ -635,7 +640,7 @@ pub fn scan(doc: &Document) -> Result<Form, String> {
                     .sum::<usize>();
             }
             if text_bytes > 1_048_576 {
-                return Err("This form exceeds the text limit".into());
+                return Err(said!("This form exceeds the text limit"));
             }
             let annotation_flags = w.get(b"F").and_then(Object::as_i64).unwrap_or(0);
             // A turn that is not a whole number of quarters is not one the
@@ -650,19 +655,19 @@ pub fn scan(doc: &Document) -> Result<Form, String> {
                 .filter(|r| r % 90 == 0)
                 .map_or(0, |r| r.rem_euclid(360) / 90) as u8;
             let reason = if !text && !checkbox && !radio && !choice {
-                Some(UNSUPPORTED.into())
+                Some(said!("This field type is not supported yet"))
             } else if flags & 1 != 0 {
-                Some(READ_ONLY.into())
+                Some(said!("This field is read-only"))
             } else if text && flags & (1 << 13) != 0 {
-                Some(PASSWORD.into())
+                Some(said!("Password fields are not supported yet"))
             } else if text && flags & (1 << 20) != 0 {
-                Some(FILE_SELECT.into())
+                Some(said!("File-select fields are not supported yet"))
             } else if text && flags & (1 << 24) != 0 {
-                Some(COMB.into())
+                Some(said!("Comb fields are not supported yet"))
             } else if text && flags & (1 << 25) != 0 {
-                Some(RICH_TEXT.into())
+                Some(said!("Rich-text fields are not supported yet"))
             } else if annotation_flags & (1 | 2 | 32) != 0 {
-                Some(HIDDEN.into())
+                Some(said!("This field is hidden"))
             } else {
                 None
             };
@@ -730,7 +735,7 @@ pub fn scan(doc: &Document) -> Result<Form, String> {
                 turns,
             });
             if result.widgets.len() > 4096 {
-                return Err("This form exceeds the widget limit".into());
+                return Err(said!("This form exceeds the widget limit"));
             }
         }
     }
@@ -785,12 +790,12 @@ pub fn scan(doc: &Document) -> Result<Form, String> {
         };
         if fixed.is_some() {
             for i in group.iter() {
-                result.widgets[*i].reason = Some(FIXED_BUTTON.into());
+                result.widgets[*i].reason = Some(said!("Another program saved this group with its answer drawn in, so it can be read and not changed"));
             }
         }
         text_bytes += group.len() * states.iter().map(|s| s.len() * 4 + 16).sum::<usize>();
         if text_bytes > 1_048_576 {
-            return Err("This form exceeds the text limit".into());
+            return Err(said!("This form exceeds the text limit"));
         }
         let selected = group
             .iter()
@@ -893,7 +898,7 @@ pub fn check(widget: &Widget, value: &Value) -> Result<(), Rejected> {
             {
                 return Err(rejected(
                     Invalid::Option,
-                    "Choose one available radio button",
+                    said!("Choose one available radio button"),
                 ));
             }
             return Ok(());
@@ -913,20 +918,20 @@ pub fn check(widget: &Widget, value: &Value) -> Result<(), Rejected> {
             {
                 return Err(rejected(
                     Invalid::Option,
-                    "Choose available options without duplicates",
+                    said!("Choose available options without duplicates"),
                 ));
             }
             for index in indices {
                 if !crate::textbox::encodable(&options[*index].label) {
                     return Err(rejected(
                         Invalid::Characters,
-                        "This option uses characters that cannot be saved visibly",
+                        said!("This option uses characters that cannot be saved visibly"),
                     ));
                 }
                 if options[*index].label.contains(['\r', '\n']) {
                     return Err(rejected(
                         Invalid::Line,
-                        "This option uses characters that cannot be saved visibly",
+                        said!("This option uses characters that cannot be saved visibly"),
                     ));
                 }
             }
@@ -938,7 +943,7 @@ pub fn check(widget: &Widget, value: &Value) -> Result<(), Rejected> {
         _ => {
             return Err(rejected(
                 Invalid::Type,
-                "The answer does not match the field type",
+                said!("The answer does not match the field type"),
             ))
         }
     }
@@ -947,7 +952,7 @@ pub fn check(widget: &Widget, value: &Value) -> Result<(), Rejected> {
             if text.len() > 16384 {
                 return Err(rejected(
                     Invalid::Length,
-                    "A form answer is limited to 16 KB",
+                    said!("A form answer is limited to 16 KB"),
                 ));
             }
             if widget
@@ -956,17 +961,20 @@ pub fn check(widget: &Widget, value: &Value) -> Result<(), Rejected> {
             {
                 return Err(rejected(
                     Invalid::Length,
-                    "This answer exceeds the field's maximum length",
+                    said!("This answer exceeds the field's maximum length"),
                 ));
             }
             if !crate::textbox::encodable(text) {
                 return Err(rejected(
                     Invalid::Characters,
-                    "This field supports Western European characters only",
+                    said!("This field supports Western European characters only"),
                 ));
             }
             if !widget.multiline && text.contains(['\r', '\n']) {
-                return Err(rejected(Invalid::Line, "This field accepts one line only"));
+                return Err(rejected(
+                    Invalid::Line,
+                    said!("This field accepts one line only"),
+                ));
             }
             text_layout(widget, text).map_err(|m| rejected(Invalid::Layout, m))?;
             Ok(())
@@ -974,7 +982,7 @@ pub fn check(widget: &Widget, value: &Value) -> Result<(), Rejected> {
         (_, Value::Checked(_)) => Ok(()),
         _ => Err(rejected(
             Invalid::Type,
-            "The answer does not match the field type",
+            said!("The answer does not match the field type"),
         )),
     }
 }
@@ -1001,7 +1009,7 @@ fn choice_layout(widget: &Widget, indices: &[usize]) -> Result<(f64, Vec<String>
         .map_or(AUTO_TEXT_SIZE, f64::from)
         .min((height - 4.0) / 1.2);
     if size < 4.0 {
-        return Err("The options do not fit visibly in this field".into());
+        return Err(said!("The options do not fit visibly in this field"));
     }
     let count = ((height - 2.0) / (size * 1.2)).floor() as usize;
     let lines: Vec<_> = options
@@ -1011,7 +1019,9 @@ fn choice_layout(widget: &Widget, indices: &[usize]) -> Result<(f64, Vec<String>
         .map(|o| o.label.clone())
         .collect();
     if lines.iter().any(|s| !crate::textbox::encodable(s)) {
-        return Err("This list uses characters that cannot be saved visibly".into());
+        return Err(said!(
+            "This list uses characters that cannot be saved visibly"
+        ));
     }
     Ok((size, lines))
 }
@@ -1045,7 +1055,7 @@ fn text_layout(widget: &Widget, text: &str) -> Result<(f64, Vec<String>), String
     // A hair of slack: `size` may be exactly the bound, and the product of the
     // two rounds a few bits either way.
     if size < 4.0 || lines.len() as f64 * size * 1.2 > height - 2.0 + 1e-9 {
-        return Err("The answer does not fit visibly in this field".into());
+        return Err(said!("The answer does not fit visibly in this field"));
     }
     Ok((size, lines))
 }
@@ -1254,7 +1264,7 @@ pub fn write(doc: &mut Document, changes: &[Change]) -> Result<(), String> {
     let mut unique = BTreeMap::new();
     for change in changes {
         if unique.insert(change.object, &change.value).is_some() {
-            return Err("Duplicate form answer".into());
+            return Err(said!("Duplicate form answer"));
         }
         let widgets: Vec<_> = form
             .widgets
@@ -1262,7 +1272,7 @@ pub fn write(doc: &mut Document, changes: &[Change]) -> Result<(), String> {
             .filter(|w| w.object == change.object)
             .collect();
         if widgets.is_empty() {
-            return Err("The form field is no longer in this document".into());
+            return Err(said!("The form field is no longer in this document"));
         }
         for widget in &widgets {
             validate(widget, &change.value)?;
@@ -1323,7 +1333,7 @@ pub fn write(doc: &mut Document, changes: &[Change]) -> Result<(), String> {
                         })
                         .unwrap_or_else(|| b"Yes".to_vec());
                     if on_name.as_ref().is_some_and(|prior| prior != &name) {
-                        return Err("Shared checkboxes have incompatible on states".into());
+                        return Err(said!("Shared checkboxes have incompatible on states"));
                     }
                     on_name = Some(name.clone());
                     let (off, on) = checkbox_appearances(doc, width, height);

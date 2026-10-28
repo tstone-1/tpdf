@@ -59,10 +59,10 @@ pub fn list(document: &Document) -> Vec<Embedded> {
 pub fn content(document: &Document, index: usize) -> Result<Vec<u8>, String> {
     let found = entries(document);
     let Some((key, spec)) = found.get(index) else {
-        return Err(format!(
-            "The document has no attachment {} (it has {}).",
-            index + 1,
-            found.len()
+        return Err(said!(
+            "The document has no attachment {number} (it has {count}).",
+            number = index + 1,
+            count = found.len()
         ));
     };
     let name = describe(document, key, *spec).name;
@@ -72,14 +72,14 @@ pub fn content(document: &Document, index: usize) -> Result<Vec<u8>, String> {
         .and_then(|ef| resolve(document, ef).as_dict().ok())
         .and_then(|ef| ef.get(b"UF").or_else(|_| ef.get(b"F")).ok())
         .and_then(|file| resolve(document, file).as_stream().ok())
-        .ok_or_else(|| format!("{name} holds no file to save."))?;
+        .ok_or_else(|| said!("{name} holds no file to save."))?;
     if stream.dict.has(b"Filter") {
         stream
             .decompressed_content_with_limit(MAX_DECODE)
             .map_err(|why| {
-                format!(
-                    "{name} could not be decoded within {} MiB: {why}",
-                    MAX_DECODE >> 20
+                said!(
+                    "{name} could not be decoded within {mib} MiB: {why}",
+                    mib = MAX_DECODE >> 20
                 )
             })
     } else {
@@ -112,12 +112,14 @@ pub fn save(
         _ => false,
     };
     if same(source, dest) {
-        return Err("The attachment was not saved: that is the document it comes from.".into());
+        return Err(said!(
+            "The attachment was not saved: that is the document it comes from."
+        ));
     }
     let name = dest.file_name().ok_or_else(|| {
-        format!(
-            "The attachment was not saved: {} names no file.",
-            dest.display()
+        said!(
+            "The attachment was not saved: {path} names no file.",
+            path = dest.display()
         )
     })?;
     let staged = dest.with_file_name(format!(
@@ -129,14 +131,14 @@ pub fn save(
         let mut from =
             std::fs::File::open(source).map_err(|e| format!("{}: {e}", source.display()))?;
         let len = usize::try_from(from.metadata().map_err(|e| e.to_string())?.len())
-            .map_err(|_| "the document is too large to read".to_string())?;
+            .map_err(|_| said!("the document is too large to read"))?;
         let mut out = std::fs::File::create(&staged).map_err(|e| e.to_string())?;
         let count = outside
             .attachment(&mut from, len, &mut out, index, password)
             .map_err(|why| why.message)?;
         let held = out.metadata().map_err(|e| e.to_string())?.len();
         if held != count as u64 {
-            return Err(format!(
+            return Err(said!(
                 "the worker said {count} bytes and the file holds {held}"
             ));
         }
@@ -147,7 +149,10 @@ pub fn save(
     })();
     written.map_err(|why| {
         let _ = std::fs::remove_file(&staged);
-        format!("The attachment was not saved to {}: {why}", dest.display())
+        said!(
+            "The attachment was not saved to {path}: {why}",
+            path = dest.display()
+        )
     })
 }
 

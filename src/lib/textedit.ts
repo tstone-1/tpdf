@@ -1,6 +1,7 @@
 import type { EditState } from "./edits";
 import { defaultTextLayout, TextLayoutControls } from "./textlayout";
 import { catalog } from "./i18n";
+import { spokenError } from "./said";
 
 const TEXT = catalog({
   "en-US": {
@@ -320,7 +321,7 @@ export class TextEditor {
       this.acceptedLayout = JSON.stringify(this.controls.read());
       this.message.textContent = TEXT().applied;
     }).catch((error: unknown) => {
-      if (!this.disposed) { this.failure = error; this.message.textContent = String(error); }
+      if (!this.disposed) { this.failure = error; this.message.textContent = spokenError(error); }
     }).finally(() => { this.saving = false; if (!this.disposed) this.setBusy(this.busy); });
   }
   async settle(): Promise<void> { await this.pending; if (this.failure) throw this.failure; }
@@ -354,7 +355,7 @@ export class TextEditor {
         this.message.textContent = TEXT().preview(preview.font, preview.lines);
         this.layout();
       }).catch((error: unknown) => {
-        if (!this.disposed && generation === this.previewGeneration) this.message.textContent = String(error);
+        if (!this.disposed && generation === this.previewGeneration) this.message.textContent = spokenError(error);
       });
     }, 250);
   }

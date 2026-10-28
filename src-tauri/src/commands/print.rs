@@ -87,7 +87,7 @@ async fn present_built(app: &tauri::AppHandle, built: Built) -> Result<(), save:
     } = built;
     tauri::async_runtime::spawn_blocking(move || present_job(&presenting, bytes, title, expected))
         .await
-        .map_err(|e| save::Refusal::from(format!("the print panel could not be shown: {e}")))?
+        .map_err(|e| save::Refusal::from(said!("the print panel could not be shown: {e}")))?
         .map_err(save::Refusal::from)
 }
 
@@ -172,7 +172,7 @@ async fn build_job(
     };
     let bytes = tauri::async_runtime::spawn_blocking(build)
         .await
-        .map_err(|e| save::Refusal::from(format!("the print job could not be built: {e}")))??;
+        .map_err(|e| save::Refusal::from(said!("the print job could not be built: {e}")))??;
     Ok(Built {
         bytes,
         title,
@@ -238,7 +238,7 @@ impl<D> Previews<D> {
     fn lock(&self) -> Result<std::sync::MutexGuard<'_, Shown<D>>, String> {
         self.0
             .lock()
-            .map_err(|_| "the print preview is unavailable".to_owned())
+            .map_err(|_| said!("the print preview is unavailable"))
     }
 
     /// Takes the worker out to draw with, if `job` is the preview on screen.
@@ -250,7 +250,7 @@ impl<D> Previews<D> {
         shown
             .drawer
             .take()
-            .ok_or_else(|| "another page of this preview is being drawn".into())
+            .ok_or_else(|| said!("another page of this preview is being drawn"))
     }
 
     /// Gives the worker back, unless the preview was printed, closed or
@@ -365,7 +365,7 @@ pub async fn print_prepare(
     let (built, session, sizes) =
         tauri::async_runtime::spawn_blocking(move || open_preview(built, &library))
             .await
-            .map_err(|e| save::Refusal::from(format!("the print preview could not start: {e}")))?
+            .map_err(|e| save::Refusal::from(said!("the print preview could not start: {e}")))?
             .map_err(save::Refusal::from)?;
     let mut shown = previews.lock().map_err(save::Refusal::from)?;
     shown.last = shown.last.wrapping_add(1).max(1);
@@ -440,7 +440,9 @@ async fn set_up(
     _settings: crate::print_layout::Settings,
     _prompt: bool,
 ) -> Result<Setup, String> {
-    Err("the printer is chosen in the system's print dialog here".into())
+    Err(said!(
+        "the printer is chosen in the system's print dialog here"
+    ))
 }
 
 #[cfg(windows)]
@@ -458,7 +460,7 @@ async fn set_up(
         apply(held, &sizes, &settings, prompt, owner)
     })
     .await
-    .map_err(|e| format!("the printer could not be asked: {e}"))?;
+    .map_err(|e| said!("the printer could not be asked: {e}"))?;
     previews.give_printer(job, printer);
     setup
 }
@@ -496,7 +498,7 @@ fn apply(
         .or_else(default_name)
         .or_else(|| printers.first().cloned());
     let Some(wanted) = wanted else {
-        return (held, Err("no printer is installed".into()));
+        return (held, Err(said!("no printer is installed")));
     };
     let mut printer = match held {
         Some(printer) if printer.name() == wanted => printer,
@@ -549,7 +551,7 @@ fn chosen_pages(
         .clone()
         .unwrap_or_else(|| (0..u32::try_from(count).unwrap_or(u32::MAX)).collect());
     if pages.is_empty() {
-        return Err("no page is chosen to print".into());
+        return Err(said!("no page is chosen to print"));
     }
     Ok(pages)
 }
@@ -571,7 +573,7 @@ fn open_preview(
         .ask(crate::worker_proto::Request::Open {
             lazy_geometry: false,
         })
-        .map_err(|e| format!("the print job could not be read: {}", e.message()))?;
+        .map_err(|e| said!("the print job could not be read: {why}", why = e.message()))?;
     let crate::worker_proto::Reply::Open {
         pages, page_count, ..
     } = reply
@@ -582,7 +584,9 @@ fn open_preview(
         ));
     };
     if pages.len() != page_count {
-        return Err("the worker returned incomplete page sizes for the print job".into());
+        return Err(said!(
+            "the worker returned incomplete page sizes for the print job"
+        ));
     }
     print::expect_pages(page_count, built.expected)?;
     Ok((built, session, pages))
@@ -613,7 +617,7 @@ pub async fn print_preview_page(
         (drawer, drawn)
     })
     .await
-    .map_err(|e| format!("the page could not be drawn: {e}"))?;
+    .map_err(|e| said!("the page could not be drawn: {e}"))?;
     previews.give_back(job, drawer);
     drawn
 }
@@ -623,7 +627,7 @@ fn draw_sheet(held: &mut Drawer, index: u32, width: u32, marks: bool) -> Result<
     let size = *held
         .sizes
         .get(index as usize)
-        .ok_or("that page is not in the print job")?;
+        .ok_or_else(|| said!("that page is not in the print job"))?;
     let (scale, wide, high) = preview_scale(size, width)?;
     let mut pixels = vec![0_u8; wide as usize * high as usize * 4];
     for y in (0..high).step_by(1024) {
@@ -642,15 +646,17 @@ fn draw_sheet(held: &mut Drawer, index: u32, width: u32, marks: bool) -> Result<
                         turns: 0,
                         invert: false,
                         crop: None,
-                        x: i32::try_from(x).map_err(|_| "the page is too wide")?,
-                        y: i32::try_from(y).map_err(|_| "the page is too tall")?,
-                        width: u16::try_from(tile_width).map_err(|_| "a tile is too wide")?,
-                        height: u16::try_from(tile_height).map_err(|_| "a tile is too tall")?,
+                        x: i32::try_from(x).map_err(|_| said!("the page is too wide"))?,
+                        y: i32::try_from(y).map_err(|_| said!("the page is too tall"))?,
+                        width: u16::try_from(tile_width)
+                            .map_err(|_| said!("a tile is too wide"))?,
+                        height: u16::try_from(tile_height)
+                            .map_err(|_| said!("a tile is too tall"))?,
                         format: crate::render::TileFormat::Raw,
                     },
                     PREVIEW_DEADLINE,
                 )
-                .map_err(|e| format!("the page could not be drawn: {}", e.message()))?;
+                .map_err(|e| said!("the page could not be drawn: {e}", e = e.message()))?;
             let stride = tile_width as usize * 4;
             for row in 0..tile_height as usize {
                 let start = ((y as usize + row) * wide as usize + x as usize) * 4;
@@ -675,7 +681,7 @@ fn draw_sheet(held: &mut Drawer, index: u32, width: u32, marks: bool) -> Result<
 fn preview_scale(size: crate::render::PageSize, width: u32) -> Result<(f32, u32, u32), String> {
     let width = width.min(PREVIEW_MAX_WIDTH);
     if width == 0 || !(size.width_pt > 0.0 && size.height_pt > 0.0) {
-        return Err("the page has no size to draw".into());
+        return Err(said!("the page has no size to draw"));
     }
     #[allow(clippy::cast_precision_loss)]
     let scale = width as f32 / size.width_pt;
@@ -683,7 +689,7 @@ fn preview_scale(size: crate::render::PageSize, width: u32) -> Result<(f32, u32,
     let high = (size.height_pt * scale).round().max(1.0) as u32;
     // A very narrow, very tall page: bounded the same way on its long side.
     if high > PREVIEW_MAX_WIDTH * 4 {
-        return Err("the page is too tall to preview".into());
+        return Err(said!("the page is too tall to preview"));
     }
     Ok((scale, width, high))
 }
@@ -709,13 +715,13 @@ pub async fn print_confirm(
     if let Some(settings) = settings {
         let (sizes, printer) = previews.take_printer(job).map_err(save::Refusal::from)?;
         let built = previews.end(job).map_err(save::Refusal::from)?;
-        let printer = printer.ok_or("no printer has been chosen for this print")?;
+        let printer = printer.ok_or_else(|| said!("no printer has been chosen for this print"))?;
         let app = app.clone();
         return tauri::async_runtime::spawn_blocking(move || {
             print_chosen(&app, built, printer, &sizes, &settings)
         })
         .await
-        .map_err(|e| save::Refusal::from(format!("the print could not start: {e}")))?
+        .map_err(|e| save::Refusal::from(said!("the print could not start: {e}")))?
         .map_err(save::Refusal::from);
     }
     // Only Windows sends settings; the system dialogs choose them elsewhere.
@@ -746,7 +752,7 @@ fn print_chosen(
         expected,
     } = built;
     let reading = print_win::read(&bytes)
-        .ok_or("the print job could not be read back, so it will not be printed")?;
+        .ok_or_else(|| said!("the print job could not be read back, so it will not be printed"))?;
     print::expect_pages(reading.pages.len(), expected)?;
     let mut pages = chosen_pages(settings, reading.pages.len())?;
     let copies = settings.copies.max(1);
@@ -875,10 +881,14 @@ pub(crate) fn print_job(
         }
     }
     match route {
-        print::Route::Passthrough => std::fs::read(source)
-            .map_err(|e| save::Refusal::from(format!("could not read {source:?}: {e}"))),
+        print::Route::Passthrough => std::fs::read(source).map_err(|e| {
+            save::Refusal::from(said!(
+                "could not read {path}: {e}",
+                path = format!("{source:?}")
+            ))
+        }),
         print::Route::Working => {
-            let plan = plan.ok_or("the working document has no plan to print")?;
+            let plan = plan.ok_or_else(|| said!("the working document has no plan to print"))?;
             save::print_bytes(source, plan, turns, password, rewriter)
         }
         print::Route::Range(job) => save::print_range_bytes(source, job, rewriter),
@@ -897,7 +907,7 @@ fn present_job(
     // parser, and the one the print system will use itself. Refusing here costs
     // a dialog; not refusing costs paper.
     let reading = print_macos::read(&bytes)
-        .ok_or("the print job could not be read back, so it will not be printed")?;
+        .ok_or_else(|| said!("the print job could not be read back, so it will not be printed"))?;
     print::expect_pages(reading.pages.len(), expected)?;
 
     app.run_on_main_thread(move || {
@@ -914,7 +924,7 @@ fn present_job(
     // The same rule: what failed was the hop to the main thread, and without
     // saying so the reader gets a bare runtime message for a print that silently
     // did not happen.
-    .map_err(|e| format!("the print panel could not be shown on the main thread: {e}"))
+    .map_err(|e| said!("the print panel could not be shown on the main thread: {e}"))
 }
 
 /// Hands built bytes to Windows, having first read them back.
@@ -941,7 +951,7 @@ fn present_job(
     expected: Option<usize>,
 ) -> Result<(), String> {
     let reading = print_win::read(&bytes)
-        .ok_or("the print job could not be read back, so it will not be printed")?;
+        .ok_or_else(|| said!("the print job could not be read back, so it will not be printed"))?;
     print::expect_pages(reading.pages.len(), expected)?;
 
     // The owner window, so the panel is modal to the document rather than floating
@@ -1001,9 +1011,7 @@ fn present_job(
     let (path, file) = crate::print_linux::stage(&bytes)?;
     let checked = save::InWorker::at(crate::pdfium_library_dir(app))
         .printed_pages(&file, bytes.len())
-        .map_err(|e| {
-            format!("the print job could not be read back, so it will not be printed: {e}")
-        })
+        .map_err(|e| said!("the print job could not be read back, so it will not be printed: {e}"))
         .and_then(|pages| print::expect_pages(pages, expected));
     drop(file);
     if let Err(why) = checked {
@@ -1029,7 +1037,7 @@ fn present_job(
     })
     .map_err(|e| {
         let _ = std::fs::remove_file(&path);
-        format!("the print panel could not be shown on the main thread: {e}")
+        said!("the print panel could not be shown on the main thread: {e}")
     })
 }
 

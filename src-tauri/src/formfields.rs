@@ -108,31 +108,31 @@ fn text_problem(
         return Some(why);
     }
     if text_size == Some(0.0) {
-        return Some(format!(
-            "`{name}`: a text size is {} to {} points, and is left out for one that follows the field",
-            forms::MIN_TEXT_SIZE,
-            forms::MAX_TEXT_SIZE
+        return Some(said!(
+            "`{name}`: a text size is {least} to {most} points, and is left out for one that follows the field",
+            least = forms::MIN_TEXT_SIZE,
+            most = forms::MAX_TEXT_SIZE
         ));
     }
     let text = matches!(kind, Kind::Text | Kind::Multiline);
     if text_size.is_some() && kind == Kind::Signature {
-        return Some(format!("`{name}`: a signature field has no text to size"));
+        return Some(said!("`{name}`: a signature field has no text to size"));
     }
     if text_size.is_some() && !text && kind != Kind::Dropdown {
-        return Some(format!("`{name}`: a box or a button has no text to size"));
+        return Some(said!("`{name}`: a box or a button has no text to size"));
     }
     let default = default_value.filter(|default| !default.is_empty())?;
     if !text {
-        return Some(format!("`{name}`: only a text field has a default value"));
+        return Some(said!("`{name}`: only a text field has a default value"));
     }
     if kind == Kind::Text && default.contains('\n') {
-        return Some(format!(
+        return Some(said!(
             "`{name}` takes one line, and its default value has several"
         ));
     }
     let holds = default.chars().count();
     if max_length.is_some_and(|most| holds > most as usize) {
-        return Some(format!(
+        return Some(said!(
             "`{name}`: the default value has {holds} characters, which is more than the field takes"
         ));
     }
@@ -165,7 +165,7 @@ fn default_problem(field: &NewField, rect: [f64; 4], turns: u8) -> Option<String
     };
     forms::validate(&would_be, &forms::Value::Text(default.to_string()))
         .err()
-        .map(|why| format!("`{}`: its default value: {why}", field.name))
+        .map(|why| said!("`{name}`: its default value: {why}", name = field.name))
 }
 
 impl Placed {
@@ -261,24 +261,24 @@ impl Placed {
         }
         if let Some(most) = self.max_length {
             if !matches!(self.kind, Kind::Text | Kind::Multiline) {
-                return Some(format!("`{name}`: only a text field has a most characters"));
+                return Some(said!("`{name}`: only a text field has a most characters"));
             }
             if most == 0 {
-                return Some(format!(
+                return Some(said!(
                     "`{name}`: the most characters is a number from 1 to 16384"
                 ));
             }
         }
         if matches!(self.kind, Kind::Checkbox | Kind::Radio) && self.align != forms::Align::Left {
-            return Some(format!("`{name}`: a box or a button has no text to align"));
+            return Some(said!("`{name}`: a box or a button has no text to align"));
         }
         if self.kind == Kind::Signature && self.align != forms::Align::Left {
-            return Some(format!("`{name}`: a signature field has no text to align"));
+            return Some(said!("`{name}`: a signature field has no text to align"));
         }
         // Read-only is what a signature makes of the fields it locks, and an
         // empty field that refuses a signature is a field nobody can use.
         if self.kind == Kind::Signature && self.read_only {
-            return Some(format!(
+            return Some(said!(
                 "`{name}`: a signature field that is read-only could not be signed"
             ));
         }
@@ -356,48 +356,48 @@ pub const MAX_OPTION: usize = 255;
 pub fn options_problem(name: &str, kind: Kind, options: &[String]) -> Option<String> {
     if kind == Kind::Radio {
         if options.len() != 1 {
-            return Some(format!("`{name}`: a radio button has one value"));
+            return Some(said!("`{name}`: a radio button has one value"));
         }
         // `/Off` is the state every button has for not being the one chosen.
         if options[0] == "Off" {
-            return Some(format!(
+            return Some(said!(
                 "`{name}`: `Off` is what a group holds when nothing is chosen, so no button can have it as its value"
             ));
         }
     } else if kind != Kind::Dropdown {
-        return (!options.is_empty()).then(|| format!("`{name}`: only a dropdown has choices"));
+        return (!options.is_empty()).then(|| said!("`{name}`: only a dropdown has choices"));
     }
     if options.is_empty() {
-        return Some(format!("`{name}`: a dropdown needs at least one choice"));
+        return Some(said!("`{name}`: a dropdown needs at least one choice"));
     }
     if options.len() > MAX_OPTIONS {
-        return Some(format!(
-            "`{name}`: {} choices is more than the {MAX_OPTIONS} a dropdown offers",
-            options.len()
+        return Some(said!(
+            "`{name}`: {count} choices is more than the {MAX_OPTIONS} a dropdown offers",
+            count = options.len()
         ));
     }
     let mut seen = HashSet::new();
     for option in options {
         if option.trim().is_empty() {
-            return Some(format!("`{name}`: a choice cannot be empty"));
+            return Some(said!("`{name}`: a choice cannot be empty"));
         }
         if option != option.trim() {
-            return Some(format!(
+            return Some(said!(
                 "`{name}`: the choice `{option}` begins or ends with a space"
             ));
         }
         if option.chars().any(char::is_control) {
-            return Some(format!(
+            return Some(said!(
                 "`{name}`: a choice cannot contain a control character"
             ));
         }
         if option.chars().count() > MAX_OPTION {
-            return Some(format!(
+            return Some(said!(
                 "`{name}`: a choice is at most {MAX_OPTION} characters"
             ));
         }
         if !seen.insert(option.as_str()) {
-            return Some(format!("`{name}`: the choice `{option}` is there twice"));
+            return Some(said!("`{name}`: the choice `{option}` is there twice"));
         }
     }
     None
@@ -406,23 +406,23 @@ pub fn options_problem(name: &str, kind: Kind, options: &[String]) -> Option<Str
 /// Whether `name` can be a field's name, and why not.
 pub fn name_problem(name: &str) -> Option<String> {
     if name.trim().is_empty() {
-        return Some("a field needs a name".into());
+        return Some(said!("a field needs a name"));
     }
     if name != name.trim() {
-        return Some(format!("the name `{name}` begins or ends with a space"));
+        return Some(said!("the name `{name}` begins or ends with a space"));
     }
     if name.contains('.') {
         // §12.7.4.2: a period separates a field from its parent in a full name.
-        return Some(format!(
+        return Some(said!(
             "the name `{name}` contains a period, which a form uses to separate a field from \
              the group it is in"
         ));
     }
     if name.chars().any(char::is_control) {
-        return Some("a field's name cannot contain a control character".into());
+        return Some(said!("a field's name cannot contain a control character"));
     }
     if name.chars().count() > MAX_NAME {
-        return Some(format!("a field's name is at most {MAX_NAME} characters"));
+        return Some(said!("a field's name is at most {MAX_NAME} characters"));
     }
     None
 }
@@ -448,14 +448,15 @@ fn placed(doc: &Document, page: ObjectId, field: &NewField) -> Result<[f64; 4], 
     let name = &field.name;
     let [left, top, width, height] = field.rect;
     if !field.rect.iter().all(|v| v.is_finite()) {
-        return Err(format!("`{name}`: its rectangle is not four numbers"));
+        return Err(said!("`{name}`: its rectangle is not four numbers"));
     }
     let least = least_side(field.kind);
     if width < least || height < least {
-        return Err(format!(
-            "`{name}`: {width} by {height} points is too small --- a {} needs at least {least} \
-             by {least}",
-            match field.kind {
+        return Err(said!(
+            "`{name}`: {width} by {height} points is too small --- a {kind} needs at least \
+             {least} by {least_high}",
+            least_high = least,
+            kind = match field.kind {
                 Kind::Checkbox => "checkbox",
                 Kind::Radio => "radio button",
                 Kind::Signature => "signature field",
@@ -472,10 +473,11 @@ fn placed(doc: &Document, page: ObjectId, field: &NewField) -> Result<[f64; 4], 
         || left + width > page_width + 0.01
         || top + height > page_height + 0.01
     {
-        return Err(format!(
-            "`{name}`: its rectangle is not inside page {}, which is {page_width} by \
-             {page_height} points",
-            field.page + 1
+        return Err(said!(
+            "`{name}`: its rectangle is not inside page {page}, which is {width} by {height} points",
+            page = field.page + 1,
+            width = page_width,
+            height = page_height
         ));
     }
     Ok(crate::pagetree::from_displayed(
@@ -495,9 +497,9 @@ pub fn check(
 ) -> Result<Vec<(ObjectId, [f64; 4])>, Vec<String>> {
     let mut problems = Vec::new();
     if fields.len() > MAX_NEW {
-        return Err(vec![format!(
-            "{} fields is more than the {MAX_NEW} one call adds",
-            fields.len()
+        return Err(vec![said!(
+            "{count} fields is more than the {MAX_NEW} one call adds",
+            count = fields.len()
         )]);
     }
     // Refuses an XFA form and one past the scan's limits, which are documents
@@ -521,48 +523,48 @@ pub fn check(
         if let Some(why) = name_problem(&field.name) {
             problems.push(why);
         } else if existing.contains(&field.name) && group.is_none() {
-            problems.push(format!(
-                "`{}`: the form already has a field of this name",
-                field.name
+            problems.push(said!(
+                "`{name}`: the form already has a field of this name",
+                name = field.name
             ));
         } else if seen
             .insert(field.name.as_str(), field.kind)
             .is_some_and(|before| !(radio && before == Kind::Radio))
         {
-            problems.push(format!("`{}` is named more than once", field.name));
+            problems.push(said!("`{name}` is named more than once", name = field.name));
         }
         if let (true, Some(value)) = (radio, field.options.first()) {
             let held = group
                 .is_some_and(|group| radio_values(doc, group).contains(&value.as_bytes().to_vec()));
             if held || !values.insert((field.name.as_str(), value.as_bytes().to_vec())) {
-                problems.push(format!(
-                    "`{}`: the group already has a button with the value `{value}`",
-                    field.name
+                problems.push(said!(
+                    "`{name}`: the group already has a button with the value `{value}`",
+                    name = field.name
                 ));
             }
         }
         if field.kind == Kind::Radio && field.max_length.is_some() {
-            problems.push(format!(
-                "`{}`: a radio button takes no characters, so it has no most",
-                field.name
+            problems.push(said!(
+                "`{name}`: a radio button takes no characters, so it has no most",
+                name = field.name
             ));
         }
         if field.kind == Kind::Checkbox && field.max_length.is_some() {
-            problems.push(format!(
-                "`{}`: a checkbox takes no characters, so it has no most",
-                field.name
+            problems.push(said!(
+                "`{name}`: a checkbox takes no characters, so it has no most",
+                name = field.name
             ));
         }
         if field.kind == Kind::Signature && field.max_length.is_some() {
-            problems.push(format!(
-                "`{}`: a signature field takes no characters, so it has no most",
-                field.name
+            problems.push(said!(
+                "`{name}`: a signature field takes no characters, so it has no most",
+                name = field.name
             ));
         }
         if field.kind == Kind::Dropdown && field.max_length.is_some() {
-            problems.push(format!(
-                "`{}`: a dropdown takes one of its choices, so it has no most characters",
-                field.name
+            problems.push(said!(
+                "`{name}`: a dropdown takes one of its choices, so it has no most characters",
+                name = field.name
             ));
         }
         if let Some(why) = options_problem(&field.name, field.kind, &field.options) {
@@ -572,9 +574,9 @@ pub fn check(
             .max_length
             .is_some_and(|most| !(1..=16384).contains(&most))
         {
-            problems.push(format!(
-                "`{}`: the most characters is a number from 1 to 16384",
-                field.name
+            problems.push(said!(
+                "`{name}`: the most characters is a number from 1 to 16384",
+                name = field.name
             ));
         }
         if field
@@ -582,9 +584,9 @@ pub fn check(
             .as_ref()
             .is_some_and(|tip| tip.chars().count() > 1024)
         {
-            problems.push(format!(
-                "`{}`: a tooltip is at most 1024 characters",
-                field.name
+            problems.push(said!(
+                "`{name}`: a tooltip is at most 1024 characters",
+                name = field.name
             ));
         }
         if let Some(why) = text_problem(
@@ -597,11 +599,11 @@ pub fn check(
             problems.push(why);
         }
         let Some(page) = pages.get(field.page as usize) else {
-            problems.push(format!(
-                "`{}`: there is no page {}; the document has {}",
-                field.name,
-                u64::from(field.page) + 1,
-                pages.len()
+            problems.push(said!(
+                "`{name}`: there is no page {page}; the document has {count}",
+                name = field.name,
+                page = u64::from(field.page) + 1,
+                count = pages.len()
             ));
             continue;
         };
@@ -642,7 +644,7 @@ fn form_id(doc: &Document) -> Option<ObjectId> {
 fn ensure_form(doc: &mut Document) -> Result<ObjectId, String> {
     if let Some(id) = form_id(doc) {
         doc.get_dictionary(id)
-            .map_err(|_| "the document's form is not a dictionary")?;
+            .map_err(|_| said!("the document's form is not a dictionary"))?;
         return Ok(id);
     }
     let direct = doc
@@ -653,7 +655,7 @@ fn ensure_form(doc: &mut Document) -> Result<ObjectId, String> {
         .map(|o| o.as_dict().cloned());
     let form = match direct {
         Some(Ok(form)) => form,
-        Some(Err(_)) => return Err("the document's form is not a dictionary".into()),
+        Some(Err(_)) => return Err(said!("the document's form is not a dictionary")),
         None => dictionary! { "Fields" => Vec::<Object>::new() },
     };
     let id = doc.add_object(form);
@@ -711,7 +713,7 @@ fn append(doc: &mut Document, owner: ObjectId, key: &[u8], item: ObjectId) -> Re
         Some(Object::Reference(array)) => doc
             .get_object_mut(array)
             .and_then(Object::as_array_mut)
-            .map_err(|_| format!("/{} is not a list", String::from_utf8_lossy(key)))?
+            .map_err(|_| said!("/{key} is not a list", key = String::from_utf8_lossy(key)))?
             .push(item.into()),
         Some(Object::Array(mut items)) => {
             items.push(item.into());
@@ -719,7 +721,12 @@ fn append(doc: &mut Document, owner: ObjectId, key: &[u8], item: ObjectId) -> Re
                 .map_err(|e| e.to_string())?
                 .set(key, items);
         }
-        Some(_) => return Err(format!("/{} is not a list", String::from_utf8_lossy(key))),
+        Some(_) => {
+            return Err(said!(
+                "/{key} is not a list",
+                key = String::from_utf8_lossy(key)
+            ))
+        }
         None => doc
             .get_dictionary_mut(owner)
             .map_err(|e| e.to_string())?
@@ -1011,9 +1018,10 @@ fn radio(
         }
     };
     if radio_values(doc, group).contains(&to.value.as_bytes().to_vec()) {
-        return Err(format!(
-            "`{}`: the group already has a button with the value `{}`",
-            to.name, to.value
+        return Err(said!(
+            "`{name}`: the group already has a button with the value `{value}`",
+            name = to.name,
+            value = to.value
         ));
     }
     let mut flags = forms::integer(doc, group, b"Ff");
@@ -1118,14 +1126,13 @@ pub fn place(
     // A radio button joins the group of its name; anything else needs a
     // name the form does not have.
     if taken(doc)?.contains(name) && !(kind == Kind::Radio && radio_group(doc, name).is_some()) {
-        return Err(format!(
-            "`{name}`: the form already has a field of this name"
-        ));
+        return Err(said!("`{name}`: the form already has a field of this name"));
     }
     let least = least_side(kind);
     if rect[2] - rect[0] < least || rect[3] - rect[1] < least {
-        return Err(format!(
-            "`{name}`: a field of this kind needs at least {least} by {least} points"
+        return Err(said!(
+            "`{name}`: a field of this kind needs at least {least} by {least_high} points",
+            least_high = least
         ));
     }
     let form = ensure_form(doc)?;
@@ -1206,7 +1213,7 @@ pub(crate) fn redraw_signature(doc: &mut Document, widget: ObjectId) -> Result<(
         .filter_map(|v| v.as_float().ok().map(f64::from))
         .collect();
     let [left, bottom, right, top] = rect[..] else {
-        return Err("a signature field's rectangle is not four numbers".into());
+        return Err(said!("a signature field's rectangle is not four numbers"));
     };
     let look = dict
         .get(b"MK")

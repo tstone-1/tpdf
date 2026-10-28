@@ -105,37 +105,37 @@ impl Props {
     pub fn problem(&self, name: &str) -> Option<String> {
         if let Some(tip) = &self.tooltip {
             if tip.chars().count() > MAX_TOOLTIP {
-                return Some(format!(
+                return Some(said!(
                     "`{name}`: a tooltip is at most {MAX_TOOLTIP} characters"
                 ));
             }
             if tip.chars().any(|ch| ch.is_control() && ch != '\n') {
-                return Some(format!(
+                return Some(said!(
                     "`{name}`: a tooltip cannot contain a control character"
                 ));
             }
         }
         if self.max_length.is_some_and(|most| most > MAX_LENGTH) {
-            return Some(format!(
+            return Some(said!(
                 "`{name}`: the most characters is a number up to {MAX_LENGTH}"
             ));
         }
         if let Some(size) = self.text_size {
             let (least, most) = (forms::MIN_TEXT_SIZE, forms::MAX_TEXT_SIZE);
             if size != 0.0 && !(least..=most).contains(&size) {
-                return Some(format!(
+                return Some(said!(
                     "`{name}`: a text size is {least} to {most} points, or nought for one that follows the field"
                 ));
             }
         }
         if let Some(default) = &self.default_value {
             if default.chars().count() > MAX_LENGTH as usize {
-                return Some(format!(
+                return Some(said!(
                     "`{name}`: a default value is at most {MAX_LENGTH} characters"
                 ));
             }
             if default.chars().any(|ch| ch.is_control() && ch != '\n') {
-                return Some(format!(
+                return Some(said!(
                     "`{name}`: a default value cannot contain a control character"
                 ));
             }
@@ -196,7 +196,7 @@ fn revalued<'a>(
 ) -> Result<Option<Revalued<'a>>, String> {
     let name = &widget.name;
     let Control::Radio { index, states, .. } = &widget.control else {
-        return Err(format!(
+        return Err(said!(
             "`{name}`: only a radio button has a value it gives its group"
         ));
     };
@@ -208,18 +208,18 @@ fn revalued<'a>(
         .as_deref()
         .filter(|why| *why != forms::READ_ONLY);
     if let Some(reason) = unanswerable {
-        return Err(format!("`{name}` keeps its value: {reason}"));
+        return Err(said!("`{name}` keeps its value: {reason}"));
     }
     // With `/Opt` the group exports what that list says and the state names
     // are only places in it, so a new name would change nothing a recipient reads.
     if forms::inherited(doc, widget.object, b"Opt").is_some() {
-        return Err(format!(
+        return Err(said!(
             "`{name}` keeps its value: the group lists what its buttons export, which tpdf does not rewrite"
         ));
     }
     let was = states
         .get(*index)
-        .ok_or("a radio button is not among its group's states")?;
+        .ok_or_else(|| said!("a radio button is not among its group's states"))?;
     let to = value.as_bytes().to_vec();
     if *was == to {
         return Ok(None);
@@ -232,14 +232,14 @@ fn revalued<'a>(
             .map(|(_, state)| state)
     };
     if others().any(|state| *state == to) {
-        return Err(format!(
+        return Err(said!(
             "`{name}`: the group already has a button with the value `{value}`"
         ));
     }
     // Buttons that share a value are chosen together. Renaming one would
     // take it out of that, which is a different change from the one asked for.
     if others().any(|state| state == was) {
-        return Err(format!(
+        return Err(said!(
             "`{name}` keeps its value: another button of the group has the same one, and they are chosen together"
         ));
     }
@@ -356,24 +356,25 @@ fn is_signature(doc: &Document, field: ObjectId) -> bool {
 fn placed(doc: &Document, widget: &Widget, rect: [f32; 4]) -> Result<[f64; 4], String> {
     let name = &widget.name;
     if !rect.iter().all(|v| v.is_finite()) {
-        return Err(format!("`{name}`: its rectangle is not four numbers"));
+        return Err(said!("`{name}`: its rectangle is not four numbers"));
     }
     let [left, top, right, bottom] = rect.map(f64::from);
     let least = least_side(&widget.control);
     if right - left < least || bottom - top < least {
-        return Err(format!(
-            "`{name}`: a field of this kind is at least {least} by {least} points"
+        return Err(said!(
+            "`{name}`: a field of this kind is at least {least} by {least_high} points",
+            least_high = least
         ));
     }
     let page = *crate::pagetree::ordered_pages(doc)
         .get(widget.page as usize)
-        .ok_or_else(|| format!("`{name}`: its page is no longer in this document"))?;
+        .ok_or_else(|| said!("`{name}`: its page is no longer in this document"))?;
     let geometry = crate::pagetree::displayed_page(doc, page);
     let (width, height) = (f64::from(geometry.width), f64::from(geometry.height));
     if left < -0.01 || top < -0.01 || right > width + 0.01 || bottom > height + 0.01 {
-        return Err(format!(
-            "`{name}`: its rectangle is not inside page {}, which is {width} by {height} points",
-            widget.page + 1
+        return Err(said!(
+            "`{name}`: its rectangle is not inside page {page}, which is {width} by {height} points",
+            page = widget.page + 1
         ));
     }
     Ok(crate::pagetree::from_displayed(
@@ -494,24 +495,28 @@ fn fields_beside(doc: &Document, field: ObjectId) -> Vec<(ObjectId, String)> {
 fn remove(doc: &mut Document, widget: &Widget) -> Result<(), String> {
     let page = *crate::pagetree::ordered_pages(doc)
         .get(widget.page as usize)
-        .ok_or("the field's page is no longer in this document")?;
-    let annots = list_at(doc, page, b"Annots").ok_or("the field's page lists no annotations")?;
-    take(doc, &annots, widget.widget).ok_or("the page's annotations could not be changed")?;
+        .ok_or_else(|| said!("the field's page is no longer in this document"))?;
+    let annots = list_at(doc, page, b"Annots")
+        .ok_or_else(|| said!("the field's page lists no annotations"))?;
+    take(doc, &annots, widget.widget)
+        .ok_or_else(|| said!("the page's annotations could not be changed"))?;
 
     let mut gone = widget.widget;
     if widget.widget != widget.object {
         // One of several widgets under a field: out of that field's kids, and
         // the field goes too only when none is left.
-        let kids = list_at(doc, widget.object, b"Kids").ok_or("the field lists no widgets")?;
-        let left =
-            take(doc, &kids, widget.widget).ok_or("the field's widgets could not be changed")?;
+        let kids = list_at(doc, widget.object, b"Kids")
+            .ok_or_else(|| said!("the field lists no widgets"))?;
+        let left = take(doc, &kids, widget.widget)
+            .ok_or_else(|| said!("the field's widgets could not be changed"))?;
         if left > 0 {
             return Ok(());
         }
         gone = widget.object;
     }
-    let beside = siblings(doc, gone).ok_or("the form's field list could not be found")?;
-    take(doc, &beside, gone).ok_or("the form's field list could not be changed")?;
+    let beside =
+        siblings(doc, gone).ok_or_else(|| said!("the form's field list could not be found"))?;
+    take(doc, &beside, gone).ok_or_else(|| said!("the form's field list could not be changed"))?;
     // The calculation order names fields too, and a name left there is a
     // reference that keeps the removed field in the file.
     let root = doc.trailer.get(b"Root").and_then(Object::as_reference).ok();
@@ -547,39 +552,39 @@ fn propertied<'a>(widget: &'a Widget, props: &'a Props) -> Result<Propertied<'a>
     }
     if let Some(most) = props.max_length {
         if !matches!(widget.control, Control::Text) {
-            return Err(format!("`{name}`: only a text field has a most characters"));
+            return Err(said!("`{name}`: only a text field has a most characters"));
         }
         let holds = match &widget.value {
             Value::Text(text) => text.chars().count(),
             _ => 0,
         };
         if most > 0 && holds > most as usize {
-            return Err(format!(
+            return Err(said!(
                 "`{name}` holds {holds} characters, which is more than the {most} it would take"
             ));
         }
     }
     let drawn_by_tpdf = matches!(widget.control, Control::Text | Control::Choice { .. });
     if props.align.is_some() && !drawn_by_tpdf {
-        return Err(format!(
+        return Err(said!(
             "`{name}`: only a text field or a field of choices has text to align"
         ));
     }
     if props.options.is_some() && !matches!(widget.control, Control::Choice { .. }) {
-        return Err(format!("`{name}`: only a field of choices has choices"));
+        return Err(said!("`{name}`: only a field of choices has choices"));
     }
     if props.text_size.is_some() && !drawn_by_tpdf {
-        return Err(format!(
+        return Err(said!(
             "`{name}`: only a text field or a field of choices has a text size"
         ));
     }
     let mut answered = None;
     if let Some(default) = &props.default_value {
         if !matches!(widget.control, Control::Text) {
-            return Err(format!("`{name}`: only a text field has a default value"));
+            return Err(said!("`{name}`: only a text field has a default value"));
         }
         if !widget.multiline && default.contains('\n') {
-            return Err(format!(
+            return Err(said!(
                 "`{name}` takes one line, and its default value has several"
             ));
         }
@@ -590,7 +595,7 @@ fn propertied<'a>(widget: &'a Widget, props: &'a Props) -> Result<Propertied<'a>
         };
         let holds = default.chars().count();
         if most.is_some_and(|most| holds > most) {
-            return Err(format!(
+            return Err(said!(
                 "`{name}`: the default value has {holds} characters, which is more than the field takes"
             ));
         }
@@ -611,7 +616,7 @@ fn propertied<'a>(widget: &'a Widget, props: &'a Props) -> Result<Propertied<'a>
         // Read-only is no obstacle: the flag is lifted while the field is
         // drawn and put back after. Any other reason is one tpdf cannot draw.
         if let Some(reason) = widget.reason.as_deref().filter(|r| *r != forms::READ_ONLY) {
-            return Err(format!(
+            return Err(said!(
                 "`{name}` keeps its alignment, text size, default value and choices: {reason}, so tpdf cannot redraw it"
             ));
         }
@@ -731,9 +736,9 @@ pub fn apply(doc: &mut Document, edits: &[FieldEdit]) -> Result<(), String> {
         return Ok(());
     }
     if edits.len() > MAX_EDITS {
-        return Err(format!(
-            "{} field changes is more than the {MAX_EDITS} one save makes",
-            edits.len()
+        return Err(said!(
+            "{count} field changes is more than the {MAX_EDITS} one save makes",
+            count = edits.len()
         ));
     }
     let form = forms::scan(doc)?;
@@ -747,22 +752,22 @@ pub fn apply(doc: &mut Document, edits: &[FieldEdit]) -> Result<(), String> {
     let mut resigned: Vec<ObjectId> = Vec::new();
     for edit in edits {
         if !seen.insert(edit.widget) {
-            return Err("a form field is changed twice".into());
+            return Err(said!("a form field is changed twice"));
         }
         let widget = form
             .widgets
             .iter()
             .find(|w| w.widget == edit.widget)
-            .ok_or("The form field is no longer in this document")?;
+            .ok_or_else(|| said!("The form field is no longer in this document"))?;
         // An empty one is a rectangle like any other field. A signed one is
         // covered by its signature, and a change to it is a change to a
         // signed document.
         if is_signature(doc, widget.object)
             && !matches!(widget.control, Control::Signature { signed: false })
         {
-            return Err(format!(
-                "`{}` is a signed signature field, which tpdf does not move, rename or remove",
-                widget.name
+            return Err(said!(
+                "`{name}` is a signed signature field, which tpdf does not move, rename or remove",
+                name = widget.name
             ));
         }
         // Before a removal is set aside: a field shown in several places
@@ -773,7 +778,10 @@ pub fn apply(doc: &mut Document, edits: &[FieldEdit]) -> Result<(), String> {
                 .get(&widget.object)
                 .is_some_and(|other| other.props != to.props)
             {
-                return Err(format!("`{}` is given two sets of properties", widget.name));
+                return Err(said!(
+                    "`{name}` is given two sets of properties",
+                    name = widget.name
+                ));
             }
             properties.insert(widget.object, to);
         }
@@ -789,7 +797,7 @@ pub fn apply(doc: &mut Document, edits: &[FieldEdit]) -> Result<(), String> {
                 return Err(why);
             }
             if names.get(&widget.object).is_some_and(|other| other != name) {
-                return Err(format!("`{}` is given two names", widget.name));
+                return Err(said!("`{name}` is given two names", name = widget.name));
             }
             names.insert(widget.object, name.clone());
         }
@@ -804,9 +812,9 @@ pub fn apply(doc: &mut Document, edits: &[FieldEdit]) -> Result<(), String> {
             let drawn_by_tpdf = matches!(widget.control, Control::Text | Control::Choice { .. });
             if resized && drawn_by_tpdf {
                 if let Some(reason) = &widget.reason {
-                    return Err(format!(
-                        "`{}` can be moved and not resized: {reason}, so tpdf cannot redraw it",
-                        widget.name
+                    return Err(said!(
+                        "`{name}` can be moved and not resized: {reason}, so tpdf cannot redraw it",
+                        name = widget.name
                     ));
                 }
                 redraw.insert(widget.object, widget.value.clone());
@@ -836,7 +844,7 @@ pub fn apply(doc: &mut Document, edits: &[FieldEdit]) -> Result<(), String> {
             !removed_fields.contains(&other) && names.get(&other).unwrap_or(&has) == name
         });
         if taken {
-            return Err(format!("`{name}`: another field has this name"));
+            return Err(said!("`{name}`: another field has this name"));
         }
     }
 

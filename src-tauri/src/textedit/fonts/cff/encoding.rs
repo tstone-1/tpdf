@@ -9,7 +9,7 @@ use ttf_parser::{cff::Table, GlyphId};
 // table of format 0 (a code per glyph) or 1 (ranges of codes) giving codes to
 // glyphs 1, 2, ... in charset order. Expert and supplementary codes are refused.
 pub(super) fn builtin(bytes: &[u8], face: &Table<'_>) -> Result<Builtin, String> {
-    let invalid = || "unsupported CFF built-in encoding".to_string();
+    let invalid = || said!("unsupported CFF built-in encoding");
     let top = super::profile::top(bytes).ok_or_else(invalid)?;
     let offset = match top.get(&16).map(|values| values[0]) {
         None | Some(0.) => return Ok(Builtin::Standard),
@@ -73,7 +73,7 @@ const EXTRA: [(&str, u8); 10] = [
 ];
 
 pub(super) fn slots(doc: &Document, font: &Dictionary) -> Result<Encoding, String> {
-    let invalid = || "unsupported or ambiguous CFF encoding".to_string();
+    let invalid = || said!("unsupported or ambiguous CFF encoding");
     let mut slots = Box::new([None; 256]);
     let mut names = Box::new([""; 256]);
     for code in 32..=126 {
@@ -146,7 +146,7 @@ pub(super) fn slots(doc: &Document, font: &Dictionary) -> Result<Encoding, Strin
                                         .map(|(_, text, slot)| (text, slot)),
                                 )
                                 .find(|(candidate, _)| candidate.as_bytes() == name)
-                                .ok_or(super::UNNAMED)?;
+                                .ok_or_else(super::unnamed)?;
                             names[code] = glyph_name;
                             Some(slot)
                         };
@@ -170,7 +170,7 @@ pub(super) fn slots(doc: &Document, font: &Dictionary) -> Result<Encoding, Strin
         let unicode = super::super::mapping::parse_cff(stream)?;
         for (slot, target) in slots.iter_mut().zip(unicode.iter()) {
             if target.is_some() && target != slot {
-                return Err("CFF ToUnicode disagrees with its glyph encoding".into());
+                return Err(said!("CFF ToUnicode disagrees with its glyph encoding"));
             }
             // A present but partial ToUnicode map supplies no evidence for
             // omitted codes. Refuse their text instead of guessing a fallback.

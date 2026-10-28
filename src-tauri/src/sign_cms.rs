@@ -140,7 +140,7 @@ pub fn named(der: &[u8]) -> String {
         .map(|c| crate::docinfo::common_name(&c.tbs_certificate.subject))
         .ok()
         .filter(|name| !name.is_empty())
-        .unwrap_or_else(|| "(a certificate with no readable name)".into())
+        .unwrap_or_else(|| said!("(a certificate with no readable name)"))
 }
 
 /// One signature in the file just written, as the worker's verifier read it.
@@ -267,8 +267,10 @@ pub fn report(
 /// `dirty` is true.
 pub fn refuse_unsaved(dirty: bool) -> Result<(), String> {
     if dirty {
-        return Err("Save your changes first: a signature covers the file as it is on disk,                     and this document has edits that are not in it yet."
-            .into());
+        return Err(said!(
+            "Save your changes first: a signature covers the file as it is on disk, \
+             and this document has edits that are not in it yet."
+        ));
     }
     Ok(())
 }
@@ -286,10 +288,10 @@ pub fn refuse_unsaved(dirty: bool) -> Result<(), String> {
 /// `len` is over the bound.
 pub fn refuse_too_large(len: u64) -> Result<(), String> {
     if len > crate::save::APPEND_MAX_BYTES {
-        return Err(format!(
-            "This document is {} MB, and tpdf signs documents of up to {} MB.",
-            len / 1_000_000,
-            crate::save::APPEND_MAX_BYTES / 1_000_000
+        return Err(said!(
+            "This document is {mb} MB, and tpdf signs documents of up to {most} MB.",
+            mb = len / 1_000_000,
+            most = crate::save::APPEND_MAX_BYTES / 1_000_000
         ));
     }
     Ok(())
@@ -386,9 +388,9 @@ pub fn key_kind(certificate: &Certificate) -> Result<KeyKind, String> {
                         (significant.len() - 1) * 8 + (8 - top.leading_zeros() as usize)
                     })
                 })
-                .ok_or("its RSA key could not be read")?;
+                .ok_or_else(|| said!("its RSA key could not be read"))?;
             if bits < MIN_RSA_BITS {
-                return Err(format!(
+                return Err(said!(
                     "its RSA key has {bits} bits, and tpdf signs only with {MIN_RSA_BITS} or more"
                 ));
             }
@@ -404,10 +406,14 @@ pub fn key_kind(certificate: &Certificate) -> Result<KeyKind, String> {
             match curve.as_deref() {
                 Some("1.2.840.10045.3.1.7") => Ok(KeyKind::P256),
                 Some("1.3.132.0.34") => Ok(KeyKind::P384),
-                _ => Err("its key is on an elliptic curve tpdf does not sign with".into()),
+                _ => Err(said!(
+                    "its key is on an elliptic curve tpdf does not sign with"
+                )),
             }
         }
-        _ => Err("its key is of a kind tpdf does not sign with (only RSA and ECDSA)".into()),
+        _ => Err(said!(
+            "its key is of a kind tpdf does not sign with (only RSA and ECDSA)"
+        )),
     }
 }
 
@@ -435,7 +441,7 @@ pub fn key_kind(certificate: &Certificate) -> Result<KeyKind, String> {
 /// The reason it is not offered, as a clause a reader can be shown.
 pub fn usable(certificate_der: &[u8], now: u64) -> Result<Offer, String> {
     let certificate =
-        Certificate::from_der(certificate_der).map_err(|_| "it could not be read".to_string())?;
+        Certificate::from_der(certificate_der).map_err(|_| said!("it could not be read"))?;
     let kind = key_kind(&certificate)?;
     let validity = &certificate.tbs_certificate.validity;
     let (from, until) = (
@@ -443,14 +449,14 @@ pub fn usable(certificate_der: &[u8], now: u64) -> Result<Offer, String> {
         validity.not_after.to_unix_duration().as_secs(),
     );
     if now < from {
-        return Err("it is not valid yet".into());
+        return Err(said!("it is not valid yet"));
     }
     if now > until {
-        return Err("it has expired".into());
+        return Err(said!("it has expired"));
     }
     if let Some(usage) = key_usage(&certificate)? {
         if !usage.digital_signature() && !usage.non_repudiation() {
-            return Err("it is not issued for signing".into());
+            return Err(said!("it is not issued for signing"));
         }
     }
     if let Some(purposes) = extended_key_usage(&certificate)? {
@@ -458,9 +464,9 @@ pub fn usable(certificate_der: &[u8], now: u64) -> Result<Offer, String> {
             .iter()
             .any(|purpose| DOCUMENT_PURPOSES.contains(&purpose.as_str()))
         {
-            return Err(format!(
-                "it is issued for {}, not for signing documents",
-                purposes_named(&purposes)
+            return Err(said!(
+                "it is issued for {purposes}, not for signing documents",
+                purposes = purposes_named(&purposes)
             ));
         }
     }
@@ -529,7 +535,7 @@ fn extended_key_usage(certificate: &Certificate) -> Result<Option<Vec<String>>, 
     };
     x509_cert::ext::pkix::ExtendedKeyUsage::from_der(extension.extn_value.as_bytes())
         .map(|usage| Some(usage.0.iter().map(ToString::to_string).collect()))
-        .map_err(|_| "its extended key usage could not be read".to_string())
+        .map_err(|_| said!("its extended key usage could not be read"))
 }
 
 /// The key usage the certificate states, or `None` when it states none.
@@ -545,7 +551,7 @@ fn key_usage(certificate: &Certificate) -> Result<Option<x509_cert::ext::pkix::K
     };
     x509_cert::ext::pkix::KeyUsage::from_der(extension.extn_value.as_bytes())
         .map(Some)
-        .map_err(|_| "its key usage could not be read".to_string())
+        .map_err(|_| said!("its key usage could not be read"))
 }
 
 /// ESS `IssuerSerial`, RFC 5035.
@@ -663,8 +669,8 @@ pub fn build(
     key: &dyn Key,
 ) -> Result<Vec<u8>, String> {
     let signer = Certificate::from_der(certificate)
-        .map_err(|e| format!("the signing certificate could not be read: {e}"))?;
-    let kind = key_kind(&signer).map_err(|why| format!("this certificate cannot sign: {why}"))?;
+        .map_err(|e| said!("the signing certificate could not be read: {e}"))?;
+    let kind = key_kind(&signer).map_err(|why| said!("this certificate cannot sign: {why}"))?;
     let encapsulated = EncapsulatedContentInfo {
         econtent_type: ID_DATA,
         econtent: None,
@@ -682,25 +688,27 @@ pub fn build(
         kind,
         refused: RefCell::new(None),
     };
-    let failed = |what: &str, e: &dyn std::fmt::Display| format!("{what}: {e}");
-
     let mut info =
         SignerInfoBuilder::new(&signing, sid, sha256.clone(), &encapsulated, Some(digest))
-            .map_err(|e| failed("the signer could not be described", &e))?;
+            .map_err(|e| said!("the signer could not be described: {e}"))?;
     info.add_signed_attribute(signing_certificate(&signer, certificate)?)
-        .map_err(|e| failed("the signing certificate could not be named", &e))?;
+        .map_err(|e| said!("the signing certificate could not be named: {e}"))?;
 
     let mut data = SignedDataBuilder::new(&encapsulated);
     data.add_digest_algorithm(sha256)
-        .map_err(|e| failed("the digest could not be named", &e))?;
+        .map_err(|e| said!("the digest could not be named: {e}"))?;
     data.add_certificate(CertificateChoices::Certificate(signer.clone()))
-        .map_err(|e| failed("the certificate could not be included", &e))?;
+        .map_err(|e| said!("the certificate could not be included: {e}"))?;
     for (at, der) in chain.iter().enumerate() {
-        let issuer = Certificate::from_der(der)
-            .map_err(|e| format!("certificate {} of the chain could not be read: {e}", at + 1))?;
+        let issuer = Certificate::from_der(der).map_err(|e| {
+            said!(
+                "certificate {number} of the chain could not be read: {e}",
+                number = at + 1
+            )
+        })?;
         if issuer != signer {
             data.add_certificate(CertificateChoices::Certificate(issuer))
-                .map_err(|e| failed("the chain could not be included", &e))?;
+                .map_err(|e| said!("the chain could not be included: {e}"))?;
         }
     }
     if let Err(e) = data.add_signer_info::<Signing<'_>, Value>(info) {
@@ -708,12 +716,12 @@ pub fn build(
             .refused
             .borrow_mut()
             .take()
-            .unwrap_or_else(|| format!("the signature could not be made: {e}")));
+            .unwrap_or_else(|| said!("the signature could not be made: {e}")));
     }
     data.build()
-        .map_err(|e| failed("the signature could not be assembled", &e))?
+        .map_err(|e| said!("the signature could not be assembled: {e}"))?
         .to_der()
-        .map_err(|e| failed("the signature could not be encoded", &e))
+        .map_err(|e| said!("the signature could not be encoded: {e}"))
 }
 
 /// Converts an `r || s` ECDSA signature to the DER `ECDSA-Sig-Value` CMS wants.
@@ -729,9 +737,9 @@ pub fn build(
 /// An odd or empty input, which no curve produces.
 pub fn ecdsa_der(raw: &[u8]) -> Result<Vec<u8>, String> {
     if raw.is_empty() || raw.len() % 2 != 0 {
-        return Err(format!(
-            "an ECDSA signature of {} bytes has no halves",
-            raw.len()
+        return Err(said!(
+            "an ECDSA signature of {bytes} bytes has no halves",
+            bytes = raw.len()
         ));
     }
     let (r, s) = raw.split_at(raw.len() / 2);
@@ -802,19 +810,21 @@ fn framed(range: [u64; 4], was: usize, update: usize) -> bool {
 pub fn check(original: &[u8], unsigned: &Unsigned) -> Result<[u8; 32], String> {
     let was = original.len();
     let changed = |what: &str| {
-        format!(
+        said!(
             "the prepared signature {what}, so it was not built for the file on disk --- \
              reopen the document and sign again"
         )
     };
     if unsigned.built_against != was {
-        return Err(changed(&format!(
-            "was built against {} bytes and the file has {was}",
-            unsigned.built_against
+        return Err(changed(&said!(
+            "was built against {built} bytes and the file has {was}",
+            built = unsigned.built_against
         )));
     }
     if !framed(unsigned.range, was, unsigned.update.len()) {
-        return Err(changed("covers a range that does not frame its own value"));
+        return Err(changed(&said!(
+            "covers a range that does not frame its own value"
+        )));
     }
     let [_, first, second, _] = unsigned
         .range
@@ -824,9 +834,9 @@ pub fn check(original: &[u8], unsigned: &Unsigned) -> Result<[u8; 32], String> {
         && hole.last() == Some(&b'>')
         && hole[1..hole.len() - 1].iter().all(|b| *b == b'0');
     if !zeros {
-        return Err(changed(
-            "has something other than an empty value in its hole",
-        ));
+        return Err(changed(&said!(
+            "has something other than an empty value in its hole"
+        )));
     }
     let mut hasher = sha2_10::Sha256::new();
     hasher.update(original);
@@ -834,9 +844,9 @@ pub fn check(original: &[u8], unsigned: &Unsigned) -> Result<[u8; 32], String> {
     hasher.update(&unsigned.update[second - was..]);
     let digest: [u8; 32] = hasher.finalize().into();
     if unsigned.digest != digest {
-        return Err(changed(
-            "states a digest that is not the one of its own bytes",
-        ));
+        return Err(changed(&said!(
+            "states a digest that is not the one of its own bytes"
+        )));
     }
     Ok(digest)
 }
@@ -854,10 +864,10 @@ pub fn splice(
     blob: &[u8],
 ) -> Result<(), String> {
     if blob.len() > STEP_TWO_LIMIT {
-        return Err(format!(
-            "the signature and its certificates take {} bytes, and tpdf keeps signatures \
+        return Err(said!(
+            "the signature and its certificates take {bytes} bytes, and tpdf keeps signatures \
              to {STEP_TWO_LIMIT} so a timestamp can be added later",
-            blob.len()
+            bytes = blob.len()
         ));
     }
     write_hex(update, built_against, range, blob)
@@ -902,26 +912,25 @@ pub fn seal_document_timestamp(
         ..
     } = unsigned;
     if built_against != original.len() {
-        return Err(format!(
+        return Err(said!(
             "the document timestamp's revision was built against {built_against} bytes, and \
-             the document is {}",
-            original.len()
+             the document is {len}",
+            len = original.len()
         ));
     }
     // The shape the signing path holds a worker's range to, before the
     // revision is indexed by it: a hole stated before the revision begins
     // would otherwise be a subtraction below zero in this process.
     if !framed(range, built_against, update.len()) {
-        return Err(
+        return Err(said!(
             "the document timestamp's revision covers a range that does not frame its own value"
-                .into(),
-        );
+        ));
     }
     if token.len() > RESERVED {
-        return Err(format!(
-            "the document timestamp takes {} bytes, and the space set aside for it holds \
+        return Err(said!(
+            "the document timestamp takes {bytes} bytes, and the space set aside for it holds \
              {RESERVED}",
-            token.len()
+            bytes = token.len()
         ));
     }
     write_hex(&mut update, built_against, range, token)?;
@@ -939,10 +948,10 @@ pub fn seal_document_timestamp(
         &mut crate::integrity::MAX_HASHED.clone(),
     );
     if verdict.verdict != crate::integrity::Verdict::Intact {
-        return Err(format!(
+        return Err(said!(
             "tpdf's own check of the document timestamp it wrote did not call it intact \
-             ({:?})",
-            verdict.verdict
+             ({verdict:?})",
+            verdict = verdict.verdict
         ));
     }
     Ok(bytes)
@@ -1003,7 +1012,7 @@ pub fn sign(
     key: &dyn Key,
 ) -> Result<Made, String> {
     usable(certificate, at)
-        .map_err(|why| format!("tpdf will not sign with this certificate: {why}"))?;
+        .map_err(|why| said!("tpdf will not sign with this certificate: {why}"))?;
     let digest = check(&original, &unsigned)?;
     let blob = build(&digest, certificate, chain, key)?;
     let Unsigned {
@@ -1042,7 +1051,7 @@ impl Made {
     pub fn value(&self) -> Result<Vec<u8>, String> {
         let (_, signed) = decoded(&self.blob)?;
         let [signer] = signed.signer_infos.0.as_slice() else {
-            return Err("the signature just made does not have one signer".into());
+            return Err(said!("the signature just made does not have one signer"));
         };
         Ok(signer.signature.as_bytes().to_vec())
     }
@@ -1067,11 +1076,11 @@ impl Made {
     pub fn stamped(&self, token: &[u8]) -> Result<Vec<u8>, String> {
         let (content_type, mut signed) = decoded(&self.blob)?;
         let [signer] = signed.signer_infos.0.as_slice() else {
-            return Err("the signature just made does not have one signer".into());
+            return Err(said!("the signature just made does not have one signer"));
         };
         let mut signer = signer.clone();
         let value = der::Any::from_der(token)
-            .map_err(|e| format!("the timestamp is not one DER value: {e}"))?;
+            .map_err(|e| said!("the timestamp is not one DER value: {e}"))?;
         let attribute = x509_cert::attr::Attribute {
             oid: TIME_STAMP_TOKEN,
             values: der::asn1::SetOfVec::try_from(vec![value]).map_err(|e| e.to_string())?,
@@ -1085,12 +1094,12 @@ impl Made {
             content: der::Any::encode_from(&signed).map_err(|e| e.to_string())?,
         }
         .to_der()
-        .map_err(|e| format!("the timestamped signature could not be encoded: {e}"))?;
+        .map_err(|e| said!("the timestamped signature could not be encoded: {e}"))?;
         if blob.len() > RESERVED {
-            return Err(format!(
-                "the signature with its timestamp takes {} bytes, and the space this \
+            return Err(said!(
+                "the signature with its timestamp takes {bytes} bytes, and the space this \
                  document set aside for it holds {RESERVED}",
-                blob.len()
+                bytes = blob.len()
             ));
         }
         Ok(blob)
@@ -1148,28 +1157,34 @@ impl Made {
             &mut crate::integrity::MAX_HASHED.clone(),
         );
         if verdict.verdict != crate::integrity::Verdict::Intact {
-            return Err(format!(
-                "tpdf's own check of the signature it just made did not find it intact \
-                 ({:?}{}), so nothing was written",
-                verdict.verdict,
-                verdict
-                    .why
-                    .map(|why| format!(", {why:?}"))
-                    .unwrap_or_default()
-            ));
+            return Err(match verdict.why {
+                Some(why) => said!(
+                    "tpdf's own check of the signature it just made did not find it intact \
+                     ({verdict:?}, {why:?}), so nothing was written",
+                    verdict = verdict.verdict
+                ),
+                None => said!(
+                    "tpdf's own check of the signature it just made did not find it intact \
+                     ({verdict:?}), so nothing was written",
+                    verdict = verdict.verdict
+                ),
+            });
         }
         if timestamped {
             let token = timestamp_in(&bytes, range)?;
             if token.verdict != crate::integrity::Verdict::Intact {
-                return Err(format!(
-                    "tpdf's own check of the timestamp in the signature it just made did not \
-                     find it intact ({:?}{}), so nothing was written",
-                    token.verdict,
-                    token
-                        .why
-                        .map(|why| format!(", {why:?}"))
-                        .unwrap_or_default()
-                ));
+                return Err(match token.why {
+                    Some(why) => said!(
+                        "tpdf's own check of the timestamp in the signature it just made did \
+                         not find it intact ({verdict:?}, {why:?}), so nothing was written",
+                        verdict = token.verdict
+                    ),
+                    None => said!(
+                        "tpdf's own check of the timestamp in the signature it just made did \
+                         not find it intact ({verdict:?}), so nothing was written",
+                        verdict = token.verdict
+                    ),
+                });
             }
         }
         Ok(bytes)
@@ -1179,11 +1194,11 @@ impl Made {
 /// The `ContentInfo`'s type and its `SignedData`.
 fn decoded(blob: &[u8]) -> Result<(ObjectIdentifier, cms::signed_data::SignedData), String> {
     let info = cms::content_info::ContentInfo::from_der(blob)
-        .map_err(|e| format!("the signature just made does not decode: {e}"))?;
+        .map_err(|e| said!("the signature just made does not decode: {e}"))?;
     let signed = info
         .content
         .decode_as::<cms::signed_data::SignedData>()
-        .map_err(|e| format!("the signature just made does not decode: {e}"))?;
+        .map_err(|e| said!("the signature just made does not decode: {e}"))?;
     Ok((info.content_type, signed))
 }
 

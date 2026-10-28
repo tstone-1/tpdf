@@ -79,7 +79,10 @@ impl AddedFont {
         let mut chars: [String; 2] = [String::new(), String::new()];
         for ch in texts.iter().flat_map(|text| text.chars()) {
             let at = font_for(&faces, ch).ok_or_else(|| {
-                format!("no bundled font has a glyph for U+{:04X}", u32::from(ch))
+                said!(
+                    "no bundled font has a glyph for U+{code:04X}",
+                    code = u32::from(ch)
+                )
             })?;
             if !chars[at].contains(ch) {
                 chars[at].push(ch);
@@ -113,7 +116,8 @@ impl AddedFont {
         let faces = faces()?;
         let mut runs: Vec<(usize, String)> = Vec::new();
         for ch in text.chars() {
-            let at = font_for(&faces, ch).ok_or("a character no bundled font has")?;
+            let at =
+                font_for(&faces, ch).ok_or_else(|| said!("a character no bundled font has"))?;
             match runs.last_mut() {
                 Some((font, run)) if *font == at => run.push(ch),
                 _ => runs.push((at, ch.to_string())),
@@ -121,9 +125,9 @@ impl AddedFont {
         }
         runs.into_iter()
             .map(|(font, run)| {
-                let (_, metrics) = self.parts[font]
-                    .as_ref()
-                    .ok_or("a line's character is in no subset made for the write")?;
+                let (_, metrics) = self.parts[font].as_ref().ok_or_else(|| {
+                    said!("a line's character is in no subset made for the write")
+                })?;
                 let hex = metrics
                     .encode(&run)?
                     .iter()
@@ -143,10 +147,11 @@ impl AddedFont {
         let faces = faces()?;
         let mut width = 0.0;
         for ch in text.chars() {
-            let at = font_for(&faces, ch).ok_or("a character no bundled font has")?;
+            let at =
+                font_for(&faces, ch).ok_or_else(|| said!("a character no bundled font has"))?;
             let (_, metrics) = self.parts[at]
                 .as_ref()
-                .ok_or("a line's character is in no subset made for the write")?;
+                .ok_or_else(|| said!("a line's character is in no subset made for the write"))?;
             width += metrics
                 .spaced_layout(ch.encode_utf8(&mut [0; 4]), size, 0.0, 0.0)?
                 .0;

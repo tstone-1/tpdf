@@ -617,8 +617,9 @@ fn field_fits(model: &Doc, id: MarkId, rect: [f32; 4]) -> Result<(), String> {
     if let Some(placed) = model.field_of(id) {
         let least = crate::formfields::least_side(placed.kind) as f32;
         if rect[2] - rect[0] < least || rect[3] - rect[1] < least {
-            return Err(format!(
-                "a field of this kind is at least {least} by {least} points"
+            return Err(said!(
+                "a field of this kind is at least {least} by {least_high} points",
+                least_high = least
             ));
         }
     }
@@ -1248,7 +1249,7 @@ impl Edits {
         // `NaN` also fails, so the two overlap and neither is redundant. This one
         // can say which number was wrong.
         if let Some(bad) = size.iter().find(|v| !v.is_finite()) {
-            return Err(format!("a page cannot be {bad} points"));
+            return Err(said!("a page cannot be {bad} points"));
         }
         let mut docs = self.docs.lock().expect("edits lock");
         let open = docs.get_mut(&doc).ok_or_else(|| unknown(doc))?;
@@ -1389,7 +1390,7 @@ impl Edits {
             let mut docs = self.docs.lock().expect("edits lock");
             let open = docs.get_mut(&doc).ok_or_else(|| unknown(doc))?;
             if open.pending.as_ref().map(|waiting| waiting.id) != Some(pending) {
-                return Err(format!(
+                return Err(said!(
                     "the file chosen for that insert is no longer open ({pending})"
                 ));
             }
@@ -1466,18 +1467,18 @@ impl Edits {
         // The reader is here: start the fingerprint if nothing has. See `wake`.
         self.wake(doc);
         if want.quads.len() % 4 != 0 {
-            return Err(format!(
-                "a mark is four numbers per rectangle, and this has {}",
-                want.quads.len()
+            return Err(said!(
+                "a mark is four numbers per rectangle, and this has {count}",
+                count = want.quads.len()
             ));
         }
         // Same shape as the quads above and the same reason for checking it
         // here: a ragged list is a sender defect, and chunking it silently would
         // drop the last point of a stroke rather than say so.
         if let Some(ragged) = want.strokes.iter().find(|s| s.len() % 2 != 0) {
-            return Err(format!(
-                "a stroke is two numbers per point, and one of these has {}",
-                ragged.len()
+            return Err(said!(
+                "a stroke is two numbers per point, and one of these has {count}",
+                count = ragged.len()
             ));
         }
         // The third door, and it was the one left open. `channel` clamps a
@@ -1500,14 +1501,14 @@ impl Edits {
             .chain(want.strokes.iter().flatten())
             .find(|v| !v.is_finite())
         {
-            return Err(format!("a mark cannot have a corner at {bad}"));
+            return Err(said!("a mark cannot have a corner at {bad}"));
         }
         if let Some(image) = &want.image {
             if want.kind == MarkKind::Picture && !image.valid_picture() {
-                return Err("The picture is empty, invalid or too large".into());
+                return Err(said!("The picture is empty, invalid or too large"));
             }
             if want.kind != MarkKind::Picture && !image.valid() {
-                return Err("The signature image is empty, invalid or too large".into());
+                return Err(said!("The signature image is empty, invalid or too large"));
             }
         }
         too_long(&want.note)?;
@@ -1564,8 +1565,9 @@ impl Edits {
                     .iter()
                     .any(|q| q.right - q.left < least || q.bottom - q.top < least)
             {
-                return Err(format!(
-                    "a signature field is at least {least} by {least} points; drag a larger rectangle"
+                return Err(said!(
+                    "a signature field is at least {least} by {least_high} points; drag a larger rectangle",
+                    least_high = least
                 ));
             }
         }
@@ -1639,7 +1641,7 @@ impl Edits {
         // one region cover the document. Refused rather than clamped, so a
         // reader is never told a redaction covers what they did not drag.
         if let Some(bad) = area.iter().find(|v| !v.is_finite()) {
-            return Err(format!("a redaction cannot have a corner at {bad}"));
+            return Err(said!("a redaction cannot have a corner at {bad}"));
         }
         let mut docs = self.docs.lock().expect("edits lock");
         let open = docs.get_mut(&doc).ok_or_else(|| unknown(doc))?;
@@ -1724,8 +1726,8 @@ impl Edits {
         // is looking at a drawing this is not, and quietly erasing the strokes
         // it *did* name would act on half a stale gesture.
         if let Some(past) = remove.iter().find(|&&at| at >= held) {
-            return Err(format!(
-                "stroke {past} of a drawing that has {held}, so this gesture was                  aimed at something else"
+            return Err(said!(
+                "stroke {past} of a drawing that has {held}, so this gesture was aimed at something else"
             ));
         }
         let keep: Vec<Stroke> = model
@@ -1790,10 +1792,9 @@ impl Edits {
         // here as well would be a second copy of that message.
         if model.mark(id).is_some_and(|m| m.kind == MarkKind::TextBox) && !textbox::encodable(&note)
         {
-            return Err(
+            return Err(said!(
                 "a text box is written in Helvetica, which cannot draw every character in that text"
-                    .to_string(),
-            );
+            ));
         }
         // A field's note is its name, so a rename is held to what a name is.
         if let Some(placed) = model.field_of(id).cloned() {
@@ -1845,7 +1846,7 @@ impl Edits {
         // The reader is here: start the fingerprint if nothing has. See `wake`.
         self.wake(doc);
         if object.0 == 0 {
-            return Err("that comment has no object to write over".to_string());
+            return Err(said!("that comment has no object to write over"));
         }
         // Before the lock, for `renote`'s reason.
         too_long(&body)?;
@@ -1888,7 +1889,7 @@ impl Edits {
         // The reader is here: start the fingerprint if nothing has. See `wake`.
         self.wake(doc);
         if object.0 == 0 {
-            return Err("that comment has no object to remove".to_string());
+            return Err(said!("that comment has no object to remove"));
         }
         let mut docs = self.docs.lock().expect("edits lock");
         let open = docs.get_mut(&doc).ok_or_else(|| unknown(doc))?;
@@ -1937,7 +1938,9 @@ impl Edits {
         let mut docs = self.docs.lock().expect("edits lock");
         let open = docs.get_mut(&doc).ok_or_else(|| unknown(doc))?;
         if open.model.tab_order() {
-            return Err("the fields are already to be tabbed through in reading order".into());
+            return Err(said!(
+                "the fields are already to be tabbed through in reading order"
+            ));
         }
         open.model.apply(Command::TabOrder).map_err(describe)?;
         Ok(reply(open))
@@ -1967,7 +1970,7 @@ impl Edits {
         let mut placed = model
             .field_of(id)
             .cloned()
-            .ok_or("that is not a form field placed in this document")?;
+            .ok_or_else(|| said!("that is not a form field placed in this document"))?;
         let was = placed.clone();
         if let Some(tooltip) = props.tooltip {
             placed.tooltip = tooltip;
@@ -1988,7 +1991,7 @@ impl Edits {
             placed.default_value = default;
         }
         if placed == was {
-            return Err("that changes nothing about the field".into());
+            return Err(said!("that changes nothing about the field"));
         }
         if let Some(why) = placed.problem("this field") {
             return Err(why);
@@ -2040,7 +2043,7 @@ impl Edits {
         // The reader is here: start the fingerprint if nothing has. See `wake`.
         self.wake(doc);
         if !dx.is_finite() || !dy.is_finite() {
-            return Err(format!("a mark cannot be moved by ({dx}, {dy})"));
+            return Err(said!("a mark cannot be moved by ({dx}, {dy})"));
         }
         let mut docs = self.docs.lock().expect("edits lock");
         let open = docs.get_mut(&doc).ok_or_else(|| unknown(doc))?;
@@ -2095,21 +2098,23 @@ impl Edits {
         let open = docs.get_mut(&doc).ok_or_else(|| unknown(doc))?;
         let model = &mut open.model;
         if moves.is_empty() {
-            return Err("nothing was selected to arrange".into());
+            return Err(said!("nothing was selected to arrange"));
         }
         if moves.len() > MAX_ARRANGED {
-            return Err(format!(
-                "{} marks is more than the {MAX_ARRANGED} one arrangement moves",
-                moves.len()
+            return Err(said!(
+                "{count} marks is more than the {MAX_ARRANGED} one arrangement moves",
+                count = moves.len()
             ));
         }
         let Some(joins) = gesture(sweep) else {
-            return Err("an arrangement is one gesture and this one has no name".into());
+            return Err(said!(
+                "an arrangement is one gesture and this one has no name"
+            ));
         };
         let mut seen: Vec<u64> = Vec::with_capacity(moves.len());
         for placement in &moves {
             if seen.contains(&placement.mark) {
-                return Err(format!("mark {} is placed twice", placement.mark));
+                return Err(said!("mark {mark} is placed twice", mark = placement.mark));
             }
             seen.push(placement.mark);
             let id = MarkId::from_raw(placement.mark);
@@ -2158,7 +2163,7 @@ impl Edits {
             .mark(MarkId::from_raw(mark))
             .filter(|m| m.kind == MarkKind::Picture)
             .and_then(|m| m.image.clone())
-            .ok_or_else(|| format!("mark {mark} is not a picture"))
+            .ok_or_else(|| said!("mark {mark} is not a picture"))
     }
 
     /// Applies a command and returns the state it produced.
@@ -2253,28 +2258,28 @@ impl Edits {
         let open = docs.get_mut(&doc).ok_or_else(|| unknown(doc))?;
         let model = &mut open.model;
         if targets.is_empty() {
-            return Err("no field was named to change".into());
+            return Err(said!("no field was named to change"));
         }
         if targets.len() > MAX_ARRANGED {
-            return Err(format!(
-                "{} fields is more than the {MAX_ARRANGED} one change moves",
-                targets.len()
+            return Err(said!(
+                "{count} fields is more than the {MAX_ARRANGED} one change moves",
+                count = targets.len()
             ));
         }
         let joins = gesture(sweep);
         if targets.len() > 1 && joins.is_none() {
-            return Err(
-                "a change to several fields is one gesture and this one has no name".into(),
-            );
+            return Err(said!(
+                "a change to several fields is one gesture and this one has no name"
+            ));
         }
         let mut changes: Vec<(ObjectId, PageId, FieldChange)> = Vec::with_capacity(targets.len());
         for target in &targets {
             if target.object.0 == 0 {
-                return Err("that field has no object to change".into());
+                return Err(said!("that field has no object to change"));
             }
             let object = ObjectId::new(target.object.0, target.object.1);
             if changes.iter().any(|(other, _, _)| *other == object) {
-                return Err("a form field is changed twice".into());
+                return Err(said!("a form field is changed twice"));
             }
             let patch = &target.patch;
             if patch.rect.is_none()
@@ -2283,12 +2288,12 @@ impl Edits {
                 && patch.props.is_empty()
                 && patch.value.is_none()
             {
-                return Err("that changes nothing about the field".into());
+                return Err(said!("that changes nothing about the field"));
             }
             let mut change = model.field_change_of(object).cloned().unwrap_or_default();
             if let Some(rect) = patch.rect {
                 if !rect.iter().all(|v| v.is_finite()) || rect[2] <= rect[0] || rect[3] <= rect[1] {
-                    return Err("that rectangle covers nothing".into());
+                    return Err(said!("that rectangle covers nothing"));
                 }
                 change.rect = Some(quad_of(rect));
             }
@@ -2500,7 +2505,7 @@ impl Edits {
         let all = snapshot(model).pages;
 
         if slots.is_empty() {
-            return Err("no pages were named".into());
+            return Err(said!("no pages were named"));
         }
         let mut pages = Vec::with_capacity(slots.len());
         // Walked in the order given rather than sorted here, and the duplicate
@@ -2512,15 +2517,15 @@ impl Edits {
         for &slot in slots {
             let page = all
                 .get(slot as usize)
-                .ok_or_else(|| format!("this document has {} pages", all.len()))?;
+                .ok_or_else(|| said!("this document has {count} pages", count = all.len()))?;
             if taken.contains(&slot) {
-                return Err(format!("page {} was named twice", slot + 1));
+                return Err(said!("page {page} was named twice", page = slot + 1));
             }
             taken.push(slot);
             pages.push(*page);
         }
         if taken.windows(2).any(|pair| pair[0] >= pair[1]) {
-            return Err("the pages are not in document order".into());
+            return Err(said!("the pages are not in document order"));
         }
 
         let marks = planned_marks(model, &pages);
@@ -2594,13 +2599,13 @@ fn field_name_problem(
         .iter()
         .any(|other| !(radio && other.kind == Kind::Radio))
     {
-        return Some(format!("`{name}`: another field placed here has this name"));
+        return Some(said!("`{name}`: another field placed here has this name"));
     }
     let twice = radio && others.iter().any(|other| other.options == placed.options);
     twice.then(|| {
-        format!(
-            "`{name}`: another button of this group has the value `{}`",
-            placed.options.first().map_or("", String::as_str)
+        said!(
+            "`{name}`: another button of this group has the value `{value}`",
+            value = placed.options.first().map_or("", String::as_str)
         )
     })
 }
@@ -3439,13 +3444,32 @@ impl From<Refusal> for failure::Failure {
 
 pub(crate) fn describe(why: Refusal) -> String {
     match why {
-        Refusal::TextEdit(message) => message.into(),
-        Refusal::NoSuchPage(_) => "no such page".into(),
-        Refusal::PageDeleted(_) => "that page has been deleted".into(),
-        Refusal::AnchorIsTarget(_) => "a page cannot be moved after itself".into(),
-        Refusal::LastPage(_) => "a document must keep at least one page".into(),
-        Refusal::DegenerateCrop(_) => "that crop encloses no area".into(),
-        Refusal::DegeneratePage(_) => "a page must have a width and a height".into(),
+        // The model's sentences are `&'static str`, which `said!` cannot
+        // write; each is written again here so the window can translate it.
+        // One that is not listed is shown in English, as it was.
+        Refusal::TextEdit(message) => match message {
+            "save or undo redactions before editing text" => {
+                said!("save or undo redactions before editing text")
+            }
+            "save or undo text edits before redacting" => {
+                said!("save or undo text edits before redacting")
+            }
+            "text changed since it was selected" => said!("text changed since it was selected"),
+            "text edit history is full" => said!("text edit history is full"),
+            "text edit history is full; save and reopen before continuing" => {
+                said!("text edit history is full; save and reopen before continuing")
+            }
+            "text no longer belongs to this page" => said!("text no longer belongs to this page"),
+            "text replacement exceeds its limit" => said!("text replacement exceeds its limit"),
+            "too many text replacements" => said!("too many text replacements"),
+            other => other.into(),
+        },
+        Refusal::NoSuchPage(_) => said!("no such page"),
+        Refusal::PageDeleted(_) => said!("that page has been deleted"),
+        Refusal::AnchorIsTarget(_) => said!("a page cannot be moved after itself"),
+        Refusal::LastPage(_) => said!("a document must keep at least one page"),
+        Refusal::DegenerateCrop(_) => said!("that crop encloses no area"),
+        Refusal::DegeneratePage(_) => said!("a page must have a width and a height"),
         // **Two variants because they are two sentences.** They were one, and
         // its string was "tpdf cannot mark a page it made yet" --- shown, among
         // other things, to a reader who had dragged a redaction on a blank page,
@@ -3453,37 +3477,38 @@ pub(crate) fn describe(why: Refusal) -> String {
         // true of the page and lets the reader draw the conclusion, rather than
         // naming a limit of tpdf's: there is nothing to crop to, and nothing to
         // remove. See `Refusal::CropOnMadePage`.
-        Refusal::CropOnMadePage(_) => "a blank page has nothing to crop to".into(),
-        Refusal::RedactionOnMadePage(_) => "a blank page has nothing to remove".into(),
-        Refusal::EmptyImport => "choose at least one page to insert".into(),
+        Refusal::CropOnMadePage(_) => said!("a blank page has nothing to crop to"),
+        Refusal::RedactionOnMadePage(_) => said!("a blank page has nothing to remove"),
+        Refusal::EmptyImport => said!("choose at least one page to insert"),
         // One-based in the sentence, as a reader counts pages; the model holds
         // them zero-based, as every other page number in it is.
         Refusal::NoSuchSourcePage { page, pages } => {
-            format!(
-                "that document has {pages} pages, so there is no page {}",
-                page + 1
+            said!(
+                "that document has {pages} pages, so there is no page {number}",
+                number = page + 1
             )
         }
-        Refusal::ImportedTwice(page) => format!(
-            "page {} was chosen twice --- insert it once, then insert it again",
-            page + 1
+        Refusal::ImportedTwice(page) => said!(
+            "page {number} was chosen twice --- insert it once, then insert it again",
+            number = page + 1
         ),
-        Refusal::NoSuchSelection(_) => "no such inserted pages".into(),
+        Refusal::NoSuchSelection(_) => said!("no such inserted pages"),
         // Named for what the reader has to change rather than for the limit:
         // the page is in the document twice, and taking one of them out is
         // what makes it editable. See `Refusal::TextOnRepeatedImport`.
         Refusal::TextOnRepeatedImport(_) => {
-            "that page of the other document is in this one twice, and an edit would appear in \
-             both --- delete one of them, then edit the other"
-                .into()
+            said!(
+                "that page of the other document is in this one twice, and an edit would appear in \
+                 both --- delete one of them, then edit the other"
+            )
         }
-        Refusal::ImportOfEditedPage(page) => format!(
-            "page {} of that document already has edited text in this one, and inserting it \
+        Refusal::ImportOfEditedPage(page) => said!(
+            "page {number} of that document already has edited text in this one, and inserting it \
              again would show the edit twice --- undo the edit, or insert a different page",
-            page + 1
+            number = page + 1
         ),
         Refusal::ForeignCommentOnImportedPage(_) => {
-            "that comment is not on a page inserted from another document".into()
+            said!("that comment is not on a page inserted from another document")
         }
         // Named for the page rather than for the document, which is the whole
         // of the 2026-09-20 narrowing: a region on the opened document's own
@@ -3500,35 +3525,36 @@ pub(crate) fn describe(why: Refusal) -> String {
         // both, and the sentence now says the thing a reader can act on rather
         // than the one that has been fixed underneath it.
         Refusal::RedactionOnImportedPage(_) => {
-            "that page came from another document, and tpdf can only remove content from the \
-             pages of the file you opened --- save this document, reopen it, and redact there"
-                .into()
+            said!(
+                "that page came from another document, and tpdf can only remove content from the \
+                 pages of the file you opened --- save this document, reopen it, and redact there"
+            )
         }
-        Refusal::NoSuchMark(_) => "no such mark".into(),
-        Refusal::MarkRemoved(_) => "that mark has already been removed".into(),
-        Refusal::EmptyMark => "that mark covers nothing".into(),
+        Refusal::NoSuchMark(_) => said!("no such mark"),
+        Refusal::MarkRemoved(_) => said!("that mark has already been removed"),
+        Refusal::EmptyMark => said!("that mark covers nothing"),
         // Not worded for a reader, because no reader can cause it: it means the
         // wire and the model disagree about what a mark is --- strokes on a kind
         // that is not ink, or ink with none. Naming the kind is what makes the
         // report actionable for whoever sent it.
         Refusal::ShapeMismatch(kind) => {
-            format!("a {kind:?} mark cannot carry the strokes it was sent with")
+            said!("a {kind:?} mark cannot carry the strokes it was sent with")
         }
         // The stamp half of the same situation, and worded so the two cannot be
         // confused in a report: a stamp needs a name and nothing else may have
         // one.
         Refusal::StampMismatch(kind) => {
-            format!("a {kind:?} mark cannot carry the stamp name it was sent with")
+            said!("a {kind:?} mark cannot carry the stamp name it was sent with")
         }
         // The field half, and the same audience: no reader can cause it.
         Refusal::FieldMismatch(kind) => {
-            format!("a {kind:?} mark cannot carry the form field kind it was sent with")
+            said!("a {kind:?} mark cannot carry the form field kind it was sent with")
         }
         // The reply half, and the third of the family. Same audience as the two
         // above --- no reader can cause it, because the only door into a reply
         // is a comment's own popup, which cannot offer a highlight.
         Refusal::ReplyMismatch(kind) => {
-            format!("a {kind:?} mark cannot answer a comment")
+            said!("a {kind:?} mark cannot answer a comment")
         }
         // **The one in this family a reader causes on purpose**, unlike the
         // three above, so it is worded as a next step rather than as a
@@ -3536,14 +3562,14 @@ pub(crate) fn describe(why: Refusal) -> String {
         // on being told which order to do the two in. The object number is left
         // out for that reason --- it names nothing a reader has seen.
         Refusal::ReplyAnswersIt(_) => {
-            "delete your reply to that comment first, then the comment".into()
+            said!("delete your reply to that comment first, then the comment")
         }
         // The three redaction refusals, worded for a reader rather than for a
         // sender: unlike the two above, every one of them is reachable from a
         // panel row that has gone stale under a reader's own undo.
-        Refusal::NoSuchRedaction(_) => "no such redaction".into(),
-        Refusal::RedactionRemoved(_) => "that redaction has already been removed".into(),
-        Refusal::EmptyRedaction => "that region covers nothing".into(),
+        Refusal::NoSuchRedaction(_) => said!("no such redaction"),
+        Refusal::RedactionRemoved(_) => said!("that redaction has already been removed"),
+        Refusal::EmptyRedaction => said!("that region covers nothing"),
     }
 }
 
@@ -3564,9 +3590,9 @@ pub(crate) fn describe(why: Refusal) -> String {
 fn too_long(note: &str) -> Result<(), String> {
     let chars = note.chars().count();
     if chars > textbox::MAX_NOTE_CHARS {
-        return Err(format!(
-            "that note is {chars} characters, and a note holds at most {}",
-            textbox::MAX_NOTE_CHARS
+        return Err(said!(
+            "that note is {chars} characters, and a note holds at most {most}",
+            most = textbox::MAX_NOTE_CHARS
         ));
     }
     Ok(())
@@ -3597,7 +3623,7 @@ pub fn draft_lines(note: &str, left: f32, right: f32) -> Result<Vec<String>, Str
 }
 
 fn unknown(doc: u32) -> String {
-    format!("no open document {doc}")
+    said!("no open document {doc}")
 }
 
 /// Reads a model into the reply shape.

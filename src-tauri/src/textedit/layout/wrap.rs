@@ -192,15 +192,25 @@ pub(super) fn flow(
 /// replaces it with one that names what is in the way.
 pub(super) enum Refused {
     NotApplicable,
-    Blocked(&'static str),
+    Blocked(String),
 }
 
-pub(super) const NO_ROOM: &str = "There is no room for more text on this line, and this paragraph cannot wrap: its lines would move onto what is below it. Shorten the text or reduce the font size.";
-pub(super) const UNMOVABLE: &str = "There is no room for more text on this line, and this paragraph cannot wrap: part of it below cannot be moved. Shorten the text or reduce the font size.";
-pub(super) const BESIDE: &str = "There is no room for more text on this line, and this paragraph cannot wrap: its lines would move out of line with the text beside them. Shorten the text or reduce the font size.";
-pub(super) const DRAWN: &str = "There is no room for more text on this line, and this paragraph cannot wrap: a drawing or an annotation is placed over the lines that would move. Shorten the text or reduce the font size.";
+pub(super) fn no_room() -> String {
+    said!("There is no room for more text on this line, and this paragraph cannot wrap: its lines would move onto what is below it. Shorten the text or reduce the font size.")
+}
+pub(super) fn unmovable() -> String {
+    said!("There is no room for more text on this line, and this paragraph cannot wrap: part of it below cannot be moved. Shorten the text or reduce the font size.")
+}
+pub(super) fn beside() -> String {
+    said!("There is no room for more text on this line, and this paragraph cannot wrap: its lines would move out of line with the text beside them. Shorten the text or reduce the font size.")
+}
+pub(super) fn drawn_over() -> String {
+    said!("There is no room for more text on this line, and this paragraph cannot wrap: a drawing or an annotation is placed over the lines that would move. Shorten the text or reduce the font size.")
+}
 /// Said to whichever of the two edits the reader is making, so it names both.
-pub(in crate::textedit) const CONFLICT: &str = "One edit in this paragraph wraps onto a new line and moves text that another pending edit changes. Save first, then make the second edit again.";
+pub(in crate::textedit) fn conflict() -> String {
+    said!("One edit in this paragraph wraps onto a new line and moves text that another pending edit changes. Save first, then make the second edit again.")
+}
 
 /// A point of page space in the run's own text space.
 fn to_text(matrix: [f64; 6], (x, y): (f64, f64)) -> Option<(f64, f64)> {
@@ -388,7 +398,7 @@ pub(super) fn plan(
             // is unknown, so it may be under the edit, and nothing here can
             // move it.
             if show > run.operator {
-                return Err(Refused::Blocked(UNMOVABLE));
+                return Err(Refused::Blocked(unmovable()));
             }
             continue;
         };
@@ -413,7 +423,7 @@ pub(super) fn plan(
             }
         } else if y < 0. {
             if !carried(page, show) {
-                return Err(Refused::Blocked(UNMOVABLE));
+                return Err(Refused::Blocked(unmovable()));
             }
             below.push(show);
         }
@@ -568,12 +578,12 @@ pub(super) fn translated(
             .operations
             .get(index)
             .cloned()
-            .ok_or_else(|| "painted path no longer exists".to_string())
+            .ok_or_else(|| said!("painted path no longer exists"))
     };
     let [a, b, c, d, ..] = transform;
     let det = a * d - b * c;
     if det.abs() < 1e-12 || first >= last {
-        return Err("painted path cannot be moved".into());
+        return Err(said!("painted path cannot be moved"));
     }
     let local = (
         (d * offset.0 - c * offset.1) / det,
@@ -582,7 +592,7 @@ pub(super) fn translated(
     let number = |value: f64| Object::Real(value as f32);
     Ok(vec![
         (
-            u32::try_from(first).map_err(|_| "painted path no longer exists")?,
+            u32::try_from(first).map_err(|_| said!("painted path no longer exists"))?,
             vec![
                 Operation::new("q", vec![]),
                 Operation::new(
@@ -600,7 +610,7 @@ pub(super) fn translated(
             ],
         ),
         (
-            u32::try_from(last).map_err(|_| "painted path no longer exists")?,
+            u32::try_from(last).map_err(|_| said!("painted path no longer exists"))?,
             vec![operation(last)?, Operation::new("Q", vec![])],
         ),
     ])
@@ -621,12 +631,12 @@ pub(super) fn drawn(
     show: u32,
     pieces: &[Drawn<'_>],
 ) -> Result<Vec<Operation>, String> {
-    let context = context_of(page, show).ok_or("missing text layout context")?;
+    let context = context_of(page, show).ok_or_else(|| said!("missing text layout context"))?;
     let operation = page
         .content
         .operations
         .get(show as usize)
-        .ok_or("text run no longer exists")?;
+        .ok_or_else(|| said!("text run no longer exists"))?;
     let [a, b, c, d, ..] = context.transform;
     let det = a * d - b * c;
     let mut operations = Vec::new();
@@ -636,7 +646,7 @@ pub(super) fn drawn(
             (a * offset.1 - b * offset.0) / det,
         );
         if !local.0.is_finite() || !local.1.is_finite() {
-            return Err("text position exceeds its limit".into());
+            return Err(said!("text position exceeds its limit"));
         }
         let mut matrix = context.shown;
         shift_position(&mut matrix, local.0, local.1)?;
@@ -649,7 +659,7 @@ pub(super) fn drawn(
                 // run twice.
                 if page.leads.contains_key(&show) {
                     let Some(Object::Array(items)) = show_op.operands.first_mut() else {
-                        return Err("invalid text patch".into());
+                        return Err(said!("invalid text patch"));
                     };
                     items.remove(0);
                 }
@@ -671,7 +681,9 @@ pub(super) fn drawn(
             .abs()
             > 0.0001
     {
-        return Err("Cannot preserve the following text position precisely".into());
+        return Err(said!(
+            "Cannot preserve the following text position precisely"
+        ));
     }
     operations.push(Operation::new(
         "TJ",

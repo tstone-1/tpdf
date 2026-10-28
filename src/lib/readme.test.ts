@@ -121,12 +121,6 @@ const UNLISTED: Record<string, string> = {
   // product, and the Status paragraph already says what it opens.
   "file.open": "opening a document is the category, not a feature of it",
   "file.reload": "re-reading the file is the other half of opening it",
-  // The interface language. German is not complete until the worker's messages
-  // are translated too, and the README claims it then, with these four.
-  "app.language.system": "the Language setting is claimed in the README when German is complete",
-  "app.language.en-US": "the Language setting is claimed in the README when German is complete",
-  "app.language.en-GB": "the Language setting is claimed in the README when German is complete",
-  "app.language.de-DE": "the Language setting is claimed in the README when German is complete",
   // Application furniture. Where the version came from and where the next one
   // comes from is the Releases link at the top; a bullet for each would be the
   // menu bar transcribed.

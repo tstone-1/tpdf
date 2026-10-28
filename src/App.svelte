@@ -456,6 +456,7 @@
     type Offer,
     plainly,
   } from "./lib/recovery";
+  import { spoken, spokenError } from "./lib/said";
   import { releaseOrphans } from "./lib/orphans";
   import type { DocumentInfo, PageSize, PrintSettings } from "./lib/ipc";
   import { call } from "./lib/ipc";
@@ -2475,7 +2476,7 @@
       else await navigator.clipboard.write([new ClipboardItem({ "image/png": fetchTilePng(request) })]);
       tell(regionSaid(request));
     } catch (e) {
-      say(TEXT().regionNotCopied(e instanceof Error ? e.message : String(e)));
+      say(TEXT().regionNotCopied(spokenError(e)));
     }
   }
 
@@ -3176,7 +3177,7 @@
       editor.update(model.state); editor.setBusy(documentBusy);
     } catch (error) {
       if (generation === textEditorGeneration) asDocument(view, () => {
-        if (edits === model) say(TEXT().cannotEditText(error instanceof Error ? error.message : String(error)));
+        if (edits === model) say(TEXT().cannotEditText(spokenError(error)));
       });
     }
   }
@@ -3708,7 +3709,7 @@
       );
     } catch (e) {
         if (e instanceof SaveCancelled) return;
-      say(TEXT().rasterFailed(String(e)));
+      say(TEXT().rasterFailed(spokenError(e)));
     } finally {
       blockingTask = null;
       copyTaskBusy = false;
@@ -4794,14 +4795,14 @@
       enabled: () => tabs.find(id) === tab,
       run: async () => {
         try { await navigator.clipboard.writeText(tab.path); }
-        catch (error) { say(TEXT().copyPathFailed(String(error))); }
+        catch (error) { say(TEXT().copyPathFailed(spokenError(error))); }
       },
     }, {
       id: "tab.copyName", title: TEXT().copyFileName,
       enabled: () => tabs.find(id) === tab,
       run: async () => {
         try { await navigator.clipboard.writeText(basename(tab.path)); }
-        catch (error) { say(TEXT().copyNameFailed(String(error))); }
+        catch (error) { say(TEXT().copyNameFailed(spokenError(error))); }
       },
     }, {
       id: "tab.close", title: TEXT().close,
@@ -5124,11 +5125,15 @@
    * button surviving next to an unrelated message --- which is a button that
    * discards the reader's work, offered for a reason that has gone. `say(null)`
    * clears both.
+   *
+   * A message that is a sentence from Rust is shown in the window's language
+   * (`said.ts`); one already worded here matches no template and is unchanged.
+   * A sentence from Rust inside one of ours is translated where it is put in.
    */
   function say(message: string | null, next: Offer[] = [], success = false) {
     messageSuccess = message !== null && success;
     redactedCopyPath = null;
-    error = message;
+    error = message === null ? null : spoken(message);
     offers = message === null ? [] : next;
   }
 
@@ -5542,7 +5547,7 @@
     // Before every other answer: a pattern that did not compile was never run,
     // so "no matches" would be a statement about the document rather than about
     // the query. Only a pattern can produce one.
-    if (search.problem) return search.problem;
+    if (search.problem) return spoken(search.problem);
     if (search.textless) {
       // Distinct from "no matches" on purpose: the query was never tested
       // against anything, and saying so is the difference between a working
@@ -6132,7 +6137,7 @@
       const note = forwardSaid(found, asked.line);
       if (note !== null) tell(note);
     } catch (e) {
-      say(TEXT().forwardSearchFailed(String(e)));
+      say(TEXT().forwardSearchFailed(spokenError(e)));
     }
   }
 

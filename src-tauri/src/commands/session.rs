@@ -78,9 +78,12 @@ pub(crate) fn with_session<F: FnOnce(&mut session::Session)>(
     // Named, because this string crosses the IPC boundary and is the only thing
     // the reader is shown. `io::Error`'s own text is "permission denied" with no
     // subject, which is true of every path in the process.
-    session
-        .save(path)
-        .map_err(|e| format!("could not write the session file {}: {e}", path.display()))
+    session.save(path).map_err(|e| {
+        said!(
+            "could not write the session file {path}: {e}",
+            path = path.display()
+        )
+    })
 }
 
 /// Records where a document was left.
@@ -113,7 +116,7 @@ pub async fn session_remember(app: tauri::AppHandle, place: session::Place) -> R
         with_session(&path, |session| session.remember(place))
     })
     .await
-    .map_err(|e| format!("the session write did not run: {e}"))?
+    .map_err(|e| said!("the session write did not run: {e}"))?
 }
 
 /// Records whether pages are shown inverted.
@@ -141,7 +144,7 @@ pub async fn session_set_invert_pages(app: tauri::AppHandle, invert: bool) -> Re
         with_session(&path, |session| session.invert_pages = invert)
     })
     .await
-    .map_err(|e| format!("the session write did not run: {e}"))?
+    .map_err(|e| said!("the session write did not run: {e}"))?
 }
 
 /// Records the reader's favourites, the whole list at once.
@@ -159,7 +162,7 @@ pub async fn session_set_favourites(
         with_session(&path, |stored| stored.favourites = favourites)
     })
     .await
-    .map_err(|e| format!("the session write did not run: {e}"))?
+    .map_err(|e| said!("the session write did not run: {e}"))?
 }
 
 /// Records the language *Recognise text* asks for, or `None` for the engine's
@@ -179,7 +182,7 @@ pub async fn session_set_ocr_language(
         with_session(&path, |session| session.set_ocr_language(language))
     })
     .await
-    .map_err(|e| format!("the session write did not run: {e}"))?
+    .map_err(|e| said!("the session write did not run: {e}"))?
 }
 
 /// Records which documents are open as tabs, which one is showing, and how
@@ -200,7 +203,7 @@ pub async fn session_set_tabs(
         with_session(&path, |session| session.set_tabs(paths, active, sides))
     })
     .await
-    .map_err(|e| format!("the session write did not run: {e}"))?
+    .map_err(|e| said!("the session write did not run: {e}"))?
 }
 
 /// Records whether a launch reopens every tab or the last document alone.
@@ -211,7 +214,7 @@ pub async fn session_set_restore_tabs(app: tauri::AppHandle, restore: bool) -> R
         with_session(&path, |session| session.restore_tabs = restore)
     })
     .await
-    .map_err(|e| format!("the session write did not run: {e}"))?
+    .map_err(|e| said!("the session write did not run: {e}"))?
 }
 
 /// Forgets one remembered document.
@@ -226,7 +229,7 @@ pub async fn session_forget(app: tauri::AppHandle, path: String) -> Result<(), S
         with_session(&file, |session| session.forget(&path))
     })
     .await
-    .map_err(|e| format!("the session write did not run: {e}"))?
+    .map_err(|e| said!("the session write did not run: {e}"))?
 }
 
 /// Forgets every remembered document, and nothing else the session holds.
@@ -237,7 +240,7 @@ pub async fn session_clear_places(app: tauri::AppHandle) -> Result<(), String> {
         with_session(&path, session::Session::clear_places)
     })
     .await
-    .map_err(|e| format!("the session write did not run: {e}"))?
+    .map_err(|e| said!("the session write did not run: {e}"))?
 }
 
 /// Remember signature pixels in the current user's protected OS storage.

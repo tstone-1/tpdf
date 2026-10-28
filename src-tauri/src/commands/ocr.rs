@@ -149,7 +149,7 @@ pub async fn recognise_page(
     let service = service.inner().clone();
     tauri::async_runtime::spawn_blocking(move || recognise_one(&service, doc, page, language))
         .await
-        .map_err(|e| format!("Text recognition stopped: {e}"))?
+        .map_err(|e| said!("Text recognition stopped: {e}"))?
 }
 
 /// Recognises a saved page through the parser and OCR worker boundaries.
@@ -168,7 +168,7 @@ pub fn recognise_one(
         original.height_pt,
         PIXELS_CAPACITY.min(TILE_CAPACITY),
     )
-    .ok_or("This page is too large to recognise.")?;
+    .ok_or_else(|| said!("This page is too large to recognise."))?;
     let request = TileRequest {
         annotations: false,
         rid: 0,
@@ -186,10 +186,10 @@ pub fn recognise_one(
     };
     let rgba = match wait(|reply| service.tile(request, reply))? {
         TileOutcome::Rendered(tile) => tile.bytes,
-        TileOutcome::Abandoned => return Err("The page render was abandoned.".into()),
+        TileOutcome::Abandoned => return Err(said!("The page render was abandoned.")),
     };
     if rgba.len() != width as usize * height as usize * 4 {
-        return Err("The page was rendered at the wrong size.".into());
+        return Err(said!("The page was rendered at the wrong size."));
     }
     let offered = language
         .as_ref()
@@ -198,9 +198,9 @@ pub fn recognise_one(
         .unwrap_or_default();
     let choice = ocr_layer::choose(language.as_deref(), &offered);
     if choice.unavailable.is_some() {
-        return Err(
-            "The selected recognition language is unavailable. Choose another language.".into(),
-        );
+        return Err(said!(
+            "The selected recognition language is unavailable. Choose another language."
+        ));
     }
     let mut engine = OcrWorker::spawn().map_err(|e| e.to_string())?;
     let (_, items) = engine
@@ -214,8 +214,8 @@ pub fn recognise_one(
             &ocr_layer::options(choice.languages),
         )
         .map_err(|e| e.to_string())?;
-    let layer =
-        ocr_layer::layer_of(page, items).ok_or("No words could be recognised on this page.")?;
+    let layer = ocr_layer::layer_of(page, items)
+        .ok_or_else(|| said!("No words could be recognised on this page."))?;
     recovered_text(original.width_pt, original.height_pt, &layer.words)
 }
 
@@ -233,7 +233,7 @@ fn recovered_text(
     };
     for word in words {
         if word.rect.iter().any(|v| !v.is_finite()) {
-            return Err("Recognition returned invalid word positions.".into());
+            return Err(said!("Recognition returned invalid word positions."));
         }
         for c in word.text.chars() {
             text.codes.push(u32::from(c));
@@ -242,7 +242,7 @@ fn recovered_text(
         text.codes.push(u32::from(' '));
         text.boxes.extend_from_slice(&[0.0; 4]);
         if text.codes.len() > 1_000_000 {
-            return Err("The recognised text exceeds the page limit.".into());
+            return Err(said!("The recognised text exceeds the page limit."));
         }
     }
     Ok(text)
@@ -349,18 +349,18 @@ fn read(
         let rgba = match wait(|reply| service.tile(request, reply))? {
             TileOutcome::Rendered(tile) => tile.bytes,
             TileOutcome::Abandoned => {
-                return Err(format!("the render of page {n} was abandoned"));
+                return Err(said!("the render of page {n} was abandoned"));
             }
         };
         if rgba.len() != width as usize * height as usize * 4 {
-            return Err(format!("page {n} was rendered at the wrong size"));
+            return Err(said!("page {n} was rendered at the wrong size"));
         }
         // Spawned at the first page that needs it, so a document whose pages
         // all have text never starts an engine.
         let worker = match &mut engine {
             Some(worker) => worker,
             None => engine.insert(
-                OcrWorker::spawn().map_err(|why| format!("The text could not be read. {why}"))?,
+                OcrWorker::spawn().map_err(|why| said!("The text could not be read. {why}"))?,
             ),
         };
         let pixels = Pixels {
@@ -378,7 +378,7 @@ fn read(
             items
         });
         let outcome = ocr_layer::outcome_of(page, answer, &text)
-            .map_err(|why| format!("Page {n} could not be read: {why}"))?;
+            .map_err(|why| said!("Page {n} could not be read: {why}"))?;
         match outcome {
             Outcome::Layer(layer) => {
                 report.pages.push(LayerPage {
@@ -410,24 +410,25 @@ fn read(
 /// whatever became of the others: it is the cause a reader can act on.
 fn nothing_to_add(report: &Recognised) -> String {
     if !report.refused.is_empty() {
-        return format!(
-            "No page was given text. The recogniser refused {}, {}.",
-            ocr_layer::pages_named(&report.refused),
-            ocr_layer::REFUSED_MEANS
+        return said!(
+            "No page was given text. The recogniser refused {pages}, {means}.",
+            pages = ocr_layer::pages_named(&report.refused),
+            means = ocr_layer::REFUSED_MEANS
         );
     }
     let read = !report.nothing_read.is_empty();
     let had = !report.already_text.is_empty();
     let large = !report.too_large.is_empty();
     match (had, read, large) {
-        (true, false, false) => "Every page already has text, so there is nothing to add.".into(),
-        (false, true, false) => "No text was recognised on any page.".into(),
+        (true, false, false) => said!("Every page already has text, so there is nothing to add."),
+        (false, true, false) => said!("No text was recognised on any page."),
         (false, false, true) => {
-            "Every page is too large to render finely enough to read its text.".into()
+            said!("Every page is too large to render finely enough to read its text.")
         }
-        _ => "No page was given text: each one either has text already, or none was recognised \
+        _ => said!(
+            "No page was given text: each one either has text already, or none was recognised \
               on it."
-            .into(),
+        ),
     }
 }
 
@@ -445,27 +446,27 @@ fn reads_back(
 ) -> Result<(), String> {
     let opened = wait(|reply| service.open(staged.to_path_buf(), true, password, reply)).map_err(
         |refusal| {
-            format!(
-                "The copy could not be opened to check it, so it was not kept: {}",
-                refusal.reason
+            said!(
+                "The copy could not be opened to check it, so it was not kept: {reason}",
+                reason = refusal.reason
             )
         },
     )?;
     let checked = (|| {
         if opened.page_count != pages as usize {
-            return Err(format!(
-                "The copy has {} pages where the document has {pages}, so it was not kept.",
-                opened.page_count
+            return Err(said!(
+                "The copy has {count} pages where the document has {pages}, so it was not kept.",
+                count = opened.page_count
             ));
         }
         for (layer, before) in layers.iter().zip(before) {
             let text: crate::text::PageText =
                 wait(|reply| service.text(opened.id, layer.page, None, reply))?;
             if !ocr_layer::reads_back(layer, before, &text) {
-                return Err(format!(
-                    "Page {} of the copy did not read back with the text that was recognised, so \
+                return Err(said!(
+                    "Page {page} of the copy did not read back with the text that was recognised, so \
                      the copy was not kept.",
-                    layer.page + 1
+                    page = layer.page + 1
                 ));
             }
         }
@@ -516,9 +517,9 @@ pub fn ocr_copy_asked(
     let mut read = read(service, doc, pages, choice.languages, cancelled, progress)?;
     read.report.language_unavailable = choice.unavailable;
     if read.layers.is_empty() {
-        return Err(format!(
-            "{} No copy was written.",
-            nothing_to_add(&read.report)
+        return Err(said!(
+            "{why} No copy was written.",
+            why = nothing_to_add(&read.report)
         ));
     }
     plan.text_layers = read.layers.clone();
@@ -594,7 +595,7 @@ pub async fn ocr_copy(
         )
     })
     .await
-    .map_err(|e| format!("Text recognition did not run: {e}"))?
+    .map_err(|e| said!("Text recognition did not run: {e}"))?
 }
 
 /// The languages the reader can choose between for *Recognise text*.
@@ -605,7 +606,7 @@ pub async fn ocr_copy(
 pub async fn ocr_languages() -> Result<Offered, String> {
     tauri::async_runtime::spawn_blocking(offered)
         .await
-        .map_err(|e| format!("The languages could not be listed: {e}"))
+        .map_err(|e| said!("The languages could not be listed: {e}"))
 }
 
 /// Asks recognition number `run` to stop before its next page.

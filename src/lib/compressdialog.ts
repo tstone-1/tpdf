@@ -26,6 +26,7 @@ import {
   type Shrinkage,
 } from "./compress";
 import { catalog } from "./i18n";
+import { spokenError } from "./said";
 
 /** Class on the backdrop, so the check harness can find it. */
 export const DIALOG_CLASS = "tpdf-compress";
@@ -283,7 +284,7 @@ export class CompressDialog {
       try {
         answer = { shrinkage: await estimate(pictures) };
       } catch (error) {
-        answer = { problem: String(error) };
+        answer = { problem: spokenError(error) };
       }
       if (run !== this.run || !this.shown) return;
       this.known.set(id, answer);
@@ -321,7 +322,7 @@ export class CompressDialog {
       try {
         answer = { shrinkage: await estimate(pictures) };
       } catch (error) {
-        answer = { problem: String(error) };
+        answer = { problem: spokenError(error) };
       }
       if (run !== this.run || !this.shown || this.customFor !== pictures) return;
       this.known.set(CUSTOM, answer);

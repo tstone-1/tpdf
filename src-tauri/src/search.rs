@@ -469,9 +469,10 @@ fn compile(pattern: &str, match_case: bool) -> Result<regex::Regex, String> {
             e.to_string()
                 .lines()
                 .find(|line| !line.trim().is_empty())
-                .unwrap_or("not a valid pattern")
-                .trim()
-                .to_string()
+                .map_or_else(
+                    || said!("not a valid pattern"),
+                    |line| line.trim().to_string(),
+                )
         })
 }
 

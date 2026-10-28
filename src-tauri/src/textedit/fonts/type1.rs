@@ -12,7 +12,9 @@ pub(super) mod program;
 #[cfg(test)]
 mod tests;
 
-const INVALID: &str = "unsupported embedded Type 1 font";
+fn invalid() -> String {
+    said!("unsupported embedded Type 1 font")
+}
 // How far a read-only glyph's ink may reach from its origin, in thousandths.
 pub(super) const OPAQUE_REACH: f64 = 4000.;
 
@@ -241,7 +243,7 @@ fn names(
     font: &Dictionary,
     builtin: &program::Builtin,
 ) -> Result<Box<[Option<Vec<u8>>; 256]>, String> {
-    let invalid = || "unsupported or ambiguous Type 1 encoding".to_string();
+    let invalid = || said!("unsupported or ambiguous Type 1 encoding");
     let mut names: Box<[Option<Vec<u8>>; 256]> = Box::new(std::array::from_fn(|_| None));
     let winansi = |names: &mut [Option<Vec<u8>>; 256]| {
         for (index, name) in super::cff::ASCII_NAMES.iter().enumerate() {
@@ -352,23 +354,23 @@ fn descriptor<'a>(doc: &'a Document, font: &'a Dictionary) -> Result<&'a Diction
             )
         })
     {
-        return Err(INVALID.into());
+        return Err(invalid());
     }
-    let descriptor = dictionary(doc, font.get(b"FontDescriptor").map_err(|_| INVALID)?)?;
+    let descriptor = dictionary(doc, font.get(b"FontDescriptor").map_err(|_| invalid())?)?;
     let flags = descriptor
         .get(b"Flags")
         .and_then(Object::as_i64)
-        .map_err(|_| INVALID)?;
+        .map_err(|_| invalid())?;
     // Exactly one of symbolic and nonsymbolic. Glyph names select outlines
     // either way, so the encoding rules below are the same for both.
     if !matches!(flags & (4 | 32), 4 | 32) {
-        return Err(INVALID.into());
+        return Err(invalid());
     }
     if descriptor.get(b"Type").and_then(Object::as_name).ok() != Some(b"FontDescriptor")
         || descriptor.get(b"FontName").ok() != font.get(b"BaseFont").ok()
         || descriptor.has(b"FontFile2")
     {
-        return Err(INVALID.into());
+        return Err(invalid());
     }
     Ok(descriptor)
 }
@@ -376,21 +378,21 @@ fn descriptor<'a>(doc: &'a Document, font: &'a Dictionary) -> Result<&'a Diction
 pub(super) fn embedded(doc: &Document, font: &Dictionary) -> Result<Metrics, String> {
     let descriptor = descriptor(doc, font)?;
     if descriptor.has(b"FontFile3") {
-        return Err(INVALID.into());
+        return Err(invalid());
     }
-    let stream = crate::encoding::resolve(doc, descriptor.get(b"FontFile").map_err(|_| INVALID)?)
+    let stream = crate::encoding::resolve(doc, descriptor.get(b"FontFile").map_err(|_| invalid())?)
         .as_stream()
-        .map_err(|_| INVALID)?;
+        .map_err(|_| invalid())?;
     let length = |key: &[u8]| -> Result<usize, String> {
         match stream.dict.get(key) {
             Ok(value) => {
                 let value = crate::encoding::resolve(doc, value)
                     .as_i64()
-                    .map_err(|_| INVALID)?;
-                usize::try_from(value).map_err(|_| INVALID.into())
+                    .map_err(|_| invalid())?;
+                usize::try_from(value).map_err(|_| invalid())
             }
             Err(_) if key == b"Length3" => Ok(0),
-            Err(_) => Err(INVALID.into()),
+            Err(_) => Err(invalid()),
         }
     };
     let (length1, length2, length3) = (
@@ -408,13 +410,14 @@ pub(super) fn embedded(doc: &Document, font: &Dictionary) -> Result<Metrics, Str
 pub(super) fn compact(doc: &Document, font: &Dictionary) -> Result<Metrics, String> {
     let descriptor = descriptor(doc, font)?;
     if descriptor.has(b"FontFile") {
-        return Err(INVALID.into());
+        return Err(invalid());
     }
-    let stream = crate::encoding::resolve(doc, descriptor.get(b"FontFile3").map_err(|_| INVALID)?)
-        .as_stream()
-        .map_err(|_| INVALID)?;
+    let stream =
+        crate::encoding::resolve(doc, descriptor.get(b"FontFile3").map_err(|_| invalid())?)
+            .as_stream()
+            .map_err(|_| invalid())?;
     if stream.dict.get(b"Subtype").and_then(Object::as_name).ok() != Some(b"Type1C") {
-        return Err(INVALID.into());
+        return Err(invalid());
     }
     let bytes = filters::decode(stream, super::super::MAX_CONTENT)?;
     measured(doc, font, &super::cff::named(&bytes)?)
@@ -431,25 +434,25 @@ fn measured(
     let first = font
         .get(b"FirstChar")
         .and_then(Object::as_i64)
-        .map_err(|_| INVALID)?;
+        .map_err(|_| invalid())?;
     let last = font
         .get(b"LastChar")
         .and_then(Object::as_i64)
-        .map_err(|_| INVALID)?;
+        .map_err(|_| invalid())?;
     if first < 0 || last > 255 || first > last {
-        return Err(INVALID.into());
+        return Err(invalid());
     }
-    let widths = crate::encoding::resolve(doc, font.get(b"Widths").map_err(|_| INVALID)?)
+    let widths = crate::encoding::resolve(doc, font.get(b"Widths").map_err(|_| invalid())?)
         .as_array()
-        .map_err(|_| INVALID)?;
+        .map_err(|_| invalid())?;
     if widths.len() != (last - first + 1) as usize {
-        return Err(INVALID.into());
+        return Err(invalid());
     }
     let unicode = match font.get(b"ToUnicode") {
         Ok(mapping) => {
             let stream = crate::encoding::resolve(doc, mapping)
                 .as_stream()
-                .map_err(|_| INVALID)?;
+                .map_err(|_| invalid())?;
             Some(super::mapping::parse_names(stream)?)
         }
         Err(_) => None,
@@ -515,7 +518,7 @@ fn measured(
                 // Two glyphs for one character would make the choice arbitrary.
                 match slot_names[slot as usize] {
                     Some(existing) if existing != name => {
-                        return Err("ambiguous duplicate Type 1 glyph encoding".into())
+                        return Err(said!("ambiguous duplicate Type 1 glyph encoding"))
                     }
                     _ => {}
                 }

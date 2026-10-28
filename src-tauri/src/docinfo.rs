@@ -2638,11 +2638,10 @@ pub(crate) fn locked(document: &Document) -> Result<bool, String> {
         fields::Flow::Descend
     });
     if cut.dropped > 0 || cut.too_deep > 0 {
-        return Err(
+        return Err(said!(
             "this form has more fields, or groups nested deeper, than tpdf reads, so it \
              cannot tell whether a signature locked the document"
-                .into(),
-        );
+        ));
     }
     Ok(locked)
 }

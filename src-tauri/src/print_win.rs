@@ -239,7 +239,8 @@ fn to_stream(bytes: &[u8]) -> Option<InMemoryRandomAccessStream> {
 ///
 /// The page index being out of range, or WinRT refusing to render or encode.
 pub fn render_page(bytes: &[u8], index: u32, dpi: f32) -> Result<Vec<u8>, String> {
-    let document = parse(bytes).ok_or("the OS parser could not read the print job")?;
+    let document =
+        parse(bytes).ok_or_else(|| said!("the OS parser could not read the print job"))?;
     let page = document
         .GetPage(index)
         .map_err(|e| format!("page {index}: {e}"))?;
@@ -878,7 +879,7 @@ fn band_rows(width: u32) -> Result<u32, String> {
     let row = u64::from(width) * 4;
     let rows = (crate::worker::TILE_CAPACITY as u64 / row.max(1)).min(u64::from(u16::MAX));
     if width == 0 || width > u32::from(u16::MAX) || rows == 0 {
-        return Err(format!("a page {width} pixels wide is too wide to print"));
+        return Err(said!("a page {width} pixels wide is too wide to print"));
     }
     Ok(u32::try_from(rows).unwrap_or(u32::from(u16::MAX)))
 }
@@ -891,10 +892,10 @@ fn band_rows(width: u32) -> Result<u32, String> {
 fn bmp_header(width: u32, height: u32) -> Result<Vec<u8>, String> {
     let pixels = u64::from(width) * u64::from(height) * 4;
     let total = u32::try_from(pixels + (BMP_FILE_HEADER + DIB_HEADER_MIN) as u64)
-        .map_err(|_| format!("a {width}x{height} page is too large to print"))?;
+        .map_err(|_| said!("a {width}x{height} page is too large to print"))?;
     let (w, h) = (
-        i32::try_from(width).map_err(|_| "page too wide")?,
-        i32::try_from(height).map_err(|_| "page too tall")?,
+        i32::try_from(width).map_err(|_| said!("page too wide"))?,
+        i32::try_from(height).map_err(|_| said!("page too tall"))?,
     );
     let mut out = Vec::with_capacity(total as usize);
     out.extend_from_slice(b"BM");
@@ -940,7 +941,12 @@ impl Painter {
             .ask(Request::Open {
                 lazy_geometry: false,
             })
-            .map_err(|e| format!("the worker could not open the print job: {}", e.message()))?;
+            .map_err(|e| {
+                said!(
+                    "the worker could not open the print job: {why}",
+                    why = e.message()
+                )
+            })?;
         match reply {
             Reply::Open {
                 pages, page_count, ..
@@ -948,7 +954,7 @@ impl Painter {
                 session,
                 sizes: pages,
             }),
-            Reply::Open { .. } => Err("the worker returned incomplete page sizes".into()),
+            Reply::Open { .. } => Err(said!("the worker returned incomplete page sizes")),
             other => Err(format!(
                 "the worker answered the print job's sizes with {}",
                 other.described()
@@ -978,10 +984,10 @@ impl Painter {
                         scale: cut.scale,
                         turns: cut.turns,
                         invert: false,
-                        x: i32::try_from(cut.x).map_err(|_| "page too wide")?,
-                        y: i32::try_from(cut.y + y).map_err(|_| "page too tall")?,
-                        width: u16::try_from(width).map_err(|_| "page too wide")?,
-                        height: u16::try_from(band).map_err(|_| "band too tall")?,
+                        x: i32::try_from(cut.x).map_err(|_| said!("page too wide"))?,
+                        y: i32::try_from(cut.y + y).map_err(|_| said!("page too tall"))?,
+                        width: u16::try_from(width).map_err(|_| said!("page too wide"))?,
+                        height: u16::try_from(band).map_err(|_| said!("band too tall"))?,
                         format: crate::render::TileFormat::Raw,
                         crop: None,
                     },
@@ -1044,9 +1050,7 @@ pub fn spool(
             // again costs one comparison per sheet of a job about to be drawn.
             let count = u32::try_from(sizes.len()).unwrap_or(u32::MAX);
             if let Some(index) = sheets.iter().find(|&&index| index >= count) {
-                return Err(format!(
-                    "sheet {index} is not in this job, which has {count}"
-                ));
+                return Err(said!("sheet {index} is not in this job, which has {count}"));
             }
             crate::print_layout::lay_out(sizes, sheets, paper, crate::print_layout::Layout::PLAIN)
         },
@@ -1333,7 +1337,7 @@ pub fn print_on(
     marks: bool,
 ) -> Result<bool, String> {
     let result = if pages.is_empty() {
-        Err("this print job has no pages in it".to_owned())
+        Err(said!("this print job has no pages in it"))
     } else {
         let of = u32::try_from(sheets).unwrap_or(u32::MAX);
         let shown = owner.map(|h| h.0 as isize);
@@ -1461,7 +1465,10 @@ pub fn present(
             // round, by refusing to report at all.
             return Ok(false);
         }
-        return Err(format!("the print dialog failed: CDERR {:#06x}", why.0));
+        return Err(said!(
+            "the print dialog failed: CDERR {code:#06x}",
+            code = why.0
+        ));
     }
 
     // What the reader typed, or nothing if they left the field alone --- the
@@ -1483,7 +1490,7 @@ pub fn present(
         // least one sheet --- so this is a job with nothing in it, and a message
         // about a range would be about something the reader never typed.
         if sheets.is_empty() {
-            return Err("this print job has no pages in it".into());
+            return Err(said!("this print job has no pages in it"));
         }
         // A stuck queue blocks `spool` inside GDI and reports nothing, so the
         // reader is told from another thread instead (`print::STALL`). The

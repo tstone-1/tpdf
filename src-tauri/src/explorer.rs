@@ -247,26 +247,44 @@ pub fn enable(registry: &mut dyn Registry, dll: &str, replace: bool) -> Result<S
     Ok(said_enabled(&taken, &left))
 }
 
+/// Each sentence is written whole, and one that others follow carries them as
+/// its last argument, so that the window can recognise every part of the
+/// answer and translate it all. The slots come in [`Slot::ALL`]'s order, the
+/// preview pane last.
 fn said_enabled(taken: &[Slot], left: &[(Slot, String)]) -> String {
-    let what = |slot: &Slot| match slot {
-        Slot::Thumbnail => "thumbnails",
-        Slot::Preview => "the preview pane",
-    };
-    let mut sentence = match taken {
-        [] => "Nothing changed.".to_string(),
-        [one] => format!("Explorer now shows PDF {} with tpdf.", what(one)),
-        _ => "Explorer now shows PDF thumbnails and the preview pane with tpdf.".to_string(),
-    };
-    for (slot, name) in left {
-        let is = match slot {
-            Slot::Thumbnail => "PDF thumbnails are still",
-            Slot::Preview => "The preview pane still is",
-        };
-        sentence.push_str(&format!(
-            " {is} {name}'s; turning it on again can replace it."
-        ));
+    let mut rest: Option<String> = None;
+    for (slot, name) in left.iter().rev() {
+        rest = Some(match (slot, rest) {
+            (Slot::Thumbnail, None) => {
+                said!("PDF thumbnails are still {name}'s; turning it on again can replace it.")
+            }
+            (Slot::Thumbnail, Some(rest)) => said!(
+                "PDF thumbnails are still {name}'s; turning it on again can replace it. {rest}"
+            ),
+            (Slot::Preview, None) => {
+                said!("The preview pane still is {name}'s; turning it on again can replace it.")
+            }
+            (Slot::Preview, Some(rest)) => said!(
+                "The preview pane still is {name}'s; turning it on again can replace it. {rest}"
+            ),
+        });
     }
-    sentence
+    match (taken, rest) {
+        ([], None) => said!("Nothing changed."),
+        ([], Some(rest)) => said!("Nothing changed. {rest}"),
+        ([Slot::Thumbnail], None) => said!("Explorer now shows PDF thumbnails with tpdf."),
+        ([Slot::Thumbnail], Some(rest)) => {
+            said!("Explorer now shows PDF thumbnails with tpdf. {rest}")
+        }
+        ([Slot::Preview], None) => said!("Explorer now shows PDF the preview pane with tpdf."),
+        ([Slot::Preview], Some(rest)) => {
+            said!("Explorer now shows PDF the preview pane with tpdf. {rest}")
+        }
+        (_, None) => said!("Explorer now shows PDF thumbnails and the preview pane with tpdf."),
+        (_, Some(rest)) => {
+            said!("Explorer now shows PDF thumbnails and the preview pane with tpdf. {rest}")
+        }
+    }
 }
 
 /// Turns tpdf's handlers off, puts back what it replaced for this user, and
@@ -291,17 +309,27 @@ pub fn disable(registry: &mut dyn Registry) -> Result<String, String> {
     registry.remove_value(PREVIEW_LIST, PREVIEW_CLSID)?;
     registry.remove_if_empty(PREVIEW_LIST)?;
     registry.remove_if_empty(SHELLEX)?;
-    let mut sentence = "Explorer no longer uses tpdf for PDFs.".to_string();
+    // Built from the last slot back, each sentence carrying the ones after it,
+    // as in `said_enabled`.
+    let mut back = Vec::new();
     for slot in Slot::ALL {
         if let Owner::Other { name } = owner(registry, slot)? {
-            let what = match slot {
-                Slot::Thumbnail => "PDF thumbnails are",
-                Slot::Preview => "The preview pane is",
-            };
-            sentence.push_str(&format!(" {what} {name}'s again."));
+            back.push((slot, name));
         }
     }
-    Ok(sentence)
+    let mut rest: Option<String> = None;
+    for (slot, name) in back.into_iter().rev() {
+        rest = Some(match (slot, rest) {
+            (Slot::Thumbnail, None) => said!("PDF thumbnails are {name}'s again."),
+            (Slot::Thumbnail, Some(rest)) => said!("PDF thumbnails are {name}'s again. {rest}"),
+            (Slot::Preview, None) => said!("The preview pane is {name}'s again."),
+            (Slot::Preview, Some(rest)) => said!("The preview pane is {name}'s again. {rest}"),
+        });
+    }
+    Ok(match rest {
+        None => said!("Explorer no longer uses tpdf for PDFs."),
+        Some(rest) => said!("Explorer no longer uses tpdf for PDFs. {rest}"),
+    })
 }
 
 /// What `tpdf explorer` says with no option.
@@ -327,14 +355,14 @@ pub fn described(state: &Handlers) -> String {
 pub fn dll_beside(executable: &Path) -> Result<PathBuf, String> {
     let dll = executable
         .parent()
-        .ok_or("where tpdf runs from has no folder")?
+        .ok_or_else(|| said!("where tpdf runs from has no folder"))?
         .join(DLL);
     if dll.is_file() {
         Ok(dll)
     } else {
-        Err(format!(
-            "{} is not there, so Explorer has nothing of tpdf's to load; reinstall tpdf",
-            dll.display()
+        Err(said!(
+            "{path} is not there, so Explorer has nothing of tpdf's to load; reinstall tpdf",
+            path = dll.display()
         ))
     }
 }
@@ -382,9 +410,7 @@ pub mod windows {
                 return Ok(None);
             }
             if status != ERROR_SUCCESS {
-                return Err(format!(
-                    "the registry could not read {key} (error {status})"
-                ));
+                return Err(said!("the registry could not read {key} (error {status})"));
             }
             let mut buffer = vec![0u16; (size as usize).div_ceil(2).max(1)];
             let mut bytes = (buffer.len() * 2) as u32;
@@ -407,9 +433,7 @@ pub mod windows {
                     Ok(Some(String::from_utf16_lossy(&text[..end])))
                 }
                 ERROR_FILE_NOT_FOUND => Ok(None),
-                _ => Err(format!(
-                    "the registry could not read {key} (error {status})"
-                )),
+                _ => Err(said!("the registry could not read {key} (error {status})")),
             }
         }
 
@@ -430,9 +454,7 @@ pub mod windows {
             if status == ERROR_SUCCESS {
                 Ok(())
             } else {
-                Err(format!(
-                    "the registry could not write {key} (error {status})"
-                ))
+                Err(said!("the registry could not write {key} (error {status})"))
             }
         }
 
@@ -443,7 +465,7 @@ pub mod windows {
             };
             match status {
                 ERROR_SUCCESS | ERROR_FILE_NOT_FOUND => Ok(()),
-                _ => Err(format!(
+                _ => Err(said!(
                     "the registry could not remove from {key} (error {status})"
                 )),
             }
@@ -455,7 +477,7 @@ pub mod windows {
             // key; `RegDeleteKeyW` then removes the key itself.
             let status = unsafe { RegDeleteTreeW(HKEY_CURRENT_USER, name.as_ptr()) };
             if status != ERROR_SUCCESS && status != ERROR_FILE_NOT_FOUND {
-                return Err(format!(
+                return Err(said!(
                     "the registry could not remove {key} (error {status})"
                 ));
             }
@@ -463,7 +485,7 @@ pub mod windows {
             let status = unsafe { RegDeleteKeyW(HKEY_CURRENT_USER, name.as_ptr()) };
             match status {
                 ERROR_SUCCESS | ERROR_FILE_NOT_FOUND => Ok(()),
-                _ => Err(format!(
+                _ => Err(said!(
                     "the registry could not remove {key} (error {status})"
                 )),
             }
@@ -486,9 +508,7 @@ pub mod windows {
                 return Ok(());
             }
             if status != ERROR_SUCCESS {
-                return Err(format!(
-                    "the registry could not open {key} (error {status})"
-                ));
+                return Err(said!("the registry could not open {key} (error {status})"));
             }
             let (mut keys, mut values) = (0u32, 0u32);
             // SAFETY: `handle` was opened above; the two counts are live
@@ -512,9 +532,7 @@ pub mod windows {
             // SAFETY: closed once.
             unsafe { RegCloseKey(handle) };
             if status != ERROR_SUCCESS {
-                return Err(format!(
-                    "the registry could not read {key} (error {status})"
-                ));
+                return Err(said!("the registry could not read {key} (error {status})"));
             }
             if keys == 0 && values == 0 {
                 // SAFETY: the name is NUL-terminated.
@@ -554,7 +572,7 @@ pub fn run(change: Option<(bool, bool)>) -> Result<(String, Handlers), String> {
             None => None,
             Some((true, replace)) => {
                 let executable =
-                    std::env::current_exe().map_err(|e| format!("where tpdf runs from: {e}"))?;
+                    std::env::current_exe().map_err(|e| said!("where tpdf runs from: {e}"))?;
                 let dll = dll_beside(&executable)?;
                 Some(enable(&mut registry, &dll.to_string_lossy(), replace)?)
             }
@@ -569,20 +587,18 @@ pub fn run(change: Option<(bool, bool)>) -> Result<(String, Handlers), String> {
     #[cfg(target_os = "macos")]
     {
         let _ = change;
-        Err(
+        Err(said!(
             "Explorer is the Windows file manager; on macOS, Finder and Quick Look show PDFs \
              themselves"
-                .into(),
-        )
+        ))
     }
     #[cfg(target_os = "linux")]
     {
         let _ = change;
-        Err(
+        Err(said!(
             "Explorer is the Windows file manager; on Linux, the file manager's own \
              thumbnailer shows PDFs"
-                .into(),
-        )
+        ))
     }
 }
 

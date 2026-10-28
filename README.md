@@ -377,6 +377,11 @@ project conventions.
   macOS the command sets it and says so; Windows lets only you choose, so there it opens
   Settings at Default apps.
   <!-- built: app.makeDefaultPdfApp -->
+- **The window speaks English or German**, following the system language. **Language:
+  Deutsch**, **Language: English (US)**, **Language: English (UK)** and **Language: follow the
+  system** choose one, from the next start. The command-line tool and its JSON reports stay
+  English.
+  <!-- built: app.language.system app.language.en-US app.language.en-GB app.language.de-DE -->
 - **Show PDFs in Explorer with tpdf**, on Windows: Explorer shows the first page of each PDF
   as its thumbnail, and the preview pane shows the document a page at a time (Page Down,
   Page Up and the mouse wheel turn pages). Off until you turn it on; the installer registers

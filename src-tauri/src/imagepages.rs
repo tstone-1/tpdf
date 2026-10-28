@@ -70,10 +70,10 @@ impl Options {
     /// The sentence for the reader.
     pub fn checked(self) -> Result<Self, String> {
         match self.dpi {
-            Some(dpi) if !PLAUSIBLE_DPI.contains(&f64::from(dpi)) => Err(format!(
-                "a resolution of {dpi} DPI is outside {:.0} to {:.0}",
-                PLAUSIBLE_DPI.start(),
-                PLAUSIBLE_DPI.end()
+            Some(dpi) if !PLAUSIBLE_DPI.contains(&f64::from(dpi)) => Err(said!(
+                "a resolution of {dpi} DPI is outside {least:.0} to {most:.0}",
+                least = PLAUSIBLE_DPI.start(),
+                most = PLAUSIBLE_DPI.end()
             )),
             _ => Ok(self),
         }
@@ -106,13 +106,13 @@ fn be16(bytes: &[u8], at: usize) -> Option<usize> {
 
 fn bounded(width: u32, height: u32) -> Result<(), String> {
     if width == 0 || height == 0 {
-        return Err("it has no pixels".into());
+        return Err(said!("it has no pixels"));
     }
     if width > MAX_SIDE || height > MAX_SIDE || u64::from(width) * u64::from(height) > MAX_PIXELS {
-        return Err(format!(
-            "it is {width} x {height} pixels, and tpdf takes pictures up to {} megapixels and \
+        return Err(said!(
+            "it is {width} x {height} pixels, and tpdf takes pictures up to {megapixels} megapixels and \
              {MAX_SIDE} pixels a side",
-            MAX_PIXELS / 1_000_000
+            megapixels = MAX_PIXELS / 1_000_000
         ));
     }
     Ok(())
@@ -169,7 +169,7 @@ struct JpegFacts {
 }
 
 fn jpeg_facts(bytes: &[u8]) -> Result<JpegFacts, String> {
-    let broken = || "it is not a complete JPEG image".to_string();
+    let broken = || said!("it is not a complete JPEG image");
     let mut facts = JpegFacts {
         width: 0,
         height: 0,
@@ -212,7 +212,7 @@ fn jpeg_facts(bytes: &[u8]) -> Result<JpegFacts, String> {
             // The frame: baseline, extended or progressive, eight bits a sample.
             0xc0..=0xc2 => {
                 if payload.len() < 6 || payload[0] != 8 {
-                    return Err("it is a JPEG with more than eight bits a sample".into());
+                    return Err(said!("it is a JPEG with more than eight bits a sample"));
                 }
                 facts.height = u32::from(u16::from_be_bytes([payload[1], payload[2]]));
                 facts.width = u32::from(u16::from_be_bytes([payload[3], payload[4]]));
@@ -220,11 +220,10 @@ fn jpeg_facts(bytes: &[u8]) -> Result<JpegFacts, String> {
                 return Ok(facts);
             }
             0xc3 | 0xc5..=0xc7 | 0xc9..=0xcb | 0xcd..=0xcf => {
-                return Err(
+                return Err(said!(
                     "it is a lossless or arithmetic-coded JPEG, which PDF readers do \
                             not display"
-                        .into(),
-                );
+                ));
             }
             0xda | 0xd9 => return Err(broken()),
             _ => {}
@@ -246,8 +245,12 @@ fn jpeg(bytes: &[u8]) -> Result<Picture, String> {
     let gray = match facts.components {
         1 => true,
         3 => false,
-        4 => return Err("it is a CMYK JPEG, which tpdf does not place yet; save it as RGB".into()),
-        other => return Err(format!("it is a JPEG with {other} colour components")),
+        4 => {
+            return Err(said!(
+                "it is a CMYK JPEG, which tpdf does not place yet; save it as RGB"
+            ))
+        }
+        other => return Err(said!("it is a JPEG with {other} colour components")),
     };
     // Decoded once and thrown away: the bytes that go into the document are
     // the file's. This refuses a file whose picture data runs out; the
@@ -267,10 +270,10 @@ fn jpeg(bytes: &[u8]) -> Result<Picture, String> {
     let mut decoder = JpegDecoder::new_with_options(&mut source, options);
     let pixels = facts.width as usize * facts.height as usize;
     let wanted = pixels * if gray { 1 } else { 3 };
-    let undecodable = |e: zune_jpeg::errors::DecodeErrors| format!("it does not decode: {e}");
+    let undecodable = |e: zune_jpeg::errors::DecodeErrors| said!("it does not decode: {e}");
     decoder.decode_headers().map_err(undecodable)?;
     if decoder.output_buffer_size() != Some(wanted) {
-        return Err("its header and its picture disagree about its size".into());
+        return Err(said!("its header and its picture disagree about its size"));
     }
     let mut decoded = vec![0; wanted];
     decoder.decode_into(&mut decoded).map_err(undecodable)?;
@@ -292,18 +295,18 @@ fn deflated(raw: &[u8]) -> Result<Vec<u8>, String> {
     encoder
         .write_all(raw)
         .and_then(|()| encoder.finish())
-        .map_err(|e| format!("its pixels could not be compressed: {e}"))
+        .map_err(|e| said!("its pixels could not be compressed: {e}"))
 }
 
 fn png(bytes: &[u8]) -> Result<Picture, String> {
-    let undecodable = |e: png::DecodingError| format!("it does not decode: {e}");
+    let undecodable = |e: png::DecodingError| said!("it does not decode: {e}");
     let be32 = |at: usize| -> Option<u32> {
         Some(u32::from_be_bytes(bytes.get(at..at + 4)?.try_into().ok()?))
     };
     // The size from the header, before the decoder is given any room.
     let (width, height) = match (bytes.get(12..16), be32(16), be32(20)) {
         (Some(b"IHDR"), Some(width), Some(height)) => (width, height),
-        _ => return Err("it is not a complete PNG image".into()),
+        _ => return Err(said!("it is not a complete PNG image")),
     };
     bounded(width, height)?;
     let pixels = width as usize * height as usize;
@@ -314,7 +317,7 @@ fn png(bytes: &[u8]) -> Result<Picture, String> {
     });
     let mut reader = decoder.read_info().map_err(undecodable)?;
     if reader.info().width != width || reader.info().height != height {
-        return Err("its header and its picture disagree about its size".into());
+        return Err(said!("its header and its picture disagree about its size"));
     }
     let dpi = reader.info().pixel_dims.and_then(|dims| match dims.unit {
         png::Unit::Meter => plausible(f64::from(dims.xppu) * 0.0254, f64::from(dims.yppu) * 0.0254),
@@ -323,21 +326,21 @@ fn png(bytes: &[u8]) -> Result<Picture, String> {
     let size = reader
         .output_buffer_size()
         .filter(|size| *size <= pixels * 4)
-        .ok_or("it is larger than its header says")?;
+        .ok_or_else(|| said!("it is larger than its header says"))?;
     let mut decoded = vec![0; size];
     let frame = reader.next_frame(&mut decoded).map_err(undecodable)?;
     if frame.bit_depth != png::BitDepth::Eight {
-        return Err("it could not be read as eight-bit samples".into());
+        return Err(said!("it could not be read as eight-bit samples"));
     }
     let (channels, gray, alpha) = match frame.color_type {
         png::ColorType::Grayscale => (1, true, false),
         png::ColorType::GrayscaleAlpha => (2, true, true),
         png::ColorType::Rgb => (3, false, false),
         png::ColorType::Rgba => (4, false, true),
-        png::ColorType::Indexed => return Err("its palette could not be expanded".into()),
+        png::ColorType::Indexed => return Err(said!("its palette could not be expanded")),
     };
     if size != pixels * channels {
-        return Err("it is not the size its header says".into());
+        return Err(said!("it is not the size its header says"));
     }
     let (data, mask) = if alpha {
         let colour = channels - 1;
@@ -371,7 +374,7 @@ fn picture(bytes: &[u8]) -> Result<Picture, String> {
     } else if bytes.starts_with(&[0xff, 0xd8]) {
         jpeg(bytes)
     } else {
-        Err("it is not a PNG or JPEG image".into())
+        Err(said!("it is not a PNG or JPEG image"))
     }
 }
 
@@ -460,19 +463,19 @@ fn number(value: f64) -> Object {
 pub fn document(images: &[(&[u8], &str)], options: Options) -> Result<Document, String> {
     let options = options.checked()?;
     if images.is_empty() {
-        return Err("choose at least one picture".into());
+        return Err(said!("choose at least one picture"));
     }
     if images.len() > MAX_IMAGES {
-        return Err(format!(
-            "{} pictures were chosen, and tpdf makes a document from at most {MAX_IMAGES} at once",
-            images.len()
+        return Err(said!(
+            "{chosen} pictures were chosen, and tpdf makes a document from at most {MAX_IMAGES} at once",
+            chosen = images.len()
         ));
     }
     let mut doc = Document::with_version("1.7");
     let pages_id = doc.new_object_id();
     let mut kids = Vec::with_capacity(images.len());
     for (bytes, label) in images {
-        let found = picture(bytes).map_err(|why| format!("{label} cannot be used: {why}"))?;
+        let found = picture(bytes).map_err(|why| said!("{label} cannot be used: {why}"))?;
         let at = placement(
             found.width,
             found.height,

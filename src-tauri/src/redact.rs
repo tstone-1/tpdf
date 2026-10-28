@@ -243,11 +243,11 @@ impl Unhandled {
     /// document also draws elsewhere. See [`Plan::shared`].
     #[must_use]
     pub fn taken_here(&self) -> String {
-        format!(
-            "object {} is a picture this document draws {} time(s). It was taken off this \
+        said!(
+            "object {at} is a picture this document draws {times} time(s). It was taken off this \
              page; it is still in the file, and on every other place that draws it",
-            self.at,
-            self.drawn.unwrap_or(2)
+            at = self.at,
+            times = self.drawn.unwrap_or(2)
         )
     }
 
@@ -266,25 +266,25 @@ impl Unhandled {
         // text is removed" is true of neither.
         match (kind.as_str(), drawn) {
             ("path", None) => {
-                return format!(
+                return said!(
                     "object {at} is a drawing that reaches beyond the region and is not a \
                      straight line or a rectangle that can be cut at its edge, so it was left"
                 )
             }
             (CLIP_PATH, None) => {
-                return format!(
+                return said!(
                     "object {at} is a drawing that also clips what is drawn after it, so it \
                      was left"
                 )
             }
             (UNPLACED_PATH, None) => {
-                return format!(
+                return said!(
                     "object {at} is a drawing inside the region that could not be found in the \
                      page's content by position, so it was left"
                 )
             }
             (UNMEASURED_TEXT, None) => {
-                return format!(
+                return said!(
                     "object {at} is text whose width could not be measured, and the text after \
                      it on its line starts where it ends. Removing it would move that text, so \
                      it was left"
@@ -294,13 +294,13 @@ impl Unhandled {
         }
         let what = said(kind);
         match drawn {
-            Some(times) => format!(
+            Some(times) => said!(
                 "object {at} is {what} drawn {times} time(s) in this document; \
                  removing it here would leave every other copy, and the object itself, in the \
                  file \u{2014} so it was left"
             ),
             None => {
-                format!("object {at} is {what} that overlaps the region; only text is removed here")
+                said!("object {at} is {what} that overlaps the region; only text is removed here")
             }
         }
     }
@@ -313,16 +313,16 @@ impl Unhandled {
 /// panel's, `UNHANDLED_KINDS` in `redactlist.ts`, and `redactlist.test.ts`
 /// holds each arm with a kind written out here equal to that table's row. A
 /// kind neither names is said as the one thing known of it.
-fn said(kind: &str) -> &'static str {
+fn said(kind: &str) -> String {
     match kind {
-        "image" => "a picture",
-        "path" => "a drawing",
-        "shading" => "a colour gradient",
-        "form" => "a reusable block of content",
+        "image" => said!("a picture"),
+        "path" => said!("a drawing"),
+        "shading" => said!("a colour gradient"),
+        "form" => said!("a reusable block of content"),
         // A drawing whichever of the two reasons it stays for; each has a
         // sentence of its own when it is not a repeated one.
-        CLIP_PATH | UNPLACED_PATH => "a drawing",
-        _ => "something of a kind tpdf cannot read",
+        CLIP_PATH | UNPLACED_PATH => said!("a drawing"),
+        _ => said!("something of a kind tpdf cannot read"),
     }
 }
 
@@ -907,11 +907,11 @@ fn form_content(doc: &Document, form: ObjectId) -> Result<Content, String> {
     let stream = doc
         .get_object(form)
         .and_then(|object| object.as_stream())
-        .map_err(|why| format!("the form's content stream could not be read: {why}"))?;
+        .map_err(|why| said!("the form's content stream could not be read: {why}"))?;
     let body = stream
         .decompressed_content_with_limit(MAX_CONTENT_BYTES)
-        .map_err(|why| format!("the form's content stream will not decode: {why}"))?;
-    decode_whole(&body, "the form's content stream")
+        .map_err(|why| said!("the form's content stream will not decode: {why}"))?;
+    decode_whole(&body, &said!("the form's content stream"))
 }
 
 /// Every operation of a content stream that is about to be written back, or a
@@ -936,7 +936,7 @@ fn form_content(doc: &Document, form: ObjectId) -> Result<Content, String> {
 /// `textedit::inspect_pinning` reads a page the same way, for the same reason.
 fn decode_whole(data: &[u8], what: &str) -> Result<Content, String> {
     Content::decode_strict(data).map_err(|_| {
-        format!(
+        said!(
             "{what} does not parse to its end, and writing back the part that could be read \
              would drop the rest of it. Nothing was removed."
         )
@@ -1742,13 +1742,10 @@ fn clear_shadow_text(
                 let name = name.clone();
                 if let Some(shared) = property_list(doc, page, &name) {
                     if let Some(key) = SHADOW_TEXT.into_iter().find(|key| shared.has(key)) {
-                        return Err(format!(
+                        return Err(said!(
                             "the region covers a marked-content span whose property list is the \
-                             shared resource /{}, and it carries /{}. Editing it would change \
-                             every other page that uses it, so nothing was removed.",
-                            String::from_utf8_lossy(&name),
-                            String::from_utf8_lossy(key)
-                        ));
+                             shared resource /{name}, and it carries /{key}. Editing it would change \
+                             every other page that uses it, so nothing was removed.", name = String::from_utf8_lossy(&name), key = String::from_utf8_lossy(key)));
                     }
                 }
             }
@@ -2074,13 +2071,15 @@ fn replace_page_content(
     let streams = doc.get_page_contents(page);
     match streams.as_slice() {
         [] => {
-            return Err("the page names no content stream, so there was nothing to replace".into());
+            return Err(said!(
+                "the page names no content stream, so there was nothing to replace"
+            ));
         }
         [only] if !named_by_another_page(doc, page, *only) => {
             let stream = doc
                 .get_object_mut(*only)
                 .and_then(|object| object.as_stream_mut())
-                .map_err(|why| format!("the page's content could not be replaced: {why}"))?;
+                .map_err(|why| said!("the page's content could not be replaced: {why}"))?;
             stream.set_plain_content(encoded.clone());
             // Stored as it is when it will not deflate, which is still the
             // content that was asked for.
@@ -2092,7 +2091,7 @@ fn replace_page_content(
             let fresh = doc.add_object(stream);
             doc.get_object_mut(page)
                 .and_then(|object| object.as_dict_mut())
-                .map_err(|why| format!("the page's content could not be replaced: {why}"))?
+                .map_err(|why| said!("the page's content could not be replaced: {why}"))?
                 .set("Contents", fresh);
         }
     }
@@ -2101,11 +2100,10 @@ fn replace_page_content(
     // stream holding `encoded` reads as `encoded` and one byte.
     let now = doc.get_page_content(page);
     if doc.get_page_contents(page).len() != 1 || now.strip_suffix(b"\n") != Some(&encoded[..]) {
-        return Err(
+        return Err(said!(
             "the page does not read back as the content that was written for it, so nothing can \
              be said to have been removed"
-                .into(),
-        );
+        ));
     }
     Ok(())
 }
@@ -2177,8 +2175,8 @@ pub fn remove_shows(
 ) -> Result<Removed, String> {
     let data = doc
         .get_page_content_with_limit(page, MAX_CONTENT_BYTES)
-        .map_err(|why| format!("the page's content stream could not be read: {why}"))?;
-    let mut content = decode_whole(&data, "the page's content stream")?;
+        .map_err(|why| said!("the page's content stream could not be read: {why}"))?;
+    let mut content = decode_whole(&data, &said!("the page's content stream"))?;
 
     let shows: Vec<usize> = content
         .operations
@@ -2192,11 +2190,9 @@ pub fn remove_shows(
     // happen; proceeding on a mismatch is one that removes the wrong words and
     // reports success.
     if shows.len() != text_objects {
-        return Err(format!(
-            "the page has {} text-showing operator(s) and PDFium reported {text_objects} text \
-             object(s). Removing by position needs those to agree, so nothing was removed.",
-            shows.len()
-        ));
+        return Err(said!(
+            "the page has {count} text-showing operator(s) and PDFium reported {text_objects} text \
+             object(s). Removing by position needs those to agree, so nothing was removed.", count = shows.len()));
     }
 
     // Descending, so an earlier removal does not move a later index. Collected
@@ -2205,9 +2201,9 @@ pub fn remove_shows(
     let mut positions: Vec<usize> = Vec::with_capacity(ordinals.len());
     for &ordinal in ordinals {
         let at = *shows.get(ordinal).ok_or_else(|| {
-            format!(
-                "there is no show operator {ordinal} on this page, which has {}",
-                shows.len()
+            said!(
+                "there is no show operator {ordinal} on this page, which has {count}",
+                count = shows.len()
             )
         })?;
         positions.push(at);
@@ -2237,7 +2233,7 @@ pub fn remove_shows(
 
     let encoded = content
         .encode()
-        .map_err(|why| format!("the rewritten content stream will not encode: {why}"))?;
+        .map_err(|why| said!("the rewritten content stream will not encode: {why}"))?;
     replace_page_content(doc, page, encoded)?;
 
     Ok(Removed {
@@ -2302,32 +2298,29 @@ pub fn remove_form_shows(
         .iter()
         .position(|(where_, _)| *where_ == at)
         .ok_or_else(|| {
-            format!(
-                "object {at} is not one of the {} form(s) on this page",
-                forms.len()
+            said!(
+                "object {at} is not one of the {count} form(s) on this page",
+                count = forms.len()
             )
         })?;
     let text_objects = forms[which].1;
 
     let data = doc
         .get_page_content_with_limit(page, MAX_CONTENT_BYTES)
-        .map_err(|why| format!("the page's content stream could not be read: {why}"))?;
-    let content = Content::decode(&data)
-        .map_err(|why| format!("the content stream will not decode: {why}"))?;
+        .map_err(|why| said!("the page's content stream could not be read: {why}"))?;
+    let content =
+        Content::decode(&data).map_err(|why| said!("the content stream will not decode: {why}"))?;
 
     let names = form_draws(doc, page, &content)?;
     if names.len() != forms.len() {
-        return Err(format!(
-            "the page draws {} form XObject(s) and PDFium reported {}. Removing from one by \
-             position needs those to agree, so nothing was removed.",
-            names.len(),
-            forms.len()
-        ));
+        return Err(said!(
+            "the page draws {draws} form XObject(s) and PDFium reported {reported}. Removing from one by \
+             position needs those to agree, so nothing was removed.", draws = names.len(), reported = forms.len()));
     }
     let name = &names[which];
     let id = form_id(doc, page, name)?;
     if let Some(times) = drawn_more_than_once(doc, page, id, &names, name) {
-        return Err(format!(
+        return Err(said!(
             "the text you marked is inside a form that this document draws {times} time(s). \
              Removing it would change every one of them, including places you did not mark, so \
              nothing was removed."
@@ -2337,11 +2330,11 @@ pub fn remove_form_shows(
     let stream = doc
         .get_object(id)
         .and_then(|object| object.as_stream())
-        .map_err(|why| format!("the form's content stream could not be read: {why}"))?;
+        .map_err(|why| said!("the form's content stream could not be read: {why}"))?;
     let body = stream
         .decompressed_content_with_limit(MAX_CONTENT_BYTES)
-        .map_err(|why| format!("the form's content stream will not decode: {why}"))?;
-    let mut inside = decode_whole(&body, "the form's content stream")?;
+        .map_err(|why| said!("the form's content stream will not decode: {why}"))?;
+    let mut inside = decode_whole(&body, &said!("the form's content stream"))?;
 
     let shows: Vec<usize> = inside
         .operations
@@ -2351,19 +2344,17 @@ pub fn remove_form_shows(
         .map(|(at, _)| at)
         .collect();
     if shows.len() != text_objects {
-        return Err(format!(
-            "this form has {} text-showing operator(s) and PDFium reported {text_objects} text \
-             object(s). Removing by position needs those to agree, so nothing was removed.",
-            shows.len()
-        ));
+        return Err(said!(
+            "this form has {count} text-showing operator(s) and PDFium reported {text_objects} text \
+             object(s). Removing by position needs those to agree, so nothing was removed.", count = shows.len()));
     }
 
     let mut positions: Vec<usize> = Vec::with_capacity(ordinals.len());
     for &ordinal in ordinals {
         let where_ = *shows.get(ordinal).ok_or_else(|| {
-            format!(
-                "there is no show operator {ordinal} in this form, which has {}",
-                shows.len()
+            said!(
+                "there is no show operator {ordinal} in this form, which has {count}",
+                count = shows.len()
             )
         })?;
         positions.push(where_);
@@ -2381,15 +2372,15 @@ pub fn remove_form_shows(
 
     let encoded = inside
         .encode()
-        .map_err(|why| format!("the rewritten form stream will not encode: {why}"))?;
+        .map_err(|why| said!("the rewritten form stream will not encode: {why}"))?;
     let stream = doc
         .get_object_mut(id)
         .and_then(|object| object.as_stream_mut())
-        .map_err(|why| format!("the form's content stream could not be replaced: {why}"))?;
+        .map_err(|why| said!("the form's content stream could not be replaced: {why}"))?;
     stream.set_plain_content(encoded);
     stream
         .compress()
-        .map_err(|why| format!("the rewritten form stream will not compress: {why}"))?;
+        .map_err(|why| said!("the rewritten form stream will not compress: {why}"))?;
 
     Ok(Removed {
         shows_before: shows.len(),
@@ -2432,31 +2423,28 @@ pub fn remove_form_images(
         .iter()
         .position(|(where_, _)| *where_ == at)
         .ok_or_else(|| {
-            format!(
-                "object {at} is not one of the {} form(s) on this page",
-                forms.len()
+            said!(
+                "object {at} is not one of the {count} form(s) on this page",
+                count = forms.len()
             )
         })?;
     let pictures = forms[which].1;
 
     let data = doc
         .get_page_content_with_limit(page, MAX_CONTENT_BYTES)
-        .map_err(|why| format!("the page's content stream could not be read: {why}"))?;
-    let content = Content::decode(&data)
-        .map_err(|why| format!("the content stream will not decode: {why}"))?;
+        .map_err(|why| said!("the page's content stream could not be read: {why}"))?;
+    let content =
+        Content::decode(&data).map_err(|why| said!("the content stream will not decode: {why}"))?;
     let names = form_draws(doc, page, &content)?;
     if names.len() != forms.len() {
-        return Err(format!(
-            "the page draws {} form XObject(s) and PDFium reported {}. Removing from one by \
-             position needs those to agree, so nothing was removed.",
-            names.len(),
-            forms.len()
-        ));
+        return Err(said!(
+            "the page draws {draws} form XObject(s) and PDFium reported {reported}. Removing from one by \
+             position needs those to agree, so nothing was removed.", draws = names.len(), reported = forms.len()));
     }
     let name = &names[which];
     let id = form_id(doc, page, name)?;
     if let Some(times) = drawn_more_than_once(doc, page, id, &names, name) {
-        return Err(format!(
+        return Err(said!(
             "the picture you marked is inside a form that this document draws {times} time(s). \
              Removing it would change every one of them, including places you did not mark, so \
              nothing was removed."
@@ -2466,10 +2454,10 @@ pub fn remove_form_images(
     let mut inside = form_content(doc, id)?;
     let drawn = picture_draws(doc, page, id, &inside);
     if drawn.len() != pictures {
-        return Err(format!(
-            "this form draws {} picture(s) and PDFium reported {pictures}. Removing one by \
+        return Err(said!(
+            "this form draws {count} picture(s) and PDFium reported {pictures}. Removing one by \
              position needs those to agree, so nothing was removed.",
-            drawn.len()
+            count = drawn.len()
         ));
     }
 
@@ -2477,9 +2465,9 @@ pub fn remove_form_images(
     let mut forgotten: Vec<String> = Vec::new();
     for &ordinal in ordinals {
         let (where_, picture, object) = drawn.get(ordinal).ok_or_else(|| {
-            format!(
-                "there is no picture {ordinal} in this form, which draws {}",
-                drawn.len()
+            said!(
+                "there is no picture {ordinal} in this form, which draws {count}",
+                count = drawn.len()
             )
         })?;
         let _ = object;
@@ -2495,7 +2483,7 @@ pub fn remove_form_images(
 
     let encoded = inside
         .encode()
-        .map_err(|why| format!("the rewritten form stream will not encode: {why}"))?;
+        .map_err(|why| said!("the rewritten form stream will not encode: {why}"))?;
     // For `remove_images`' reason: a name the form still draws through, or
     // one in a list that is not this form's alone, stays.
     forgotten.sort();
@@ -2513,11 +2501,11 @@ pub fn remove_form_images(
     let stream = doc
         .get_object_mut(id)
         .and_then(|object| object.as_stream_mut())
-        .map_err(|why| format!("the form's content stream could not be replaced: {why}"))?;
+        .map_err(|why| said!("the form's content stream could not be replaced: {why}"))?;
     stream.set_plain_content(encoded);
     stream
         .compress()
-        .map_err(|why| format!("the rewritten form stream will not compress: {why}"))?;
+        .map_err(|why| said!("the rewritten form stream will not compress: {why}"))?;
 
     Ok(Removed {
         shows_before: drawn.len(),
@@ -2544,7 +2532,7 @@ fn forget_form_xobjects(
     let dict = &doc
         .get_object(form)
         .and_then(|object| object.as_stream())
-        .map_err(|why| format!("the form could not be read: {why}"))?
+        .map_err(|why| said!("the form could not be read: {why}"))?
         .dict;
     let Ok(resources) = dict.get(b"Resources") else {
         return Ok(());
@@ -2571,7 +2559,7 @@ fn forget_form_xobjects(
         let xobjects = doc
             .get_object_mut(id)
             .and_then(|object| object.as_dict_mut())
-            .map_err(|why| format!("the form's XObject list could not be read: {why}"))?;
+            .map_err(|why| said!("the form's XObject list could not be read: {why}"))?;
         strip(xobjects);
         return Ok(());
     }
@@ -2579,15 +2567,15 @@ fn forget_form_xobjects(
         Some(id) => doc
             .get_object_mut(id)
             .and_then(|object| object.as_dict_mut())
-            .map_err(|why| format!("the form's resources could not be read: {why}"))?,
+            .map_err(|why| said!("the form's resources could not be read: {why}"))?,
         None => doc
             .get_object_mut(form)
             .and_then(|object| object.as_stream_mut())
-            .map_err(|why| format!("the form could not be read: {why}"))?
+            .map_err(|why| said!("the form could not be read: {why}"))?
             .dict
             .get_mut(b"Resources")
             .and_then(|value| value.as_dict_mut())
-            .map_err(|why| format!("the form's resources could not be read: {why}"))?,
+            .map_err(|why| said!("the form's resources could not be read: {why}"))?,
     };
     if let Ok(xobjects) = holder
         .get_mut(b"XObject")
@@ -2666,15 +2654,15 @@ pub fn remove_images(
 
     let data = doc
         .get_page_content_with_limit(page, MAX_CONTENT_BYTES)
-        .map_err(|why| format!("the page's content stream could not be read: {why}"))?;
-    let mut content = decode_whole(&data, "the page's content stream")?;
+        .map_err(|why| said!("the page's content stream could not be read: {why}"))?;
+    let mut content = decode_whole(&data, &said!("the page's content stream"))?;
 
     let drawn = xobject_draws(doc, page, &content, b"Image");
     if drawn.len() != image_objects {
-        return Err(format!(
-            "the page draws {} image(s) and PDFium reported {image_objects}. Removing one by \
+        return Err(said!(
+            "the page draws {count} image(s) and PDFium reported {image_objects}. Removing one by \
              position needs those to agree, so nothing was removed.",
-            drawn.len()
+            count = drawn.len()
         ));
     }
 
@@ -2682,9 +2670,9 @@ pub fn remove_images(
     let mut names: Vec<String> = Vec::new();
     for &ordinal in ordinals {
         let (at, name) = drawn.get(ordinal).ok_or_else(|| {
-            format!(
-                "there is no image {ordinal} on this page, which draws {}",
-                drawn.len()
+            said!(
+                "there is no image {ordinal} on this page, which draws {count}",
+                count = drawn.len()
             )
         })?;
         positions.push(*at);
@@ -2699,7 +2687,7 @@ pub fn remove_images(
     }
     let encoded = content
         .encode()
-        .map_err(|why| format!("the rewritten content stream will not encode: {why}"))?;
+        .map_err(|why| said!("the rewritten content stream will not encode: {why}"))?;
     replace_page_content(doc, page, encoded)?;
 
     // **The half that redacts.** Without it the stream is still reachable from
@@ -2815,15 +2803,15 @@ pub fn take_paths(
 
     let data = doc
         .get_page_content_with_limit(page, MAX_CONTENT_BYTES)
-        .map_err(|why| format!("the page's content stream could not be read: {why}"))?;
-    let mut content = decode_whole(&data, "the page's content stream")?;
+        .map_err(|why| said!("the page's content stream could not be read: {why}"))?;
+    let mut content = decode_whole(&data, &said!("the page's content stream"))?;
 
     let painted = painted_paths(&content);
     if painted.len() != path_objects {
-        return Err(format!(
-            "the page paints {} path(s) and PDFium reported {path_objects}. Removing one by \
+        return Err(said!(
+            "the page paints {count} path(s) and PDFium reported {path_objects}. Removing one by \
              position needs those to agree, so nothing was removed.",
-            painted.len()
+            count = painted.len()
         ));
     }
 
@@ -2848,7 +2836,7 @@ pub fn take_paths(
 
     let encoded = content
         .encode()
-        .map_err(|why| format!("the rewritten content stream will not encode: {why}"))?;
+        .map_err(|why| said!("the rewritten content stream will not encode: {why}"))?;
     replace_page_content(doc, page, encoded)?;
 
     Ok(PathsTaken {
@@ -2891,17 +2879,16 @@ fn path_edits(
     let mut positions: Vec<usize> = Vec::new();
     for &ordinal in &wanted {
         let path = painted.get(ordinal).ok_or_else(|| {
-            format!(
-                "there is no path {ordinal} on this page, which paints {}",
-                painted.len()
+            said!(
+                "there is no path {ordinal} on this page, which paints {count}",
+                count = painted.len()
             )
         })?;
         if path.clips {
-            return Err(
+            return Err(said!(
                 "a drawing you marked also clips what is drawn after it, and removing it would \
                  change the page outside the region \u{2014} so nothing was removed."
-                    .to_string(),
-            );
+            ));
         }
         positions.extend(path.operations.iter().copied());
     }
@@ -2920,9 +2907,9 @@ fn path_edits(
         let drawings = drawings();
         for (ordinal, regions) in &crossed {
             let path = painted.get(*ordinal).ok_or_else(|| {
-                format!(
-                    "there is no path {ordinal} on this page, which paints {}",
-                    painted.len()
+                said!(
+                    "there is no path {ordinal} on this page, which paints {count}",
+                    count = painted.len()
                 )
             })?;
             let verdict = drawings
@@ -2946,11 +2933,10 @@ fn path_edits(
                 }
                 pathcut::Verdict::Outside => {}
                 pathcut::Verdict::Unsupported => {
-                    return Err(
+                    return Err(said!(
                         "a drawing that was to be cut at the region's edge cannot be split \
                          exactly on this page \u{2014} so nothing was removed."
-                            .to_string(),
-                    );
+                    ));
                 }
             }
         }
@@ -3019,32 +3005,29 @@ pub fn take_form_paths(
         .iter()
         .position(|(where_, _)| *where_ == at)
         .ok_or_else(|| {
-            format!(
-                "object {at} is not one of the {} form(s) on this page",
-                forms.len()
+            said!(
+                "object {at} is not one of the {count} form(s) on this page",
+                count = forms.len()
             )
         })?;
     let expected = forms[which].1;
 
     let data = doc
         .get_page_content_with_limit(page, MAX_CONTENT_BYTES)
-        .map_err(|why| format!("the page's content stream could not be read: {why}"))?;
-    let content = Content::decode(&data)
-        .map_err(|why| format!("the content stream will not decode: {why}"))?;
+        .map_err(|why| said!("the page's content stream could not be read: {why}"))?;
+    let content =
+        Content::decode(&data).map_err(|why| said!("the content stream will not decode: {why}"))?;
     let draws = xobject_draws(doc, page, &content, b"Form");
     if draws.len() != forms.len() {
-        return Err(format!(
-            "the page draws {} form XObject(s) and PDFium reported {}. Removing from one by \
-             position needs those to agree, so nothing was removed.",
-            draws.len(),
-            forms.len()
-        ));
+        return Err(said!(
+            "the page draws {draws} form XObject(s) and PDFium reported {reported}. Removing from one by \
+             position needs those to agree, so nothing was removed.", draws = draws.len(), reported = forms.len()));
     }
     let (drawn_at, name) = &draws[which];
     let id = form_id(doc, page, name)?;
     let names: Vec<String> = draws.iter().map(|(_, name)| name.clone()).collect();
     if let Some(times) = drawn_more_than_once(doc, page, id, &names, name) {
-        return Err(format!(
+        return Err(said!(
             "the drawing you marked is inside a form that this document draws {times} time(s). \
              Changing it would change every one of them, including places you did not mark, so \
              nothing was removed."
@@ -3054,10 +3037,10 @@ pub fn take_form_paths(
     let mut inside = form_content(doc, id)?;
     let painted = painted_paths(&inside);
     if painted.len() != expected {
-        return Err(format!(
-            "this form paints {} path(s) and PDFium reported {expected}. Removing one by \
+        return Err(said!(
+            "this form paints {count} path(s) and PDFium reported {expected}. Removing one by \
              position needs those to agree, so nothing was removed.",
-            painted.len()
+            count = painted.len()
         ));
     }
     let paths: Vec<&[usize]> = painted
@@ -3072,15 +3055,15 @@ pub fn take_form_paths(
 
     let encoded = inside
         .encode()
-        .map_err(|why| format!("the rewritten form stream will not encode: {why}"))?;
+        .map_err(|why| said!("the rewritten form stream will not encode: {why}"))?;
     let stream = doc
         .get_object_mut(id)
         .and_then(|object| object.as_stream_mut())
-        .map_err(|why| format!("the form's content stream could not be replaced: {why}"))?;
+        .map_err(|why| said!("the form's content stream could not be replaced: {why}"))?;
     stream.set_plain_content(encoded);
     stream
         .compress()
-        .map_err(|why| format!("the rewritten form stream will not compress: {why}"))?;
+        .map_err(|why| said!("the rewritten form stream will not compress: {why}"))?;
 
     Ok(PathsTaken {
         cut,
@@ -3107,7 +3090,7 @@ fn forget_xobjects(doc: &mut Document, page: ObjectId, names: &[String]) -> Resu
     // Until 2026-10-03 this looked for a `/Resources` key *inside* a resources
     // object, found none, and refused every page whose resources are an
     // object of their own.
-    let missing = || "the page's resources name no XObject list to remove from".to_string();
+    let missing = || said!("the page's resources name no XObject list to remove from");
     let (holder, _) = nearest_resources(doc, page).ok_or_else(missing)?;
     let list = held(doc, holder)
         .and_then(|resources| resources.get(b"XObject").ok())
@@ -3241,21 +3224,19 @@ fn held(doc: &Document, holder: Holder) -> Option<&Dictionary> {
 fn form_id(doc: &Document, page: ObjectId, name: &str) -> Result<ObjectId, String> {
     let resources = nearest_resources(doc, page)
         .and_then(|(holder, _)| held(doc, holder))
-        .ok_or_else(|| "the page has no resource dictionary".to_string())?;
+        .ok_or_else(|| said!("the page has no resource dictionary"))?;
     let xobjects = resources
         .get(b"XObject")
         .and_then(|object| doc.dereference(object).map(|(_, value)| value))
         .and_then(Object::as_dict)
-        .map_err(|_| "the page's resources list no XObjects".to_string())?;
+        .map_err(|_| said!("the page's resources list no XObjects"))?;
     match xobjects.get(name.as_bytes()) {
         Ok(Object::Reference(id)) => Ok(*id),
-        Ok(_) => Err(format!(
+        Ok(_) => Err(said!(
             "the form named {name} is written into the page rather than being its own object, \
              which this cannot rewrite"
         )),
-        Err(_) => Err(format!(
-            "the page's resources do not name an XObject {name}"
-        )),
+        Err(_) => Err(said!("the page's resources do not name an XObject {name}")),
     }
 }
 
@@ -3474,9 +3455,9 @@ fn painted_paths(content: &Content) -> Vec<PaintedPath> {
 pub fn painted_path_count(doc: &Document, page: ObjectId) -> Result<usize, String> {
     let data = doc
         .get_page_content_with_limit(page, MAX_CONTENT_BYTES)
-        .map_err(|why| format!("the page's content stream could not be read: {why}"))?;
-    let content = Content::decode(&data)
-        .map_err(|why| format!("the content stream will not decode: {why}"))?;
+        .map_err(|why| said!("the page's content stream could not be read: {why}"))?;
+    let content =
+        Content::decode(&data).map_err(|why| said!("the content stream will not decode: {why}"))?;
     Ok(painted_paths(&content).len())
 }
 
@@ -4628,7 +4609,7 @@ pub fn inserted_pages_note(
     if inserted == 0 || found.is_empty() || placed {
         return None;
     }
-    Some(format!(
+    Some(said!(
         "the scan reads the whole file and could not say which page every word above is on, \
          and this document holds {inserted} page(s) inserted from another document --- no \
          region was marked on any of them and nothing in the write changed them, so a word \
@@ -4665,13 +4646,11 @@ pub fn short_needle_note(report: &verify::Report) -> Option<String> {
     if short.is_empty() {
         return None;
     }
-    Some(format!(
-        "{} is too short to be told apart from the rest of the file: the check reads the whole \
+    Some(said!(
+        "{words} is too short to be told apart from the rest of the file: the check reads the whole \
          file, where one or two characters also occur in the page's own numbers and other \
          text, so it cannot say whether the marked one was removed --- mark the whole word or \
-         number to get an answer",
-        short.join(", ")
-    ))
+         number to get an answer", words = short.join(", ")))
 }
 
 /// How to read the findings against the pages the reader actually marked.
@@ -4726,19 +4705,17 @@ pub fn marked_pages_note(report: &verify::Report, marked: &[u32]) -> Option<Stri
         // removal and still carries a word"* --- and then agrees with nothing
         // when there are two of them. `Placed::sentence` answers *page 3* or
         // *pages 3 and 5*, so every verb around it has to be neutral to which.
-        return Some(format!(
-            "a word reported above is still on {}, where regions were marked for removal, so \
+        return Some(said!(
+            "a word reported above is still on {pages}, where regions were marked for removal, so \
              the removal did not take it there",
-            verify::Placed::of(&hit).sentence()
+            pages = verify::Placed::of(&hit).sentence()
         ));
     }
     Some(match marked.is_empty() {
-        true => "every word reported above is on a page no region was marked on".to_string(),
-        false => format!(
-            "every word reported above is on a page no region was marked on --- {} carried the \
-             regions, and none of them carries any of those words",
-            verify::Placed::of(&marked).sentence()
-        ),
+        true => said!("every word reported above is on a page no region was marked on"),
+        false => said!(
+            "every word reported above is on a page no region was marked on --- {pages} carried the \
+             regions, and none of them carries any of those words", pages = verify::Placed::of(&marked).sentence()),
     })
 }
 

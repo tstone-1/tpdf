@@ -674,9 +674,23 @@ Moved out of `AGENTS.md` on 2026-10-12.
 
 ## Interface language: catalogs, the checks, and the German glossary
 
-Added 2026-10-26. The window speaks American English, British English or German; the CLI, the
-JSON reports and the worker's messages stay English (German for the worker is phase 2, and the
-Language commands are excluded from the README until it lands, `readme.test.ts`).
+Added 2026-10-26. The window speaks American English, British English or German; the CLI and the
+JSON reports stay English.
+
+- **Sentences Rust writes are translated in the window, not in Rust** (2026-10-28). Rust writes
+  each one with `said!` (`said.rs`), which is `format!` and returns the same English `String`,
+  so the CLI, the worker protocol and every Rust test are unchanged. `src/lib/said.ts` recognises
+  the finished sentence by its template, takes the arguments back out, translates any sentence
+  inside them, and renders the German from `src/lib/said/*.ts`. `say()` in `App.svelte` does this
+  for every message; a Rust sentence put inside one of our own goes through `spoken` or
+  `spokenError` where it is put in. A sentence matching no template stays English.
+- **`said.test.ts` is the gate**: every `said!` template has German and every German entry a
+  template, placeholders named and equal, each template recognised as itself and no other, and
+  no template of placeholders and punctuation alone. Rendering a sample of every template and
+  recognising it is what proves two templates are never confused; it found the first such case
+  (`{width}x{height}` against a sample ending in `x`) on the day it was written.
+- **It is display only.** What the window *does* after a refusal is decided from fields
+  (`failure.rs`), never from these words.
 
 - **Every string the window shows comes from a catalog.** `catalog()` in `src/lib/i18n.ts`, one
   `TEXT` per module beside the code that shows it. The `"de-DE"` half must have every key of the

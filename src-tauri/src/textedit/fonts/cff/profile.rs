@@ -2,7 +2,9 @@
 //! is executed; only literal font-embedding declarations are recognized.
 
 use std::collections::{BTreeMap, BTreeSet};
-const INVALID: &str = "unsupported CFF program metadata";
+fn invalid() -> String {
+    said!("unsupported CFF program metadata")
+}
 
 pub(super) fn index<'a>(bytes: &'a [u8], pos: &mut usize) -> Option<Vec<&'a [u8]>> {
     let count = u16::from_be_bytes(bytes.get(*pos..*pos + 2)?.try_into().ok()?) as usize;
@@ -138,19 +140,19 @@ pub(super) fn validate(bytes: &[u8]) -> Result<Option<i64>, String> {
         || bytes[2] < 4
         || !(1..=4).contains(&bytes[3])
     {
-        return Err(INVALID.into());
+        return Err(invalid());
     }
     let mut pos = usize::from(bytes[2]);
-    let names = index(bytes, &mut pos).ok_or(INVALID)?;
-    let tops = index(bytes, &mut pos).ok_or(INVALID)?;
-    let strings = index(bytes, &mut pos).ok_or(INVALID)?;
+    let names = index(bytes, &mut pos).ok_or_else(invalid)?;
+    let tops = index(bytes, &mut pos).ok_or_else(invalid)?;
+    let strings = index(bytes, &mut pos).ok_or_else(invalid)?;
     if names.len() != 1
         || names[0].is_empty()
         || names[0].len() > 127
         || tops.len() != 1
         || tops[0].len() > 4096
     {
-        return Err(INVALID.into());
+        return Err(invalid());
     }
     let top = tops[0];
     let mut pos = 0;
@@ -159,20 +161,20 @@ pub(super) fn validate(bytes: &[u8]) -> Result<Option<i64>, String> {
     let mut rights = None;
     while pos < top.len() {
         if top[pos] >= 28 {
-            operands.push(number(top, &mut pos).ok_or(INVALID)?);
+            operands.push(number(top, &mut pos).ok_or_else(invalid)?);
             if operands.len() > 48 {
-                return Err(INVALID.into());
+                return Err(invalid());
             }
             continue;
         }
         let mut op = u16::from(top[pos]);
         pos += 1;
         if op == 12 {
-            op = 1200 + u16::from(*top.get(pos).ok_or(INVALID)?);
+            op = 1200 + u16::from(*top.get(pos).ok_or_else(invalid)?);
             pos += 1;
         }
         if !seen.insert(op) {
-            return Err(INVALID.into());
+            return Err(invalid());
         }
         let valid = match op {
             0..=4 | 13 | 15..=17 | 1200 | 1222 => {
@@ -187,26 +189,28 @@ pub(super) fn validate(bytes: &[u8]) -> Result<Option<i64>, String> {
             1206 => operands == [2.],        // Type 2 charstrings only.
             1207 => operands == [0.001, 0., 0., 0.001, 0., 0.],
             1221 if operands.len() == 1 && operands[0] >= 391. && operands[0].fract() == 0. => {
-                let value = strings.get((operands[0] - 391.) as usize).ok_or(INVALID)?;
+                let value = strings
+                    .get((operands[0] - 391.) as usize)
+                    .ok_or_else(invalid)?;
                 rights = Some(permissions(value)?);
                 true
             }
             _ => false, // No synthetic bases, CID fonts, blends or unknown semantics.
         };
         if !valid {
-            return Err(INVALID.into());
+            return Err(invalid());
         }
         operands.clear();
     }
     if !operands.is_empty() {
-        return Err(INVALID.into());
+        return Err(invalid());
     }
     Ok(rights)
 }
 
 // A `/FSType N def` string's rights, which `fonts::restricts` reads.
 pub(super) fn permissions(bytes: &[u8]) -> Result<i64, String> {
-    let text = std::str::from_utf8(bytes).map_err(|_| INVALID)?;
+    let text = std::str::from_utf8(bytes).map_err(|_| invalid())?;
     let tokens: Vec<_> = text.split_ascii_whitespace().collect();
     if !(tokens.len() == 3
         || (tokens.len() == 6
@@ -216,9 +220,9 @@ pub(super) fn permissions(bytes: &[u8]) -> Result<i64, String> {
         || tokens[0] != "/FSType"
         || tokens[2] != "def"
     {
-        return Err(INVALID.into());
+        return Err(invalid());
     }
-    let rights: u16 = tokens[1].parse().map_err(|_| INVALID)?;
+    let rights: u16 = tokens[1].parse().map_err(|_| invalid())?;
     Ok(i64::from(rights))
 }
 

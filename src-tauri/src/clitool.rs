@@ -92,23 +92,28 @@ pub fn plan(install: bool, link: &Path, tool: &Path) -> Step {
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
             return if install { Step::Create } else { Step::Absent };
         }
-        Err(e) => return Step::Foreign(format!("{} could not be read: {e}", link.display())),
+        Err(e) => {
+            return Step::Foreign(said!(
+                "{path} could not be read: {e}",
+                path = link.display()
+            ))
+        }
         Ok(meta) => meta,
     };
     if !held.file_type().is_symlink() {
-        return Step::Foreign(format!(
-            "{} is a file that tpdf did not put there",
-            link.display()
+        return Step::Foreign(said!(
+            "{path} is a file that tpdf did not put there",
+            path = link.display()
         ));
     }
     let Ok(target) = std::fs::read_link(link) else {
-        return Step::Foreign(format!("{} could not be read", link.display()));
+        return Step::Foreign(said!("{path} could not be read", path = link.display()));
     };
     if !ours(&target) {
-        return Step::Foreign(format!(
-            "{} links to {}, which is not tpdf's",
-            link.display(),
-            target.display()
+        return Step::Foreign(said!(
+            "{path} links to {target}, which is not tpdf's",
+            path = link.display(),
+            target = target.display()
         ));
     }
     match (install, target == tool) {
@@ -129,23 +134,22 @@ pub fn plan(install: bool, link: &Path, tool: &Path) -> Step {
 pub fn tool() -> Result<PathBuf, String> {
     let exe = std::env::current_exe()
         .and_then(|p| p.canonicalize())
-        .map_err(|e| format!("tpdf could not find where it is running from: {e}"))?;
+        .map_err(|e| said!("tpdf could not find where it is running from: {e}"))?;
     let tool = exe
         .parent()
         .map(|dir| dir.join(TOOL))
-        .ok_or("tpdf could not find the folder it is running from")?;
+        .ok_or_else(|| said!("tpdf could not find the folder it is running from"))?;
     if exe.to_string_lossy().contains("/AppTranslocation/") {
-        return Err(
+        return Err(said!(
             "tpdf is running from a temporary location macOS chose, so a link to it would stop \
              working. Move tpdf to the Applications folder, open it from there, and install \
              the command-line tool again."
-                .into(),
-        );
+        ));
     }
     if !tool.is_file() {
-        return Err(format!(
-            "The command-line tool is not beside this copy of tpdf ({}).",
-            tool.display()
+        return Err(said!(
+            "The command-line tool is not beside this copy of tpdf ({path}).",
+            path = tool.display()
         ));
     }
     Ok(tool)
@@ -155,17 +159,17 @@ pub fn tool() -> Result<PathBuf, String> {
 #[must_use]
 pub fn outcome(install: bool, after: &Step, tool: &Path) -> String {
     match (install, after) {
-        (true, Step::Present) => format!(
+        (true, Step::Present) => said!(
             "Installed. `tpdf` in a terminal now runs the command-line tool ({LINK} links to \
-             {}). Try `tpdf help`.",
-            tool.display()
+             {path}). Try `tpdf help`.",
+            path = tool.display()
         ),
         (false, Step::Absent) => {
-            format!("Removed {LINK} and {ALIAS}. The application is unchanged.")
+            said!("Removed {LINK} and {ALIAS}. The application is unchanged.")
         }
-        (_, Step::Foreign(why)) => format!("{why}, so it was left alone."),
-        (true, _) => format!("{LINK} was not installed."),
-        (false, _) => format!("{LINK} is still there."),
+        (_, Step::Foreign(why)) => said!("{why}, so it was left alone."),
+        (true, _) => said!("{path} was not installed.", path = LINK),
+        (false, _) => said!("{path} is still there.", path = LINK),
     }
 }
 
@@ -185,18 +189,18 @@ pub fn apply(install: bool) -> Result<String, String> {
         // before 2026-10-02 has the link and not the alias, and installing
         // again is how it gains it.
         Step::Present if changes(install, link, Path::new(ALIAS), &tool).is_empty() => {
-            return Ok(format!(
-                "Already installed: {LINK} links to {}.",
-                tool.display()
+            return Ok(said!(
+                "Already installed: {LINK} links to {path}.",
+                path = tool.display()
             ))
         }
         Step::Absent if changes(install, link, Path::new(ALIAS), &tool).is_empty() => {
-            return Ok(format!(
+            return Ok(said!(
                 "The command-line tool is not installed ({LINK} does not exist)."
             ))
         }
         Step::Foreign(why) => {
-            return Err(format!(
+            return Err(said!(
                 "{why}, so it was left alone. Remove it yourself to install tpdf's."
             ))
         }
@@ -324,14 +328,13 @@ pub fn changes<'a>(install: bool, link: &'a Path, alias: &'a Path, tool: &Path) 
 #[must_use]
 pub fn alias_outcome(install: bool, after: &Step) -> Option<String> {
     match (install, after) {
-        (true, Step::Present) => Some(
+        (true, Step::Present) => Some(said!(
             "`tpdf-cli` runs it too, which is its name on Windows, so one script runs on both."
-                .into(),
-        ),
+        )),
         (false, Step::Absent) => None,
-        (_, Step::Foreign(why)) => Some(format!("{why}, so it was left alone.")),
-        (true, _) => Some(format!("{ALIAS} was not installed.")),
-        (false, _) => Some(format!("{ALIAS} is still there.")),
+        (_, Step::Foreign(why)) => Some(said!("{why}, so it was left alone.")),
+        (true, _) => Some(said!("{path} was not installed.", path = ALIAS)),
+        (false, _) => Some(said!("{path} is still there.", path = ALIAS)),
     }
 }
 
@@ -362,15 +365,17 @@ fn privileged(install: bool, tool: &Path, paths: &[&Path]) -> Result<(), String>
         .arg(&script)
         .arg(tool)
         .output()
-        .map_err(|e| format!("the administrator prompt could not be shown: {e}"))?;
+        .map_err(|e| said!("the administrator prompt could not be shown: {e}"))?;
     if out.status.success() {
         return Ok(());
     }
     let said = String::from_utf8_lossy(&out.stderr);
     if said.contains("-128") {
-        return Err("Nothing was changed: the administrator prompt was cancelled.".into());
+        return Err(said!(
+            "Nothing was changed: the administrator prompt was cancelled."
+        ));
     }
-    Err(format!("Nothing was changed: {}", said.trim()))
+    Err(said!("Nothing was changed: {why}", why = said.trim()))
 }
 
 /// The AppleScript that makes or removes `paths` behind the administrator
@@ -433,7 +438,7 @@ pub fn folder() -> Result<String, String> {
     let tool = tool()?;
     let dir = tool
         .parent()
-        .ok_or("the command-line tool is in no folder")?;
+        .ok_or_else(|| said!("the command-line tool is in no folder"))?;
     Ok(shown(&dir.display().to_string()))
 }
 
@@ -450,16 +455,16 @@ pub fn apply(install: bool) -> Result<String, String> {
     let dir = folder()?;
     Ok(match (install, crate::userpath::apply(&dir, install)?) {
         (true, Outcome::Changed) => {
-            format!("Added {dir} to your PATH. Open a new terminal and run tpdf-cli.")
+            said!("Added {dir} to your PATH. Open a new terminal and run tpdf-cli.")
         }
         (true, Outcome::Unchanged) => {
-            format!("{dir} is already on your PATH: run tpdf-cli in a terminal.")
+            said!("{dir} is already on your PATH: run tpdf-cli in a terminal.")
         }
         (false, Outcome::Changed) => {
-            format!("Removed {dir} from your PATH. The tool itself is removed together with tpdf.")
+            said!("Removed {dir} from your PATH. The tool itself is removed together with tpdf.")
         }
         (false, Outcome::Unchanged) => {
-            format!("{dir} is not on your PATH. The tool itself is removed together with tpdf.")
+            said!("{dir} is not on your PATH. The tool itself is removed together with tpdf.")
         }
     })
 }
@@ -473,11 +478,12 @@ pub fn apply(install: bool) -> Result<String, String> {
 pub fn apply(install: bool) -> Result<String, String> {
     let dir = folder()?;
     Ok(if install {
-        format!("The command-line tool is installed with tpdf, in {dir}.")
+        said!("The command-line tool is installed with tpdf, in {dir}.")
     } else {
-        "The command-line tool is removed together with tpdf; there is nothing to remove \
-         separately."
-            .into()
+        said!(
+            "The command-line tool is removed together with tpdf; there is nothing to remove \
+             separately."
+        )
     })
 }
 

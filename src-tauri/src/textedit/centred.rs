@@ -8,6 +8,10 @@ use super::{Inspection, Run};
 
 /// The refusal for an edit that carries no layout: written at the run's own
 /// origin, it would leave the line off centre.
+pub(super) fn needs_layout() -> String {
+    said!("a centred line needs a text layout to stay centred; in an edit plan, name a \"font\"")
+}
+#[cfg(test)]
 pub(super) const NEEDS_LAYOUT: &str =
     "a centred line needs a text layout to stay centred; in an edit plan, name a \"font\"";
 

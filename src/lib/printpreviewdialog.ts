@@ -46,6 +46,7 @@ import {
   writeKept,
   type Sheet,
 } from "./printpreview";
+import { spokenError } from "./said";
 
 /** Class on the backdrop, so the check harness can find it. */
 export const DIALOG_CLASS = "tpdf-print-preview";
@@ -776,7 +777,7 @@ export class PrintPreviewDialog {
         if (run !== this.run || !this.shown || marks !== this.marks) return;
         // Recorded as drawn, at no width, so it is not asked for again and again.
         this.drawn.set(page, { width: Number.MAX_SAFE_INTEGER, url: "" });
-        if (note) note.textContent = TEXT().notDrawnBecause(page + 1, String(error));
+        if (note) note.textContent = TEXT().notDrawnBecause(page + 1, spokenError(error));
       })
       .finally(() => {
         if (run !== this.run) return;

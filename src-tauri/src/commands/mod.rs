@@ -139,12 +139,12 @@ pub(crate) fn answered<T: Send + 'static, E: Send + 'static + From<String>>(
     }));
     match rx.recv_timeout(ANSWER_BOUND) {
         Ok(result) => result,
-        Err(std::sync::mpsc::RecvTimeoutError::Timeout) => Err(E::from(format!(
-            "the render service did not answer within {} s while {doing}",
-            ANSWER_BOUND.as_secs()
+        Err(std::sync::mpsc::RecvTimeoutError::Timeout) => Err(E::from(said!(
+            "the render service did not answer within {secs} s while {doing}",
+            secs = ANSWER_BOUND.as_secs()
         ))),
         Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => {
-            Err(E::from("the render service stopped".to_string()))
+            Err(E::from(said!("the render service stopped")))
         }
     }
 }
@@ -194,5 +194,5 @@ where
 {
     rx.recv()
         .await
-        .ok_or_else(|| E::from(format!("render thread stopped ({command})")))?
+        .ok_or_else(|| E::from(said!("render thread stopped ({command})")))?
 }

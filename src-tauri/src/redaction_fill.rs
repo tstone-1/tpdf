@@ -76,7 +76,7 @@ impl Fill {
 /// are on them. It adds appearances and removes, moves and answers nothing.
 pub(crate) fn output_plan(original: &Plan) -> Result<Plan, Refusal> {
     let count = u32::try_from(original.pages.len())
-        .map_err(|_| Refusal::from("Too many pages for the redaction fill"))?;
+        .map_err(|_| Refusal::from(said!("Too many pages for the redaction fill")))?;
     let mut redactions = Vec::new();
     for (slot, page) in original.pages.iter().enumerate() {
         for redaction in &original.redactions {
@@ -84,8 +84,9 @@ pub(crate) fn output_plan(original: &Plan) -> Result<Plan, Refusal> {
                 redactions.push(PlannedRedaction {
                     lines: Vec::new(),
                     show_cuts: Vec::new(),
-                    source: u32::try_from(slot)
-                        .map_err(|_| Refusal::from("Too many pages for the redaction fill"))?,
+                    source: u32::try_from(slot).map_err(|_| {
+                        Refusal::from(said!("Too many pages for the redaction fill"))
+                    })?,
                     areas: redaction.areas.clone(),
                     // Everything that names content to take. The removal pass
                     // took it; asked for again, each of these would be looked
@@ -173,7 +174,7 @@ pub(crate) fn paint(
     for redaction in redactions {
         let page = *pages
             .get(redaction.source as usize)
-            .ok_or_else(|| Refusal::from("The redaction fill addresses a missing page"))?;
+            .ok_or_else(|| Refusal::from(said!("The redaction fill addresses a missing page")))?;
         for &area in &redaction.areas {
             let [left, bottom, right, top] = area;
             let width = right - left;
@@ -184,7 +185,7 @@ pub(crate) fn paint(
                 || width <= 0.0
                 || height <= 0.0
             {
-                return Err("The redaction fill has an invalid rectangle".into());
+                return Err(said!("The redaction fill has an invalid rectangle").into());
             }
             let current = doc.get_dictionary(page).map_err(|e| e.to_string())?;
             let mut annots = match current.get(b"Annots") {

@@ -192,7 +192,7 @@ describe("CompressDialog", () => {
     expect(d.comes(2)).toBe("Could not be worked out");
     expect(d.comes(3)).toBe("258 KB, 97% smaller");
     d.radio(2).dispatch("change", {});
-    expect(d.problem.textContent).toBe("Error: the worker went away");
+    expect(d.problem.textContent).toBe("the worker went away");
     expect(d.save.disabled).toBe(true);
   });
 

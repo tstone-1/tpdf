@@ -56,6 +56,10 @@ const MAX_NODES: usize = 4096;
 // 262. Containers still share the MAX_NODES bound with every other element.
 const MAX_CONTAINERS: usize = 1024;
 const MAX_CONTAINER_DEPTH: usize = 8;
+fn invalid() -> String {
+    said!("unsupported or inconsistent tagged text structure")
+}
+#[cfg(test)]
 const INVALID: &str = "unsupported or inconsistent tagged text structure";
 // Marks an MCID whose slot names an unreachable element. A PDF name cannot
 // contain NUL (ISO 32000-1 7.3.5), so no content tag can equal it.
@@ -133,7 +137,11 @@ fn role<'a>(roles: Option<&'a Dictionary>, tag: &'a [u8]) -> Result<&'a [u8], St
         .map(|mapped| mapped.unwrap_or(tag))
 }
 
-fn keys(dict: &Dictionary, allowed: &[&[u8]], context: &str) -> Result<(), String> {
+fn keys(
+    dict: &Dictionary,
+    allowed: &[&[u8]],
+    context: impl FnOnce() -> String,
+) -> Result<(), String> {
     if let Some((key, _)) = dict
         .iter()
         .find(|(key, _)| !allowed.contains(&key.as_slice()))
@@ -157,8 +165,9 @@ fn keys(dict: &Dictionary, allowed: &[&[u8]], context: &str) -> Result<(), Strin
             b"StmOwn" => "StmOwn",
             _ => "unrecognized",
         };
-        return Err(format!(
-            "unsupported {feature} metadata in tagged {context}"
+        return Err(said!(
+            "unsupported {feature} metadata in tagged {context}",
+            context = context()
         ));
     }
     Ok(())
@@ -167,7 +176,7 @@ fn keys(dict: &Dictionary, allowed: &[&[u8]], context: &str) -> Result<(), Strin
 /// A `Lang` value: a language tag of letters and digits in parts of up to
 /// eight, joined by hyphens (ISO 32000-1 14.9.2.2).
 fn language(value: &Object) -> Result<(), String> {
-    let bytes = value.as_str().map_err(|_| INVALID)?;
+    let bytes = value.as_str().map_err(|_| invalid())?;
     if bytes.is_empty()
         || bytes.len() > 63
         || !bytes[0].is_ascii_alphabetic()
@@ -175,38 +184,35 @@ fn language(value: &Object) -> Result<(), String> {
             part.is_empty() || part.len() > 8 || !part.iter().all(u8::is_ascii_alphanumeric)
         })
     {
-        return Err(INVALID.into());
+        return Err(invalid());
     }
     Ok(())
 }
 
 fn get<'a>(dict: &'a Dictionary, key: &[u8]) -> Result<&'a Object, String> {
-    dict.get(key).map_err(|_| INVALID.into())
+    dict.get(key).map_err(|_| invalid())
 }
 
 fn reference(value: &Object) -> Result<ObjectId, String> {
-    value.as_reference().map_err(|_| INVALID.into())
+    value.as_reference().map_err(|_| invalid())
 }
 
 fn node(doc: &Document, id: ObjectId) -> Result<&Dictionary, String> {
     doc.get_object(id)
         .and_then(Object::as_dict)
-        .map_err(|_| INVALID.into())
+        .map_err(|_| invalid())
 }
 
 fn array(value: &Object) -> Result<&[Object], String> {
-    value
-        .as_array()
-        .map(Vec::as_slice)
-        .map_err(|_| INVALID.into())
+    value.as_array().map(Vec::as_slice).map_err(|_| invalid())
 }
 
 fn name(value: &Object) -> Result<&[u8], String> {
-    value.as_name().map_err(|_| INVALID.into())
+    value.as_name().map_err(|_| invalid())
 }
 
 fn integer(value: &Object) -> Result<i64, String> {
-    value.as_i64().map_err(|_| INVALID.into())
+    value.as_i64().map_err(|_| invalid())
 }
 
 const MAX_TREE_DEPTH: usize = 8;
@@ -224,7 +230,7 @@ fn number_tree(doc: &Document, root: ObjectId) -> Result<Vec<&Object>, String> {
     let mut pending = vec![(root, 0, true)];
     while let Some((id, depth, is_root)) = pending.pop() {
         if depth > MAX_TREE_DEPTH || !visited.insert(id) || visited.len() > MAX_TREE_NODES {
-            return Err(INVALID.into());
+            return Err(invalid());
         }
         let tree = node(doc, id)?;
         keys(
@@ -234,7 +240,7 @@ fn number_tree(doc: &Document, root: ObjectId) -> Result<Vec<&Object>, String> {
             } else {
                 &[b"Type", b"Nums", b"Kids", b"Limits"]
             },
-            "parent tree",
+            || said!("parent tree"),
         )?;
         if tree
             .get(b"Type")
@@ -242,15 +248,15 @@ fn number_tree(doc: &Document, root: ObjectId) -> Result<Vec<&Object>, String> {
             || tree.has(b"Nums") == tree.has(b"Kids")
             || (!is_root && !tree.has(b"Limits"))
         {
-            return Err(INVALID.into());
+            return Err(invalid());
         }
         if let Ok(nums) = tree.get(b"Nums") {
             let nums = array(crate::encoding::resolve(doc, nums))?;
             if nums.len() % 2 != 0 {
-                return Err("tagged parent tree must contain one entry per page".into());
+                return Err(said!("tagged parent tree must contain one entry per page"));
             }
             if pairs.len() + nums.len() > 2 * MAX_DOCUMENT_CONTENT {
-                return Err(INVALID.into());
+                return Err(invalid());
             }
             pairs.extend(nums.iter());
             if let Ok(limits) = tree.get(b"Limits") {
@@ -260,13 +266,13 @@ fn number_tree(doc: &Document, root: ObjectId) -> Result<Vec<&Object>, String> {
                     || integer(&limits[0])? != integer(&nums[0])?
                     || integer(&limits[1])? != integer(&nums[nums.len() - 2])?
                 {
-                    return Err(INVALID.into());
+                    return Err(invalid());
                 }
             }
         } else {
             let kids = array(crate::encoding::resolve(doc, get(tree, b"Kids")?))?;
             if kids.is_empty() || kids.len() + pending.len() > MAX_TREE_NODES {
-                return Err(INVALID.into());
+                return Err(invalid());
             }
             // An intermediate node's Limits span its children's; each child's
             // own Limits are checked against its leaves when it is visited.
@@ -286,7 +292,7 @@ fn number_tree(doc: &Document, root: ObjectId) -> Result<Vec<&Object>, String> {
                     || integer(&limits[0])? != integer(&first[0])?
                     || integer(&limits[1])? != integer(&last[1])?
                 {
-                    return Err(INVALID.into());
+                    return Err(invalid());
                 }
             }
             for kid in kids.iter().rev() {
@@ -369,10 +375,10 @@ fn element(
         allowed.push(b"C");
     }
     allowed.push(b"NS");
-    keys(dict, &allowed, "element")?;
+    keys(dict, &allowed, || said!("element"))?;
     if let Ok(namespace) = dict.get(b"NS") {
         if !scope.namespaces.contains(&reference(namespace)?) || !common_to_both_namespaces(tag) {
-            return Err("unsupported NS metadata in tagged element".into());
+            return Err(said!("unsupported NS metadata in tagged element"));
         }
     }
     // ISO 32000-1 Table 323: T is a human-readable title, Alt an alternate
@@ -387,7 +393,7 @@ fn element(
             .get(key)
             .is_ok_and(|value| !value.as_str().is_ok_and(|text| text.len() <= limit))
         {
-            return Err(INVALID.into());
+            return Err(invalid());
         }
     }
     // Alt and ActualText stand in for everything the element contains, so
@@ -410,7 +416,7 @@ fn element(
         || reference(get(dict, b"P")?)? != parent
         || page.is_some_and(|id| !scope.pages.contains(&id))
     {
-        return Err(INVALID.into());
+        return Err(invalid());
     }
     if let Ok(value) = dict.get(b"A") {
         // Cell attributes and identifiers are checked together with the IDTree
@@ -424,7 +430,7 @@ fn element(
         match crate::encoding::resolve(doc, value) {
             Object::Array(objects) if role != b"L" => {
                 if objects.is_empty() || objects.len() > 8 {
-                    return Err(INVALID.into());
+                    return Err(invalid());
                 }
                 for object in objects {
                     pins |= attributes(doc, role, crate::encoding::resolve(doc, object))?;
@@ -437,18 +443,18 @@ fn element(
     // root's ClassMap. They apply exactly as the element's own A would, so
     // each is held to the same rules. A revision number may follow a name.
     if let Ok(value) = dict.get(b"C") {
-        let classes = scope.classes.ok_or(INVALID)?;
+        let classes = scope.classes.ok_or_else(invalid)?;
         let names = match crate::encoding::resolve(doc, value) {
             value @ Object::Name(_) => std::slice::from_ref(value),
             Object::Array(values) if !values.is_empty() && values.len() <= 8 => values.as_slice(),
-            _ => return Err(INVALID.into()),
+            _ => return Err(invalid()),
         };
         let mut named = false;
         for entry in names {
             match entry {
                 Object::Name(class) => {
                     let value =
-                        crate::encoding::resolve(doc, classes.get(class).map_err(|_| INVALID)?);
+                        crate::encoding::resolve(doc, classes.get(class).map_err(|_| invalid())?);
                     let objects = match value {
                         Object::Array(values) if !values.is_empty() && values.len() <= 8 => {
                             values.as_slice()
@@ -461,7 +467,7 @@ fn element(
                     named = true;
                 }
                 Object::Integer(revision) if named && *revision >= 0 => named = false,
-                _ => return Err(INVALID.into()),
+                _ => return Err(invalid()),
             }
         }
     }
@@ -496,11 +502,11 @@ fn attributes(doc: &Document, tag: &[u8], value: &Object) -> Result<bool, String
             entries.get(b"O").and_then(Object::as_name).ok() == Some(b"PrintField")
         })
     {
-        let attributes = value.as_dict().map_err(|_| INVALID)?;
+        let attributes = value.as_dict().map_err(|_| invalid())?;
         keys(
             attributes,
             &[b"O", b"Role", b"checked", b"Checked", b"Desc"],
-            "field attributes",
+            || said!("field attributes"),
         )?;
         if attributes
             .get(b"Role")
@@ -514,7 +520,7 @@ fn attributes(doc: &Document, tag: &[u8], value: &Object) -> Result<bool, String
                 .get(b"Desc")
                 .is_ok_and(|text| !text.as_str().is_ok_and(|text| text.len() <= 65536))
         {
-            return Err(INVALID.into());
+            return Err(invalid());
         }
         return Ok(false);
     }
@@ -524,7 +530,7 @@ fn attributes(doc: &Document, tag: &[u8], value: &Object) -> Result<bool, String
     // A table's cells are edited inside the bounds it states, so it pins
     // nothing here: `table_bounds` reads them and `Tags::table` carries them.
     if matches!(tag, b"Figure" | b"Link" | b"Form" | b"Table") {
-        let attributes = value.as_dict().map_err(|_| INVALID)?;
+        let attributes = value.as_dict().map_err(|_| invalid())?;
         // PowerPoint also writes the block indents and spacing on figures.
         // They are the element's authored allocation and move nothing.
         keys(
@@ -542,7 +548,7 @@ fn attributes(doc: &Document, tag: &[u8], value: &Object) -> Result<bool, String
                 b"WritingMode",
                 b"TextDecorationType",
             ],
-            "bounded attributes",
+            || said!("bounded attributes"),
         )?;
         // Table 343: how the element's text is decorated. LibreOffice writes
         // Underline on every link. The text it describes is read-only here.
@@ -552,7 +558,7 @@ fn attributes(doc: &Document, tag: &[u8], value: &Object) -> Result<bool, String
                 Ok(b"None" | b"Underline" | b"Overline" | b"LineThrough")
             )
         }) {
-            return Err(INVALID.into());
+            return Err(invalid());
         }
         for key in [
             b"StartIndent".as_slice(),
@@ -572,18 +578,18 @@ fn attributes(doc: &Document, tag: &[u8], value: &Object) -> Result<bool, String
                 value.as_name().ok() != Some(b"Auto")
                     && !super::number(value).is_ok_and(|size| size.is_finite() && size >= 0.0)
             }) {
-                return Err(INVALID.into());
+                return Err(invalid());
             }
         }
         if name(get(attributes, b"O")?)? != b"Layout" {
-            return Err(INVALID.into());
+            return Err(invalid());
         }
         if attributes.get(b"Placement").is_ok_and(|value| {
             !value.as_name().is_ok_and(|name| {
                 matches!(name, b"Block" | b"Inline" | b"Before" | b"Start" | b"End")
             })
         }) {
-            return Err(INVALID.into());
+            return Err(invalid());
         }
         bounding_box(doc, attributes)?;
         return Ok(false);
@@ -595,8 +601,10 @@ fn attributes(doc: &Document, tag: &[u8], value: &Object) -> Result<bool, String
             Object::Array(items) if items.len() == 1 => crate::encoding::resolve(doc, &items[0]),
             value => value,
         };
-        let attributes = attributes.as_dict().map_err(|_| INVALID)?;
-        keys(attributes, &[b"O", b"ListNumbering"], "list attributes")?;
+        let attributes = attributes.as_dict().map_err(|_| invalid())?;
+        keys(attributes, &[b"O", b"ListNumbering"], || {
+            said!("list attributes")
+        })?;
         if name(get(attributes, b"O")?)? != b"List"
             || !matches!(
                 name(get(attributes, b"ListNumbering")?)?,
@@ -611,11 +619,11 @@ fn attributes(doc: &Document, tag: &[u8], value: &Object) -> Result<bool, String
                     | b"LowerAlpha"
             )
         {
-            return Err(INVALID.into());
+            return Err(invalid());
         }
         return Ok(false);
     }
-    let attributes = value.as_dict().map_err(|_| INVALID)?;
+    let attributes = value.as_dict().map_err(|_| invalid())?;
     let leaf = matches!(tag, b"NonStruct" | b"Span");
     // ISO 32000-1 Table 343: LineHeight is the distance between adjacent
     // baselines. A fixed-position edit moves no line, so it stays true, and it
@@ -637,11 +645,13 @@ fn attributes(doc: &Document, tag: &[u8], value: &Object) -> Result<bool, String
             b"BBox",
         ]
     };
-    keys(attributes, allowed, "layout attributes")?;
+    keys(attributes, allowed, || said!("layout attributes"))?;
     // PowerPoint records each list label's ink as a BBox. Like a table's, it
     // stays true only while the label's text does not change, so it pins it.
     if tag != b"Lbl" && attributes.has(b"BBox") {
-        return Err("unsupported BBox metadata in tagged layout attributes".into());
+        return Err(said!(
+            "unsupported BBox metadata in tagged layout attributes"
+        ));
     }
     let bounded = bounding_box(doc, attributes)?.is_some();
     // Table 343: a list label sits inline beside its body (PowerPoint says
@@ -653,12 +663,12 @@ fn attributes(doc: &Document, tag: &[u8], value: &Object) -> Result<bool, String
         )
         || (leaf && !attributes.has(b"LineHeight"))
     {
-        return Err(INVALID.into());
+        return Err(invalid());
     }
     default_writing_mode(attributes)?;
     if let Ok(height) = attributes.get(b"LineHeight") {
         if !matches!(height.as_name(), Ok(b"Normal" | b"Auto")) && super::number(height)? < 0.0 {
-            return Err(INVALID.into());
+            return Err(invalid());
         }
     }
     for key in [
@@ -675,7 +685,7 @@ fn attributes(doc: &Document, tag: &[u8], value: &Object) -> Result<bool, String
             // TextIndent offsets only the first line from StartIndent;
             // its origin stays fixed even when that line gets shorter.
             if tag == b"Document" {
-                return Err(INVALID.into());
+                return Err(invalid());
             }
             super::number(indent)?;
         }
@@ -692,7 +702,7 @@ fn attributes(doc: &Document, tag: &[u8], value: &Object) -> Result<bool, String
             // `layout::prepare`), so it pins nothing.
             b"Center" => Ok(bounded),
             b"End" | b"Justify" => Ok(true),
-            _ => Err(INVALID.into()),
+            _ => Err(invalid()),
         },
     }
 }
@@ -756,7 +766,7 @@ fn centred(doc: &Document, classes: Option<&Dictionary>, mut id: ObjectId) -> bo
 // not a structure element; other indirect values retain their object identity.
 fn children<'a>(doc: &'a Document, value: &'a Object) -> Result<&'a [Object], String> {
     let resolved = if let Object::Reference(id) = value {
-        doc.get_object(*id).map_err(|_| INVALID)?
+        doc.get_object(*id).map_err(|_| invalid())?
     } else {
         value
     };
@@ -798,7 +808,7 @@ fn groups<'a>(
     nested: &mut Vec<(&'a Object, ObjectId, bool)>,
 ) -> Result<Vec<Group<'a>>, String> {
     if paragraph.items.len() > MAX_NODES {
-        return Err(INVALID.into());
+        return Err(invalid());
     }
     let mut plain = Group {
         items: Vec::new(),
@@ -839,7 +849,7 @@ fn groups<'a>(
                 continue;
             }
             if !ids.insert(*id) || ids.len() > MAX_NODES {
-                return Err(INVALID.into());
+                return Err(invalid());
             }
             let child = node(doc, *id)?;
             // PowerPoint wraps the paragraphs of every table cell in a Textbox,
@@ -862,7 +872,7 @@ fn groups<'a>(
                         .iter()
                         .all(|item| matches!(item, Object::Reference(_)))
                 {
-                    return Err(INVALID.into());
+                    return Err(invalid());
                 }
                 work.extend(
                     items
@@ -903,14 +913,14 @@ fn groups<'a>(
                     && !(plain.tag == b"LI" && matches!(tag, b"Lbl" | b"LBody"))
                     && !(matches!(plain.tag, b"TD" | b"TH") && (block || tag == b"Figure")))
             {
-                return Err(INVALID.into());
+                return Err(invalid());
             }
             leaves |= plain.tag == b"LBody" && !block;
             // A label's or body's layout attributes were checked by `element`
             // like a paragraph's, and any pin they carry joins the group's.
             let items = kids(doc, child)?;
             if items.len() > MAX_NODES {
-                return Err(INVALID.into());
+                return Err(invalid());
             }
             // PowerPoint wraps a link's words in a Span inside the Link, and
             // may name its annotation through an indirect OBJR. The Span keeps
@@ -931,13 +941,13 @@ fn groups<'a>(
                         .is_ok_and(|inner| get(inner, b"S").and_then(name) == Ok(b"Span"))
                 {
                     if !ids.insert(*kid) || ids.len() > MAX_NODES {
-                        return Err(INVALID.into());
+                        return Err(invalid());
                     }
                     let inner = node(doc, *kid)?;
                     let (span_page, _) = element(doc, inner, *id, scope, true, b"Span")?;
                     let words = kids(doc, inner)?;
                     if words.is_empty() || words.len() > MAX_NODES {
-                        return Err(INVALID.into());
+                        return Err(invalid());
                     }
                     groups.push(Group {
                         id: *kid,
@@ -953,8 +963,8 @@ fn groups<'a>(
                     own.push(item);
                     continue;
                 }
-                let object = doc.get_object(*kid).map_err(|_| INVALID)?;
-                let dict = object.as_dict().map_err(|_| INVALID)?;
+                let object = doc.get_object(*kid).map_err(|_| invalid())?;
+                let dict = object.as_dict().map_err(|_| invalid())?;
                 if dict
                     .get(b"Type")
                     .is_ok_and(|kind| kind.as_name().ok() == Some(b"OBJR"))
@@ -967,14 +977,14 @@ fn groups<'a>(
                     || !ids.insert(*kid)
                     || ids.len() > MAX_NODES
                 {
-                    return Err(INVALID.into());
+                    return Err(invalid());
                 }
                 let (span_page, _) = element(doc, dict, *id, scope, true, b"Span")?;
                 // The words: marked content, which the claim below requires
                 // of every item (an element there is refused as it is anywhere).
                 let words = kids(doc, dict)?;
                 if words.is_empty() || words.len() > MAX_NODES {
-                    return Err(INVALID.into());
+                    return Err(invalid());
                 }
                 groups.push(Group {
                     id: *kid,
@@ -1028,7 +1038,7 @@ fn groups<'a>(
         }
     }
     if !body_holds_one_thing(paragraphs, leaves || !plain.items.is_empty()) {
-        return Err(INVALID.into());
+        return Err(invalid());
     }
     if !plain.items.is_empty() || groups.is_empty() {
         groups.push(plain);
@@ -1056,7 +1066,7 @@ fn bounding_box(doc: &Document, attributes: &Dictionary) -> Result<Option<[f64; 
         return Ok(None);
     };
     let [a, b, c, d] = array(crate::encoding::resolve(doc, bounds))? else {
-        return Err(INVALID.into());
+        return Err(invalid());
     };
     let (a, b, c, d) = (
         super::number(a)?,
@@ -1119,7 +1129,7 @@ fn table_bounds(
 // text the editor would write in the wrong direction, and stay refused.
 fn default_writing_mode(attributes: &Dictionary) -> Result<(), String> {
     match attributes.get(b"WritingMode") {
-        Ok(value) if value.as_name().ok() != Some(b"LrTb") => Err(INVALID.into()),
+        Ok(value) if value.as_name().ok() != Some(b"LrTb") => Err(invalid()),
         _ => Ok(()),
     }
 }
@@ -1159,13 +1169,15 @@ fn annotation(
     pages: &BTreeSet<ObjectId>,
     objects: &mut BTreeMap<i64, ObjectId>,
 ) -> Result<(), String> {
-    keys(objr, &[b"Type", b"Pg", b"Obj"], "object reference")?;
+    keys(objr, &[b"Type", b"Pg", b"Obj"], || {
+        said!("object reference")
+    })?;
     if !annotation_owner(tag) {
-        return Err(INVALID.into());
+        return Err(invalid());
     }
     let page = match objr.get(b"Pg") {
         Ok(value) => reference(value)?,
-        Err(_) => page.ok_or(INVALID)?,
+        Err(_) => page.ok_or_else(invalid)?,
     };
     let target = reference(get(objr, b"Obj")?)?;
     let dict = node(doc, target)?;
@@ -1187,7 +1199,9 @@ fn annotation(
         || !listed
         || objects.remove(&key) != Some(owner)
     {
-        return Err("tagged annotation and parent tree disagree on ownership".into());
+        return Err(said!(
+            "tagged annotation and parent tree disagree on ownership"
+        ));
     }
     Ok(())
 }
@@ -1222,7 +1236,7 @@ pub(super) struct Tags {
 
 impl Tags {
     pub(super) fn read(doc: &Document, page: ObjectId, pages: &[ObjectId]) -> Result<Self, String> {
-        let catalog = doc.catalog().map_err(|_| INVALID)?;
+        let catalog = doc.catalog().map_err(|_| invalid())?;
         let page_dict = node(doc, page)?;
         let Ok(root) = catalog.get(b"StructTreeRoot") else {
             // Some untagged exports retain the page's former parent-tree index.
@@ -1236,17 +1250,17 @@ impl Tags {
                         .is_ok_and(|key| (0..=1_000_000).contains(&key))
                 })
             {
-                return Err(INVALID.into());
+                return Err(invalid());
             }
             return Ok(Self::default());
         };
         // The grouping walk below is iterative, with independent depth/count bounds.
         if pages.is_empty() || pages.len() > 128 {
-            return Err(INVALID.into());
+            return Err(invalid());
         }
         let page_ids: BTreeSet<_> = pages.iter().copied().collect();
         if page_ids.len() != pages.len() || !page_ids.contains(&page) {
-            return Err(INVALID.into());
+            return Err(invalid());
         }
         let root_id = reference(root)?;
         let root = node(doc, root_id)?;
@@ -1262,7 +1276,7 @@ impl Tags {
                 b"Namespaces",
                 b"ClassMap",
             ],
-            "structure root",
+            || said!("structure root"),
         )?;
         // Word 365 declares the PDF 2.0 standard namespace. Only the two
         // standard namespaces are admitted, with no role maps or schemas.
@@ -1270,27 +1284,27 @@ impl Tags {
         if let Ok(list) = root.get(b"Namespaces") {
             let list = array(crate::encoding::resolve(doc, list))?;
             if list.len() > 8 {
-                return Err(INVALID.into());
+                return Err(invalid());
             }
             for entry in list {
                 let id = reference(entry)?;
                 let namespace = node(doc, id)?;
-                keys(namespace, &[b"Type", b"NS"], "namespace")?;
+                keys(namespace, &[b"Type", b"NS"], || said!("namespace"))?;
                 if namespace
                     .get(b"Type")
                     .is_ok_and(|value| value.as_name().ok() != Some(b"Namespace"))
                     || !matches!(
-                        get(namespace, b"NS")?.as_str().map_err(|_| INVALID)?,
+                        get(namespace, b"NS")?.as_str().map_err(|_| invalid())?,
                         b"http://iso.org/pdf2/ssn" | b"http://iso.org/pdf/ssn"
                     )
                     || !namespaces.insert(id)
                 {
-                    return Err("unsupported tagged namespace".into());
+                    return Err(said!("unsupported tagged namespace"));
                 }
             }
         }
         if name(get(root, b"Type")?)? != b"StructTreeRoot" {
-            return Err(INVALID.into());
+            return Err(invalid());
         }
         let mut tables = tables::Tables::read(doc, root)?;
         let roles = root
@@ -1298,7 +1312,7 @@ impl Tags {
             .ok()
             .map(|value| crate::encoding::resolve(doc, value).as_dict())
             .transpose()
-            .map_err(|_| INVALID)?;
+            .map_err(|_| invalid())?;
         if let Some(roles) = roles {
             if roles.len() > 128
                 || roles.iter().any(|(key, value)| {
@@ -1308,14 +1322,16 @@ impl Tags {
                         || !value.as_name().is_ok_and(standard_role)
                 })
             {
-                return Err("tagged RoleMap contains unsupported or conflicting roles".into());
+                return Err(said!(
+                    "tagged RoleMap contains unsupported or conflicting roles"
+                ));
             }
         }
         // The structure root may own several elements, including material added
         // alongside the producer's Document element by a later PDF editor.
         let paragraphs = children(doc, get(root, b"K")?)?;
         if paragraphs.is_empty() {
-            return Err(INVALID.into());
+            return Err(invalid());
         }
         // ISO 32000-1 14.7.4.4: StructParents indexes the number tree; the MCID
         // indexes its array. Require both directions to agree, not just /K.
@@ -1330,12 +1346,12 @@ impl Tags {
         for pair in nums.chunks_exact(2) {
             let key = integer(pair[0])?;
             if key <= previous || !(0..=1_000_000).contains(&key) {
-                return Err(INVALID.into());
+                return Err(invalid());
             }
             previous = key;
             if crate::encoding::resolve(doc, pair[1]).as_dict().is_ok() {
                 if objects.len() >= MAX_DOCUMENT_CONTENT {
-                    return Err("tagged parent content is empty or exceeds its limit".into());
+                    return Err(said!("tagged parent content is empty or exceeds its limit"));
                 }
                 objects.insert(key, reference(pair[1])?);
             } else {
@@ -1349,7 +1365,7 @@ impl Tags {
             // scans. They own no MCIDs; an element naming one is refused below.
             let Ok(key) = dict.get(b"StructParents") else {
                 if dict.has(b"StructParent") {
-                    return Err(INVALID.into());
+                    return Err(invalid());
                 }
                 continue;
             };
@@ -1358,7 +1374,7 @@ impl Tags {
                 || !(0..=1_000_000).contains(&key)
                 || page_keys.insert(key, id).is_some()
             {
-                return Err(INVALID.into());
+                return Err(invalid());
             }
         }
         // Diagnose a missing or surplus page entry before reading any entry.
@@ -1367,7 +1383,7 @@ impl Tags {
                 .iter()
                 .any(|(key, _)| !page_keys.contains_key(key))
         {
-            return Err("tagged parent tree must contain one entry per page".into());
+            return Err(said!("tagged parent tree must contain one entry per page"));
         }
         let mut by_page = BTreeMap::new();
         let mut total = 0;
@@ -1375,9 +1391,9 @@ impl Tags {
         for (key, value) in page_entries {
             let owner = page_keys
                 .remove(&key)
-                .ok_or("tagged parent tree must contain one entry per page")?;
+                .ok_or_else(|| said!("tagged parent tree must contain one entry per page"))?;
             let entry = match value {
-                Object::Reference(id) => doc.get_object(*id).map_err(|_| INVALID)?,
+                Object::Reference(id) => doc.get_object(*id).map_err(|_| invalid())?,
                 value => value,
             };
             let entries = array(entry)?;
@@ -1393,7 +1409,7 @@ impl Tags {
                 || entries.len() > MAX_CONTENT_ITEMS
                 || slots > MAX_DOCUMENT_CONTENT
             {
-                return Err("tagged parent content is empty or exceeds its limit".into());
+                return Err(said!("tagged parent content is empty or exceeds its limit"));
             }
             by_page.insert(
                 owner,
@@ -1407,15 +1423,15 @@ impl Tags {
         if let Ok(next) = root.get(b"ParentTreeNextKey") {
             let next = integer(next)?;
             if next <= previous || next > 1_000_001 {
-                return Err(INVALID.into());
+                return Err(invalid());
             }
         }
         // Every page that declares StructParents must have its entry.
         if !page_keys.is_empty() {
-            return Err("tagged parent tree must contain one entry per page".into());
+            return Err(said!("tagged parent tree must contain one entry per page"));
         }
         if paragraphs.len() > MAX_NODES {
-            return Err(INVALID.into());
+            return Err(invalid());
         }
         // Classes are checked where an element names them, against the rules
         // for that element's own attributes; one nobody names changes nothing.
@@ -1424,9 +1440,9 @@ impl Tags {
             .ok()
             .map(|value| crate::encoding::resolve(doc, value).as_dict())
             .transpose()
-            .map_err(|_| INVALID)?;
+            .map_err(|_| invalid())?;
         if classes.is_some_and(|classes| classes.len() > 256) {
-            return Err(INVALID.into());
+            return Err(invalid());
         }
         let scope = Scope {
             pages: &page_ids,
@@ -1450,7 +1466,7 @@ impl Tags {
         while let Some((child, parent_id, depth, bounded)) = pending.pop() {
             let id = reference(child)?;
             if !ids.insert(id) || ids.len() > MAX_NODES {
-                return Err(INVALID.into());
+                return Err(invalid());
             }
             let child = node(doc, id)?;
             let tag = name(get(child, b"S")?)?;
@@ -1469,7 +1485,7 @@ impl Tags {
                     || items.is_empty()
                     || items.len() + pending.len() > MAX_NODES
                 {
-                    return Err(INVALID.into());
+                    return Err(invalid());
                 }
                 pending.extend(items.iter().rev().map(|item| (item, id, depth, bounded)));
                 continue;
@@ -1482,7 +1498,7 @@ impl Tags {
             // A figure alias (PowerPoint's Diagram and Chart) is read-only like
             // any figure; its group carries the mapped role below.
             if tag != role && !text_block(role) && !container(role) && role != b"Figure" {
-                return Err("tagged element role is not editable yet".into());
+                return Err(said!("tagged element role is not editable yet"));
             }
             let mut content_items = Vec::new();
             if container(role)
@@ -1493,7 +1509,7 @@ impl Tags {
                 containers += 1;
                 // Bound the work list before copying child references into it.
                 if items.len() + pending.len() > MAX_NODES {
-                    return Err("tagged grouping frontier exceeds its limit".into());
+                    return Err(said!("tagged grouping frontier exceeds its limit"));
                 }
                 if depth >= MAX_CONTAINER_DEPTH
                     || containers > MAX_CONTAINERS
@@ -1501,7 +1517,7 @@ impl Tags {
                         && child.has(b"A")
                         && !(role == b"TR" && placed_as_a_block(doc, child)))
                 {
-                    return Err(INVALID.into());
+                    return Err(invalid());
                 }
                 if role == b"L" {
                     // Word nests a sublist directly in its parent list.
@@ -1510,7 +1526,7 @@ impl Tags {
                             name(get(node(doc, reference(item)?)?, b"S")?)?,
                             b"LI" | b"L"
                         ) {
-                            return Err(INVALID.into());
+                            return Err(invalid());
                         }
                     }
                 }
@@ -1520,18 +1536,18 @@ impl Tags {
                 if role == b"TOC" {
                     for item in items {
                         if !toc(name(get(node(doc, reference(item)?)?, b"S")?)?) {
-                            return Err(INVALID.into());
+                            return Err(invalid());
                         }
                     }
                 }
                 if role == b"TOCI" && name(get(node(doc, parent_id)?, b"S")?)? != b"TOC" {
-                    return Err(INVALID.into());
+                    return Err(invalid());
                 }
                 if role == b"TR" || table_section(role) {
                     // The structure root has no S; rows and sections never sit there.
                     let parent_tag = name(get(node(doc, parent_id)?, b"S")?)?;
                     if parent_tag != b"Table" && !(role == b"TR" && table_section(parent_tag)) {
-                        return Err(INVALID.into());
+                        return Err(invalid());
                     }
                 }
                 if matches!(role, b"Table" | b"TR") || table_section(role) {
@@ -1548,13 +1564,13 @@ impl Tags {
                             } else {
                                 tag == b"TR"
                             }) {
-                                return Err(INVALID.into());
+                                return Err(invalid());
                             }
                             descendants += 1;
                         }
                     }
                     if descendants == 0 && !items.is_empty() {
-                        return Err(INVALID.into());
+                        return Err(invalid());
                     }
                 }
                 // Container Pg never supplies a descendant's page. Its own
@@ -1574,11 +1590,11 @@ impl Tags {
                 && !matches!(role, b"LI" | b"TD" | b"TH" | b"Table" | b"Figure")
                 && !(tag == role && annotation_owner(role))
             {
-                return Err("tagged element role is not editable yet".into());
+                return Err(said!("tagged element role is not editable yet"));
             }
             if matches!(role, b"TD" | b"TH") {
                 if name(get(node(doc, parent_id)?, b"S")?)? != b"TR" {
-                    return Err(INVALID.into());
+                    return Err(invalid());
                 }
                 // Rows may sit in THead/TBody/TFoot; header links stay per table.
                 let mut table = reference(get(node(doc, parent_id)?, b"P")?)?;
@@ -1590,14 +1606,14 @@ impl Tags {
             if role == b"LI"
                 && (name(get(node(doc, parent_id)?, b"S")?)? != b"L" || child.has(b"A"))
             {
-                return Err(INVALID.into());
+                return Err(invalid());
             }
             if matches!(role, b"LI" | b"TD" | b"TH") {
                 // Nested lists use the same iterative walk and container bounds.
                 // LI and table cells own content; they do not add a container
                 // level. Word places lists directly inside table cells.
                 if items.len() + pending.len() > MAX_NODES {
-                    return Err("tagged list frontier exceeds its limit".into());
+                    return Err(said!("tagged list frontier exceeds its limit"));
                 }
                 for item in items.iter().rev() {
                     if matches!(item, Object::Reference(_))
@@ -1631,7 +1647,7 @@ impl Tags {
             let mut deferred = Vec::new();
             let produced = groups(doc, paragraph, &scope, &mut ids, &mut deferred)?;
             if deferred.len() + pending.len() > MAX_NODES {
-                return Err("tagged sublist frontier exceeds its limit".into());
+                return Err(said!("tagged sublist frontier exceeds its limit"));
             }
             pending.extend(
                 deferred
@@ -1668,20 +1684,24 @@ impl Tags {
                     // ISO 32000-1 14.7.4.2: an integer uses the element's Pg;
                     // an MCR names a sequence on its own page. No external streams.
                     let (owner, mcid) = match item {
-                        Object::Integer(mcid) => (paragraph_page.ok_or(INVALID)?, *mcid),
+                        Object::Integer(mcid) => (paragraph_page.ok_or_else(invalid)?, *mcid),
                         Object::Dictionary(mcr) => {
-                            keys(mcr, &[b"Type", b"Pg", b"MCID"], "content reference")?;
+                            keys(mcr, &[b"Type", b"Pg", b"MCID"], || {
+                                said!("content reference")
+                            })?;
                             if name(get(mcr, b"Type")?)? != b"MCR" {
-                                return Err(INVALID.into());
+                                return Err(invalid());
                             }
                             (reference(get(mcr, b"Pg")?)?, integer(get(mcr, b"MCID")?)?)
                         }
-                        _ => return Err(INVALID.into()),
+                        _ => return Err(invalid()),
                     };
-                    let (entries, names, blocks) = by_page.get_mut(&owner).ok_or(INVALID)?;
-                    let mcid = usize::try_from(mcid).map_err(|_| INVALID)?;
+                    let (entries, names, blocks) = by_page.get_mut(&owner).ok_or_else(invalid)?;
+                    let mcid = usize::try_from(mcid).map_err(|_| invalid())?;
                     if mcid >= names.len() || reference(&entries[mcid])? != id {
-                        return Err("tagged content and parent tree disagree on ownership".into());
+                        return Err(said!(
+                            "tagged content and parent tree disagree on ownership"
+                        ));
                     }
                     // Acrobat can list one MCR several times in the same element.
                     // The slot names this element, and every earlier claim had
@@ -1691,7 +1711,7 @@ impl Tags {
                     }
                     assigned += 1;
                     if assigned > total {
-                        return Err(INVALID.into());
+                        return Err(invalid());
                     }
                     names[mcid] = tag.to_vec();
                     blocks[mcid] = Some(block);
@@ -1711,7 +1731,9 @@ impl Tags {
         }
         tables.finish()?;
         if !objects.is_empty() {
-            return Err("tagged parent tree has annotation entries no element claims".into());
+            return Err(said!(
+                "tagged parent tree has annotation entries no element claims"
+            ));
         }
         // Acrobat leaves parent-tree slots naming elements it has since deleted
         // or retagged as artifacts; nothing in the logical structure reaches
@@ -1724,7 +1746,7 @@ impl Tags {
                 }
                 let id = reference(slot)?;
                 if ids.contains(&id) {
-                    return Err(INVALID.into());
+                    return Err(invalid());
                 }
                 self::name(get(node(doc, id)?, b"S")?)?;
                 *name = ORPHAN.to_vec();
@@ -1752,8 +1774,10 @@ impl Tags {
     // artifact property list. It names the artifact's own placement, which an
     // edit elsewhere cannot make stale; the artifact's text stays read-only.
     pub(super) fn artifact(&mut self, properties: &Object) -> Result<(), String> {
-        const ARTIFACT: &str = "unsupported artifact properties";
-        let dict = properties.as_dict().map_err(|_| ARTIFACT)?;
+        fn artifact() -> String {
+            said!("unsupported artifact properties")
+        }
+        let dict = properties.as_dict().map_err(|_| artifact())?;
         for (key, value) in dict.iter() {
             let valid = match key.as_slice() {
                 b"Type" => value.as_name().is_ok_and(|kind| {
@@ -1793,7 +1817,7 @@ impl Tags {
                 _ => false,
             };
             if !valid {
-                return Err(ARTIFACT.into());
+                return Err(artifact());
             }
         }
         self.begin(&Object::Name(b"Artifact".to_vec()), None)
@@ -1807,21 +1831,24 @@ impl Tags {
         // An artifact names no structure element, so an untagged page may
         // carry one (Acrobat stamps page numbers on scans this way).
         if self.names.is_empty() && (properties.is_some() || name(tag)? != b"Artifact") {
-            return Err("marked content has no supported structure tree".into());
+            return Err(said!("marked content has no supported structure tree"));
         }
         if self.active.is_some() {
-            return Err("nested marked content is not editable yet".into());
+            return Err(said!("nested marked content is not editable yet"));
         }
         let tag = name(tag)?;
         let mcid = if let Some(properties) = properties {
-            let properties = properties.as_dict().map_err(|_| INVALID)?;
+            let properties = properties.as_dict().map_err(|_| invalid())?;
             // A sequence may name its own language, as InDesign's paragraphs
             // do beside the MCID; the text an edit writes keeps it.
-            keys(properties, &[b"MCID", b"Lang"], "marked-content properties")?;
+            keys(properties, &[b"MCID", b"Lang"], || {
+                said!("marked-content properties")
+            })?;
             if let Ok(value) = properties.get(b"Lang") {
                 language(value)?;
             }
-            let mcid = usize::try_from(integer(get(properties, b"MCID")?)?).map_err(|_| INVALID)?;
+            let mcid =
+                usize::try_from(integer(get(properties, b"MCID")?)?).map_err(|_| invalid())?;
             // An empty name is a null parent-tree slot, owned by nothing.
             let owner = self
                 .names
@@ -1842,13 +1869,15 @@ impl Tags {
                 None
             } else {
                 if owner.is_none() || tag == b"Artifact" || !self.seen.insert(mcid) {
-                    return Err("marked content repeats or disagrees with its structure tag".into());
+                    return Err(said!(
+                        "marked content repeats or disagrees with its structure tag"
+                    ));
                 }
                 Some(mcid)
             }
         } else {
             if tag != b"Artifact" {
-                return Err("marked content without MCID must be an Artifact".into());
+                return Err(said!("marked content without MCID must be an Artifact"));
             }
             None
         };
@@ -1865,9 +1894,12 @@ impl Tags {
     }
 
     pub(super) fn end(&mut self) -> Result<(), String> {
-        let active = self.active.take().ok_or("unmatched marked-content end")?;
+        let active = self
+            .active
+            .take()
+            .ok_or_else(|| said!("unmatched marked-content end"))?;
         if active.is_some() && !self.has_content {
-            return Err(INVALID.into());
+            return Err(invalid());
         }
         Ok(())
     }
@@ -1884,7 +1916,7 @@ impl Tags {
             .flatten()
             .is_some_and(|mcid| matches!(self.names[mcid].as_slice(), b"Table" | b"Figure"))
         {
-            return Err("text outside a tagged table cell is not editable".into());
+            return Err(said!("text outside a tagged table cell is not editable"));
         }
         self.has_content = true;
         Ok(())
@@ -1974,7 +2006,7 @@ impl Tags {
             .filter(|&&mcid| self.names[mcid] != ORPHAN)
             .count();
         if self.active.is_some() || used != owned {
-            return Err(INVALID.into());
+            return Err(invalid());
         }
         Ok(())
     }

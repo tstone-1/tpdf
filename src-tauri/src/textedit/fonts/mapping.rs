@@ -39,7 +39,7 @@ fn unicode_codes(
     stream: &Stream,
     wide: bool,
 ) -> Result<std::collections::BTreeMap<u16, String>, String> {
-    let invalid = || "unsupported or ambiguous Unicode character map".to_string();
+    let invalid = || said!("unsupported or ambiguous Unicode character map");
     let word = |object: &Object| -> Result<u16, String> {
         let bytes = object.as_str().map_err(|_| invalid())?;
         if !wide {
@@ -194,9 +194,9 @@ fn blocks_with_header(
     labelled: bool,
 ) -> Result<Vec<Operation>, String> {
     if stream.dict.has(b"UseCMap") {
-        return Err("inherited character maps are not editable yet".into());
+        return Err(said!("inherited character maps are not editable yet"));
     }
-    let invalid = || "unsupported or ambiguous character map".to_string();
+    let invalid = || said!("unsupported or ambiguous character map");
     let mut bytes = super::filters::decode(stream, MAX_MAP)?;
     // Typst ends its map with a `%%EOF` comment and no end of line, which
     // lopdf's content parser refuses; the end of the data ends a comment too.
@@ -270,7 +270,7 @@ pub(super) type Slots = Box<[Option<u8>; 256]>;
 pub(super) fn parse(stream: &Stream) -> Result<Box<[Option<u8>; 256]>, String> {
     let (codes, kept) = parse_keeping(stream)?;
     if kept.contains(&true) {
-        return Err("unsupported or ambiguous single-byte character map".into());
+        return Err(said!("unsupported or ambiguous single-byte character map"));
     }
     Ok(codes)
 }
@@ -306,7 +306,9 @@ pub(super) fn parse_named(stream: &Stream) -> Result<Box<[Option<u8>; 256]>, Str
             usize::from(slot) != code || matches!(code, 0x80 | 0xA0 | 0xAD) || code < 32
         })
     }) {
-        return Err("named TrueType ToUnicode disagrees with its ASCII encoding".into());
+        return Err(said!(
+            "named TrueType ToUnicode disagrees with its ASCII encoding"
+        ));
     }
     Ok(codes)
 }
@@ -321,7 +323,7 @@ fn parse_single(
     mut kept: Option<&mut [bool; 256]>,
 ) -> Result<Box<[Option<u8>; 256]>, String> {
     let ops = blocks_with_header(stream, false, padded, false)?;
-    let invalid = || "unsupported or ambiguous single-byte character map".to_string();
+    let invalid = || said!("unsupported or ambiguous single-byte character map");
     let mut result = Box::new([None; 256]);
     let mut unicode = [false; 256];
     for block in ops.chunks_exact(2) {
@@ -430,7 +432,7 @@ fn parse_single(
 // The caller requires agreement with the glyph names; nothing here is trusted
 // to choose a glyph.
 pub(super) fn parse_names(stream: &Stream) -> Result<Box<[Option<Option<u8>>; 256]>, String> {
-    let invalid = || "unsupported or ambiguous single-byte character map".to_string();
+    let invalid = || said!("unsupported or ambiguous single-byte character map");
     let mut result = Box::new([None; 256]);
     for block in blocks_with_header(stream, false, true, true)?.chunks_exact(2) {
         let [Object::Integer(count)] = block[0].operands.as_slice() else {
@@ -500,7 +502,7 @@ pub(super) fn parse_names(stream: &Stream) -> Result<Box<[Option<Option<u8>>; 25
 // only into unique printable Latin-1 or en dash. Individual bfchar entries may
 // also name the four exact ligature sequences; ranges cannot expand sequences.
 pub(super) fn parse_cid(stream: &Stream) -> Result<std::collections::BTreeMap<u16, u8>, String> {
-    let invalid = || "unsupported or ambiguous two-byte character map".to_string();
+    let invalid = || said!("unsupported or ambiguous two-byte character map");
     let word = |object: &Object| -> Result<u16, String> {
         let Object::String(bytes, _) = object else {
             return Err(invalid());

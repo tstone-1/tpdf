@@ -235,12 +235,12 @@ pub fn parts(line: &str) -> Result<Vec<Part>, String> {
             words.push('}');
             rest = after;
         } else if tail.starts_with('}') {
-            return Err(format!(
+            return Err(said!(
                 "the text has a `}}` that closes nothing in `{line}` --- write `}}}}` for a brace"
             ));
         } else {
             let Some(end) = tail.find('}') else {
-                return Err(format!(
+                return Err(said!(
                     "the text has a `{{` that is never closed in `{line}` --- write `{{{{` for a \
                      brace"
                 ));
@@ -251,10 +251,12 @@ pub fn parts(line: &str) -> Result<Vec<Part>, String> {
                 "reason" => Part::Reason,
                 "location" => Part::Location,
                 other => {
+                    // Not `said!`: its literal braces around words read as
+                    // placeholders to the window's recogniser.
                     return Err(format!(
                         "the text asks for `{{{other}}}`, and tpdf fills in `{{name}}`, \
                          `{{date}}`, `{{reason}}` and `{{location}}` --- write `{{{{` for a brace"
-                    ))
+                    ));
                 }
             };
             if !words.is_empty() {
@@ -429,16 +431,26 @@ pub fn words(name: &str, pdf_date: &str, options: &Options) -> Vec<String> {
 fn check_note(what: &str, text: Option<&str>) -> Result<(), String> {
     let Some(text) = text else { return Ok(()) };
     if text.chars().count() > MAX_NOTE_CHARS {
-        return Err(format!(
+        return Err(said!(
             "the {what} is longer than the {MAX_NOTE_CHARS} characters a visible signature draws"
         ));
     }
+    // Written out for each of the two, so that each sentence names its
+    // placeholders once (`said!`'s rule for the window's recognition).
     if text.chars().any(char::is_control) || !textbox::encodable(text) {
-        return Err(format!(
-            "the {what}, {text}, has characters tpdf cannot draw in a visible signature yet \
-             (it draws Latin-1 only), and drawing others would put different words on the \
-             page --- change the {what}, or leave it empty"
-        ));
+        return Err(if what == "reason" {
+            said!(
+                "the reason, {text}, has characters tpdf cannot draw in a visible signature yet \
+                 (it draws Latin-1 only), and drawing others would put different words on the \
+                 page --- change the reason, or leave it empty"
+            )
+        } else {
+            said!(
+                "the location, {text}, has characters tpdf cannot draw in a visible signature \
+                 yet (it draws Latin-1 only), and drawing others would put different words on \
+                 the page --- change the location, or leave it empty"
+            )
+        });
     }
     Ok(())
 }
@@ -454,19 +466,19 @@ fn check_text(visible: &Visible) -> Result<(), String> {
     let options = &visible.options;
     let format = options.date_format.as_str();
     if format.chars().count() > MAX_FORMAT_CHARS {
-        return Err(format!(
+        return Err(said!(
             "the date format is longer than the {MAX_FORMAT_CHARS} characters a visible \
              signature draws"
         ));
     }
     if format.chars().any(char::is_control) || !textbox::encodable(format) {
-        return Err(format!(
+        return Err(said!(
             "the date format, {format}, has characters tpdf cannot draw in a visible signature \
              yet (it draws Latin-1 only)"
         ));
     }
     if options.text.len() > MAX_TEXT_LINES {
-        return Err(format!(
+        return Err(said!(
             "the text has more than the {MAX_TEXT_LINES} lines a visible signature draws"
         ));
     }
@@ -484,13 +496,13 @@ fn check_text(visible: &Visible) -> Result<(), String> {
             .collect();
         drawn |= !own.trim().is_empty();
         if own.chars().count() > MAX_NOTE_CHARS {
-            return Err(format!(
+            return Err(said!(
                 "a line of the text is longer than the {MAX_NOTE_CHARS} characters a visible \
                  signature draws"
             ));
         }
         if own.chars().any(char::is_control) || !textbox::encodable(&own) {
-            return Err(format!(
+            return Err(said!(
                 "the text, {line}, has characters tpdf cannot draw in a visible signature yet \
                  (it draws Latin-1 only), and drawing others would put different words on the \
                  page --- change the text"
@@ -498,7 +510,9 @@ fn check_text(visible: &Visible) -> Result<(), String> {
         }
     }
     if !drawn {
-        return Err("the text has no words in it, so there is nothing to draw".into());
+        return Err(said!(
+            "the text has no words in it, so there is nothing to draw"
+        ));
     }
     Ok(())
 }
@@ -529,25 +543,26 @@ pub fn check(visible: &Visible) -> Result<(), String> {
         true
     };
     if !lines && visible.image.is_none() {
-        return Err(
+        return Err(said!(
             "a visible signature has to show something --- choose an image or at least one \
              line of text"
-                .into(),
-        );
+        ));
     }
     if options.draws_name() {
         let name = visible.name.as_str();
         if name.trim().is_empty() {
-            return Err("the certificate names nobody, so there is no name to draw".into());
+            return Err(said!(
+                "the certificate names nobody, so there is no name to draw"
+            ));
         }
         if name.chars().count() > MAX_NAME_CHARS {
-            return Err(format!(
+            return Err(said!(
                 "the certificate's name is longer than the {MAX_NAME_CHARS} characters a visible \
                  signature draws --- sign without a visible appearance"
             ));
         }
         if !textbox::encodable(name) || name.chars().any(char::is_control) {
-            return Err(format!(
+            return Err(said!(
                 "the certificate's name, {name}, has characters tpdf cannot draw in a visible \
                  signature yet (it draws Latin-1 only), and drawing others would put a different \
                  name on the page --- turn the name line off, or sign without a visible appearance"
@@ -557,7 +572,7 @@ pub fn check(visible: &Visible) -> Result<(), String> {
     check_note("reason", options.reason())?;
     check_note("location", options.location())?;
     if visible.image.as_ref().is_some_and(|image| !image.valid()) {
-        return Err("the saved signature image is damaged".into());
+        return Err(said!("the saved signature image is damaged"));
     }
     Ok(())
 }
@@ -581,10 +596,12 @@ pub fn place(visible: &Visible, shown: DisplayedPage) -> Result<[f64; 4], String
         && f64::from(right) <= width + slack
         && f64::from(bottom) <= height + slack;
     if !on_page {
-        return Err("the rectangle chosen for the signature is not on its page".into());
+        return Err(said!(
+            "the rectangle chosen for the signature is not on its page"
+        ));
     }
     if f64::from(right - left) < MIN_SIDE || f64::from(bottom - top) < MIN_SIDE {
-        return Err(format!(
+        return Err(said!(
             "the rectangle chosen for the signature is smaller than {MIN_SIDE} points a side, \
              too small to read --- sign again and drag a larger one"
         ));

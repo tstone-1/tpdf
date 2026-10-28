@@ -3,7 +3,9 @@
 use super::{Inspection, MAX_TEXT};
 use lopdf::Object;
 
-const INVALID: &str = "unsupported ActualText marked-content sequence";
+fn invalid() -> String {
+    said!("unsupported ActualText marked-content sequence")
+}
 
 pub(super) struct Span {
     pub operator: usize,
@@ -15,11 +17,11 @@ pub(super) struct Span {
 
 impl Span {
     pub(super) fn new(tag: &Object, properties: &Object, operator: usize) -> Result<Self, String> {
-        let dict = properties.as_dict().map_err(|_| INVALID)?;
+        let dict = properties.as_dict().map_err(|_| invalid())?;
         if tag.as_name().ok() != Some(b"Span") || dict.len() != 1 {
-            return Err(INVALID.into());
+            return Err(invalid());
         }
-        let logical = logical(dict.get(b"ActualText").map_err(|_| INVALID)?)?;
+        let logical = logical(dict.get(b"ActualText").map_err(|_| invalid())?)?;
         Ok(Self {
             operator,
             logical,
@@ -32,7 +34,7 @@ impl Span {
     pub(super) fn show(&mut self, index: u32, text: &str, bounded_ink: bool) -> Result<(), String> {
         if self.shows.len() >= 128 || self.visible.chars().count() + text.chars().count() > MAX_TEXT
         {
-            return Err(INVALID.into());
+            return Err(invalid());
         }
         self.shows.push(index);
         self.visible.push_str(text);
@@ -42,7 +44,7 @@ impl Span {
 
     pub(super) fn finish(self, page: &mut Inspection) -> Result<(), String> {
         if self.shows.is_empty() {
-            return Err(INVALID.into());
+            return Err(invalid());
         }
         let nonempty: Vec<_> = page
             .runs
@@ -61,7 +63,9 @@ impl Span {
         }
         .filter(|_| self.visible == self.logical);
         if candidate.is_none() && !self.bounded_ink {
-            return Err("read-only ActualText requires validated glyph outlines".into());
+            return Err(said!(
+                "read-only ActualText requires validated glyph outlines"
+            ));
         }
         if let Some(operator) = candidate {
             page.actual_text.insert(operator, self.operator);
@@ -81,30 +85,32 @@ impl Span {
 /// An ActualText string as text, bounded like every run: UTF-16 or UTF-8 with
 /// their byte-order marks, PDFDocEncoding otherwise, and no control character.
 pub(super) fn logical(value: &Object) -> Result<String, String> {
-    let bytes = value.as_str().map_err(|_| INVALID)?;
+    let bytes = value.as_str().map_err(|_| invalid())?;
     if bytes.len() > MAX_TEXT * 4 + 3 {
-        return Err(INVALID.into());
+        return Err(invalid());
     }
     let logical = if let Some(bytes) = bytes.strip_prefix(&[0xfe, 0xff]) {
         if bytes.len() % 2 != 0 {
-            return Err(INVALID.into());
+            return Err(invalid());
         }
         let units: Vec<_> = bytes
             .chunks_exact(2)
             .map(|b| u16::from_be_bytes([b[0], b[1]]))
             .collect();
-        String::from_utf16(&units).map_err(|_| INVALID)?
+        String::from_utf16(&units).map_err(|_| invalid())?
     } else if let Some(bytes) = bytes.strip_prefix(&[0xef, 0xbb, 0xbf]) {
-        std::str::from_utf8(bytes).map_err(|_| INVALID)?.to_owned()
+        std::str::from_utf8(bytes)
+            .map_err(|_| invalid())?
+            .to_owned()
     } else {
-        lopdf::decode_text_string(value).map_err(|_| INVALID)?
+        lopdf::decode_text_string(value).map_err(|_| invalid())?
     };
     if logical.chars().count() > MAX_TEXT
         || logical
             .chars()
             .any(|c| c.is_control() || matches!(c, '\u{fffd}' | '\u{2028}' | '\u{2029}'))
     {
-        return Err(INVALID.into());
+        return Err(invalid());
     }
     Ok(logical)
 }
@@ -181,7 +187,7 @@ pub(super) fn patch(page: &mut Inspection, operator: u32, replacement: &str) -> 
     if let Some(&index) = page.actual_text.get(&operator) {
         let dict = page.content.operations[index].operands[1]
             .as_dict_mut()
-            .map_err(|_| INVALID)?;
+            .map_err(|_| invalid())?;
         dict.set("ActualText", utf16(replacement));
         page.patched.insert(index);
     }
