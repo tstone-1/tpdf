@@ -113,6 +113,7 @@ hop through the index.
 - PDFium normalises ligatures too, so the cost of case folding was smaller than stated
 - A body's newlines live below the table that decodes it
 - Neither bundled font holds a line of Greek beside Chinese, so a font chosen per line refused it
+- A regex of lazy groups between separators took 6.6 s on one message a PDF can write
 
 ## The worker boundary, the sandbox and the pool
 - macOS Vision cannot run in the parser worker's sandbox, and it aborts rather than refusing
@@ -754,6 +755,7 @@ hop through the index.
 - A press aimed with a rectangle measured from the viewer's corner missed its mark once the window grew a toolbar
 - A file added with `git add -N` cannot be stashed, so `run_on_mac.py` sent nothing
 - A new window phase is not run at a release until `window_checks.py` lists it
+- A mutant that failed to compile once was a busy machine, and `--resume` kept the verdict
 
 ## Windows and portability
 - The gates had never run on the platform where they fail
@@ -27004,3 +27006,40 @@ inside a literal. The German conversion of 2026-10-28 found them, because its ca
 English sentences byte for byte. The `said!` gate in `src/lib/said.test.ts` now refuses a template
 with three spaces in a row. Literals outside `said!` (the command-line usage texts, the probes)
 are not checked; most of them indent continuation lines on purpose.
+
+
+### A regex of lazy groups between separators took 6.6 s on one message a PDF can write
+
+`spoken()` in `src/lib/said.ts` turns an English sentence from Rust back into its template. It
+did that with one anchored regex per template, each placeholder a lazy group, `^L0(.+?)L1(.+?)...Ln$`.
+When the final literal does not match, the engine tries every later occurrence of every
+separator before it gives up, so the cost grows with the sentence length to the power of the
+number of placeholders. A 4 KB sentence built from the separators of one 4-placeholder
+template took 6.6 s, and one of 59 KB did not finish in five minutes. Some of these sentences carry a
+form field's name, which comes from the document, and the match runs on the window's thread,
+so a hostile PDF could have frozen the window. It was found while re-checking the threat
+model for 26.10.27, before it shipped, and no test or gate had timed it.
+
+The matcher is now linear (`split`): each placeholder ends at the first occurrence of the next
+literal, found with `indexOf`. That is the same split the lazy regex returns, because a later
+end for one placeholder only starts the search for the next literal later and so cannot
+succeed where the earliest one failed. `said.test.ts` times a 59 KB sentence of that shape
+against a 500 ms budget; on the old code the test does not finish. Any regex run on text a
+document supplies needs that question asked: what does it cost when the match fails near the
+end?
+
+
+### A mutant that failed to compile once was a busy machine, and `--resume` kept the verdict
+
+In the 26.10.27 release table on Windows, one row of 1,790 (`wrap annotations: an unreadable
+list stops every edit`) came back `no summary line -- the run did not finish (error: could not
+compile `tpdf` (lib test))`. The mutant is valid Rust: it replaces `.ok()` with `?` in a
+function returning the same error type. Run alone with `--only`, it compiled and was caught.
+The harness quotes the first line starting with `error`, and here that was cargo's generic
+closing line, so whatever failed came before it in a form that does not start with `error`
+(a crashed or killed compiler, a locked output file), and the log kept nothing else.
+
+Two things follow. A compile failure on a valid mutant is not evidence that the row is stale:
+rerun the row with `--only` before re-aiming it. And `--resume` stores a did-not-finish
+verdict like any other, so a resumed table repeats the failure without building anything;
+the rerun has to be by `--only`, which does not reuse.

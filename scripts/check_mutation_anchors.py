@@ -219,6 +219,59 @@ def test_names(root: pathlib.Path) -> set[str]:
     return found
 
 
+#: `mod name;` and `pub mod name;`: a module whose body is a file of its own.
+MOD_DECLARATION = re.compile(r"^\s*(?:pub(?:\([a-z]+\))?\s+)?mod\s+([A-Za-z_][A-Za-z0-9_]*)\s*;")
+
+
+def file_gates(root: pathlib.Path) -> dict[pathlib.Path, set[str]]:
+    """The platforms each source file compiles on, from `#[cfg]` on its `mod` line.
+
+    **The third scan, added 2026-10-28.** `lib.rs` writes
+    `#[cfg(target_os = "macos")] pub mod ocr_vision;`, and every test in
+    `ocr_vision.rs` exists on macOS alone, while its test module carries a plain
+    `#[cfg(test)]`. Neither scan in `gated_tests` reads the parent's line, so a
+    row aimed there without `only_on` passed this gate and stopped the Rust table
+    on Windows before it began (*ocr language: list no language on macOS*, run
+    for 26.10.27). A file not in the map compiles everywhere.
+
+    The gate is read from the declaration and passed down: a file's gate is the
+    intersection of every gated `mod` line above it, its directory's included. A
+    predicate outside the platform vocabulary (a feature, `test`) gates nothing
+    here; `cfg_admits` reads `test` as true, and a feature is not a platform.
+    """
+    declared: dict[pathlib.Path, set[str]] = {}
+    for source in sorted(root.rglob("*.rs")):
+        lines = source.read_text(encoding="utf-8").splitlines()
+        owner = source.parent if source.name in ("lib.rs", "main.rs", "mod.rs") else source.parent / source.stem
+        for at, line in enumerate(lines):
+            match = MOD_DECLARATION.match(line)
+            if not match:
+                continue
+            platforms = set(SHIPPED)
+            for back in range(at - 1, max(at - 8, -1), -1):
+                found_cfg = FUNCTION_CFG.match(lines[back])
+                if found_cfg:
+                    admits = {p: cfg_admits(found_cfg.group("expr"), p) for p in SHIPPED}
+                    if None not in admits.values():
+                        platforms &= {p for p, yes in admits.items() if yes}
+                    continue
+                if not ATTRIBUTE.match(lines[back]):
+                    break
+            if platforms != SHIPPED:
+                name = match.group(1)
+                declared[owner / f"{name}.rs"] = platforms
+                declared[owner / name] = platforms
+    gates: dict[pathlib.Path, set[str]] = {}
+    for source in sorted(root.rglob("*.rs")):
+        here = set(SHIPPED)
+        for path, platforms in declared.items():
+            if source == path or path in source.parents:
+                here &= platforms
+        if here != SHIPPED:
+            gates[source] = here
+    return gates
+
+
 def gated_tests(root: pathlib.Path) -> dict[str, set[str]]:
     """Every `fn` name defined inside a platform-gated test module, to its gates.
 
@@ -251,8 +304,10 @@ def gated_tests(root: pathlib.Path) -> dict[str, set[str]]:
     """
     found: dict[str, set[str]] = {}
     unreadable: list[str] = []
+    files = file_gates(root)
     for source in sorted(root.rglob("*.rs")):
         gate = None
+        whole_file = files.get(source, set(SHIPPED))
         lines = source.read_text(encoding="utf-8").splitlines()
         for at, line in enumerate(lines):
             for pattern, platform in PLATFORM_GATES:
@@ -298,7 +353,7 @@ def gated_tests(root: pathlib.Path) -> dict[str, set[str]]:
                 if not ATTRIBUTE.match(above):
                     break
 
-            here: set[str] | None = set(SHIPPED) if gate is None else set(gate)
+            here: set[str] | None = (set(SHIPPED) if gate is None else set(gate)) & whole_file
             if saw_test and cfgs:
                 for expr in cfgs:
                     if any(cfg_admits(expr, p) is None for p in SHIPPED):
@@ -306,7 +361,7 @@ def gated_tests(root: pathlib.Path) -> dict[str, set[str]]:
                         here = None
                         break
                     here &= {p for p in SHIPPED if cfg_admits(expr, p)}
-            elif gate is None:
+            elif gate is None and whole_file == SHIPPED:
                 # Neither gated as a module nor as a function: absent from the
                 # map, which is what its docstring promises about an ungated name.
                 continue

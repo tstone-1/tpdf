@@ -27,8 +27,11 @@ export interface Template {
   key: string;
   /** Placeholder names, in the order they appear. */
   names: string[];
-  /** Anchored, and each placeholder a lazy capture. */
-  pattern: RegExp;
+  /**
+   * The literal text around the placeholders: one more than `names`, the
+   * first before the first placeholder and the last after the last.
+   */
+  segments: string[];
   /** How many characters of the template are literal: the tiebreak. */
   literal: number;
 }
@@ -36,36 +39,58 @@ export interface Template {
 /** `{name}`, `{name:?}`, `{name:.1}`; `{{` and `}}` are literal braces. */
 const PLACEHOLDER = /\{\{|\}\}|\{([A-Za-z_][A-Za-z0-9_]*)(?::[^}]*)?\}/g;
 
-function escape(text: string): string {
-  return text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-}
-
 /** Parses one template. Throws on a positional `{}`, which German cannot reorder. */
 export function parse(key: string): Template {
   const names: string[] = [];
-  let source = "^";
-  let literal = 0;
+  const segments = [""];
   let at = 0;
   for (const match of key.matchAll(PLACEHOLDER)) {
-    const before = key.slice(at, match.index);
-    source += escape(before);
-    literal += before.length;
+    segments[segments.length - 1] += key.slice(at, match.index);
     if (match[0] === "{{" || match[0] === "}}") {
-      source += escape(match[0][0]!);
-      literal += 1;
+      segments[segments.length - 1] += match[0][0]!;
     } else {
       names.push(match[1]!);
-      source += "([\\s\\S]+?)";
+      segments.push("");
     }
     at = match.index + match[0].length;
   }
-  const rest = key.slice(at);
+  segments[segments.length - 1] += key.slice(at);
   if (/\{\}|\{:/.test(key.replace(/\{\{|\}\}/g, ""))) {
     throw new Error(`positional placeholder in ${JSON.stringify(key)}: name it`);
   }
-  source += `${escape(rest)}$`;
-  literal += rest.length;
-  return { key, names, pattern: new RegExp(source), literal };
+  const literal = segments.reduce((sum, segment) => sum + segment.length, 0);
+  return { key, names, segments, literal };
+}
+
+/**
+ * The arguments `sentence` gives `template`'s placeholders, or `null`.
+ *
+ * Each placeholder takes at least one character and ends at the first
+ * occurrence of the literal after it. That is the split an anchored regex of
+ * lazy groups finds, `^L0(.+?)L1(.+?)...Ln$`, because a later end for one
+ * placeholder only starts the search for the next literal later and so can
+ * never succeed where the earliest end failed. It was that regex until
+ * 2026-10-28, and its backtracking took 6.6 s on a 4 KB sentence built from a
+ * template's own separators. A field name comes from the document, so a
+ * hostile PDF could hold the window's thread; this is linear in the sentence.
+ */
+function split(template: Template, sentence: string): string[] | null {
+  const { segments } = template;
+  const last = segments[segments.length - 1]!;
+  if (segments.length === 1) return sentence === last ? [] : null;
+  if (!sentence.startsWith(segments[0]!) || !sentence.endsWith(last)) return null;
+  const end = sentence.length - last.length;
+  const values: string[] = [];
+  let start = segments[0]!.length;
+  for (let i = 1; i < segments.length - 1; i += 1) {
+    const at = sentence.indexOf(segments[i]!, start + 1);
+    if (at < 0 || at + segments[i]!.length > end) return null;
+    values.push(sentence.slice(start, at));
+    start = at + segments[i]!.length;
+  }
+  if (end - start < 1) return null;
+  values.push(sentence.slice(start, end));
+  return values;
 }
 
 let parsed: Template[] | null = null;
@@ -79,11 +104,11 @@ function templates(): Template[] {
 /** The template a sentence was rendered from, and its arguments; `null` for none. */
 export function recognise(sentence: string): { template: Template; args: Record<string, string> } | null {
   for (const template of templates()) {
-    const found = template.pattern.exec(sentence);
+    const found = split(template, sentence);
     if (!found) continue;
     const args: Record<string, string> = {};
     template.names.forEach((name, i) => {
-      args[name] = found[i + 1]!;
+      args[name] = found[i]!;
     });
     return { template, args };
   }

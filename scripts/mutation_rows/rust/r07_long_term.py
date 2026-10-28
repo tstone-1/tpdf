@@ -1282,6 +1282,7 @@ ROWS += [
         "        Ok(listed.iter().map(|tag| tag.to_string()).collect())",
         "        Ok(listed.iter().map(|tag| tag.to_string()).take(0).collect())",
         "the_engine_lists_the_languages_it_can_be_asked_for",
+        only_on="macos",
     ),
 ]
 

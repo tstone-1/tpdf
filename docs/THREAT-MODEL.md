@@ -694,6 +694,16 @@ computing a trip count from geometry. That is a statement about the drawing rout
 which is why this is a residual rather than a closed item: the class is *a quantity derived
 from plan geometry*, not *the squiggle loop*.
 
+**The window's own thread is a second CPU budget, and no worker deadline protects it**
+(added 2026-10-28). Since 26.10.27 a sentence from the backend is translated in the window by
+`spoken()` in `src/lib/said.ts`, and some of those sentences carry text from the document: a
+form field's name, a font's name, a path. The first version matched each sentence with a
+regex of lazy groups, which backtracks through every split when the end does not match: a
+crafted 4 KB sentence took 6.6 s, and the window does nothing else while it runs. The
+matcher is linear since then (`split`), and `said.test.ts` holds a 59 KB sentence of that
+shape to a 500 ms budget. Any other matching the window does on text a document supplies
+has the same exposure and no deadline; the worker's 30 s does not reach it.
+
 **Residual.** One pathological page still occupies its process's single PDFium thread and
 starves every other render there. Note this is our own threading choice, forced by the
 fact that concurrent PDFium calls crash — `pdfium-render`'s `thread_safe` feature does

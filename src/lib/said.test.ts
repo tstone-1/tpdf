@@ -207,7 +207,28 @@ describe("spoken", () => {
     expect(() => parse("page {} of {}")).toThrow(/positional/);
   });
 
+  it("takes linear time on a sentence built from a template's own separators", () => {
+    // A field name comes from the document. The lazy regex this replaced took
+    // 6.6 s here at 4 KB, each placeholder trying every later separator; the
+    // budget is far above what a linear match takes and far below that.
+    const key = "`{name}`: its rectangle is not inside page {page}, which is {width} by {height} points";
+    expect(Object.keys(GERMAN)).toContain(key);
+    // Every separator many times over, and a last character that breaks the
+    // final literal, so the regex had to try every split before giving up.
+    const filler = "`: its rectangle is not inside page , which is  by ".repeat(300);
+    const sentence = `\`${filler}\`: its rectangle is not inside page ${filler}, which is ${filler} by ${filler} points!`;
+    const started = performance.now();
+    expect(spoken(sentence, "de-DE")).toBe(sentence);
+    expect(performance.now() - started).toBeLessThan(500);
+  });
+
+  it("splits a placeholder at the first separator after it, as the lazy regex did", () => {
+    const found = recognise("could not read a: b: c");
+    expect(found?.template.key).toBe("could not read {path}: {e}");
+    expect(found?.args).toEqual({ path: "a", e: "b: c" });
+  });
+
   it("recognises braces written double", () => {
-    expect(parse("a {{literal}} and {name}").pattern.test("a {literal} and x")).toBe(true);
+    expect(parse("a {{literal}} and {name}").segments).toEqual(["a {literal} and ", ""]);
   });
 });
