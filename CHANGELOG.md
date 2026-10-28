@@ -29,6 +29,14 @@ have the binary.)
 - The command palette finds a command by its English title in the German window too.
 
 ### Changed
+### Security
+
+- The updater refuses an update whose signature does not name the version on offer. Before,
+  whoever could serve the update file could offer an older genuine release under a newer
+  version number and the installed copy would install it.
+- The updater is 2.14.1, which brings `zip` 9.1.3. The three `zip` 4.6.1 advisories excepted
+  in the audit since 2026-10-17 no longer apply.
+
 
 - The window uses American spelling ("Color", "Favorites", "Recognize") unless the system or
   the Language setting asks for British English.

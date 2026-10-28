@@ -4,6 +4,28 @@ What was run to verify each feature: the commands, the platform, the date and th
 The sections stood at the end of `BUILD.md`'s *Cutting a release* until 2026-10-05 and were moved here unchanged.
 Where a section says "this file", "above" or "the top of this file", it means [`BUILD.md`](../BUILD.md).
 
+### Updater 2.14.1 with a required signed version (unreleased, 2026-10-28)
+
+`tauri-plugin-updater` 2.13.3 to 2.14.1 in Cargo and npm, which moved `zip` from 4.6.1 to
+9.1.3 and `base64` to 0.23, and `plugins.updater.requireSignedVersion` set to `true`.
+The published `latest.json` of every release was read that day: 26.8.2 to 26.9.18 carry no
+version in the signature's trusted comment, 26.9.19 to 26.10.26 do.
+
+`BUILD.md` step 12 for a new updater, on Windows 11: the tree built as 26.10.1 (crate
+version included) and `update_check.py` on its `-setup.exe` passed 17/17. It was offered
+the published 26.10.26, verified its signature with the version check on, installed it,
+came back as 26.10.26 with the document from a folder with a space open again, and
+offered nothing more. The first attempt, with only `--config` lowered, stopped at the first
+window check; `BUILD.md` step 12 now says why. The control and the macOS half were not run.
+
+The run left `HKCU\Software\Timo Stein\tpdf` naming its scratch folder, and the next
+silent install of 26.10.26 went there. `installed_check.py` now puts the key back and
+checks it (round trip on the live key: equal).
+
+`the_updater_requires_a_signed_version` fails with the flag set to `false` and passes with
+`true`. `check_cargo_audit.py` on both lockfiles passed with 7 ignores; the three `zip`
+advisories are gone from `.cargo/audit.toml`.
+
 ### Temporary search recovery and success banners (26.10.26, 2026-10-24)
 
 The first release audit found RUSTSEC-2026-0387 in `crypto-bigint` 0.5.5.
@@ -70,6 +92,15 @@ does not prove Accessibility access to an application's menu. Run the check from
 a desktop context granted that access; do not interpret these failures as updater
 defects or as a passed update. The test restores the original session and removes
 its temporary application.
+
+A later retry launched through Terminal passed the initial menu query and chose
+Install update. The installed CLI reported 26.10.26, and Gatekeeper accepted the
+updated bundle as Notarized Developer ID. The subsequent restart-menu query was
+denied with -1719, so the runner never chose restart: 7/12 checks passed, with
+restart and its dependent observations unverified. Initial menu access is not
+proof that the later menu request will be permitted. The runner then closed and
+removed its temporary copy; a manual restart cannot be requested after that
+cleanup has begun. The source of the permission change was not established.
 
 The Windows CI cache post-step took several minutes after all tests passed.
 Review cache size and upload time separately from release correctness; no cache

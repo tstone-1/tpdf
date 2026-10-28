@@ -2620,7 +2620,7 @@ SOFTWARE.
 
 ## Rust crates
 
-533 crates are linked into the application binary. Build- and dev-dependencies are excluded: they run at compile time and are not distributed.
+530 crates are linked into the application binary. Build- and dev-dependencies are excluded: they run at compile time and are not distributed.
 
 | Crate | Version | Licence |
 |---|---|---|
@@ -2648,7 +2648,6 @@ SOFTWARE.
 | atomic-waker | 1.1.2 | Apache-2.0 OR MIT |
 | base16ct | 1.0.0 | Apache-2.0 OR MIT |
 | base64 | 0.21.7 | MIT OR Apache-2.0 |
-| base64 | 0.22.1 | MIT OR Apache-2.0 |
 | base64 | 0.23.1 | MIT OR Apache-2.0 |
 | base64ct | 1.8.3 | Apache-2.0 OR MIT |
 | bit-set | 0.8.0 | Apache-2.0 OR MIT |
@@ -2661,9 +2660,9 @@ SOFTWARE.
 | block-padding | 0.4.2 | MIT OR Apache-2.0 |
 | block2 | 0.6.2 | MIT |
 | blocking | 1.7.0 | Apache-2.0 OR MIT |
-| brotli | 9.0.0 | BSD-3-Clause AND MIT |
+| brotli | 9.1.1 | BSD-3-Clause AND MIT |
 | brotli-decompressor | 5.0.3 | BSD-3-Clause/MIT |
-| brotli-decompressor | 6.0.1 | BSD-3-Clause/MIT |
+| brotli-decompressor | 6.2.0 | BSD-3-Clause/MIT |
 | bs58 | 0.5.1 | MIT/Apache-2.0 |
 | bytemuck | 1.25.2 | Zlib OR Apache-2.0 OR MIT |
 | byteorder | 1.5.0 | Unlicense OR MIT |
@@ -2720,7 +2719,7 @@ SOFTWARE.
 | defmt-macros | 1.2.0 | MIT OR Apache-2.0 |
 | defmt-parser | 1.1.0 | MIT OR Apache-2.0 |
 | der | 0.7.10 | Apache-2.0 OR MIT |
-| der | 0.8.2 | Apache-2.0 OR MIT |
+| der | 0.8.3 | Apache-2.0 OR MIT |
 | der_derive | 0.7.3 | Apache-2.0 OR MIT |
 | deranged | 0.5.9 | MIT OR Apache-2.0 |
 | derive_more | 2.1.1 | MIT |
@@ -2743,14 +2742,14 @@ SOFTWARE.
 | ecb | 0.2.1 | MIT OR Apache-2.0 |
 | ecdsa | 0.17.0 | Apache-2.0 OR MIT |
 | either | 1.19.0 | MIT OR Apache-2.0 |
-| elliptic-curve | 0.14.1 | Apache-2.0 OR MIT |
+| elliptic-curve | 0.14.3 | Apache-2.0 OR MIT |
 | embed_plist | 1.2.2 | MIT OR Apache-2.0 |
 | encoding_rs | 0.8.42 | (Apache-2.0 OR MIT) AND BSD-3-Clause |
 | endi | 1.1.1 | MIT |
 | enumflags2 | 0.7.12 | MIT OR Apache-2.0 |
 | enumflags2_derive | 0.7.12 | MIT OR Apache-2.0 |
 | equivalent | 1.0.3 | Apache-2.0 OR MIT |
-| erased-serde | 0.4.10 | MIT OR Apache-2.0 |
+| erased-serde | 0.4.11 | MIT OR Apache-2.0 |
 | errno | 0.3.14 | MIT OR Apache-2.0 |
 | event-listener | 5.4.2 | Apache-2.0 OR MIT |
 | event-listener-strategy | 0.5.4 | Apache-2.0 OR MIT |
@@ -2900,7 +2899,7 @@ SOFTWARE.
 | objc2-vision | 0.3.2 | Zlib OR Apache-2.0 OR MIT |
 | objc2-web-kit | 0.3.2 | Zlib OR Apache-2.0 OR MIT |
 | once_cell | 1.21.4 | MIT OR Apache-2.0 |
-| openssl-probe | 0.2.1 | MIT OR Apache-2.0 |
+| openssl-probe | 0.2.2 | MIT OR Apache-2.0 |
 | option-ext | 0.2.0 | MPL-2.0 |
 | ordered-stream | 0.2.0 | MIT OR Apache-2.0 |
 | osakit | 0.3.1 | MIT OR Apache-2.0 |
@@ -2962,11 +2961,11 @@ SOFTWARE.
 | regex-syntax | 0.8.11 | MIT OR Apache-2.0 |
 | reqwest | 0.13.5 | MIT OR Apache-2.0 |
 | rfc6979 | 0.6.0 | Apache-2.0 OR MIT |
-| rfd | 0.16.1 | MIT |
+| rfd | 0.17.2 | MIT |
 | ring | 0.17.14 | Apache-2.0 AND ISC |
 | rsa | 0.9.10 | MIT OR Apache-2.0 |
 | rustc-hash | 2.1.3 | Apache-2.0 OR MIT |
-| rustix | 1.1.5 | Apache-2.0 WITH LLVM-exception OR Apache-2.0 OR MIT |
+| rustix | 1.1.6 | Apache-2.0 WITH LLVM-exception OR Apache-2.0 OR MIT |
 | rustls | 0.23.46 | Apache-2.0 OR ISC OR MIT |
 | rustls-native-certs | 0.8.5 | Apache-2.0 OR ISC OR MIT |
 | rustls-pki-types | 1.15.1 | MIT OR Apache-2.0 |
@@ -3040,11 +3039,11 @@ SOFTWARE.
 | tauri | 2.12.5 | Apache-2.0 OR MIT |
 | tauri-codegen | 2.7.4 | Apache-2.0 OR MIT |
 | tauri-macros | 2.7.4 | Apache-2.0 OR MIT |
-| tauri-plugin-dialog | 2.8.3 | Apache-2.0 OR MIT |
+| tauri-plugin-dialog | 2.8.4 | Apache-2.0 OR MIT |
 | tauri-plugin-fs | 2.7.1 | Apache-2.0 OR MIT |
 | tauri-plugin-process | 2.4.0 | Apache-2.0 OR MIT |
-| tauri-plugin-single-instance | 2.5.4 | Apache-2.0 OR MIT |
-| tauri-plugin-updater | 2.13.3 | Apache-2.0 OR MIT |
+| tauri-plugin-single-instance | 2.5.5 | Apache-2.0 OR MIT |
+| tauri-plugin-updater | 2.14.1 | Apache-2.0 OR MIT |
 | tauri-runtime | 2.12.2 | Apache-2.0 OR MIT |
 | tauri-runtime-wry | 2.12.3 | Apache-2.0 OR MIT |
 | tauri-utils | 2.10.2 | Apache-2.0 OR MIT |
@@ -3082,6 +3081,7 @@ SOFTWARE.
 | tray-icon | 0.25.1 | MIT OR Apache-2.0 |
 | try-lock | 0.2.5 | MIT |
 | ttf-parser | 0.25.1 | MIT OR Apache-2.0 |
+| typed-path | 0.13.0 | MIT OR Apache-2.0 |
 | typeid | 1.0.3 | MIT OR Apache-2.0 |
 | typenum | 1.20.1 | MIT OR Apache-2.0 |
 | unicode-bidi | 0.3.18 | MIT OR Apache-2.0 |
@@ -3119,12 +3119,9 @@ SOFTWARE.
 | windows-registry | 0.6.1 | MIT OR Apache-2.0 |
 | windows-result | 0.4.1 | MIT OR Apache-2.0 |
 | windows-strings | 0.5.1 | MIT OR Apache-2.0 |
-| windows-sys | 0.60.2 | MIT OR Apache-2.0 |
 | windows-sys | 0.61.2 | MIT OR Apache-2.0 |
-| windows-targets | 0.53.5 | MIT OR Apache-2.0 |
 | windows-threading | 0.2.1 | MIT OR Apache-2.0 |
 | windows-version | 0.1.7 | MIT OR Apache-2.0 |
-| windows_x86_64_msvc | 0.53.1 | MIT OR Apache-2.0 |
 | winnow | 0.5.40 | MIT |
 | winnow | 1.0.4 | MIT |
 | wnaf | 0.14.1 | Apache-2.0 OR MIT |
@@ -3134,7 +3131,7 @@ SOFTWARE.
 | x11-dl | 2.21.0 | MIT |
 | x509-cert | 0.2.5 | Apache-2.0 OR MIT |
 | x509-ocsp | 0.2.1 | Apache-2.0 OR MIT |
-| xattr | 1.6.1 | MIT OR Apache-2.0 |
+| xattr | 1.7.0 | MIT OR Apache-2.0 |
 | yoke | 0.8.4 | Unicode-3.0 |
 | yoke-derive | 0.8.4 | Unicode-3.0 |
 | zbus | 5.19.0 | MIT |
@@ -3149,7 +3146,7 @@ SOFTWARE.
 | zerotrie | 0.2.5 | Unicode-3.0 |
 | zerovec | 0.11.9 | Unicode-3.0 |
 | zerovec-derive | 0.11.7 | Unicode-3.0 |
-| zip | 4.6.1 | MIT |
+| zip | 9.1.3 | MIT |
 | zlib-rs | 0.6.8 | Zlib |
 | zmij | 1.0.23 | MIT |
 | zune-core | 0.5.3 | MIT OR Apache-2.0 OR Zlib |
@@ -12673,10 +12670,10 @@ Packages whose code is compiled into `dist/`. This list is read from the build's
 | Package | Version | Licence |
 |---|---|---|
 | @tauri-apps/api | 2.12.4 | Apache-2.0 OR MIT |
-| @tauri-apps/plugin-dialog | 2.8.3 | MIT OR Apache-2.0 |
+| @tauri-apps/plugin-dialog | 2.8.4 | MIT OR Apache-2.0 |
 | @tauri-apps/plugin-process | 2.4.0 | MIT OR Apache-2.0 |
-| @tauri-apps/plugin-updater | 2.13.3 | MIT OR Apache-2.0 |
-| svelte | 5.57.2 | MIT |
+| @tauri-apps/plugin-updater | 2.14.1 | MIT OR Apache-2.0 |
+| svelte | 5.57.3 | MIT |
 
 ### Copyright notices
 

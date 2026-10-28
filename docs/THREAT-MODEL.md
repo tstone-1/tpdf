@@ -3640,15 +3640,25 @@ and the same call gates the Windows *install*, which ends the process just as su
    newer ones, but that decision is made from `latest.json` — an attacker who could serve
    that file could not forge a signature, but could withhold an update indefinitely. Nothing
    here detects being pinned to an old version.
+   **Until 2026-10-28 this residual was understated: serving the file was also enough to
+   install an old release.** `latest.json` is not signed, so it could pair a high `version`
+   with the URL and signature of an earlier genuine installer, and the copy would accept
+   it. Updater 2.14.1 compares the version in the signature's trusted comment, which the
+   signature covers, with the announced one. Releases 26.8.2 to 26.9.18 were signed before
+   the CLI wrote that field, so `plugins.updater.requireSignedVersion` is `true` and a
+   signature without a version is refused; `the_updater_requires_a_signed_version` in
+   `lib.rs` holds it. Every release from 26.9.19 on carries the field (read from each
+   release's `latest.json` that day). Withholding remains.
 3. **The archive parsers run in the app process.** Signature verification comes first, so
    this only matters if the signing key is compromised — at which point it is the least of
    the problems. Recorded because the boundary claim elsewhere in this document is about
    *PDFium*, and this is a second parser family that the app process now links.
-   **That `zip` is 4.6.1, a version its maintainers count among those with security
-   issues.** On 2026-10-16 they yanked every version below 9.0.3, citing advisories some
-   published and more announced (zip-rs/zip2#1075), and unyanked 4.6.1 the same afternoon.
-   `tauri-plugin-updater` 2.13.3 and 2.14.0 both require `zip ^4`, so the tree holds 4.6.1
-   until Tauri releases its move to zip 9. Read in the 2.13.3 source: `zip` is
+   **That `zip` was 4.6.1 from 2026-10-16 to 2026-10-28, a version its maintainers count
+   among those with security issues; it is 9.1.3 since updater 2.14.1.** On 2026-10-16 they
+   yanked every version below 9.0.3, citing advisories some published and more announced
+   (zip-rs/zip2#1075), and unyanked 4.6.1 the same afternoon. `tauri-plugin-updater` 2.13.3
+   and 2.14.0 both required `zip ^4`. What follows held for 4.6.1, and the call path is
+   unchanged in the 2.14.1 source. Read in the 2.13.3 source: `zip` is
    called only on Windows, in `extract_zip`, after `verify_signature`, and only when the
    signed payload's leading bytes are a zip archive (`infer::archive::is_zip`); tpdf's
    Windows payload is the NSIS `-setup.exe`, which goes to `extract_exe`. So the yanked
@@ -3659,7 +3669,7 @@ and the same call gates the Windows *install*, which ends the process just as su
    links pointing outside the destination) and -0369 (Unix permissions applied through
    symbolic links). The first and third are Unix permissions, which a Windows extraction
    does not apply; the second is reached by the same signed zip as the rest. They are
-   listed in `.cargo/audit.toml` for that reason, and leave it with the move to zip 9.
+   listed in `.cargo/audit.toml` for that reason, and left it with the move to zip 9.
 4. **The unsaved-work question before a restart lives on the webview's side of the
    boundary.** The coordinator does not know whether a tab is dirty — the edit models are
    Rust state, but the settle that makes `dirty` current runs in the frontend — so

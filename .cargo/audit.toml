@@ -43,17 +43,6 @@ ignore = [
     # glib 0.18: unsound `VariantStrIter`. The same Linux-only GTK path, absent
     # from both shipped targets by the same command.
     "RUSTSEC-2024-0429",
-    # zip 4.6.1: three flaws in `ZipArchive::extract`, fixed only in zip 9 --
-    # setuid and setgid bits kept (-0367), symbolic links whose targets leave
-    # the destination (-0368), Unix permissions applied through symbolic links
-    # (-0369). `tauri-plugin-updater` 2.13.3 and 2.14.0 require `zip ^4`, so
-    # no lockfile can leave 4.6.1. The updater extracts only on Windows, in
-    # `extract_zip`, after `verify_signature`, and only for a signed payload
-    # that is a zip; tpdf's is a `-setup.exe`. docs/THREAT-MODEL.md §T9
-    # residual 3. Recorded 2026-10-17; remove all three with the move to zip 9.
-    "RUSTSEC-2026-0367",
-    "RUSTSEC-2026-0368",
-    "RUSTSEC-2026-0369",
     # zvariant, zbus_names, zvariant_derive: unmaintained as standalone crates,
     # merged into zbus 6.0.0 (2026-10-16). The advisories report no defect.
     # Linux only: `tauri-plugin-single-instance` 2.5.4, the newest, requires

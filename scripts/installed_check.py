@@ -226,6 +226,25 @@ def registry(key: str) -> str | None:
     return asked.stdout if asked.returncode == 0 else None
 
 
+def restore_app_key(before: str | None) -> None:
+    """Puts the application's key back to the `reg query` listing taken before.
+
+    Only its values are written back, which is all it holds: the folder as its
+    default value and the installer's language.
+    """
+    subprocess.run(["reg", "delete", APP_KEY, "/f"], capture_output=True, check=False)
+    if before is None:
+        return
+    for line in before.splitlines():
+        parts = re.split(r"\s{4}", line.strip(), maxsplit=2)
+        if len(parts) != 3 or not parts[1].startswith("REG_"):
+            continue
+        name, kind, data = parts
+        where = ["/ve"] if name == "(Default)" else ["/v", name]
+        subprocess.run(["reg", "add", APP_KEY, *where, "/t", kind, "/d", data, "/f"],
+                       capture_output=True, check=False)
+
+
 def flat(text: str | None) -> str:
     """A registry listing on one line, for a check's detail."""
     return "no key" if text is None else " | ".join(l.strip() for l in text.splitlines() if l.strip())
@@ -452,6 +471,13 @@ def uninstall(checks: Checks, folder: Path, before: dict[str, str | None], run_i
             len(left) == 1 and left[0].startswith("(Default)") and left[0].endswith(str(folder)))
         checks.note(known, "the application's own key holds the install folder and nothing else",
                     "" if known else flat(now))
+        # Then put it back. The installer reads its folder from this key, so
+        # the folder of this run stayed the default of the next install: on
+        # 2026-10-28 a reinstall after `update_check.py` went silently into
+        # `tpdf-update-check`.
+        restore_app_key(before[APP_KEY])
+        checks.note(registry(APP_KEY) == before[APP_KEY], "the application's own key is as it was before",
+                    "" if registry(APP_KEY) == before[APP_KEY] else flat(registry(APP_KEY)))
         left = sorted(str(path.relative_to(folder)) for path in folder.rglob("*") if path.is_file())
         checks.note(left in ([], ["uninstall.exe"]), "the folder holds nothing but the uninstaller",
                     ", ".join(left[:12]))

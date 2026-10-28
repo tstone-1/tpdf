@@ -1713,6 +1713,25 @@ mod tests {
     ///
     /// **A trailing slash in a Tauri resource map is a rename, not a directory**,
     /// and `docs/TRAPS.md` records that from the macOS side --- which is why the
+    /// The updater refuses a signature that does not name the version it offers.
+    ///
+    /// `latest.json` is not signed, so with this off whoever serves it can pair a
+    /// high `version` with the installer and signature of 26.8.2 to 26.9.18, the
+    /// releases signed before the CLI wrote the version into the trusted comment,
+    /// and the installed copy downgrades to a genuine old build. The plugin's
+    /// default is `false`, so deleting the line is the regression this catches.
+    /// `docs/THREAT-MODEL.md` §T9 residual 2.
+    #[test]
+    fn the_updater_requires_a_signed_version() {
+        let parsed: serde_json::Value = serde_json::from_str(include_str!("../tauri.conf.json"))
+            .expect("tauri.conf.json is JSON");
+        assert_eq!(
+            parsed.pointer("/plugins/updater/requireSignedVersion"),
+            Some(&serde_json::Value::Bool(true)),
+            "plugins.updater.requireSignedVersion must be true"
+        );
+    }
+
     /// macOS config names `pdfium/libpdfium.dylib` in full. The Windows twin was
     /// written as `"pdfium/"` and shipped the runtime DLL as a file called
     /// `pdfium`, with no extension. `pdfium_library_dir` then found no

@@ -270,8 +270,8 @@ been decoded under a stated bound.
   output is parsed back with `ttf-parser` and held to `MAX_CONTENT` like any other program.
 
 Two more arrived with installed-font matching on 2026-09-30, **neither a new package**:
-`base64` 0.22 (MIT OR Apache-2.0), already in the runtime tree through the updater and
-`wry`, carries an installed font's bytes across the worker boundary as one string rather
+`base64` (MIT OR Apache-2.0; 0.22 then, 0.23 since updater 2.14.1), already in the runtime
+tree through the updater and `wry`, carries an installed font's bytes across the worker boundary as one string rather
 than a JSON array of numbers; `objc2-core-text` 0.3 (Zlib OR Apache-2.0 OR MIT), already
 compiled beneath `objc2-app-kit`, finds that font by PostScript name in the app process on
 macOS. Windows uses a feature of the `windows` crate already linked (`Win32_Graphics_DirectWrite`).

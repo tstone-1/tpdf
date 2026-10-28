@@ -27,6 +27,7 @@
       "endpoints": [
         "https://github.com/tstone-1/tpdf/releases/latest/download/latest.json"
       ],
+      "requireSignedVersion": true,
       "windows": {
         "installMode": "passive"
       }

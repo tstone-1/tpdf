@@ -1025,9 +1025,6 @@ starts at 0 and increments within the month.
      The Linux certificate-file reader's `pkcs5`, `des`, `rc2`, `cbc` and `hmac` belong to the same
      generation (`Cargo.toml` says so beside `pkcs12`) and move with it (26.10.20).
    - **`gtk` 0.19** is held by Tauri: `muda` and `tao` name 0.18. Take it when they do.
-   - **`base64` 0.23** compiles here. It is held because 0.22 comes with
-     `tauri-plugin-updater` and `wry`, and the note beside it in `Cargo.toml` chose it for
-     adding no package; 0.23 would be a second copy. Take it when Tauri does.
    The fuzz package has a lockfile of its own, and `Audit` reads both. 26.10.19 updated only
    the application's: rustls moved to 0.23.46 there and stayed at 0.23.45 in the fuzz one,
    and four advisories published that week failed `Audit` on the release commit.
@@ -1036,21 +1033,16 @@ starts at 0 and increments within the month.
    - **`windows-core` 0.100** is held by Tauri: `tao`, `wry` and `webview2-com` name 0.62.
      **`parking_lot` 0.13** would be a second copy beside `tao`'s 0.12, the reason `base64` is
      held. Take each when Tauri does (26.10.24).
-   - **`tauri-plugin-updater` 2.14.0** and its npm half were held at 2.13.3 for 26.10.19
-     (2026-10-14): step 12 asks for the new updater to be tested before the tag when its
-     own crates move, which needs a Mac screen, and that release had the Linux packages to
-     land. Take it in a release that runs that test. Held again for 26.10.20, a release of
-     fixes cut the day after, and for 26.10.21, prepared on Windows.
-     The 26.10.26 manifests pin 2.13.3 exactly in both ecosystems: a hold recorded
-     only here was undone by the routine dependency-update commands above.
-   - **`zip` is held at 4.6.1 by the updater** (2026-10-16). Every `zip` below 9.0.3 was
-     yanked for security issues that morning and 4.6.1 unyanked that afternoon;
-     `tauri-plugin-updater` 2.13.3 and 2.14.0 both require `zip ^4`. While every version a
-     requirement allows is yanked, `cargo update` with no `-p` cannot resolve: update by
-     name instead, every package in `Cargo.lock` except the yanked one and `tpdf` as `-p`
-     arguments (`name@version` where a name is locked twice), then `--precise` for
-     anything held. `scripts/check_cargo_audit.py` is where `Audit` allows such a yank.
-     Take an updater on zip 9 when it is released, and delete this bullet.
+   - **`tauri-plugin-updater` is pinned exactly in both ecosystems** (`Cargo.toml` and
+     `package.json`): a hold recorded only here was once undone by the routine
+     dependency-update commands above. A new updater is taken only in a release that runs
+     step 12 on it before the tag. 2.14.1 (2026-10-28) replaced 2.13.3, which had been held
+     since 26.10.19; it brought `zip` 9 and `base64` 0.23 with it.
+   - **While every version a requirement allows is yanked, `cargo update` with no `-p`
+     cannot resolve** (`zip` 4, 2026-10-16): update by name instead, every package in
+     `Cargo.lock` except the yanked one and `tpdf` as `-p` arguments (`name@version` where
+     a name is locked twice), then `--precise` for anything held.
+     `scripts/check_cargo_audit.py` is where `Audit` allows such a yank.
 2. <a id="release-step-2"></a>Bump **all four** version files so they agree:
    - `package.json`
    - `package-lock.json` (top-level *and* the root package entry — `npm version <v> --no-git-tag-version` does both)
@@ -2452,6 +2444,22 @@ starts at 0 and increments within the month.
     npm run tauri build -- --config '{"version":"26.10.1","bundle":{"createUpdaterArtifacts":false}}' --bundles dmg
     python3 scripts/update_check_mac.py src-tauri/target/release/bundle/dmg/tpdf_26.10.1_aarch64.dmg testdata/text-wide.pdf
     ```
+
+    **On Windows the crate's version has to go down too**, because `update_check.py` waits
+    for a window titled `tpdf v<version>` and asks the installed tool for its version, and
+    both come from `Cargo.toml`: with only `--config` lowered, the run ends at the first
+    window check without pressing anything. Save `src-tauri/Cargo.toml` and `Cargo.lock`,
+    set the package `version` to `26.10.1`, build, and put both files back byte for byte.
+    A background `tauri build` ends its `beforeBuildCommand` with exit code -1, so build the
+    frontend first and pass `"build":{"beforeBuildCommand":""}` in the same `--config` file:
+
+    ```powershell
+    npm run build
+    npx tauri build --config <file with version, beforeBuildCommand and createUpdaterArtifacts> --bundles nsis
+    python scripts\update_check.py src-tauri\target\release\bundle\nsis\tpdf_26.10.1_x64-setup.exe testdata\text-wide.pdf
+    ```
+
+    The run on 2026-10-28, updater 2.14.1 offered the published 26.10.26: 17 of 17.
 
     Needs two published releases, so it starts from the second one ever cut with the
     updater — first opportunity is applying `26.8.2` from an installed `26.8.2`+1.

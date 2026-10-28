@@ -131,8 +131,9 @@ caseless = "0.2.2"
 # signature is verified against a compiled-in public key before anything is
 # unpacked, which is what keeps those two archive parsers from ever seeing
 # attacker-chosen bytes. `docs/THREAT-MODEL.md` §T9 is the worked-out version.
-# Held until the new updater passes BUILD.md step 12 before tagging.
-tauri-plugin-updater = "=2.13.3"
+# Pinned exactly: a new updater is taken only in a release that runs BUILD.md
+# step 12 on it before tagging.
+tauri-plugin-updater = "=2.14.1"
 
 # The timestamp authority's HTTP client, `tsa.rs`: Phase 6 step 3, increment B.
 # **Zero packages** --- 617 before and 617 after over the whole tree, counted
@@ -256,11 +257,12 @@ ttf-parser = { version = "0.25.1", default-features = false, features = ["std", 
 subsetter = { version = "0.2.6", default-features = false }
 # An installed font's bytes cross the worker boundary in a request, and a JSON
 # array of numbers would cost four bytes per byte. MIT OR Apache-2.0, and it
-# adds **no package**: 0.22.1 is already in the runtime tree through
-# `tauri-plugin-updater` and `wry`, checked with `cargo tree -i` rather than
-# assumed, which is the standing rule for anything the licensing constraint
-# touches.
-base64 = "0.22"
+# adds **no package**: 0.23 is already in the runtime tree through
+# `tauri-plugin-updater`, `wry` and `plist`, checked with `cargo tree -i` rather
+# than assumed, which is the standing rule for anything the licensing constraint
+# touches. It moved from 0.22 with updater 2.14.1 (2026-10-28), when this line
+# became the only user of 0.22.
+base64 = "0.23"
 
 # The macOS print dialog. PDFKit paginates the document and builds the
 # NSPrintOperation; AppKit supplies NSPrintInfo and runs the panel. `objc2`,
