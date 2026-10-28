@@ -4,7 +4,7 @@ What was run to verify each feature: the commands, the platform, the date and th
 The sections stood at the end of `BUILD.md`'s *Cutting a release* until 2026-10-05 and were moved here unchanged.
 Where a section says "this file", "above" or "the top of this file", it means [`BUILD.md`](../BUILD.md).
 
-### Updater 2.14.1 with a required signed version (unreleased, 2026-10-28)
+### Updater 2.14.1 with a required signed version (26.10.27, 2026-10-28)
 
 `tauri-plugin-updater` 2.13.3 to 2.14.1 in Cargo and npm, which moved `zip` from 4.6.1 to
 9.1.3 and `base64` to 0.23, and `plugins.updater.requireSignedVersion` set to `true`.
@@ -25,6 +25,33 @@ checks it (round trip on the live key: equal).
 `the_updater_requires_a_signed_version` fails with the flag set to `false` and passes with
 `true`. `check_cargo_audit.py` on both lockfiles passed with 7 ignores; the three `zip`
 advisories are gone from `.cargo/audit.toml`.
+
+The macOS half before the tag, on the second Mac: the release tree built as 26.10.1 with
+`--bundles app`, re-signed with Developer ID, and `update_check_mac.py` on its `.dmg`
+passed 11/12. It was offered 26.10.26, installed it and came back with the document open.
+The one failure is by construction: only the configuration's version was lowered, so the
+bundled tool still says 26.10.26. Its `--control no-press` failed the seven checks aimed
+at it and, by construction again, the tool's version and the notarization of a local build.
+
+After publication, from the published 26.10.26 to the published 26.10.27:
+`update_check.py` 18/18 on Windows 11 and `update_check_mac.py` 12/12 on the second Mac,
+and each `--control no-press` failed its seven checks and nothing else. The first Windows
+run, about five minutes after publishing, found no offer in the window while the script's
+own read of `latest.json` had 26.10.27; the rerun a few minutes later passed. A stale copy
+of `latest.json` at GitHub's CDN would explain it, and nothing measured which copy the
+application read.
+
+### Backend messages in German, and matching them in linear time (26.10.27, 2026-10-28)
+
+`spoken()` in `src/lib/said.ts` turned a sentence from Rust back into its template with
+one anchored regex of lazy groups per template. Found while re-reading the threat model
+for this release: a 4 KB sentence made of one four-placeholder template's separators took
+6.6 s, and 59 KB did not finish in 5 minutes. Some of these sentences carry a form field's
+name, and the match runs on the window's thread. The matcher is now `split`, linear,
+with the lazy regex's semantics. `said.test.ts` holds a 59 KB sentence of that shape to
+500 ms (it did not finish on the old code) and pins the first-separator split. The
+frontend suite passed 3,250 tests, and the frontend mutation table `--near v26.10.26`
+caught 747 of 747 on the release tree.
 
 ### Temporary search recovery and success banners (26.10.26, 2026-10-24)
 

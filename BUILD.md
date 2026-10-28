@@ -1938,7 +1938,9 @@ starts at 0 and increments within the month.
    ```
 
    Both probes refuse an already running bundle identifier and target only the PID they
-   launched. Use a separately identified test bundle when the installed app is open.
+   launched. `save_check.py` needs Python 3.10 or later, and over ssh `python3` is the
+   system's 3.9 unless `/opt/homebrew/bin` comes first on `PATH`; on 3.9 it stops at a
+   `TypeError` about `ignore_cleanup_errors` before it starts anything. Use a separately identified test bundle when the installed app is open.
 
    Run the `--self-test` first. It replays the application menu as measured before and after
    the duplicate `About tpdf` was removed, so it shows the rule calling one a defect and the
@@ -2403,7 +2405,9 @@ starts at 0 and increments within the month.
     `brew audit --cask --online tstone-1/tpdf/tpdf` and `brew livecheck --cask
     tstone-1/tpdf/tpdf`. The cask's `livecheck` block reads the latest full release: without
     it Homebrew takes the engine prerelease tag `pdfium-...` for the version. To install for
-    a test without touching `/Applications`, pass `--appdir=<folder>`.
+    a test without touching `/Applications`, pass `--appdir=<folder>`. Since 2026-10, Homebrew
+    refuses to load a cask from a tap nobody has trusted (*Refusing to load cask ... from
+    untrusted tap*); `brew trust tstone-1/tpdf` once per machine.
 
     **And winget** (first submitted for 26.10.2, as `tstone-1.tpdf`, pull request 445804 to
     `microsoft/winget-pkgs`; not merged when this was written, so the README does not name
@@ -2412,6 +2416,10 @@ starts at 0 and increments within the month.
     `PackageVersion`, `InstallerUrl`, `InstallerSha256` (of the `-setup.exe`) and
     `ReleaseNotesUrl` changed, on a branch of the fork `tstone-1/winget-pkgs`, titled
     `Update: tstone-1.tpdf to <version>`. Run `winget validate --manifest <folder>` first.
+    The fork is a copy of a very large repository, and on 2026-10-28 every git fetch from it
+    (a sparse, blobless clone included) was refused with HTTP 429 (*gitmon refuses to schedule
+    us*). The REST API still answered, with retries: read the three files through `contents`
+    and write the move as one commit through `git/trees`, `git/commits` and `git/refs`.
     `winget install --manifest` needs local manifests enabled by an administrator; without
     that, run the downloaded `setup.exe /S` and read `winget list tpdf`. The installer is
     `nullsoft`, user scope. Over ssh, `winget install --manifest` downloads the installer,

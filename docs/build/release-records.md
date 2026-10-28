@@ -2,6 +2,50 @@
 
 What was run for each release, what passed, and what was not run. The record of a new release goes at the top. Moved here verbatim from `BUILD.md` on 2026-10-23, which indexes this file.
 
+**26.10.27 verification and publication, 2026-10-28:** prepared on the Windows development
+machine, with the macOS half on the second Mac over ssh. Step 1: `cargo update --dry-run`
+locked nothing in either lockfile, `npm outdated` was empty and `check_pdfium_age.py` found the
+pin at the head of 8103. The window checks passed 16 of 16 on macOS (`run_on_mac.py`) on the
+tree before the version bump. Step 6 found the backtracking matcher in `said.ts` before it
+shipped (`docs/VERIFICATION.md`, *Backend messages in German*). Step 7 in the mutation
+worktree on the release tree: `mutate_python.py` 38/38, `mutate_frontend.py --near v26.10.26`
+747/747, `mutate_rust.py --near v26.10.26` 1,768 of 1,768 with 22 skipped as not runnable on
+Windows. That run was killed once and resumed; one row failed to compile in the first part and
+was caught when run alone with `--only` (`docs/TRAPS.md`, *A mutant that failed to compile
+once*). The Rust table refused to start at first: a macOS-only row had no `only_on`, and
+`check_mutation_anchors.py` now reads a `#[cfg]` on a parent's `mod` line, so it reports that
+row. All 34 gates passed on the release tree (3,287 Rust tests with 12 ignored, 630
+command-line checks with 3 skipped, 3,250 frontend tests), and `check_linux.py` passed. Step 8
+on Windows 11: the installer built with the Explorer overlay passed `installed_check.py` 26/26;
+from its extracted payload, with the development PDFium hidden, `tpdf-cli` answered 26.10.27
+and verified `testdata/incr-signed.pdf`; `print-probe` 15/15; `redact-reach-probe` over 181
+documents in the desktop's Downloads: 15,314 regions, 92.5% taken whole; the gate read back
+13,947 on 395 pages, none still read as text, 8,279 not shown unreadable and 5,668 shown
+unreadable, in 91.4 s; a `--no-bundle` checks build passed `viewer_check.py` 378/378 on
+`text-heavy.pdf` and 277/277 on `vector-heavy.pdf`. No rehearsal tag: `release.yml` changed
+only in its notes. CI passed all three jobs on `4e8d6ce4` (run 40772931058) and `Audit`
+passed (run 40772931086); release run 40777564103 skipped its gates and left a draft of eight
+files whose `latest.json` offered 26.10.27 for the four macOS and Windows entries. On the
+draft's files: the installer read as `Valid` and timestamped by Certum and passed
+`installed_check.py` 26/26; the `.dmg`'s app was accepted as Notarized Developer ID and
+stapled, its `tpdf-cli` (Developer ID, `runtime`) answered 26.10.27 and verified
+`incr-signed.pdf` with the development engine hidden, and against that app `menu_check.py`
+(after its self-test) found a clean bar of ten menus and `save_check.py` saved over the
+document twice, read back by `qpdf` both times, and refused a print after a second writer.
+`menu_check.py` had read only `['tpdf']` out of `menubar.ts` since the menu titles became
+catalog keys in 26.10.27's translation, and was corrected the same night; `save_check.py`
+needs Python 3.10, which the Mac's system `python3` is not. `publish_release.py v26.10.27
+--publish` published it; without authentication `releases/latest` is v26.10.27, the `.dmg`,
+the `-setup.exe`, the `.deb`, the AppImage and `latest.json` answer 200, and `latest.json`
+offers 26.10.27. An installed 26.10.26 updated itself: `update_check.py` 18/18 on Windows
+(the first run, five minutes after publishing, saw no offer; `docs/VERIFICATION.md`) and
+`update_check_mac.py` 12/12 on the second Mac, and each `--control no-press` failed its seven
+checks and nothing else. The cask went to 26.10.27 with the `.dmg`'s SHA-256 equal to
+GitHub's digest; `brew audit --cask --online` was clean once the tap was trusted, and `brew
+livecheck` reads 26.10.27. The winget pull request moved to 26.10.27 and passed `winget
+validate`. **Not run:** step 7's pass after the release (`--since v26.10.26 --resume`), the
+Windows window phases other than the viewer, and the README pictures.
+
 **26.10.6 verification, macOS arm64, 2026-10-05:** all 30 gates passed on the release tree
 (2,823 Rust tests with ten documented ignored, 2,454 frontend tests). Every Rust and
 frontend mutation selected `--near v26.10.5` ran in the mutation worktree and was caught:

@@ -152,7 +152,19 @@ def declared_menus() -> list[str]:
     source = MENUBAR_TS.read_text(encoding="utf-8")
     start = source.index("export const MENU_LAYOUT")
     body = source[start:]
-    return re.findall(r'^\s{4}title: "([^"]+)",', body, re.M)
+    # Since 26.10.27 a title is `TEXT().file`, a key into the catalog at the top
+    # of the file, and only the application menu is still a literal. Read before
+    # this, the bar was "['tpdf']" against a bar of ten, and the check failed on
+    # its own reading rather than on the menu. The live bar is read in English,
+    # so the keys resolve through the `en-US` block.
+    english = re.search(r'const TEXT = catalog\(\{\s*"en-US": \{(.*?)\}', source, re.S)
+    words = dict(re.findall(r'^\s*(\w+): "([^"]+)",', english.group(1), re.M)) if english else {}
+    titles = []
+    for literal, key in re.findall(r'^\s{4}title: (?:"([^"]+)"|TEXT\(\)\.(\w+)),', body, re.M):
+        if key and key not in words:
+            sys.exit(f"[FAIL] menubar.ts names TEXT().{key}, which its en-US catalog does not have")
+        titles.append(literal or words[key])
+    return titles
 
 
 def read_menus() -> list[list[str]]:
