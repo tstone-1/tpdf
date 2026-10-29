@@ -106,8 +106,9 @@ presses Tab in one of them; testdata/form.pdf has one, and the transcript says s
 
 --phase recognise runs Recognise text and save as in the window: the palette, the
 save panel's suggestion, the toolbar's page line and Stop button, the sentence
-afterwards, the copy opened and searched, the refusal of unsaved changes, and a
-stopped run. The scan is made here from the fixture's first page, with tpdf-cli
+afterwards, the copy opened and searched, the refusal of unsaved changes, a
+stopped run, and Recognize this page clicked in the find bar after its search
+found nothing. The scan is made here from the fixture's first page, with tpdf-cli
 beside the binary; the fixture must show the word "quartz" once.
   uv run scripts/tabs_check.py <checks-binary> testdata/text-base14.pdf --phase recognise
 --phase sign signs with a certificate through the window a reader signs in:

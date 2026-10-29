@@ -16,7 +16,7 @@
 import type { OpenCheckHost } from "./opencheck";
 import { pause, settle, type Report } from "./checkreport";
 import { message } from "./i18n";
-import { SAVE_FIRST, suggestedName } from "./recognise";
+import { progressLine, SAVE_FIRST, suggestedName } from "./recognise";
 
 /** A word `testdata/text-base14.pdf` draws once, which the scan is made from. */
 const WORD = "quartz";
@@ -89,7 +89,7 @@ export async function recogniseCheck(host: OpenCheckHost, expected: string, repo
   report.check("the save panel suggests <name> searchable.pdf",
     suggestions[suggestions.length - 1] === suggestedName(scan), suggestions.join(", "));
   report.check("the toolbar said which page was being read",
-    [...lines].some((line) => line === "Recognising text: page 1 of 1..."), [...lines].join(" / "));
+    [...lines].some((line) => line === progressLine({ page: 1, of: 1 })), [...lines].join(" / "));
   report.check("and offered to stop while it did", stoppable, String(stoppable));
   report.check("the line and the button are gone afterwards", task() === "" && stop() === null, task());
 
@@ -126,11 +126,29 @@ export async function recogniseCheck(host: OpenCheckHost, expected: string, repo
   report.check("and nothing is left running", task() === "" && stop() === null, task());
 
   // Explicit recovery changes the view's reading, never the saved file.
+  // Started from the find bar's button, as a reader whose search found
+  // nothing starts it: 26.10.26 shipped that button disabled on every
+  // document while the palette route this phase used then worked.
   await host.open(scan); await host.idle(); await quiet();
   report.check("temporary recovery control has no native match", (await found(WORD)) === 0, WORD);
   const saves = host.saveSuggestions().length;
-  await run(message("recognisePage"));
-  const recovered = await settle(() => shown().includes(message("recognisedPage").split(".")[0]!), READ_MS);
+  document.querySelector<HTMLButtonElement>('[data-testid="find-open"]')?.click();
+  const findField = () => document.querySelector<HTMLInputElement>(".find-panel input.find");
+  if (!(await settle(() => findField() !== null, DIALOG_MS))) throw new Error("the find bar did not open");
+  findField()!.value = WORD;
+  findField()!.dispatchEvent(new InputEvent("input", { bubbles: true }));
+  await pause(300);
+  if (!(await settle(() => !host.viewer()!.searching, SETTLE_MS))) throw new Error("the find bar's search did not finish");
+  report.check("the find bar's search of the scan finds nothing", host.viewer()!.searchMatches.length === 0, WORD);
+  const pageButton = document.querySelector<HTMLButtonElement>('[data-testid="recognise-page"]');
+  report.check("the find bar offers page recognition, enabled", pageButton !== null && !pageButton.disabled,
+    pageButton ? `disabled=${pageButton.disabled}` : "no button");
+  // A disabled button starts nothing, so waiting the full READ_MS for it would
+  // turn this red into the harness's timeout, which prints no summary.
+  const clickable = pageButton !== null && !pageButton.disabled;
+  pageButton?.click();
+  const recovered = await settle(() => shown().includes(message("recognisedPage").split(".")[0]!),
+    clickable ? READ_MS : DIALOG_MS);
   report.check("explicit recognition finishes without asking for a save path", recovered && host.saveSuggestions().length === saves, shown());
   report.check("temporary recognition makes the word searchable", (await found(WORD)) > 0, WORD);
   const successBar = document.querySelector('[data-testid="problem"]');

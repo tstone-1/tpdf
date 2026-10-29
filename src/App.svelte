@@ -7097,7 +7097,7 @@
           {/each}
         </div>
       </details>
-      <button aria-pressed={findShown} title={TEXT().findInDocument} aria-label={TEXT().findInDocument} onclick={focusFind}><span class="icon" use:icon={"find"}></span></button>
+      <button data-testid="find-open" aria-pressed={findShown} title={TEXT().findInDocument} aria-label={TEXT().findInDocument} onclick={focusFind}><span class="icon" use:icon={"find"}></span></button>
     {/if}
     <button title={TEXT().allCommands(label('app.palette'))} onclick={openPaletteFromToolbar}>{TEXT().commands}</button>
     {#if !isMac()}

@@ -62,6 +62,9 @@ CHECKS: list[tuple[str, str, str, list[str]]] = [
      ["--phase", "compare", "--other", "testdata/links.pdf"]),
     # Page numbers, a watermark and Greek page numbers, read back from disk.
     ("add text", "tabs_check.py", "testdata/links.pdf", ["--phase", "add-text"]),
+    # Recognition to a copy from the palette, and of one page from the find
+    # bar's button, which 26.10.26 shipped disabled while no check clicked it.
+    ("recognise", "tabs_check.py", "testdata/text-base14.pdf", ["--phase", "recognise"]),
     ("session", "session_check.py", TEXT, []),
     # Every route a document arrives by, and `--page` with `--zoom` on two of them.
     ("open", "open_check.py", TEXT, ["--other", "testdata/outline-simple.pdf"]),

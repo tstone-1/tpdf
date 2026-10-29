@@ -1224,10 +1224,12 @@ starts at 0 and increments within the month.
    npm run build
    ```
 
-   It runs the viewer check, the mark check on two documents, the tab phases `tabs`,
-   `tabs-position`, `sides`, `views`, `import`, `answers` and `form-beside`, and the session
-   check, one after the other, and
+   It runs the viewer check, the mark check on three documents, the tab phases `tabs`,
+   `tabs-position`, `sides`, `views`, `answers`, `form-beside`, `import`, `fit`, `compare`,
+   `add-text` and `recognise`, the session check and the open check, one after the other, and
    exits 1 when any of them fails or a fixture is missing; `--list` prints the commands.
+   `recognise` clicks **Recognize this page** in the find bar; 26.10.26 shipped that button
+   disabled while every check reached the command through the palette.
    The last line puts the normal frontend back in `dist/`, which the checks build replaced.
    It needs an unlocked screen and takes the keyboard while it runs, so it is not a gate.
    The Tab check of `form-beside` needs a form of two controls and `testdata/form.pdf` has

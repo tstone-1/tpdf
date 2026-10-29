@@ -26994,6 +26994,18 @@ state from `toolState`, as the header's buttons do, so it cannot disagree with t
 written in `App.svelte` markup instead of read from the command registry is a second copy of the
 rule, and nothing compares the two.
 
+The fix shipped in 26.10.27 still without a check that clicks the button: `tabs_check.py --phase
+recognise` reached page recognition only through the palette, and that phase was not in
+`window_checks.py`, so no release ran it. Running it on 2026-10-29 found it already stale: it
+expected the British "Recognising text: page 1 of 1...", which 26.10.27's US spelling changed. The
+phase now clicks the button after a find-bar search of the scan finds nothing, and
+`window_checks.py` runs it. Proved both ways on a Windows checks build: with the 26.10.26 guard put
+back, 21 of 26 passed and the first failure was `the find bar offers page recognition, enabled
+disabled=true`; with the fix, 26 of 26. The first red run ended in the harness timeout instead of a
+summary, because the next step waited the full 120 s for a recognition a disabled button never
+starts; the wait is now 5 s when the button was disabled. A window phase outside
+`window_checks.py` is a check no release runs, and it goes stale with nothing reporting it.
+
 
 ### A Rust string that lost its line continuation shows the reader the next line's indentation
 
