@@ -971,6 +971,18 @@ const TEXT = catalog({
       `ein Treffer dort bliebe also in der Datei. ` +
       `Nichts wurde markiert. Suche erneut oder markiere diese Seiten von Hand.`,
   },
+  "de-DE-formal": {
+    tooMany: (count: number, most: number) =>
+      `${count} Treffer sind mehr als die ${most}, die auf einmal markiert werden können. ` +
+      `Jeder Bereich muss in der Prüfliste lesbar sein, bevor etwas entfernt wird. ` +
+      `Grenzen Sie die Suche ein und versuchen Sie es erneut.`,
+    stillRunning: "Die Suche läuft noch, es wurden also noch nicht alle Seiten durchsucht. " +
+      "Nichts wurde markiert: Warten Sie, bis sie fertig ist, und versuchen Sie es erneut.",
+    unread: (count: number) =>
+      `${count === 1 ? "1 Seite konnte" : `${count} Seiten konnten`} nicht durchsucht werden, ` +
+      `ein Treffer dort bliebe also in der Datei. ` +
+      `Nichts wurde markiert. Suchen Sie erneut oder markieren Sie diese Seiten von Hand.`,
+  },
 });
 
 /**

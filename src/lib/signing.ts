@@ -303,6 +303,31 @@ const TEXT = catalog({
       "Zeitstempel. In beiden Fällen wird der Schlüssel nicht erneut angefragt.",
     longTermWithout: "Ohne Langzeitdaten signieren",
   },
+  "de-DE-formal": {
+    withoutCertificate: " Um ein Bild Ihrer Unterschrift ohne Zertifikat auf eine Seite zu setzen, verwenden Sie " +
+      "„Unterschriftsbild ohne Zertifikat platzieren...“ — es identifiziert niemanden und sperrt nichts.",
+    place: "Ziehen Sie ein Rechteck dort auf, wo die Signatur erscheinen soll. Esc bricht das Signieren ab.",
+    unsaved: "Speichern Sie zuerst Ihre Änderungen: Eine Signatur erfasst die Datei so, wie sie auf dem " +
+      "Datenträger liegt, und dieses Dokument hat Änderungen, die noch nicht darin sind.",
+    noneLinux: (lead: string): string =>
+      `${lead}, weder auf einer Smartcard oder einem Token noch in einer Zertifikatsdatei, die ` +
+      "Sie hinzugefügt haben. „Zertifikatsdatei zum Signieren hinzufügen…“ fügt eine hinzu.",
+    keyHint: "Ihr Betriebssystem fragt eventuell nach dem Zugriff auf den Schlüssel oder nach einer PIN; " +
+      "tpdf bekommt sie nie zu sehen.",
+    notIntact: (name: string, field: string, reason: string): string =>
+      `${name} wurde geschrieben, aber beim Zurücklesen war die neue Signatur ${field} nicht ` +
+      `intakt: ${reason}. Verlassen Sie sich nicht auf diese Kopie.`,
+    dragHint: "Sie wählen mit einer Vorschau, was sie zeigt, und ziehen dann ein Rechteck auf einer Seite auf.",
+    fieldHint: (field: string): string =>
+      `Sie wählen mit einer Vorschau, was sie zeigt; sie wird im Feld ${field} gezeichnet.`,
+    noTimestamp: "Kein Zeitstempel, die Zeit stammt von der Uhr Ihres Computers",
+    stampHelp: "Es wurde nichts geschrieben. Die Signatur ist erstellt; Sie können den Zeitstempel erneut " +
+      "versuchen oder sie ohne Zeitstempel speichern. In beiden Fällen wird der Schlüssel nicht " +
+      "erneut angefragt.",
+    longTermHelp: "Es wurde nichts geschrieben. Die Signatur ist erstellt und hat einen Zeitstempel; Sie können " +
+      "es erneut versuchen oder sie ohne die Langzeitdaten speichern — sie behält ihren " +
+      "Zeitstempel. In beiden Fällen wird der Schlüssel nicht erneut angefragt.",
+  },
 });
 
 /** A certificate the chooser may offer. Mirrors `sign_cms::Choice`. */

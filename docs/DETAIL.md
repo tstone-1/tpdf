@@ -675,7 +675,22 @@ Moved out of `AGENTS.md` on 2026-10-12.
 ## Interface language: catalogs, the checks, and the German glossary
 
 Added 2026-10-26. The window speaks American English, British English or German; the CLI and the
-JSON reports stay English.
+JSON reports stay English. German comes in two forms of address since 2026-10-29: `de-DE` says
+"du" and is what a German system gets, `de-DE-formal` says "Sie" and is chosen with **Language:
+Deutsch (Sie)**.
+
+- **"Sie" is an overlay on "du", as British is on American.** A catalog's `"de-DE-formal"` half
+  lists only the entries that change, and `catalog()` fills the rest from `"de-DE"`; a `said/`
+  area's `export const sie` does the same for Rust's sentences, read by `SIE` in `said/de.ts`.
+  Ask `isGerman(locale)`, never `locale === "de-DE"`: a comparison with the one tag sends the
+  "Sie" window to English (`said.ts` and `keywords.ts` did, until the overlay was added).
+- **`formal.test.ts` is the gate.** It reads every catalog in `src/`, both components included,
+  and every `said/` area with the TypeScript parser, and requires a "Sie" entry for each German
+  entry that says "du": a pronoun, or an imperative on its `IMPERATIVES` list. A sentence that
+  addresses the reader only with a verb not on that list escapes it; add the verb. "Gehe zu" is
+  off the list on purpose, since German software uses it whatever the form of address.
+- **Where a bare "Sie" could mean "she" or "it", name the thing instead**: "Die Auswahl gilt, bis
+  Sie tpdf schließen", not "Sie gilt, bis Sie tpdf schließen".
 
 - **Sentences Rust writes are translated in the window, not in Rust** (2026-10-28). Rust writes
   each one with `said!` (`said.rs`), which is `format!` and returns the same English `String`,
@@ -713,7 +728,7 @@ JSON reports stay English.
   writes it to disk a few seconds after the change; a process killed before that loses it, a
   window closed normally keeps it (measured 2026-10-26).
 
-German glossary. The reader is addressed with "du". Buttons are infinitives or nouns, messages
+German glossary. The reader is addressed with "du" in `de-DE` and "Sie" in `de-DE-formal`. Buttons are infinitives or nouns, messages
 whole sentences, no "Bitte", „…" quotation marks, "..." where English has it.
 
 | English | German | English | German |

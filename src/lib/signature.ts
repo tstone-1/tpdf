@@ -12,6 +12,10 @@ const TEXT = catalog({
     tooLarge: "Wähle ein Bild unter 10 MB.",
     disagree: "Die Abmessungen des dekodierten Bildes widersprechen den Angaben in seinem Dateikopf.",
   },
+  "de-DE-formal": {
+    invalid: "Wählen Sie ein gültiges, unbewegtes PNG- oder JPEG-Bild unter 10 MB und 8 Megapixeln.",
+    tooLarge: "Wählen Sie ein Bild unter 10 MB.",
+  },
 });
 
 /** Normalized, straight-alpha pixels shared with signature::Image. */

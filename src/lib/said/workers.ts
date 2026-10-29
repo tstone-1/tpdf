@@ -314,3 +314,16 @@ export default {
   "Text recognition did not run: {e}": "Die Texterkennung ist nicht gelaufen: {e}",
   "The languages could not be listed: {e}": "Die Sprachen konnten nicht aufgelistet werden: {e}",
 } satisfies Record<string, Wording>;
+
+/** The entries above that say "du", addressing the reader with "Sie" instead. */
+export const sie = {
+  "{OUTLIVED_MARK}: it was {mapped} bytes when it was opened and is {backing} now, so the part of the document past that point is gone. Open it again to read the new file.":
+    (a) =>
+      `Diese Datei wurde auf dem Datenträger geändert, während sie geöffnet war: Beim Öffnen hatte sie ${a.mapped} Bytes, jetzt hat sie ${a.backing}, daher fehlt der Teil des Dokuments ab dieser Stelle. Öffnen Sie sie erneut, um die neue Datei zu lesen.`,
+  "{sent} for a minute. The print queue may be stuck: open Settings, Printers & scanners, choose the printer and open its print queue. If the queue starts again, the rest will print.":
+    "{sent} (seit einer Minute). Die Druckwarteschlange hängt vielleicht: Öffnen Sie Einstellungen, Drucker und Scanner, wählen Sie den Drucker und öffnen Sie seine Druckwarteschlange. Läuft die Warteschlange wieder an, wird der Rest gedruckt.",
+  "{name:?} prints every page of the document, so it cannot print only the pages chosen; choose All Pages, or a printer":
+    "{name} druckt jede Seite des Dokuments und kann deshalb nicht nur die gewählten Seiten drucken; wählen Sie „Alle Seiten“ oder einen Drucker",
+  "The selected recognition language is unavailable. Choose another language.":
+    "Die gewählte Erkennungssprache ist nicht verfügbar. Wählen Sie eine andere Sprache.",
+} satisfies Record<string, Wording>;

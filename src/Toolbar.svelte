@@ -48,6 +48,12 @@
       corners: (n: number) => ` (${n} ${n === 1 ? "Ecke" : "Ecken"})`,
       stop: "Beenden",
     },
+    "de-DE-formal": {
+      selectTextFirstHint: "Wählen Sie zuerst Text aus, dann eine Hervorhebung oder Unterstreichung",
+      selectTextFirst: "Wählen Sie zuerst Text aus",
+      finishDrawingFirst: "Beenden oder verwerfen Sie zuerst diese Zeichnung",
+      editingText: "Vorhandenen Text bearbeiten — wählen Sie eine umrandete Zeile",
+    },
   });
 
   let {

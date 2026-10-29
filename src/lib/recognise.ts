@@ -93,6 +93,9 @@ const TEXT = catalog({
     pages: (shown: string, count: number, rest: number) =>
       count === 1 ? `Seite ${shown}` : rest > 0 ? `Seiten ${shown} und ${rest} weitere` : `Seiten ${shown}`,
   },
+  "de-DE-formal": {
+    saveFirst: "Speichern Sie zuerst Ihre Änderungen. Der Text wird auf den Seiten der gespeicherten Datei erkannt.",
+  },
 });
 
 /**

@@ -93,6 +93,11 @@ const TEXT = catalog({
     place: "Auf Seite platzieren…",
     drawing: "Die Vorschau wird gezeichnet…",
   },
+  "de-DE-formal": {
+    help: "Wählen Sie, was die Signatur zeigt. Danach platzieren Sie sie auf einer Seite; sie wird " +
+      "für das Rechteck, das Sie aufziehen, neu angeordnet.",
+    nameLine: "Ihr Name aus dem Zertifikat",
+  },
 });
 
 /** Which lines are drawn, and the reason and location. Mirrors `sign_prepare::Options`. */

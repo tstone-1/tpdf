@@ -68,6 +68,11 @@ const TEXT = catalog({
     fellBack: (language: string, chooseAgain: string) =>
       `${language} ist auf diesem Computer nicht verfügbar, daher hat die Texterkennung die Sprache selbst gewählt. ${chooseAgain}`,
   },
+  "de-DE-formal": {
+    chooseAgain: (command: string) => `Wählen Sie mit „${command}“ eine andere.`,
+    installMore: "Weitere Sprachen können Sie in den Windows-Einstellungen unter „Zeit und Sprache“, dann „Sprache und Region“ installieren.",
+    typeLanguage: (automatic: string, offering: string) => `Geben Sie eine Sprache ein oder ${automatic}. ${offering}`,
+  },
 });
 
 /** The word for the engine's own choice, as shown and as typed. */

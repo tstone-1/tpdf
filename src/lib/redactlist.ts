@@ -152,6 +152,9 @@ const TEXT = catalog({
     nothingMarked: "Du hast in diesem Dokument nichts zum Schwärzen markiert.",
     removeRegion: "Bereich entfernen",
   },
+  "de-DE-formal": {
+    nothingMarked: "Sie haben in diesem Dokument nichts zum Schwärzen markiert.",
+  },
 });
 
 /** Side of the swatch standing for the region, in CSS pixels. */

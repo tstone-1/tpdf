@@ -12,7 +12,7 @@
 import { describe, expect, it } from "vitest";
 
 import { parse, recognise, spoken } from "./said";
-import { AREAS, GERMAN } from "./said/de";
+import { AREAS, GERMAN, SIE } from "./said/de";
 
 const sources = import.meta.glob("../../src-tauri/src/**/*.rs", {
   query: "?raw",
@@ -123,9 +123,9 @@ describe("said!: Rust's sentences in German", () => {
     expect(twice).toEqual([]);
   });
 
-  it("a German wording uses the template's placeholders, all of them", () => {
+  it("a German wording uses the template's placeholders, all of them, with du and with Sie", () => {
     const wrong: string[] = [];
-    for (const [key, wording] of Object.entries(GERMAN)) {
+    for (const [key, wording] of [...Object.entries(GERMAN), ...Object.entries(SIE)]) {
       const names = parse(key).names;
       if (typeof wording === "function") {
         const args = Object.fromEntries(names.map((n, i) => [n, `${i + 2}`]));
@@ -170,7 +170,7 @@ describe("said!: Rust's sentences in German", () => {
 
   it("no German wording uses Rust's prose dash", () => {
     // The keys keep Rust's `---` to match it; the German is shown, and takes " – ".
-    const dashed = Object.entries(GERMAN).filter(([key, wording]) => {
+    const dashed = [...Object.entries(GERMAN), ...Object.entries(SIE)].filter(([key, wording]) => {
       const args = Object.fromEntries(parse(key).names.map((n) => [n, "x"]));
       return (typeof wording === "function" ? wording(args) : wording).includes("---");
     });
@@ -196,6 +196,14 @@ describe("spoken", () => {
     expect(spoken("could not load Pdfium from C:\\a b\\pdfium.dll: This file could not be read from disk.", "de-DE"))
       .toBe("PDFium konnte nicht aus C:\\a b\\pdfium.dll geladen werden: Diese Datei konnte nicht vom Datenträger gelesen werden.");
     expect(spoken("This file could not be read from disk.", "en-GB")).toBe("This file could not be read from disk.");
+  });
+
+  it("says Sie where the du sentence has a Sie entry, and the shared German where it has none", () => {
+    expect(spoken("your PATH is too long", "de-DE")).toBe("Dein PATH ist zu lang");
+    expect(spoken("your PATH is too long", "de-DE-formal")).toBe("Ihr PATH ist zu lang");
+    expect(spoken("This file could not be read from disk.", "de-DE-formal")).toBe(
+      "Diese Datei konnte nicht vom Datenträger gelesen werden.",
+    );
   });
 
   it("leaves English and unknown sentences alone", () => {

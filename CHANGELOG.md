@@ -17,6 +17,17 @@ as *downloadable*, while the release sat as a draft that GitHub showed to nobody
 are given now because they are different facts, and only the second one means a reader can
 have the binary.)
 
+## [26.10.28] - Unreleased
+
+### Added
+
+- German comes in two forms of address. **Language: Deutsch (Sie)** in the command palette
+  and the menu addresses the reader with "Sie"; **Language: Deutsch (Du)** keeps "du", which
+  is still what a German system gets. The 223 window texts and backend messages that address
+  the reader have a "Sie" wording, and a test fails when a new "du" text has none.
+- The landing page shows how to search a scanned page: a sample scan, the invoice number to
+  search for, and the find bar's *Recognize this page*. A German landing page is at `/de/`.
+
 ## [26.10.27] - 2026-10-28
 
 ### Added

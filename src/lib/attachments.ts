@@ -71,6 +71,11 @@ const TEXT = catalog({
     saved: (name: string, where: string, size: string) => `${name} in ${where} gespeichert, ${size}.`,
     row: (number: number) => `Anhang ${number}`,
   },
+  "de-DE-formal": {
+    severalNames: (count: number, typed: string) =>
+      `${count} Anhänge haben „${typed}“ im Namen; geben Sie eine Nummer ein`,
+    programWarning: " Laut Name ist die Datei ein Programm oder Skript: Öffnen Sie sie nur, wenn Sie dem Dokument vertrauen, aus dem sie stammt.",
+  },
 });
 
 type Texts = ReturnType<typeof TEXT>;

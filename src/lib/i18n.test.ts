@@ -99,6 +99,7 @@ describe("the reader's choice of language", () => {
   it("reads a kept choice, and anything else as the system's", () => {
     expect(readLanguageChoice(store("de-DE").storage)).toBe("de-DE");
     expect(readLanguageChoice(store("en-GB").storage)).toBe("en-GB");
+    expect(readLanguageChoice(store("de-DE-formal").storage)).toBe("de-DE-formal");
     expect(readLanguageChoice(store("fr-FR").storage)).toBe("system");
     expect(readLanguageChoice(store(null).storage)).toBe("system");
     expect(readLanguageChoice(store("de-DE", true).storage)).toBe("system");
@@ -115,6 +116,11 @@ describe("the reader's choice of language", () => {
     expect(chosenLocale("de-DE", ["en-US"])).toBe("de-DE");
     expect(chosenLocale("en-US", ["de-DE"])).toBe("en-US");
     expect(chosenLocale("system", ["de-DE"])).toBe("de-DE");
+    expect(chosenLocale("de-DE-formal", ["en-US"])).toBe("de-DE-formal");
+  });
+
+  it("gives a German system du, which is how the German window has spoken since it was added", () => {
+    expect(chosenLocale("system", ["de-AT"])).toBe("de-DE");
   });
 
   it("runs the unit tests in American English, whatever the machine is set to", () => {
@@ -127,6 +133,7 @@ describe("a module's own catalog", () => {
     "en-US": { saved: "Saved", pages: (n: number) => `${n} pages`, colour: "Color" },
     "en-GB": { colour: "Colour" },
     "de-DE": { saved: "Gespeichert", pages: (n: number) => `${n} Seiten`, colour: "Farbe" },
+    "de-DE-formal": { saved: "Von Ihnen gespeichert" },
   });
 
   it("answers in the locale asked for, and in the process's own by default", () => {
@@ -135,6 +142,10 @@ describe("a module's own catalog", () => {
     expect(TEXT("en-GB").colour).toBe("Colour");
     // British takes what it does not respell from American.
     expect(TEXT("en-GB").pages(2)).toBe("2 pages");
+    // Sie takes what does not change from du.
+    expect(TEXT("de-DE-formal").saved).toBe("Von Ihnen gespeichert");
+    expect(TEXT("de-DE-formal").pages(2)).toBe("2 Seiten");
+    expect(TEXT("de-DE").saved).toBe("Gespeichert");
   });
 
   it("refuses a German half with a key missing", () => {

@@ -32,6 +32,11 @@ const TEXT = catalog({
     preparing: "Vorschau wird erstellt...",
     preview: (font: string, lines: number) => `Vorschau: ${font}, ${lines} ${lines === 1 ? "Zeile" : "Zeilen"}.`,
   },
+  "de-DE-formal": {
+    tooLong: "Verwenden Sie höchstens 4096 Zeichen ohne Steuerzeichen. Für Zeilenumbrüche aktivieren Sie den Umbruch.",
+    help: "Längerer Text wächst von selbst in den Platz hinter der Zeile; legen Sie eine Breite fest, um die Größe des Kastens selbst zu bestimmen. Übernehmen aktualisiert die Seite; Speichern schreibt das PDF. Mit Umbruch übernimmt Strg+Eingabe.",
+    applied: "Übernommen. Speichern Sie, um das PDF zu schreiben.",
+  },
 });
 
 /** Worker-inspected source addresses; these always refer to the original PDF. */

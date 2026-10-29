@@ -440,6 +440,7 @@ export function windowMenu(locale: UiLocale = UI_LOCALE): MenuSection[] {
         "file.onDiskChange.ask", "file.onDiskChange.reload", "file.onDiskChange.ignore",
         "file.recogniseTextLanguage",
         "app.language.system", "app.language.en-US", "app.language.en-GB", "app.language.de-DE",
+        "app.language.de-DE-formal",
         "view.tabLabelsLarger", "view.tabLabelsSmaller", "view.tabLabelsDefault",
       ],
     },

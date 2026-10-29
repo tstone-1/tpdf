@@ -172,6 +172,7 @@ export function needsNoDocument(linux: boolean): string[] {
     "app.language.en-US",
     "app.language.en-GB",
     "app.language.de-DE",
+    "app.language.de-DE-formal",
     "file.open",
     // Makes a document, so it needs none. Missing here from the day it was
     // registered until this check next ran, 2026-10-04.

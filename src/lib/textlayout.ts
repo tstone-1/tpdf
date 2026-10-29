@@ -24,6 +24,9 @@ const TEXT = catalog({
     wrap: "Im Kasten umbrechen",
     sizeRange: "Verwende eine Schriftgröße von 1 bis 512 pt und einen Kasten von 0,1 bis 14400 pt.",
   },
+  "de-DE-formal": {
+    sizeRange: "Verwenden Sie eine Schriftgröße von 1 bis 512 pt und einen Kasten von 0,1 bis 14400 pt.",
+  },
 });
 
 /**

@@ -90,6 +90,9 @@ const TEXT = catalog({
     page: (page: number) => `Seite ${page}`,
     offPage: (page: number) => `Seite ${page}, außerhalb der Seite`,
   },
+  "de-DE-formal": {
+    unsaved: "Geprüft wurde die gespeicherte Datei. Ihre ungespeicherten Änderungen waren nicht Teil davon.",
+  },
 });
 
 /** The line shown before the first page has been reported. */

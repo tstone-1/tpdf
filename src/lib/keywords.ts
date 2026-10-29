@@ -17,7 +17,7 @@
  */
 
 import type { CommandRegistry } from "./commands";
-import { UI_LOCALE, type UiLocale } from "./i18n";
+import { isGerman, UI_LOCALE, type UiLocale } from "./i18n";
 
 /** Keywords for the commands whose ids are written out. */
 const NAMED: Record<string, readonly string[]> = {
@@ -264,7 +264,7 @@ export function attachKeywords(
   locale: UiLocale = UI_LOCALE,
   english?: (id: string) => string | undefined,
 ): void {
-  const german = locale === "de-DE";
+  const german = isGerman(locale);
   for (const command of registry.all()) {
     const named = [...(KEYWORDS[command.id] ?? []), ...(german ? (GERMAN_KEYWORDS[command.id] ?? []) : [])];
     Object.defineProperty(command, "keywords", {

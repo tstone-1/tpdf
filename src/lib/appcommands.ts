@@ -510,6 +510,12 @@ const TEXT = catalog({
     showMarks: "Meine Markierungen anzeigen",
     showRedactions: "Schwärzungen anzeigen",
   },
+  "de-DE-formal": {
+    dropdownPreview: (count: number) =>
+      `${count === 1 ? "1 Option" : `${count} Optionen`}. Ziehen Sie dann das Feld auf die Seite.`,
+    radioPreview: (group: string) =>
+      `Ziehen Sie eine Schaltfläche von „${group}“ auf die Seite und eine weitere für jede Option. Esc beendet.`,
+  },
 });
 
 /** One title per choice, each a whole sentence so the palette reads it alone. */

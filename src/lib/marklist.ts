@@ -67,6 +67,9 @@ const TEXT = catalog({
     marks: "Markierungen",
     nothingMarked: "Du hast in diesem Dokument nichts markiert.",
   },
+  "de-DE-formal": {
+    nothingMarked: "Sie haben in diesem Dokument nichts markiert.",
+  },
 });
 
 export interface MarkListOptions {

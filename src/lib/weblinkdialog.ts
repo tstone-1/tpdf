@@ -61,6 +61,9 @@ const TEXT = catalog({
     cancel: "Abbrechen",
     open: "Öffnen",
   },
+  "de-DE-formal": {
+    note: "Diese Adresse steht im Dokument und öffnet sich in Ihrem Browser.",
+  },
 });
 
 /** Class on the backdrop, so the check harness can find it. */

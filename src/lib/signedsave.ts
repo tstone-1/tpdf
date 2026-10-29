@@ -29,6 +29,12 @@ const TEXT = catalog({
     cancel: "Abbrechen",
     saveAnyway: "Trotzdem speichern",
   },
+  "de-DE-formal": {
+    locked: "Eine Signatur in diesem PDF besagt, dass sich nach ihr nichts ändern darf. Ein Programm, das Signaturen prüft, wird die gespeicherte Datei gegenüber dieser Signatur als geändert melden. Bewahren Sie die signierte Originaldatei auf. Mit dem Speichern fortfahren?",
+    signed: "Dieses PDF enthält Signaturen. Das Speichern kann sie ungültig machen, auch wenn das Dokument das Ausfüllen von Formularen erlaubt. Bewahren Sie die signierte Originaldatei auf. Mit dem Speichern fortfahren?",
+    unread: "Der Signaturstatus des Dokuments konnte nicht vollständig gelesen werden. Das Speichern kann Signaturen ungültig machen. Bewahren Sie die Originaldatei auf. Mit dem Speichern fortfahren?",
+    merging: "Beim Zusammenführen entsteht ein neues PDF, das die Signaturen der ausgewählten Dateien nicht übernimmt. Bewahren Sie die signierten Originaldateien auf. Mit dem Speichern fortfahren?",
+  },
 });
 
 export class SaveCancelled extends Error {}

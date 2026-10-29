@@ -169,6 +169,9 @@ const TEXT = catalog({
     added: "hinzugefügt",
     replaced: "geändert",
   },
+  "de-DE-formal": {
+    outOfDate: "Eines der Dokumente hat sich seit dem Vergleich geändert. Vergleichen Sie sie erneut, um zu sehen, was sich jetzt unterscheidet.",
+  },
 });
 
 /** The line shown while the pages are being read. */

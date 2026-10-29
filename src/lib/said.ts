@@ -18,8 +18,8 @@
  * itself and as no other.
  */
 
-import { UI_LOCALE, type UiLocale } from "./i18n";
-import { GERMAN, type Wording } from "./said/de";
+import { isGerman, UI_LOCALE, type UiLocale } from "./i18n";
+import { GERMAN, SIE, type Wording } from "./said/de";
 
 /** A template split into its literal text and its placeholders. */
 export interface Template {
@@ -128,12 +128,13 @@ function render(wording: Wording, args: Record<string, string>): string {
  * back unchanged.
  */
 export function spoken(sentence: string, locale: UiLocale = UI_LOCALE, depth = 0): string {
-  if (locale !== "de-DE" || depth > 8 || sentence.length === 0) return sentence;
+  if (!isGerman(locale) || depth > 8 || sentence.length === 0) return sentence;
   const found = recognise(sentence);
   if (!found) return sentence;
   const args: Record<string, string> = {};
   for (const [name, value] of Object.entries(found.args)) args[name] = spoken(value, locale, depth + 1);
-  return render(GERMAN[found.template.key]!, args);
+  const key = found.template.key;
+  return render((locale === "de-DE-formal" ? SIE[key] : undefined) ?? GERMAN[key]!, args);
 }
 
 /** What a failed command threw, as a reader is shown it. Replaces `String(e)`. */

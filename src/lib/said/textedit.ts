@@ -514,3 +514,23 @@ export default {
   "painted path no longer exists": "Diesen gemalten Pfad gibt es nicht mehr",
   "painted path cannot be moved": "Der gemalte Pfad lässt sich nicht verschieben",
 } satisfies Record<string, Wording>;
+
+/** The entries above that say "du", addressing the reader with "Sie" instead. */
+export const sie = {
+  "This font shows spaces as gaps between words; use single spaces between words":
+    "Diese Schrift zeigt Leerzeichen als Lücken zwischen Wörtern; setzen Sie nur einfache Leerzeichen zwischen Wörter",
+  "A centred line cannot be wrapped yet. Keep the text on one line.":
+    "Eine zentrierte Zeile lässt sich noch nicht umbrechen. Halten Sie den Text in einer Zeile.",
+  "This text's font does not permit editing. Choose automatic fallback or a Noto font.":
+    "Die Schrift dieses Textes erlaubt kein Bearbeiten. Wählen Sie die automatische Ersatzschrift oder eine Noto-Schrift.",
+  "Use a font size from 1 to 512 pt and a box from 0.1 to 14400 pt":
+    "Verwenden Sie eine Schriftgröße von 1 bis 512 pt und einen Kasten von 0,1 bis 14400 pt",
+  "Text exceeds the box width. Widen the box, reduce the font size, or enable wrapping.":
+    "Der Text ist breiter als der Kasten. Verbreitern Sie den Kasten, verkleinern Sie die Schrift oder schalten Sie den Umbruch ein.",
+  "Text ink exceeds the box. Increase its width or choose another font.":
+    "Der Text zeichnet über den Kasten hinaus. Verbreitern Sie ihn oder wählen Sie eine andere Schrift.",
+  "Text would overlap another line. Reduce the font size or change the box dimensions.":
+    "Der Text würde eine andere Zeile überdecken. Verkleinern Sie die Schrift oder ändern Sie die Maße des Kastens.",
+  "One edit in this paragraph wraps onto a new line and moves text that another pending edit changes. Save first, then make the second edit again.":
+    "Eine Änderung in diesem Absatz bricht in eine neue Zeile um und verschiebt Text, den eine andere offene Änderung ändert. Speichern Sie zuerst und nehmen Sie dann die zweite Änderung erneut vor.",
+} satisfies Record<string, Wording>;

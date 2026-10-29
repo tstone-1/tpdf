@@ -622,3 +622,65 @@ export default {
     "die Datei auf dem Datenträger ist nicht die, die geöffnet wurde, daher wurde ihr nichts hinzugefügt - öffne sie erneut und versuche es noch einmal",
   "adding the validation data did not run: {e}": "das Hinzufügen der Validierungsdaten ist nicht gelaufen: {e}",
 } satisfies Record<string, Wording>;
+
+/** The entries above that say "du", addressing the reader with "Sie" instead. */
+export const sie = {
+  "that certificate is no longer in your keychain or certificate store":
+    "dieses Zertifikat ist nicht mehr in Ihrem Schlüsselbund oder Zertifikatspeicher",
+  "{why} Nothing was added; move it aside to start a new list.":
+    "{why} Es wurde nichts hinzugefügt; verschieben Sie sie, um eine neue Liste zu beginnen.",
+  "The certificate file {path} now holds a different certificate from the one added; add it again.":
+    "Die Zertifikatsdatei {path} enthält jetzt ein anderes Zertifikat als das hinzugefügte; fügen Sie sie erneut hinzu.",
+  "tpdf does not keep a signature on Linux yet; draw it or import it each time":
+    "tpdf speichert unter Linux noch keine Unterschrift; zeichnen oder importieren Sie sie jedes Mal",
+  "This document is certified, and its certification already says which changes are permitted. tpdf does not add a second statement beside it: sign it without locking.":
+    "Dieses Dokument ist zertifiziert, und seine Zertifizierung legt schon fest, welche Änderungen erlaubt sind. tpdf fügt daneben keine zweite Festlegung hinzu: Signieren Sie es ohne Sperren.",
+  "This document is certified, and tpdf draws no visible signature on a certified document: one added as a new field is read by at least one widely used validator as a change the certification does not permit, and whether one drawn in a field the document already has is read the same way has not been measured. Sign the field without a visible appearance.":
+    "Dieses Dokument ist zertifiziert, und tpdf zeichnet keine sichtbare Signatur auf ein zertifiziertes Dokument: Eine als neues Feld hinzugefügte liest mindestens ein verbreitetes Prüfprogramm als Änderung, die die Zertifizierung nicht erlaubt, und ob eine in ein vorhandenes Feld gezeichnete genauso gelesen wird, ist nicht gemessen. Signieren Sie das Feld ohne sichtbares Erscheinungsbild.",
+  "This document is certified, and a visible signature added after a certification is read by at least one widely used validator as a change the certification does not permit. Sign it without a visible appearance --- an invisible signature is accepted.":
+    "Dieses Dokument ist zertifiziert, und eine nach einer Zertifizierung hinzugefügte sichtbare Signatur liest mindestens ein verbreitetes Prüfprogramm als Änderung, die die Zertifizierung nicht erlaubt. Signieren Sie es ohne sichtbares Erscheinungsbild - eine unsichtbare Signatur wird akzeptiert.",
+  "the field is {width} by {height} points, smaller than the {least} a side a visible signature is drawn in --- sign it without an appearance":
+    "das Feld ist {width} mal {height} Punkt groß, kleiner als die {least} Punkt Seitenlänge, in denen eine sichtbare Signatur gezeichnet wird - signieren Sie es ohne Erscheinungsbild",
+  "the reason, {text}, has characters tpdf cannot draw in a visible signature yet (it draws Latin-1 only), and drawing others would put different words on the page --- change the reason, or leave it empty":
+    "der Grund, {text}, hat Zeichen, die tpdf in einer sichtbaren Signatur noch nicht zeichnen kann (es zeichnet nur Latin-1), und andere zu zeichnen würde andere Wörter auf die Seite setzen - ändern Sie den Grund oder lassen Sie ihn leer",
+  "the location, {text}, has characters tpdf cannot draw in a visible signature yet (it draws Latin-1 only), and drawing others would put different words on the page --- change the location, or leave it empty":
+    "der Ort, {text}, hat Zeichen, die tpdf in einer sichtbaren Signatur noch nicht zeichnen kann (es zeichnet nur Latin-1), und andere zu zeichnen würde andere Wörter auf die Seite setzen - ändern Sie den Ort oder lassen Sie ihn leer",
+  "the text, {line}, has characters tpdf cannot draw in a visible signature yet (it draws Latin-1 only), and drawing others would put different words on the page --- change the text":
+    "der Text, {line}, hat Zeichen, die tpdf in einer sichtbaren Signatur noch nicht zeichnen kann (es zeichnet nur Latin-1), und andere zu zeichnen würde andere Wörter auf die Seite setzen - ändern Sie den Text",
+  "a visible signature has to show something --- choose an image or at least one line of text":
+    "eine sichtbare Signatur muss etwas zeigen - wählen Sie ein Bild oder mindestens eine Textzeile",
+  "the certificate's name is longer than the {MAX_NAME_CHARS} characters a visible signature draws --- sign without a visible appearance":
+    "der Name des Zertifikats ist länger als die {MAX_NAME_CHARS} Zeichen, die eine sichtbare Signatur zeichnet - signieren Sie ohne sichtbares Erscheinungsbild",
+  "the certificate's name, {name}, has characters tpdf cannot draw in a visible signature yet (it draws Latin-1 only), and drawing others would put a different name on the page --- turn the name line off, or sign without a visible appearance":
+    "der Name des Zertifikats, {name}, hat Zeichen, die tpdf in einer sichtbaren Signatur noch nicht zeichnen kann (es zeichnet nur Latin-1), und andere zu zeichnen würde einen anderen Namen auf die Seite setzen - schalten Sie die Namenszeile aus oder signieren Sie ohne sichtbares Erscheinungsbild",
+  "the rectangle chosen for the signature is smaller than {MIN_SIDE} points a side, too small to read --- sign again and drag a larger one":
+    "das für die Signatur gewählte Rechteck hat weniger als {MIN_SIDE} Punkt Seitenlänge und ist zu klein zum Lesen - signieren Sie erneut und ziehen Sie ein größeres auf",
+  "Save your changes first: a signature covers the file as it is on disk, and this document has edits that are not in it yet.":
+    "Speichern Sie zuerst Ihre Änderungen: Eine Signatur deckt die Datei so ab, wie sie auf dem Datenträger liegt, und dieses Dokument hat Änderungen, die dort noch nicht enthalten sind.",
+  "the prepared signature {what}, so it was not built for the file on disk --- reopen the document and sign again":
+    "die vorbereitete Signatur {what}, daher wurde sie nicht für die Datei auf dem Datenträger erstellt - öffnen Sie das Dokument erneut und signieren Sie noch einmal",
+  "long-term validation data needs a timestamp: choose a timestamp authority too":
+    "Langzeitvalidierungsdaten brauchen einen Zeitstempel: Wählen Sie auch einen Zeitstempeldienst",
+  "the page chosen for the signature is not a page of the file on disk --- save the document and sign again":
+    "die für die Signatur gewählte Seite ist keine Seite der Datei auf dem Datenträger - speichern Sie das Dokument und signieren Sie erneut",
+  "this signature is no longer held --- sign the document again":
+    "diese Signatur wird nicht mehr bereitgehalten - signieren Sie das Dokument erneut",
+  "{name} was written, but {what}. Do not rely on that copy.":
+    "{name} wurde geschrieben, aber {what}. Verlassen Sie sich nicht auf diese Kopie.",
+  "{subject} can sign now: choose it when you sign a document.":
+    "{subject} kann jetzt signieren: Wählen Sie es, wenn Sie ein Dokument signieren.",
+  "Certificate files are added to tpdf on Linux; on macOS and Windows, import the file into your keychain or certificate store, and tpdf finds it there.":
+    "Zertifikatsdateien werden unter Linux zu tpdf hinzugefügt; unter macOS und Windows importieren Sie die Datei in Ihren Schlüsselbund oder Zertifikatspeicher, und tpdf findet sie dort.",
+  "tpdf could not record what this file looked like when it was opened, so it cannot tell that what it signs is that file --- reopen it and sign again":
+    "tpdf konnte nicht festhalten, wie diese Datei beim Öffnen aussah, und kann deshalb nicht sicherstellen, dass es genau diese Datei signiert - öffnen Sie sie erneut und signieren Sie noch einmal",
+  "{name} was written, but reading it back did not find what was added: {why}. Do not rely on that copy.":
+    "{name} wurde geschrieben, aber beim Zurücklesen fand sich nicht, was hinzugefügt wurde: {why}. Verlassen Sie sich nicht auf diese Kopie.",
+  "Save your changes first: validation data is added to the file as it is on disk, and this document has edits that are not in it yet.":
+    "Speichern Sie zuerst Ihre Änderungen: Validierungsdaten werden der Datei so hinzugefügt, wie sie auf dem Datenträger liegt, und dieses Dokument hat Änderungen, die dort noch nicht enthalten sind.",
+  "The document with the data added is written as a new file --- choose a name other than the original's.":
+    "Das Dokument mit den hinzugefügten Daten wird als neue Datei geschrieben - wählen Sie einen anderen Namen als den des Originals.",
+  "tpdf could not record what this file looked like when it was opened, so it cannot tell that what it adds to is that file --- reopen it and try again":
+    "tpdf konnte nicht festhalten, wie diese Datei beim Öffnen aussah, und kann deshalb nicht sicherstellen, dass es genau diese Datei ergänzt - öffnen Sie sie erneut und versuchen Sie es noch einmal",
+  "the file on disk is not the one that was opened, so nothing was added to it --- reopen it and try again":
+    "die Datei auf dem Datenträger ist nicht die, die geöffnet wurde, daher wurde ihr nichts hinzugefügt - öffnen Sie sie erneut und versuchen Sie es noch einmal",
+} satisfies Record<string, Wording>;

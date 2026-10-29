@@ -109,6 +109,11 @@ const TEXT = catalog({
       "Speichere eine Kopie, um sie zu behalten; Neu laden verwirft sie.",
     changed: (name: string) => `${name} wurde auf dem Datenträger geändert.`,
   },
+  "de-DE-formal": {
+    changedDirty: (name: string) =>
+      `${name} wurde auf dem Datenträger geändert, während Sie ungespeicherte Änderungen haben. ` +
+      "Speichern Sie eine Kopie, um sie zu behalten; Neu laden verwirft sie.",
+  },
 });
 
 /** What {@link onDiskChange} needs from the window. */

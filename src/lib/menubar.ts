@@ -161,6 +161,7 @@ export const MENU_LAYOUT: LayoutSection[] = [
       "app.language.en-US",
       "app.language.en-GB",
       "app.language.de-DE",
+      "app.language.de-DE-formal",
       "file.clearRecents",
       SEPARATOR,
       "file.save",

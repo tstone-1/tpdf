@@ -1,0 +1,192 @@
+<!doctype html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>tpdf: ein schneller PDF-Viewer und -Editor für macOS, Windows und Linux</title>
+<meta name="description" content="Kostenloser Open-Source-PDF-Viewer und -Editor für macOS, Windows und Linux. Gescannte Seiten durchsuchen, schwärzen, signieren, kommentieren und Formulare ausfüllen, auf dem eigenen Computer; ohne Konto, ohne Telemetrie.">
+<!-- The German counterpart of `site/index.html`. It leads with searching a
+     scanned page, the task this page exists to offer. Absolute URLs in the
+     card: a preview fetcher does not resolve a relative one. -->
+<link rel="canonical" href="https://tstone-1.github.io/tpdf/de/">
+<link rel="alternate" hreflang="en" href="https://tstone-1.github.io/tpdf/">
+<link rel="alternate" hreflang="de" href="https://tstone-1.github.io/tpdf/de/">
+<meta property="og:type" content="website">
+<meta property="og:url" content="https://tstone-1.github.io/tpdf/de/">
+<meta property="og:title" content="tpdf: ein schneller PDF-Viewer und -Editor">
+<meta property="og:description" content="Kostenloser Open-Source-PDF-Viewer und -Editor für macOS, Windows und Linux. Gescannte Seiten durchsuchen, schwärzen, signieren, kommentieren und Formulare ausfüllen, auf dem eigenen Computer; ohne Konto, ohne Telemetrie.">
+<meta property="og:image" content="https://tstone-1.github.io/tpdf/img/redact.png">
+<meta property="og:image:width" content="1600">
+<meta property="og:image:height" content="1200">
+<meta property="og:image:alt" content="Zwei zum Entfernen markierte Bereiche, zur Prüfung aufgelistet">
+<meta name="twitter:card" content="summary_large_image">
+<style>
+  :root {
+    --page: #ffffff; --text: #1b1f24; --quiet: #57606a; --line: #d8dee4;
+    --band: #f6f8fa; --button: #0b5cad; --button-text: #ffffff; --link: #0b5cad;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --page: #0f1317; --text: #e6edf3; --quiet: #9aa5b1; --line: #2b323a;
+      --band: #161b22; --button: #4c9bea; --button-text: #0f1317; --link: #6cb1f5;
+    }
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--page); color: var(--text);
+    font: 17px/1.55 -apple-system, "Segoe UI", system-ui, sans-serif;
+  }
+  main, header, footer { max-width: 60rem; margin: 0 auto; padding: 0 1rem; }
+  header { padding-top: 3rem; text-align: center; }
+  h1 { font-size: 2.4rem; line-height: 1.15; margin: 0 0 0.75rem; hyphens: auto; }
+  h2 { font-size: 1.5rem; line-height: 1.25; margin: 0 0 0.5rem; hyphens: auto; }
+  p { margin: 0 0 1rem; }
+  a { color: var(--link); }
+  .lead { font-size: 1.2rem; color: var(--quiet); max-width: 40rem; margin: 0 auto 1.75rem; }
+  .downloads { display: flex; flex-wrap: wrap; gap: 0.75rem; justify-content: center; }
+  .download {
+    display: block; padding: 0.8rem 1.4rem; border-radius: 8px; text-decoration: none;
+    border: 1px solid var(--button); color: var(--link); font-weight: 600;
+  }
+  .download span { display: block; font-weight: 400; font-size: 0.85rem; }
+  .download.here { background: var(--button); color: var(--button-text); }
+  .small { font-size: 0.9rem; color: var(--quiet); }
+  .downloads + .small { margin-top: 1rem; }
+  code { font: 0.9em ui-monospace, "SF Mono", Consolas, monospace; overflow-wrap: anywhere; }
+  img { max-width: 100%; height: auto; border: 1px solid var(--line); border-radius: 8px; display: block; }
+  .task { display: grid; gap: 1.5rem; padding: 3rem 0; border-top: 1px solid var(--line); align-items: center; }
+  @media (min-width: 52rem) { .task { grid-template-columns: 2fr 3fr; } .task.wide { grid-template-columns: 1fr; } }
+  .task ol { margin: 0 0 1rem; padding-left: 1.25rem; }
+  .facts { background: var(--band); border-top: 1px solid var(--line); border-bottom: 1px solid var(--line); }
+  .facts ul { max-width: 60rem; margin: 0 auto; padding: 2rem 1rem; list-style: none; display: grid; gap: 1.5rem; }
+  @media (min-width: 52rem) { .facts ul { grid-template-columns: repeat(3, 1fr); } }
+  .facts strong { display: block; }
+  footer { padding: 2rem 1rem 3rem; }
+</style>
+</head>
+<body>
+
+<header>
+  <h1>Ein schneller PDF-Viewer und -Editor für macOS, Windows und Linux</h1>
+  <p class="lead">Kostenlos und quelloffen. tpdf durchsucht gescannte Seiten, entfernt, was ein
+  schwarzer Kasten übrig lässt, und prüft, dass es weg ist, und signiert mit Ihrem eigenen
+  Zertifikat. Ohne Konto und ohne Telemetrie; Ihre Dokumente bleiben auf Ihrem Computer.</p>
+
+  <div class="downloads">
+    <a class="download" id="download-mac" href="https://github.com/tstone-1/tpdf/releases/latest">
+      Für Mac herunterladen<span>Apple Silicon, signiert und notarisiert</span></a>
+    <a class="download" id="download-windows" href="https://github.com/tstone-1/tpdf/releases/latest">
+      Für Windows herunterladen<span>64 Bit, ohne Administratorrechte</span></a>
+    <a class="download" id="download-linux" href="https://github.com/tstone-1/tpdf/releases/latest">
+      Für Linux herunterladen<span>x86-64, .deb oder AppImage</span></a>
+  </div>
+  <p class="small"><span id="version"></span>Auf einem Mac geht auch
+  <code>brew install --cask tstone-1/tpdf/tpdf</code>. Für Intel-Macs, Windows auf ARM und
+  ARM-Linux gibt es keine Version.</p>
+  <p class="small">Unter Linux nehmen Sie das <code>.deb</code> für Ubuntu 24.04 oder Debian 13 und
+  neuer (<code>sudo apt install ./tpdf_&lt;version&gt;_amd64.deb</code>), sonst das AppImage.
+  tpdf braucht glibc 2.39 oder neuer und startet daher nicht unter Ubuntu 22.04 oder
+  Debian 12. Unter Linux aktualisiert sich tpdf nicht selbst: Installieren Sie das neue Paket,
+  wenn eine Version erscheint. Die Texterkennung braucht das Tesseract des Systems, das das
+  <code>.deb</code> mitinstalliert und das AppImage nicht.</p>
+  <p class="small">Das Windows-Installationsprogramm ist signiert; als Herausgeber steht
+  dort <em>Open Source Developer Timo Stein</em>. Das Zertifikat ist neu, deshalb kann
+  Windows beim ersten Start „Der Computer wurde durch Windows geschützt“ anzeigen: Wählen Sie
+  <strong>Weitere Informationen</strong>, prüfen Sie den Herausgeber und dann
+  <strong>Trotzdem ausführen</strong>.</p>
+  <p class="small">tpdf erscheint auf Deutsch, wenn das System Deutsch spricht, und duzt zunächst;
+  <em>Sprache: Deutsch (Sie)</em> in der Befehlspalette stellt auf „Sie“ um.
+  <a href="../">This page in English</a>.</p>
+</header>
+
+<main>
+  <section class="task wide">
+    <div>
+      <h2>Eine gescannte Seite durchsuchen</h2>
+      <p>Ein Scan ist ein Bild der Seite. Die Suche findet darin nichts, nicht einmal die
+      Rechnungsnummer, die Sie vor sich sehen. tpdf liest die Seite auf Ihrem Computer, wenn
+      Sie darum bitten, und danach findet die Suche sie. Probieren Sie es in drei Schritten aus.</p>
+      <ol>
+        <li><strong>Öffnen Sie ein gescanntes PDF.</strong> Eines von Ihnen oder
+        <a href="beispiel-scan.pdf" download>diese erfundene Rechnung</a>.</li>
+        <li><strong>Suchen Sie darin.</strong> Drücken Sie Strg+F (⌘F auf einem Mac) und geben Sie
+        <em>RE-2026-0417</em> ein. In der Suchleiste steht
+        <em>kein Text: gescannte Seiten</em>.</li>
+        <li><strong>Klicken Sie in der Suchleiste auf <em>Diese Seite erkennen</em>.</strong>
+        Jetzt findet die Suche die Nummer zweimal. Die Erkennung läuft auf Ihrem Computer
+        und gilt nur vorübergehend: Das PDF bleibt unverändert, und eine Bearbeitung oder das
+        Verlassen der Seite verwirft sie.</li>
+      </ol>
+      <p class="small">Soll der Text bleiben, schreibt <em>Text erkennen und speichern
+      unter...</em> eine Kopie, in der jede gescannte Seite durchsuchbar ist.</p>
+    </div>
+  </section>
+
+  <section class="task">
+    <div>
+      <h2>Finden, was ein schwarzer Kasten im PDF übrig ließ, und es entfernen</h2>
+      <p>Die häufigste falsche Schwärzung legt ein schwarzes Rechteck über die Wörter und
+      lässt sie in der Datei, wo jeder sie herauskopieren kann. tpdf listet diese Wörter auf,
+      entfernt sie aus der Datei und prüft die geschriebene Datei; der Rest des Dokuments
+      bleibt Text. Wenn tpdf nicht prüfen kann, sagt es „nicht bestätigt“ und nie, die Datei sei sauber.
+      Zum Ausprobieren gibt es <a href="../sample-redacted.pdf" download>einen erfundenen
+      englischen Brief</a> mit vier schwarzen Kästen.</p>
+    </div>
+    <img src="../img/hidden.png" alt="Ein Brief mit vier schwarzen Kästen und daneben die Liste der Wörter darunter">
+  </section>
+
+  <section class="task">
+    <div>
+      <h2>Ein Dokument signieren und eine erhaltene Signatur prüfen</h2>
+      <p>Signieren Sie mit einem Zertifikat aus dem macOS-Schlüsselbund oder dem
+      Windows-Zertifikatspeicher. Ihr Unterschriftsbild steht auf der Seite, ein
+      Zeitstempeldienst bestätigt die Zeit, und die Signatur sperrt das Dokument, sodass eine
+      spätere Änderung gemeldet wird. Bei einem signierten Dokument sagt tpdf, ob jede
+      Signatur intakt ist, ob Ihr Computer dem Unterzeichner vertraut und was nach dem
+      Signieren hinzukam.</p>
+    </div>
+    <img src="../img/signatures.png" alt="Dokumenteigenschaften mit je einer Karte für zwei Signaturen">
+  </section>
+
+  <section class="task">
+    <div>
+      <h2>Markieren, ausfüllen und umstellen</h2>
+      <p>Hervorheben, unterstreichen, zeichnen, Textfelder, Stempel und Kommentare
+      hinzufügen. Formulare ausfüllen und Formularfelder anlegen. Seiten drehen, verschieben,
+      löschen, zuschneiden, herauslösen und einfügen; Dokumente zusammenführen oder teilen.
+      Außerdem eine kleinere Kopie speichern und ein Passwort setzen oder entfernen.</p>
+    </div>
+    <img src="../img/annotate.png" alt="Eine hervorgehobene Zeile, eine umrahmte Tabellenzeile und ein Kommentar, in der Seitenleiste aufgelistet">
+  </section>
+</main>
+
+<div class="facts">
+  <ul>
+    <li><strong>Schnell geöffnet</strong>Vom Start bis zur ersten gezeichneten Seite
+    vergehen 276 ms, gemessen bei warmem Start auf einem Mac mit Apple Silicon.</li>
+    <li><strong>Jedes Werkzeug an einem Ort</strong>Tippen Sie einen Teil des Befehlsnamens in
+    die Befehlspalette und drücken Sie die Eingabetaste. Nichts ist in einem Menü versteckt.</li>
+    <li><strong>Nichts wird hochgeladen</strong>tpdf geht nur für die Suche nach
+    Aktualisierungen ins Netz und beim Signieren: für den Zeitstempel und die
+    Validierungsdaten, die der Signaturdialog anzeigt, bevor etwas gesendet wird.
+    <a href="https://github.com/tstone-1/tpdf#who-makes-it-and-what-leaves-your-computer">Die
+    Einzelheiten (englisch)</a>.</li>
+  </ul>
+</div>
+
+<footer class="small">
+  <p>tpdf wird von einem einzelnen Entwickler geschrieben und gepflegt und ist unter der
+  MIT-Lizenz frei. <a href="https://github.com/tstone-1/tpdf">Quellcode und ausführliche
+  Beschreibung (englisch)</a> ·
+  <a href="https://github.com/tstone-1/tpdf/releases">Alle Versionen</a> ·
+  <a href="https://github.com/tstone-1/tpdf/blob/main/CHANGELOG.md">Änderungen</a> ·
+  <a href="https://github.com/tstone-1/tpdf/blob/main/SECURITY.md">Sicherheit</a> ·
+  <a href="https://github.com/tstone-1/tpdf/issues">Problem melden</a></p>
+  <p>Diese Seite fragt einmal bei api.github.com nach, welche Dateien die neueste Version
+  hat, um die beiden Installationsprogramme direkt zu verlinken. Sie setzt kein Cookie und
+  lädt nichts weiter.</p>
+</footer>
+
+<script type="module" src="../download.js"></script>
+</body>
+</html>

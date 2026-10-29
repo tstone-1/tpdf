@@ -109,6 +109,24 @@ const TEXT = catalog({
       " Das Original hat sich auf dem Datenträger geändert, während du es geöffnet hattest. " +
       "Deine Änderungen wurden deshalb auf die neuere Fassung angewendet.",
   },
+  "de-DE-formal": {
+    beforeReload: "Neu laden öffnet die Datei erneut und verwirft Ihre nicht gespeicherten Änderungen. " +
+      "Speichern Sie zuerst eine Kopie, um sie zu behalten.",
+    beforeRedactingInPlace: (name: string) =>
+      `Das Schwärzen entfernt den markierten Text aus ${name} selbst. Es lässt sich nicht ` +
+      "rückgängig machen, und danach gibt es kein Original mehr. Speichern Sie zuerst eine Kopie, um eines zu behalten.",
+    afterCopyChanged: "Die Datei wurde geschrieben, aber das Original hat sich auf dem Datenträger geändert, während Sie es geöffnet hatten. " +
+      "Ihre Änderungen wurden deshalb auf die neuere Fassung angewendet. Prüfen Sie die Datei, bevor Sie sich auf sie verlassen.",
+    redactionNotVerified: (removed: string, why: string) =>
+      `Schwärzung nicht bestätigt. Geschwärzt: ${removed}, aber tpdf konnte nicht nachweisen, dass die Datei sauber ist. ` +
+      `Die Prüfung vor dem Einfügen der Füllung ergab: ${why}. Behandeln Sie die Datei als ungeschwärzt, bis Sie sie geprüft haben.`,
+    redactionAlsoChanged: " Außerdem hat sich das Original auf dem Datenträger geändert, während Sie es geöffnet hatten. " +
+      "Das Ergebnis beruht daher auf der neueren Fassung.",
+    splitChanged: " Das Original hat sich auf dem Datenträger geändert, während Sie es geöffnet hatten. Ihre Änderungen " +
+      "wurden deshalb auf die neuere Fassung angewendet. Prüfen Sie sie, bevor Sie sich auf sie verlassen.",
+    mergeChanged: " Das Original hat sich auf dem Datenträger geändert, während Sie es geöffnet hatten. " +
+      "Ihre Änderungen wurden deshalb auf die neuere Fassung angewendet.",
+  },
 });
 
 /**

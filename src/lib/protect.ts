@@ -47,6 +47,9 @@ const TEXT = catalog({
     savedProtected: (name: string) => `${name} gespeichert. Zum Öffnen ist das neue Passwort nötig.`,
     savedUnprotected: (name: string) => `${name} gespeichert. Die Datei öffnet sich ohne Passwort.`,
   },
+  "de-DE-formal": {
+    typePassword: "Geben Sie ein Passwort ein.",
+  },
 });
 
 /**

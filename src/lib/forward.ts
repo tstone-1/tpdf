@@ -57,6 +57,10 @@ const TEXT = catalog({
     nearest: (asked: number, found: number) =>
       `Zeile ${asked} erzeugt nichts auf der Seite; angezeigt wird Zeile ${found}, die nächste, die etwas erzeugt.`,
   },
+  "de-DE-formal": {
+    notFileAndLine: (typed: string) =>
+      `tpdf sollte --forward-search „${typed}“ ausführen, das ist aber keine Datei mit Zeile: Geben Sie es als datei.tex:ZEILE an`,
+  },
 });
 
 /**

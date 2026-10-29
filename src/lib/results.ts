@@ -411,4 +411,7 @@ const TEXT = catalog({
     count: (total: number) => trefferOf(total),
     capped: (total: number, shown: number) => `${trefferOf(total)}, die ersten ${shown} werden angezeigt`,
   },
+  "de-DE-formal": {
+    typeToSearch: "Geben Sie einen Suchbegriff in das Suchfeld ein.",
+  },
 });

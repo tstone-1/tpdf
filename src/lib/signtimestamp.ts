@@ -186,6 +186,9 @@ const TEXT = catalog({
     scheme: "tpdf fragt Zeitstempeldienste nur über http:// oder https:// an.",
     credentials: "Eine Adresse, die einen Benutzernamen oder ein Passwort enthält, wird nicht angefragt.",
   },
+  "de-DE-formal": {
+    empty: "Geben Sie die Adresse des Zeitstempeldienstes ein.",
+  },
 });
 
 /**

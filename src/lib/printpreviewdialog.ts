@@ -185,6 +185,9 @@ const TEXT = catalog({
     notDrawn: (page: number) => `Seite ${page} konnte nicht gezeichnet werden.`,
     notDrawnBecause: (page: number, reason: string) => `Seite ${page} konnte nicht gezeichnet werden: ${reason}`,
   },
+  "de-DE-formal": {
+    nextStep: "Drucker, Papier und die zu druckenden Seiten wählen Sie im nächsten Schritt.",
+  },
 });
 
 /** The scale choices, in the order the list offers them. */

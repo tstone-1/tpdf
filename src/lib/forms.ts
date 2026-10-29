@@ -44,6 +44,13 @@ const TEXT = catalog({
     answerRefused: "Diese Antwort wurde abgelehnt. Korrigiere sie, bevor du speicherst oder das Dokument wechselst.",
     noFormFields: "Dieses Dokument hat keine unterstützten bearbeitbaren Formularfelder.",
   },
+  "de-DE-formal": {
+    chooseNoDuplicates: "Wählen Sie verfügbare Optionen ohne Doppelungen.",
+    chooseOne: "Wählen Sie eine Option.",
+    chooseOneRadio: "Wählen Sie ein Optionsfeld.",
+    saveToChoose: "Speichern Sie das Dokument, um dies zu wählen.",
+    answerRefused: "Diese Antwort wurde abgelehnt. Korrigieren Sie sie, bevor Sie speichern oder das Dokument wechseln.",
+  },
 });
 
 /** Option indices preserve choices whose export values happen to be equal. */

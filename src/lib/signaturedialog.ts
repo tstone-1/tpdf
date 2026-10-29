@@ -59,6 +59,18 @@ const TEXT = catalog({
     removed: "Die gespeicherte Unterschrift wurde von diesem Gerät entfernt.",
     notRemoved: "Die gespeicherte Unterschrift konnte nicht entfernt werden.",
   },
+  "de-DE-formal": {
+    help: "Zeichnen Sie Ihre Unterschrift oder importieren Sie ein PNG- oder JPEG-Bild.",
+    notice: "Nur eine sichtbare Markierung, die Ihre Identität nicht bestätigt und "
+      + "keine zertifikatsbasierte Signatur erzeugt.",
+    drawHere: "Zeichnen Sie Ihre Unterschrift",
+    tooLarge: "Wählen Sie ein PNG- oder JPEG-Bild unter 10 MB.",
+    nothingDrawn: "Zeichnen oder importieren Sie zuerst eine Unterschrift.",
+    notRemembered: "Die Unterschrift konnte nicht sicher gespeichert werden. "
+      + "Deaktivieren Sie diese Option, um sie zu platzieren, ohne sie lokal zu speichern.",
+    savedNotPlaced: "Die vorherige Unterschrift wurde auf diesem Gerät gespeichert, aber nicht platziert, "
+      + "weil sich die Unterschrift geändert hat. Platzieren Sie die aktuelle, wenn Sie so weit sind.",
+  },
 });
 
 /** What the dialog is called and what its accepting button says, for one use of it. */

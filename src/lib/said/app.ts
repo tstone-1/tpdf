@@ -308,3 +308,53 @@ export default {
   "could not parse the document: {e}": "Das Dokument konnte nicht gelesen werden: {e}",
   "text preview is unavailable": "Die Textvorschau ist nicht verfügbar",
 } satisfies Record<string, Wording>;
+
+/** The entries above that say "du", addressing the reader with "Sie" instead. */
+export const sie = {
+  "tpdf is running from a temporary location macOS chose, so a link to it would stop working. Move tpdf to the Applications folder, open it from there, and install the command-line tool again.":
+    "tpdf läuft von einem vorübergehenden Ort, den macOS gewählt hat, daher würde ein Link darauf nicht mehr funktionieren. Verschieben Sie tpdf in den Ordner „Programme“, öffnen Sie es von dort und installieren Sie das Kommandozeilenwerkzeug erneut.",
+  "{why}, so it was left alone. Remove it yourself to install tpdf's.":
+    "{why}, daher wurde es nicht angerührt. Entfernen Sie es selbst, um das von tpdf zu installieren.",
+  "Added {dir} to your PATH. Open a new terminal and run tpdf-cli.":
+    "{dir} wurde zu Ihrem PATH hinzugefügt. Öffnen Sie ein neues Terminal und starten Sie tpdf-cli.",
+  "{dir} is already on your PATH: run tpdf-cli in a terminal.":
+    "{dir} ist bereits in Ihrem PATH: Starten Sie tpdf-cli in einem Terminal.",
+  "Removed {dir} from your PATH. The tool itself is removed together with tpdf.":
+    "{dir} wurde aus Ihrem PATH entfernt. Das Werkzeug selbst wird zusammen mit tpdf entfernt.",
+  "{dir} is not on your PATH. The tool itself is removed together with tpdf.":
+    "{dir} ist nicht in Ihrem PATH. Das Werkzeug selbst wird zusammen mit tpdf entfernt.",
+  "{path} is not there, so Explorer has nothing of tpdf's to load; reinstall tpdf":
+    "{path} fehlt, daher kann der Explorer nichts von tpdf laden; installieren Sie tpdf neu",
+  "your PATH could not be opened (error {status})":
+    "Ihr PATH konnte nicht geöffnet werden (Fehler {status})",
+  "your PATH could not be read (error {status})":
+    "Ihr PATH konnte nicht gelesen werden (Fehler {status})",
+  "your PATH is not stored as text, so tpdf leaves it alone":
+    "Ihr PATH ist nicht als Text gespeichert, daher lässt tpdf ihn unverändert",
+  "your PATH is too long":
+    "Ihr PATH ist zu lang",
+  "your PATH holds text tpdf cannot read, so tpdf leaves it alone":
+    "Ihr PATH enthält Text, den tpdf nicht lesen kann, daher lässt tpdf ihn unverändert",
+  "your PATH could not be written (error {status})":
+    "Ihr PATH konnte nicht geschrieben werden (Fehler {status})",
+  'To change that, select a PDF in Finder, choose Get Info, and pick another application under "Open with".':
+    "Um das zu ändern, wählen Sie im Finder ein PDF aus, dann „Informationen“, und suchen Sie sich unter „Öffnen mit“ eine andere App aus.",
+  'To change that, open a PDF\'s properties in your file manager and choose another application under "Open With".':
+    "Um das zu ändern, öffnen Sie im Dateimanager die Eigenschaften eines PDFs und wählen Sie unter „Öffnen mit“ eine andere App.",
+  "this copy of tpdf is not an application: open tpdf from the Applications folder":
+    "Dieses tpdf ist keine App: Öffnen Sie tpdf aus dem Ordner „Programme“",
+  "Settings did not open. Choose tpdf for .pdf under Apps, Default apps.":
+    "Die Einstellungen haben sich nicht geöffnet. Wählen Sie tpdf für .pdf unter Apps, Standard-Apps.",
+  "Windows lets only you choose the default. Settings is open at Default apps: choose tpdf, then set it for .pdf.":
+    "Unter Windows können nur Sie die Standard-App wählen. Die Einstellungen sind bei Standard-Apps geöffnet: Wählen Sie tpdf und legen Sie es für .pdf fest.",
+  "this copy of tpdf is not installed, so there is no tpdf.desktop to name: install the tpdf package and run it from the applications menu":
+    "Dieses tpdf ist nicht installiert, daher gibt es kein tpdf.desktop, das sich nennen ließe: Installieren Sie das tpdf-Paket und starten Sie es aus dem Anwendungsmenü",
+  "the SyncTeX file names {count} different inputs called {name}; give the source's full path":
+    "Die SyncTeX-Datei nennt {count} verschiedene Eingaben namens {name}; geben Sie den vollständigen Pfad der Quelle an",
+  "{path} changed on disk since you opened it --- {how}":
+    "{path} wurde auf dem Datenträger geändert, seit Sie es geöffnet haben – {how}",
+  "{fact}. Your edits are still here: save them under another name, or open the file again to start from what is on disk now.":
+    "{fact}. Ihre Änderungen sind noch da: Speichern Sie sie unter einem anderen Namen, oder öffnen Sie die Datei erneut, um mit dem zu beginnen, was jetzt auf dem Datenträger liegt.",
+  "{name} is encrypted, and tpdf cannot insert pages from an encrypted file yet. Save an unencrypted copy of it first.":
+    "{name} ist verschlüsselt, und tpdf kann noch keine Seiten aus einer verschlüsselten Datei einfügen. Speichern Sie zuerst eine unverschlüsselte Kopie davon.",
+} satisfies Record<string, Wording>;

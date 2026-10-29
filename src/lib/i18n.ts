@@ -14,10 +14,11 @@
  * Changing either takes a restart. The unit tests and the checks build always
  * run in American English.
  */
-export type UiLocale = "en-US" | "en-GB" | "de-DE";
+/** `de-DE` addresses the reader with "du", `de-DE-formal` with "Sie". */
+export type UiLocale = "en-US" | "en-GB" | "de-DE" | "de-DE-formal";
 
 /** Every locale, in the order the Language setting offers them. */
-export const UI_LOCALES: readonly UiLocale[] = ["en-US", "en-GB", "de-DE"];
+export const UI_LOCALES: readonly UiLocale[] = ["en-US", "en-GB", "de-DE", "de-DE-formal"];
 
 /** A message: plain text, or worded from what it is about. */
 type Text = string | ((...args: never[]) => string);
@@ -39,12 +40,14 @@ export function catalog<const T extends Catalog>(texts: {
   "en-US": T;
   "de-DE": Translation<T>;
   "en-GB"?: Partial<Translation<T>>;
+  "de-DE-formal"?: Partial<Translation<T>>;
 }): (locale?: UiLocale) => Translation<T> {
   const british = { ...texts["en-US"], ...texts["en-GB"] } as Translation<T>;
   const by: Record<UiLocale, Translation<T>> = {
     "en-US": texts["en-US"] as Translation<T>,
     "en-GB": british,
     "de-DE": texts["de-DE"],
+    "de-DE-formal": { ...texts["de-DE"], ...texts["de-DE-formal"] },
   };
   return (locale = UI_LOCALE) => by[locale];
 }
@@ -115,6 +118,11 @@ const SHARED = catalog({
     recognisingPage: "Diese Seite wird erkannt...",
     recognisedPage: "Diese Seite ist jetzt durchsuchbar. Das PDF ist unverändert. Die Erkennung gilt, bis du etwas bearbeitest oder diese Ansicht verlässt; Wortmarkierungen sind ungefähr.",
   },
+  "de-DE-formal": {
+    recognisePageHint: "Sehen Sie ein Wort, das die Suche nicht findet? Erkennen Sie diese Seite, ohne das PDF zu ändern.",
+    recogniseScanHint: "Keine Seite enthält Text. Erkennen Sie alle Seiten und speichern Sie eine durchsuchbare Kopie.",
+    recognisedPage: "Diese Seite ist jetzt durchsuchbar. Das PDF ist unverändert. Die Erkennung gilt, bis Sie etwas bearbeiten oder diese Ansicht verlassen; Wortmarkierungen sind ungefähr.",
+  },
 });
 
 type Message = keyof ReturnType<typeof SHARED>;
@@ -126,6 +134,7 @@ export function resolveUiLocale(preferred: readonly string[]): UiLocale {
   for (const tag of preferred) {
     try {
       const locale = new Intl.Locale(tag);
+      // "du", as the German window has spoken since it was added; "Sie" is a choice.
       if (locale.language === "de") return "de-DE";
       if (locale.language !== "en") continue;
       return COLOUR_REGIONS.has(locale.region ?? "US") ? "en-GB" : "en-US";
@@ -196,9 +205,15 @@ export function message(key: Message, locale: UiLocale = UI_LOCALE): string {
   return SHARED(locale)[key];
 }
 
+/** Whether a locale is German, in either form of address. */
+export function isGerman(locale: UiLocale): boolean {
+  return locale === "de-DE" || locale === "de-DE-formal";
+}
+
 /** Each locale's name in its own language, for the Language setting. */
 export const LOCALE_NAMES: Record<UiLocale, string> = {
   "en-US": "English (US)",
   "en-GB": "English (UK)",
-  "de-DE": "Deutsch",
+  "de-DE": "Deutsch (Du)",
+  "de-DE-formal": "Deutsch (Sie)",
 };

@@ -71,6 +71,12 @@ const TEXT = catalog({
     installed: (newer: string) => `Version ${newer} ist installiert – starte tpdf neu, um abzuschließen`,
     failed: (version: string, reason: string) => `tpdf ${version} – Suche nach Updates fehlgeschlagen: ${reason}`,
   },
+  "de-DE-formal": {
+    manualUpdates: "unter Linux wird tpdf aktualisiert, indem Sie das neue Paket von https://github.com/tstone-1/tpdf/releases installieren",
+    restartMessage: (what: string) => `Möchten Sie ${what} verwerfen und neu starten, um das Update abzuschließen?`,
+    installMessage: (what: string) => `Die Installation schließt tpdf. Möchten Sie ${what} verwerfen?`,
+    installed: (newer: string) => `Version ${newer} ist installiert – starten Sie tpdf neu, um abzuschließen`,
+  },
 });
 
 // linux-difference: updates

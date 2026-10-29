@@ -46,6 +46,10 @@ const TEXT = catalog({
       "Gib an, ob noch jemand anderes signieren muss: Ein gesperrtes Dokument nimmt keine " +
       "weitere Signatur an.",
   },
+  "de-DE-formal": {
+    unanswered: "Geben Sie an, ob noch jemand anderes signieren muss: Ein gesperrtes Dokument nimmt keine " +
+      "weitere Signatur an.",
+  },
 });
 
 const T = TEXT();

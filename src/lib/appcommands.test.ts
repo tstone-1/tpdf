@@ -517,14 +517,17 @@ describe("the interface language", () => {
     expect(registry.run("app.language.de-DE")).toBe(true);
     expect(fired).toEqual(["setLanguageChoice:de-DE"]);
     expect(registry.run("app.language.de-DE")).toBe(false);
+    expect(registry.run("app.language.de-DE-formal")).toBe(true);
+    expect(fired).toEqual(["setLanguageChoice:de-DE", "setLanguageChoice:de-DE-formal"]);
     expect(registry.run("app.language.system")).toBe(true);
   });
 
   it("names each language in its own language, in every locale", () => {
-    for (const locale of ["en-US", "de-DE"] as const) {
+    for (const locale of ["en-US", "de-DE", "de-DE-formal"] as const) {
       const registry = new CommandRegistry();
       registerAppCommands(registry, {} as AppActions, locale);
-      expect(registry.find("app.language.de-DE")?.title).toMatch(/: Deutsch$/);
+      expect(registry.find("app.language.de-DE")?.title).toMatch(/: Deutsch \(Du\)$/);
+      expect(registry.find("app.language.de-DE-formal")?.title).toMatch(/: Deutsch \(Sie\)$/);
       expect(registry.find("app.language.en-US")?.title).toMatch(/: English \(US\)$/);
     }
   });
@@ -738,6 +741,7 @@ describe("the commands a document is needed for", () => {
       "app.language.en-US",
       "app.language.en-GB",
       "app.language.de-DE",
+      "app.language.de-DE-formal",
       "file.open",
       // It begins with pictures, not with a document.
       "file.fromPictures",

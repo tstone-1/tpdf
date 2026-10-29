@@ -50,6 +50,9 @@ const TEXT = catalog({
     pagesHint: "Leer lassen für alle Seiten, oder 2-10 oder 1,3,5 eingeben.",
     cancel: "Abbrechen",
   },
+  "de-DE-formal": {
+    numbersIntro: "{page} ist die Nummer jeder Seite und {pages} die Anzahl der nummerierten Seiten. Ergänzen Sie Wörter darum herum für eine Kopf- oder Fußzeile.",
+  },
 });
 
 /** What each kind asks, beside the text and the position. */

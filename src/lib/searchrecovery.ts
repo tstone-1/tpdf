@@ -9,6 +9,9 @@ import type { PageText } from "./text";
 const TEXT = catalog({
   "en-US": { full: "Recognition memory is full. Reopen the document to start again." },
   "de-DE": { full: "Der Speicher für erkannten Text ist voll. Öffne das Dokument erneut, um neu zu beginnen." },
+  "de-DE-formal": {
+    full: "Der Speicher für erkannten Text ist voll. Öffnen Sie das Dokument erneut, um neu zu beginnen.",
+  },
 });
 
 export class SearchRecovery {

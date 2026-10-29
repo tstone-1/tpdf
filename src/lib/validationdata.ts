@@ -115,6 +115,12 @@ const TEXT = catalog({
     cancel: "Abbrechen",
     add: "Hinzufügen…",
   },
+  "de-DE-formal": {
+    unsaved: "Speichern Sie zuerst Ihre Änderungen: Die Validierungsdaten werden der Datei so hinzugefügt, " +
+      "wie sie auf dem Datenträger liegt, und dieses Dokument hat Änderungen, die noch nicht " +
+      "darin sind.",
+    choose: "Wählen Sie den Zeitstempeldienst, der angefragt werden soll.",
+  },
 });
 
 /**

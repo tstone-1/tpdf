@@ -355,3 +355,33 @@ export default {
   "The picture was not saved: {path} names no file.": "Das Bild wurde nicht gespeichert: {path} nennt keine Datei.",
   "The picture was not saved to {path}: {why}": "Das Bild wurde nicht unter {path} gespeichert: {why}",
 } satisfies Record<string, Wording>;
+
+/** The entries above that say "du", addressing the reader with "Sie" instead. */
+export const sie = {
+  "Choose one available radio button":
+    "Wählen Sie ein vorhandenes Optionsfeld",
+  "Choose available options without duplicates":
+    "Wählen Sie vorhandene Einträge, jeden nur einmal",
+  "a signature field is at least {least} by {least_high} points; drag a larger rectangle":
+    "Ein Signaturfeld ist mindestens {least} mal {least_high} Punkt groß; ziehen Sie ein größeres Rechteck",
+  "save or undo redactions before editing text":
+    "Speichern oder widerrufen Sie die Schwärzungen, bevor Sie Text bearbeiten",
+  "save or undo text edits before redacting":
+    "Speichern oder widerrufen Sie die Textänderungen, bevor Sie schwärzen",
+  "text edit history is full; save and reopen before continuing":
+    "Der Verlauf der Textänderungen ist voll; speichern Sie und öffnen Sie das Dokument erneut, bevor Sie weitermachen",
+  "choose at least one page to insert":
+    "Wählen Sie mindestens eine Seite zum Einfügen",
+  "page {number} was chosen twice --- insert it once, then insert it again":
+    "Seite {number} wurde zweimal gewählt – fügen Sie sie einmal ein und dann noch einmal",
+  "that page of the other document is in this one twice, and an edit would appear in both --- delete one of them, then edit the other":
+    "Diese Seite des anderen Dokuments ist zweimal in diesem, und eine Änderung erschiene in beiden – löschen Sie eine davon und bearbeiten Sie dann die andere",
+  "page {number} of that document already has edited text in this one, and inserting it again would show the edit twice --- undo the edit, or insert a different page":
+    "Seite {number} dieses Dokuments hat hier schon bearbeiteten Text, und ein erneutes Einfügen würde die Änderung zweimal zeigen – widerrufen Sie die Änderung oder fügen Sie eine andere Seite ein",
+  "that page came from another document, and tpdf can only remove content from the pages of the file you opened --- save this document, reopen it, and redact there":
+    "Diese Seite stammt aus einem anderen Dokument, und tpdf kann nur aus den Seiten der geöffneten Datei Inhalte entfernen – speichern Sie dieses Dokument, öffnen Sie es erneut und schwärzen Sie dort",
+  "delete your reply to that comment first, then the comment":
+    "Löschen Sie zuerst Ihre Antwort auf diesen Kommentar und dann den Kommentar",
+  "it is a CMYK JPEG, which tpdf does not place yet; save it as RGB":
+    "Es ist ein CMYK-JPEG, das tpdf noch nicht platziert; speichern Sie es als RGB",
+} satisfies Record<string, Wording>;

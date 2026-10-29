@@ -67,6 +67,9 @@ const TEXT = catalog({
     savedNumbers: (name: string) => `${name} mit Seitenzahlen gespeichert.`,
     savedWatermark: (name: string) => `${name} mit Wasserzeichen gespeichert.`,
   },
+  "de-DE-formal": {
+    typeText: "Geben Sie den Text ein, der auf die Seiten geschrieben wird.",
+  },
 });
 
 /** `Position` in `addedtext.rs`, in reading order. */

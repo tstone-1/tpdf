@@ -617,3 +617,85 @@ export default {
   "the document's bytes could not be read":
     "Die Bytes des Dokuments konnten nicht gelesen werden",
 } satisfies Record<string, Wording>;
+
+/** The entries above that say "du", addressing the reader with "Sie" instead. */
+export const sie = {
+  "the text you marked is inside a form that this document draws {times} time(s). Removing it would change every one of them, including places you did not mark, so nothing was removed.":
+    "Der markierte Text liegt in einem Form-XObject, das dieses Dokument {times}-mal zeichnet. Ihn zu entfernen würde jede dieser Stellen ändern, auch solche, die Sie nicht markiert haben, daher wurde nichts entfernt.",
+  "the picture you marked is inside a form that this document draws {times} time(s). Removing it would change every one of them, including places you did not mark, so nothing was removed.":
+    "Das markierte Bild liegt in einem Form-XObject, das dieses Dokument {times}-mal zeichnet. Es zu entfernen würde jede dieser Stellen ändern, auch solche, die Sie nicht markiert haben, daher wurde nichts entfernt.",
+  "the drawing you marked is inside a form that this document draws {times} time(s). Changing it would change every one of them, including places you did not mark, so nothing was removed.":
+    "Die markierte Zeichnung liegt in einem Form-XObject, das dieses Dokument {times}-mal zeichnet. Die Zeichnung zu ändern würde jede dieser Stellen ändern, auch solche, die Sie nicht markiert haben, daher wurde nichts entfernt.",
+  "{words} is too short to be told apart from the rest of the file: the check reads the whole file, where one or two characters also occur in the page's own numbers and other text, so it cannot say whether the marked one was removed --- mark the whole word or number to get an answer":
+    "{words} ist zu kurz, um es vom Rest der Datei zu unterscheiden: Die Prüfung liest die ganze Datei, in der ein oder zwei Zeichen auch in den Zahlen und im übrigen Text der Seite vorkommen, daher kann sie nicht sagen, ob das Markierte entfernt wurde - markieren Sie das ganze Wort oder die ganze Zahl, um eine Antwort zu bekommen",
+  "save text edits before applying redactions":
+    "Speichern Sie die Textänderungen, bevor Sie Schwärzungen anwenden",
+  "An image-only copy is drawn from this document's own pages, and some of these came from another document. Redact without the image-only option, or save this document, reopen it, and make an image-only copy there.":
+    "Eine Kopie nur aus Bildern entsteht aus den eigenen Seiten dieses Dokuments, und einige davon stammen aus einem anderen Dokument. Schwärzen Sie ohne die Option „Kopie nur aus Bildern“ oder speichern Sie dieses Dokument, öffnen Sie es neu und erstellen Sie die Kopie nur aus Bildern dort.",
+  "{reason} A print job is built from the file on disk, so the paper would carry that document with your edits placed on the pages of the one you opened.":
+    "{reason} Ein Druckauftrag entsteht aus der Datei auf dem Datenträger, das Papier zeigte also jenes Dokument, mit Ihren Änderungen auf den Seiten des Dokuments, das Sie geöffnet haben.",
+  "tpdf cannot save over the document it is reading --- choose another name":
+    "tpdf kann nicht über das Dokument speichern, das es gerade liest - wählen Sie einen anderen Namen",
+  "Choose a different name for the image-only copy; the original must be kept":
+    "Wählen Sie einen anderen Namen für die Kopie nur aus Bildern; das Original muss erhalten bleiben",
+  "The source could not be fingerprinted. Reopen it before redacting":
+    "Von der Quelle ließ sich kein Fingerabdruck bilden. Öffnen Sie sie neu, bevor Sie schwärzen",
+  "The source changed since it was opened. Reopen it and mark the regions again":
+    "Die Quelle hat sich seit dem Öffnen geändert. Öffnen Sie sie neu und markieren Sie die Bereiche noch einmal",
+  "{path} already exists, and a split would replace it --- choose another name":
+    "{path} gibt es schon, und das Aufteilen würde es ersetzen - wählen Sie einen anderen Namen",
+  "choose at least one document to merge in":
+    "Wählen Sie mindestens ein Dokument zum Zusammenführen",
+  "choose at least one picture":
+    "Wählen Sie mindestens ein Bild",
+  "the pictures come to {total} MB, and tpdf takes at most {limit} MB at once --- make the document in two passes and merge them":
+    "Die Bilder sind zusammen {total} MB groß, und tpdf nimmt höchstens {limit} MB auf einmal - erstellen Sie das Dokument in zwei Durchgängen und führen Sie sie zusammen",
+  "the documents to merge come to at least {total} MB, and tpdf merges at most {limit} MB at once --- merge fewer files, or merge them in two passes":
+    "Die zusammenzuführenden Dokumente sind zusammen mindestens {total} MB groß, und tpdf führt höchstens {limit} MB auf einmal zusammen - führen Sie weniger Dateien zusammen oder arbeiten Sie in zwei Durchgängen",
+  "tpdf could not record what this file looked like when it was opened, so it cannot tell whether saving over it is safe --- use Save a copy":
+    "tpdf konnte nicht festhalten, wie diese Datei beim Öffnen aussah, und kann daher nicht sagen, ob Speichern darüber sicher ist - nutzen Sie „Kopie speichern“",
+  "tpdf could not confirm what this file was when it read it --- use Save a copy":
+    "tpdf konnte nicht bestätigen, welche Datei es beim Lesen vor sich hatte - nutzen Sie „Kopie speichern“",
+  "tpdf did not record what {label} was when its pages were inserted, so it cannot tell whether they are still those pages --- undo the insert and insert them again":
+    "tpdf hat nicht festgehalten, wie {label} beim Einfügen seiner Seiten aussah, und kann daher nicht sagen, ob es noch dieselben Seiten sind - machen Sie das Einfügen rückgängig und fügen Sie sie noch einmal ein",
+  "{label} has changed since its pages were inserted, so they may no longer be the pages you placed --- undo the insert and insert them again":
+    "{label} hat sich seit dem Einfügen seiner Seiten geändert, es sind also vielleicht nicht mehr die Seiten, die Sie eingefügt haben - machen Sie das Einfügen rückgängig und fügen Sie sie noch einmal ein",
+  "these edits were built against {built} bytes and the file is {size} --- reopen it before saving":
+    "Diese Änderungen beziehen sich auf {built} Bytes, die Datei hat {size} - öffnen Sie sie vor dem Speichern neu",
+  "This document is encrypted and tpdf could not unlock it, so it cannot be saved. Open it with its password first.":
+    "Dieses Dokument ist verschlüsselt und tpdf konnte es nicht entsperren, daher kann es nicht gespeichert werden. Öffnen Sie es zuerst mit seinem Passwort.",
+  "the document on disk has {pages} page(s) and the edits were made against {baseline} --- it has changed since it was opened, so reopen it before saving":
+    "Das Dokument auf dem Datenträger hat {pages} Seite(n), die Änderungen beziehen sich auf {baseline} - es hat sich seit dem Öffnen geändert, öffnen Sie es also vor dem Speichern neu",
+  "{why} --- nothing was written, so the file on disk is untouched. Your document has been closed and the edits you had made are gone.":
+    "{why} - es wurde nichts geschrieben, die Datei auf dem Datenträger ist also unverändert. Ihr Dokument wurde geschlossen, und Ihre Änderungen sind verloren.",
+  "tpdf could not tell which file {source:?} is, so it cannot promise a save would land there --- nothing was written. Use Save a copy.":
+    "tpdf konnte nicht feststellen, welche Datei {source} ist, und kann daher nicht zusichern, dass ein Speichern dort ankommt - es wurde nichts geschrieben. Nutzen Sie „Kopie speichern“.",
+  "save this document before merging it --- it holds pages inserted from another document, and a merge cannot carry those yet":
+    "Speichern Sie dieses Dokument, bevor Sie es zusammenführen - es enthält aus einem anderen Dokument eingefügte Seiten, und ein Zusammenführen kann die noch nicht mitnehmen",
+  "{label} is encrypted, and merging rewrites it --- which would silently remove that. Leave it out, or save an unencrypted copy of it first.":
+    "{label} ist verschlüsselt, und das Zusammenführen schreibt es neu - dabei ginge die Verschlüsselung stillschweigend verloren. Lassen Sie es weg oder speichern Sie zuerst eine unverschlüsselte Kopie davon.",
+  "This document is encrypted and tpdf could not unlock it, so it cannot be rewritten. Open it with its password first.":
+    "Dieses Dokument ist verschlüsselt und tpdf konnte es nicht entsperren, daher kann es nicht neu geschrieben werden. Öffnen Sie es zuerst mit seinem Passwort.",
+  "{label} is encrypted, and inserting its pages would write them without that --- save an unencrypted copy of it and insert from that instead":
+    "{label} ist verschlüsselt, und beim Einfügen seiner Seiten würden sie ohne Verschlüsselung geschrieben - speichern Sie eine unverschlüsselte Kopie davon und fügen Sie stattdessen aus dieser ein",
+  "pages {gone} and {shared} are the same page in this file, so page {again} cannot be removed on its own. Remove both, or keep both.":
+    "Die Seiten {gone} und {shared} sind in dieser Datei dieselbe Seite, daher kann Seite {again} nicht allein entfernt werden. Entfernen Sie beide oder behalten Sie beide.",
+  "pages {first} and {second} are the same page in this file, so they cannot be cropped differently. Crop them the same way, or leave both as they are.":
+    "Die Seiten {first} und {second} sind in dieser Datei dieselbe Seite und lassen sich daher nicht unterschiedlich zuschneiden. Schneiden Sie beide gleich zu oder lassen Sie beide, wie sie sind.",
+  "the comment being answered is not in this document any more: {e}":
+    "Der Kommentar, auf den Sie antworten, ist nicht mehr in diesem Dokument: {e}",
+  "the comment being edited is not in this document any more: {e}":
+    "Der Kommentar, den Sie bearbeiten, ist nicht mehr in diesem Dokument: {e}",
+  "the comment being deleted is not in this document any more: {e}":
+    "Der Kommentar, den Sie löschen, ist nicht mehr in diesem Dokument: {e}",
+  "the file on disk is not the one that was opened, so it was not signed --- reopen it to sign what is there now":
+    "Die Datei auf dem Datenträger ist nicht die, die geöffnet wurde, daher wurde nicht signiert - öffnen Sie sie neu, um zu signieren, was jetzt dort ist",
+  "the signed document is written as a new file --- choose a name other than the original's":
+    "Das signierte Dokument wird als neue Datei geschrieben - wählen Sie einen anderen Namen als den des Originals",
+  "Reopen the source before creating an image-only redaction":
+    "Öffnen Sie die Quelle neu, bevor Sie eine Schwärzung als Bild erstellen",
+  "The source changed. Reopen it and mark the regions again":
+    "Die Quelle hat sich geändert. Öffnen Sie sie neu und markieren Sie die Bereiche noch einmal",
+  "pages {first} and {second} are the same page in this file, so they cannot be turned differently. Turn them the same way, or leave both as they are.":
+    "Die Seiten {first} und {second} sind in dieser Datei dieselbe Seite und lassen sich daher nicht unterschiedlich drehen. Drehen Sie beide gleich oder lassen Sie beide, wie sie sind.",
+} satisfies Record<string, Wording>;

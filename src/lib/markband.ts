@@ -519,6 +519,9 @@ const TEXT = catalog({
     idle: "Radieren: Ziehe über eine Markierung",
     erasing: (parts: string) => `Radieren: ${parts}`,
   },
+  "de-DE-formal": {
+    idle: "Radieren: Ziehen Sie über eine Markierung",
+  },
 });
 
 /**

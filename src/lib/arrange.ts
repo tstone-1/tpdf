@@ -33,6 +33,9 @@ const TEXT = catalog({
       `${count} ausgewählt. Anordnen richtet sie aus, verteilt sie und passt ihre Größe an; die zuerst ausgewählte gibt den anderen die Richtung vor.`,
     pickAnother: "1 ausgewählt. Halte Umschalt gedrückt und klicke eine weitere an, um sie gemeinsam anzuordnen.",
   },
+  "de-DE-formal": {
+    pickAnother: "1 ausgewählt. Halten Sie Umschalt gedrückt und klicken Sie eine weitere an, um sie gemeinsam anzuordnen.",
+  },
 });
 
 /** Every arrangement there is a command for. */

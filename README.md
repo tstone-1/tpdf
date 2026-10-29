@@ -111,6 +111,11 @@ under an annotation, in the background's colour or outside the page.
 
 The letter in the picture is [a made-up sample](site/sample-redacted.pdf) for trying this.
 
+**Search a scanned page.** When a search finds nothing on a scan, *Recognize this page* in
+the find bar reads the page with the system's text recognition, and the search finds the
+words. Recognition is local and temporary: the PDF stays unchanged. Try it on
+[a made-up scanned invoice](site/sample-scan.pdf) by searching for `INV-2026-0417`.
+
 **Sign and check signatures.** Sign with a certificate from the macOS keychain or the
 Windows certificate store: your signature image is drawn on the page, a timestamp
 authority confirms the time, and the signature locks the document, so that a program
@@ -377,11 +382,12 @@ project conventions.
   macOS the command sets it and says so; Windows lets only you choose, so there it opens
   Settings at Default apps.
   <!-- built: app.makeDefaultPdfApp -->
-- **The window speaks English or German**, following the system language. **Language:
-  Deutsch**, **Language: English (US)**, **Language: English (UK)** and **Language: follow the
-  system** choose one, from the next start. The command-line tool and its JSON reports stay
-  English.
-  <!-- built: app.language.system app.language.en-US app.language.en-GB app.language.de-DE -->
+- **The window speaks English or German**, following the system language. German comes in
+  two forms of address: **Language: Deutsch (Du)**, which a German system gets, and
+  **Language: Deutsch (Sie)**. Those two, **Language: English (US)**, **Language: English
+  (UK)** and **Language: follow the system** choose one, from the next start. The command-line
+  tool and its JSON reports stay English.
+  <!-- built: app.language.system app.language.en-US app.language.en-GB app.language.de-DE app.language.de-DE-formal -->
 - **Show PDFs in Explorer with tpdf**, on Windows: Explorer shows the first page of each PDF
   as its thumbnail, and the preview pane shows the document a page at a time (Page Down,
   Page Up and the mouse wheel turn pages). Off until you turn it on; the installer registers

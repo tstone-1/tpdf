@@ -330,4 +330,8 @@ const TEXT = catalog({
     manyMatch: (count: number) => `${count} geöffnete Dokumente passen. Gib mehr vom Namen ein`,
     andMore: (shown: string, more: number) => `${shown} und ${more} weitere`,
   },
+  "de-DE-formal": {
+    typeName: "Geben Sie einen Teil des Dokumentnamens ein",
+    manyMatch: (count: number) => `${count} geöffnete Dokumente passen. Geben Sie mehr vom Namen ein`,
+  },
 });

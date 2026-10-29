@@ -72,6 +72,9 @@ const TEXT = catalog({
     closeComment: "Kommentar schließen",
     unknown: "Unbekannt",
   },
+  "de-DE-formal": {
+    yourReply: "Ihre Antwort",
+  },
 });
 
 export { POPUP_WIDTH, type Anchor };

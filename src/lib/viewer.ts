@@ -217,6 +217,10 @@ const TEXT = catalog({
     notCopied: "Der Text einiger ausgewählter Seiten konnte nicht gelesen werden, daher wurde nichts kopiert.",
     clipboard: (error: string) => `Konnte nicht in die Zwischenablage schreiben: ${error}`,
   },
+  "de-DE-formal": {
+    nothingMarked: "Sie haben in diesem Dokument nichts markiert.",
+    pageChanged: "Die Seite hat sich während der Texterkennung geändert. Versuchen Sie es erneut.",
+  },
 });
 
 /** What a drag extends the selection by. */

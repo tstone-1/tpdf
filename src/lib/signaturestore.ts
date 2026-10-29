@@ -20,6 +20,10 @@ const TEXT = catalog({
     damaged: "Die geschützte Unterschrift ist beschädigt.",
     invalid: "Die Pixel der Unterschrift sind ungültig.",
   },
+  "de-DE-formal": {
+    oldDamaged: "Die alte gespeicherte Unterschrift ist beschädigt. Entfernen Sie sie mit „Gespeicherte Unterschrift entfernen“.",
+    differ: "Die alte und die geschützte gespeicherte Unterschrift unterscheiden sich. Wählen Sie „Gespeicherte Unterschrift entfernen“, bevor Sie eine neue speichern.",
+  },
 });
 
 type Action = { kind: "load" } | { kind: "save"; image: SignatureImage } | { kind: "forget" };
