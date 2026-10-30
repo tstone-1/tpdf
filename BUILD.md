@@ -2418,6 +2418,12 @@ starts at 0 and increments within the month.
     `PackageVersion`, `InstallerUrl`, `InstallerSha256` (of the `-setup.exe`) and
     `ReleaseNotesUrl` changed, on a branch of the fork `tstone-1/winget-pkgs`, titled
     `Update: tstone-1.tpdf to <version>`. Run `winget validate --manifest <folder>` first.
+    A copied manifest also keeps its old `ManifestVersion`, and the repository retires old
+    ones: on 2026-10-30 a moderator's automation set `Manifest-Version-Deprecated` and
+    `Needs-Author-Feedback` on 1.12.0, after every validation check had passed, and asked for
+    1.28.0. Before each submission, compare it with the newest folder under
+    `schemas/JSON/manifests` in `microsoft/winget-cli`, and change it in all three files,
+    in both the `ManifestVersion` line and the `$schema` comment on line 1.
     The fork is a copy of a very large repository, and on 2026-10-28 every git fetch from it
     (a sparse, blobless clone included) was refused with HTTP 429 (*gitmon refuses to schedule
     us*). The REST API still answered, with retries: read the three files through `contents`
