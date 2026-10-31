@@ -567,6 +567,17 @@ jobs:
           workers run under Landlock and seccomp. The Linux packages (deb
           and AppImage) do not update themselves: install the new one.
 
+          **New in 26.10.28.** A hardening release from a security review.
+          `tpdf verify --strict` fails more forged changes appended after a
+          signature, and a revocation can no longer be hidden by a look-alike
+          certificate added to the signature. A timestamp from an authority
+          this computer does not trust is no longer written into a signature:
+          `sign --timestamp` exits 3 and writes nothing unless
+          `--allow-untrusted-timestamp` is given, and on Windows that includes
+          a real authority whose root this machine has not fetched yet.
+          Scripts should expect more exit codes of 1 and 3, and `--help` beside
+          other words now exits 2. German comes in two forms of address.
+
           **New in 26.10.27.** The window is available in German, following
           the system language or the new Language setting; the command-line
           tool stays English. The window uses American spelling unless the

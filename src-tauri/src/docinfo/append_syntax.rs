@@ -589,32 +589,41 @@ mod tests {
     #[test]
     fn what_two_parsers_could_read_differently_is_not_plain() {
         let digits = "1".repeat(300);
-        // Numbers that parse whatever their length, so only the length refuses them.
-        let zeros = format!("{}1", "0".repeat(299));
-        let zeros_start = format!("startxref\n{zeros}\n%%EOF\n");
-        let zeros_prev = format!("xref\n0 0\ntrailer\n<</Prev {zeros}>>\nstartxref\n1\n%%EOF\n");
+        // Numbers that parse whatever their length, and name the table at 0 once they
+        // have, so only the length refuses them.
+        let zeros = "0".repeat(300);
+        let zeros_start = [TAIL, format!("startxref\n{zeros}\n%%EOF\n").as_bytes()].concat();
+        let zeros_prev = [
+            TAIL,
+            format!(
+                "xref\n0 0\ntrailer\n<</Prev {zeros}>>\nstartxref\n{}\n%%EOF\n",
+                TAIL.len()
+            )
+            .as_bytes(),
+        ]
+        .concat();
         let long_start = format!("startxref\n{digits}\n%%EOF\n");
-        let long_prev = format!("xref\n0 0\ntrailer\n<</Prev {digits}>>\nstartxref\n1\n%%EOF\n");
+        let long_prev = format!("xref\n0 0\ntrailer\n<</Prev {digits}>>\nstartxref\n0\n%%EOF\n");
         for (case, append) in [
-            ("a long startxref of zeros", zeros_start.into_bytes()),
-            ("a long /Prev of zeros", zeros_prev.into_bytes()),
+            ("a long startxref of zeros", zeros_start),
+            ("a long /Prev of zeros", zeros_prev),
             ("a stream that closes as an object", revision(b"5 0 obj <</Length 0>> stream\nendobj")),
             ("a last startxref with no %%EOF", [TAIL, b"startxref\n1\n"].concat()),
             ("a startxref that names no section", b"xref\n0 0\ntrailer\n<<>>\nstartxref\n3\n%%EOF\n".to_vec()),
             ("a word that holds startxref", b"xstartxref\n1\n%%EOF\n".to_vec()),
             ("a long startxref", long_start.into_bytes()),
             ("a long /Prev", long_prev.into_bytes()),
-            ("a key with a byte past ASCII", b"xref\n0 0\ntrailer\n<</Prev 1/Prev\x80 2>>\nstartxref\n1\n%%EOF\n".to_vec()),
-            ("a key given twice", b"xref\n0 0\ntrailer\n<</Prev 1/Prev 2>>\nstartxref\n1\n%%EOF\n".to_vec()),
-            ("a short table entry", b"xref\n5 1\n000000010 00000 n \ntrailer\n<<>>\nstartxref\n1\n%%EOF\n".to_vec()),
-            ("a generation past 65535", b"xref\n5 1\n0000000010 70000 n \ntrailer\n<<>>\nstartxref\n1\n%%EOF\n".to_vec()),
+            ("a key with a byte past ASCII", b"xref\n0 0\ntrailer\n<</A 1/A\x80 2>>\nstartxref\n0\n%%EOF\n".to_vec()),
+            ("a key given twice", b"xref\n0 0\ntrailer\n<</A 1/A 2>>\nstartxref\n0\n%%EOF\n".to_vec()),
+            ("a short table entry", b"xref\n5 1\n000000010 00000 f \ntrailer\n<<>>\nstartxref\n0\n%%EOF\n".to_vec()),
+            ("a generation past 65535", b"xref\n5 1\n0000000010 70000 f \ntrailer\n<<>>\nstartxref\n0\n%%EOF\n".to_vec()),
             ("an object's generation past 65535", revision(b"5 70000 obj null endobj")),
-            ("a comment in a table", b"xref\n%x\n5 1\n0000000010 00000 n \ntrailer\n<<>>\nstartxref\n1\n%%EOF\n".to_vec()),
+            ("a comment in a table", b"xref\n%x\n5 1\n0000000010 00000 f \ntrailer\n<<>>\nstartxref\n0\n%%EOF\n".to_vec()),
             ("a comment after the last revision", [TAIL, b"%startxref 9\n%%EOF\n"].concat()),
-            ("a comment before a table", b"%iText\nxref\n0 0\ntrailer\n<<>>\nstartxref\n1\n%%EOF\n".to_vec()),
+            ("a comment before a table", b"%iText\nxref\n0 0\ntrailer\n<<>>\nstartxref\n7\n%%EOF\n".to_vec()),
             ("a comment at the end", [TAIL, b"%iText\n"].concat()),
-            ("a marker naming a section", b"%xref 5\nstartxref\n1\n%%EOF\n".to_vec()),
-            ("a marker past ASCII", b"%\xff\nstartxref\n1\n%%EOF\n".to_vec()),
+            ("a marker naming a section", [TAIL, b"%xref 5\nstartxref\n0\n%%EOF\n"].concat()),
+            ("a marker past ASCII", [TAIL, b"%\xff\nstartxref\n0\n%%EOF\n"].concat()),
             ("a string ending in a backslash", revision(b"5 0 obj (a\\")),
             ("a comment in a value", revision(b"5 0 obj %x\n null endobj")),
             ("a length short of endstream", revision(b"5 0 obj <</Length 0>> stream\n0 0 9 9 re f\nendstream endobj")),

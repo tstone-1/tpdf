@@ -604,6 +604,26 @@ mod authority_tests {
         );
         assert_eq!(trust, trusted());
         assert_eq!(chain.len(), 2);
+
+        // Sound at its last moment and out of date now: what the reader follows, and
+        // not what long-term signing may fetch from.
+        let (found, vouched) = of_blob_vouching(
+            &token(&tsa),
+            &[],
+            Purpose::Timestamping,
+            crate::integrity::test_tsa::UNTIL + DAY,
+            Anchors::Only(roots),
+        );
+        assert_eq!(found.standing, Standing::Expired);
+        assert_eq!(vouched.len(), 2);
+        let (trust, chain) = of_blob_with_chain(
+            &token(&tsa),
+            Purpose::Timestamping,
+            crate::integrity::test_tsa::UNTIL + DAY,
+            Anchors::Only(roots),
+        );
+        assert_eq!(trust.standing, Standing::Expired);
+        assert!(chain.is_empty(), "{chain:?}");
     }
 }
 

@@ -2620,7 +2620,7 @@ SOFTWARE.
 
 ## Rust crates
 
-530 crates are linked into the application binary. Build- and dev-dependencies are excluded: they run at compile time and are not distributed.
+534 crates are linked into the application binary. Build- and dev-dependencies are excluded: they run at compile time and are not distributed.
 
 | Crate | Version | Licence |
 |---|---|---|
@@ -2710,7 +2710,7 @@ SOFTWARE.
 | cssparser | 0.37.0 | MPL-2.0 |
 | cssparser-macros | 0.7.1 | MPL-2.0 |
 | ctor | 1.0.13 | Apache-2.0 OR MIT |
-| ctutils | 0.4.6 | Apache-2.0 OR MIT |
+| ctutils | 0.4.7 | Apache-2.0 OR MIT |
 | darling | 0.24.1 | MIT |
 | darling_core | 0.24.1 | MIT |
 | darling_macro | 0.24.1 | MIT |
@@ -2744,7 +2744,7 @@ SOFTWARE.
 | either | 1.19.0 | MIT OR Apache-2.0 |
 | elliptic-curve | 0.14.3 | Apache-2.0 OR MIT |
 | embed_plist | 1.2.2 | MIT OR Apache-2.0 |
-| encoding_rs | 0.8.42 | (Apache-2.0 OR MIT) AND BSD-3-Clause |
+| encoding_rs | 0.8.44 | (Apache-2.0 OR MIT) AND BSD-3-Clause |
 | endi | 1.1.1 | MIT |
 | enumflags2 | 0.7.12 | MIT OR Apache-2.0 |
 | enumflags2_derive | 0.7.12 | MIT OR Apache-2.0 |
@@ -2858,7 +2858,7 @@ SOFTWARE.
 | linux-raw-sys | 0.12.1 | Apache-2.0 WITH LLVM-exception OR Apache-2.0 OR MIT |
 | litemap | 0.8.3 | Unicode-3.0 |
 | lock_api | 0.4.14 | MIT OR Apache-2.0 |
-| log | 0.4.34 | MIT OR Apache-2.0 |
+| log | 0.4.35 | MIT OR Apache-2.0 |
 | lopdf | 0.46.0 | MIT |
 | markup5ever | 0.39.0 | MIT OR Apache-2.0 |
 | maybe-owned | 0.3.4 | MIT OR Apache-2.0 |
@@ -3087,13 +3087,14 @@ SOFTWARE.
 | unicode-bidi | 0.3.18 | MIT OR Apache-2.0 |
 | unicode-ident | 1.0.27 | (MIT OR Apache-2.0) AND Unicode-3.0 |
 | unicode-normalization | 0.1.26 | (MIT OR Apache-2.0) AND Unicode-3.0 |
-| unicode-properties | 0.1.4 | MIT/Apache-2.0 |
+| unicode-properties | 0.1.5 | (MIT OR Apache-2.0) AND Unicode-3.0 |
 | unicode-segmentation | 1.13.3 | MIT OR Apache-2.0 |
 | untrusted | 0.9.0 | ISC |
 | url | 2.5.8 | MIT OR Apache-2.0 |
 | urlpattern | 0.6.0 | MIT |
 | utf16string | 0.2.0 | MIT OR Apache-2.0 |
-| utf8_iter | 1.0.4 | Apache-2.0 OR MIT |
+| utf8_iter | 1.1.0 | Apache-2.0 OR MIT |
+| utf_types | 1.0.0 | Apache-2.0 OR MIT |
 | uuid | 1.29.0 | Apache-2.0 OR MIT |
 | vecmath | 1.0.0 | MIT |
 | walkdir | 2.5.0 | Unlicense/MIT |
@@ -3119,9 +3120,12 @@ SOFTWARE.
 | windows-registry | 0.6.1 | MIT OR Apache-2.0 |
 | windows-result | 0.4.1 | MIT OR Apache-2.0 |
 | windows-strings | 0.5.1 | MIT OR Apache-2.0 |
+| windows-sys | 0.52.0 | MIT OR Apache-2.0 |
 | windows-sys | 0.61.2 | MIT OR Apache-2.0 |
+| windows-targets | 0.52.6 | MIT OR Apache-2.0 |
 | windows-threading | 0.2.1 | MIT OR Apache-2.0 |
 | windows-version | 0.1.7 | MIT OR Apache-2.0 |
+| windows_x86_64_msvc | 0.52.6 | MIT OR Apache-2.0 |
 | winnow | 0.5.40 | MIT |
 | winnow | 1.0.4 | MIT |
 | wnaf | 0.14.1 | Apache-2.0 OR MIT |
@@ -3137,7 +3141,7 @@ SOFTWARE.
 | zbus | 5.19.0 | MIT |
 | zbus_macros | 5.19.0 | MIT |
 | zbus_names | 4.3.5 | MIT |
-| zcheapstr | 1.1.0 | MIT |
+| zcheapstr | 1.2.0 | MIT |
 | zerocopy | 0.8.63 | BSD-2-Clause OR Apache-2.0 OR MIT |
 | zerofrom | 0.1.8 | Unicode-3.0 |
 | zerofrom-derive | 0.1.8 | Unicode-3.0 |
@@ -3427,6 +3431,7 @@ MIT and the BSD family require the copyright notice itself to be reproduced, whi
 - Copyright notices are retained in src/* files where relevant.
 - Copyright {yyyy} {name of copyright owner}
 - Copyright © 1991-2023 Unicode, Inc.
+- Copyright © 1991-2026 Unicode, Inc.
 - Copyright © 1993,2004 Sun Microsystems or
 - Copyright © 2003-2009 Bruce D. Evans or
 - Copyright © 2003-2009 Steven G. Kargl or

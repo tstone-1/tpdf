@@ -634,14 +634,6 @@ ROWS += [
         "a_signature_replaced_after_signing_is_a_rewritten_page",
     ),
     Mutation(
-        # A text field answered after signing is a form answer changed.
-        "appendix: take any field filled for a signature place",
-        "src/docinfo.rs",
-        "            || !is_signature_field(self.signed, was)\n",
-        "",
-        "a_prepared_text_field_answered_after_signing_is_a_rewritten_page",
-    ),
-    Mutation(
         "appendix: take any annotation for a signature's widget",
         "src/docinfo.rs",
         "        if !is_widget(self.signed, was)\n"
@@ -686,7 +678,7 @@ ROWS += [
         "src/docinfo.rs",
         "        (!self.signed.objects.contains_key(&signature)\n",
         "        (true\n",
-        "an_unsigned_signature_field_with_an_appearance_after_signing_is_a_rewritten_page",
+        "a_prepared_signature_field_given_something_else_is_a_rewritten_page",
     ),
     Mutation(
         "appendix: follow nothing else from a page with a signed place",

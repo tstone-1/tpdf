@@ -4293,6 +4293,19 @@ mod tests {
         assert_eq!(broken.added, 0, "and it claims nothing about what changed");
         assert_eq!(broken.replaced, 0);
         assert!(broken.kinds.is_empty());
+
+        // Cut where what follows still reads plainly: just before the signed
+        // revision's own `startxref`, which is then the prefix's to lack. A cut in
+        // the middle of the body is refused for what follows it, so only this one
+        // reaches the parse of the prefix.
+        let last = bytes[..real_end]
+            .windows(9)
+            .rposition(|word| word == b"startxref")
+            .expect("the signed revision's startxref");
+        assert!(
+            read_appendix(&bytes, last, None).unread,
+            "a prefix with no startxref is not an empty append"
+        );
     }
 
     /// The bounds a reader's own document sets: nothing before the file, nothing
