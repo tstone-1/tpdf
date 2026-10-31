@@ -1402,8 +1402,12 @@ the page as it is displayed:
   does on opening (`/OpenAction`, `/AA`) or to the scripts or files in `/Names` touches every page. Validation data and an archive timestamp are not such a change.
   **`--strict` is not proof that a signed page looks as it did.** It compares how `lopdf` reads
   the file before and after the append, and PDFium, which draws the page, can read a crafted
-  file differently. Treat a pass as a check for honest appends and ordinary mistakes. To rule
-  out a forgery, cut a copy of the file where the signature's range ends and `compare` the two. Without
+  file differently. Treat a pass as a check for honest appends and ordinary mistakes. For a document
+  that matters, read what the signature covers: keep the file's first bytes up to its size less the
+  signature's `appended_bytes`, and read that copy. To see whether the current file shows
+  the same, `render` each page of both and compare the images; `compare` alone will not do, because it
+  compares only the words, so a changed picture or moved text reads as no difference. Different images
+  are expected where a later signature draws on the page. Without
   `--json`, `verify` prints a line beginning *After the last signature:* under such a
   document. Under every signature that something was appended after, it prints the properties
   dialog's *Appended* row: what arrived, and what it did to pages. `--json` carries the same

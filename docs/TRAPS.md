@@ -887,6 +887,7 @@ hop through the index.
 - A test that skips on an absent fixture passes on every machine where nobody wrote it
 
 ## Documents as controls
+- A remedy written into a warning is a claim about another command, and nobody checked it
 - A mitigation present and disclaimed is quieter than one claimed and absent
 - A mitigation that moved half a path reads exactly like one that moved the path
 - A checklist step nothing can perform, and a comment promising a mechanism that does not exist
@@ -27125,3 +27126,14 @@ was the page the action names, gaining a signature widget. With the walk stopped
 walking references from the entry and asking whether anything changed reads a widget added to the
 page as a changed action, which is why `catalog_redraws` stops at a page in the tree and not at a
 `/Type /Page` the attacker can write on any object.
+
+### A remedy written into a warning is a claim about another command, and nobody checked it
+
+The README's warning that `--strict` is not proof ended by telling the reader to cut the file where
+the signature's range ends and run `compare` on the two, "to rule out a forgery". `compare` reads
+words only, and says so at the top of `compare.rs` and on every run, so a changed picture or moved
+text passed the check the sentence recommended. That shipped in 26.10.28 and an outside reading
+found it, not a gate: no check reads what a warning recommends. The replacement was measured before
+it was written (2026-10-31): `render` of the whole file against the cut copy differed on three forged
+appends and matched byte for byte on an honest one. Run what a warning recommends, against the case
+the warning is about.
