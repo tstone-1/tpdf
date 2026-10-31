@@ -1290,10 +1290,12 @@ from start to end in a plain form (`docinfo/append_syntax.rs`), or it reads as u
 stray bytes, long numbers, name bytes past ASCII, a key given twice, a table entry of the wrong size,
 comments but a producer's marker before `startxref`, and a stream length that misses `endstream`. Over
 the 153 appendices in the public DSS project's `dss-pades` validation PDFs it changes no reading,
-though 23 of them were already unread. **Still open** is an append in that plain form whose `/Prev`
-and table entries say something else than its bytes: a prototype requiring them to agree accepted
-only 106 of 156 appends, refusing honest producers' files such as a `startxref` one byte before its
-`xref`. A page counts as touched
+though 23 of them were already unread. An entry in use in a table has to name the object at its
+offset, since `lopdf` keys an object by its own header and PDFium by the table, and a new `/Pages` in
+the catalog touches every page, since the two walk a page tree differently. **Still open** are
+entries in a cross-reference stream, and a `/Prev` that names something other than the section before
+it: a prototype requiring that whole chain to agree accepted only 106 of 156 appends, refusing honest
+producers' files such as a `startxref` one byte before its `xref`. A page counts as touched
 when its object or anything it draws from was added or replaced; until that date only `/Page`
 objects were counted, so a replaced content stream read as no page. Since 2026-10-31 a change to
 `/OCProperties` or to `/AcroForm /NeedAppearances` touches every page, since each redraws a page no

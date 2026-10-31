@@ -21,9 +21,10 @@
 //! way round (`lopdf` applies the parameters, PDFium does not).
 //!
 //! **What it costs and what it leaves.** Over the 153 appendices in the public DSS
-//! validation files it changes no reading. It reads syntax, and does not ask that
-//! `/Prev` and each table entry agree with the bytes: a prototype of that accepted
-//! only 106 of 156 appends, so such aliasing stays open (`docs/THREAT-MODEL.md`).
+//! validation files it changes no reading. It asks a table's entries what they
+//! name, and not a cross-reference stream's, and does not follow `/Prev`: a prototype
+//! requiring the whole chain to agree accepted only 106 of 156 appends, so those stay
+//! open (`docs/THREAT-MODEL.md`).
 
 use std::collections::BTreeMap;
 
@@ -188,13 +189,13 @@ impl<L: Fn(ObjectId) -> Option<i64>> Reader<'_, L> {
             if self.word(b"trailer") {
                 break;
             }
-            self.digits(10)?;
+            let first = self.digits(10)?;
             self.white();
-            for _ in 0..self.digits(10)? {
+            for number in 0..self.digits(10)? {
                 // The line's end is left to the entry; a count on a line of its
                 // own has white space before the first.
                 self.white();
-                self.entry()?;
+                self.entry(first.checked_add(number)?)?;
             }
         }
         self.white();
@@ -203,19 +204,55 @@ impl<L: Fn(ObjectId) -> Option<i64>> Reader<'_, L> {
 
     /// `nnnnnnnnnn ggggg n` and its two-byte line end: 20 bytes, as PDF 32000-1
     /// 7.5.4 has it.
-    fn entry(&mut self) -> Option<()> {
+    ///
+    /// **An entry in use has to name the object at its offset.** `lopdf` keys an
+    /// object by the number in its own header and PDFium by the table's, so an entry
+    /// for an unused 999 at the offset of the signed `7 0 obj` has `lopdf` read the
+    /// signed 7 while PDFium draws the 7 this append wrote.
+    fn entry(&mut self, number: u64) -> Option<()> {
         let entry = self.bytes.get(self.at..self.at + 20)?;
         let digits = |range: std::ops::Range<usize>| entry[range].iter().all(u8::is_ascii_digit);
         let generation: u32 = std::str::from_utf8(&entry[11..16]).ok()?.parse().ok()?;
+        let offset: usize = std::str::from_utf8(&entry[0..10]).ok()?.parse().ok()?;
+        let in_use = entry[17] == b'n';
         (digits(0..10)
             && entry[10] == b' '
             && digits(11..16)
             && generation <= MAX_GENERATION
             && entry[16] == b' '
-            && matches!(entry[17], b'n' | b'f')
+            && (in_use || entry[17] == b'f')
             && is_white(entry[18])
-            && is_white(entry[19]))
+            && is_white(entry[19])
+            && (!in_use || self.names_object(offset, number)))
         .then(|| self.at += 20)
+    }
+
+    /// Whether `n g obj` with this `number` stands at `offset`, counted from the
+    /// file's first byte or from a `%PDF-` with bytes before it, as PDFium counts.
+    fn names_object(&self, offset: usize, number: u64) -> bool {
+        let header = self
+            .bytes
+            .windows(5)
+            .take(1024)
+            .position(|at| at == b"%PDF-")
+            .unwrap_or(0);
+        [offset, offset.saturating_add(header)]
+            .into_iter()
+            .filter(|offset| *offset < self.bytes.len())
+            .any(|offset| {
+                let mut there = Reader {
+                    bytes: self.bytes,
+                    at: offset,
+                    length: |_| None,
+                };
+                there.white();
+                let named = there.digits(10);
+                there.white();
+                there.digits(5).is_some() && {
+                    there.white();
+                    named == Some(number) && there.word(b"obj")
+                }
+            })
     }
 
     /// `n g obj`, a value, a stream if there is one, `endobj`.
@@ -434,7 +471,7 @@ mod tests {
     }
 
     const TAIL: &[u8] =
-        b"xref\n5 1\n0000000010 00000 n \ntrailer\n<</Size 6/Prev 9>>\nstartxref\n100\n%%EOF\n";
+        b"xref\n5 1\n0000000010 00000 f \ntrailer\n<</Size 6/Prev 9>>\nstartxref\n100\n%%EOF\n";
 
     fn revision(object: &[u8]) -> Vec<u8> {
         [object, b"\n", TAIL].concat()
@@ -474,6 +511,7 @@ mod tests {
             ("a long startxref of zeros", zeros_start.into_bytes()),
             ("a long /Prev of zeros", zeros_prev.into_bytes()),
             ("a stream that closes as an object", revision(b"5 0 obj <</Length 0>> stream\nendobj")),
+            ("a last startxref with no %%EOF", [TAIL, b"startxref\n1\n"].concat()),
             ("a word that holds startxref", b"xstartxref\n1\n%%EOF\n".to_vec()),
             ("a long startxref", long_start.into_bytes()),
             ("a long /Prev", long_prev.into_bytes()),
@@ -519,5 +557,39 @@ mod tests {
         let bytes = [b"junk".as_slice(), TAIL].concat();
         assert!(!reads_plainly(&bytes, 0, |_| None));
         assert!(reads_plainly(&bytes, 4, |_| None));
+    }
+
+    /// An entry for an unused number at the offset of another object: `lopdf` reads
+    /// the signed 7 for it, while PDFium draws the 7 the table's own entry names.
+    #[test]
+    fn a_table_entry_has_to_name_the_object_at_its_offset() {
+        let signed = b"%PDF-1.7\n7 0 obj\nnull\nendobj\n";
+        let at = |entries: &str| {
+            let tail = format!("xref\n{entries}trailer\n<<>>\nstartxref\n1\n%%EOF\n");
+            let bytes = [signed.as_slice(), tail.as_bytes()].concat();
+            reads_plainly(&bytes, signed.len(), |_| None)
+        };
+        assert!(at("7 1\n0000000009 00000 n \n"), "its own offset");
+        assert!(
+            at("7 1\n0000000008 00000 n \n"),
+            "one byte short, as honest files are"
+        );
+        assert!(
+            !at("999 1\n0000000009 00000 n \n"),
+            "another object's offset"
+        );
+        assert!(
+            !at("7 1\n0000000012 00000 n \n"),
+            "the middle of the object"
+        );
+        assert!(!at("7 1\n0009999999 00000 n \n"), "past the end");
+        // Bytes before `%PDF-`, and offsets counted from it.
+        let moved = b"xxx%PDF-1.7\n7 0 obj\nnull\nendobj\n";
+        let tail = b"xref\n7 1\n0000000009 00000 n \ntrailer\n<<>>\nstartxref\n1\n%%EOF\n";
+        let bytes = [moved.as_slice(), tail.as_slice()].concat();
+        assert!(
+            reads_plainly(&bytes, moved.len(), |_| None),
+            "after a prefix"
+        );
     }
 }

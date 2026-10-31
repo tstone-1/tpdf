@@ -3389,11 +3389,11 @@ fn blank_content(content: &[u8]) -> bool {
         })
 }
 
-/// Whether the append changed one of the two things in the catalog that redraw a
-/// page with no page referring to them: `/OCProperties`, which turns a layer off,
-/// and `/AcroForm /NeedAppearances`, which has a reader draw the form's fields anew.
+/// Whether the append changed one of the things in the catalog that redraw a page
+/// with no page referring to them: `/Pages`, `/OCProperties`, which turns a layer
+/// off, and `/AcroForm /NeedAppearances`, which has a reader draw the fields anew.
 ///
-/// **These two by name, and not every entry but a list of harmless ones.** That
+/// **These by name, and not every entry but a list of harmless ones.** That
 /// was tried and failed 22 of the 134 public DSS validation files: honest signers
 /// change `/DR`, `/DA`, `/StructTreeRoot`, `/OutputIntents` and `/OpenAction`.
 /// Fails closed on a catalog it cannot find in one parse and not the other.
@@ -3405,6 +3405,13 @@ fn catalog_redraws(
     let (Ok(before), Ok(after)) = (signed.catalog(), whole.catalog()) else {
         return true;
     };
+    // Another root for the page tree. `lopdf` walks only kids with a `/Type` and PDFium
+    // takes any kid without `/Kids` for a page, so a new root can show a forged page
+    // first while the walk finds the old pages unchanged. No signer writes one.
+    match (before.get(b"Pages"), after.get(b"Pages")) {
+        (Ok(a), Ok(b)) if same_object(a, b) => {}
+        _ => return true,
+    }
     let redraws_form = |document: &Document, catalog: &Dictionary| {
         catalog
             .get(b"AcroForm")

@@ -2095,6 +2095,19 @@ fn a_catalog_change_that_can_redraw_a_page_touches_every_page() {
         assert_eq!(appendix.pages_touched, 2, "{case}: {appendix:?}");
         assert_eq!(strict(appendix), After::Pages(2), "{case}");
     }
+    // Another root for the page tree, with the old one under it.
+    let appendix = edited(|new, root| {
+        let tree = root
+            .get(b"Pages")
+            .and_then(Object::as_reference)
+            .expect("the tree");
+        let forged = new.add_object(dictionary! { "Type" => "Template", "Contents" => tree });
+        let top = new.add_object(dictionary! {
+            "Type" => "Pages", "Count" => 1, "Kids" => vec![forged.into(), tree.into()],
+        });
+        root.set("Pages", top);
+    });
+    assert_eq!(appendix.pages_touched, 2, "another page tree: {appendix:?}");
     // The control: what a validator writes.
     let appendix = edited(|new, root| {
         let dss = new.add_object(dictionary! {});

@@ -196,6 +196,27 @@ ROWS += [
         "what_two_parsers_could_read_differently_is_not_plain",
     ),
     Mutation(
+        "append syntax: take a table entry naming another object",
+        "src/docinfo/append_syntax.rs",
+        "            && (!in_use || self.names_object(offset, number)))",
+        "            && (!in_use || self.names_object(offset, number) || true))",
+        "a_table_entry_has_to_name_the_object_at_its_offset",
+    ),
+    Mutation(
+        "append syntax: read a table's offset past the end of the file",
+        "src/docinfo/append_syntax.rs",
+        "            .filter(|offset| *offset < self.bytes.len())\n",
+        "",
+        "a_table_entry_has_to_name_the_object_at_its_offset",
+    ),
+    Mutation(
+        "appendix: let another page tree root through",
+        "src/docinfo.rs",
+        "        (Ok(a), Ok(b)) if same_object(a, b) => {}\n",
+        "        (Ok(_), Ok(_)) => {}\n",
+        "a_catalog_change_that_can_redraw_a_page_touches_every_page",
+    ),
+    Mutation(
         "worker: take the marker anywhere on the command line",
         "src/worker.rs",
         "    args.get(1).map(String::as_str) == Some(WORKER_ARGV)",
