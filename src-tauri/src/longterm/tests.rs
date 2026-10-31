@@ -1934,3 +1934,35 @@ fn strict_fails_a_signature_followed_by_a_rewritten_page() {
         );
     }
 }
+
+/// The first token vouched for and the second not: somebody on the path answering
+/// the second request over `http://`. Sealed, it would read intact and attest nothing.
+#[test]
+fn an_archive_timestamp_from_an_authority_nobody_trusts_is_not_sealed() {
+    let pki = Pki::start(good());
+    let signed = sealed(&pki);
+    let asked = std::cell::Cell::new(0);
+    let vouch = |token: &[u8], at: u64| {
+        asked.set(asked.get() + 1);
+        if asked.get() == 1 {
+            anchored(token, at)
+        } else {
+            stranger(token, at)
+        }
+    };
+    let why = extend(
+        &signed.bytes,
+        &signed.cms,
+        &signed.field,
+        now(),
+        &crate::save::Here,
+        &no_os_chain,
+        &vouch,
+        &mut quick,
+        &mut archive,
+    )
+    .expect_err("an authority nobody vouched for");
+    assert!(matches!(why, Refusal::Archive(_)), "{why:?}");
+    assert!(why.sentence().contains("not trusted"), "{why:?}");
+    assert_eq!(asked.get(), 2, "asked of each token");
+}

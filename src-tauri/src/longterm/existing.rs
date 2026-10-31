@@ -854,10 +854,7 @@ pub fn add(
         let token = archive(pieces)?;
         match vouched_chain(&token, Purpose::Timestamping, "the authority's", now, vouch) {
             Ok(_) => Ok(token),
-            Err((name, why)) => Err(said!(
-                "the timestamp authority {name} is not trusted by this computer, so its \
-                 timestamp would not keep the document checkable here: {why}"
-            )),
+            Err((name, why)) => Err(super::untrusted_archive(&name, &why)),
         }
     })
     .map_err(whole)?;

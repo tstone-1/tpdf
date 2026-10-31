@@ -1521,6 +1521,7 @@ mod tests {
                 "validation data appended (not written)",
                 "archive timestamp prepared (not written)",
                 "archive timestamp (not written)",
+                "authority vouched for (not written)",
                 "read back (written)",
             ]
         );

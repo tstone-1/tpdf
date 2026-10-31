@@ -406,7 +406,7 @@ impl OcrWorker {
             .stdout(Stdio::piped())
             // Inherited, as the parser worker's is: a sandbox denial or a fatal
             // signal has to be visible somewhere.
-            .stderr(Stdio::inherit());
+            .stderr(crate::worker_handover::worker_stderr());
         // Tesseract's OpenMP would start a thread per core for each reading;
         // one is enough for a strip of a page, and it keeps the worker at the
         // single thread `sandbox_linux::apply` requires at the boundary.
@@ -422,6 +422,7 @@ impl OcrWorker {
             command.pre_exec(move || crate::worker_handover::remap_fds(&[(fd, PIXELS_FD)]));
         }
         let mut child = command.spawn().map_err(|e| said!("spawn failed: {e}"))?;
+        crate::worker_handover::relay_stderr(&mut child);
         let stdin = child.stdin.take().ok_or("the OCR worker has no stdin")?;
         let stdout = child.stdout.take().ok_or("the OCR worker has no stdout")?;
         let replies = reply_thread(stdout);

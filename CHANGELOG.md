@@ -53,6 +53,11 @@ have the binary.)
   read as `verify`'s own.
 - Forward search no longer opens a path named in a `.synctex` file to compare it. On Windows that
   could connect to a host the file chose, and send the reader's credentials to it.
+- Long-term signing refuses an archive timestamp from an authority this computer does not trust,
+  which somebody on the path could answer with over `http://`. It used to be sealed and attest
+  nothing.
+- A sandboxed worker on macOS or Linux no longer holds the terminal when stderr is one: it gets a
+  pipe, and what it says is printed with anything a terminal acts on replaced.
 - `--render-worker` means a worker only directly after the program's name.
 - `--help` or `-h` beside other words on a command's line, which may be a file of that name from
   a shell's `*`, is refused with exit code 2. It used to print help and exit 0 with no document

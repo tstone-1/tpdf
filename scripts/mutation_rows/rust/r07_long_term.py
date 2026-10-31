@@ -452,8 +452,8 @@ ROWS += [
     Mutation(
         "archive: write the long-term data without an archive timestamp",
         "src/longterm.rs",
-        "    archived(whole, worker, archive)",
-        "    let _ = &archive;\n    Ok(whole)",
+        "    archived(whole, worker, &mut |pieces| {\n        let token = archive(pieces)?;",
+        "    if !whole.is_empty() {\n        return Ok(whole);\n    }\n    archived(whole, worker, &mut |pieces| {\n        let token = archive(pieces)?;",
         "the_archive_timestamp_covers_the_signature_and_its_validation_data",
     ),
     Mutation(

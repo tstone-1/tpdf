@@ -296,6 +296,53 @@ pub unsafe fn recv_document(socket: i32) -> Result<Option<(OwnedFd, usize)>, Str
     }
 }
 
+/// What a worker gets for stderr: the parent's, unless that is a terminal.
+///
+/// **A terminal is not a place for a worker to hold a descriptor to.** A document
+/// that takes over a worker could `TIOCSTI` a command line into the reader's shell,
+/// read what is typed at a PIN prompt, or write sequences that rewrite the screen, all
+/// past the sandbox. So there it gets a pipe, and [`relay_stderr`] prints what comes
+/// down it. Anywhere else it is inherited byte for byte, which is what the harnesses
+/// that read a worker's stderr capture. The Windows path does not come through here.
+#[cfg(unix)]
+pub(crate) fn worker_stderr() -> std::process::Stdio {
+    use std::io::IsTerminal as _;
+    if std::io::stderr().is_terminal() {
+        std::process::Stdio::piped()
+    } else {
+        std::process::Stdio::inherit()
+    }
+}
+
+/// Prints what a worker says down the pipe [`worker_stderr`] gave it, if it gave one,
+/// until the worker ends. A sandbox denial and a dying worker's last words stay visible.
+#[cfg(unix)]
+pub(crate) fn relay_stderr(child: &mut std::process::Child) {
+    if let Some(said) = child.stderr.take() {
+        // A thread that cannot start leaves a closed pipe: the worker's writes fail
+        // and nothing else about it changes.
+        let _ = std::thread::Builder::new()
+            .name("worker-stderr".into())
+            .spawn(move || relay(said, &mut std::io::stderr()));
+    }
+}
+
+/// Copies `from` to `to` with whatever a terminal acts on replaced, by
+/// [`crate::cli::printable`], in pieces of a bounded size so that a worker writing
+/// no line end holds no memory here.
+#[cfg(unix)]
+fn relay(mut from: impl std::io::Read, to: &mut impl std::io::Write) {
+    let mut piece = [0u8; 8192];
+    while let Ok(read) = from.read(&mut piece) {
+        if read == 0 {
+            break;
+        }
+        let text = String::from_utf8_lossy(&piece[..read]);
+        let _ = to.write_all(crate::cli::printable(&text).as_bytes());
+        let _ = to.flush();
+    }
+}
+
 #[cfg(all(test, unix))]
 mod tests {
     use super::*;
@@ -475,5 +522,19 @@ mod tests {
             high.as_raw_fd()
         );
         drop(ends);
+    }
+
+    /// A worker's words reach the reader, and what a terminal would act on does not.
+    #[test]
+    fn what_a_worker_says_is_relayed_with_nothing_a_terminal_acts_on() {
+        let mut out = Vec::new();
+        super::relay(
+            &b"[worker] denied\n\x1b]52;c;x\x07\x9b2J\tend\n"[..],
+            &mut out,
+        );
+        let out = String::from_utf8(out).expect("UTF-8");
+        assert!(out.starts_with("[worker] denied\n"), "{out:?}");
+        assert!(out.ends_with("\tend\n"), "{out:?}");
+        assert!(!out.contains('\u{1b}') && !out.contains('\u{7}'), "{out:?}");
     }
 }

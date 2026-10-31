@@ -267,6 +267,21 @@ ROWS += [
         only_on="macos",
     ),
     Mutation(
+        "long-term: seal an archive timestamp from any authority",
+        "src/longterm.rs",
+        "        if trust.standing == crate::trust::Standing::Trusted {\n            return Ok(token);\n        }\n        let (name, why) = unvouched(&trust, &token, \"the authority's\");\n        Err(untrusted_archive(&name, &why))",
+        "        let _ = trust;\n        Ok(token)",
+        "an_archive_timestamp_from_an_authority_nobody_trusts_is_not_sealed",
+    ),
+    Mutation(
+        "worker: relay what a terminal would act on",
+        "src/worker_handover.rs",
+        "        let _ = to.write_all(crate::cli::printable(&text).as_bytes());",
+        "        let _ = to.write_all(text.as_bytes());",
+        "what_a_worker_says_is_relayed_with_nothing_a_terminal_acts_on",
+        only_on="macos",
+    ),
+    Mutation(
         "worker: take the marker anywhere on the command line",
         "src/worker.rs",
         "    args.get(1).map(String::as_str) == Some(WORKER_ARGV)",

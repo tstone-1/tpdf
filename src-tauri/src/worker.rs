@@ -718,7 +718,7 @@ impl Worker {
             .stdout(Stdio::piped())
             // Inherited, as for a document-carrying worker: a sandbox denial or
             // a fatal signal has to be visible.
-            .stderr(Stdio::inherit());
+            .stderr(crate::worker_handover::worker_stderr());
 
         let tile_fd = tile.raw_fd();
         let sock_fd = theirs.as_raw_fd();
@@ -729,6 +729,7 @@ impl Worker {
         }
 
         let mut child = command.spawn().map_err(|e| said!("spawn failed: {e}"))?;
+        crate::worker_handover::relay_stderr(&mut child);
         let stdin = child.stdin.take().ok_or("worker has no stdin")?;
         let stdout = BufReader::new(child.stdout.take().ok_or("worker has no stdout")?);
         Ok(PreWorker {
@@ -1010,7 +1011,7 @@ impl Worker {
             .stdout(Stdio::piped())
             // Inherited, so a sandbox denial or a fatal signal is visible.
             // A worker that dies silently is the hardest thing here to diagnose.
-            .stderr(Stdio::inherit());
+            .stderr(crate::worker_handover::worker_stderr());
         // Said in argv as well as installed on [`OUT_FD`], because the child
         // cannot tell a descriptor it was handed from one that happens to be
         // open at that number. See [`OUT_ARGV`].
@@ -1046,6 +1047,7 @@ impl Worker {
         }
 
         let mut child = command.spawn().map_err(|e| said!("spawn failed: {e}"))?;
+        crate::worker_handover::relay_stderr(&mut child);
         let stdin = child.stdin.take().ok_or("worker has no stdin")?;
         let stdout = BufReader::new(child.stdout.take().ok_or("worker has no stdout")?);
         Ok(Self {

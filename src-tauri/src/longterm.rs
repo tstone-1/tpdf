@@ -1399,7 +1399,26 @@ pub fn extend(
     let mut whole = Vec::with_capacity(bytes.len() + extended.update.len());
     whole.extend_from_slice(bytes);
     whole.extend_from_slice(&extended.update);
-    archived(whole, worker, archive)
+    // The first token was vouched for above; this one is a second answer, which
+    // over `http://` can come from somebody else.
+    archived(whole, worker, &mut |pieces| {
+        let token = archive(pieces)?;
+        let Vouched { trust, .. } = vouch(&token, now);
+        if trust.standing == crate::trust::Standing::Trusted {
+            return Ok(token);
+        }
+        let (name, why) = unvouched(&trust, &token, "the authority's");
+        Err(untrusted_archive(&name, &why))
+    })
+}
+
+/// Why a token from an authority this computer does not trust is not sealed: it
+/// would read intact and attest nothing to the reader of the file.
+fn untrusted_archive(name: &str, why: &str) -> String {
+    said!(
+        "the timestamp authority {name} is not trusted by this computer, so its \
+         timestamp would not keep the document checkable here: {why}"
+    )
 }
 
 /// `whole` --- the signed document with its validation data --- with an

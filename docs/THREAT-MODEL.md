@@ -4867,7 +4867,10 @@ because the arm it ran was the one written for "any other platform".
     frame rate; there is no equivalent for text, search or outline requests.
 
 13. **What the coordinator diagnoses now survives the run; what its workers say still does
-    not.** A worker killed on its deadline, a crashed worker replaced under a reader who saw
+    not.** (Since 2026-10-31 a worker on macOS or Linux holds no descriptor to a terminal: where stderr
+    is one it gets a pipe, and the parent prints what comes down it with anything a terminal acts
+    on replaced, so a worker taken over cannot `TIOCSTI` a command into the shell. On Windows it
+    still inherits the handle, and what a low-integrity process can do to a console is unmeasured.) A worker killed on its deadline, a crashed worker replaced under a reader who saw
     nothing, a pre-spawn that failed, a print that did not present — every one of those was
     an `eprintln!`, and a GUI process started by double-clicking a PDF has no stderr at all,
     so the diagnostics this codebase words most carefully were exactly the ones a user could
@@ -5479,7 +5482,8 @@ because the arm it ran was the one written for "any other platform".
     so a substituted authority reads *not trusted* rather than as the one chosen; and closed for
     the one listed authority that serves HTTPS, Sectigo, which is asked over it. **Closed for
     long-term signing at the 26.9.22 release audit**: with long-term data, the authority must be
-    trusted for timestamping by the OS store before anything is fetched, so a substituted token
+    trusted for timestamping by the OS store before anything is fetched, and since 2026-10-31 so
+    must the authority of the archive timestamp sealed at the end, so a substituted token
     is refused, nothing written, and its certificates choose no address tpdf connects to
     (§T10). That price was paid there --- trust is now asked in the coordinator on network
     bytes (residual 25), and a real authority whose root a Windows machine has not yet fetched
