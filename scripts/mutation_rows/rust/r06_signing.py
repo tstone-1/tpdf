@@ -196,8 +196,8 @@ ROWS += [
         # Refuse the qualified card that states nonRepudiation alone.
         "sign: accept only digitalSignature",
         "src/sign_cms.rs",
-        "        if !usage.digital_signature() && !usage.non_repudiation() {",
-        "        if !usage.digital_signature() {",
+        "usage.digital_signature() || usage.non_repudiation()",
+        "usage.digital_signature()",
         "a_certificate_is_offered_only_while_valid_for_signing",
     ),
     Mutation(
@@ -219,8 +219,8 @@ ROWS += [
     Mutation(
         "sign: offer a certificate that is not for signing",
         "src/sign_cms.rs",
-        "        if !usage.digital_signature() && !usage.non_repudiation() {",
-        "        if false {",
+        "    if !may_sign(&certificate)? {",
+        "    if false {",
         "a_certificate_is_offered_only_while_valid_for_signing",
     ),
     Mutation(

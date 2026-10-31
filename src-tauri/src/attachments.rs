@@ -251,16 +251,32 @@ fn describe(document: &Document, key: &[u8], spec: Option<&Object>) -> Embedded 
     }
 }
 
+/// An invisible character that changes what a name shows: the direction marks
+/// and overrides, by which `fdp.exe` reads as `exe.pdf`, and the zero-width ones.
+fn reorders(c: char) -> bool {
+    matches!(
+        c,
+        '\u{061c}' | '\u{200b}'..='\u{200f}' | '\u{202a}'..='\u{202e}' | '\u{2060}'..='\u{2069}'
+            | '\u{feff}'
+    )
+}
+
 /// The last part of a name a document wrote with folders in front of it, with
 /// no character a file system refuses: what the save panel offers.
 fn file_name(raw: &str) -> String {
     let last = raw.rsplit(['/', '\\', ':']).next().unwrap_or(raw);
     let kept: String = last
         .chars()
-        .filter(|c| !c.is_control() && !matches!(c, '<' | '>' | '"' | '|' | '?' | '*'))
+        .filter(|c| {
+            !c.is_control() && !reorders(*c) && !matches!(c, '<' | '>' | '"' | '|' | '?' | '*')
+        })
         .take(MAX_NAME_CHARS)
         .collect();
-    let kept = kept.trim().trim_start_matches('.').to_string();
+    // Trailing dots and spaces too: Windows drops them from a path, so
+    // `report.exe.` has no ending here and is `report.exe` on disk.
+    let kept = kept
+        .trim_matches(|c: char| c.is_whitespace() || c == '.')
+        .to_string();
     if kept.is_empty() {
         "attachment".to_string()
     } else {
@@ -544,5 +560,13 @@ mod tests {
         assert_eq!(file_name("a\u{0}b?.txt"), "ab.txt");
         assert_eq!(file_name(".hidden"), "hidden");
         assert_eq!(file_name("  "), "attachment");
+        assert_eq!(file_name("report.exe."), "report.exe");
+        assert_eq!(file_name("report.exe . ."), "report.exe");
+        assert_eq!(file_name("Rechnung\u{202e}fdp.exe"), "Rechnungfdp.exe");
+        assert_eq!(
+            file_name("a\u{061c}b\u{200b}c\u{2066}d\u{feff}.pdf"),
+            "abcd.pdf"
+        );
+        assert_eq!(file_name("\u{202e}..."), "attachment");
     }
 }

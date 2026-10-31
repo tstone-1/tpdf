@@ -219,15 +219,15 @@ ROWS += [
     Mutation(
         "append syntax: take a /Prev that is not earlier",
         "src/docinfo/append_syntax.rs",
-        "        (previous < at && self.names_section(previous)).then_some(())",
-        "        self.names_section(previous).then_some(())",
+        "        (earlier && self.names_section(previous)).then_some(())",
+        "        let _ = earlier;\n        self.names_section(previous).then_some(())",
         "a_prev_has_to_name_an_earlier_section",
     ),
     Mutation(
         "append syntax: take a /Prev that names no section",
         "src/docinfo/append_syntax.rs",
-        "        (previous < at && self.names_section(previous)).then_some(())",
-        "        (previous < at).then_some(())",
+        "        (earlier && self.names_section(previous)).then_some(())",
+        "        earlier.then_some(())",
         "a_prev_has_to_name_an_earlier_section",
     ),
     Mutation(

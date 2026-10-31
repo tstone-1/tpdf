@@ -272,6 +272,9 @@ pub(crate) struct Asking<'a> {
     /// The archive timestamp: the authority's token over the covered pieces
     /// of the file, or the sentence saying why not.
     pub archive: &'a mut ArchiveBy<'a>,
+    /// Seal a timestamp from an authority `vouch` does not vouch for. False
+    /// everywhere but `tpdf sign --allow-untrusted-timestamp`.
+    pub any_authority: bool,
 }
 
 /// [`Asking`] as the application and the command-line tool ask: the network
@@ -291,6 +294,7 @@ pub(crate) fn asking_the_world<R>(
         vouch: &vouch,
         fetch: &mut fetch,
         archive: &mut archive,
+        any_authority: false,
     })
 }
 
@@ -494,6 +498,23 @@ pub(crate) fn finish(
                     })
                 }
             };
+            // Before anything is sealed. The token's arithmetic says nothing of
+            // who made it, and over `http://` anybody on the path can answer.
+            // Long-term data asks this itself, before it fetches anything.
+            if let (Some(cms), false) = (&stamped, long_term || asking.any_authority) {
+                if let Err(refusal) = crate::longterm::vouched(cms, now, asking.vouch) {
+                    let why = match refusal {
+                        crate::longterm::Refusal::Untrusted { name, why } => said!(
+                            "the timestamp authority {name} is not trusted by this computer: {why}"
+                        ),
+                        other => other.sentence(),
+                    };
+                    return Err(Stopped::Unstamped {
+                        made: Box::new(made),
+                        why: crate::tsa::Refusal::Untrusted(why),
+                    });
+                }
+            }
             let field = made.field.clone();
             let locked = made.locked;
             let cms = stamped.clone();
@@ -1133,6 +1154,7 @@ mod tests {
             vouch: &vouch,
             fetch: &mut fetch,
             archive: &mut archive,
+            any_authority: false,
         })
     }
 
@@ -1456,6 +1478,7 @@ mod tests {
                     note("archive timestamp".into());
                     test_archive(url, pieces)
                 },
+                any_authority: false,
             });
         };
 
@@ -1526,6 +1549,79 @@ mod tests {
             ]
         );
         assert_eq!(tool.into_inner().expect("the record"), window);
+    }
+
+    /// A sound token from an authority nobody vouches for is not sealed, with
+    /// long-term data or without, unless the command line says to keep it. It is
+    /// what somebody on the path can answer with over `http://`.
+    #[test]
+    fn a_timestamp_from_an_authority_nobody_vouches_for_is_not_sealed() {
+        use crate::integrity::test_tsa::{mint, Imprint, Pki};
+        use crate::sign_cms::testkeys::{plain_pdf, Soft};
+        let pki = Pki::start(crate::integrity::test_tsa::Plan::default());
+        let authority = url::Url::parse("http://127.0.0.1:9/").expect("a URL");
+        let at = now();
+        let made = || {
+            let original = plain_pdf();
+            let unsigned = sign_prepare::prepare(original.clone(), at, None).expect("prepared");
+            sign_cms::sign(
+                original,
+                unsigned,
+                at,
+                &pki.signer.certificate,
+                &pki.chain,
+                &Soft::p256(pki.signer.seed),
+            )
+            .expect("made")
+        };
+        let run = |any_authority: bool, out: &Path| {
+            let mut fetch = crate::longterm::fetch_blocking;
+            let mut archive = test_archive;
+            finish(
+                Stage::Made(made()),
+                Some(&authority),
+                false,
+                out,
+                at,
+                &crate::save::Here,
+                Asking {
+                    stamp: &|_, value| {
+                        Ok(mint(
+                            Imprint::Sha256,
+                            &Imprint::Sha256.digest(value),
+                            None,
+                            at,
+                            &pki.tsa,
+                        ))
+                    },
+                    os_chain: &|_, _| Vec::new(),
+                    vouch: &|token, now| {
+                        crate::longterm::vouched_under(token, now, crate::trust::Anchors::Only(&[]))
+                    },
+                    fetch: &mut fetch,
+                    archive: &mut archive,
+                    any_authority,
+                },
+                &|bytes| std::fs::write(out, bytes).map_err(|e| e.to_string()),
+            )
+        };
+
+        let (_, out) = scratch("untrusted-refused");
+        let _ = std::fs::remove_file(&out);
+        match run(false, &out) {
+            Err(Stopped::Unstamped {
+                why: crate::tsa::Refusal::Untrusted(sentence),
+                ..
+            }) => assert!(!sentence.is_empty()),
+            Err(_) => panic!("stopped for another reason"),
+            Ok(_) => panic!("sealed"),
+        }
+        assert!(!out.exists(), "nothing is written");
+
+        let (_, out) = scratch("untrusted-kept");
+        let _ = std::fs::remove_file(&out);
+        assert!(run(true, &out).is_ok());
+        assert!(out.exists(), "the command line asked to keep it");
     }
 
     /// A worker that reads the written file as `save::Here` does, and then

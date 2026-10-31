@@ -981,3 +981,38 @@ fn dss_certificates_are_offered_within_their_own_bound() {
     let (_, with) = certificates_with(&raw, &offered).expect("the set and extras");
     assert_eq!(with.len(), own.len() + MAX_CERTIFICATES);
 }
+
+#[test]
+fn a_key_usage_that_forbids_signatures_does_not_serve_documents() {
+    use x509_cert::ext::pkix::KeyUsages;
+    let of = |usage: Option<Vec<KeyUsages>>| {
+        let mut spec = Spec::new("tpdf test user");
+        spec.usage = usage;
+        Certificate::from_der(&certificate(&Soft::p256(0x41), &spec)).expect("a certificate")
+    };
+    for (usage, serving) in [
+        (None, true),
+        (Some(vec![KeyUsages::DigitalSignature]), true),
+        (Some(vec![KeyUsages::NonRepudiation]), true),
+        (Some(vec![KeyUsages::KeyEncipherment]), false),
+        (
+            Some(vec![KeyUsages::KeyEncipherment, KeyUsages::CRLSign]),
+            false,
+        ),
+    ] {
+        let certificate = of(usage.clone());
+        assert_eq!(
+            serves(&certificate, Purpose::Documents),
+            Some(serving),
+            "{usage:?}"
+        );
+    }
+    // A usage nobody can read is neither a restriction nor its absence.
+    let mut unreadable = of(Some(vec![KeyUsages::DigitalSignature]));
+    for extension in unreadable.tbs_certificate.extensions.iter_mut().flatten() {
+        if extension.extn_id.to_string() == "2.5.29.15" {
+            extension.extn_value = der::asn1::OctetString::new(vec![0xff]).expect("octets");
+        }
+    }
+    assert_eq!(serves(&unreadable, Purpose::Documents), None);
+}

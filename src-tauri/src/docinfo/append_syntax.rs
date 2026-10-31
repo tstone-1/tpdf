@@ -40,6 +40,12 @@ const MAX_NUMBER: usize = 32;
 /// The longest comment taken before `startxref`.
 const MAX_MARKER: usize = 64;
 
+/// How far from the file's end its last `startxref` may start. PDFium looks for one
+/// only so far back, and past that rebuilds from a scan where `lopdf` strips the
+/// padding and reads on: 4,000 spaces after `%%EOF` drew the signed page and 5,000 a
+/// forged one (2026-10-31). Well short of that, and far past anything honest.
+const MAX_AFTER_STARTXREF: usize = 1024;
+
 /// The most a generation number can be.
 const MAX_GENERATION: u32 = 65535;
 
@@ -58,6 +64,10 @@ enum Value {
 /// `length` answers for a stream's `/Length` given as a reference: the object
 /// is an integer in the parse this is checking, and `None` otherwise.
 pub fn reads_plainly(bytes: &[u8], end: usize, length: impl Fn(ObjectId) -> Option<i64>) -> bool {
+    let tail = &bytes[bytes.len().saturating_sub(MAX_AFTER_STARTXREF)..];
+    if end < bytes.len() && !tail.windows(9).any(|word| word == b"startxref") {
+        return false;
+    }
     Reader {
         bytes,
         at: end,
@@ -217,15 +227,33 @@ impl<L: Fn(ObjectId) -> Option<i64>> Reader<'_, L> {
             return None;
         };
         let previous = usize::try_from(*previous).ok()?;
-        (previous < at && self.names_section(previous)).then_some(())
+        let earlier = self
+            .candidates(previous)
+            .into_iter()
+            .all(|offset| offset < at);
+        (earlier && self.names_section(previous)).then_some(())
     }
 
-    /// Whether `xref` or an `n g obj` stands at `offset`.
+    /// Whether `xref`, or a cross-reference stream by its own direct `/Type`, stands
+    /// at `offset`. **Any other stream is no section to hold to a rule**, and neither
+    /// parser asks for the `/Type`: a stream with `/W` and no `/Type`, whose `/Prev`
+    /// names itself, had PDFium rebuild with the page reading as not rewritten.
     fn names_section(&self, offset: usize) -> bool {
         self.candidates(offset).into_iter().any(|offset| {
             let mut there = self.at_offset(offset);
             there.white();
-            there.word(b"xref") || there.object_header().is_some()
+            if there.word(b"xref") {
+                return true;
+            }
+            if there.object_header().is_none() {
+                return false;
+            }
+            there.white();
+            matches!(
+                there.value(0),
+                Some(Value::Dictionary(dict))
+                    if matches!(dict.get(b"Type".as_slice()), Some(Value::Name(kind)) if kind == b"XRef")
+            )
         })
     }
 
@@ -528,15 +556,20 @@ mod tests {
     const TAIL: &[u8] =
         b"xref\n5 1\n0000000010 00000 f \ntrailer\n<</Size 6>>\nstartxref\n0\n%%EOF\n";
 
+    /// `object`, and a table after it that `startxref` names.
     fn revision(object: &[u8]) -> Vec<u8> {
-        [object, b"\n", TAIL].concat()
+        let table = object.len() + 1;
+        let tail = format!(
+            "xref\n5 1\n0000000010 00000 f \ntrailer\n<</Size 6>>\nstartxref\n{table}\n%%EOF\n"
+        );
+        [object, b"\n", tail.as_bytes()].concat()
     }
 
     #[test]
     fn what_a_signer_writes_is_plain() {
         for (case, append) in [
             ("nothing", b"".to_vec()),
-            ("a line end", b"\r\n".to_vec()),
+            ("a line end", [TAIL, b"\r\n"].concat()),
             ("a table", TAIL.to_vec()),
             ("an object", revision(b"5 0 obj\n<</A 1 0 R/B[1 2.5 -3 .5 (a\\)(b)) <0aF> /N true null]>>\nendobj")),
             ("no white space", revision(b"5 0 obj<</A/B>>endobj")),
@@ -546,7 +579,7 @@ mod tests {
             ("an indirect length", revision(b"5 0 obj <</Length 9 0 R>> stream\nabcd\nendstream endobj")),
             ("a stream section", b"5 0 obj <</Type/XRef/Length 1/Filter/FlateDecode/DecodeParms<</Columns 4>>>> stream\nx\nendstream endobj\nstartxref\n0\n%%EOF".to_vec()),
             ("two revisions", [TAIL, TAIL].concat()),
-            ("a producer's marker", [b"5 0 obj null endobj\n%iText-5.5.3\nstartxref\n0\n%%EOF\n".as_slice()].concat()),
+            ("a producer's marker", [b"5 0 obj <</Type/XRef>> endobj\n%iText-5.5.3\nstartxref\n0\n%%EOF\n".as_slice()].concat()),
             ("binary in a stream", revision(b"5 0 obj <</Length 4>> stream\n%\xff\x80%\nendstream endobj")),
         ] {
             assert!(plain(&append), "{case}");
@@ -622,7 +655,8 @@ mod tests {
     fn a_table_entry_has_to_name_the_object_at_its_offset() {
         let signed = b"%PDF-1.7\n7 0 obj\nnull\nendobj\n";
         let at = |entries: &str| {
-            let tail = format!("xref\n{entries}trailer\n<<>>\nstartxref\n9\n%%EOF\n");
+            let section = signed.len();
+            let tail = format!("xref\n{entries}trailer\n<<>>\nstartxref\n{section}\n%%EOF\n");
             let bytes = [signed.as_slice(), tail.as_bytes()].concat();
             reads_plainly(&bytes, signed.len(), |_| None)
         };
@@ -642,8 +676,11 @@ mod tests {
         assert!(!at("7 1\n0009999999 00000 n \n"), "past the end");
         // Bytes before `%PDF-`, and offsets counted from it.
         let moved = b"xxx%PDF-1.7\n7 0 obj\nnull\nendobj\n";
-        let tail = b"xref\n7 1\n0000000009 00000 n \ntrailer\n<<>>\nstartxref\n9\n%%EOF\n";
-        let bytes = [moved.as_slice(), tail.as_slice()].concat();
+        let tail = format!(
+            "xref\n7 1\n0000000009 00000 n \ntrailer\n<<>>\nstartxref\n{}\n%%EOF\n",
+            moved.len() - 3
+        );
+        let bytes = [moved.as_slice(), tail.as_bytes()].concat();
         assert!(
             reads_plainly(&bytes, moved.len(), |_| None),
             "after a prefix"
@@ -654,7 +691,7 @@ mod tests {
     /// from a scan, and the last copy of an object in the file then wins.
     #[test]
     fn a_prev_has_to_name_an_earlier_section() {
-        let signed = b"%PDF-1.7\n7 0 obj\nnull\nendobj\n";
+        let signed = b"%PDF-1.7\n7 0 obj\n<</Type/XRef>>\nendobj\n";
         let section = signed.len();
         let plain_with = |prev: String| {
             let tail = format!("xref\n0 0\ntrailer\n<<{prev}>>\nstartxref\n{section}\n%%EOF\n");
@@ -690,6 +727,57 @@ mod tests {
         };
         assert!(stream(9), "an earlier section");
         assert!(!stream(section), "itself");
+    }
+
+    /// Neither parser asks a cross-reference stream for its `/Type`, so `startxref` or
+    /// `/Prev` naming a stream without one is a section `chained` never held to its rule.
+    #[test]
+    fn a_section_has_to_say_it_is_one() {
+        let signed = b"%PDF-1.7\n7 0 obj\n<</Type/XRef/Length 1>> stream\nx\nendstream endobj\n";
+        let section = signed.len();
+        let named = |dict: &str, prev: usize| {
+            let tail = format!(
+                "{section} 0 obj <<{dict}/W[1 1 1]/Length 1/Prev {prev}>> stream\nx\nendstream \
+                 endobj\nstartxref\n{section}\n%%EOF\n"
+            );
+            let bytes = [signed.as_slice(), tail.as_bytes()].concat();
+            reads_plainly(&bytes, signed.len(), |_| None)
+        };
+        assert!(named("/Type/XRef", 9), "the control");
+        assert!(!named("", section), "no /Type, naming itself");
+        assert!(!named("", 9), "no /Type, whatever it names");
+        assert!(!named("/Type 9 0 R", section), "not a direct /Type");
+        assert!(!named("/Type/ObjStm", 9), "another /Type");
+    }
+
+    #[test]
+    fn padding_past_where_pdfium_looks_for_startxref_is_not_plain() {
+        let padded = |pad: usize, byte: u8| {
+            let append = [TAIL, vec![byte; pad].as_slice()].concat();
+            plain(&append)
+        };
+        assert!(padded(900, b' '), "a little");
+        assert!(!padded(5000, b' '), "as far as drew a forgery");
+        assert!(!padded(5000, 0), "in NULs");
+        assert!(!plain(&vec![b' '; 5000]), "with no revision at all");
+        // Padding the signature covers is the signed file's own affair.
+        let signed = [b"%PDF-1.7\n".as_slice(), &[b' '; 5000]].concat();
+        assert!(reads_plainly(&signed, signed.len(), |_| None));
+    }
+
+    /// PDFium and `lopdf` count from `%PDF-` when bytes stand before it, so an offset
+    /// that looks earlier from the first byte can be the section itself.
+    #[test]
+    fn a_prev_counted_from_the_header_is_held_to_the_same_rule() {
+        let signed = b"xxx%PDF-1.7\n7 0 obj\nnull\nendobj\n";
+        let section = signed.len();
+        let with = |prev: usize| {
+            let tail =
+                format!("xref\n0 0\ntrailer\n<</Prev {prev}>>\nstartxref\n{section}\n%%EOF\n");
+            let bytes = [signed.as_slice(), tail.as_bytes()].concat();
+            reads_plainly(&bytes, signed.len(), |_| None)
+        };
+        assert!(!with(section - 3), "itself, three bytes down");
     }
 
     #[test]

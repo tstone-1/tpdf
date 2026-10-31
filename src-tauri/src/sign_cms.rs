@@ -454,10 +454,8 @@ pub fn usable(certificate_der: &[u8], now: u64) -> Result<Offer, String> {
     if now > until {
         return Err(said!("it has expired"));
     }
-    if let Some(usage) = key_usage(&certificate)? {
-        if !usage.digital_signature() && !usage.non_repudiation() {
-            return Err(said!("it is not issued for signing"));
-        }
+    if !may_sign(&certificate)? {
+        return Err(said!("it is not issued for signing"));
     }
     if let Some(purposes) = extended_key_usage(&certificate)? {
         if !purposes
@@ -539,6 +537,18 @@ fn extended_key_usage(certificate: &Certificate) -> Result<Option<Vec<String>>, 
 }
 
 /// The key usage the certificate states, or `None` when it states none.
+/// Whether the certificate's key usage lets its key make signatures: one stating
+/// none restricts nothing. One rule for offering a certificate to sign with and
+/// for calling a signature's signer trusted (`trust::serves`).
+///
+/// # Errors
+///
+/// A key usage that is present and will not decode.
+pub(crate) fn may_sign(certificate: &Certificate) -> Result<bool, String> {
+    Ok(key_usage(certificate)?
+        .is_none_or(|usage| usage.digital_signature() || usage.non_repudiation()))
+}
+
 fn key_usage(certificate: &Certificate) -> Result<Option<x509_cert::ext::pkix::KeyUsage>, String> {
     let Some(extensions) = &certificate.tbs_certificate.extensions else {
         return Ok(None);

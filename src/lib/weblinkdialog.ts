@@ -153,6 +153,9 @@ export async function confirmAndOpen(
   }
 }
 
+/** How long Open ignores a press after appearing: longer than a double-click. */
+export const OPEN_AFTER_MS = 500;
+
 /**
  * A modal asking whether to open an address.
  *
@@ -178,6 +181,8 @@ export class WebLinkDialog {
    * the logic*.
    */
   private shown = false;
+  /** When it last appeared, which is what {@link OPEN_AFTER_MS} counts from. */
+  private shownAt = 0;
 
   constructor(host: HTMLElement) {
     this.backdrop = document.createElement("div");
@@ -223,7 +228,11 @@ export class WebLinkDialog {
     buttons.style.cssText =
       "display:flex;gap:0.5rem;justify-content:flex-end;margin-top:0.85rem;";
     this.cancel = this.button(TEXT().cancel, () => this.settle(false));
-    const open = this.button(TEXT().open, () => this.settle(true));
+    // A link fires on its first press and this appears under the pointer, so
+    // the second press of a double-click could land here unread.
+    const open = this.button(TEXT().open, () => {
+      if (Date.now() - this.shownAt >= OPEN_AFTER_MS) this.settle(true);
+    });
     buttons.append(this.cancel, open);
 
     this.panel.append(heading, this.host, this.rest, note, buttons);
@@ -300,6 +309,7 @@ export class WebLinkDialog {
         typeof active?.focus === "function" ? (active as HTMLElement) : null;
     }
     this.shown = true;
+    this.shownAt = Date.now();
     this.backdrop.style.display = "flex";
     // Cancel, not Open. See the header.
     this.cancel.focus();

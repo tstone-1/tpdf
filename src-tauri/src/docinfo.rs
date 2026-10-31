@@ -3416,13 +3416,18 @@ fn blank_content(content: &[u8]) -> bool {
         })
 }
 
-/// Whether the append changed one of the things in the catalog that redraw a page
-/// with no page referring to them: `/Pages`, `/OCProperties`, which turns a layer
-/// off, and `/AcroForm /NeedAppearances`, which has a reader draw the fields anew.
+/// Whether the append changed one of the things in the catalog that change what a
+/// reader is shown with no page referring to them: `/Pages`, `/OCProperties`, which
+/// turns a layer off, `/AcroForm /NeedAppearances`, which has a reader draw the fields
+/// anew, `/OpenAction`, `/AA` and the scripts in `/Names`, which a viewer that runs them
+/// can draw with whatever a signature covers, and the files in `/Names`, which read as
+/// part of what was signed.
 ///
 /// **These by name, and not every entry but a list of harmless ones.** That
 /// was tried and failed 22 of the 134 public DSS validation files: honest signers
-/// change `/DR`, `/DA`, `/StructTreeRoot`, `/OutputIntents` and `/OpenAction`.
+/// change `/DR`, `/DA`, `/StructTreeRoot` and `/OutputIntents`. `/OpenAction` read as
+/// changing too only when compared through the page it names: as itself, `/OpenAction`
+/// and `/AA` changed in none of the 241 revisions after a signature in those files.
 /// Fails closed on a catalog it cannot find in one parse and not the other.
 fn catalog_redraws(
     signed: &Document,
@@ -3451,23 +3456,49 @@ fn catalog_redraws(
     if redraws_form(signed, before) != redraws_form(whole, after) {
         return true;
     }
-    let layers = |catalog: &'_ Dictionary| catalog.get(b"OCProperties").ok().cloned();
-    let (layers_before, layers_after) = (layers(before), layers(after));
-    let same = match (&layers_before, &layers_after) {
-        (None, None) => true,
-        (Some(a), Some(b)) => same_object(a, b),
-        _ => false,
+    // What a viewer does on opening, the layers it shows, what it runs and the
+    // files it offers. Of `/Names` only those two: signers add appearances there.
+    let entries = |document: &Document, catalog: &Dictionary| -> Vec<Option<Object>> {
+        let entry = |key: &[u8]| catalog.get(key).ok().cloned();
+        let names = catalog
+            .get(b"Names")
+            .ok()
+            .and_then(|names| resolve(document, names).as_dict().ok());
+        let named = |key: &[u8]| names.and_then(|names| names.get(key).ok()).cloned();
+        vec![
+            entry(b"OCProperties"),
+            entry(b"OpenAction"),
+            entry(b"AA"),
+            named(b"JavaScript"),
+            named(b"EmbeddedFiles"),
+        ]
     };
+    let (entries_before, entries_after) = (entries(signed, before), entries(whole, after));
+    let same = entries_before
+        .iter()
+        .zip(&entries_after)
+        .all(|pair| match pair {
+            (None, None) => true,
+            (Some(a), Some(b)) => same_object(a, b),
+            _ => false,
+        });
     if !same {
         return true;
     }
-    // The same entry unchanged as a reference, over objects that are not.
+    // The same entries unchanged as references, over objects that are not. Not
+    // into a page: `/OpenAction` names one, and a page is judged as a page, so a
+    // signature's widget on it is not a change of what the document does on opening.
+    let pages: std::collections::BTreeSet<lopdf::ObjectId> =
+        whole.get_pages().into_values().collect();
     let mut pending = Vec::new();
-    if let Some(layers) = &layers_after {
-        references_in(layers, &mut pending);
+    for entry in entries_after.iter().flatten() {
+        references_in(entry, &mut pending);
     }
     let mut met = std::collections::BTreeSet::new();
     while let Some(id) = pending.pop() {
+        if pages.contains(&id) {
+            continue;
+        }
         if changed.iter().any(|c| c.0 == id.0) {
             return true;
         }

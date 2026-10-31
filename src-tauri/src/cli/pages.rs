@@ -736,8 +736,9 @@ impl Temporary {
                 std::process::id(),
                 NEXT.fetch_add(1, Ordering::Relaxed)
             ));
-            match std::fs::create_dir(&path) {
-                Ok(_) => return Ok(Self(path)),
+            // Private to this user: what is staged here may be a decrypted copy.
+            match private_dir(&path) {
+                Ok(()) => return Ok(Self(path)),
                 Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {}
                 Err(e) => {
                     return Err(Failure::new(
@@ -754,6 +755,7 @@ impl Temporary {
     }
     pub(super) fn publish(staged: &Path, target: &Path, force: bool) -> Result<(), Failure> {
         let result = if force {
+            keep_mode(staged, target);
             save::commit_in_place(staged, target)
         } else {
             std::fs::hard_link(staged, target).map_err(|e| e.to_string())
@@ -766,6 +768,32 @@ impl Temporary {
         })
     }
 }
+
+#[cfg(unix)]
+fn private_dir(path: &Path) -> std::io::Result<()> {
+    use std::os::unix::fs::DirBuilderExt as _;
+    std::fs::DirBuilder::new().mode(0o700).create(path)
+}
+
+#[cfg(windows)]
+fn private_dir(path: &Path) -> std::io::Result<()> {
+    std::fs::create_dir(path)
+}
+
+/// A file replaced keeps its mode, as `save::stage` keeps it for a save, execute
+/// bits apart: otherwise a private file comes back readable under the umask.
+fn keep_mode(staged: &Path, target: &Path) {
+    #[cfg(unix)]
+    if let Ok(existing) = std::fs::metadata(target) {
+        use std::os::unix::fs::PermissionsExt;
+        let mut permissions = existing.permissions();
+        permissions.set_mode(permissions.mode() & !0o111);
+        let _ = std::fs::set_permissions(staged, permissions);
+    }
+    #[cfg(windows)]
+    let _ = (staged, target);
+}
+
 impl Drop for Temporary {
     fn drop(&mut self) {
         let _ = std::fs::remove_dir_all(&self.0);
@@ -777,6 +805,28 @@ mod tests {
     use super::*;
     fn args(raw: &str) -> Vec<String> {
         raw.split_whitespace().map(str::to_string).collect()
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn force_keeps_a_private_files_mode_and_staging_is_private() {
+        use std::os::unix::fs::PermissionsExt;
+        let mode = |path: &Path| std::fs::metadata(path).unwrap().permissions().mode() & 0o777;
+        let dir = std::env::temp_dir().join(format!("tpdf-publish-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let target = dir.join("statement.pdf");
+        std::fs::write(&target, b"old").unwrap();
+        std::fs::set_permissions(&target, std::fs::Permissions::from_mode(0o600)).unwrap();
+        let staging = Temporary::beside(&target).unwrap();
+        assert_eq!(mode(&staging.0), 0o700);
+        let staged = staging.0.join("out");
+        std::fs::write(&staged, b"new").unwrap();
+        std::fs::set_permissions(&staged, std::fs::Permissions::from_mode(0o644)).unwrap();
+        Temporary::publish(&staged, &target, true).unwrap();
+        assert_eq!(std::fs::read(&target).unwrap(), b"new");
+        assert_eq!(mode(&target), 0o600);
+        drop(staging);
+        std::fs::remove_dir_all(&dir).unwrap();
     }
 
     #[test]

@@ -53,6 +53,8 @@
 //! a code signer's --- is [`Doubt::Purpose`], not trusted. The issuer vouched
 //! that the key belongs to a server name or a software publisher, not that its
 //! holder signs documents, and a basic X.509 policy checks no usage at all.
+//! The same goes for a key usage that forbids signatures, such as an encryption
+//! certificate whose key its issuer holds a copy of.
 //! The list is `sign_cms::DOCUMENT_PURPOSES`, the same one that decides which
 //! of the reader's own certificates tpdf offers for signing: a certificate
 //! tpdf would refuse to sign with is not one it calls trusted for signing.
@@ -587,6 +589,9 @@ pub fn judge_at(
 /// present and will not decode: a usage nobody can read is neither a
 /// restriction nor its absence.
 fn serves(certificate: &Certificate, purpose: Purpose) -> Option<bool> {
+    if purpose == Purpose::Documents && !crate::sign_cms::may_sign(certificate).ok()? {
+        return Some(false);
+    }
     let extensions = certificate
         .tbs_certificate
         .extensions

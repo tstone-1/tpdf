@@ -418,6 +418,8 @@ export default {
     "{name} sagt nicht, wo seine Widerrufsdaten veröffentlicht werden, daher kann tpdf dafür keine Langzeitvalidierungsdaten hinzufügen: Dafür braucht es ein Zertifikat einer Zertifizierungsstelle, die Widerrufsdaten veröffentlicht (einen OCSP-Responder oder eine Widerrufsliste über http oder https). Ein Zeitstempel allein funktioniert mit diesem Zertifikat",
   "tpdf could not find the certificate that issued {name}, so it cannot ask about its revocation":
     "tpdf konnte das Zertifikat nicht finden, das {name} ausgestellt hat, und kann deshalb nicht nach seinem Widerruf fragen",
+  "the timestamp authority {name} is not trusted by this computer: {why}":
+    "diesem Computer gilt der Zeitstempeldienst {name} nicht als vertrauenswürdig: {why}",
   "the timestamp authority {name} is not trusted by this computer, so tpdf will not fetch revocation data for it: {why}":
     "diesem Computer gilt der Zeitstempeldienst {name} nicht als vertrauenswürdig, daher holt tpdf keine Widerrufsdaten dafür: {why}",
   "tpdf could not get revocation data for {name}: {attempts}":

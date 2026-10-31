@@ -171,6 +171,9 @@ pub enum Refusal {
     Nonce,
     /// The token could not be put into the signature (`sign_cms::Made::stamped`).
     Fit(String),
+    /// The token is sound, from an authority this computer does not trust for
+    /// timestamping, with the sentence saying which and why.
+    Untrusted(String),
 }
 
 impl Refusal {
@@ -201,6 +204,7 @@ impl Refusal {
                 "{at} sent a timestamp that does not check out ({why})",
                 why = verdict_words(integrity)
             ),
+            Refusal::Untrusted(why) => why.clone(),
             Refusal::Imprint => said!(
                 "{at} sent a timestamp that is not of this signature as it was asked for \
                  (SHA-256)"

@@ -25,6 +25,14 @@ fn question(asked: Asked<'_>) -> String {
     }
 }
 
+/// The prompt as the terminal gets it. A token's label and a file's name are not
+/// tpdf's words: a terminal would act on an escape sequence in them, and its
+/// answer to one would be read as the PIN being typed.
+fn terminal_prompt(asked: Asked<'_>) -> String {
+    let prompt = format!("{} {}: ", question(asked), names(asked).1);
+    crate::cli::printable(&prompt).into_owned()
+}
+
 /// The dialog's title and the terminal prompt's label.
 fn names(asked: Asked<'_>) -> (&'static str, &'static str) {
     match asked {
@@ -165,7 +173,7 @@ fn terminal(asked: Asked<'_>) -> Result<Option<AuthPin>, String> {
         ));
     }
     let mut writer = &tty;
-    let _ = write!(writer, "{} {}: ", question(asked), names(asked).1);
+    let _ = write!(writer, "{}", terminal_prompt(asked));
     let _ = writer.flush();
     let typed = read_keys(&tty);
     // SAFETY: as above; restores what was read before any change.
@@ -222,6 +230,18 @@ mod tests {
 
     fn keys(bytes: &[u8]) -> Result<Option<String>, String> {
         read_keys(bytes).map(|typed| typed.map(|t| t.to_string()))
+    }
+
+    #[test]
+    fn a_label_or_file_name_cannot_send_the_terminal_anything() {
+        for asked in [
+            Asked::Pin("card\u{1b}[6n\u{9b}2J"),
+            Asked::Password("a\u{1b}]0;x\u{7}.p12"),
+        ] {
+            let prompt = terminal_prompt(asked);
+            assert!(!prompt.chars().any(char::is_control), "{prompt:?}");
+            assert!(prompt.ends_with(": "), "{prompt:?}");
+        }
     }
 
     #[test]

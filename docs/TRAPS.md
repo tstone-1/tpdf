@@ -359,6 +359,7 @@ hop through the index.
 - A stderr lock held for a whole command deadlocks the first diagnostic another thread writes
 - A Rust string that lost its line continuation shows the reader the next line's indentation
 ## Measuring: what a number can and cannot say
+- A comparison that follows a reference reports the target's change as the entry's
 - A documented count that is one sample of a race makes an honest run look like a defect
 - The harness prints the count so nobody has to derive it, and it was derived anyway
 - Two counts from two commits are not a platform difference
@@ -27113,3 +27114,14 @@ which no test can set up.
 CryptoAPI on the first CI run, and the one red test assumed a store takes an intermediate as a trust
 anchor. macOS does and CryptoAPI's exclusive root store does not. A store's answer to an unusual
 chain is measured per platform, and a test's premise assertion is what said which half had failed.
+
+### A comparison that follows a reference reports the target's change as the entry's
+
+`/OpenAction` changing after a signature was written down as a measured fact, and it decided a
+design: "honest signers change `/OpenAction`", so the entry went unjudged. Measured again on the same
+134 files, a value comparison that resolved references gave 29 changes in 241 revisions. Every one
+was the page the action names, gaining a signature widget. With the walk stopped at a page,
+`/OpenAction` and `/AA` changed in none of them (2026-10-31). The same mistake is available in code:
+walking references from the entry and asking whether anything changed reads a widget added to the
+page as a changed action, which is why `catalog_redraws` stops at a page in the tree and not at a
+`/Type /Page` the attacker can write on any object.

@@ -2147,6 +2147,84 @@ fn a_layer_turned_off_in_an_object_of_its_own_touches_every_page() {
     assert_eq!(strict(appendix), After::Unchanged);
 }
 
+/// What a viewer does on opening, and the scripts and files it is handed, are no
+/// page's and every signature's: gained in the catalog, in `/Names`, or under an
+/// entry the same reference before and after.
+#[test]
+fn an_opening_action_a_script_or_a_file_appended_touches_every_page() {
+    use crate::cli::verify::After;
+    let script = || dictionary! { "S" => "JavaScript", "JS" => "app.alert(1)" };
+    let plain = self::built();
+    let edited = |edit: &dyn Fn(&mut Document, &mut Dictionary)| {
+        appended(&plain, |before, new| {
+            let mut root = dict_of(before, plain.catalog);
+            edit(new, &mut root);
+            new.set_object(plain.catalog, root);
+        })
+    };
+    for key in ["OpenAction", "AA"] {
+        let appendix = edited(&|new, root| {
+            let action = new.add_object(script());
+            root.set(key, action);
+        });
+        assert_eq!(strict(appendix), After::Pages(2), "{key}");
+    }
+    for key in ["JavaScript", "EmbeddedFiles"] {
+        let appendix = edited(&|_, root| {
+            root.set(
+                "Names",
+                dictionary! { key => dictionary! { "Names" => Vec::<Object>::new() } },
+            );
+        });
+        assert_eq!(strict(appendix), After::Pages(2), "{key}");
+    }
+    // The control: signers add appearances to `/Names`.
+    let appendix = edited(&|_, root| {
+        root.set(
+            "Names",
+            dictionary! { "AP" => dictionary! { "Names" => Vec::<Object>::new() } },
+        );
+    });
+    assert_eq!(strict(appendix), After::Unchanged);
+
+    // The same reference, over an action written again.
+    let mut built = built();
+    let mut signed = Document::load_mem(&built.bytes).expect("parses");
+    let held = built.undrawn;
+    signed
+        .get_dictionary_mut(built.catalog)
+        .expect("the catalog")
+        .set("OpenAction", held);
+    built.bytes.clear();
+    signed.save_to(&mut built.bytes).expect("saved");
+    let appendix = appended(&built, |_, new| new.set_object(held, script()));
+    assert_eq!(strict(appendix), After::Pages(2));
+}
+
+/// `/OpenAction` names a page, and a page is judged as a page: rewriting it touches
+/// it and not every other.
+#[test]
+fn an_opening_action_naming_a_page_written_again_does_not_touch_every_page() {
+    let mut built = built();
+    let mut signed = Document::load_mem(&built.bytes).expect("parses");
+    let page = built.page[0];
+    signed
+        .get_dictionary_mut(built.catalog)
+        .expect("the catalog")
+        .set("OpenAction", vec![Object::Reference(page), "Fit".into()]);
+    built.bytes.clear();
+    signed.save_to(&mut built.bytes).expect("saved");
+    let appendix = appended(&built, |document, new| {
+        let mut rewritten = document.get_object(page).expect("the page").clone();
+        rewritten
+            .as_dict_mut()
+            .expect("a dictionary")
+            .set("Rotate", 90);
+        new.set_object(page, rewritten);
+    });
+    assert_eq!(appendix.pages_touched, 1, "{appendix:?}");
+}
+
 /// A stream that draws nothing, as producers write one, against ones that draw.
 #[test]
 fn a_blank_appearance_is_blank_however_it_is_written_and_nothing_else_is() {

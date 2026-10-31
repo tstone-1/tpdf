@@ -4,6 +4,7 @@ import type { Target, WebTarget } from "./outline";
 import { installFakeDom, type FakeDom, type FakeElement } from "./testdom";
 import {
   DIALOG_CLASS,
+  OPEN_AFTER_MS,
   WebLinkDialog,
   addressOf,
   confirmAndOpen,
@@ -15,11 +16,18 @@ let dom: FakeDom;
 
 beforeEach(() => {
   dom = installFakeDom();
+  vi.useFakeTimers();
 });
 
 afterEach(() => {
+  vi.useRealTimers();
   dom.restore();
 });
+
+/** Lets the time pass in which a double-click's second press would land. */
+function waitToRead(): void {
+  vi.advanceTimersByTime(OPEN_AFTER_MS);
+}
 
 /** The dialog, and the pieces a reader touches. */
 function open(): {
@@ -53,6 +61,7 @@ describe("WebLinkDialog", () => {
   it("resolves true only when Open is pressed", async () => {
     const { dialog, openButton } = open();
     const answer = dialog.ask(ADDRESS);
+    waitToRead();
     openButton.dispatch("click", {});
     await expect(answer).resolves.toBe(true);
   });
@@ -105,6 +114,23 @@ describe("WebLinkDialog", () => {
     await Promise.resolve();
     expect(settled).toBe(false);
     // And the button itself still works.
+    waitToRead();
+    parts.openButton.dispatch("click", {});
+    await expect(answer).resolves.toBe(true);
+  });
+
+  it("ignores a press of Open that comes as the second of a double-click", async () => {
+    const parts = open();
+    const answer = parts.dialog.ask(ADDRESS);
+    vi.advanceTimersByTime(OPEN_AFTER_MS - 1);
+    parts.openButton.dispatch("click", {});
+    let settled = false;
+    void answer.then(() => {
+      settled = true;
+    });
+    await Promise.resolve();
+    expect(settled).toBe(false);
+    vi.advanceTimersByTime(1);
     parts.openButton.dispatch("click", {});
     await expect(answer).resolves.toBe(true);
   });
@@ -149,6 +175,7 @@ describe("WebLinkDialog", () => {
     const first = parts.dialog.ask(ADDRESS);
     const second = parts.dialog.ask({ host: "other.example", rest: "/" });
     await expect(first).resolves.toBe(false);
+    waitToRead();
     parts.openButton.dispatch("click", {});
     await expect(second).resolves.toBe(true);
   });

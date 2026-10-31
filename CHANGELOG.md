@@ -44,6 +44,23 @@ have the binary.)
   now exits 1.
 - `verify --strict` is documented as what it is: a check that compares two readings of the
   file with `lopdf`, not proof that a signed page looks as it did.
+- A timestamp from an authority this computer does not trust is no longer written into a signature,
+  since over `http://` anybody on the path can answer with one. `sign --timestamp` exits 3 and
+  writes nothing unless `--allow-untrusted-timestamp` is given; the window stops and offers what it
+  offers when an authority does not answer. A private authority's root can be added to the
+  system's store instead.
+- A certificate whose key usage forbids signing no longer reads as trusted for signing documents,
+  so `verify --strict` fails it.
+- `verify --strict` fails an append that changes `/OpenAction`, `/AA`, or the scripts or attached
+  files in `/Names`.
+- An attachment's name loses text-direction and zero-width characters and trailing dots, by which
+  `report.exe.` or a reversed `fdp.exe` could read as another type and skip the program warning.
+- The PIN and password prompt on the terminal no longer passes on escape sequences from a token's
+  label or a certificate file's name.
+- `--force` keeps a replaced file's mode, so a private file does not come back readable by others,
+  and what is staged beside it is in a directory private to the user.
+- The web-link dialog ignores Open for half a second after appearing, so the second press of a
+  double-click on a link cannot confirm it unread.
 - `verify --strict` also fails a timestamp that blanks a signature field's existing appearance,
   annotations put in another order beside a new field, and a change to `/OCProperties` or
   `/NeedAppearances`. A timestamp with a compressed empty appearance counts as drawing nothing, and
@@ -51,8 +68,9 @@ have the binary.)
 - `verify --strict` fails an append that is not written plainly enough for two PDF parsers to
   have to read it alike, such as stray bytes, a very long number, a name byte past ASCII or a key
   given twice, or a table entry that names another object than the one at its offset. It reads
-  as *something was appended that tpdf could not read*. So does a `/Prev` that does not name an
-  earlier section. Another root for the page tree touches
+  as *something was appended that tpdf could not read*. So does a `/Prev` or `startxref` that does
+  not name an earlier section, a table or a stream saying it is a cross-reference stream, and more
+  than 1 KiB after the last `startxref`. Another root for the page tree touches
   every page.
 - A line break in a signature's field name or a certificate's name can no longer print rows that
   read as `verify`'s own.

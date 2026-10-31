@@ -1292,7 +1292,7 @@ comments but a producer's marker before `startxref`, and a stream length that mi
 the 153 appendices in the public DSS project's `dss-pades` validation PDFs it changes no reading,
 though 23 of them were already unread. An entry in use in a table has to name the object at its
 offset, since `lopdf` keys an object by its own header and PDFium by the table, and a new `/Pages` in
-the catalog touches every page, since the two walk a page tree differently. A `/Prev` has to name an earlier section, since one that
+the catalog touches every page, since the two walk a page tree differently. A `/Prev` or `startxref` has to name a table or a stream with a direct `/Type /XRef`, and the last `startxref` has to stand within 1 KiB of the file's end, since PDFium rebuilds from a scan past that and neither parser asks for the `/Type`; both were found by an independent read-only review on 2026-10-31 and measured through PDFium. Other triggers for that rebuild may remain, because this reads the rules rather than PDFium. A `/Prev` has to name an earlier section, since one that
 does not has PDFium rebuild from a scan, where the last copy of an object wins. **Still open** are
 entries in a cross-reference stream, and a `/Prev` that names an earlier section other than the one
 before it: a prototype requiring that whole chain to agree accepted only 106 of 156 appends, refusing honest
@@ -1304,10 +1304,12 @@ when its object or anything it draws from was added or replaced; until that date
 objects were counted, so a replaced content stream read as no page. Since 2026-10-31 a change to
 `/OCProperties` or to `/AcroForm /NeedAppearances` touches every page, since each redraws a page no
 page object refers to, and a listing has to leave the page's annotations in their order, since a
-later one draws over an earlier one. Not judged: any other catalog entry, such as form defaults or
-document JavaScript, because honest signers change `/DR`, `/DA`, `/StructTreeRoot` and `/OpenAction`
-(22 of the 134 DSS validation files failed an allowlist); and a change between two signatures, which
-the later one covers. A
+later one draws over an earlier one. So does a change to `/OpenAction`, `/AA`, or the scripts or
+files in `/Names`, which is what a viewer does with the document whatever a signature covers: none of
+the 241 revisions after a signature in the 134 DSS validation files changes `/OpenAction` or `/AA`,
+compared without following them into the page they name. Not judged: any other catalog entry, such
+as form defaults, because honest signers change `/DR`, `/DA` and `/StructTreeRoot` (22 of those files
+failed an allowlist); and a change between two signatures, which the later one covers. A
 document signature that carries the ESS `signingCertificateV2` attribute is held to it: one
 naming another certificate than the one it carries is `unchecked`, reason `binding`. A signature tpdf
 cannot fully check is `unchecked` with its reason and is never shown as `intact`; a SHA-1 match
@@ -5505,9 +5507,12 @@ because the arm it ran was the one written for "any other platform".
     is refused, nothing written, and its certificates choose no address tpdf connects to
     (§T10). That price was paid there --- trust is now asked in the coordinator on network
     bytes (residual 25), and a real authority whose root a Windows machine has not yet fetched
-    is refused for long-term data until it has. Still open for a plain timestamped signing: a
-    substituted token without long-term data is written, and reads *not trusted* wherever it
-    is shown --- the decision left open in `docs/PLAN.md` §9, Phase 6's open questions.
+    is refused for long-term data until it has. **Closed for a plain timestamped signing on
+    2026-10-31**, at the same price: `commands::sign::finish` asks the same question before
+    sealing, the window stops as it does for an authority that did not answer, and the command
+    line exits 3 unless `--allow-untrusted-timestamp` says to keep it. So on Windows a real
+    authority whose root has not been fetched now stops a plain signing too, and a private
+    authority needs its root in the system's store or that option.
 30. **A signer judged at an attested moment is judged with today's trust store** (§T6.25),
     added 2026-09-28. The OS store is asked whether the chain ended at a root it trusts *at*
     `genTime`, using the roots it holds now: a root distrusted since reads as not trusted, and a

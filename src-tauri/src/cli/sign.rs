@@ -19,8 +19,8 @@ use crate::sign_prepare::{Options, Visible};
 /// `sign`, registered.
 pub const COMMAND: Registered = Registered {
     name: "sign",
-    usage: "sign <in.pdf> -o <out.pdf> --identity <subject | sha256 | sha1>\n        [--visible (--rect x,y,w,h | --anchor TEXT --size w,h [--offset dx,dy]\n         [--anchor-match N]) [--page N] [--image FILE | --no-image]\n         [--lines label,name,date | --text LINE ...] [--date-format FORMAT]\n         [--hide reason,location]]\n        [--reason TEXT] [--location TEXT] [--contact TEXT] [--field NAME]\n        [--timestamp digicert|sectigo|globalsign|<url> [--long-term]]\n        [--lock] [--force] [--json]",
-    summary: "Signs with a certificate from your keychain (macOS), your\n            certificate store (Windows), or on Linux a smart card or token\n            through PKCS#11 or a certificate file added with identities --add.\n            A key in the keychain, the store or on a card never leaves it, and\n            the system may ask you to allow its use or ask for the PIN. The original is never\n            changed; the signed copy is written to -o, which must not exist\n            unless --force is given. --visible draws it on a page: --rect is\n            x,y,w,h in points from the top-left corner of the page as\n            displayed, --page counts from 1, and the saved signature image is\n            drawn unless --no-image is given or --image names a PNG or JPEG\n            file to draw instead, for this signature only; the saved image is\n            then neither read nor changed. --reason, --location and --contact are\n            written to the signature, with or without --visible; a visible\n            signature draws the reason and location as lines of it. --hide writes the ones\n            it names without drawing them, and nothing is hidden without it.\n            --anchor puts it beside text on the page instead: its top-left\n            corner is the text's, moved by --offset, and --size is its width\n            and height; text found more than once needs --anchor-match.\n            --text draws your own lines instead of the standard ones: {name},\n            {date}, {reason} and {location} are filled in, \\n starts a new\n            line, and --text may be given more than once. --date-format writes\n            the date with YYYY, MM, DD, HH, mm and ss; the time is UTC.\n            --field signs an empty signature field the document has, by its\n            name: the signature is written into that field, and with --visible\n            it is drawn in the field's rectangle, so --rect, --page and --anchor\n            are left out.\n            --timestamp asks that\n            timestamp authority for an RFC 3161 timestamp over the new\n            signature; nothing is sent anywhere without it, and if the\n            authority does not answer with one that checks out, nothing\n            is written.\n            --lock writes into the signature that nothing may change after\n            it. Validation data and document timestamps can still be added;\n            a further signature is refused. A certified document already\n            says what may change, so it is not locked: sign it without\n            --lock.",
+    usage: "sign <in.pdf> -o <out.pdf> --identity <subject | sha256 | sha1>\n        [--visible (--rect x,y,w,h | --anchor TEXT --size w,h [--offset dx,dy]\n         [--anchor-match N]) [--page N] [--image FILE | --no-image]\n         [--lines label,name,date | --text LINE ...] [--date-format FORMAT]\n         [--hide reason,location]]\n        [--reason TEXT] [--location TEXT] [--contact TEXT] [--field NAME]\n        [--timestamp digicert|sectigo|globalsign|<url>\n         [--long-term | --allow-untrusted-timestamp]]\n        [--lock] [--force] [--json]",
+    summary: "Signs with a certificate from your keychain (macOS), your\n            certificate store (Windows), or on Linux a smart card or token\n            through PKCS#11 or a certificate file added with identities --add.\n            A key in the keychain, the store or on a card never leaves it, and\n            the system may ask you to allow its use or ask for the PIN. The original is never\n            changed; the signed copy is written to -o, which must not exist\n            unless --force is given. --visible draws it on a page: --rect is\n            x,y,w,h in points from the top-left corner of the page as\n            displayed, --page counts from 1, and the saved signature image is\n            drawn unless --no-image is given or --image names a PNG or JPEG\n            file to draw instead, for this signature only; the saved image is\n            then neither read nor changed. --reason, --location and --contact are\n            written to the signature, with or without --visible; a visible\n            signature draws the reason and location as lines of it. --hide writes the ones\n            it names without drawing them, and nothing is hidden without it.\n            --anchor puts it beside text on the page instead: its top-left\n            corner is the text's, moved by --offset, and --size is its width\n            and height; text found more than once needs --anchor-match.\n            --text draws your own lines instead of the standard ones: {name},\n            {date}, {reason} and {location} are filled in, \\n starts a new\n            line, and --text may be given more than once. --date-format writes\n            the date with YYYY, MM, DD, HH, mm and ss; the time is UTC.\n            --field signs an empty signature field the document has, by its\n            name: the signature is written into that field, and with --visible\n            it is drawn in the field's rectangle, so --rect, --page and --anchor\n            are left out.\n            --timestamp asks that\n            timestamp authority for an RFC 3161 timestamp over the new\n            signature; nothing is sent anywhere without it, and if the\n            authority does not answer with one that checks out, nothing\n            is written. Nor is it from an authority this computer does not\n            trust for timestamping, unless --allow-untrusted-timestamp is given.\n            --lock writes into the signature that nothing may change after\n            it. Validation data and document timestamps can still be added;\n            a further signature is refused. A certified document already\n            says what may change, so it is not locked: sign it without\n            --lock.",
     parse: boxed,
 };
 
@@ -62,6 +62,9 @@ pub struct Sign {
     /// `--long-term`: gather and add long-term validation data. Only with a
     /// timestamp, which the parse enforces.
     pub long_term: bool,
+    /// `--allow-untrusted-timestamp`: seal a timestamp whatever authority made
+    /// it. Not with `long_term`, which rests on a trusted one.
+    pub allow_untrusted_timestamp: bool,
     /// `--lock`: the signature locks the document against any later change.
     pub lock: bool,
     /// `--json`.
@@ -185,6 +188,7 @@ pub fn parse(args: &[String]) -> Result<Sign, String> {
     let mut date_format: Option<String> = None;
     let mut timestamp: Option<url::Url> = None;
     let mut long_term = false;
+    let mut allow_untrusted_timestamp = false;
     let mut lock = false;
     let mut json = false;
     let mut force = false;
@@ -225,6 +229,7 @@ pub fn parse(args: &[String]) -> Result<Sign, String> {
                 );
             }
             (false, "--long-term") => long_term = true,
+            (false, "--allow-untrusted-timestamp") => allow_untrusted_timestamp = true,
             (false, "--lock") => lock = true,
             (false, "--json") => json = true,
             (false, "--force") => force = true,
@@ -330,6 +335,13 @@ pub fn parse(args: &[String]) -> Result<Sign, String> {
                 .into(),
         );
     }
+    if allow_untrusted_timestamp && (timestamp.is_none() || long_term) {
+        return Err(
+            "`--allow-untrusted-timestamp` needs `--timestamp` and not `--long-term`, which \
+             rests on an authority this computer trusts"
+                .into(),
+        );
+    }
     // A field is a place: it says the page and the rectangle, and a second
     // answer beside it is a line with a mistake in it.
     if let Some(name) = &field {
@@ -387,6 +399,7 @@ pub fn parse(args: &[String]) -> Result<Sign, String> {
         date_format: date_format.unwrap_or_default(),
         timestamp,
         long_term,
+        allow_untrusted_timestamp,
         lock,
         json,
         force,
@@ -432,6 +445,10 @@ pub(crate) fn concluded(
     worker: &dyn save::Verifier,
     asking: Asking<'_>,
 ) -> Result<Finished, Failure> {
+    let asking = Asking {
+        any_authority: sign.allow_untrusted_timestamp,
+        ..asking
+    };
     finish(
         Stage::Made(made),
         sign.timestamp.as_ref(),
@@ -449,11 +466,16 @@ pub(crate) fn concluded(
                 .as_ref()
                 .and_then(url::Url::host_str)
                 .unwrap_or_default();
+            let otherwise = if matches!(why, crate::tsa::Refusal::Untrusted(_)) {
+                "sign again with --allow-untrusted-timestamp to keep it, or without --timestamp \
+                 to sign without one"
+            } else {
+                "sign again without --timestamp to sign without one"
+            };
             Failure::new(
                 Exit::Refused,
                 format!(
-                    "{} --- nothing was written; sign again without --timestamp to sign without \
-                     one",
+                    "{} --- nothing was written; {otherwise}",
                     why.sentence(host)
                 ),
             )
