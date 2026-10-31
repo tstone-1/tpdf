@@ -39,6 +39,10 @@ have the binary.)
   written before a timestamp, or only a timestamp, now exits 1 where it exited 0.
 - `verify --strict` is documented as what it is: a check that compares two readings of the
   file with `lopdf`, not proof that a signed page looks as it did.
+- `verify --strict` also fails a timestamp that blanks a signature field's existing appearance,
+  annotations put in another order beside a new field, and a change to `/OCProperties` or
+  `/NeedAppearances`. A timestamp with a compressed empty appearance counts as drawing nothing, and
+  a value written differently, such as `612.0` as `612`, is not a change.
 - `--render-worker` means a worker only directly after the program's name.
 - `--help` or `-h` beside other words on a command's line, which may be a file of that name from
   a shell's `*`, is refused with exit code 2. It used to print help and exit 0 with no document

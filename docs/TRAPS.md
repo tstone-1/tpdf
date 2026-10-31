@@ -27074,6 +27074,13 @@ empty appearance draws 0% in PDFium, also with content after its first `endstrea
 colours and no `/AP` at all, while `/Length 0` over real content paints 94% and strict `lopdf`
 refuses that file, so it reads as unread.
 
+**Run a stricter rule over real files before believing it.** The first version of these rules passed
+every test and made 7 of the 134 public DSS validation files fail: five hold an empty appearance
+compressed with Flate, one was a page whose `612.0` was written again as `612`, and one has a
+genuinely visible timestamp, which is meant to fail. An allowlist of harmless catalog entries then
+failed 22, so the catalog rule names the two entries that redraw instead. `verify --json` over that
+set, compared against a build of the commit before, took minutes and found what no test could.
+
 **A `Debug` comparison is a comparison of a lossy printout.** `same_object` compared `format!("{:?}")`,
 so a key named `Resources 4 0 R/Contents` printed exactly like the two entries it replaced. And
 **PDFium ignores a reference's generation**: `7 3 R` draws object 7 where `lopdf` finds nothing.

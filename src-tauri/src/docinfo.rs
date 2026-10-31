@@ -2817,6 +2817,12 @@ fn read_appendix(bytes: &[u8], end: usize, password: Option<&str>) -> Appendix {
         listings.retain(|(page, _)| !lost.contains(page));
         touched.extend(lost);
     }
+    // Asked of the catalog, and answered for every page: a layer turned off there
+    // changes what any page shows, and no page refers to what changed.
+    if catalog_redraws(&signed, &whole, &changed) {
+        listings.clear();
+        touched.extend(whole.get_pages().into_values());
+    }
     out.pages_listing = listings.into_iter().map(|(_, listing)| listing).collect();
     let now = whole.get_pages();
     let moved = signed
@@ -3133,7 +3139,9 @@ impl PageRead<'_> {
         let old = Self::annots(self.signed, before)?;
         let new = Self::annots(self.whole, after)?;
         let listed = |entry: &Object| old.iter().any(|o| same_object(o, entry));
-        if !old.iter().all(|o| new.iter().any(|n| same_object(o, n))) {
+        // In their order and first: a later annotation draws over an earlier one,
+        // so two swapped change the page with every entry still present.
+        if new.len() < old.len() || !old.iter().zip(new.iter()).all(|(o, n)| same_object(o, n)) {
             return None;
         }
         let (kept, gained): (Vec<&Object>, Vec<&Object>) =
@@ -3151,7 +3159,7 @@ impl PageRead<'_> {
                 return None;
             }
             let stamp = self.holds_timestamp(widget);
-            if stamp && !self.draws_nothing(widget) {
+            if stamp && !draws_nothing(self.whole, widget) {
                 return None;
             }
             timestamp &= stamp;
@@ -3250,7 +3258,11 @@ impl PageRead<'_> {
             return None;
         }
         self.new_signature(now)?;
-        if self.holds_timestamp(now) && !self.draws_nothing(now) {
+        // Both sides: a token's widget that drew in the signed revision and has
+        // gone blank has taken something off the page, for the price of a token.
+        if self.holds_timestamp(now)
+            && !(draws_nothing(self.whole, now) && draws_nothing(self.signed, was))
+        {
             return None;
         }
 
@@ -3298,34 +3310,133 @@ impl PageRead<'_> {
             .then_some(signature)
     }
 
-    /// Whether a widget holding a document timestamp cannot draw anything.
-    ///
-    /// Anybody can get a document timestamp from a public authority, for any bytes,
-    /// so one vouches for no person and a visible one could repaint a signed page.
-    /// **The appearance's size is not asked.** `lopdf` and PDFium read a rectangle
-    /// differently (2^32 rounds to no width in an `f32`, and PDFium painted it), and
-    /// PDFium draws an appearance with no `/BBox` whatever `/Rect` says; content that
-    /// is not there is the one answer both have to agree on.
-    fn draws_nothing(&self, widget: &lopdf::Dictionary) -> bool {
-        let Ok(appearances) = widget.get(b"AP") else {
-            return true;
-        };
-        resolve(self.whole, appearances)
-            .as_dict()
-            .is_ok_and(|appearances| {
-                appearances.iter().all(|(_, shown)| {
-                    matches!(resolve(self.whole, shown), Object::Stream(stream)
-                        if stream.content.iter().all(u8::is_ascii_whitespace))
-                })
-            })
-    }
-
     /// Whether a field holds a document timestamp.
     fn holds_timestamp(&self, field: &lopdf::Dictionary) -> bool {
         inherited(self.whole, field, b"V")
             .and_then(|v| resolve(self.whole, v).as_dict().ok())
             .is_some_and(|sig| name_of(self.whole, sig, b"SubFilter") == "ETSI.RFC3161")
     }
+}
+
+/// Whether a widget holding a document timestamp cannot draw anything.
+///
+/// Anybody can get a document timestamp from a public authority, for any bytes,
+/// so one vouches for no person and a visible one could repaint a signed page.
+/// **The appearance's size is not asked.** `lopdf` and PDFium read a rectangle
+/// differently (2^32 rounds to no width in an `f32`, and PDFium painted it), and
+/// PDFium draws an appearance with no `/BBox` whatever `/Rect` says; content that
+/// is not there is the one answer both have to agree on.
+fn draws_nothing(document: &Document, widget: &Dictionary) -> bool {
+    let Ok(appearances) = widget.get(b"AP") else {
+        return true;
+    };
+    resolve(document, appearances)
+        .as_dict()
+        .is_ok_and(|appearances| {
+            appearances.iter().all(|(_, shown)| {
+                matches!(resolve(document, shown), Object::Stream(stream) if blank_stream(stream))
+            })
+        })
+}
+
+/// How long a compressed appearance may be and still be read for being blank:
+/// far past the eight bytes an empty one takes, and bounding what it can expand to.
+const BLANK_STREAM_MAX: usize = 256;
+
+/// Whether a stream, plain or Flate-compressed and nothing else, is [`blank_content`].
+///
+/// Decoded because honest producers compress an empty appearance: five of the 134
+/// public DSS validation files do. Any other filter, and parameters on this one,
+/// read as something drawn, so that no decoder's reading is in question.
+fn blank_stream(stream: &lopdf::Stream) -> bool {
+    let filter = stream.dict.get(b"Filter").ok();
+    let flate = |o: &Object| o.as_name().is_ok_and(|n| n == b"FlateDecode");
+    match filter {
+        None => blank_content(&stream.content),
+        Some(filter)
+            if !stream.dict.has(b"DecodeParms")
+                && stream.content.len() <= BLANK_STREAM_MAX
+                && (flate(filter)
+                    || filter
+                        .as_array()
+                        .is_ok_and(|a| a.len() == 1 && flate(&a[0]))) =>
+        {
+            stream
+                .decompressed_content()
+                .is_ok_and(|content| blank_content(&content))
+        }
+        Some(_) => false,
+    }
+}
+
+/// Whether content-stream bytes hold nothing but white space, comments, and the
+/// `q` and `Q` that save and restore a state nothing then changes. Those are
+/// what producers write for an appearance with nothing in it.
+fn blank_content(content: &[u8]) -> bool {
+    content
+        .split(|byte| matches!(byte, b'\r' | b'\n'))
+        .all(|line| {
+            let code = line.split(|byte| *byte == b'%').next().unwrap_or_default();
+            code.split(|byte| matches!(byte, b' ' | b'\t' | b'\x0c' | 0))
+                .all(|word| word.is_empty() || word == b"q" || word == b"Q")
+        })
+}
+
+/// Whether the append changed one of the two things in the catalog that redraw a
+/// page with no page referring to them: `/OCProperties`, which turns a layer off,
+/// and `/AcroForm /NeedAppearances`, which has a reader draw the form's fields anew.
+///
+/// **These two by name, and not every entry but a list of harmless ones.** That
+/// was tried and failed 22 of the 134 public DSS validation files: honest signers
+/// change `/DR`, `/DA`, `/StructTreeRoot`, `/OutputIntents` and `/OpenAction`.
+/// Fails closed on a catalog it cannot find in one parse and not the other.
+fn catalog_redraws(
+    signed: &Document,
+    whole: &Document,
+    changed: &std::collections::BTreeSet<lopdf::ObjectId>,
+) -> bool {
+    let (Ok(before), Ok(after)) = (signed.catalog(), whole.catalog()) else {
+        return true;
+    };
+    let redraws_form = |document: &Document, catalog: &Dictionary| {
+        catalog
+            .get(b"AcroForm")
+            .ok()
+            .and_then(|form| resolve(document, form).as_dict().ok())
+            .and_then(|form| form.get(b"NeedAppearances").ok())
+            .and_then(|flag| resolve(document, flag).as_bool().ok())
+            .unwrap_or(false)
+    };
+    if redraws_form(signed, before) != redraws_form(whole, after) {
+        return true;
+    }
+    let layers = |catalog: &'_ Dictionary| catalog.get(b"OCProperties").ok().cloned();
+    let (layers_before, layers_after) = (layers(before), layers(after));
+    let same = match (&layers_before, &layers_after) {
+        (None, None) => true,
+        (Some(a), Some(b)) => same_object(a, b),
+        _ => false,
+    };
+    if !same {
+        return true;
+    }
+    // The same entry unchanged as a reference, over objects that are not.
+    let mut pending = Vec::new();
+    if let Some(layers) = &layers_after {
+        references_in(layers, &mut pending);
+    }
+    let mut met = std::collections::BTreeSet::new();
+    while let Some(id) = pending.pop() {
+        if changed.iter().any(|c| c.0 == id.0) {
+            return true;
+        }
+        if met.insert(id) {
+            if let Ok(object) = whole.get_object(id) {
+                references_in(object, &mut pending);
+            }
+        }
+    }
+    false
 }
 
 /// The `/V` of every signature field [`read_signatures`] reads in `document`, by
@@ -3397,10 +3508,12 @@ fn is_signature_field(document: &Document, widget: &lopdf::Dictionary) -> bool {
 }
 
 /// Whether two objects are the same, for the purpose of "did the append rewrite
-/// this": every byte of every name and string, every number and every entry in
-/// its order, and a stream's content as well as its dictionary. A difference in
-/// the order or the spelling reads as a change, which over-reports and is the
-/// safe direction.
+/// this": every byte of every name and string, the value of every number, every
+/// entry in its order, and a stream's content as well as its dictionary. A
+/// difference in the order reads as a change, which over-reports and is the safe
+/// direction. **A difference in how a value is written does not**: producers write
+/// a page's `612.0` again as `612`, or a literal string as hex, and it draws the
+/// same; calling that a change failed honest documents.
 ///
 /// **Compared value by value and never through `Debug`.** `lopdf` prints a name
 /// lossily and without delimiting it from what follows, so a page's `/Resources 4 0 R`
@@ -3412,11 +3525,13 @@ fn same_object(before: &Object, after: &Object) -> bool {
         (Object::Null, Object::Null) => true,
         (Object::Boolean(a), Object::Boolean(b)) => a == b,
         (Object::Integer(a), Object::Integer(b)) => a == b,
-        (Object::Real(a), Object::Real(b)) => a.to_bits() == b.to_bits(),
-        (Object::Name(a), Object::Name(b)) => a == b,
-        (Object::String(a, a_format), Object::String(b, b_format)) => {
-            a == b && a_format == b_format
+        (Object::Real(a), Object::Real(b)) => a == b,
+        #[allow(clippy::cast_precision_loss)]
+        (Object::Integer(a), Object::Real(b)) | (Object::Real(b), Object::Integer(a)) => {
+            *a as f32 == *b
         }
+        (Object::Name(a), Object::Name(b)) => a == b,
+        (Object::String(a, _), Object::String(b, _)) => a == b,
         (Object::Array(a), Object::Array(b)) => {
             a.len() == b.len() && a.iter().zip(b).all(|(a, b)| same_object(a, b))
         }

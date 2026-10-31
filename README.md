@@ -1397,7 +1397,8 @@ the page as it is displayed:
   over that append, or a document timestamp whose field has nothing to draw. A signature field
   nobody signed is such a change, since its appearance can paint over the page, and a timestamp
   does not answer for a page rewritten before it, since anybody can get one for any bytes.
-  Validation data and an archive timestamp are not such a change.
+  A change to the document's optional-content configuration or to `/NeedAppearances` touches
+  every page. Validation data and an archive timestamp are not such a change.
   **`--strict` is not proof that a signed page looks as it did.** It compares how `lopdf` reads
   the file before and after the append, and PDFium, which draws the page, can read a crafted
   file differently. Treat a pass as a check for honest appends and ordinary mistakes. To rule

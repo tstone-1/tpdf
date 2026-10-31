@@ -1962,28 +1962,240 @@ fn a_reference_naming_another_generation_still_draws_the_object() {
     assert!(!reached.contains(&built.page[1]), "{reached:?}");
 }
 
+/// A prepared place with nothing to draw, or with what `prepared` gave it.
+fn prepared_place(blank: bool) -> Prepared {
+    let mut prepared = prepared(false);
+    if blank {
+        let mut signed = Document::load_mem(&prepared.built.bytes).expect("parses");
+        signed
+            .get_dictionary_mut(prepared.place)
+            .expect("the place")
+            .remove(b"AP");
+        prepared.built.bytes.clear();
+        signed.save_to(&mut prepared.built.bytes).expect("saved");
+    }
+    prepared
+}
+
+/// A token written into `prepared`'s place, with an appearance or with none.
+fn stamps_the_place(prepared: &Prepared, appearance: bool) -> Appendix {
+    let place = prepared.place;
+    appended(&prepared.built, |before, new| {
+        fills(before, new, (place, place), |shown| {
+            if !appearance {
+                shown.remove(b"AP");
+            }
+        });
+        let value = dict_of(new, place)
+            .get(b"V")
+            .and_then(Object::as_reference)
+            .expect("the token");
+        let mut token = dict_of(new, value);
+        token.set("SubFilter", "ETSI.RFC3161");
+        new.set_object(value, token);
+    })
+}
+
 /// The same rule for a place the document had ready: a token in it draws nothing,
 /// or its page was rewritten.
 #[test]
 fn a_timestamp_in_a_prepared_place_is_held_to_the_same_rule() {
     use crate::cli::verify::After;
-    let prepared = prepared(false);
-    let stamped = |appearance: bool| {
-        appended(&prepared.built, |before, new| {
-            fills(before, new, (prepared.place, prepared.place), |shown| {
-                if !appearance {
-                    shown.remove(b"AP");
-                }
+    let place = prepared_place(true);
+    assert_eq!(strict(stamps_the_place(&place, true)), After::Pages(1));
+    assert_eq!(strict(stamps_the_place(&place, false)), After::Unchanged);
+}
+
+/// A token put in a prepared place whose appearance it leaves out takes what the
+/// signed revision drew there off the page.
+#[test]
+fn a_timestamp_that_erases_a_signed_appearance_is_a_rewritten_page() {
+    use crate::cli::verify::After;
+    let appendix = stamps_the_place(&prepared_place(false), false);
+    assert_eq!(appendix.pages_touched, 1, "{appendix:?}");
+    assert_eq!(strict(appendix), After::Pages(1));
+}
+
+/// Two annotations swapped beside a new field: every entry is still there, and
+/// the later one now draws over the earlier one.
+#[test]
+fn annotations_put_in_another_order_beside_a_new_field_are_a_rewritten_page() {
+    use crate::cli::verify::After;
+    let built = built();
+    let reading = |swap: bool| {
+        signed_then(&built, |built, _, new, widget, _| {
+            let mut page = dict_of(new, built.page[0]);
+            let mut annots = page
+                .get(b"Annots")
+                .and_then(Object::as_array)
+                .expect("its annotations")
+                .clone();
+            assert_eq!(annots.pop(), Some(widget.into()));
+            let kept = annots.remove(0);
+            let drawn = new.add_object(dictionary! {
+                "Type" => "Annot", "Subtype" => "Square",
+                "Rect" => vec![0.into(), 0.into(), 9.into(), 9.into()],
             });
-            let value = dict_of(new, prepared.place)
-                .get(b"V")
-                .and_then(Object::as_reference)
-                .expect("the token");
-            let mut token = dict_of(new, value);
-            token.set("SubFilter", "ETSI.RFC3161");
-            new.set_object(value, token);
+            if swap {
+                annots.extend([drawn.into(), kept]);
+            } else {
+                annots.extend([kept, drawn.into()]);
+            }
+            annots.push(widget.into());
+            page.set("Annots", annots);
+            new.set_object(built.page[0], page);
         })
     };
-    assert_eq!(strict(stamped(true)), After::Pages(1));
-    assert_eq!(strict(stamped(false)), After::Unchanged);
+    assert_eq!(strict(reading(true)), After::Pages(1));
+    // A new annotation that is no field is not a listing either way.
+    assert_eq!(strict(reading(false)), After::Pages(1));
+    // The control: the same list untouched, with the field at its end.
+    let plain = signed_then(&built, |_, _, _, _, _| {});
+    assert_eq!(strict(plain), After::Unchanged);
+}
+
+/// What a catalog can change on every page without any page referring to it.
+#[test]
+fn a_catalog_change_that_can_redraw_a_page_touches_every_page() {
+    use crate::cli::verify::After;
+    let built = built();
+    let edited = |edit: fn(&mut Document, &mut Dictionary)| {
+        appended(&built, |before, new| {
+            let mut root = dict_of(before, built.catalog);
+            edit(new, &mut root);
+            new.set_object(built.catalog, root);
+        })
+    };
+    for (case, edit) in [
+        (
+            "a layer turned off",
+            (|_, root| {
+                root.set(
+                    "OCProperties",
+                    dictionary! { "D" => dictionary! { "OFF" => vec![Object::Reference((1, 0))] } },
+                );
+            }) as fn(&mut Document, &mut Dictionary),
+        ),
+        (
+            "a layer's configuration in an object of its own",
+            |new, root| {
+                let held = new.add_object(dictionary! { "OFF" => vec![Object::Reference((1, 0))] });
+                root.set("OCProperties", dictionary! { "D" => held });
+            },
+        ),
+        ("the form told to redraw itself", |_, root| {
+            let form = root
+                .get_mut(b"AcroForm")
+                .and_then(Object::as_dict_mut)
+                .expect("a form");
+            form.set("NeedAppearances", true);
+        }),
+    ] {
+        let appendix = edited(edit);
+        assert_eq!(appendix.pages_touched, 2, "{case}: {appendix:?}");
+        assert_eq!(strict(appendix), After::Pages(2), "{case}");
+    }
+    // The control: what a validator writes.
+    let appendix = edited(|new, root| {
+        let dss = new.add_object(dictionary! {});
+        root.set("DSS", dss);
+    });
+    assert_eq!(appendix.pages_touched, 0, "{appendix:?}");
+    assert_eq!(strict(appendix), After::Unchanged);
+}
+
+/// `/OCProperties` the same reference before and after, over an object that is
+/// not: a layer turned off with the catalog's own entry unchanged.
+#[test]
+fn a_layer_turned_off_in_an_object_of_its_own_touches_every_page() {
+    use crate::cli::verify::After;
+    let mut built = built();
+    let mut signed = Document::load_mem(&built.bytes).expect("parses");
+    let held = built.undrawn;
+    signed
+        .get_dictionary_mut(built.catalog)
+        .expect("the catalog")
+        .set("OCProperties", held);
+    built.bytes.clear();
+    signed.save_to(&mut built.bytes).expect("saved");
+    let appendix = appended(&built, |_, new| {
+        new.set_object(
+            held,
+            dictionary! { "D" => dictionary! { "BaseState" => "OFF" } },
+        );
+    });
+    assert_eq!(appendix.pages_touched, 2, "{appendix:?}");
+    assert_eq!(strict(appendix), After::Pages(2));
+    // The control: the same object rewritten when no catalog entry names it.
+    let plain = self::built();
+    let appendix = appended(&plain, |_, new| {
+        new.set_object(plain.undrawn, dictionary! { "D" => dictionary! {} });
+    });
+    assert_eq!(strict(appendix), After::Unchanged);
+}
+
+/// A stream that draws nothing, as producers write one, against ones that draw.
+#[test]
+fn a_blank_appearance_is_blank_however_it_is_written_and_nothing_else_is() {
+    use std::io::Write as _;
+    let compressed = |content: &[u8]| {
+        let mut encoder =
+            flate2::write::ZlibEncoder::new(Vec::new(), flate2::Compression::default());
+        encoder.write_all(content).expect("compressed");
+        encoder.finish().expect("compressed")
+    };
+    let flate = |content: &[u8]| {
+        Stream::new(
+            dictionary! { "Filter" => "FlateDecode" },
+            compressed(content),
+        )
+    };
+    let plain = |content: &[u8]| Stream::new(dictionary! {}, content.to_vec());
+    for (case, stream) in [
+        ("empty", plain(b"")),
+        ("white space", plain(b" \r\n\t")),
+        ("a comment", plain(b"% DSBlank\n")),
+        ("a saved state", plain(b"q Q")),
+        ("compressed and empty", flate(b"")),
+        ("compressed and a comment", flate(b"% DSBlank\nq\nQ\n")),
+    ] {
+        assert!(super::blank_stream(&stream), "{case}");
+    }
+    let mut parameters = flate(b"");
+    parameters
+        .dict
+        .set("DecodeParms", dictionary! { "Predictor" => 1 });
+    let other_filter = Stream::new(dictionary! { "Filter" => "ASCIIHexDecode" }, b">".to_vec());
+    let long = flate(b"q Q ").content.repeat(100);
+    for (case, stream) in [
+        ("a fill", plain(b"0 0 9 9 re f")),
+        ("a fill after a comment", plain(b"% DSBlank\n0 0 9 9 re f")),
+        (
+            "a fill after a comment ended by CR",
+            plain(b"% x\r0 0 9 9 re f"),
+        ),
+        ("compressed and a fill", flate(b"0 0 9 9 re f")),
+        ("compressed with parameters", parameters),
+        ("another filter", other_filter),
+        (
+            "too long to read",
+            Stream::new(dictionary! { "Filter" => "FlateDecode" }, long),
+        ),
+    ] {
+        assert!(!super::blank_stream(&stream), "{case}");
+    }
+}
+
+/// What a value looks like is not what it is: producers write a page again with
+/// its `612.0` as `612`, and one honest file in 134 failed for it.
+#[test]
+fn a_value_written_differently_is_the_same_value() {
+    use super::same_object;
+    assert!(same_object(&Object::Real(612.0), &Object::Integer(612)));
+    assert!(same_object(&Object::Integer(612), &Object::Real(612.0)));
+    assert!(!same_object(&Object::Real(612.5), &Object::Integer(612)));
+    assert!(same_object(
+        &Object::String(b"a".to_vec(), lopdf::StringFormat::Literal),
+        &Object::String(b"a".to_vec(), lopdf::StringFormat::Hexadecimal),
+    ));
 }

@@ -1292,9 +1292,13 @@ exact stream lengths accepts 149; also requiring `startxref`, `/Prev` and each x
 accepts 106, refusing honest producers' files, such as a `startxref` one byte before its `xref`. A
 prototype, untested against hostile files. A page counts as touched
 when its object or anything it draws from was added or replaced; until that date only `/Page`
-objects were counted, so a replaced content stream read as no page. Not judged: a change that
-reaches no page (a catalog entry such as form defaults, optional-content configuration or
-document JavaScript), and a change between two signatures, which the later one covers. A
+objects were counted, so a replaced content stream read as no page. Since 2026-10-31 a change to
+`/OCProperties` or to `/AcroForm /NeedAppearances` touches every page, since each redraws a page no
+page object refers to, and a listing has to leave the page's annotations in their order, since a
+later one draws over an earlier one. Not judged: any other catalog entry, such as form defaults or
+document JavaScript, because honest signers change `/DR`, `/DA`, `/StructTreeRoot` and `/OpenAction`
+(22 of the 134 DSS validation files failed an allowlist); and a change between two signatures, which
+the later one covers. A
 document signature that carries the ESS `signingCertificateV2` attribute is held to it: one
 naming another certificate than the one it carries is `unchecked`, reason `binding`. A signature tpdf
 cannot fully check is `unchecked` with its reason and is never shown as `intact`; a SHA-1 match
