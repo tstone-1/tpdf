@@ -1477,7 +1477,10 @@ fn an_authority_marked_no_check_on_the_stores_chain_is_not_asked_about() {
 
 #[test]
 fn the_anchor_the_store_ended_at_is_not_asked_about_though_it_issued_nothing_to_itself() {
-    if !has_store() {
+    // macOS alone: CryptoAPI's exclusive root store reads a chain ending at an
+    // anchor that is not self-issued as untrusted (CI, 2026-10-31), so there
+    // the store never vouches for the shape this holds.
+    if !cfg!(target_os = "macos") {
         return;
     }
     // The issuing authority itself is the only root here, so the store's chain

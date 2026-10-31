@@ -27108,3 +27108,8 @@ what the attacker wants. So the fix judges the OS chain (`chain::along`), which 
 the rules inside it. One rule was then deleted rather than tested: judging a certificate the document
 carries in place of the store's differed only for an intermediate held in the machine's own store,
 which no test can set up.
+
+**Windows then disagreed with one premise, not with the fix.** All the attack tests passed through
+CryptoAPI on the first CI run, and the one red test assumed a store takes an intermediate as a trust
+anchor. macOS does and CryptoAPI's exclusive root store does not. A store's answer to an unusual
+chain is measured per platform, and a test's premise assertion is what said which half had failed.
