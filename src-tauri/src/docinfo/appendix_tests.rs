@@ -2199,3 +2199,29 @@ fn a_value_written_differently_is_the_same_value() {
         &Object::String(b"a".to_vec(), lopdf::StringFormat::Hexadecimal),
     ));
 }
+
+/// The grammar through the reading: `lopdf` parses each of these, and what it says
+/// cannot speak for PDFium, so the append reads as unread and `--strict` fails it.
+#[test]
+fn an_append_two_parsers_could_read_differently_is_unread() {
+    use crate::cli::verify::After;
+    let built = built();
+    let honest = revised(&built, |_, _| {});
+    let read = |tail: &[u8]| {
+        let whole = [honest.as_slice(), tail].concat();
+        read_appendix(&whole, built.bytes.len(), None)
+    };
+    assert!(!read(b"").unread, "the control");
+    assert!(!read(b"\n").unread, "a line end");
+    for (case, tail) in [
+        (
+            "a comment after the last revision",
+            b"%startxref 9\n%%EOF\n".as_slice(),
+        ),
+        ("a stray word", b"junk\n"),
+    ] {
+        let appendix = read(tail);
+        assert!(appendix.unread, "{case}");
+        assert_eq!(strict(appendix), After::Unread, "{case}");
+    }
+}

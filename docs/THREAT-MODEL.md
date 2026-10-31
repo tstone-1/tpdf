@@ -1285,12 +1285,15 @@ revision; and a document timestamp is no signature here, since any public author
 any bytes: it fails a document holding nothing else, it answers for no page before it, and its own
 field counts as a listing only with no content to draw. **The residual is parser differentials:**
 all of this reads the file through `lopdf`, PDFium draws it, and the two can read a crafted append
-differently, so `--strict` is not proof that a signed page looks as it did. A remedy not yet built
-was measured on 2026-10-31 over the 156 appends after a signature in the public DSS project's
-`dss-pades` validation PDFs: reading the append from start to end with a strict token grammar and
-exact stream lengths accepts 149; also requiring `startxref`, `/Prev` and each xref entry to agree
-accepts 106, refusing honest producers' files, such as a `startxref` one byte before its `xref`. A
-prototype, untested against hostile files. A page counts as touched
+differently, so `--strict` is not proof that a signed page looks as it did. Since 2026-10-31 an append also has to read
+from start to end in a plain form (`docinfo/append_syntax.rs`), or it reads as unread: that refuses
+stray bytes, long numbers, name bytes past ASCII, a key given twice, a table entry of the wrong size,
+comments but a producer's marker before `startxref`, and a stream length that misses `endstream`. Over
+the 153 appendices in the public DSS project's `dss-pades` validation PDFs it changes no reading,
+though 23 of them were already unread. **Still open** is an append in that plain form whose `/Prev`
+and table entries say something else than its bytes: a prototype requiring them to agree accepted
+only 106 of 156 appends, refusing honest producers' files such as a `startxref` one byte before its
+`xref`. A page counts as touched
 when its object or anything it draws from was added or replaced; until that date only `/Page`
 objects were counted, so a replaced content stream read as no page. Since 2026-10-31 a change to
 `/OCProperties` or to `/AcroForm /NeedAppearances` touches every page, since each redraws a page no

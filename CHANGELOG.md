@@ -43,6 +43,9 @@ have the binary.)
   annotations put in another order beside a new field, and a change to `/OCProperties` or
   `/NeedAppearances`. A timestamp with a compressed empty appearance counts as drawing nothing, and
   a value written differently, such as `612.0` as `612`, is not a change.
+- `verify --strict` fails an append that is not written plainly enough for two PDF parsers to
+  have to read it alike, such as stray bytes, a very long number, a name byte past ASCII or a key
+  given twice. It reads as *something was appended that tpdf could not read*.
 - `--render-worker` means a worker only directly after the program's name.
 - `--help` or `-h` beside other words on a command's line, which may be a file of that name from
   a shell's `*`, is refused with exit code 2. It used to print help and exit 0 with no document
