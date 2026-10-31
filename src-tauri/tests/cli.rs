@@ -67,6 +67,10 @@
 //!    and what it does not match is not; a dry run predicts the write; the
 //!    verdict and every reason equal the application's path driven in this
 //!    process; refusals write nothing. Its containment is 3's, below.
+//! 9. **A word reading `--ocr-worker` belongs to the command**: as a file name
+//!    after `--` and as an option's value, the built tool answers about a real
+//!    document of that name. Control: `redact`'s "nothing is printed on stderr"
+//!    checks in 8 run the real worker, and go red if the marker stops reaching it.
 //!
 //! Fixtures under `testdata/` are generated, not committed (`BUILD.md`); a
 //! check whose fixtures are absent says `[SKIP]` and names them, and is never
@@ -268,6 +272,10 @@ fn main() {
         (
             "plain output carries no escape from a document string",
             escapes_stay_out_of_plain_output,
+        ),
+        (
+            "a word reading --ocr-worker belongs to the command, not to a worker",
+            ocr_marker_in_a_word,
         ),
         ("text agrees with the in-process extraction", text_agrees),
         ("text beside pdftotext, for information", beside_pdftotext),
@@ -3144,4 +3152,53 @@ fn beside_pdftotext(report: &mut Report) {
             per_page.join(" ")
         );
     }
+}
+
+// --- 9 ----------------------------------------------------------------------
+
+/// `verify --strict` and `search` on a real document named after the marker, whose
+/// text is the marker too, so that each answer proves the command read it. A
+/// diverted process reports no document on stdout, whichever exit code it reaches.
+fn ocr_marker_in_a_word(report: &mut Report) {
+    const MARKER: &str = tpdf_lib::ocr_worker::OCR_WORKER_ARGV;
+    let dir = scratch("ocr-marker");
+    pages::fixture(&dir.join(MARKER), &[MARKER]);
+    let in_dir = |args: &[&str]| {
+        let out = Command::new(env!("CARGO_BIN_EXE_tpdf-cli"))
+            .current_dir(&dir)
+            .args(args)
+            .output()
+            .expect("the built tool runs");
+        (
+            out.status.code().unwrap_or(-1),
+            serde_json::from_slice::<serde_json::Value>(&out.stdout).unwrap_or_default(),
+            String::from_utf8_lossy(&out.stderr).into_owned(),
+        )
+    };
+
+    let (code, json, stderr) = in_dir(&["verify", "--strict", "--json", "--", MARKER]);
+    report.check(
+        "verify --strict reads a file of that name after --, and it has no signature",
+        code == 1 && json["strict_passed"] == false && json["files"][0]["path"] == MARKER,
+        &format!("exit {code}: {stderr}{json}"),
+    );
+
+    let (code, json, stderr) = in_dir(&["search", "--json", "--text", MARKER, "--", MARKER]);
+    report.check(
+        "search takes it as the value of --text and finds it in that file",
+        code == 0
+            && json["queries"][0]["query"] == MARKER
+            && json["files"][0]["path"] == MARKER
+            && json["files"][0]["matches"][0]["hit"] == MARKER,
+        &format!("exit {code}: {stderr}{json}"),
+    );
+
+    let (code, stdout, stderr) = tool(&["search", MARKER], &[]);
+    report.check(
+        "where an option stands it is an option search does not have",
+        code == 2 && stdout.is_empty() && stderr.contains(MARKER),
+        &format!("exit {code}: {stderr}{stdout}"),
+    );
+
+    let _ = std::fs::remove_dir_all(&dir);
 }

@@ -106,6 +106,15 @@ pub use crate::worker_shm::Shm;
 /// of defect `AGENTS.md` already records for the PDFium library directory.
 pub const WORKER_ARGV: &str = "--render-worker";
 
+/// Whether `args` is a line this file wrote: the marker directly after the
+/// program's name, where every spawn puts it and nowhere else. Anywhere further
+/// along it is a word of somebody's command line, and `--lib` beside it would
+/// choose the library a worker loads.
+#[must_use]
+pub fn asks_for_the_worker(args: &[String]) -> bool {
+    args.get(1).map(String::as_str) == Some(WORKER_ARGV)
+}
+
 // The three platforms a worker has a boundary on. Any other is refused here,
 // when the crate is compiled, rather than by an entry point that refuses at run
 // time: it makes every `unix` in this crate mean macOS or Linux, and leaves no
@@ -1521,5 +1530,23 @@ mod tests {
             super::PRESPAWNS,
             if started { "started one" } else { "refused" }
         );
+    }
+}
+
+#[cfg(test)]
+mod marker_tests {
+    use super::{asks_for_the_worker, WORKER_ARGV};
+
+    #[test]
+    fn the_marker_asks_for_the_worker_only_directly_after_the_programs_name() {
+        let asks = |words: &[&str]| {
+            asks_for_the_worker(&words.iter().map(|w| (*w).to_string()).collect::<Vec<_>>())
+        };
+        assert!(asks(&["tpdf", WORKER_ARGV, "--doc-len", "1", "--lib", "x"]));
+        assert!(!asks(&[]));
+        assert!(!asks(&["tpdf"]));
+        assert!(!asks(&[WORKER_ARGV]));
+        assert!(!asks(&["tpdf", "a.pdf", WORKER_ARGV, "--lib", "x"]));
+        assert!(!asks(&["tpdf", "--", WORKER_ARGV]));
     }
 }

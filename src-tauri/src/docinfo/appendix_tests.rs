@@ -300,7 +300,7 @@ fn signs_the_first_page_as(built: &Built, before: &Document, new: &mut Document,
     // empty field (`PageRead::new_signature`).
     let value = new.add_object(dictionary! {
         "Type" => "Sig", "Filter" => "Adobe.PPKLite", "SubFilter" => "adbe.pkcs7.detached",
-        "ByteRange" => vec![0.into(), 10.into(), 20.into(), 30.into()],
+        "ByteRange" => reaching_the_append(),
     });
     let font = new.add_object(dictionary! {
         "Type" => "Font", "Subtype" => "Type1", "BaseFont" => "Courier",
@@ -331,6 +331,28 @@ fn signs_the_first_page_as(built: &Built, before: &Document, new: &mut Document,
     annots.push(widget.into());
     page.set("Annots", annots);
     new.set_object(built.page[0], page);
+    lists_in_the_form(built.catalog, before, new, widget);
+}
+
+/// A `/ByteRange` whose end is past any document built here, as a signature made
+/// over the append has (`PageRead::new_signature`).
+fn reaching_the_append() -> Vec<Object> {
+    vec![0.into(), 10.into(), 20.into(), 1_000_000.into()]
+}
+
+/// `/AcroForm /Fields` with `field` added, which is what makes it a field
+/// `read_signatures` judges. The form's own object when the catalog holds it.
+fn lists_in_the_form(catalog: ObjectId, before: &Document, new: &mut Document, field: ObjectId) {
+    let mut root = dict_of(before, catalog);
+    let form = root
+        .get_mut(b"AcroForm")
+        .and_then(Object::as_dict_mut)
+        .expect("a form");
+    form.get_mut(b"Fields")
+        .and_then(Object::as_array_mut)
+        .expect("its fields")
+        .push(field.into());
+    new.set_object(catalog, root);
 }
 
 /// What `--strict` makes of an appendix after an intact signature.
@@ -489,7 +511,7 @@ fn what_a_page_draws_replaced_beside_a_new_signature_field_is_not_a_listing() {
             signs_the_first_page(&built, before, new);
             new.set_object(id, rewritten(id));
         });
-        assert_eq!(appendix.replaced, 2, "{what}: {appendix:?}");
+        assert_eq!(appendix.replaced, 3, "{what}: {appendix:?}");
         assert_eq!(
             (
                 appendix.pages_listing.clone(),
@@ -538,8 +560,8 @@ fn a_visible_second_signature_is_a_listing_whatever_its_widget_brings() {
         signs_the_first_page(&built, before, new)
     });
     // The signature, the font, the appearance and the widget, and the
-    // revision's own cross-reference stream.
-    assert_eq!((appendix.added, appendix.replaced), (5, 1), "{appendix:?}");
+    // revision's own cross-reference stream; the page and the form's list.
+    assert_eq!((appendix.added, appendix.replaced), (5, 2), "{appendix:?}");
     assert_eq!(
         appendix.pages_listing,
         [PageListing {
@@ -621,7 +643,7 @@ fn an_object_no_page_draws_replaced_beside_a_new_signature_field_leaves_the_list
         signs_the_first_page(&built, before, new);
         new.set_object(built.undrawn, form(b"0 0 9 9 re f", dictionary! {}));
     });
-    assert_eq!(appendix.replaced, 2, "{appendix:?}");
+    assert_eq!(appendix.replaced, 3, "{appendix:?}");
     assert_eq!(appendix.pages_listing.len(), 1, "{appendix:?}");
     assert_eq!(appendix.pages_touched, 1);
     assert_eq!(strict(appendix), After::Unchanged);
@@ -638,7 +660,7 @@ fn an_object_no_page_draws_replaced_beside_a_new_signature_field_leaves_the_list
             "CRLs" => vec![crl.into()],
             "OCSPs" => vec![ocsp.into()],
         });
-        let mut catalog = dict_of(before, built.catalog);
+        let mut catalog = dict_of(new, built.catalog);
         catalog.set("DSS", dss);
         new.set_object(built.catalog, catalog);
     });
@@ -659,7 +681,7 @@ fn a_new_field_the_page_also_draws_with_is_not_a_listing() {
         signs_the_first_page_as(&built, before, new, built.dangling);
     });
     // What arrived is what the visible signature brings, object for object.
-    assert_eq!((appendix.added, appendix.replaced), (5, 1), "{appendix:?}");
+    assert_eq!((appendix.added, appendix.replaced), (5, 2), "{appendix:?}");
     assert_eq!(
         (
             appendix.pages_listing.clone(),
@@ -1078,7 +1100,7 @@ fn fills(
 ) {
     let value = new.add_object(dictionary! {
         "Type" => "Sig", "Filter" => "Adobe.PPKLite", "SubFilter" => "adbe.pkcs7.detached",
-        "ByteRange" => vec![0.into(), 0.into(), 0.into(), 0.into()],
+        "ByteRange" => reaching_the_append(),
         "Contents" => Object::String(vec![0; 8], lopdf::StringFormat::Hexadecimal),
     });
     let font = new.add_object(dictionary! {
@@ -1436,7 +1458,7 @@ fn a_new_signature_field_listed_in_annotations_held_apart_is_a_listing() {
     let held = prepared.annots.expect("held apart");
     let listed = |new: &mut Document, before: &Document, more: Vec<Object>, drop: bool| {
         let value = new.add_object(dictionary! {
-            "Type" => "Sig", "ByteRange" => vec![0.into(), 10.into(), 20.into(), 30.into()],
+            "Type" => "Sig", "ByteRange" => reaching_the_append(),
         });
         let widget = new.add_object(dictionary! {
             "Type" => "Annot", "Subtype" => "Widget", "FT" => "Sig", "V" => value,
@@ -1455,11 +1477,12 @@ fn a_new_signature_field_listed_in_annotations_held_apart_is_a_listing() {
         annots.push(widget.into());
         annots.extend(more);
         new.set_object(held, annots);
+        lists_in_the_form(prepared.built.catalog, before, new, widget);
     };
     let appendix = appended(&prepared.built, |before, new| {
         listed(new, before, Vec::new(), false)
     });
-    assert_eq!(appendix.replaced, 1, "{appendix:?}");
+    assert_eq!(appendix.replaced, 2, "{appendix:?}");
     assert_eq!(
         untouched(appendix),
         (
@@ -1719,4 +1742,248 @@ fn what_follows_the_last_signature_decides_strict_and_is_said() {
     assert!(both(&[After::Unchanged, After::Unchanged]));
     assert!(!both(&[After::Unchanged, After::Pages(1)]));
     assert!(both(&[After::Unchanged]));
+}
+
+/// A visible widget and the signature it holds, for the tests below to change.
+/// `edit` is given the widget and the signature as written.
+fn signed_then(
+    built: &Built,
+    edit: impl FnOnce(&Built, &Document, &mut Document, ObjectId, ObjectId),
+) -> Appendix {
+    appended(built, |before, new| {
+        let widget = new.new_object_id();
+        signs_the_first_page_as(built, before, new, widget);
+        let value = dict_of(new, widget)
+            .get(b"V")
+            .and_then(Object::as_reference)
+            .expect("its signature");
+        edit(built, before, new, widget, value);
+    })
+}
+
+/// A page-size widget with a `/V` that is never judged, because it is not in the
+/// form. It needs no key and no token, and `read_signatures` never reports it, so
+/// `--strict` has nothing to fail on but this.
+#[test]
+fn a_new_signature_outside_the_form_is_a_rewritten_page() {
+    use crate::cli::verify::After;
+    let built = built();
+    let appendix = signed_then(&built, |built, before, new, _, _| {
+        new.set_object(built.catalog, dict_of(before, built.catalog));
+    });
+    assert!(appendix.pages_listing.is_empty(), "{appendix:?}");
+    assert_eq!(strict(appendix), After::Pages(1));
+}
+
+/// A copy of the signature this append follows is intact and in the form, and
+/// its range ends where the signed revision does: it signed none of the append.
+/// The control is one byte further, which is what makes the rule the range's.
+#[test]
+fn a_copy_of_the_signature_before_the_append_is_a_rewritten_page() {
+    use crate::cli::verify::After;
+    let built = built();
+    let ending_at = |end: usize| {
+        signed_then(&built, |_, _, new, _, value| {
+            let mut copy = dict_of(new, value);
+            copy.set(
+                "ByteRange",
+                vec![
+                    0.into(),
+                    0.into(),
+                    0.into(),
+                    i64::try_from(end).unwrap().into(),
+                ],
+            );
+            new.set_object(value, copy);
+        })
+    };
+    let copied = ending_at(built.bytes.len());
+    assert!(copied.pages_listing.is_empty(), "{copied:?}");
+    assert_eq!(strict(copied), After::Pages(1));
+    let reaching = ending_at(built.bytes.len() + 1);
+    assert_eq!(reaching.pages_listing.len(), 1, "{reaching:?}");
+    assert_eq!(strict(reaching), After::Unchanged);
+}
+
+/// A document timestamp lists only when its widget has no content to draw,
+/// whatever its rectangle says: anybody can get a token for any bytes. Each `Rect`
+/// row was measured painting a page in PDFium while it read as no area in `lopdf`.
+#[test]
+fn a_timestamp_lists_a_page_only_when_its_widget_has_nothing_to_draw() {
+    use crate::cli::verify::After;
+    let built = built();
+    let stamped = |rect: Vec<Object>, content: Option<&[u8]>| {
+        signed_then(&built, |_, _, new, widget, value| {
+            let mut token = dict_of(new, value);
+            token.set("SubFilter", "ETSI.RFC3161");
+            new.set_object(value, token);
+            let mut dict = dict_of(new, widget);
+            dict.set("Rect", rect);
+            match content {
+                Some(content) => {
+                    let shown = new.add_object(Stream::new(dictionary! {}, content.to_vec()));
+                    dict.set("AP", dictionary! { "N" => shown });
+                }
+                None => {
+                    dict.remove(b"AP");
+                }
+            }
+            new.set_object(widget, dict);
+        })
+    };
+    let none = || vec![0.into(), 0.into(), 0.into(), 0.into()];
+    let page = || vec![0.into(), 0.into(), 612.into(), 792.into()];
+    let far = || {
+        vec![
+            4_294_967_295i64.into(),
+            4_294_967_295i64.into(),
+            4_294_967_296i64.into(),
+            4_294_967_296i64.into(),
+        ]
+    };
+    for (case, rect, content) in [
+        (
+            "the page's size",
+            page(),
+            Some(b"1 0 0 rg 0 0 612 792 re f".as_slice()),
+        ),
+        (
+            "no area, no /BBox",
+            none(),
+            Some(b"1 0 0 rg 0 0 612 792 re f".as_slice()),
+        ),
+        (
+            "no area after rounding",
+            far(),
+            Some(b"1 0 0 rg 0 0 612 792 re f".as_slice()),
+        ),
+    ] {
+        let appendix = stamped(rect, content);
+        assert!(appendix.pages_listing.is_empty(), "{case}: {appendix:?}");
+        assert_eq!(strict(appendix), After::Pages(1), "{case}");
+    }
+    for (case, rect, content) in [
+        ("no appearance at all", none(), None),
+        ("an empty appearance", none(), Some(b"".as_slice())),
+        ("a blank one", page(), Some(b" \n".as_slice())),
+    ] {
+        let appendix = stamped(rect, content);
+        assert_eq!(
+            appendix.pages_listing,
+            [PageListing {
+                page: 1,
+                timestamp: true
+            }],
+            "{case}: {appendix:?}"
+        );
+        assert_eq!(strict(appendix), After::Unchanged, "{case}");
+    }
+}
+
+/// A timestamp answers for nothing about the pages, wherever it stands: a page
+/// rewritten after the signature stays rewritten with a token over the rewrite.
+#[test]
+fn a_timestamp_after_a_rewritten_page_does_not_answer_for_it() {
+    use crate::cli::verify::{after_last_signature, After};
+    use crate::integrity::Verdict::Intact;
+    let rewritten = Appendix {
+        pages_touched: 1,
+        ..Default::default()
+    };
+    let token = super::Signature {
+        kind: "ETSI.RFC3161".into(),
+        ..signature(Intact, 0, None)
+    };
+    assert_eq!(
+        after_last_signature(&[
+            signature(Intact, 900, Some(rewritten.clone())),
+            token.clone()
+        ]),
+        After::Pages(1)
+    );
+    // The control: the same signature with a person's after it.
+    assert_eq!(
+        after_last_signature(&[
+            signature(Intact, 900, Some(rewritten)),
+            signature(Intact, 0, None)
+        ]),
+        After::Unchanged
+    );
+    // Nothing but tokens has no signature for anything to follow.
+    assert_eq!(after_last_signature(&[token]), After::Unchanged);
+}
+
+/// Two dictionaries `Debug` prints alike: a page's `/Resources` taken into the
+/// name of a key, which then reads as an unchanged page.
+#[test]
+fn a_change_that_prints_the_same_is_a_change() {
+    let two = |pairs: Vec<(&str, Object)>| {
+        let mut dict = Dictionary::new();
+        for (key, value) in pairs {
+            dict.set(key, value);
+        }
+        Object::Dictionary(dict)
+    };
+    let before = two(vec![
+        ("Resources", Object::Reference((4, 0))),
+        ("Contents", Object::Reference((5, 0))),
+    ]);
+    let after = two(vec![(
+        "Resources 4 0 R/Contents",
+        Object::Reference((5, 0)),
+    )]);
+    assert_eq!(
+        format!("{before:?}"),
+        format!("{after:?}"),
+        "the control: these did print alike"
+    );
+    assert!(!super::same_object(&before, &after));
+    assert!(super::same_object(&before, &before.clone()));
+    // As many entries with the same values, under another key.
+    assert!(!super::same_object(
+        &two(vec![("Resources", Object::Reference((4, 0)))]),
+        &two(vec![("Resourcez", Object::Reference((4, 0)))]),
+    ));
+}
+
+/// PDFium draws object 7 for `7 3 R`; `lopdf` finds nothing under that pair.
+#[test]
+fn a_reference_naming_another_generation_still_draws_the_object() {
+    let built = built();
+    let mut document = Document::load_mem(&built.bytes).expect("parses");
+    let (number, _) = built.content[0];
+    document
+        .get_dictionary_mut(built.page[0])
+        .expect("the page")
+        .set("Contents", Object::Reference((number, 3)));
+    let changed = std::collections::BTreeSet::from([built.content[0]]);
+    let reached = super::pages_drawing_from(&document, &changed);
+    assert!(reached.contains(&built.page[0]), "{reached:?}");
+    assert!(!reached.contains(&built.page[1]), "{reached:?}");
+}
+
+/// The same rule for a place the document had ready: a token in it draws nothing,
+/// or its page was rewritten.
+#[test]
+fn a_timestamp_in_a_prepared_place_is_held_to_the_same_rule() {
+    use crate::cli::verify::After;
+    let prepared = prepared(false);
+    let stamped = |appearance: bool| {
+        appended(&prepared.built, |before, new| {
+            fills(before, new, (prepared.place, prepared.place), |shown| {
+                if !appearance {
+                    shown.remove(b"AP");
+                }
+            });
+            let value = dict_of(new, prepared.place)
+                .get(b"V")
+                .and_then(Object::as_reference)
+                .expect("the token");
+            let mut token = dict_of(new, value);
+            token.set("SubFilter", "ETSI.RFC3161");
+            new.set_object(value, token);
+        })
+    };
+    assert_eq!(strict(stamped(true)), After::Pages(1));
+    assert_eq!(strict(stamped(false)), After::Unchanged);
 }

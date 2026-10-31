@@ -617,9 +617,21 @@ impl Drop for OcrWorker {
 /// went wrong, in the direction where a worker that was never reached is
 /// reported as an engine that crashed.
 pub fn child_main_if_asked(args: &[String]) {
-    if args.iter().any(|a| a == OCR_WORKER_ARGV) {
+    if asks_for_the_worker(args) {
         child_main();
     }
+}
+
+/// Whether `args` is a line [`OcrWorker::spawn`] wrote: the marker directly after
+/// the program's name, where both of its arms put it and nowhere else.
+///
+/// **The position is the rule.** `cli::main` asks this before its parser runs, so
+/// a marker accepted further along makes a worker of a file name after `--`, or of
+/// the value of `--text`: the command does not run, and whoever called it reads
+/// the worker's exit code as the command's answer. For `verify --strict` that code
+/// can be 0.
+fn asks_for_the_worker(args: &[String]) -> bool {
+    args.get(1).map(String::as_str) == Some(OCR_WORKER_ARGV)
 }
 
 /// The child's entry point. Never returns.
@@ -1199,5 +1211,35 @@ mod tests {
         assert!(room_for(&px, 24).is_ok(), "exactly the capacity fits");
         let why = room_for(&px, 23).expect_err("refused");
         assert!(format!("{why}").contains("buffer holds 23"), "{why}");
+    }
+
+    /// Only where `spawn` writes it. Every other line here is one the shipped
+    /// tool's parser has to see; `tests/cli.rs` runs them through the built tool.
+    #[test]
+    fn the_marker_asks_for_the_worker_only_directly_after_the_programs_name() {
+        let asks = |words: &[&str]| {
+            asks_for_the_worker(&words.iter().map(|w| (*w).to_string()).collect::<Vec<_>>())
+        };
+        assert!(asks(&["tpdf", OCR_WORKER_ARGV]), "what Unix's spawn writes");
+        assert!(
+            asks(&["tpdf", OCR_WORKER_ARGV, "--pixels-handle", "1234"]),
+            "what Windows's spawn writes"
+        );
+
+        assert!(!asks(&[]), "no argv at all");
+        assert!(!asks(&["tpdf"]), "no argument");
+        assert!(!asks(&[OCR_WORKER_ARGV]), "the program's own name");
+        assert!(
+            !asks(&["tpdf", "verify", "--strict", "--", OCR_WORKER_ARGV]),
+            "a file name after --"
+        );
+        assert!(
+            !asks(&["tpdf", "search", "a.pdf", "--text", OCR_WORKER_ARGV]),
+            "an option's value"
+        );
+        assert!(
+            !asks(&["tpdf", "--", OCR_WORKER_ARGV]),
+            "the word straight after --"
+        );
     }
 }

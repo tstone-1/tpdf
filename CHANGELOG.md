@@ -28,6 +28,25 @@ have the binary.)
 - The landing page shows how to search a scanned page: a sample scan, the invoice number to
   search for, and the find bar's *Recognize this page*. A German landing page is at `/de/`.
 
+### Security
+
+- `verify --strict` fails more forged appends. A new signature counts only when it is in the
+  document's form, so that it is judged, and was made over the append; a copy of the earlier
+  signature does not count. A document timestamp no longer answers for a page rewritten before
+  it, fails a document holding nothing else, and counts only when its field has nothing to
+  draw. A change to a page's dictionary is found by comparing it value by value, and a change
+  reached through a reference naming another generation is found too. A document with a page
+  written before a timestamp, or only a timestamp, now exits 1 where it exited 0.
+- `verify --strict` is documented as what it is: a check that compares two readings of the
+  file with `lopdf`, not proof that a signed page looks as it did.
+- `--render-worker` means a worker only directly after the program's name.
+- Saving an attachment or a page region no longer writes through a file planted at the name
+  it stages under.
+- A word reading `--ocr-worker` anywhere after the first word of the `tpdf` command line, such as a file of that
+  name after `--` or the value of `--text`, no longer turns the process into an OCR worker.
+  The command did not run, and a script read the exit code as its answer; for
+  `verify --strict` that code could be 0. The word now means what its place on the line says.
+
 ## [26.10.27] - 2026-10-28
 
 ### Added

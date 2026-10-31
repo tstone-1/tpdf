@@ -98,7 +98,7 @@ use crate::{
 /// [`stage`] for why every part of that is load-bearing.
 const PARTIAL: &str = "tpdf-partial";
 
-/// How many names [`stage`] will try before giving up.
+/// How many names [`stage`] and [`claim_beside`] will try before giving up.
 ///
 /// A collision means another save of the same destination is in flight in this
 /// process, or a stale leftover from a run whose pid has since been reused.
@@ -5378,6 +5378,57 @@ fn stage(
     Err(Refusal::from(said!(
         "could not find an unused temporary name beside {out:?} after {STAGING_ATTEMPTS} tries"
     )))
+}
+
+/// A new, empty file beside `out`, whose file name is `name`, for a rename to
+/// put in its place. For bytes a document chose: an attachment, a picture of a
+/// page.
+///
+/// **`create_new`, as in [`stage`], and for the reason `docs/TRAPS.md` gives.**
+/// The name is easy to predict and the folder may hold what another user or an
+/// unpacked archive left there. A name that is taken, by a link above all, is
+/// skipped and never opened, so nothing is written through it and nothing there
+/// is truncated. The file handed back is one this call created, the only kind a
+/// caller may remove when it fails.
+///
+/// **Not [`stage`], which copies the mode of the file it will replace.** That
+/// suits a reader's own document. Here the bytes are the document's author's and
+/// `out` may be a file somebody planted, so an executable `out` would come back
+/// owned by the reader, still executable, holding those bytes. This file keeps
+/// the process umask.
+///
+/// The first name carries no counter, so a file name near the file system's
+/// limit is not refused for a counter no save needed.
+///
+/// # Errors
+///
+/// No unused name after [`STAGING_ATTEMPTS`] tries, or the file cannot be
+/// created.
+pub(crate) fn claim_beside(
+    out: &Path,
+    name: &std::ffi::OsStr,
+) -> std::io::Result<(PathBuf, std::fs::File)> {
+    let name = name.to_string_lossy();
+    let pid = std::process::id();
+    let mut options = std::fs::OpenOptions::new();
+    options.write(true).create_new(true);
+    for attempt in 0..STAGING_ATTEMPTS {
+        let staged = out.with_file_name(match attempt {
+            0 => format!(".{name}.tpdf-{pid}"),
+            _ => format!(".{name}.tpdf-{pid}-{attempt}"),
+        });
+        match options.open(&staged) {
+            Ok(file) => return Ok((staged, file)),
+            Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {}
+            Err(e) => return Err(e),
+        }
+    }
+    Err(std::io::Error::new(
+        std::io::ErrorKind::AlreadyExists,
+        said!(
+            "could not find an unused temporary name beside {out:?} after {STAGING_ATTEMPTS} tries"
+        ),
+    ))
 }
 
 /// How many times a refused rename is tried again on Windows, the waits

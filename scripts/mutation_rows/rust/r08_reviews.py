@@ -20,11 +20,67 @@ ROWS += [
         # `lopdf` prints a stream without its bytes, so the comparison by
         # `Debug` alone calls a content stream written again at its old
         # length unchanged, and `verify --strict` passes it.
-        "appendix: compare two streams by what lopdf prints of them",
+        "appendix: compare two streams by their dictionaries alone",
         "src/docinfo.rs",
-        "        if before.content != after.content {",
-        "        if false {",
+        "            a.content == b.content && same_dictionary(&a.dict, &b.dict)",
+        "            same_dictionary(&a.dict, &b.dict)",
         "a_content_stream_replaced_with_the_same_length_touches_its_page",
+    ),
+    Mutation(
+        "appendix: compare two dictionaries by their values alone",
+        "src/docinfo.rs",
+        ".all(|((a_key, a), (b_key, b))| a_key == b_key && same_object(a, b))",
+        ".all(|((_, a), (_, b))| same_object(a, b))",
+        "a_change_that_prints_the_same_is_a_change",
+    ),
+    Mutation(
+        "appendix: follow a reference by its number and generation",
+        "src/docinfo.rs",
+        "            referrers.entry(to.0).or_default().push(*id);",
+        "            referrers.entry(to.0 + u32::from(to.1)).or_default().push(*id);",
+        "a_reference_naming_another_generation_still_draws_the_object",
+    ),
+    Mutation(
+        "appendix: list a field no walk of the form reads",
+        "src/docinfo.rs",
+        "            && self.judged.contains(&signature)\n",
+        "",
+        "a_new_signature_outside_the_form_is_a_rewritten_page",
+    ),
+    Mutation(
+        "appendix: list a copy of the signature the append follows",
+        "src/docinfo.rs",
+        "            && range_end(self.whole, dict)? > self.signed_end)",
+        "            && range_end(self.whole, dict)? >= self.signed_end)",
+        "a_copy_of_the_signature_before_the_append_is_a_rewritten_page",
+    ),
+    Mutation(
+        "appendix: list a gained timestamp that draws",
+        "src/docinfo.rs",
+        "            if stamp && !self.draws_nothing(widget) {",
+        "            if false {",
+        "a_timestamp_lists_a_page_only_when_its_widget_has_nothing_to_draw",
+    ),
+    Mutation(
+        "appendix: call any appearance one that draws nothing",
+        "src/docinfo.rs",
+        "                        if stream.content.iter().all(u8::is_ascii_whitespace))",
+        "                        if !stream.content.is_empty() || stream.content.is_empty())",
+        "a_timestamp_lists_a_page_only_when_its_widget_has_nothing_to_draw",
+    ),
+    Mutation(
+        "appendix: excuse a drawing timestamp in a prepared place",
+        "src/docinfo.rs",
+        "        if self.holds_timestamp(now) && !self.draws_nothing(now) {",
+        "        if false {",
+        "a_timestamp_in_a_prepared_place_is_held_to_the_same_rule",
+    ),
+    Mutation(
+        "worker: take the marker anywhere on the command line",
+        "src/worker.rs",
+        "    args.get(1).map(String::as_str) == Some(WORKER_ARGV)",
+        "    args.iter().any(|a| a == WORKER_ARGV)",
+        "the_marker_asks_for_the_worker_only_directly_after_the_programs_name",
     ),
     Mutation(
         # A listing needs nothing the page draws from to have changed, and
@@ -392,8 +448,8 @@ ROWS += [
         # signs nothing.
         "appendix: take a dictionary that signs nothing for a signature",
         "src/docinfo.rs",
-        '            && self.whole.get_dictionary(signature).ok()?.has(b"ByteRange"))',
-        '            && self.whole.get_dictionary(signature).is_ok())',
+        "            && range_end(self.whole, dict)? > self.signed_end)",
+        "            && true)",
         "a_prepared_signature_field_given_something_else_is_a_rewritten_page",
     ),
     Mutation(
@@ -415,8 +471,8 @@ ROWS += [
     Mutation(
         "appendix: list a gained field whose value signs nothing",
         "src/docinfo.rs",
-        '            && self.whole.get_dictionary(signature).ok()?.has(b"ByteRange"))',
-        '            && self.whole.get_dictionary(signature).is_ok())',
+        "            && range_end(self.whole, dict)? > self.signed_end)",
+        "            && true)",
         "an_unsigned_signature_field_with_an_appearance_after_signing_is_a_rewritten_page",
     ),
     Mutation(

@@ -286,6 +286,7 @@ hop through the index.
 - lopdf leaves a dictionary with a /Linearized key out of what it writes, with no error
 - A name is not an identity for the thing that was just written
 - A bound the worker holds on its own answer is the worker's word, and the parse it bounds is on the other side
+- A document timestamp is a signature anybody can get, so nothing may rest on one
 
 ## Tauri, the webview and startup
 - `AppHandle::exit` does not set the process's exit code
@@ -27055,3 +27056,26 @@ Two things follow. A compile failure on a valid mutant is not evidence that the 
 rerun the row with `--only` before re-aiming it. And `--resume` stores a did-not-finish
 verdict like any other, so a resumed table repeats the failure without building anything;
 the rerun has to be by `--only`, which does not reuse.
+
+### A document timestamp is a signature anybody can get, so nothing may rest on one
+
+A public authority issues a token for any bytes, free and with no account, and it reads
+`intact` and `trusted` because it is. `verify --strict` had let one stand as the last signature,
+so a page rewritten before it read as covered; it let a document with nothing else pass; and it
+counted the token's field as a harmless listing whatever it drew. The rule that came out of it: a
+token answers for no page, a document needs a signature besides, and its field counts only with
+no content to draw.
+
+**Do not write that last test on the size of the appearance.** Two attempts did. `/Rect
+[4294967295 4294967295 4294967296 4294967296]` has no area after `lopdf`'s `f32`, while PDFium
+painted 40000 of 40000 pixels; `/Rect [0 0 0 0]` with an appearance lacking `/BBox` went from
+99.9% white to 0.0%. Measured on 2026-10-31 with hand-built appends to `incr-signed.pdf`: an
+empty appearance draws 0% in PDFium, also with content after its first `endstream` and with `/MK`
+colours and no `/AP` at all, while `/Length 0` over real content paints 94% and strict `lopdf`
+refuses that file, so it reads as unread.
+
+**A `Debug` comparison is a comparison of a lossy printout.** `same_object` compared `format!("{:?}")`,
+so a key named `Resources 4 0 R/Contents` printed exactly like the two entries it replaced. And
+**PDFium ignores a reference's generation**: `7 3 R` draws object 7 where `lopdf` finds nothing.
+Both now have a test. Both are the same family as the rule itself: **`--strict` reads the file
+with `lopdf` and PDFium draws it**, which is the residual `docs/THREAT-MODEL.md` states.

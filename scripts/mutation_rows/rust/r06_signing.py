@@ -841,9 +841,16 @@ ROWS += [
     Mutation(
         "cli: pass --strict on a document with no signature",
         "src/cli/verify.rs",
-        "            && !file.signatures.is_empty()\n",
+        "            && file.signatures.iter().any(|s| !s.document_timestamp)\n",
         "\n",
         "strict_passes_only_intact_and_trusted_signatures_in_every_document",
+    ),
+    Mutation(
+        "cli: pass --strict on a document with nothing but a document timestamp",
+        "src/cli/verify.rs",
+        "            && file.signatures.iter().any(|s| !s.document_timestamp)\n",
+        "            && !file.signatures.is_empty()\n",
+        "strict_fails_a_document_with_only_a_document_timestamp",
     ),
     Mutation(
         "cli: report a worker's failure as a refusal",

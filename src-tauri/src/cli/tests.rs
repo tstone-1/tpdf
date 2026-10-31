@@ -961,6 +961,18 @@ fn file(signatures: Vec<report::Signature>, error: Option<ErrorKind>) -> report:
     }
 }
 
+/// A document timestamp names no signer, and anybody can get one for any bytes,
+/// so a document holding nothing else has no signature for `--strict` to pass on.
+#[test]
+fn strict_fails_a_document_with_only_a_document_timestamp() {
+    let trusted = |document_timestamp| report::Signature {
+        document_timestamp,
+        ..signature(Verdict::Intact, Some(Standing::Trusted))
+    };
+    assert!(!verified(vec![file(vec![trusted(true)], None)]).strict_passed);
+    assert!(verified(vec![file(vec![trusted(false), trusted(true)], None)]).strict_passed);
+}
+
 #[test]
 fn strict_passes_only_intact_and_trusted_signatures_in_every_document() {
     let good = || signature(Verdict::Intact, Some(Standing::Trusted));

@@ -44,23 +44,19 @@ pub fn write_png(path: &Path, png: &[u8]) -> Result<(), String> {
             path = path.display()
         )
     })?;
-    let staged = path.with_file_name(format!(
-        ".{}.tpdf-{}",
-        name.to_string_lossy(),
-        std::process::id()
-    ));
-    let written = std::fs::File::create(&staged)
-        .and_then(|mut file| {
-            file.write_all(png)?;
-            file.sync_all()
-        })
-        .and_then(|()| std::fs::rename(&staged, path));
-    written.map_err(|why| {
-        let _ = std::fs::remove_file(&staged);
+    let failed = |why: std::io::Error| {
         said!(
             "The picture was not saved to {path}: {why}",
             path = path.display()
         )
+    };
+    let (staged, mut file) = crate::save::claim_beside(path, name).map_err(failed)?;
+    let written = file.write_all(png).and_then(|()| file.sync_all());
+    drop(file);
+    let written = written.and_then(|()| std::fs::rename(&staged, path));
+    written.map_err(|why| {
+        let _ = std::fs::remove_file(&staged);
+        failed(why)
     })
 }
 
@@ -124,5 +120,49 @@ mod tests {
         let refused = write_png(&path, &png(b"x")).expect_err("rename over a directory");
         assert!(refused.contains("was not saved to"), "{refused}");
         assert_eq!(dir.names(), ["taken.png"]);
+    }
+
+    /// The name a write to `path` would stage at, asked of the code that names
+    /// it, so that a planted file cannot end up beside a name nothing uses.
+    fn staged_name(path: &Path) -> std::path::PathBuf {
+        let name = path.file_name().expect("a file name");
+        let (staged, file) = crate::save::claim_beside(path, name).expect("a free name");
+        drop(file);
+        std::fs::remove_file(&staged).expect("give the name back");
+        staged
+    }
+
+    /// A link to nothing: following it would create the file it names.
+    #[cfg(unix)]
+    #[test]
+    fn a_link_planted_at_the_staged_name_is_not_written_through() {
+        let dir = TempDir::new("region-link");
+        let path = dir.join("page.png");
+        let target = dir.join("never-made");
+        let planted = staged_name(&path);
+        std::os::unix::fs::symlink(&target, &planted).expect("plant the link");
+
+        write_png(&path, &png(b"new")).expect("written");
+
+        assert!(!target.exists());
+        assert_eq!(std::fs::read(&path).expect("read"), png(b"new"));
+        let link = std::fs::symlink_metadata(&planted).expect("the link is left alone");
+        assert!(link.file_type().is_symlink());
+    }
+
+    #[test]
+    fn a_file_left_at_the_staged_name_survives_a_failed_write() {
+        let dir = TempDir::new("region-left");
+        // A directory where the file would go: the rename over it fails.
+        let path = dir.join("taken.png");
+        std::fs::create_dir(&path).expect("dir");
+        std::fs::write(path.join("inside"), b"x").expect("fill");
+        let left = staged_name(&path);
+        std::fs::write(&left, b"somebody else's").expect("leave it");
+
+        write_png(&path, &png(b"x")).expect_err("rename over a directory");
+
+        assert_eq!(std::fs::read(&left).expect("read"), b"somebody else's");
+        assert_eq!(dir.names().len(), 2, "{:?}", dir.names());
     }
 }

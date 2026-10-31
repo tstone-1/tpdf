@@ -1389,11 +1389,18 @@ the page as it is displayed:
   time. A document carrying no revocation data still passes, as nearly every signed document
   would otherwise fail. A timestamp whose authority's certificate has since expired still counts
   when an archive timestamp later in the document, from an authority this computer trusts,
-  attests it existed while that certificate was in force. `--strict` also fails a document
-  when something appended after its last intact signature or document timestamp could not be
-  read, or touches a page other than by listing, among that page's annotations, a signature
-  or timestamp field holding the signature that append wrote. A signature field nobody signed
-  is such a change, since its appearance can paint over the page. Validation data and an archive timestamp are not such a change. Without
+  attests it existed while that certificate was in force. A document with a document timestamp
+  and no signature fails `--strict`: a timestamp names nobody. `--strict` also fails a document
+  when something appended after its last intact signature could not be read, or touches a page
+  other than by listing, among that page's annotations, a signature in the document's form made
+  over that append, or a document timestamp whose field has nothing to draw. A signature field
+  nobody signed is such a change, since its appearance can paint over the page, and a timestamp
+  does not answer for a page rewritten before it, since anybody can get one for any bytes.
+  Validation data and an archive timestamp are not such a change.
+  **`--strict` is not proof that a signed page looks as it did.** It compares how `lopdf` reads
+  the file before and after the append, and PDFium, which draws the page, can read a crafted
+  file differently. Treat a pass as a check for honest appends and ordinary mistakes. To rule
+  out a forgery, cut a copy of the file where the signature's range ends and `compare` the two. Without
   `--json`, `verify` prints a line beginning *After the last signature:* under such a
   document. Under every signature that something was appended after, it prints the properties
   dialog's *Appended* row: what arrived, and what it did to pages. `--json` carries the same
@@ -1984,7 +1991,7 @@ built.
 | Code | Meaning |
 |---|---|
 | 0 | Done. For `verify`, every document was read, whatever the verdicts. |
-| 1 | `verify --strict`: a document with no signature, or a signature that is not both intact and trusted, or pages rewritten after the last signature. `redact`: the copy was written and could not be proved clean — it is kept, and every reason is reported. `search`: every document was read and nothing matched. `compare`: the words of the two documents differ. `hidden`: text was found that a page does not show. `sign`: the copy was written, and its new signature — intact when tpdf checked it before writing — was not checked again in the written file, because the document's signatures together cover more data than tpdf checks at once (1 GiB for one document); the summary says so. |
+| 1 | `verify --strict`: a document with no signature (a document timestamp is not one), or a signature that is not both intact and trusted, or pages rewritten after the last signature. `redact`: the copy was written and could not be proved clean — it is kept, and every reason is reported. `search`: every document was read and nothing matched. `compare`: the words of the two documents differ. `hidden`: text was found that a page does not show. `sign`: the copy was written, and its new signature — intact when tpdf checked it before writing — was not checked again in the written file, because the document's signatures together cover more data than tpdf checks at once (1 GiB for one document); the summary says so. |
 | 2 | The command line is malformed: a missing `-o` or `--values`, an output that names the input or the answers or regions file, a bad `--rect` or `--pages`, a `--timestamp` that is not a listed authority or an `http`/`https` address without a password in it, `--long-term` without `--timestamp`, `long-term` without `--timestamp`, nothing for `redact` to remove or `search` to find, a `--pattern` that does not compile or a query that can match nothing, an unknown option, or a `--password-env` naming a variable that is not set. |
 | 3 | Refused: an identity that is unknown, ambiguous or cannot sign; a document that cannot be read or signed; for `text`, `search`, `fields` and `fill`, a locked document; for `search`, more than 10,000 matches in one document; for `text`, a page past its end; for `fields` and `fill`, an XFA form; for `fill`, a signed document or answers it cannot write, with nothing written; for `sign --timestamp`, an authority that could not be reached, did not answer in time, declined, or answered with a timestamp that does not check out, with nothing written; for `sign --long-term`, a timestamp authority this computer does not trust, or revocation data or an archive timestamp that could not be had, does not check out, or says a certificate is revoked, with nothing written; for `long-term`, a document with no signature, an encrypted or certified-against-change document, one that already carries as much validation data as tpdf reads, a signature that does not verify, a signer or timestamp authority this computer does not trust, or revocation data or an archive timestamp that could not be had, does not check out, or says a certificate is revoked, with nothing written; for `redact`, a signed document without `--invalidate-signatures`, an XFA form, a regions file it cannot read, a page it cannot read, more than 500 matches, matches it cannot mark, or a document the removal cannot rewrite, with nothing written; an output that exists; a key the system would not use, or a prompt that was cancelled. |
 | 4 | tpdf failed: a worker died or did not answer, the certificate store could not be searched, or the written file did not read back as written — for `sign --long-term`, also the validation data tpdf built not reading back as it must, with nothing written; for `long-term`, the same, and a written copy that does not read back as built, which is named and not to be relied on; for `fill`, the copy is then removed; for `redact`, a copy that could not be read back or finished is removed. |
@@ -2165,8 +2172,8 @@ it with `[Console]::OutputEncoding = [Text.Encoding]::UTF8` set if a name may ca
   field the signed revision already had does not touch its page), `pages_listing` (the touched pages rewritten only
   to list a new signature or timestamp field among their annotations, each with its `page`,
   counted from 1, and `timestamp`, `true` when every field it gained is a document
-  timestamp's) and `sentence`. This is what `--strict` reads: of the `intact` signature
-  with the fewest `appended_bytes`, it fails an `appendix` that is `unread` or has more
+  timestamp's) and `sentence`. This is what `--strict` reads: of the `intact` signature that
+  is not a document timestamp with the fewest `appended_bytes`, it fails an `appendix` that is `unread` or has more
   `pages_touched` than entries in `pages_listing`;
   `lock`, what the signature says may change after it, as a number: 0 when it locks
   nothing, 1 no changes (what `sign --lock` writes), 2 form filling and signing, 3 those and

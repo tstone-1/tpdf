@@ -3592,6 +3592,35 @@ fn staging_does_not_follow_a_symlink_left_at_its_name() {
 }
 
 #[test]
+fn claim_beside_takes_a_new_name_each_time_and_gives_up_rather_than_reuse_one() {
+    // Claiming without releasing is what fills the names, so the test needs no
+    // copy of the naming rule, and the sixteen files it makes are the control:
+    // each is still there and empty after the refusal.
+    let scratch = Scratch::new("claim-beside");
+    let out = scratch.join("report.pdf");
+    let name = out.file_name().expect("a file name");
+    let claimed: Vec<PathBuf> = (0..STAGING_ATTEMPTS)
+        .map(|_| claim_beside(&out, name).expect("a free name").0)
+        .collect();
+    assert_eq!(
+        claimed.iter().collect::<HashSet<_>>().len(),
+        STAGING_ATTEMPTS as usize
+    );
+
+    let refused = claim_beside(&out, name).expect_err("every name is taken");
+
+    assert!(
+        refused
+            .to_string()
+            .contains("could not find an unused temporary name"),
+        "{refused}"
+    );
+    for path in &claimed {
+        assert_eq!(std::fs::read(path).expect("read"), b"");
+    }
+}
+
+#[test]
 fn nothing_of_the_partial_file_survives_a_successful_write() {
     let Some(path) = fixture("rotated.pdf") else {
         crate::fixtures::missing("[SKIP] rotated.pdf not generated");

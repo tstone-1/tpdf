@@ -1243,6 +1243,17 @@ fn format_date(raw: &str) -> String {
 /// `bytes` empty every range fails [`crate::integrity::covered`], so what those
 /// tests assert about coverage cannot be disturbed by the verdict. `budget` is
 /// what remains of [`crate::integrity::MAX_HASHED`] for the whole document.
+/// How far the walk over a form's signature fields goes.
+fn signature_bounds() -> fields::Bounds {
+    fields::Bounds {
+        nodes: MAX_FIELD_NODES,
+        depth: Some(8),
+        dedup: false,
+        names: true,
+        order: fields::Order::Document,
+    }
+}
+
 fn read_signatures(
     document: &Document,
     size: u64,
@@ -1255,13 +1266,7 @@ fn read_signatures(
     // The two are separated because the same tree is walked by `redact.rs` with
     // different bounds and a different question, and one bounded loop between
     // them is one place for a hostile `/Kids` to be refused.
-    let bounds = fields::Bounds {
-        nodes: MAX_FIELD_NODES,
-        depth: Some(8),
-        dedup: false,
-        names: true,
-        order: fields::Order::Document,
-    };
+    let bounds = signature_bounds();
 
     // The walk collects; the judging comes after, because an archive
     // timestamp judges what came before it (`archive_moment`), so the
@@ -1362,13 +1367,7 @@ pub(crate) struct Values {
 
 /// [`Values`] of a parsed document.
 pub(crate) fn signature_values(document: &Document) -> Values {
-    let bounds = fields::Bounds {
-        nodes: MAX_FIELD_NODES,
-        depth: Some(8),
-        dedup: false,
-        names: true,
-        order: fields::Order::Document,
-    };
+    let bounds = signature_bounds();
     let mut values = Vec::new();
     let mut complete = true;
     let cut = fields::walk(document, &bounds, |node| {
@@ -1424,6 +1423,13 @@ fn signed_reach(document: &Document, field: &Dictionary) -> Option<(bool, u64)> 
         .get(b"V")
         .ok()
         .and_then(|o| resolve(document, o).as_dict().ok())?;
+    let end = range_end(document, sig)?;
+    Some((name_of(document, sig, b"SubFilter") == "ETSI.RFC3161", end))
+}
+
+/// Where the signed range a signature's `/ByteRange` states ends, or `None` for a
+/// range that does not start at the file's first byte.
+fn range_end(document: &Document, sig: &Dictionary) -> Option<u64> {
     let range = sig
         .get(b"ByteRange")
         .ok()
@@ -1436,8 +1442,7 @@ fn signed_reach(document: &Document, field: &Dictionary) -> Option<(bool, u64)> 
         return None;
     }
     let last = numbers.chunks_exact(2).last()?;
-    let end = u64::try_from(last[0].checked_add(last[1])?).ok()?;
-    Some((name_of(document, sig, b"SubFilter") == "ETSI.RFC3161", end))
+    u64::try_from(last[0].checked_add(last[1])?).ok()
 }
 
 /// The moment the earliest archive timestamp covering a signed range that
@@ -2735,6 +2740,7 @@ fn read_appendix(bytes: &[u8], end: usize, password: Option<&str>) -> Appendix {
     // What each page refers to apart from signing, for the pages that signing
     // reached: one that lists a new signature field, and one with a place a
     // signature was put in. The walks below take a page's word from here.
+    let judged = values_judged(&whole);
     let mut listings: Vec<(lopdf::ObjectId, PageListing)> = Vec::new();
     let mut apart_from_signing = Referring::new();
     for (number, id) in whole.get_pages() {
@@ -2745,6 +2751,8 @@ fn read_appendix(bytes: &[u8], end: usize, password: Option<&str>) -> Appendix {
             signed: &signed,
             whole: &whole,
             changed: &changed,
+            judged: &judged,
+            signed_end: end as u64,
         };
         if let Some((timestamp, refers_to)) = read.listing(id, before, after) {
             listings.push((
@@ -2878,6 +2886,10 @@ fn references_in(object: &Object, into: &mut Vec<lopdf::ObjectId>) {
 /// reach its siblings through a node's `/Kids`, which would make one branch
 /// written again touch every page of the document.
 ///
+/// **A reference is followed by its object number alone.** PDFium ignores the
+/// generation it names, so a page saying `7 3 R` draws object 7 while `lopdf`
+/// finds nothing there, and a page saying `7 0 R` draws a new `7 3 obj`.
+///
 /// One pass over the document builds who refers to whom, and one walk back
 /// from the changed objects finds what reaches them, so the cost is the
 /// document's size and not its size times its page count.
@@ -2929,7 +2941,7 @@ fn pages_reaching(
         }
     }
 
-    let mut referrers: BTreeMap<ObjectId, Vec<ObjectId>> = BTreeMap::new();
+    let mut referrers: BTreeMap<u32, Vec<ObjectId>> = BTreeMap::new();
     let mut named = Vec::new();
     for (id, object) in &whole.objects {
         named.clear();
@@ -2949,7 +2961,7 @@ fn pages_reaching(
             }
         }
         for to in &named {
-            referrers.entry(*to).or_default().push(*id);
+            referrers.entry(to.0).or_default().push(*id);
         }
     }
     // Everything that reaches a changed object, the changed ones included.
@@ -2962,7 +2974,7 @@ fn pages_reaching(
         .copied()
         .collect();
     while let Some(at) = pending.pop() {
-        for from in referrers.get(&at).into_iter().flatten() {
+        for from in referrers.get(&at.0).into_iter().flatten() {
             if reaching.insert(*from) && !pages.contains(from) {
                 pending.push(*from);
             }
@@ -3033,6 +3045,10 @@ struct PageRead<'a> {
     whole: &'a Document,
     /// Every object the append added or wrote differently.
     changed: &'a std::collections::BTreeSet<lopdf::ObjectId>,
+    /// [`values_judged`] of `whole`.
+    judged: &'a std::collections::BTreeSet<lopdf::ObjectId>,
+    /// Where the signed revision ends.
+    signed_end: u64,
 }
 
 impl PageRead<'_> {
@@ -3134,9 +3150,11 @@ impl PageRead<'_> {
             {
                 return None;
             }
-            timestamp &= inherited(self.whole, widget, b"V")
-                .and_then(|v| resolve(self.whole, v).as_dict().ok())
-                .is_some_and(|sig| name_of(self.whole, sig, b"SubFilter") == "ETSI.RFC3161");
+            let stamp = self.holds_timestamp(widget);
+            if stamp && !self.draws_nothing(widget) {
+                return None;
+            }
+            timestamp &= stamp;
         }
         // `/Annots` is taken as the entries compared above and not as the
         // object that holds them, so an array written as an object of its
@@ -3232,6 +3250,9 @@ impl PageRead<'_> {
             return None;
         }
         self.new_signature(now)?;
+        if self.holds_timestamp(now) && !self.draws_nothing(now) {
+            return None;
+        }
 
         let mut refers_to = Vec::new();
         let mut writes: &[&[u8]] = &SIGNING_WRITES;
@@ -3259,15 +3280,75 @@ impl PageRead<'_> {
     }
 
     /// The signature a field now holds, its own `/V` or inherited, when it is
-    /// one the append wrote: an object the signed revision did not have, and
-    /// a dictionary with a `/ByteRange`, which every signature in a field has
-    /// (PDF 32000-1 table 252) and a text field's answer does not.
+    /// one the append wrote and `--strict` will have judged:
+    ///
+    /// 1. an object the signed revision did not have;
+    /// 2. a value [`read_signatures`] reaches from `/AcroForm /Fields`
+    ///    ([`values_judged`]), so that one which is not intact and trusted fails
+    ///    `--strict` by itself. A widget outside the form with a `/V` of its own is
+    ///    never judged, and its appearance is as visible as anybody's;
+    /// 3. with a range reaching past the signed revision. A copy of the signature
+    ///    this append follows is intact, and answers for nothing the append wrote.
     fn new_signature(&self, field: &lopdf::Dictionary) -> Option<lopdf::ObjectId> {
         let signature = inherited(self.whole, field, b"V")?.as_reference().ok()?;
+        let dict = self.whole.get_dictionary(signature).ok()?;
         (!self.signed.objects.contains_key(&signature)
-            && self.whole.get_dictionary(signature).ok()?.has(b"ByteRange"))
-        .then_some(signature)
+            && self.judged.contains(&signature)
+            && range_end(self.whole, dict)? > self.signed_end)
+            .then_some(signature)
     }
+
+    /// Whether a widget holding a document timestamp cannot draw anything.
+    ///
+    /// Anybody can get a document timestamp from a public authority, for any bytes,
+    /// so one vouches for no person and a visible one could repaint a signed page.
+    /// **The appearance's size is not asked.** `lopdf` and PDFium read a rectangle
+    /// differently (2^32 rounds to no width in an `f32`, and PDFium painted it), and
+    /// PDFium draws an appearance with no `/BBox` whatever `/Rect` says; content that
+    /// is not there is the one answer both have to agree on.
+    fn draws_nothing(&self, widget: &lopdf::Dictionary) -> bool {
+        let Ok(appearances) = widget.get(b"AP") else {
+            return true;
+        };
+        resolve(self.whole, appearances)
+            .as_dict()
+            .is_ok_and(|appearances| {
+                appearances.iter().all(|(_, shown)| {
+                    matches!(resolve(self.whole, shown), Object::Stream(stream)
+                        if stream.content.iter().all(u8::is_ascii_whitespace))
+                })
+            })
+    }
+
+    /// Whether a field holds a document timestamp.
+    fn holds_timestamp(&self, field: &lopdf::Dictionary) -> bool {
+        inherited(self.whole, field, b"V")
+            .and_then(|v| resolve(self.whole, v).as_dict().ok())
+            .is_some_and(|sig| name_of(self.whole, sig, b"SubFilter") == "ETSI.RFC3161")
+    }
+}
+
+/// The `/V` of every signature field [`read_signatures`] reads in `document`, by
+/// its walk and its bounds, so a field that walk cut is not in here either.
+fn values_judged(document: &Document) -> std::collections::BTreeSet<lopdf::ObjectId> {
+    let mut fields_met = 0;
+    let mut values = std::collections::BTreeSet::new();
+    fields::walk(document, &signature_bounds(), |node| {
+        if fields_met >= MAX_SIGNATURES {
+            return fields::Flow::Leaf;
+        }
+        let Some(field) = node.dict else {
+            return fields::Flow::Leaf;
+        };
+        if name_of(document, field, b"FT") == "Sig" {
+            fields_met += 1;
+            if let Ok(value) = field.get(b"V").and_then(Object::as_reference) {
+                values.insert(value);
+            }
+        }
+        fields::Flow::Descend
+    });
+    values
 }
 
 /// Whether two dictionaries are the same with the entries `apart` left out
@@ -3316,28 +3397,45 @@ fn is_signature_field(document: &Document, widget: &lopdf::Dictionary) -> bool {
 }
 
 /// Whether two objects are the same, for the purpose of "did the append rewrite
-/// this".
+/// this": every byte of every name and string, every number and every entry in
+/// its order, and a stream's content as well as its dictionary. A difference in
+/// the order or the spelling reads as a change, which over-reports and is the
+/// safe direction.
 ///
-/// Compared through `Debug`, which is coarse and is the right coarseness here:
-/// `lopdf::Object` is not `Eq` (an `f64` is in there), and what this needs is
-/// *did anything about this object change*, not a semantic equality. A false
-/// "changed" would over-report; a false "unchanged" would under-report, and this
-/// errs toward the first.
-///
-/// **A stream's bytes are compared as well, because `Debug` leaves them
-/// out.** `lopdf` prints a stream as its dictionary followed by the literal
-/// `stream...endstream`, so two streams of one length and different content
-/// print alike. Until 2026-10-09 a content stream written again at its old
-/// length was therefore an object nothing had changed, and its page one
-/// nobody had rewritten. A stream is an object of its own and never inside
-/// another, so the top level is the only place to look.
+/// **Compared value by value and never through `Debug`.** `lopdf` prints a name
+/// lossily and without delimiting it from what follows, so a page's `/Resources 4 0 R`
+/// and a key spelled `/Resources#204#200#20R` printed alike and the page read
+/// unchanged. `Debug` also leaves out a stream's bytes, which until 2026-10-09 made
+/// a content stream written again at its old length an object nothing had changed.
 fn same_object(before: &Object, after: &Object) -> bool {
-    if let (Object::Stream(before), Object::Stream(after)) = (before, after) {
-        if before.content != after.content {
-            return false;
+    match (before, after) {
+        (Object::Null, Object::Null) => true,
+        (Object::Boolean(a), Object::Boolean(b)) => a == b,
+        (Object::Integer(a), Object::Integer(b)) => a == b,
+        (Object::Real(a), Object::Real(b)) => a.to_bits() == b.to_bits(),
+        (Object::Name(a), Object::Name(b)) => a == b,
+        (Object::String(a, a_format), Object::String(b, b_format)) => {
+            a == b && a_format == b_format
         }
+        (Object::Array(a), Object::Array(b)) => {
+            a.len() == b.len() && a.iter().zip(b).all(|(a, b)| same_object(a, b))
+        }
+        (Object::Dictionary(a), Object::Dictionary(b)) => same_dictionary(a, b),
+        (Object::Stream(a), Object::Stream(b)) => {
+            a.content == b.content && same_dictionary(&a.dict, &b.dict)
+        }
+        (Object::Reference(a), Object::Reference(b)) => a == b,
+        _ => false,
     }
-    format!("{before:?}") == format!("{after:?}")
+}
+
+/// [`same_object`] for two dictionaries, entry by entry in the order written.
+fn same_dictionary(before: &lopdf::Dictionary, after: &lopdf::Dictionary) -> bool {
+    before.len() == after.len()
+        && before
+            .iter()
+            .zip(after.iter())
+            .all(|((a_key, a), (b_key, b))| a_key == b_key && same_object(a, b))
 }
 
 /// What the file calls an object: `/Type`, with `/Subtype` where there is one.
@@ -3809,11 +3907,14 @@ mod tests {
         let widget = Object::Reference((4, 0));
         let signed = build(vec![link.clone()], 0, b"q Q", b"Sig");
         let the_page = std::collections::BTreeSet::from([(2, 0)]);
+        let the_value = std::collections::BTreeSet::from([(7, 0)]);
         let asked = |whole: &Document| {
             PageRead {
                 signed: &signed,
                 whole,
                 changed: &the_page,
+                judged: &the_value,
+                signed_end: 49,
             }
             .listing((2, 0), &signed.objects[&(2, 0)], &whole.objects[&(2, 0)])
         };

@@ -305,7 +305,7 @@ pub fn main() -> i32 {
     // would fall into this parser and exit --- `ocr_worker::child_main_if_asked`
     // records the day that read as an engine that crashed.
     crate::ocr_worker::child_main_if_asked(&argv);
-    if argv.get(1).map(String::as_str) == Some(crate::worker::WORKER_ARGV) {
+    if crate::worker::asks_for_the_worker(&argv) {
         crate::worker_child::main(&argv);
     }
     let program = argv

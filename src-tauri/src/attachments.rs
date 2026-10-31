@@ -122,17 +122,19 @@ pub fn save(
             path = dest.display()
         )
     })?;
-    let staged = dest.with_file_name(format!(
-        ".{}.tpdf-{}",
-        name.to_string_lossy(),
-        std::process::id()
-    ));
+    let failed = |why: String| {
+        said!(
+            "The attachment was not saved to {path}: {why}",
+            path = dest.display()
+        )
+    };
+    let (staged, mut out) =
+        crate::save::claim_beside(dest, name).map_err(|e| failed(e.to_string()))?;
     let written = (|| -> Result<usize, String> {
         let mut from =
             std::fs::File::open(source).map_err(|e| format!("{}: {e}", source.display()))?;
         let len = usize::try_from(from.metadata().map_err(|e| e.to_string())?.len())
             .map_err(|_| said!("the document is too large to read"))?;
-        let mut out = std::fs::File::create(&staged).map_err(|e| e.to_string())?;
         let count = outside
             .attachment(&mut from, len, &mut out, index, password)
             .map_err(|why| why.message)?;
@@ -149,10 +151,7 @@ pub fn save(
     })();
     written.map_err(|why| {
         let _ = std::fs::remove_file(&staged);
-        said!(
-            "The attachment was not saved to {path}: {why}",
-            path = dest.display()
-        )
+        failed(why)
     })
 }
 
@@ -465,6 +464,77 @@ mod tests {
         assert!(refused.contains("no attachment 6"), "{refused}");
         assert_eq!(std::fs::read(&dest).expect("read"), b"kept");
         assert_eq!(dir.names(), ["carrier.pdf", "kept.txt"]);
+    }
+
+    /// The name a save to `dest` would stage at, asked of the code that names
+    /// it, so that a planted file cannot end up beside a name nothing uses.
+    fn staged_name(dest: &std::path::Path) -> std::path::PathBuf {
+        let name = dest.file_name().expect("a file name");
+        let (staged, file) = crate::save::claim_beside(dest, name).expect("a free name");
+        drop(file);
+        std::fs::remove_file(&staged).expect("give the name back");
+        staged
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_link_planted_at_the_staged_name_is_not_written_through() {
+        let dir = crate::testutil::TempDir::new("attachments-link");
+        let mut doc = carrying(&[("a", "a.txt", b"first", false)], false);
+        let source = written(&dir, &mut doc);
+        let victim = dir.join("victim.txt");
+        std::fs::write(&victim, b"do not overwrite me").expect("seed");
+        let dest = dir.join("invoice.xml");
+        let planted = staged_name(&dest);
+        std::os::unix::fs::symlink(&victim, &planted).expect("plant the link");
+
+        assert_eq!(save(&source, 0, &dest, None, &crate::save::Here), Ok(5));
+
+        assert_eq!(
+            std::fs::read(&victim).expect("read"),
+            b"do not overwrite me"
+        );
+        assert_eq!(std::fs::read(&dest).expect("read"), b"first");
+        let link = std::fs::symlink_metadata(&planted).expect("the link is left alone");
+        assert!(link.file_type().is_symlink());
+    }
+
+    #[test]
+    fn a_file_left_at_the_staged_name_survives_a_save_that_fails() {
+        let dir = crate::testutil::TempDir::new("attachments-left");
+        let mut doc = carrying(&[("a", "a.txt", b"first", false)], false);
+        let source = written(&dir, &mut doc);
+        let dest = dir.join("kept.txt");
+        let left = staged_name(&dest);
+        std::fs::write(&left, b"somebody else's").expect("leave it");
+
+        let refused = save(&source, 5, &dest, None, &crate::save::Here).expect_err("no sixth");
+
+        assert!(refused.contains("no attachment 6"), "{refused}");
+        assert_eq!(std::fs::read(&left).expect("read"), b"somebody else's");
+        assert_eq!(dir.names().len(), 2, "{:?}", dir.names());
+    }
+
+    /// The reason this does not stage through `save::stage`, which copies the
+    /// mode of the file it replaces: the bytes are the document author's, and
+    /// the file they replace may be too.
+    #[cfg(unix)]
+    #[test]
+    fn saving_over_a_program_does_not_make_the_attachment_one() {
+        use std::os::unix::fs::PermissionsExt as _;
+
+        let dir = crate::testutil::TempDir::new("attachments-mode");
+        let mut doc = carrying(&[("a", "a.txt", b"first", false)], false);
+        let source = written(&dir, &mut doc);
+        let dest = dir.join("tool");
+        std::fs::write(&dest, b"old").expect("seed");
+        std::fs::set_permissions(&dest, std::fs::Permissions::from_mode(0o755)).expect("chmod");
+
+        assert_eq!(save(&source, 0, &dest, None, &crate::save::Here), Ok(5));
+
+        assert_eq!(std::fs::read(&dest).expect("read"), b"first");
+        let mode = std::fs::metadata(&dest).expect("stat").permissions().mode();
+        assert_eq!(mode & 0o111, 0, "{mode:o}");
     }
 
     #[test]

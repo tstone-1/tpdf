@@ -735,7 +735,7 @@ pub fn run() {
     // as their own OCR worker carry it too, and the platform gate that used to
     // be written on this line was widened here and nowhere else.
     ocr_worker::child_main_if_asked(&args);
-    if args.iter().any(|a| a == worker::WORKER_ARGV) {
+    if worker::asks_for_the_worker(&args) {
         // No platform gate here any more. The refusal that mattered was never
         // this one --- it is `establish_boundary`, inside the worker, which fails
         // where there is no boundary to establish and takes the process down

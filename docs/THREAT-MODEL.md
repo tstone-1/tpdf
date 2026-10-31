@@ -1276,10 +1276,16 @@ was unrevoked, or was in date, and it says nothing about revisions appended afte
 range --- a later revision can change every page a reader sees while an earlier signature stays
 `intact`, which is why the dialog states the appendix beside the verdict. Since 2026-10-05 the
 command-line gate has the counterpart: `verify --strict` fails a document when what was appended
-after its last intact signature or document timestamp could not be read, or touches a page other
-than by listing a signature or timestamp field among its annotations; since 2026-10-15 only a
-field holding a signature that append wrote counts as a listing, because an unsigned one's
-appearance can paint over the page and `--strict` passed it. A page counts as touched
+after its last intact signature could not be read, or touches a page other than by listing a
+signature or timestamp field among its annotations; since 2026-10-15 only a field holding a
+signature that append wrote counts as a listing, because an unsigned one's appearance can paint
+over the page and `--strict` passed it. Since 2026-10-31 that signature has to be reached from
+`/AcroForm /Fields`, where `read_signatures` judges it, and its range has to reach past the signed
+revision; and a document timestamp is no signature here, since any public authority issues one for
+any bytes: it fails a document holding nothing else, it answers for no page before it, and its own
+field counts as a listing only with no content to draw. **The residual is parser differentials:**
+all of this reads the file through `lopdf`, PDFium draws it, and the two can read a crafted append
+differently, so `--strict` is not proof that a signed page looks as it did. A page counts as touched
 when its object or anything it draws from was added or replaced; until that date only `/Page`
 objects were counted, so a replaced content stream read as no page. Not judged: a change that
 reaches no page (a catalog entry such as form defaults, optional-content configuration or

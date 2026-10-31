@@ -691,6 +691,13 @@ ROWS += [
         "                    .is_some()\n        })\n        .min_by_key(|s| s.appended_bytes);",
         "what_follows_the_last_intact_signature_is_judged_by_the_pages_it_touches",
     ),
+    Mutation(
+        "cli: let a document timestamp answer for what precedes it",
+        "src/cli/verify.rs",
+        '                && s.kind != "ETSI.RFC3161"\n',
+        "",
+        "a_timestamp_after_a_rewritten_page_does_not_answer_for_it",
+    ),
     # `verify --json`'s `appendix`, 2026-10-05: what a script reads to see why
     # `--strict` failed, so each count has to be the worker's own.
     Mutation(

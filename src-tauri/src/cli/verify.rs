@@ -477,12 +477,18 @@ pub enum After {
 /// furthest. One that is not intact answers for nothing, so what follows it is
 /// still judged against the intact one before it --- and `--strict` fails on
 /// the signature that is not intact whatever this says.
+///
+/// **A document timestamp is not a signature here.** Any public authority issues
+/// one for any bytes, so a page rewritten after the last signature stays rewritten
+/// when a timestamp follows it. The timestamp shows up in the appendix instead, as
+/// what a listing has to be.
 #[must_use]
 pub fn after_last_signature(signatures: &[docinfo::Signature]) -> After {
     let last = signatures
         .iter()
         .filter(|s| {
             s.signed
+                && s.kind != "ETSI.RFC3161"
                 && s.integrity
                     .as_ref()
                     .is_some_and(|i| i.verdict == crate::integrity::Verdict::Intact)
@@ -612,7 +618,7 @@ pub fn verified(files: Vec<report::File>) -> report::Verified {
 pub fn verified_after(files: Vec<report::File>, after: &[After]) -> report::Verified {
     let strict_passed = files.iter().enumerate().all(|(at, file)| {
         file.error.is_none()
-            && !file.signatures.is_empty()
+            && file.signatures.iter().any(|s| !s.document_timestamp)
             && file.signatures.iter().all(passes_strict)
             && after.get(at).is_none_or(|after| *after == After::Unchanged)
     });

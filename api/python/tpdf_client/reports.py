@@ -914,7 +914,8 @@ class Signature(TypedDict):
     # Bytes written after the signed range ends.
     appended_bytes: int
     # None exactly when `appended_bytes` is 0. `--strict` fails the intact
-    # signature with the fewest `appended_bytes` when this is `unread` or has
+    # signature, not counting document timestamps, with the fewest
+    # `appended_bytes` when this is `unread` or has
     # more `pages_touched` than `pages_listing` has entries.
     appendix: AppendixReport | None
     # What the signature says may change after it: 0 when it locks nothing,
