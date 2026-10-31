@@ -73,6 +73,13 @@ debug-assertions = true
 debug = 1
 
 [[bin]]
+name = "append_syntax"
+path = "fuzz_targets/append_syntax.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
 name = "ber_definite"
 path = "fuzz_targets/ber_definite.rs"
 test = false

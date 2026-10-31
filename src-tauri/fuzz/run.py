@@ -129,6 +129,10 @@ RUSTFLAGS = "-Clink-arg=-Wl,-undefined,dynamic_lookup"
 
 # Each target with the input bound it is run at, and why that bound.
 TARGETS = {
+    "append_syntax": (
+        8192,
+        "an append's syntax: tables, trailers and short objects, with offsets into it",
+    ),
     "ber_definite": (
         4096,
         "structure, not size: nesting and length forms are what the walk decides on",

@@ -521,6 +521,28 @@ def editable_symbolic(clipped: bool = False, tagged: bool = False, multipage: bo
     return pdf_objects(objects)
 
 
+def appends() -> list[tuple[str, bytes]]:
+    """Each with its two bytes of signed length, the shapes a signer writes."""
+    signed = b"%PDF-1.7\n7 0 obj\nnull\nendobj\n"
+    entry = b"xref\n7 1\n0000000009 00000 n \n"
+    trailer = b"trailer\n<</Size 8/Prev 9/Root 1 0 R>>\nstartxref\n30\n%%EOF\n"
+    shapes = {
+        "table": entry + trailer,
+        "object": b"8 0 obj\n<</A 1 0 R/B[1 2.5 (a\\)) <0aF> /N true null]>>\nendobj\n"
+        + entry
+        + trailer,
+        "stream": b"8 0 obj <</Length 4/Filter/FlateDecode/DecodeParms<</Columns 4>>>> stream\n"
+        b"abcd\nendstream endobj\n" + entry + trailer,
+        "indirect-length": b"8 0 obj <</Length 9 0 R>> stream\nabcd\nendstream endobj\n"
+        + entry
+        + trailer,
+        "marker": b"8 0 obj null endobj\n%iText-5.5.3\nstartxref\n1\n%%EOF\n",
+        "two-revisions": entry + trailer + entry + trailer,
+    }
+    header = len(signed).to_bytes(2, "big")
+    return [(name, header + signed + shape) for name, shape in shapes.items()]
+
+
 def corpora() -> dict[str, list[tuple[str, bytes]]]:
     """What each target is seeded with, and from where."""
     blobs = signature_blobs()
@@ -529,6 +551,7 @@ def corpora() -> dict[str, list[tuple[str, bytes]]]:
     # of the shape is the ratio rather than the absolute figure.
     bombs = [("metadata-bomb-16mib", metadata_bomb(16 * 1024 * 1024))]
     return {
+        "append_syntax": appends(),
         "ber_definite": blobs,
         "ber_certificate": blobs,
         "lopdf_load": docs + bombs,

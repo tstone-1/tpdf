@@ -52,15 +52,11 @@ enum Value {
     Other,
 }
 
-/// Whether `bytes` after `end` is plain.
+/// Whether `bytes` after `end` is plain. `pub` for the fuzz target alone.
 ///
 /// `length` answers for a stream's `/Length` given as a reference: the object
 /// is an integer in the parse this is checking, and `None` otherwise.
-pub(super) fn reads_plainly(
-    bytes: &[u8],
-    end: usize,
-    length: impl Fn(ObjectId) -> Option<i64>,
-) -> bool {
+pub fn reads_plainly(bytes: &[u8], end: usize, length: impl Fn(ObjectId) -> Option<i64>) -> bool {
     Reader {
         bytes,
         at: end,

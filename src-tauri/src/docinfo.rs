@@ -3597,7 +3597,7 @@ fn kind_of(object: &Object) -> String {
 #[cfg(test)]
 mod revocation_tests;
 
-mod append_syntax;
+pub mod append_syntax;
 
 mod freed;
 
