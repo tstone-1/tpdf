@@ -1029,6 +1029,9 @@ starts at 0 and increments within the month.
    The fuzz package has a lockfile of its own, and `Audit` reads both. 26.10.19 updated only
    the application's: rustls moved to 0.23.46 there and stayed at 0.23.45 in the fuzz one,
    and four advisories published that week failed `Audit` on the release commit.
+   - **`zip` 9.2.0** is held at 9.1.3 (26.10.28): only `tauri-plugin-updater` names it, and a
+     release moving the updater's crates has to run step 12 on the new updater before the tag.
+     Take it in a release that does.
    - `toml`, `toml_datetime`, `toml_edit`, `brotli-decompressor`, `generic-array` and
      `rand_chacha` are not named in `Cargo.toml`; what names them pins them.
    - **`windows-core` 0.100** is held by Tauri: `tao`, `wry` and `webview2-com` name 0.62.
@@ -1944,6 +1947,9 @@ starts at 0 and increments within the month.
    launched. `save_check.py` needs Python 3.10 or later, and over ssh `python3` is the
    system's 3.9 unless `/opt/homebrew/bin` comes first on `PATH`; on 3.9 it stops at a
    `TypeError` about `ignore_cleanup_errors` before it starts anything. Use a separately identified test bundle when the installed app is open.
+
+   **A timeout from `osascript` on the second Mac is `System Events` having hung, not the
+   application** (26.10.28): `killall "System Events"` there, then run the check again.
 
    Run the `--self-test` first. It replays the application menu as measured before and after
    the duplicate `About tpdf` was removed, so it shows the rule calling one a defect and the

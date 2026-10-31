@@ -2,6 +2,45 @@
 
 What was run for each release, what passed, and what was not run. The record of a new release goes at the top. Moved here verbatim from `BUILD.md` on 2026-10-23, which indexes this file.
 
+**26.10.28 verification and publication, 2026-10-31:** prepared on the first Mac, with the window
+checks and bundle checks on the second Mac over ssh and Windows on the build machine; the Windows
+development machine was not reachable. Step 1 took every update within its range except `zip`,
+held at 9.1.3 (below); `check_pdfium_age.py` found the pin at the head of 8103. The window checks
+passed 17 of 17 (`run_on_mac.py`), and the unit and command-line suites passed on Windows 11
+through `run_on_windows.py --suite all` (3,336 tests with 12 ignored, 633 checks with 4 skipped), both
+on the tree before the last test corrections below, which touched tests and mutation rows only.
+`check_windows.py` passed. Step 7 in the mutation worktree: `mutate_python.py` 38/38,
+`mutate_frontend.py --near v26.10.27` 47/47, `mutate_rust.py --near v26.10.27` 168 of 177 with 3
+skipped. **The nine were real and all came from this cycle's own rules**: a stricter rule refuses
+first, so older tests were refusing for the wrong reason. `a /Prev that names no section` left
+`what_two_parsers_could_read_differently_is_not_plain` naming nothing, and the append grammar
+refused the cut the unparseable-prefix test used. The fixtures were corrected so only the rule under
+test refuses, two rows were pointed at the test that holds them, one test gained the expired case,
+and one row was removed: `is_signature_field` in `signed_place` can no longer decide anything now
+that `new_signature` asks `values_judged`, and it stays as a second statement of the rule. Those
+rows then ran 19 of 19. All 34 gates passed on the release tree. No rehearsal tag: `release.yml`
+changed only in its notes. CI passed all three jobs on `1139233c` (run 41235776042) and `Audit`
+passed (run 41235775925); release run 41238719036 skipped its gates and left a draft of eight files
+whose `latest.json` offered 26.10.28. On the draft's files: the installer read as `Valid`, timestamped
+by Certum, and passed `installed_check.py` 26/26 on Windows 11; the `.dmg`'s app was accepted as
+Notarized Developer ID and stapled, its `tpdf-cli` (Developer ID, `runtime`) answered 26.10.28 and
+verified `incr-signed.pdf` with the development engine hidden, and on the second Mac `menu_check.py`
+(after its self-test) found a clean bar of ten menus and `save_check.py` saved over the document
+twice, read back by `qpdf` both times, and refused a print after a second writer. On the second Mac
+`System Events` had hung, so every `osascript` timed out with nothing to say why; `killall "System
+Events"` cleared it. `publish_release.py v26.10.28 --publish` published it; without authentication
+`releases/latest` is v26.10.28, the `.dmg`, the `-setup.exe`, the `.deb`, the AppImage and `latest.json`
+answer 200. An installed 26.10.27 updated itself: `update_check_mac.py` 12/12 on the second Mac and
+`update_check.py` 18/18 on Windows, and each `--control no-press` failed its seven checks and nothing
+else. The cask went to 26.10.28; `brew audit --cask --online` was clean and `brew livecheck` reads
+26.10.28. **The winget pull request stays on 26.10.27**: it is a new package waiting for a moderator
+with validation passed, and moving it starts validation again. **Not run:** `print-probe` and
+`redact-reach-probe` (no printing or OCR code changed; the corpus is on the development machine,
+which was off), the Windows window phases, `check_linux.py` (a Windows script; CI's Ubuntu job built
+and tested the tree), step 7's pass after the release (`--since v26.10.27 --resume`), and the README
+pictures. **Known limit:** the append rules name PDFium's rebuild triggers one at a time, and an
+independent review found two more this cycle; `--strict` is still documented as not proof.
+
 **26.10.27 verification and publication, 2026-10-28:** prepared on the Windows development
 machine, with the macOS half on the second Mac over ssh. Step 1: `cargo update --dry-run`
 locked nothing in either lockfile, `npm outdated` was empty and `check_pdfium_age.py` found the
