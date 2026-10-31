@@ -5348,9 +5348,15 @@ fn stage(
         // with the neighbours' permissions rather than with a default. The
         // narrower question of an ACL set on the file itself is not answered by
         // either platform's branch here; `docs/THREAT-MODEL.md` §T6.7 says so.
+        //
+        // The execute bits stay behind: what is written here is a document, and
+        // one that takes them from a file it replaced can be run by double-click.
         #[cfg(unix)]
         if let Ok(existing) = std::fs::metadata(out) {
-            let _ = file.set_permissions(existing.permissions());
+            use std::os::unix::fs::PermissionsExt;
+            let mut permissions = existing.permissions();
+            permissions.set_mode(permissions.mode() & !0o111);
+            let _ = file.set_permissions(permissions);
         }
         // Removed on any failure, and this call created it, so removing it
         // cannot take anything that was not ours.

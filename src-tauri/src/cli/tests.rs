@@ -3461,12 +3461,20 @@ fn plain_output_carries_no_escape_from_a_document_string() {
 #[test]
 fn a_help_or_json_word_that_is_an_options_value_is_the_value() {
     // The control: in option position each is what it was.
+    for line in ["redact -h", "redact --help", "search --help --json"] {
+        assert!(matches!(parse(&argv(line)), Ok(Line::HelpFor(_))), "{line}");
+    }
+    // Beside anything else it is refused: `verify --strict *` over a file named
+    // `--help` read no document and exited 0, which is what a pass exits.
     for line in [
         "redact in.pdf -o out.pdf --text x -h",
         "redact --help in.pdf",
         "search in.pdf --text x --help",
+        "verify --strict --help",
+        "verify a.pdf --help b.pdf",
     ] {
-        assert!(matches!(parse(&argv(line)), Ok(Line::HelpFor(_))), "{line}");
+        let why = parse(&argv(line)).expect_err(line);
+        assert!(why.contains("did not run"), "{line}: {why}");
     }
     // As the value of the option before it, it is that option's value, and
     // the command runs: this one looks for `-h` in the document.
@@ -3481,10 +3489,7 @@ fn a_help_or_json_word_that_is_an_options_value_is_the_value() {
         assert!(matches!(parse(&argv(line)), Ok(Line::Run(_))), "{line}");
     }
     // A value is skipped once: the word after it is an option again.
-    assert!(matches!(
-        parse(&argv("search in.pdf --text -h -h")),
-        Ok(Line::HelpFor(_))
-    ));
+    assert!(parse(&argv("search in.pdf --text -h -h")).is_err());
     // After `--` nothing is an option, as before.
     assert!(matches!(
         parse(&argv("search --text x -- -h")),
@@ -3969,7 +3974,7 @@ fn every_command_explains_itself_when_asked() {
             format!("help {}", command.name),
             format!("help --json {}", command.name),
             format!("{} --help", command.name),
-            format!("{} a.pdf -h", command.name),
+            format!("{} -h", command.name),
         ] {
             match parse(&argv(&line)) {
                 Ok(Line::HelpFor(found)) => assert_eq!(found.name, command.name, "{line}"),

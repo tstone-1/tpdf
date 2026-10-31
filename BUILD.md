@@ -286,7 +286,8 @@ copy up before its first build:
 
 ```
 cp -R <checkout>/vendor/pdfium vendor/          # or scripts/fetch_pdfium.py
-python3 scripts/ci_fixtures.py --signed --hostile
+python3 scripts/fetch_pdfium.py --check          # a copy carries a stale engine with no error
+uv run --no-project --with-requirements scripts/fixture-tools.txt python scripts/ci_fixtures.py --signed --hostile
 ```
 
 `ci_fixtures.py` builds what CI builds, which is not every fixture a local run can use (its

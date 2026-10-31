@@ -76,6 +76,21 @@ ROWS += [
         "a_timestamp_in_a_prepared_place_is_held_to_the_same_rule",
     ),
     Mutation(
+        "cli: answer --help beside other words with exit code 0",
+        "src/cli/args.rs",
+        """            .all(|arg| matches!(arg.as_str(), "--help" | "-h" | "--json"))""",
+        """            .all(|arg| !arg.is_empty())""",
+        "a_help_or_json_word_that_is_an_options_value_is_the_value",
+    ),
+    Mutation(
+        "save: keep the execute bit of the file replaced",
+        "src/save.rs",
+        "            permissions.set_mode(permissions.mode() & !0o111);\n",
+        "            permissions.set_mode(permissions.mode());\n",
+        "a_save_over_an_executable_file_writes_a_file_that_is_not",
+        only_on="macos",
+    ),
+    Mutation(
         "worker: take the marker anywhere on the command line",
         "src/worker.rs",
         "    args.get(1).map(String::as_str) == Some(WORKER_ARGV)",

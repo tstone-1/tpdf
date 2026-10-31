@@ -19,6 +19,7 @@ What that costs, once per machine:
     brew install xwin llvm
     xwin --accept-license --arch x86_64 --variant desktop splat --output ~/.xwin
     scripts/fetch_pdfium.py --platform win-x64 --dest /tmp/pdfium-win
+    mkdir -p vendor/pdfium/bin   # fetch_pdfium.py --force removes it, with the install it replaces
     cp /tmp/pdfium-win/bin/pdfium.dll vendor/pdfium/bin/pdfium.dll
 
 The last two are not optional and the failure does not say so: Tauri's build
@@ -93,6 +94,7 @@ def missing_prerequisites() -> list[str]:
             "path ... doesn't exist')\n"
             "      scripts/fetch_pdfium.py --platform win-x64 --dest "
             "/tmp/pdfium-win\n"
+            "      mkdir -p vendor/pdfium/bin\n"
             "      cp /tmp/pdfium-win/bin/pdfium.dll vendor/pdfium/bin/"
         )
     if TRIPLE not in subprocess.run(

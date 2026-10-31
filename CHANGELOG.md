@@ -40,6 +40,10 @@ have the binary.)
 - `verify --strict` is documented as what it is: a check that compares two readings of the
   file with `lopdf`, not proof that a signed page looks as it did.
 - `--render-worker` means a worker only directly after the program's name.
+- `--help` or `-h` beside other words on a command's line, which may be a file of that name from
+  a shell's `*`, is refused with exit code 2. It used to print help and exit 0 with no document
+  read, which is what `verify --strict` exits for a pass.
+- A save over a file with execute bits no longer gives the document those bits.
 - Saving an attachment or a page region no longer writes through a file planted at the name
   it stages under.
 - A word reading `--ocr-worker` anywhere after the first word of the `tpdf` command line, such as a file of that

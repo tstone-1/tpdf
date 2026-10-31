@@ -320,12 +320,24 @@ fn main() {
         height: TILE,
         png: false,
     };
-    let _ = worker.send(&tile_at(20));
-    let _ = worker.send(&tile_at(21));
-    let _ = worker.send(&Request::Withdraw { rid: 21 });
-
-    let first = worker.read_reply();
-    let second = worker.read_reply();
+    //
+    // That margin is not a promise on a loaded machine: a hosted macOS runner lost
+    // it once on 2026-10-30, the third write arriving after the render thread had
+    // taken the second tile. So up to five tries, and all five rendering is a
+    // withdrawal that does nothing.
+    let mut sent = (20..).step_by(2);
+    let (first, second) = loop {
+        let rid = sent.next().expect("an endless range");
+        let _ = worker.send(&tile_at(rid));
+        let _ = worker.send(&tile_at(rid + 1));
+        let _ = worker.send(&Request::Withdraw { rid: rid + 1 });
+        let first = worker.read_reply();
+        let second = worker.read_reply();
+        let lost_the_race = matches!(&second, Ok(r) if r.ok && !r.abandoned);
+        if !lost_the_race || rid >= 28 {
+            break (first, second);
+        }
+    };
     check(
         "the tile ahead of a withdrawal still renders",
         matches!(&first, Ok(r) if r.ok && !r.abandoned && r.bytes > 0),
@@ -349,7 +361,7 @@ fn main() {
     // And the control: an un-withdrawn request on the same worker still
     // renders, so "abandoned" is a reply to the withdrawal rather than a worker
     // that has stopped working.
-    let after = worker.call(&tile_at(22));
+    let after = worker.call(&tile_at(30));
     check(
         "the worker still renders after a withdrawal",
         matches!(&after, Ok(r) if r.ok && !r.abandoned && r.bytes > 0),

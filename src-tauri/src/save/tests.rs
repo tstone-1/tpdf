@@ -13566,3 +13566,26 @@ fn an_attachment_claimed_longer_than_written_is_not_saved() {
     );
     assert_eq!(std::fs::read(&dest).expect("read"), b"four");
 }
+
+/// A document takes the mode of the file it replaces, and not the execute bits.
+#[cfg(unix)]
+#[test]
+fn a_save_over_an_executable_file_writes_a_file_that_is_not() {
+    use std::os::unix::fs::PermissionsExt;
+    let scratch = Scratch::new("execute-bits");
+    let out = scratch.join("out.pdf");
+    std::fs::write(&out, b"before").expect("seed");
+    std::fs::set_permissions(&out, std::fs::Permissions::from_mode(0o750)).expect("chmod");
+    let staged = stage(&out, |file| {
+        use std::io::Write as _;
+        file.write_all(b"after")
+            .map_err(|e| Refusal::from(e.to_string()))
+    })
+    .expect("stage");
+    commit(&staged, &out).expect("commit");
+    let mode = std::fs::metadata(&out).expect("stat").permissions().mode() & 0o777;
+    assert_eq!(
+        mode, 0o640,
+        "the group's read stays and every execute bit goes"
+    );
+}

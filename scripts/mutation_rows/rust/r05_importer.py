@@ -343,7 +343,7 @@ ROWS += [
         # the right page count.
         "save: give the replacement the umask's mode rather than the document's",
         "src/save.rs",
-        "        #[cfg(unix)]\n        if let Ok(existing) = std::fs::metadata(out) {\n            let _ = file.set_permissions(existing.permissions());\n        }\n",
+        "        #[cfg(unix)]\n        if let Ok(existing) = std::fs::metadata(out) {\n            use std::os::unix::fs::PermissionsExt;\n            let mut permissions = existing.permissions();\n            permissions.set_mode(permissions.mode() & !0o111);\n            let _ = file.set_permissions(permissions);\n        }\n",
         "",
         "a_rewrite_keeps_the_documents_mode",
         only_on="macos",

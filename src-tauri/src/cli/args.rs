@@ -54,11 +54,25 @@ pub fn parse(args: &[String]) -> Result<Line, String> {
     // stands: `redact in.pdf -o out.pdf --text -h` looks for `-h` in the
     // document, and answering it with the help text and exit code 0 told a
     // script the redaction was done.
-    if options(command, rest)
-        .iter()
-        .any(|option| *option == "--help" || *option == "-h")
+    //
+    // Only alone, or with `--json`. Beside anything else the word may be a file
+    // of that name from a shell's `*`, and exit code 0 with no document read is
+    // the answer `verify --strict` gives for a pass. A refusal says what to do.
+    if let Some(word) = options(command, rest)
+        .into_iter()
+        .find(|option| *option == "--help" || *option == "-h")
     {
-        return Ok(Line::HelpFor(command));
+        if rest
+            .iter()
+            .all(|arg| matches!(arg.as_str(), "--help" | "-h" | "--json"))
+        {
+            return Ok(Line::HelpFor(command));
+        }
+        return Err(format!(
+            "`{word}` asks for help, so `{}` did not run on the rest of the line --- \
+             give it alone, or put `--` before a file of that name",
+            command.name
+        ));
     }
     (command.parse)(rest).map(Line::Run)
 }

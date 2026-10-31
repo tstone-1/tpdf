@@ -1232,8 +1232,9 @@ tpdf completions fish | source                                    # ~/.config/fi
 tpdf-cli completions powershell | Out-String | Invoke-Expression  # $PROFILE
 ```
 
-`tpdf help <command>`, or `--help` after a command, prints that command's summary and
-options alone. A mistyped command is answered with the nearest one.
+`tpdf help <command>`, or `--help` alone after a command, prints that command's summary and
+options alone. Beside other words `--help` is refused with exit code 2 and nothing runs, since
+it may be a file of that name from a shell's `*`; put `--` before file names to read it as one. A mistyped command is answered with the nearest one.
 
 An answers file for `fill` is one JSON object of full field names and answers:
 

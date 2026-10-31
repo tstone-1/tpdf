@@ -1285,7 +1285,12 @@ revision; and a document timestamp is no signature here, since any public author
 any bytes: it fails a document holding nothing else, it answers for no page before it, and its own
 field counts as a listing only with no content to draw. **The residual is parser differentials:**
 all of this reads the file through `lopdf`, PDFium draws it, and the two can read a crafted append
-differently, so `--strict` is not proof that a signed page looks as it did. A page counts as touched
+differently, so `--strict` is not proof that a signed page looks as it did. A remedy not yet built
+was measured on 2026-10-31 over the 156 appends after a signature in the public DSS project's
+`dss-pades` validation PDFs: reading the append from start to end with a strict token grammar and
+exact stream lengths accepts 149; also requiring `startxref`, `/Prev` and each xref entry to agree
+accepts 106, refusing honest producers' files, such as a `startxref` one byte before its `xref`. A
+prototype, untested against hostile files. A page counts as touched
 when its object or anything it draws from was added or replaced; until that date only `/Page`
 objects were counted, so a replaced content stream read as no page. Not judged: a change that
 reaches no page (a catalog entry such as form defaults, optional-content configuration or
