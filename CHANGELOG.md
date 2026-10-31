@@ -46,8 +46,13 @@ have the binary.)
 - `verify --strict` fails an append that is not written plainly enough for two PDF parsers to
   have to read it alike, such as stray bytes, a very long number, a name byte past ASCII or a key
   given twice, or a table entry that names another object than the one at its offset. It reads
-  as *something was appended that tpdf could not read*. Another root for the page tree touches
+  as *something was appended that tpdf could not read*. So does a `/Prev` that does not name an
+  earlier section. Another root for the page tree touches
   every page.
+- A line break in a signature's field name or a certificate's name can no longer print rows that
+  read as `verify`'s own.
+- Forward search no longer opens a path named in a `.synctex` file to compare it. On Windows that
+  could connect to a host the file chose, and send the reader's credentials to it.
 - `--render-worker` means a worker only directly after the program's name.
 - `--help` or `-h` beside other words on a command's line, which may be a file of that name from
   a shell's `*`, is refused with exit code 2. It used to print help and exit 0 with no document

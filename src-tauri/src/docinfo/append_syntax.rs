@@ -22,9 +22,9 @@
 //!
 //! **What it costs and what it leaves.** Over the 153 appendices in the public DSS
 //! validation files it changes no reading. It asks a table's entries what they
-//! name, and not a cross-reference stream's, and does not follow `/Prev`: a prototype
-//! requiring the whole chain to agree accepted only 106 of 156 appends, so those stay
-//! open (`docs/THREAT-MODEL.md`).
+//! name, and not a cross-reference stream's, and asks of `/Prev` only that it names
+//! an earlier section, not the one before: a prototype requiring the whole chain to
+//! agree accepted only 106 of 156 appends, so those stay open (`docs/THREAT-MODEL.md`).
 
 use std::collections::BTreeMap;
 
@@ -49,6 +49,7 @@ enum Value {
     Array,
     Integer(i64),
     Reference(ObjectId),
+    Name(Vec<u8>),
     Other,
 }
 
@@ -121,13 +122,14 @@ impl<L: Fn(ObjectId) -> Option<i64>> Reader<'_, L> {
             if self.peek() == Some(b'%') {
                 self.marker()?;
             } else if self.word(b"xref") {
-                self.table()?;
+                self.table(self.at - b"xref".len())?;
                 open = true;
             } else if self.word(b"startxref") {
                 self.white();
-                self.digits(20)?;
+                let section = usize::try_from(self.digits(20)?).ok()?;
                 self.white();
-                if !self.word(b"%%EOF") {
+                // As with `/Prev`: one naming no section has PDFium rebuild from a scan.
+                if !self.word(b"%%EOF") || !self.names_section(section) {
                     return None;
                 }
                 open = false;
@@ -179,7 +181,7 @@ impl<L: Fn(ObjectId) -> Option<i64>> Reader<'_, L> {
     }
 
     /// The subsections and the trailer of a table, after its `xref`.
-    fn table(&mut self) -> Option<()> {
+    fn table(&mut self, section: usize) -> Option<()> {
         loop {
             self.white();
             if self.word(b"trailer") {
@@ -195,7 +197,70 @@ impl<L: Fn(ObjectId) -> Option<i64>> Reader<'_, L> {
             }
         }
         self.white();
-        matches!(self.value(0)?, Value::Dictionary(_)).then_some(())
+        let Value::Dictionary(trailer) = self.value(0)? else {
+            return None;
+        };
+        self.chained(&trailer, section)
+    }
+
+    /// Whether a section's `/Prev`, if it has one, is an integer naming an earlier
+    /// section. **One that does not has PDFium rebuild the table from a scan**, where
+    /// the last copy of each object in the file wins, while `lopdf` breaks the cycle
+    /// and keeps the entries it read: a `/Prev` naming its own section, with a forged
+    /// copy of a content stream that no entry lists, drew the forgery in PDFium with
+    /// no page reading as rewritten.
+    fn chained(&self, section: &BTreeMap<Vec<u8>, Value>, at: usize) -> Option<()> {
+        let Some(previous) = section.get(b"Prev".as_slice()) else {
+            return Some(());
+        };
+        let Value::Integer(previous) = previous else {
+            return None;
+        };
+        let previous = usize::try_from(*previous).ok()?;
+        (previous < at && self.names_section(previous)).then_some(())
+    }
+
+    /// Whether `xref` or an `n g obj` stands at `offset`.
+    fn names_section(&self, offset: usize) -> bool {
+        self.candidates(offset).into_iter().any(|offset| {
+            let mut there = self.at_offset(offset);
+            there.white();
+            there.word(b"xref") || there.object_header().is_some()
+        })
+    }
+
+    /// `offset`, as counted from the file's first byte or from a `%PDF-` with bytes
+    /// before it, as PDFium counts, where that is inside the file.
+    fn candidates(&self, offset: usize) -> Vec<usize> {
+        let header = self
+            .bytes
+            .windows(5)
+            .take(1024)
+            .position(|at| at == b"%PDF-")
+            .unwrap_or(0);
+        [offset, offset.saturating_add(header)]
+            .into_iter()
+            .filter(|offset| *offset < self.bytes.len())
+            .collect()
+    }
+
+    fn at_offset(&self, at: usize) -> Reader<'_, fn(ObjectId) -> Option<i64>> {
+        Reader {
+            bytes: self.bytes,
+            at,
+            length: |_| None,
+        }
+    }
+
+    /// `n g obj`, as the number `n`.
+    fn object_header(&mut self) -> Option<u64> {
+        let number = self.digits(10)?;
+        self.white();
+        if self.digits(5)? > u64::from(MAX_GENERATION) {
+            return None;
+        }
+        self.white();
+        self.word(b"obj").then_some(number)
     }
 
     /// `nnnnnnnnnn ggggg n` and its two-byte line end: 20 bytes, as PDF 32000-1
@@ -223,47 +288,27 @@ impl<L: Fn(ObjectId) -> Option<i64>> Reader<'_, L> {
         .then(|| self.at += 20)
     }
 
-    /// Whether `n g obj` with this `number` stands at `offset`, counted from the
-    /// file's first byte or from a `%PDF-` with bytes before it, as PDFium counts.
+    /// Whether `n g obj` with this `number` stands at `offset`.
     fn names_object(&self, offset: usize, number: u64) -> bool {
-        let header = self
-            .bytes
-            .windows(5)
-            .take(1024)
-            .position(|at| at == b"%PDF-")
-            .unwrap_or(0);
-        [offset, offset.saturating_add(header)]
-            .into_iter()
-            .filter(|offset| *offset < self.bytes.len())
-            .any(|offset| {
-                let mut there = Reader {
-                    bytes: self.bytes,
-                    at: offset,
-                    length: |_| None,
-                };
-                there.white();
-                let named = there.digits(10);
-                there.white();
-                there.digits(5).is_some() && {
-                    there.white();
-                    named == Some(number) && there.word(b"obj")
-                }
-            })
+        self.candidates(offset).into_iter().any(|offset| {
+            let mut there = self.at_offset(offset);
+            there.white();
+            there.object_header() == Some(number)
+        })
     }
 
     /// `n g obj`, a value, a stream if there is one, `endobj`.
     fn object(&mut self) -> Option<()> {
-        self.digits(10)?;
-        self.white();
-        if self.digits(5)? > u64::from(MAX_GENERATION) {
-            return None;
-        }
-        self.white();
-        if !self.word(b"obj") {
-            return None;
-        }
+        let section = self.at;
+        self.object_header()?;
         self.white();
         let value = self.value(0)?;
+        // A cross-reference stream is a section as a table is, and has a `/Prev` too.
+        if let Value::Dictionary(dict) = &value {
+            if matches!(dict.get(b"Type".as_slice()), Some(Value::Name(kind)) if kind == b"XRef") {
+                self.chained(dict, section)?;
+            }
+        }
         self.white();
         if self.word(b"stream") {
             self.stream(&value)?;
@@ -283,7 +328,7 @@ impl<L: Fn(ObjectId) -> Option<i64>> Reader<'_, L> {
             dict.get(b"DecodeParms".as_slice()),
         ) {
             (Some(Value::Array), Some(Value::Dictionary(_)))
-            | (Some(Value::Other), Some(Value::Array)) => return None,
+            | (Some(Value::Name(_)), Some(Value::Array)) => return None,
             _ => {}
         }
         let length = match dict.get(b"Length".as_slice())? {
@@ -321,7 +366,7 @@ impl<L: Fn(ObjectId) -> Option<i64>> Reader<'_, L> {
                 self.array(depth)
             }
             b'(' => self.string(),
-            b'/' => self.name().map(|_| Value::Other),
+            b'/' => self.name().map(Value::Name),
             b'0'..=b'9' | b'+' | b'-' | b'.' => self.number(),
             _ => (self.word(b"true") || self.word(b"false") || self.word(b"null"))
                 .then_some(Value::Other),
@@ -356,8 +401,10 @@ impl<L: Fn(ObjectId) -> Option<i64>> Reader<'_, L> {
         }
     }
 
-    /// A name's bytes without its slash. Printable ASCII and nothing else: a `#`
-    /// escape both parsers decode alike is left to [`super::same_object`].
+    /// A name without its slash, with its `#` escapes decoded, as both parsers read
+    /// it: `/Pr#65v` is `/Prev`, for the key given twice and for finding `/Prev` at all.
+    /// Printable ASCII and nothing else as written, and a `#` that is no escape is
+    /// refused.
     fn name(&mut self) -> Option<Vec<u8>> {
         if self.peek()? != b'/' {
             return None;
@@ -373,7 +420,19 @@ impl<L: Fn(ObjectId) -> Option<i64>> Reader<'_, L> {
             }
             self.at += 1;
         }
-        Some(self.bytes[start..self.at].to_vec())
+        let written = &self.bytes[start..self.at];
+        let mut name = Vec::with_capacity(written.len());
+        let mut bytes = written.iter().copied();
+        while let Some(byte) = bytes.next() {
+            if byte == b'#' {
+                let high = char::from(bytes.next()?).to_digit(16)?;
+                let low = char::from(bytes.next()?).to_digit(16)?;
+                name.push(u8::try_from(high * 16 + low).ok()?);
+            } else {
+                name.push(byte);
+            }
+        }
+        Some(name)
     }
 
     fn hex(&mut self) -> Option<Value> {
@@ -467,7 +526,7 @@ mod tests {
     }
 
     const TAIL: &[u8] =
-        b"xref\n5 1\n0000000010 00000 f \ntrailer\n<</Size 6/Prev 9>>\nstartxref\n100\n%%EOF\n";
+        b"xref\n5 1\n0000000010 00000 f \ntrailer\n<</Size 6>>\nstartxref\n0\n%%EOF\n";
 
     fn revision(object: &[u8]) -> Vec<u8> {
         [object, b"\n", TAIL].concat()
@@ -485,9 +544,9 @@ mod tests {
             ("a stream", revision(b"5 0 obj <</Length 4>> stream\nendo\nendstream endobj")),
             ("CRLF before a stream", revision(b"5 0 obj <</Length 4>> stream\r\nabcd\r\nendstream\r\nendobj")),
             ("an indirect length", revision(b"5 0 obj <</Length 9 0 R>> stream\nabcd\nendstream endobj")),
-            ("a stream section", b"5 0 obj <</Type/XRef/Length 1/Filter/FlateDecode/DecodeParms<</Columns 4>>>> stream\nx\nendstream endobj\nstartxref\n1\n%%EOF".to_vec()),
+            ("a stream section", b"5 0 obj <</Type/XRef/Length 1/Filter/FlateDecode/DecodeParms<</Columns 4>>>> stream\nx\nendstream endobj\nstartxref\n0\n%%EOF".to_vec()),
             ("two revisions", [TAIL, TAIL].concat()),
-            ("a producer's marker", [b"5 0 obj null endobj\n%iText-5.5.3\nstartxref\n1\n%%EOF\n".as_slice()].concat()),
+            ("a producer's marker", [b"5 0 obj null endobj\n%iText-5.5.3\nstartxref\n0\n%%EOF\n".as_slice()].concat()),
             ("binary in a stream", revision(b"5 0 obj <</Length 4>> stream\n%\xff\x80%\nendstream endobj")),
         ] {
             assert!(plain(&append), "{case}");
@@ -508,6 +567,7 @@ mod tests {
             ("a long /Prev of zeros", zeros_prev.into_bytes()),
             ("a stream that closes as an object", revision(b"5 0 obj <</Length 0>> stream\nendobj")),
             ("a last startxref with no %%EOF", [TAIL, b"startxref\n1\n"].concat()),
+            ("a startxref that names no section", b"xref\n0 0\ntrailer\n<<>>\nstartxref\n3\n%%EOF\n".to_vec()),
             ("a word that holds startxref", b"xstartxref\n1\n%%EOF\n".to_vec()),
             ("a long startxref", long_start.into_bytes()),
             ("a long /Prev", long_prev.into_bytes()),
@@ -550,7 +610,8 @@ mod tests {
     /// Past the signature's range and no sooner: what the range covers is signed.
     #[test]
     fn only_what_follows_the_range_is_asked() {
-        let bytes = [b"junk".as_slice(), TAIL].concat();
+        let tail = b"xref\n0 0\ntrailer\n<<>>\nstartxref\n4\n%%EOF\n";
+        let bytes = [b"junk".as_slice(), tail].concat();
         assert!(!reads_plainly(&bytes, 0, |_| None));
         assert!(reads_plainly(&bytes, 4, |_| None));
     }
@@ -561,7 +622,7 @@ mod tests {
     fn a_table_entry_has_to_name_the_object_at_its_offset() {
         let signed = b"%PDF-1.7\n7 0 obj\nnull\nendobj\n";
         let at = |entries: &str| {
-            let tail = format!("xref\n{entries}trailer\n<<>>\nstartxref\n1\n%%EOF\n");
+            let tail = format!("xref\n{entries}trailer\n<<>>\nstartxref\n9\n%%EOF\n");
             let bytes = [signed.as_slice(), tail.as_bytes()].concat();
             reads_plainly(&bytes, signed.len(), |_| None)
         };
@@ -581,11 +642,61 @@ mod tests {
         assert!(!at("7 1\n0009999999 00000 n \n"), "past the end");
         // Bytes before `%PDF-`, and offsets counted from it.
         let moved = b"xxx%PDF-1.7\n7 0 obj\nnull\nendobj\n";
-        let tail = b"xref\n7 1\n0000000009 00000 n \ntrailer\n<<>>\nstartxref\n1\n%%EOF\n";
+        let tail = b"xref\n7 1\n0000000009 00000 n \ntrailer\n<<>>\nstartxref\n9\n%%EOF\n";
         let bytes = [moved.as_slice(), tail.as_slice()].concat();
         assert!(
             reads_plainly(&bytes, moved.len(), |_| None),
             "after a prefix"
         );
+    }
+
+    /// A `/Prev` has to name an earlier section. Anything else has PDFium rebuild
+    /// from a scan, and the last copy of an object in the file then wins.
+    #[test]
+    fn a_prev_has_to_name_an_earlier_section() {
+        let signed = b"%PDF-1.7\n7 0 obj\nnull\nendobj\n";
+        let section = signed.len();
+        let plain_with = |prev: String| {
+            let tail = format!("xref\n0 0\ntrailer\n<<{prev}>>\nstartxref\n{section}\n%%EOF\n");
+            let bytes = [signed.as_slice(), tail.as_bytes()].concat();
+            reads_plainly(&bytes, signed.len(), |_| None)
+        };
+        assert!(plain_with(String::new()), "no /Prev");
+        assert!(plain_with("/Prev 9".into()), "an object before it");
+        assert!(
+            plain_with("/Prev 8".into()),
+            "one byte short, as honest files are"
+        );
+        for (case, prev) in [
+            ("itself", format!("/Prev {section}")),
+            ("itself, in an escaped key", format!("/Pr#65v {section}")),
+            ("past itself", format!("/Prev {}", section + 1)),
+            ("past the end", "/Prev 999999".to_string()),
+            ("not a section", "/Prev 12".to_string()),
+            ("no integer", "/Prev 7 0 R".to_string()),
+            ("negative", "/Prev -1".to_string()),
+            ("given twice, once escaped", "/Prev 9/Pr#65v 9".to_string()),
+        ] {
+            assert!(!plain_with(prev), "{case}");
+        }
+        // A cross-reference stream's `/Prev`, the same.
+        let stream = |prev: usize| {
+            let tail = format!(
+                "{section} 0 obj <</Type/XRef/Length 1/Prev {prev}>> stream\nx\nendstream endobj\n\
+                 startxref\n{section}\n%%EOF\n"
+            );
+            let bytes = [signed.as_slice(), tail.as_bytes()].concat();
+            reads_plainly(&bytes, signed.len(), |_| None)
+        };
+        assert!(stream(9), "an earlier section");
+        assert!(!stream(section), "itself");
+    }
+
+    #[test]
+    fn a_name_that_is_not_a_good_escape_is_refused() {
+        assert!(plain(&revision(b"5 0 obj /A#20B endobj")));
+        for bad in [&b"/A#"[..], b"/A#2", b"/A#zz"] {
+            assert!(!plain(&revision(&[b"5 0 obj ", bad, b" endobj"].concat())));
+        }
     }
 }

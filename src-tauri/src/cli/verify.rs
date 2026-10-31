@@ -699,6 +699,24 @@ pub(crate) fn counted(signatures: &[report::Signature]) -> String {
 }
 
 pub(crate) fn signature_text(signature: &report::Signature) -> String {
+    signature_rows(signature)
+        .iter()
+        .map(|row| one_line(row))
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+/// `text` kept to one line: every line break a terminal or a reader honours is
+/// replaced by U+FFFD. A field's name and a certificate's are the document's to
+/// choose, and with a line break in one it could print rows that read as tpdf's own,
+/// `Trust:` among them. [`super::printable`] keeps `\n`, for output that is many
+/// lines by nature.
+fn one_line(text: &str) -> String {
+    text.replace(['\n', '\r', '\u{85}', '\u{2028}', '\u{2029}'], "\u{fffd}")
+}
+
+/// [`signature_text`], a row at a time.
+fn signature_rows(signature: &report::Signature) -> Vec<String> {
     // A document timestamp's own certificate is its authority's, so its rows
     // are the authority's rows and the token's copies below are not repeated.
     let document = signature.document_timestamp;
@@ -764,7 +782,7 @@ pub(crate) fn signature_text(signature: &report::Signature) -> String {
     if let Some(stamp) = &signature.timestamp {
         lines.push(format!("    Timestamped: {}", stamp.integrity.sentence));
         if document {
-            return lines.join("\n");
+            return lines;
         }
         if let Some(trust) = &stamp.trust {
             lines.push(format!("    Timestamp authority: {}", trust.sentence));
@@ -782,5 +800,5 @@ pub(crate) fn signature_text(signature: &report::Signature) -> String {
     if let Some(level) = &signature.pades {
         lines.push(format!("    PAdES level: {level}"));
     }
-    lines.join("\n")
+    lines
 }

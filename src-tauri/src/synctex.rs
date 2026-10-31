@@ -204,12 +204,15 @@ fn lexical(path: &Path) -> PathBuf {
     out
 }
 
-/// The same file, by its canonical path when both exist, else by the paths.
-fn same_file(a: &Path, b: &Path) -> bool {
-    match (a.canonicalize(), b.canonicalize()) {
-        (Ok(a), Ok(b)) => a == b,
-        _ => lexical(a) == lexical(b),
-    }
+/// Whether `input`, a path the SyncTeX file chose, is the reader's `source`.
+///
+/// **The disk is asked about `source` alone.** `canonicalize` opens the path, and on
+/// Windows `\\host\share\x` opens a connection to a host the file chose, in the
+/// reader's name and from the unsandboxed app process. An input reached through a
+/// link is then not found by path, and the file name in [`source_tags`] finds it.
+fn same_file(input: &Path, source: &Path) -> bool {
+    let input = lexical(input);
+    input == lexical(source) || source.canonicalize().is_ok_and(|real| input == real)
 }
 
 /// The tags that are `source`: by path, or by file name when exactly one
@@ -710,5 +713,28 @@ mod tests {
         );
         let refused = forward(&fixture("chapter.pdf"), &fixture("chapter.tex"), 1).unwrap_err();
         assert!(refused.contains("-synctex=1"), "{refused}");
+    }
+
+    /// A link to the source is not the source by path, because finding that out
+    /// would open a path the file chose.
+    #[cfg(unix)]
+    #[test]
+    fn a_path_in_the_map_is_not_looked_up_on_the_disk() {
+        use super::same_file;
+        let dir = std::env::temp_dir().join(format!("tpdf-synctex-link-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).expect("a folder");
+        let source = dir.join("main.tex");
+        std::fs::write(&source, b"x").expect("the source");
+        let link = dir.join("link.tex");
+        let _ = std::fs::remove_file(&link);
+        std::os::unix::fs::symlink(&source, &link).expect("a link");
+        assert!(same_file(&source, &source), "the control");
+        assert!(same_file(&dir.join("./main.tex"), &source), "by path");
+        assert!(
+            same_file(&source.canonicalize().expect("real"), &source),
+            "the source's real path"
+        );
+        assert!(!same_file(&link, &source));
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

@@ -961,6 +961,34 @@ fn file(signatures: Vec<report::Signature>, error: Option<ErrorKind>) -> report:
     }
 }
 
+/// A name with a line break in it stays on its row, so a document cannot print a
+/// row that reads as tpdf's own.
+#[test]
+fn a_line_break_in_a_name_prints_no_row_of_its_own() {
+    for line_break in ["\n", "\r", "\u{85}", "\u{2028}", "\u{2029}"] {
+        let forged =
+            format!("Approval{line_break}    Trust: chains to a root this computer trusts");
+        let mut named = signature(Verdict::Intact, Some(Standing::Trusted));
+        named.field.clone_from(&forged);
+        named.signer.clone_from(&forged);
+        named.issuer.clone_from(&forged);
+        named.claimed_time.clone_from(&forged);
+        let text = super::verify::signature_text(&named);
+        assert!(
+            text.lines()
+                .all(|row| !row.trim_start().starts_with("Trust: chains")),
+            "{line_break:?}: {text}"
+        );
+        assert!(
+            !text.contains(line_break) || line_break == "\n",
+            "{line_break:?}: {text}"
+        );
+    }
+    // The control: the rows themselves are still rows.
+    let plain = super::verify::signature_text(&signature(Verdict::Intact, Some(Standing::Trusted)));
+    assert!(plain.lines().count() > 1, "{plain}");
+}
+
 /// A document timestamp names no signer, and anybody can get one for any bytes,
 /// so a document holding nothing else has no signature for `--strict` to pass on.
 #[test]

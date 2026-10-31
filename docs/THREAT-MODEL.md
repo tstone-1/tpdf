@@ -1292,10 +1292,14 @@ comments but a producer's marker before `startxref`, and a stream length that mi
 the 153 appendices in the public DSS project's `dss-pades` validation PDFs it changes no reading,
 though 23 of them were already unread. An entry in use in a table has to name the object at its
 offset, since `lopdf` keys an object by its own header and PDFium by the table, and a new `/Pages` in
-the catalog touches every page, since the two walk a page tree differently. **Still open** are
-entries in a cross-reference stream, and a `/Prev` that names something other than the section before
-it: a prototype requiring that whole chain to agree accepted only 106 of 156 appends, refusing honest
-producers' files such as a `startxref` one byte before its `xref`. A page counts as touched
+the catalog touches every page, since the two walk a page tree differently. A `/Prev` has to name an earlier section, since one that
+does not has PDFium rebuild from a scan, where the last copy of an object wins. **Still open** are
+entries in a cross-reference stream, and a `/Prev` that names an earlier section other than the one
+before it: a prototype requiring that whole chain to agree accepted only 106 of 156 appends, refusing honest
+producers' files such as a `startxref` one byte before its `xref`. Nine of the 134 DSS files, seven of them honest, stop
+earlier: `lopdf`'s strict load refuses them, with `InvalidTrailer`, `InvalidXref` or an object error,
+so they read as unread and cannot pass `--strict`. That fails closed and is left so, since loosening
+the load would loosen what the comparison stands on. A page counts as touched
 when its object or anything it draws from was added or replaced; until that date only `/Page`
 objects were counted, so a replaced content stream read as no page. Since 2026-10-31 a change to
 `/OCProperties` or to `/AcroForm /NeedAppearances` touches every page, since each redraws a page no
