@@ -1625,11 +1625,12 @@ fn read_signature(
     // signature shares.
     let mut own = crate::revocation::Material::default();
     let mut token = None;
+    let mut authority_chain = Vec::new();
     if let Some(blob) = &blob {
         own.extend(&crate::revocation::Material::of_cms(blob));
         if document_timestamp {
             token = Some(blob.clone());
-        } else if let Some((timestamp, bytes)) = read_timestamp_token(
+        } else if let Some((timestamp, bytes, vouched)) = read_timestamp_token(
             blob,
             &mut limits.timestamps_unread,
             budget,
@@ -1640,6 +1641,7 @@ fn read_signature(
             own.extend(&crate::revocation::Material::of_cms(&bytes));
             out.timestamp = Some(timestamp);
             token = Some(bytes);
+            authority_chain = vouched;
         }
     }
     limits.revocation_unread += own.unread;
@@ -1664,9 +1666,26 @@ fn read_signature(
             population.push(certificate.clone());
         }
     }
+    // Along the chain the store vouched for when it vouched, since the
+    // population is the unsigned certificate sets (`revocation::chain`).
     let judged = |leaf: &x509_cert::Certificate,
+                  vouched: &[Vec<u8>],
                   moment: crate::revocation::Moment,
                   budget: &mut u64| {
+        let vouched: Vec<x509_cert::Certificate> = vouched
+            .iter()
+            .filter_map(|der| der::Decode::from_der(der).ok())
+            .collect();
+        if let Some(answer) = crate::revocation::chain::along(
+            &vouched,
+            &population,
+            &pools,
+            moment,
+            judging.now,
+            budget,
+        ) {
+            return answer;
+        }
         let own = crate::revocation::judge(leaf, &population, &pools, moment, judging.now, budget);
         let chain = crate::revocation::chain::chain(
             leaf,
@@ -1694,7 +1713,7 @@ fn read_signature(
                     basis: crate::revocation::Basis::Stated,
                     at: stated,
                 };
-                let (own, chain) = judged(leaf, moment, budget);
+                let (own, chain) = judged(leaf, &authority_chain, moment, budget);
                 timestamp.revocation = Some(own);
                 timestamp.revocation_chain = Some(chain);
             }
@@ -1715,15 +1734,19 @@ fn read_signature(
         // A document timestamp's signer is judged at the moment a later
         // archive timestamp attests, as a token's authority is.
         let at = attested.or(archive.filter(|_| document_timestamp));
-        out.trust = Some(match (&blob, at) {
-            (None, _) => crate::trust::Trust::unchecked(crate::trust::Doubt::Certificate),
+        let (trust, signer_chain) = match (&blob, at) {
+            (None, _) => (
+                crate::trust::Trust::unchecked(crate::trust::Doubt::Certificate),
+                Vec::new(),
+            ),
             (Some(blob), Some(at)) => {
                 crate::trust::of_blob_at(blob, extra, purpose, at, judging.anchors)
             }
             (Some(blob), None) => {
-                crate::trust::of_blob_with(blob, extra, purpose, judging.now, judging.anchors)
+                crate::trust::of_blob_vouching(blob, extra, purpose, judging.now, judging.anchors)
             }
-        });
+        };
+        out.trust = Some(trust);
         // The moment the signer's revocation is judged at: the attested one
         // when there is one; for a document timestamp, whose signer is the
         // authority, the time its token states; otherwise the signer's `/M`,
@@ -1749,7 +1772,7 @@ fn read_signature(
             },
         };
         if let Some((leaf, _)) = &signer {
-            let (own, chain) = judged(leaf, moment, budget);
+            let (own, chain) = judged(leaf, &signer_chain, moment, budget);
             out.revocation = Some(own);
             out.revocation_chain = Some(chain);
         }
@@ -2262,11 +2285,13 @@ fn read_timestamp(
     anchors: crate::trust::Anchors<'_>,
     now: u64,
 ) -> Option<Timestamp> {
-    read_timestamp_token(blob, unread, budget, anchors, now, None).map(|(timestamp, _)| timestamp)
+    read_timestamp_token(blob, unread, budget, anchors, now, None)
+        .map(|(timestamp, _, _)| timestamp)
 }
 
-/// [`read_timestamp`], with the token's own bytes beside it: the scan needs
-/// them for the authority's revocation and the time the token states.
+/// [`read_timestamp`], with the token's own bytes beside it, which the scan needs
+/// for the authority's revocation and the time the token states, and the chain
+/// the store vouched for, which that revocation follows.
 fn read_timestamp_token(
     blob: &[u8],
     unread: &mut usize,
@@ -2274,7 +2299,7 @@ fn read_timestamp_token(
     anchors: crate::trust::Anchors<'_>,
     now: u64,
     archive: Option<u64>,
-) -> Option<(Timestamp, Vec<u8>)> {
+) -> Option<(Timestamp, Vec<u8>, Vec<Vec<u8>>)> {
     use cms::content_info::ContentInfo;
     use cms::signed_data::SignedData;
     use der::{Decode, Encode};
@@ -2305,7 +2330,7 @@ fn read_timestamp_token(
         *unread += 1;
         return None;
     };
-    let checked = checked(
+    let (checked, vouched) = checked(
         timestamp,
         &token,
         crate::integrity::token::Target::Signature(signer.signature.as_bytes()),
@@ -2314,7 +2339,7 @@ fn read_timestamp_token(
         now,
         archive,
     );
-    Some((checked, token))
+    Some((checked, token, vouched))
 }
 
 /// A read token with its verdict, its authority's standing, and whether its
@@ -2328,25 +2353,27 @@ fn checked(
     anchors: crate::trust::Anchors<'_>,
     now: u64,
     archive: Option<u64>,
-) -> Timestamp {
+) -> (Timestamp, Vec<Vec<u8>>) {
     let integrity = crate::integrity::token::check(token, target, budget);
     let attested = attributable(&integrity);
     // The authority now --- or, when an archive timestamp later in the file
     // attests that this token existed at a moment, at that moment: the
     // archive's authority vouches for the time, so the authority under
     // question does not choose it (PAdES B-LTA, `docs/PLAN.md` §9).
-    let trust = attested.then(|| match archive {
-        Some(at) => {
-            crate::trust::of_blob_at(token, &[], crate::trust::Purpose::Timestamping, at, anchors)
-        }
-        None => crate::trust::of_blob_for(token, crate::trust::Purpose::Timestamping, now, anchors),
-    });
-    Timestamp {
+    let purpose = crate::trust::Purpose::Timestamping;
+    let (trust, vouched) = attested
+        .then(|| match archive {
+            Some(at) => crate::trust::of_blob_at(token, &[], purpose, at, anchors),
+            None => crate::trust::of_blob_vouching(token, &[], purpose, now, anchors),
+        })
+        .unzip();
+    let timestamp = Timestamp {
         integrity: Some(integrity),
         trust,
         attested,
         ..timestamp
-    }
+    };
+    (timestamp, vouched.unwrap_or_default())
 }
 
 /// Reads one RFC 3161 `TimeStampToken`.

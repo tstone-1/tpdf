@@ -37,6 +37,11 @@ have the binary.)
   draw. A change to a page's dictionary is found by comparing it value by value, and a change
   reached through a reference naming another generation is found too. A document with a page
   written before a timestamp, or only a timestamp, now exits 1 where it exited 0.
+- A certificate added to a signature's or a timestamp's unsigned certificate set no longer hides
+  a revocation. Where the operating system vouches for the chain, revocation is judged along that
+  chain, so a certificate above the signer's that the document shows revoked now fails
+  `verify --strict` even with a look-alike issuer added. A document changed this way exited 0, and
+  now exits 1.
 - `verify --strict` is documented as what it is: a check that compares two readings of the
   file with `lopdf`, not proof that a signed page looks as it did.
 - `verify --strict` also fails a timestamp that blanks a signature field's existing appearance,

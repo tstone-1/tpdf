@@ -17638,6 +17638,10 @@ Decisions, each with its reason:
   because a walk that cannot continue reads *not checked*, the safe direction. The price is
   residual 34 of `docs/THREAT-MODEL.md`: a third-party `/DSS` ending at a cross-certificate
   reads *not checked* for it. Offering the OS chain's roots as anchors only would close that half.
+  **Corrected 2026-10-31:** with the OS chain ignored, a certificate added to the unsigned set could
+  choose the chain that was judged (`docs/THREAT-MODEL.md` §T6.25). Where the store vouches, its chain
+  now says which certificates are judged and under which key. It is still not offered as a source of
+  issuers the file lacks, so what can be checked stays the file's.
 - **One candidate population for both chains of a signature**: the signature's certificates and
   its token's, beside the pools' (`/DSS`, OCSP responders). It is exactly the population `judge`
   looks for an issuer in, so a certificate whose data checked out always has its issuer on the

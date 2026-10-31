@@ -48,9 +48,10 @@
 //!   does not offer the OS chain as candidate issuers, so an issuer not in
 //!   the document reads as `unchecked`, reason `issuer`. The walk itself is
 //!   the reader's (`revocation::chain::walk`), over what the reader will
-//!   have, so what is asked about here is exactly what the reader judges in
-//!   the file written --- and a walk that meets a certificate outside those
-//!   chains is a refusal, not a different walk.
+//!   have, so what is asked about here is what the reader judges in the file
+//!   written, whether it walks or follows the store's chain
+//!   (`revocation::chain::along`) --- and a walk that meets a certificate
+//!   outside those chains is a refusal, not a different walk.
 //! - **How** ([`gather`]): OCSP first --- a `POST` of `application/ocsp-request`
 //!   to each `id-ad-ocsp` address in the certificate's `authorityInfoAccess`, in
 //!   the order written --- and the revocation list from its

@@ -690,6 +690,21 @@ pub fn judge(
         .chain(pools.iter().flat_map(|pool| pool.candidates()))
         .collect();
     let issuer = issuer_of(subject, &everything);
+    judge_under(subject, issuer, &everything, pools, moment, now, budget)
+}
+
+/// [`judge`] with the issuer settled: [`chain::along`] takes it from the chain
+/// the operating system vouched for, where [`judge`] searches for it. `None` is
+/// an issuer the document does not carry.
+pub(crate) fn judge_under(
+    subject: &Certificate,
+    issuer: Option<&Certificate>,
+    everything: &[&Certificate],
+    pools: &[&Pool],
+    moment: Moment,
+    now: u64,
+    budget: &mut u64,
+) -> Revocation {
     let issuer_name = subject.tbs_certificate.issuer.to_der().unwrap_or_default();
 
     let mut findings = Vec::new();
@@ -699,7 +714,7 @@ pub fn judge(
                 subject,
                 issuer,
                 &issuer_name,
-                &everything,
+                everything,
                 pool,
                 index,
                 response,

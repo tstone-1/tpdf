@@ -285,9 +285,53 @@ ROWS += [
     Mutation(
         "chain: count nothing past the bound",
         "src/revocation/chain.rs",
-        "            dropped += 1;",
-        "            dropped += 0;",
+        "        } else {\n            dropped += 1;",
+        "        } else {\n            dropped += 0;",
         "a_chain_longer_than_the_bound_is_counted_and_cannot_read_good",
+    ),
+    Mutation(
+        "along: count nothing past the bound",
+        "src/revocation/chain.rs",
+        "        if certificates.len() == MAX_CHAIN {\n            dropped += 1;",
+        "        if certificates.len() == MAX_CHAIN {\n            dropped += 0;",
+        "a_chain_past_the_bound_is_counted_and_cannot_read_good",
+    ),
+    Mutation(
+        # The certificate set is unsigned: the walk over it is what F15 masked.
+        "along: judge the signer's chain by the document's certificates",
+        "src/docinfo.rs",
+        "judged(leaf, &signer_chain, moment, budget)",
+        "judged(leaf, &[], moment, budget)",
+        "a_twin_of_a_revoked_issuer_added_to_the_signature_does_not_hide_the_revocation",
+    ),
+    Mutation(
+        "along: judge the authority's chain by the document's certificates",
+        "src/docinfo.rs",
+        "judged(leaf, &authority_chain, moment, budget)",
+        "judged(leaf, &[], moment, budget)",
+        "a_twin_added_to_a_token_does_not_hide_a_revoked_issuer_above_the_authority",
+    ),
+    Mutation(
+        # A stand-in's own key usage could then refuse the real issuer's list.
+        "along: prefer no certificate that is the store's own",
+        "src/revocation/chain.rs",
+        ".find(|candidate| *candidate == wanted)",
+        ".find(|candidate| *candidate == wanted && file.len() == 0)",
+        "a_twin_that_may_not_sign_lists_does_not_stop_the_real_issuers_list_being_read",
+    ),
+    Mutation(
+        "along: let a name stand in for a key",
+        "src/revocation/chain.rs",
+        "                    && candidate.tbs_certificate.subject_public_key_info\n                        == tbs.subject_public_key_info\n",
+        "",
+        "an_issuer_only_the_store_holds_supplies_no_key_and_a_same_named_key_is_no_issuer",
+    ),
+    Mutation(
+        "along: follow a chain the store refused",
+        "src/trust.rs",
+        "    if !vouched_for(&trust) {\n        chain.clear();\n    }\n",
+        "",
+        "a_chain_the_store_refused_is_not_followed",
     ),
     Mutation(
         # Not "remove the seen check", which would hang the harness: a loop
@@ -386,8 +430,8 @@ ROWS += [
     Mutation(
         "archive: judge a token's authority now whatever an archive attests",
         "src/docinfo.rs",
-        "    let trust = attested.then(|| match archive {",
-        "    let trust = attested.then(|| match None::<u64> {",
+        "        .then(|| match archive {",
+        "        .then(|| match None::<u64> {",
         "an_archive_timestamp_lets_a_lapsed_authority_attest_the_time_it_stated",
     ),
     Mutation(

@@ -2738,8 +2738,26 @@ same `MAX_HASHED`. **Bounded**: at most eight certificates judged per chain
 (`chain::MAX_CHAIN`), the rest counted to the walk's end and turning a chain that would read
 *good* or *none* into *not checked*; a certificate met twice ends the walk, so two authorities
 certifying each other cannot loop it; the steps are at most the candidates, which the bounds
-above already count. The chain the OS assembles is **not** offered as candidates --- a revocation
-answer stays a property of the file, the same on every computer --- which is residual 34.
+above already count. The chain the OS assembles is **not** offered as candidates --- what can be
+checked stays a property of the file, the same on every computer --- which is residual 34.
+
+**Where the store vouched, its chain says which certificates are judged, added 2026-10-31.** A
+signature's and a token's certificate sets sit outside what they sign, so anybody holding the file
+can add to them in the padding `/Contents` reserves, and the verdict and the store's answer do not
+change. The walk took a certificate with the real issuer's name and key for the issuer, then went up
+a chain of its maker's: that maker's root answered *good*, or `id-pkix-ocsp-nocheck` stopped anybody
+asking, and a revoked issuer read as not revoked with *trusted* beside it. On ECDSA a second key
+that verifies the same signature can be computed from it, and a revocation under the real key then
+matched nothing. Both were reproduced end to end, and on the authority's side the same edit earned
+an attested moment. So when the store vouches (`trust::of_blob_vouching`, `of_blob_at`),
+`chain::along` judges the certificates it assembled, and each issuer is the next one on that chain,
+as the document carries it or by its name and key. **Reading *not checked* on a mismatch would not
+have closed it**: `--strict` passes *not checked* by design, so the addition would still have hidden
+the revocation. The walk remains for a chain the store refused, where nothing rests on it: `--strict`
+and an attested moment both need *trusted*. Measured on macOS, and through Windows's chain builder only
+by CI; the tests return early on Linux, whose checker is `rustls-webpki`, so Linux is inferred.
+**Not closed by this**: the same padding lets anybody **delete** data from the CMS `crls` set or the
+unsigned parts, and a revocation the file no longer carries reads *none*, which `--strict` passes.
 
 **Archive timestamps, added the same day (PAdES B-LTA).** A document timestamp later in the file
 now fixes the moment the timestamp authorities before it are judged at (`docinfo::archive_moment`,
@@ -5525,9 +5543,11 @@ because the arm it ran was the one written for "any other platform".
     checked* for the certificate where the walk stopped, however good the rest. The direction
     is the safe one --- nothing reads *good* that the document does not show --- and tpdf's own
     writer carries every issuer and the self-issued anchor. The cost is a warning a reader of
-    such a document sees and a stricter reader might not. Not closed: offering the OS chain's
-    roots as anchors only, never as issuers of checked data, would close the cross-certificate
-    half without making the answer depend on the computer's data.
+    such a document sees and a stricter reader might not. Narrowed 2026-10-31: where the store
+    vouched, its chain decides which certificates are asked about (§T6.25), so a cross-certificate
+    the document carries stands in for the root it left out, and an intermediate only the store
+    holds is listed as *none* or *not checked* rather than ending the row. The data checked is
+    still only the file's.
 
 35. **An edit's font depends on what the computer has installed** (§T6.26), added 2026-09-30.
     Automatic mode uses an installed copy of the document's own font for characters its

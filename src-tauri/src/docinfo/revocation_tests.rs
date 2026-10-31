@@ -1176,3 +1176,586 @@ fn a_date_this_module_wrote_reads_back_as_the_moment_it_names() {
         assert_eq!(utc_seconds(bad), None, "{bad}");
     }
 }
+
+// ---- A certificate added to the unsigned set does not choose the chain ----
+
+/// The name and key of `real`, issued by `theirs`, as somebody holding the file
+/// adds it to the signature's unsigned certificate set.
+fn twins(theirs: &TestCa, real: &TestCa) -> [Vec<u8>; 2] {
+    [theirs.cross(real, 1), theirs.cross_no_check(real, 2)]
+}
+
+/// The signer under `issuing`, with `added` in the signature beside it, and a
+/// `/DSS` holding every response in `extra` and the signer's and authority's.
+fn with_added(
+    w: &World,
+    issuing: &TestCa,
+    signer: &Issued,
+    added: &[Vec<u8>],
+    middle: Says,
+    extra: &[Vec<u8>],
+) -> Vec<u8> {
+    let mut chain = added.to_vec();
+    chain.push(issuing.certificate.clone());
+    let bytes = signed(signer, &chain, G, &w.tsa);
+    let mut responses = vec![
+        ocsp(&signer.certificate, issuing, Says::Good),
+        ocsp(&issuing.certificate, &w.ca, middle),
+        ocsp(&w.tsa.certificate, &w.tsa_root, Says::Good),
+    ];
+    responses.extend_from_slice(extra);
+    with_dss(
+        &bytes,
+        &[w.ca.certificate.clone(), w.tsa.root.clone()],
+        &responses,
+        &[],
+    )
+}
+
+#[test]
+fn a_twin_of_a_revoked_issuer_added_to_the_signature_does_not_hide_the_revocation() {
+    if !has_store() {
+        return;
+    }
+    let w = world();
+    let issuing = w.ca.intermediate("tpdf test issuing authority", 0x6c, 0x31);
+    let signer = issuing.issue("tpdf test signer under it", 0x6d, 8, None);
+    let theirs = TestCa::new("tpdf test injected root", 0x5a);
+    let revoked = Says::Revoked {
+        at: G - DAY,
+        reason: Some(2),
+    };
+    for twin in twins(&theirs, &issuing) {
+        // Their own root says their twin is good, which it is theirs to say.
+        let bytes = with_added(
+            &w,
+            &issuing,
+            &signer,
+            &[twin.clone(), theirs.certificate.clone()],
+            revoked,
+            &[ocsp(&twin, &theirs, Says::Good)],
+        );
+        let signature = read(&bytes, &anchors(&w));
+        assert_eq!(
+            signature.trust.as_ref().map(|t| t.standing),
+            Some(Standing::TrustedAtTimestamp),
+            "the attack's premise: the store still builds the real chain"
+        );
+        let chain = signature.revocation_chain.clone().expect("a chain");
+        assert_eq!(
+            (chain.standing, chain.after_moment, chain.decided_by),
+            (Status::Revoked, false, Some(1)),
+            "{chain:?}"
+        );
+        assert_eq!(chain.certificates[1].serial, "31");
+        let report = crate::cli::verify::signature_report(&signature);
+        assert!(!crate::cli::verify::passes_strict(&report));
+    }
+}
+
+#[test]
+fn a_twin_added_to_a_clean_signature_changes_nothing_it_reports() {
+    if !has_store() {
+        return;
+    }
+    let w = world();
+    let issuing = w.ca.intermediate("tpdf test issuing authority", 0x6c, 0x31);
+    let signer = issuing.issue("tpdf test signer under it", 0x6d, 8, None);
+    let theirs = TestCa::new("tpdf test injected root", 0x5a);
+    let plain = read(
+        &with_added(&w, &issuing, &signer, &[], Says::Good, &[]),
+        &anchors(&w),
+    );
+    for twin in twins(&theirs, &issuing) {
+        let added = [twin, theirs.certificate.clone()];
+        let bytes = with_added(&w, &issuing, &signer, &added, Says::Good, &[]);
+        let signature = read(&bytes, &anchors(&w));
+        assert_eq!(signature.revocation_chain, plain.revocation_chain);
+    }
+}
+
+#[test]
+fn a_twin_added_to_a_token_does_not_hide_a_revoked_issuer_above_the_authority() {
+    if !has_store() {
+        return;
+    }
+    use crate::integrity::test_tsa::Published;
+    let w = world();
+    let root = TestCa::of_tsa();
+    let issuing = root.intermediate("tpdf test timestamp issuing authority", 0x54, 4);
+    let genuine = TestTsa::under(&issuing, &Published::default());
+    let theirs = TestCa::new("tpdf test injected root", 0x5a);
+    let revoked = Says::Revoked {
+        at: G - DAY,
+        reason: Some(2),
+    };
+    for twin in twins(&theirs, &issuing) {
+        let mut tampered = genuine.clone();
+        tampered.carried.insert(0, theirs.certificate.clone());
+        tampered.carried.insert(0, twin.clone());
+        let bytes = signed(&w.signer, &[], G, &tampered);
+        let bytes = with_dss(
+            &bytes,
+            &[w.ca.certificate.clone(), root.certificate.clone()],
+            &[
+                ocsp(&w.signer.certificate, &w.ca, Says::Good),
+                ocsp(&genuine.certificate, &issuing, Says::Good),
+                ocsp(&issuing.certificate, &root, revoked),
+                ocsp(&twin, &theirs, Says::Good),
+            ],
+            &[],
+        );
+        let signature = read(
+            &bytes,
+            &[w.ca.certificate.clone(), root.certificate.clone()],
+        );
+        let stamp = signature.timestamp.as_ref().expect("a timestamp");
+        assert_eq!(
+            stamp.trust.as_ref().map(|t| t.standing),
+            Some(Standing::Trusted),
+            "the attack's premise: the store still builds the real chain"
+        );
+        let chain = stamp.revocation_chain.clone().expect("a chain");
+        assert_eq!(
+            (chain.standing, chain.decided_by),
+            (Status::Revoked, Some(1)),
+            "{chain:?}"
+        );
+        // So the time it states attests nothing: the signer is judged now.
+        assert_eq!(
+            signature.trust.as_ref().map(|t| t.standing),
+            Some(Standing::Trusted)
+        );
+    }
+}
+
+/// `real` with the second key that verifies the ECDSA signature on `issued`,
+/// recoverable by anybody from that signature: `real`'s name, not `real`'s key,
+/// and not `real`'s signature, which nothing asks about.
+fn second_key_twin(real: &[u8], issued: &[u8]) -> Vec<u8> {
+    use der::{Decode as _, Encode as _};
+    use p256::ecdsa::{RecoveryId, Signature, VerifyingKey};
+    use sha2::{Digest as _, Sha256};
+    let subject = x509_cert::Certificate::from_der(issued).expect("the certificate");
+    let tbs = subject.tbs_certificate.to_der().expect("its body");
+    let digest = Sha256::digest(&tbs);
+    let signature =
+        Signature::from_der(subject.signature.as_bytes().expect("bits")).expect("a signature");
+    let mut twin = x509_cert::Certificate::from_der(real).expect("the issuer");
+    let genuine = twin
+        .tbs_certificate
+        .subject_public_key_info
+        .subject_public_key
+        .raw_bytes()
+        .to_vec();
+    let other = [0u8, 1]
+        .into_iter()
+        .filter_map(|id| {
+            VerifyingKey::recover_from_prehash(
+                &digest,
+                &signature,
+                RecoveryId::from_byte(id).expect("an id"),
+            )
+            .ok()
+        })
+        .map(|key| key.to_sec1_point(false).as_bytes().to_vec())
+        .find(|key| *key != genuine)
+        .expect("a second key");
+    twin.tbs_certificate
+        .subject_public_key_info
+        .subject_public_key = der::asn1::BitString::from_bytes(&other).expect("bits");
+    twin.to_der().expect("encoded")
+}
+
+#[test]
+fn a_second_key_twin_does_not_lose_a_revocation_of_the_signers_own_certificate() {
+    if !has_store() {
+        return;
+    }
+    let w = world();
+    let issuing = w.ca.intermediate("tpdf test issuing authority", 0x6c, 0x31);
+    let signer = issuing.issue("tpdf test signer under it", 0x6d, 8, None);
+    let twin = second_key_twin(&issuing.certificate, &signer.certificate);
+    let bytes = signed(&signer, &[twin, issuing.certificate.clone()], G, &w.tsa);
+    let bytes = with_dss(
+        &bytes,
+        &[w.ca.certificate.clone(), w.tsa.root.clone()],
+        &[
+            ocsp(
+                &signer.certificate,
+                &issuing,
+                Says::Revoked {
+                    at: G - DAY,
+                    reason: Some(1),
+                },
+            ),
+            ocsp(&issuing.certificate, &w.ca, Says::Good),
+            ocsp(&w.tsa.certificate, &w.tsa_root, Says::Good),
+        ],
+        &[],
+    );
+    let signature = read(&bytes, &anchors(&w));
+    assert_eq!(
+        signature.trust.as_ref().map(|t| t.standing),
+        Some(Standing::TrustedAtTimestamp),
+        "the attack's premise: the store still builds the real chain"
+    );
+    assert_eq!(
+        signature.revocation.as_ref().map(|r| r.standing),
+        Some(Status::Revoked)
+    );
+    let report = crate::cli::verify::signature_report(&signature);
+    assert!(!crate::cli::verify::passes_strict(&report));
+}
+
+// ---- The rules of judging along the store's chain ----
+
+/// A chain under `w.ca` with `depth` authorities between it and the signer,
+/// all carried by the signature, with good answers for the signer and the
+/// authority and none for the authorities in between.
+fn deep(w: &World, depth: u8) -> Vec<u8> {
+    let mut authorities = vec![w.ca.intermediate("tpdf test authority 0", 0x70, 0x40)];
+    for at in 1..depth {
+        let above = authorities.last().expect("one");
+        let name = format!("tpdf test authority {at}");
+        authorities.push(above.intermediate(&name, 0x70 + at, 0x40 + at));
+    }
+    let lowest = authorities.last().expect("one");
+    let signer = lowest.issue("tpdf test signer deep down", 0x6d, 8, None);
+    let carried: Vec<Vec<u8>> = authorities.iter().map(|a| a.certificate.clone()).collect();
+    let bytes = signed(&signer, &carried, G, &w.tsa);
+    with_dss(
+        &bytes,
+        &[w.ca.certificate.clone(), w.tsa.root.clone()],
+        &[
+            ocsp(&signer.certificate, lowest, Says::Good),
+            ocsp(&w.tsa.certificate, &w.tsa_root, Says::Good),
+        ],
+        &[],
+    )
+}
+
+#[test]
+fn a_chain_past_the_bound_is_counted_and_cannot_read_good() {
+    if !has_store() {
+        return;
+    }
+    let w = world();
+    let signature = read(&deep(&w, 9), &anchors(&w));
+    assert_eq!(
+        signature.trust.as_ref().map(|t| t.standing),
+        Some(Standing::TrustedAtTimestamp)
+    );
+    let chain = signature.revocation_chain.expect("a chain");
+    assert_eq!(
+        chain.certificates.len(),
+        crate::revocation::chain::MAX_CHAIN
+    );
+    assert_eq!(chain.dropped, 2, "{chain:?}");
+    assert_eq!(chain.standing, Status::Unchecked);
+}
+
+#[test]
+fn an_authority_marked_no_check_on_the_stores_chain_is_not_asked_about() {
+    if !has_store() {
+        return;
+    }
+    let w = world();
+    let issuing =
+        w.ca.intermediate_no_check("tpdf test issuing authority", 0x6c, 0x31);
+    let signer = issuing.issue("tpdf test signer under it", 0x6d, 8, None);
+    let bytes = with_added(&w, &issuing, &signer, &[], Says::Good, &[]);
+    let chain = read(&bytes, &anchors(&w))
+        .revocation_chain
+        .expect("a chain");
+    assert_eq!(
+        (chain.standing, chain.certificates.len(), chain.end),
+        (Status::Good, 1, crate::revocation::chain::End::Root),
+        "{chain:?}"
+    );
+}
+
+#[test]
+fn the_anchor_the_store_ended_at_is_not_asked_about_though_it_issued_nothing_to_itself() {
+    if !has_store() {
+        return;
+    }
+    // The issuing authority itself is the only root here, so the store's chain
+    // ends at a certificate that is not self-issued and has no data about it.
+    let w = world();
+    let issuing = w.ca.intermediate("tpdf test issuing authority", 0x6c, 0x31);
+    let signer = issuing.issue("tpdf test signer under it", 0x6d, 8, None);
+    let bytes = with_added(&w, &issuing, &signer, &[], Says::Good, &[]);
+    let only = [issuing.certificate.clone(), w.tsa.root.clone()];
+    let signature = read(&bytes, &only);
+    assert_eq!(
+        signature.trust.as_ref().map(|t| t.standing),
+        Some(Standing::TrustedAtTimestamp)
+    );
+    let chain = signature.revocation_chain.expect("a chain");
+    assert_eq!(
+        (chain.standing, chain.certificates.len()),
+        (Status::Good, 1),
+        "{chain:?}"
+    );
+}
+
+#[test]
+fn a_cross_certificate_of_a_root_the_document_carries_ends_the_stores_chain_too() {
+    if !has_store() {
+        return;
+    }
+    // The store goes through the cross-certificate to the root it trusts; the
+    // document carries the self-issued twin, as DigiCert's and Sectigo's do.
+    let w = world();
+    let their_root = TestCa::new("tpdf test second root", 0x75);
+    let cross = w.ca.cross(&their_root, 0x32);
+    let signer = their_root.issue("tpdf test signer under it", 0x6d, 8, None);
+    let bytes = signed(&signer, &[cross, their_root.certificate.clone()], G, &w.tsa);
+    let bytes = with_dss(
+        &bytes,
+        std::slice::from_ref(&w.tsa.root),
+        &[
+            ocsp(&signer.certificate, &their_root, Says::Good),
+            ocsp(&w.tsa.certificate, &w.tsa_root, Says::Good),
+        ],
+        &[],
+    );
+    let signature = read(&bytes, &anchors(&w));
+    assert_eq!(
+        signature.trust.as_ref().map(|t| t.standing),
+        Some(Standing::TrustedAtTimestamp)
+    );
+    let chain = signature.revocation_chain.expect("a chain");
+    assert_eq!(
+        (chain.standing, chain.certificates.len()),
+        (Status::Good, 1),
+        "{chain:?}"
+    );
+}
+
+#[test]
+fn an_issuer_only_the_store_holds_supplies_no_key_and_a_same_named_key_is_no_issuer() {
+    if !has_store() {
+        return;
+    }
+    use crate::revocation::chain::End;
+    // The root is an anchor and the document leaves it out, so a response about
+    // the authority below it cannot be checked on any computer. A certificate
+    // with the root's name and another key changes nothing.
+    let w = world();
+    let issuing = w.ca.intermediate("tpdf test issuing authority", 0x6c, 0x31);
+    let signer = issuing.issue("tpdf test signer under it", 0x6d, 8, None);
+    let impostor = TestCa::new("tpdf test signing authority", 0x76);
+    for added in [vec![], vec![impostor.certificate.clone()]] {
+        let mut chain = added;
+        chain.push(issuing.certificate.clone());
+        let bytes = signed(&signer, &chain, G, &w.tsa);
+        let bytes = with_dss(
+            &bytes,
+            std::slice::from_ref(&w.tsa.root),
+            &[
+                ocsp(&signer.certificate, &issuing, Says::Good),
+                ocsp(&issuing.certificate, &w.ca, Says::Good),
+                ocsp(&w.tsa.certificate, &w.tsa_root, Says::Good),
+            ],
+            &[],
+        );
+        let signature = read(&bytes, &anchors(&w));
+        assert_eq!(
+            signature.trust.as_ref().map(|t| t.standing),
+            Some(Standing::TrustedAtTimestamp)
+        );
+        let chain = signature.revocation_chain.expect("a chain");
+        assert_eq!(
+            (chain.standing, chain.end, chain.decided_by),
+            (Status::Unchecked, End::NoIssuer, Some(1)),
+            "{chain:?}"
+        );
+        assert_eq!(chain.certificates[1].revocation.why, Some(Gap::Issuer));
+    }
+}
+
+#[test]
+fn a_cross_certificate_stands_in_for_a_root_the_document_leaves_out() {
+    if !has_store() {
+        return;
+    }
+    // The root's name and key under another authority: data the root signed
+    // checks out under it, as it does under the root.
+    let w = world();
+    let issuing = w.ca.intermediate("tpdf test issuing authority", 0x6c, 0x31);
+    let signer = issuing.issue("tpdf test signer under it", 0x6d, 8, None);
+    let other = TestCa::new("tpdf test other root", 0x77);
+    let stand_in = other.cross(&w.ca, 0x33);
+    let bytes = signed(&signer, &[issuing.certificate.clone(), stand_in], G, &w.tsa);
+    let bytes = with_dss(
+        &bytes,
+        std::slice::from_ref(&w.tsa.root),
+        &[
+            ocsp(&signer.certificate, &issuing, Says::Good),
+            ocsp(&issuing.certificate, &w.ca, Says::Good),
+            ocsp(&w.tsa.certificate, &w.tsa_root, Says::Good),
+        ],
+        &[],
+    );
+    let chain = read(&bytes, &anchors(&w))
+        .revocation_chain
+        .expect("a chain");
+    assert_eq!(
+        (chain.standing, chain.end, chain.certificates.len()),
+        (Status::Good, crate::revocation::chain::End::Root, 2),
+        "{chain:?}"
+    );
+}
+
+#[test]
+fn a_trusted_signer_that_issued_itself_is_judged_by_its_own_data() {
+    if !has_store() {
+        return;
+    }
+    let w = world();
+    let own = TestCa::new("tpdf test signer of its own", 0x78);
+    let signer = own.as_signer(0x78);
+    let bytes = signed(&signer, &[], G, &w.tsa);
+    let bytes = with_dss(
+        &bytes,
+        std::slice::from_ref(&w.tsa.root),
+        &[
+            ocsp(&own.certificate, &own, Says::Good),
+            ocsp(&w.tsa.certificate, &w.tsa_root, Says::Good),
+        ],
+        &[],
+    );
+    let roots = [own.certificate.clone(), w.tsa.root.clone()];
+    let signature = read(&bytes, &roots);
+    assert_eq!(
+        signature.trust.as_ref().map(|t| t.standing),
+        Some(Standing::TrustedAtTimestamp)
+    );
+    assert_eq!(signature.revocation.map(|r| r.standing), Some(Status::Good));
+}
+
+#[test]
+fn a_chain_the_store_refused_is_not_followed() {
+    if !has_store() {
+        return;
+    }
+    // The store stops at the signer, so its chain is one certificate long and
+    // says nothing about who issued it; the data about the signer cannot be
+    // checked. Followed, the signer would read as having issued itself.
+    let w = world();
+    let issuing = w.ca.intermediate("tpdf test issuing authority", 0x6c, 0x31);
+    let signer = issuing.issue("tpdf test signer under it", 0x6d, 8, None);
+    let bytes = signed(&signer, &[], G, &w.tsa);
+    let bytes = with_dss(
+        &bytes,
+        std::slice::from_ref(&w.tsa.root),
+        &[
+            ocsp(&signer.certificate, &issuing, Says::Good),
+            ocsp(&w.tsa.certificate, &w.tsa_root, Says::Good),
+        ],
+        &[],
+    );
+    let signature = read(&bytes, &anchors(&w));
+    assert_eq!(
+        signature.trust.as_ref().map(|t| (t.standing, t.why)),
+        Some((Standing::Untrusted, Some(Doubt::Incomplete)))
+    );
+    let revocation = signature.revocation.expect("an answer");
+    assert_eq!(
+        (revocation.standing, revocation.why),
+        (Status::Unchecked, Some(Gap::Issuer))
+    );
+}
+
+#[test]
+fn a_signer_read_as_out_of_its_dates_is_still_judged_along_the_stores_chain() {
+    if !has_store() {
+        return;
+    }
+    use crate::integrity::test_tsa::{FROM, UNTIL};
+    let w = world();
+    let issuing = w.ca.intermediate("tpdf test issuing authority", 0x6c, 0x31);
+    let signer = issuing.issue("tpdf test signer under it", 0x6d, 8, None);
+    let theirs = TestCa::new("tpdf test injected root", 0x5a);
+    let twin = theirs.cross(&issuing, 1);
+    let bytes = with_added(
+        &w,
+        &issuing,
+        &signer,
+        &[twin.clone(), theirs.certificate.clone()],
+        Says::Revoked {
+            at: G - DAY,
+            reason: Some(2),
+        },
+        &[ocsp(&twin, &theirs, Says::Good)],
+    );
+    for (now, standing) in [
+        (UNTIL + DAY, Standing::Expired),
+        (FROM - DAY, Standing::NotYetValid),
+    ] {
+        let found = scan_at(&bytes, crate::trust::Anchors::Only(&anchors(&w)), now).expect("read");
+        let signature = found
+            .signatures
+            .into_iter()
+            .find(|s| s.signed)
+            .expect("the signature");
+        assert_eq!(signature.trust.map(|t| t.standing), Some(standing));
+        let chain = signature.revocation_chain.expect("a chain");
+        // The real authority, serial 31, whatever the data says at that moment.
+        assert_eq!(chain.certificates[1].serial, "31", "{chain:?}");
+    }
+}
+
+#[test]
+fn a_twin_that_may_not_sign_lists_does_not_stop_the_real_issuers_list_being_read() {
+    if !has_store() {
+        return;
+    }
+    use crate::integrity::test_tsa::{mint_crl, CrlFaults, Listed};
+    use der::{Decode as _, Encode as _};
+    let w = world();
+    let issuing = w.ca.intermediate("tpdf test issuing authority", 0x6c, 0x31);
+    let signer = issuing.issue("tpdf test signer under it", 0x6d, 8, None);
+    // The root's name and key, stating a key usage without `cRLSign`, ahead of
+    // the root in the signature's set.
+    let mut twin = x509_cert::Certificate::from_der(&w.ca.certificate).expect("the root");
+    let usage =
+        x509_cert::ext::pkix::KeyUsage(x509_cert::ext::pkix::KeyUsages::DigitalSignature.into());
+    twin.tbs_certificate.extensions = Some(vec![x509_cert::ext::Extension {
+        extn_id: der::oid::ObjectIdentifier::new_unwrap("2.5.29.15"),
+        critical: true,
+        extn_value: der::asn1::OctetString::new(usage.to_der().expect("usage")).expect("octets"),
+    }]);
+    let twin = twin.to_der().expect("encoded");
+    let list = mint_crl(
+        &w.ca,
+        &[Listed {
+            certificate: &issuing.certificate,
+            at: G - DAY,
+            reason: Some(2),
+        }],
+        G - 3_600,
+        Some(G + 7 * DAY),
+        &CrlFaults::default(),
+    );
+    let bytes = signed(&signer, &[twin, issuing.certificate.clone()], G, &w.tsa);
+    let bytes = with_dss(
+        &bytes,
+        &[w.ca.certificate.clone(), w.tsa.root.clone()],
+        &[
+            ocsp(&signer.certificate, &issuing, Says::Good),
+            ocsp(&w.tsa.certificate, &w.tsa_root, Says::Good),
+        ],
+        &[list],
+    );
+    let chain = read(&bytes, &anchors(&w))
+        .revocation_chain
+        .expect("a chain");
+    assert_eq!(
+        (chain.standing, chain.decided_by),
+        (Status::Revoked, Some(1)),
+        "{chain:?}"
+    );
+}

@@ -282,15 +282,67 @@ pub fn of_blob_with(
     now: u64,
     anchors: Anchors<'_>,
 ) -> Trust {
+    of_blob_vouching(blob, extra, purpose, now, anchors).0
+}
+
+/// [`of_blob_with`], and the chain the answer is about: the one the store
+/// assembled in the evaluation that passed, signer first, DER, the root it
+/// ended at last. Empty unless the store vouched ([`vouched_for`]).
+///
+/// For the reader's revocation answers, which follow this chain rather than
+/// whatever the signature's unsigned certificate set offers
+/// (`revocation::chain::along`). One evaluation answers both, so the chain is
+/// the one the verdict beside it is about.
+#[must_use]
+pub fn of_blob_vouching(
+    blob: &[u8],
+    extra: &[Vec<u8>],
+    purpose: Purpose,
+    now: u64,
+    anchors: Anchors<'_>,
+) -> (Trust, Vec<Vec<u8>>) {
+    answer_and_chain(blob, extra, anchors, |signer, evaluate| {
+        judge_for(signer, purpose, now, evaluate)
+    })
+}
+
+/// The answer `ask` reads from the store's evaluations of the certificates in
+/// `blob`, and the chain the last of them assembled, if the store vouched for it.
+fn answer_and_chain(
+    blob: &[u8],
+    extra: &[Vec<u8>],
+    anchors: Anchors<'_>,
+    ask: impl FnOnce(&Certificate, &mut dyn FnMut(u64) -> Result<Evaluation, String>) -> Trust,
+) -> (Trust, Vec<Vec<u8>>) {
     let Some((leaf, others)) = certificates_with(blob, extra) else {
-        return Trust::unchecked(Doubt::Certificate);
+        return (Trust::unchecked(Doubt::Certificate), Vec::new());
     };
     let Ok(parsed) = Certificate::from_der(&leaf) else {
-        return Trust::unchecked(Doubt::Certificate);
+        return (Trust::unchecked(Doubt::Certificate), Vec::new());
     };
-    judge_for(&parsed, purpose, now, |at| {
-        platform::evaluate(&leaf, &others, anchors, at)
-    })
+    let mut chain = Vec::new();
+    let trust = ask(&parsed, &mut |at| {
+        let evaluation = platform::evaluate(&leaf, &others, anchors, at)?;
+        chain.clone_from(&evaluation.chain);
+        Ok(evaluation)
+    });
+    if !vouched_for(&trust) {
+        chain.clear();
+    }
+    (trust, chain)
+}
+
+/// Whether the chain last evaluated is one the store vouched for: it passed,
+/// for this purpose, at the moment the answer is about. The dates of the signer
+/// being the news does not change whose chain it is.
+fn vouched_for(trust: &Trust) -> bool {
+    matches!(
+        trust.standing,
+        Standing::Trusted
+            | Standing::TrustedAtTimestamp
+            | Standing::Expired
+            | Standing::NotYetValid
+    )
 }
 
 /// [`of_blob_for`], and the chain the store vouched for: the one it assembled
@@ -311,18 +363,7 @@ pub fn of_blob_with_chain(
     now: u64,
     anchors: Anchors<'_>,
 ) -> (Trust, Vec<Vec<u8>>) {
-    let Some((leaf, others)) = certificates_with(blob, &[]) else {
-        return (Trust::unchecked(Doubt::Certificate), Vec::new());
-    };
-    let Ok(parsed) = Certificate::from_der(&leaf) else {
-        return (Trust::unchecked(Doubt::Certificate), Vec::new());
-    };
-    let mut chain = Vec::new();
-    let trust = judge_for(&parsed, purpose, now, |at| {
-        let evaluation = platform::evaluate(&leaf, &others, anchors, at)?;
-        chain.clone_from(&evaluation.chain);
-        Ok(evaluation)
-    });
+    let (trust, mut chain) = of_blob_vouching(blob, &[], purpose, now, anchors);
     // `Trusted` is only ever the answer to the first evaluation, the one at
     // `now`, so the chain kept is that one's. Anything else --- a chain the
     // store refused, one that passed inside the certificate's dates and not
@@ -476,6 +517,8 @@ pub fn judge_for(
 /// decides when the time qualifies (`docinfo`: token `intact`, authority
 /// `trusted`, not revoked, and `genTime` inside the authority's certificate's
 /// dates); this only asks the store about that moment.
+///
+/// The chain the answer is about comes beside it, as from [`of_blob_vouching`].
 #[must_use]
 pub fn of_blob_at(
     blob: &[u8],
@@ -483,15 +526,9 @@ pub fn of_blob_at(
     purpose: Purpose,
     at: u64,
     anchors: Anchors<'_>,
-) -> Trust {
-    let Some((leaf, others)) = certificates_with(blob, extra) else {
-        return Trust::unchecked(Doubt::Certificate);
-    };
-    let Ok(parsed) = Certificate::from_der(&leaf) else {
-        return Trust::unchecked(Doubt::Certificate);
-    };
-    judge_at(&parsed, purpose, at, |moment| {
-        platform::evaluate(&leaf, &others, anchors, moment)
+) -> (Trust, Vec<Vec<u8>>) {
+    answer_and_chain(blob, extra, anchors, |signer, evaluate| {
+        judge_at(signer, purpose, at, evaluate)
     })
 }
 

@@ -2439,8 +2439,8 @@ ROWS += [
         # Ask about the authority of a token nothing vouches for.
         "docinfo: ask about a broken token's authority",
         "src/docinfo.rs",
-        "    let trust = attested.then(|| match archive {",
-        "    let trust = Some(()).map(|()| match archive {",
+        "    let (trust, vouched) = attested\n        .then(|| match archive {",
+        "    let (trust, vouched) = Some(())\n        .map(|()| match archive {",
         "a_broken_tokens_time_is_not_attested_and_its_authority_not_asked",
     ),
     Mutation(

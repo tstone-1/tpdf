@@ -16,11 +16,13 @@
 //!
 //! ## One walk, for reading and for signing
 //!
-//! [`walk`] is the only place a chain is followed. `longterm::plan` walks it to
-//! decide what to ask the certificate authorities about while signing, and the
-//! worker walks it to decide what to judge while reading; two walks would be two
-//! answers to *which certificates are on this chain*, and the file one writes
-//! would be read by the other. The rules, each measured before it was written:
+//! [`walk`] is the only place a chain is followed through a document's
+//! certificates. `longterm::plan` walks it to decide what to ask the certificate
+//! authorities about while signing, and the worker walks it to decide what to
+//! judge while reading a signature the store did not vouch for (below); two walks
+//! would be two answers to *which certificates are on this chain*, and the file
+//! one writes would be read by the other. The rules, each measured before it was
+//! written:
 //!
 //! - **The issuer is found by name and by key** ([`crate::revocation::issuer_of`]),
 //!   among the candidates given --- never by name alone.
@@ -43,19 +45,36 @@
 //! The signature's certificates, its token's, the `/DSS`'s and those inside
 //! the document's OCSP responses: exactly the population
 //! [`crate::revocation::judge`] looks for an issuer in, so a certificate whose
-//! data checked out always has its issuer on the walk too. **The chain the
-//! operating system assembles is not offered**, though `trust.rs` builds one:
-//! a revocation answer is a property of the file and reads the same on every
-//! computer, which a chain completed from one computer's store would not; a
-//! B-LT document carries its certificates (EN 319 142-1 §5.4.2), and tpdf's own
-//! writer puts every issuer and the self-issued anchor in its `/DSS`; and a
-//! certificate the walk cannot continue past reads *not checked*, which is the
-//! safe direction. Residual 34 of `docs/THREAT-MODEL.md` names the price.
+//! data checked out always has its issuer on the walk too.
+//!
+//! ## When the operating system vouched, its chain decides
+//!
+//! **A signature's certificate set is outside its signature.** Anybody holding
+//! the file can add to it, in the padding `/Contents` reserves, without changing
+//! a verdict. A certificate with the real issuer's name and key verifies the
+//! same signature, so [`walk`] may take it for the issuer and go up a chain of
+//! its maker's, where their own root answers *good*, or where
+//! `id-pkix-ocsp-nocheck` stops anybody asking; on ECDSA a second key that
+//! verifies the signature can be computed from it, and a revocation under the
+//! real key then matches nothing. The store is not fooled, so *trusted* would
+//! stand beside a chain nobody vouched for (F15, F16).
+//!
+//! So where the store vouched, [`along`] judges the certificates it assembled,
+//! and the walk is what is left for a chain it did not: reading *trusted* or
+//! `--strict` never rests on one. Reading it as *not checked* on a mismatch would
+//! not do: `--strict` passes that, so the added certificate would still hide
+//! the revocation.
+//!
+//! **The data is still the document's alone.** The store's chain decides which
+//! certificates are asked about and under which key; a chain completed from one
+//! computer's store never supplies an issuer the file lacks, so data the file
+//! cannot check reads *not checked* on every computer. A chain the file leaves
+//! short still ends [`End::NoIssuer`]; residual 34 of `docs/THREAT-MODEL.md`.
 
 use der::Encode as _;
 use x509_cert::Certificate;
 
-use super::{issuer_of, judge, Moment, Pool, Revocation, Status};
+use super::{issuer_of, judge, judge_under, Moment, Pool, Revocation, Status};
 
 /// id-pkix-ocsp-nocheck, RFC 6960 §4.2.2.2.1.
 pub const OCSP_NO_CHECK: &str = "1.3.6.1.5.5.7.48.1.5";
@@ -350,6 +369,76 @@ pub fn chain(
         certificates.push(judged(&link.certificate, answer));
     }
     combine(certificates, walked.dropped, walked.end)
+}
+
+/// `wanted`, as the document carries it: the certificate itself, or one with its
+/// name and its key --- a cross-certificate, say. Nothing is judged through such
+/// a stand-in but that name and key, which are `wanted`'s.
+fn carried<'a>(wanted: &Certificate, file: &[&'a Certificate]) -> Option<&'a Certificate> {
+    let tbs = &wanted.tbs_certificate;
+    file.iter()
+        .copied()
+        .find(|candidate| *candidate == wanted)
+        .or_else(|| {
+            file.iter().copied().find(|candidate| {
+                candidate.tbs_certificate.subject == tbs.subject
+                    && candidate.tbs_certificate.subject_public_key_info
+                        == tbs.subject_public_key_info
+            })
+        })
+}
+
+/// What the document's data says about the chain the store vouched for:
+/// `vouched`, signer first, the root it ended at last. The signer's own answer,
+/// and the chain's, of which it is the first certificate.
+///
+/// `None` when `vouched` is empty: the store vouched for nothing, and the caller
+/// walks the document's certificates ([`chain`]).
+#[must_use]
+pub fn along(
+    vouched: &[Certificate],
+    candidates: &[Certificate],
+    pools: &[&Pool],
+    moment: Moment,
+    now: u64,
+    budget: &mut u64,
+) -> Option<(Revocation, Chain)> {
+    let leaf = vouched.first()?;
+    let everything: Vec<&Certificate> = candidates
+        .iter()
+        .chain(pools.iter().flat_map(|pool| pool.candidates()))
+        .collect();
+    let mut end = End::Root;
+    let mut issuer_at = |at: usize| {
+        // A chain of one is a trusted certificate that issued itself.
+        let issuer = carried(vouched.get(at + 1).unwrap_or(leaf), &everything);
+        if issuer.is_none() {
+            end = End::NoIssuer;
+        }
+        issuer
+    };
+    let own = judge_under(leaf, issuer_at(0), &everything, pools, moment, now, budget);
+    let mut certificates = vec![judged(leaf, own.clone())];
+    let mut dropped = 0;
+    // The last is the root the store ended at, which nobody asks about, and so
+    // is a certificate the document shows to be a cross-certificate of a root.
+    let below_root = vouched.len().saturating_sub(1);
+    for (at, certificate) in vouched.iter().enumerate().take(below_root).skip(1) {
+        if anchor_of(certificate, &everything).is_some() {
+            break;
+        }
+        let issuer = issuer_at(at);
+        if no_check(certificate) {
+            continue;
+        }
+        if certificates.len() == MAX_CHAIN {
+            dropped += 1;
+            continue;
+        }
+        let answer = judge_under(certificate, issuer, &everything, pools, moment, now, budget);
+        certificates.push(judged(certificate, answer));
+    }
+    Some((own, combine(certificates, dropped, end)))
 }
 
 #[cfg(test)]

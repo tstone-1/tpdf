@@ -2239,7 +2239,7 @@ ROWS += [
         "lt: judge the signer now even with an attested moment",
         "src/docinfo.rs",
         "                crate::trust::of_blob_at(blob, extra, purpose, at, judging.anchors)",
-        "                crate::trust::of_blob_with(blob, extra, purpose, judging.now, judging.anchors)",
+        "                crate::trust::of_blob_vouching(blob, extra, purpose, judging.now, judging.anchors)",
         "a_b_lt_signature_is_judged_at_the_attested_time_with_the_documents_own_data",
     ),
     Mutation(

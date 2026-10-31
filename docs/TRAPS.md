@@ -287,6 +287,7 @@ hop through the index.
 - A name is not an identity for the thing that was just written
 - A bound the worker holds on its own answer is the worker's word, and the parse it bounds is on the other side
 - A document timestamp is a signature anybody can get, so nothing may rest on one
+- A revocation chain followed through a signature's own certificates is chosen by whoever holds the file
 
 ## Tauri, the webview and startup
 - `AppHandle::exit` does not set the process's exit code
@@ -27086,3 +27087,24 @@ so a key named `Resources 4 0 R/Contents` printed exactly like the two entries i
 **PDFium ignores a reference's generation**: `7 3 R` draws object 7 where `lopdf` finds nothing.
 Both now have a test. Both are the same family as the rule itself: **`--strict` reads the file
 with `lopdf` and PDFium draws it**, which is the residual `docs/THREAT-MODEL.md` states.
+
+### A revocation chain followed through a signature's own certificates is chosen by whoever holds the file
+
+The CMS `certificates` set is outside the signature, in the padding `/Contents` reserves, so it can
+be edited with every verdict unchanged. An issuer found "by name and key" among those certificates
+is not found safely: a certificate with the real issuer's name and key verifies the same signature,
+and it can sit under a root of its maker's that answers *good*, or carry `id-pkix-ocsp-nocheck`. On
+ECDSA the key need not even be the real one: a second key verifying the same (r, s) is computed from
+the signature, and a genuine *revoked* then fails the `CertID` key hash and is skipped. The OS chain
+builder is not fooled, so *trusted* stands beside a revocation answer about a chain nobody vouched
+for. Four tests reproduced it through a whole scan before the fix (2026-10-31).
+
+**The obvious repair is wrong in this repository.** Reading *not checked* when the walk and the OS
+chain differ sounds safe, and `verify --strict` passes *not checked* by design ("does anything speak
+against it"), so the added certificate would still have hidden the revocation. Lowering an answer is
+what the attacker wants. So the fix judges the OS chain (`chain::along`), which keeps *revoked*.
+
+**The first mutation run caught 4 of 14.** The attack tests proved the route was taken and none of
+the rules inside it. One rule was then deleted rather than tested: judging a certificate the document
+carries in place of the store's differed only for an intermediate held in the machine's own store,
+which no test can set up.

@@ -786,6 +786,16 @@ impl TestCa {
         }
     }
 
+    /// This authority as a signer: `seed` is the one [`TestCa::new`] was given.
+    #[must_use]
+    pub fn as_signer(&self, seed: u8) -> Issued {
+        Issued {
+            key: self.key.clone(),
+            seed,
+            certificate: self.certificate.clone(),
+        }
+    }
+
     /// The root that issued [`TestTsa`]'s certificate --- the same key and the
     /// same bytes --- so data it signs is about the test authority.
     #[must_use]
@@ -1494,6 +1504,33 @@ impl TestCa {
             purposes: None,
             authority: true,
         })
+    }
+
+    /// [`TestCa::cross`] carrying `id-pkix-ocsp-nocheck`: what somebody on the
+    /// path adds so that a walk through it asks nobody about it.
+    #[must_use]
+    pub fn cross_no_check(&self, other: &TestCa, serial: u8) -> Vec<u8> {
+        certificate_with(
+            &Spec {
+                subject: &other.name,
+                issuer: &self.name,
+                key: &other.key,
+                signer: &self.key,
+                serial,
+                purposes: None,
+                authority: true,
+            },
+            Dates {
+                from: FROM,
+                until: UNTIL,
+            },
+            &[Extension {
+                extn_id: oid(OCSP_NO_CHECK),
+                critical: false,
+                extn_value: OctetString::new(der::asn1::Null.to_der().expect("null"))
+                    .expect("octets"),
+            }],
+        )
     }
 
     /// [`TestCa::cross`], saying where its revocation data is published: what
