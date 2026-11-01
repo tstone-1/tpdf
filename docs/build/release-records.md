@@ -2,6 +2,37 @@
 
 What was run for each release, what passed, and what was not run. The record of a new release goes at the top. Moved here verbatim from `BUILD.md` on 2026-10-23, which indexes this file.
 
+**26.11.0 verification and publication, 2026-11-01:** prepared on the Windows development machine,
+with Windows Sandbox enabled there for `clean_windows_check.py`. Step 1 took every update within its
+range except `zip`: `cargo update` moved it to 9.2.1 and it was put back to 9.1.3 with `--precise`
+in both lockfiles. `check_pdfium_age.py` found the pin at the head of 8103. All 34 gates passed on
+the release tree, `check_linux.py` passed, and `window_checks.py` passed 17 of 17 on Windows 11 and
+on the second Mac (`run_on_mac.py`, `--wrap '~/bin/mac-build-env.zsh --'`). Step 7:
+`mutate_python.py` 38/38, `mutate_frontend.py --near v26.10.28` 15/15, `mutate_rust.py --near
+v26.10.28` 9/9 with 4 macOS-only rows skipped. `clean_windows_check.py` on the locally built installer: three authorities signed
+on a store holding none of their roots, and reading fetched nothing until `--fetch-roots`; with the
+flag's check removed from `verify` the script failed at its first plain `verify`. CI passed all
+three jobs on `40a56b78` (run 41331433002) and `Audit` passed (run 41331432868). Rehearsal
+`v26.11.0-rc1` because `57de6aeb` moved the release workflow to Node 26 (run 41334369433): every leg
+green and eight files, then deleted. Release run 41338162966 skipped its gates and left a draft of
+eight files whose `latest.json` offered 26.11.0. On the draft's files: the installer read as `Valid`,
+timestamped by Certum, and passed `installed_check.py` 26/26 on the Windows build machine; there the
+button was pressed once through UI Automation on `incr-signed.pdf`, which said the root changed
+nothing and kept the offer. The `.dmg`'s app was accepted as Notarized Developer ID and stapled, and
+its `tpdf-cli` (Developer ID, `runtime`) answered 26.11.0 and verified the signed fixture.
+`publish_release.py v26.11.0 --publish` published it; without authentication `releases/latest` is
+v26.11.0 with 8 assets, and the `.dmg`, `-setup.exe`, `.deb`, AppImage, updater bundle and
+`latest.json` answer 200. An installed 26.10.28 updated itself: `update_check.py` 18/18 on the build
+machine and `update_check_mac.py` 12/12 on the second Mac, and each `--control no-press` failed its
+seven checks and nothing else. `update_check_mac.py` needs the Accessibility permission of whatever
+starts it, which on that Mac is `sshd-keygen-wrapper`: run it over ssh, because as a launchd job in
+the logged-in session its first menu read gets no answer within 20 s. **Not run:** `print-probe`
+and `redact-reach-probe` (no printing or OCR code changed), `menu_check.py` and `save_check.py` on
+the `.dmg`, a press of the button on a clean machine (the sandbox proved the same lookup through
+`--fetch-roots`), a blocked network, and step 7's pass after the release (`--since v26.10.28
+--resume`). `npm audit` reports two low findings for `deepmerge`, a build-time dependency with no
+fix available. The winget pull request stays where it was.
+
 **26.10.28 verification and publication, 2026-10-31:** prepared on the first Mac, with the window
 checks and bundle checks on the second Mac over ssh and Windows on the build machine; the Windows
 development machine was not reachable. Step 1 took every update within its range except `zip`,

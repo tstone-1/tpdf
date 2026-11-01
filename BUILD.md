@@ -1029,9 +1029,10 @@ starts at 0 and increments within the month.
    The fuzz package has a lockfile of its own, and `Audit` reads both. 26.10.19 updated only
    the application's: rustls moved to 0.23.46 there and stayed at 0.23.45 in the fuzz one,
    and four advisories published that week failed `Audit` on the release commit.
-   - **`zip` 9.2.0** is held at 9.1.3 (26.10.28): only `tauri-plugin-updater` names it, and a
+   - **`zip` 9.2** is held at 9.1.3 (26.10.28): only `tauri-plugin-updater` names it, and a
      release moving the updater's crates has to run step 12 on the new updater before the tag.
-     Take it in a release that does.
+     Take it in a release that does. The commands above move it anyway (9.2.1 on 26.11.0), so
+     afterwards run `cargo update -p zip --precise 9.1.3` in `src-tauri` and in `src-tauri/fuzz`.
    - `toml`, `toml_datetime`, `toml_edit`, `brotli-decompressor`, `generic-array` and
      `rand_chacha` are not named in `Cargo.toml`; what names them pins them.
    - **`windows-core` 0.100** is held by Tauri: `tao`, `wry` and `webview2-com` name 0.62.
