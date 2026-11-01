@@ -17,6 +17,17 @@ as *downloadable*, while the release sat as a draft that GitHub showed to nobody
 are given now because they are different facts, and only the second one means a reader can
 have the binary.)
 
+## [26.11.1] - Unreleased
+
+### Added
+
+- **Measure a distance.** Drag along something on a page and the line shows its length; Shift
+  keeps it straight. **Set the scale** takes the real length of the last line, such as
+  `195 cm`, and the page's other lines then read in that unit, with as many decimals as the
+  scale was typed with and at least one. Each page has its own scale. In the View menu, the
+  Draw menu and the palette. On screen only, until the document is closed, saved or reloaded:
+  nothing is written to the file, so a measurement cannot disturb a digital signature.
+
 ## [26.11.0] - 2026-11-01
 
 ### Added

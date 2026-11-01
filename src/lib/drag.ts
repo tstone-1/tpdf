@@ -41,6 +41,8 @@
 export interface DragPoint {
   readonly clientX: number;
   readonly clientY: number;
+  /** Whether Shift was held at this point, for a gesture Shift constrains. */
+  readonly shiftKey?: boolean;
 }
 
 /** What a caller does with a drag. */
@@ -137,7 +139,7 @@ export class PointerDrag {
   private readonly onMove = (event: PointerEvent): void => {
     const live = this.live;
     if (!live || event.pointerId !== live.pointerId) return;
-    live.at = { clientX: event.clientX, clientY: event.clientY };
+    live.at = { clientX: event.clientX, clientY: event.clientY, shiftKey: event.shiftKey };
     this.target.move(live.at);
   };
 

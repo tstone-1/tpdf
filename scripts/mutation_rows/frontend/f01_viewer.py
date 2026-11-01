@@ -1359,7 +1359,7 @@ ROWS += [
         # and one across a link jumps to another page.
         "viewer: hit-test the page before letting the box tool have the press",
         "src/lib/viewer.ts",
-        "    if (this.cropDrag.start(event) || this.drawDrag.start(event)) {\n"
+        "    if (this.cropDrag.start(event) || this.measureDrag.start(event) || this.drawDrag.start(event)) {\n"
         "      event.preventDefault();\n      return;\n    }",
         "",
         "goes to the drag when a tool is armed and not when one is not",
@@ -1594,7 +1594,7 @@ ROWS += [
         # box preview does.
         "drag: cancel at the starting point rather than the last point seen",
         "src/lib/drag.ts",
-        "    live.at = { clientX: event.clientX, clientY: event.clientY };",
+        "    live.at = { clientX: event.clientX, clientY: event.clientY, shiftKey: event.shiftKey };",
         "",
         "cancels at the last point seen, since a cancel has no point of its own",
     ),

@@ -44,6 +44,9 @@ const TEXT = catalog({
     box: "Box",
     ellipse: "Ellipse",
     line: "Line",
+    measure: "Measure a distance",
+    setScale: "Set the scale...",
+    clearMeasures: "Clear measurements",
     arrow: "Arrow",
     polygon: "Polygon",
     connectedLines: "Connected lines",
@@ -134,6 +137,9 @@ const TEXT = catalog({
     box: "Rechteck",
     ellipse: "Ellipse",
     line: "Linie",
+    measure: "Abstand messen",
+    setScale: "Maßstab festlegen...",
+    clearMeasures: "Messungen entfernen",
     arrow: "Pfeil",
     polygon: "Polygon",
     connectedLines: "Linienzug",
@@ -298,6 +304,9 @@ export function toolGroups(locale: UiLocale = UI_LOCALE): ToolGroup[] {
         { id: "edit.stamp.final", label: text.stampFinal },
         { id: "edit.addSignature", label: text.signaturePicture },
         { id: "edit.erase", label: text.erase, rule: true },
+        { id: "view.measure", label: text.measure, rule: true },
+        { id: "view.measureScale", label: text.setScale },
+        { id: "view.measureClear", label: text.clearMeasures },
       ],
     },
     {
@@ -493,7 +502,7 @@ export function toolbarState(
 }
 
 /** What the viewer reports as armed; `ViewerStatus.armed`'s type. */
-export type ArmedTool = MarkKind | "crop" | "redact" | "place" | "region" | null;
+export type ArmedTool = MarkKind | "crop" | "redact" | "place" | "region" | "measure" | null;
 
 /** The kinds a chosen colour changes. A stamp and a signature keep their own. */
 const COLORED: readonly ArmedTool[] = [

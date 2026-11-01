@@ -290,6 +290,7 @@ hop through the index.
 - A revocation chain followed through a signature's own certificates is chosen by whoever holds the file
 
 ## Tauri, the webview and startup
+- A viewer lasts as long as a tab is on screen, not as long as its document
 - `AppHandle::exit` does not set the process's exit code
 - `RunEvent::Opened` fires before the setup hook, so managed state is not there yet
 - A raw `cargo build` binary runs no webview content at all
@@ -27155,3 +27156,16 @@ sandbox. One Sandbox fact cost six runs: ending its processes leaves the machine
 names it), and a new launch attaches to that machine, so its configuration is ignored and its logon
 command never runs, with no error. A check launched that way looks hung. The script refuses to start
 beside a running sandbox and ends its own with `wsb stop`.
+
+### A viewer lasts as long as a tab is on screen, not as long as its document
+
+Written while adding the measure tool, whose lines first lived in a field of `Viewer` and read
+as per document. They were per mount. Switching tabs runs `unmountDocument`, which destroys the
+viewer, and showing the tab again builds a new one through `openDocument`. So a field on `Viewer`
+is lost on every tab switch, and every unit test still passes, because a test holds one viewer
+for its whole life. State a reader expects to find on coming back belongs in `TabState`
+(`documenttabs.ts`), whose types refuse a field written on one side of the switch only.
+
+Saving is the same again and further: `saveDocument` reopens the written file through
+`reopenAfterWrite`, without the kept tab, so even `TabState` does not cross it. Measurements go
+at that point on purpose, and the README says so.

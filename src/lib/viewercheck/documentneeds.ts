@@ -159,6 +159,10 @@ export function needsMoreThanADocument(linux: boolean): string[] {
     // Declared with the commands.
     "nav.nextChange",
     "nav.previousChange",
+    // No measurement yet, so no line for a scale to name and none to clear.
+    // Both are driven below, from a line drawn with a real drag.
+    "view.measureScale",
+    "view.measureClear",
   ];
 }
 

@@ -1976,13 +1976,14 @@ ROWS += [
         # Re-aimed 2026-09-06 when the five tool flags became one `tool` field.
         # Re-aimed 2026-09-27 when the signature placement joined the crop's drag.
         # Re-aimed 2026-10-16 when the region to copy or save joined the crop's drag.
-        '          : this.tool.kind === "region"\n'
-        '            ? "region"\n'
+        # Re-aimed 2026-11-01 when the measure tool joined this expression.
+        '          : this.tool.kind === "measure"\n'
+        '            ? "measure"\n'
         "            : this.drawnStrokes === null\n"
         "            ? this.drawArmed\n"
         "            : null,",
-        '          : this.tool.kind === "region"\n'
-        '            ? "region"\n'
+        '          : this.tool.kind === "measure"\n'
+        '            ? "measure"\n'
         "            : this.drawArmed,",
         "names a drawing in one field, not two",
     ),

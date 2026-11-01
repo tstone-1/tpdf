@@ -324,6 +324,7 @@ const ARM: Record<ToolKind, (viewer: Viewer) => void> = {
   // The promise is the signing sequence's; here only the arming matters.
   place: (viewer) => void viewer.armPlacement(),
   region: (viewer) => void viewer.armRegion(),
+  measure: (viewer) => viewer.armMeasure(),
 };
 
 /** What each tool answers when it is the armed one. Same keys, same reason. */
@@ -334,6 +335,7 @@ const ARMED: Record<ToolKind, (viewer: Viewer) => boolean> = {
   redact: (viewer) => viewer.redactArmed,
   place: (viewer) => viewer.placeArmed,
   region: (viewer) => viewer.regionArmed,
+  measure: (viewer) => viewer.measureArmed,
 };
 
 describe("one hand, one tool", () => {
@@ -1834,6 +1836,215 @@ describe("where pasted marks land", () => {
     // marks stay where they are.
     const corner = viewer.placePasted([{ quads: [500, 700, 600, 800], strokes: [] }], true);
     expect(corner?.placed[0]?.quads).toEqual([500, 700, 600, 800]);
+    viewer.destroy();
+  });
+});
+
+describe("the measure tool", () => {
+  async function ready(pages?: PageView[]): Promise<Viewer> {
+    const viewer = build(pages);
+    await settle();
+    viewer.armMeasure();
+    return viewer;
+  }
+
+  /** A drag from a client point, by a distance given in the page's points. */
+  function along(viewer: Viewer, from: { x: number; y: number }, by: { x: number; y: number }): void {
+    const zoom = viewer.currentZoom;
+    drag(from, { x: from.x + by.x * zoom, y: from.y + by.y * zoom });
+  }
+
+  it("does nothing with a drag when it is not armed", async () => {
+    const viewer = build();
+    await settle();
+    along(viewer, { x: 200, y: 200 }, { x: 100, y: 0 });
+
+    expect(viewer.measureCount).toBe(0);
+    viewer.destroy();
+  });
+
+  it("draws a line, writes nothing to the document, and stays armed", async () => {
+    const said: [string, boolean][] = [];
+    const viewer = new Viewer(dom.root as unknown as HTMLElement, {
+      doc: 1,
+      pageCount: 1,
+      pages: [{ width_pt: 600, height_pt: 800 }],
+      onDrawn: (kind, page, shape) => drawn.push({ kind, page, shape }),
+      onMeasured: (label, scaled) => said.push([label, scaled]),
+    });
+    await settle();
+    viewer.armMeasure();
+    along(viewer, { x: 200, y: 200 }, { x: 30, y: 40 });
+
+    expect(viewer.measureLines.map((line) => line.label)).toEqual(["50 pt"]);
+    expect(said).toEqual([["50 pt", false]]);
+    expect(drawn).toEqual([]);
+    expect(viewer.measureArmed).toBe(true);
+    viewer.destroy();
+  });
+
+  it("reads a second line in the first line's unit once the scale is set", async () => {
+    const viewer = await ready();
+    along(viewer, { x: 200, y: 100 }, { x: 390, y: 0 });
+    expect(viewer.setMeasureScale({ value: 195, unit: "cm", decimals: 0 })).toBe(true);
+    along(viewer, { x: 200, y: 200 }, { x: 0, y: 164.8 });
+
+    expect(viewer.measureLines.map((line) => line.label)).toEqual(["195 cm (scale)", "82.4 cm"]);
+    viewer.destroy();
+  });
+
+  it("reads the same length at any zoom", async () => {
+    const viewer = await ready();
+    along(viewer, { x: 200, y: 100 }, { x: 100, y: 0 });
+    viewer.setZoom(viewer.currentZoom * 2);
+    await settle();
+    along(viewer, { x: 200, y: 300 }, { x: 100, y: 0 });
+
+    expect(viewer.measureLines.map((line) => line.label)).toEqual(["100 pt", "100 pt"]);
+    viewer.destroy();
+  });
+
+  it("keeps a line on the paper, and its length, when the page turns", async () => {
+    const viewer = await ready();
+    along(viewer, { x: 200, y: 200 }, { x: 100, y: 0 });
+    const before = viewer.measureLines[0]!;
+    expect(before.from.y).toBeCloseTo(before.to.y);
+    viewer.setPages(turnedPage(1));
+    await settle();
+    const after = viewer.measureLines[0]!;
+
+    expect(after.label).toBe("100 pt");
+    // A quarter turn: what ran across the page now runs down it.
+    expect(after.from.x).toBeCloseTo(after.to.x);
+    expect(Math.abs(after.to.y - after.from.y)).toBeCloseTo(100);
+    viewer.destroy();
+  });
+
+  it("puts a line drawn on a turned page back where it was drawn", async () => {
+    const viewer = await ready(turnedPage(1));
+    along(viewer, { x: 200, y: 200 }, { x: 0, y: 80 });
+    const line = viewer.measureLines[0]!;
+
+    expect(line.label).toBe("80 pt");
+    expect(line.from.x).toBeCloseTo(line.to.x);
+    expect(line.to.y - line.from.y).toBeCloseTo(80);
+    viewer.destroy();
+  });
+
+  it("makes Shift hold the line to an axis", async () => {
+    const viewer = await ready();
+    const zoom = viewer.currentZoom;
+    const at = (dx: number, dy: number, shiftKey: boolean) => ({
+      pointerId: 1,
+      clientX: 200 + dx * zoom,
+      clientY: 200 + dy * zoom,
+      shiftKey,
+    });
+    dom.root.dispatch("pointerdown", { button: 0, target: dom.root, ...at(0, 0, true) });
+    dom.root.dispatch("pointermove", at(100, 10, true));
+    dom.root.dispatch("pointerup", at(100, 10, true));
+    const line = viewer.measureLines[0]!;
+
+    expect(line.label).toBe("100 pt");
+    expect(line.to.y).toBeCloseTo(line.from.y);
+    viewer.destroy();
+  });
+
+  it("does not let a line slant only because Shift was not held", async () => {
+    const viewer = await ready();
+    along(viewer, { x: 200, y: 200 }, { x: 100, y: 10 });
+
+    expect(viewer.measureLines[0]!.to.y - viewer.measureLines[0]!.from.y).toBeCloseTo(10);
+    viewer.destroy();
+  });
+
+  it("keeps a click from becoming a line, and stays armed", async () => {
+    const viewer = await ready();
+    along(viewer, { x: 200, y: 200 }, { x: 0, y: 0 });
+
+    expect(viewer.measureCount).toBe(0);
+    expect(viewer.measureArmed).toBe(true);
+    viewer.destroy();
+  });
+
+  it("keeps a drag past the page's edge on the page", async () => {
+    const viewer = await ready();
+    along(viewer, { x: 200, y: 200 }, { x: 0, y: 5000 });
+
+    expect(viewer.measureLines[0]?.to.y).toBeCloseTo(800);
+    viewer.destroy();
+  });
+
+  it("leaves the lines behind when Escape stops the tool, and a cancelled drag adds none", async () => {
+    const viewer = await ready();
+    along(viewer, { x: 200, y: 200 }, { x: 100, y: 0 });
+    drag({ x: 200, y: 300 }, { x: 300, y: 300 }, false);
+    viewer.cancelDraw();
+    // The button comes up after Escape, and a drag still live would commit here.
+    dom.root.dispatch("pointerup", { pointerId: 1, clientX: 300, clientY: 300 });
+
+    expect(viewer.measureArmed).toBe(false);
+    expect(viewer.measureCount).toBe(1);
+    viewer.destroy();
+  });
+
+  it("refuses a scale with no line to be about, and clearing takes the scale too", async () => {
+    const viewer = await ready();
+    expect(viewer.setMeasureScale({ value: 1, unit: "m", decimals: 0 })).toBe(false);
+    along(viewer, { x: 200, y: 200 }, { x: 100, y: 0 });
+    viewer.setMeasureScale({ value: 1, unit: "m", decimals: 0 });
+    viewer.clearMeasures();
+    along(viewer, { x: 200, y: 200 }, { x: 100, y: 0 });
+
+    expect(viewer.measureLines.map((line) => line.label)).toEqual(["100 pt"]);
+    viewer.destroy();
+  });
+
+  it("does not report a line whose page has gone, and it comes back with the page", async () => {
+    const viewer = await ready();
+    along(viewer, { x: 200, y: 200 }, { x: 100, y: 0 });
+    expect(viewer.measuredPage).toBe(1);
+    viewer.setPages([{ id: pageId(2), source: { baseline: 0 }, turns: 0 }]);
+    await settle();
+    expect(viewer.measureLines).toEqual([]);
+    expect(viewer.measuredPage).toBe(null);
+    viewer.setPages(turnedPage(0));
+    await settle();
+    expect(viewer.measureLines.map((line) => line.label)).toEqual(["100 pt"]);
+    viewer.destroy();
+  });
+
+  it("hands its measurements to the next viewer of the same tab", async () => {
+    const viewer = await ready();
+    along(viewer, { x: 200, y: 200 }, { x: 100, y: 0 });
+    const kept = viewer.measurements;
+    viewer.destroy();
+
+    const next = build();
+    await settle();
+    expect(next.measureCount).toBe(0);
+    next.restoreMeasures(kept);
+    expect(next.measureLines.map((line) => line.label)).toEqual(["100 pt"]);
+    next.destroy();
+  });
+
+  it("reports the count in its status, so the window can enable Set the scale", async () => {
+    const seen: number[] = [];
+    // A frame asks for tiles, and this test is about what it reports.
+    tiles.fetchTile.mockReturnValue(new Promise(() => {}));
+    const viewer = new Viewer(dom.root as unknown as HTMLElement, {
+      doc: 1,
+      pageCount: 1,
+      pages: [{ width_pt: 600, height_pt: 800 }],
+      onStatus: (status) => seen.push(status.measures),
+    });
+    await settle();
+    viewer.armMeasure();
+    along(viewer, { x: 200, y: 200 }, { x: 100, y: 0 });
+    dom.runFrames();
+    await settle();
+
+    expect(seen.at(-1)).toBe(1);
     viewer.destroy();
   });
 });

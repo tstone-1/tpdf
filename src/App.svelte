@@ -34,6 +34,8 @@
       armedCrop: "Crop — drag out what to keep",
       armedSignature: "Signature — drag out where it appears; Esc cancels",
       armedRegion: "Picture — drag out the region to copy or save; Esc cancels",
+      armedMeasure: "Measure — drag along a distance; hold Shift for a straight line; Esc stops",
+      measuredNoScale: (length: string) => `${length}. This page has no scale yet: Set the scale turns it into a real length.`,
       armedRedact: "Redact — drag across words or blank paper to mark; Esc when done; nothing is removed yet",
       armedCorners: (name: string) => `${name} — click each corner; Enter or a click on the last corner finishes`,
       armedEnds: (name: string) => `${name} — drag from one end to the other`,
@@ -208,6 +210,8 @@
       armedCrop: "Zuschneiden — zieh einen Rahmen um das, was bleiben soll",
       armedSignature: "Signatur — zieh einen Rahmen dort auf, wo sie erscheinen soll; Esc bricht ab",
       armedRegion: "Bild — zieh einen Rahmen um den Bereich, den du kopieren oder speichern willst; Esc bricht ab",
+      armedMeasure: "Messen — zieh entlang eines Abstands; mit Umschalt bleibt die Linie gerade; Esc beendet",
+      measuredNoScale: (length: string) => `${length}. Diese Seite hat noch keinen Maßstab: „Maßstab festlegen“ macht daraus eine echte Länge.`,
       armedRedact: "Schwärzen — zieh über Wörter oder leere Stellen, um sie zu markieren; Esc, wenn du fertig bist; noch wird nichts entfernt",
       armedCorners: (name: string) => `${name} — klicke auf jede Ecke; Eingabe oder ein Klick auf die letzte Ecke schließt ab`,
       armedEnds: (name: string) => `${name} — zieh von einem Ende zum anderen`,
@@ -361,6 +365,7 @@
       armedCrop: "Zuschneiden — ziehen Sie einen Rahmen um das, was bleiben soll",
       armedSignature: "Signatur — ziehen Sie einen Rahmen dort auf, wo sie erscheinen soll; Esc bricht ab",
       armedRegion: "Bild — ziehen Sie einen Rahmen um den Bereich, den Sie kopieren oder speichern möchten; Esc bricht ab",
+      armedMeasure: "Messen — ziehen Sie entlang eines Abstands; mit Umschalt bleibt die Linie gerade; Esc beendet",
       armedRedact: "Schwärzen — ziehen Sie über Wörter oder leere Stellen, um sie zu markieren; Esc, wenn Sie fertig sind; noch wird nichts entfernt",
       armedCorners: (name: string) => `${name} — klicken Sie auf jede Ecke; Eingabe oder ein Klick auf die letzte Ecke schließt ab`,
       armedEnds: (name: string) => `${name} — ziehen Sie von einem Ende zum anderen`,
@@ -903,7 +908,7 @@
       edits, place: currentPlace(false), covered: new Map(covered), query,
       findShown, searchOptions: viewer.searchOptionsNow,
       searchScope: keepScope(viewer.searchScopeRanges, edits.state.pages), sidebarTab: sidebar?.tab ?? "outline",
-      error, messageSuccess, offers, notice, redactedCopyPath,
+      error, messageSuccess, offers, notice, redactedCopyPath, measures: viewer.measurements,
     });
     refreshTabs();
   }
@@ -932,6 +937,7 @@
     // call so that a search confined to a selection is not widened on the way.
     // The scope only while the pages are the ones it was kept with: the
     // document's other view may have deleted or moved one since.
+    measures: (value) => viewer?.restoreMeasures(value),
     searchOptions: (value, kept) => viewer?.restoreSearch(kept.query, value,
       scopeToRestore(kept.searchScope, edits?.state.pages ?? [])),
     searchScope: restoredWith("searchOptions"),
@@ -1545,10 +1551,11 @@
    * that counts strokes --- and it is left out of the table rather than given an
    * unreachable entry, so the fallback is the honest one if that ever changes.
    */
-  function armedLabel(kind: MarkKind | "crop" | "redact" | "place" | "region"): string {
+  function armedLabel(kind: MarkKind | "crop" | "redact" | "place" | "region" | "measure"): string {
     if (kind === "crop") return TEXT().armedCrop;
     if (kind === "place") return TEXT().armedSignature;
     if (kind === "region") return TEXT().armedRegion;
+    if (kind === "measure") return TEXT().armedMeasure;
     // **Says what goes, where the crop's says what stays**, because the two are
     // the same drag and this is the only place the reader is told which one
     // they armed. "Nothing is removed yet" is the other half: marking is
@@ -6589,6 +6596,7 @@
       // rectangle a drag produces is not, so that one has to be converted.
       // A pending redaction is held in exactly the space handed here.
       onRedacted: (page, area) => void applyEdit((e) => e.redact(page, area)),
+      onMeasured: (label, scaled) => tell(scaled ? label : TEXT().measuredNoScale(label)),
       onRedactSelection: () =>
         void redactSelection().then(() => asDocument(view, () => viewer?.clearSelection())),
       onMarkMoved: (id, dx, dy) =>

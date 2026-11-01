@@ -1,3 +1,4 @@
+import { Measurements } from "./measure";
 import type { DocumentInfo } from "./ipc";
 import type { Edits } from "./edits";
 import type { Place } from "./session";
@@ -30,6 +31,8 @@ export interface DocumentTab {
   offers: Offer[];
   notice: string | null;
   redactedCopyPath: string | null;
+  /** The lines and scales drawn on this document, which outlive its viewer. */
+  measures: Measurements;
 }
 
 /**
@@ -110,6 +113,7 @@ export function freshState(): FreshState {
     offers: [],
     notice: null,
     redactedCopyPath: null,
+    measures: new Measurements(),
   };
 }
 
@@ -132,9 +136,9 @@ export function keepState(tab: DocumentTab, state: TabState): void {
 export function restoredState(tab: DocumentTab | undefined): FreshState {
   if (!tab) return freshState();
   const { covered, query, findShown, searchOptions, searchScope, sidebarTab, error, messageSuccess, offers, notice,
-    redactedCopyPath } = tab;
+    redactedCopyPath, measures } = tab;
   return { covered, query, findShown, searchOptions, searchScope, sidebarTab, error, messageSuccess, offers, notice,
-    redactedCopyPath };
+    redactedCopyPath, measures };
 }
 
 /**
@@ -165,6 +169,7 @@ const RESTORED_AT: { readonly [K in keyof FreshState]: RestorePoint } = {
   searchOptions: "mounted",
   searchScope: "mounted",
   sidebarTab: "mounted",
+  measures: "mounted",
 };
 
 /**

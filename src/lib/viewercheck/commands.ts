@@ -25,7 +25,7 @@ import type { StampName } from "../pages";
 import { SINGLE } from "../scroller";
 import { kindOf } from "../spreads";
 import { Viewer } from "../viewer";
-import { check, settle, skip } from "./common";
+import { check, drag, settle, skip } from "./common";
 import { syntheticMark, syntheticRedaction } from "./marks";
 import { pickNeedle } from "./invert";
 
@@ -338,7 +338,17 @@ async function argumentChecks(
 export async function appCommandChecks(
   viewer: Viewer,
   doc: DocumentInfo,
+  root: HTMLElement,
 ): Promise<void> {
+  /** A line across the middle of the view, drawn with a real drag; leaves the tool put away. */
+  const aMeasurement = (): void => {
+    viewer.armMeasure();
+    const bounds = root.getBoundingClientRect();
+    const x = bounds.left + bounds.width / 2;
+    const y = bounds.top + bounds.height / 2;
+    drag(root, [x, y], [x + 60, y]);
+    viewer.cancelDraw();
+  };
   /** Shell actions that fired, in order, since the last clearing. */
   let fired: string[] = [];
   let busy = false;
@@ -1658,6 +1668,29 @@ export async function appCommandChecks(
       id: "file.redactDocument",
       ...shell("redactDocument"),
       read: () => fired.join(","),
+    },
+    {
+      // Disarmed again afterwards, or the next probe's press would draw a line.
+      id: "view.measure",
+      read: () => String(viewer.measureArmed),
+      moved: (before, after) => before === "false" && after === "true",
+      then: () => viewer.cancelDraw(),
+    },
+    {
+      // A real line first, since the command is not enabled without one, and
+      // the value typed through the palette, which is where the parsing is.
+      id: "view.measureScale",
+      argument: "195 cm",
+      from: aMeasurement,
+      read: () => viewer.measureLines.at(-1)?.label ?? "",
+      moved: (before, after) => before !== "" && after === "195 cm (scale)",
+      then: () => viewer.clearMeasures(),
+    },
+    {
+      id: "view.measureClear",
+      from: aMeasurement,
+      read: () => String(viewer.measureCount),
+      moved: (before, after) => before !== "0" && after === "0",
     },
     {
       // The redactions tab, driven like the four tabs above it. It reaches

@@ -417,7 +417,7 @@ async function run(path: string): Promise<void> {
   await crossPageChecks(viewer, doc, seen);
   await scopedSearchChecks(root, viewer, seen);
   await paletteChecks(viewer, doc.page_count);
-  await appCommandChecks(viewer, doc);
+  await appCommandChecks(viewer, doc, root);
   await accessibilityChecks(root, viewer, doc, seen);
   await outlineChecks(viewer, sidebar, doc, webLinksActivated);
   // Before `rotationChecks`, which leaves the view turned: `screenPoint` maps a

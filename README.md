@@ -259,6 +259,14 @@ project conventions.
   screen and never under 144 pixels an inch. It is the page as the file draws it, under the
   crop and turn you see: marks you have not saved yet are not in it.
   <!-- built: edit.copyRegionAsPicture file.saveRegionAsPicture -->
+- **Measure a distance**: drag along something on a page and the line shows its length, in
+  points at first; hold Shift for a straight line. **Set the scale** takes the real length of
+  the last line, such as `195 cm`, and every line on that page then reads in that unit.
+  A scale belongs to one page, because the sheets of a drawing set differ. Measurements are
+  on screen only: they are not saved, printed or copied, and they change nothing in the file.
+  They stay while you switch tabs and go when the document is closed, saved or reloaded,
+  all of which read the file afresh. **Clear measurements** removes them and the scale.
+  <!-- built: view.measure view.measureScale view.measureClear -->
 - **Save an attachment** saves a file the document carries to a place you choose; with
   several, the command palette asks which, by number or by part of its name. The properties
   dialog lists them with the kind of file each name claims to be. tpdf never opens one, and

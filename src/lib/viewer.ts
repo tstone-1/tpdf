@@ -88,6 +88,7 @@ import {
 } from "./markband";
 import { Picked, arrange, differs, together, type Arrangement } from "./arrange";
 import { PointerDrag, type DragPoint } from "./drag";
+import { distance, endTicks, keepOnPage, Measurements, straighten, type KnownLength, type MeasurePoint } from "./measure";
 
 /**
  * A point on a page, in that page's laid-out space, in points.
@@ -404,7 +405,12 @@ export interface ViewerStatus {
    * same drag with opposite meanings. The line of chrome is where they are told
    * which one their next press is.
    */
-  armed: MarkKind | "crop" | "redact" | "place" | "region" | null;
+  armed: MarkKind | "crop" | "redact" | "place" | "region" | "measure" | null;
+  /**
+   * How many measurements are on the document. Here so that the window asks again
+   * whether *Set scale* can be pressed when a line is drawn with the tool still armed.
+   */
+  measures: number;
   /** State of the find-in-document scan. */
   search: SearchStatus;
 }
@@ -619,6 +625,11 @@ export interface ViewerOptions {
     drawn: Drawn,
     stamp: StampName | null,
   ) => void;
+  /**
+   * A measurement was drawn: what it reads, and whether its page has a scale yet.
+   * The canvas is not read aloud, so the window says the length as well.
+   */
+  onMeasured?: (label: string, scaled: boolean) => void;
   /**
    * The reader dragged one of their own marks somewhere else on its page.
    *
@@ -1003,6 +1014,15 @@ const SELECTION_FILL = "rgba(80, 140, 255, 0.35)";
  * at a glance.
  */
 const PREVIEW_STROKE = "rgba(80, 140, 255, 0.95)";
+
+/** A measurement's line. Magenta, which technical drawings rarely use. */
+const MEASURE_STROKE = "rgb(200, 30, 120)";
+const MEASURE_LABEL_FILL = "rgb(255, 244, 170)";
+const MEASURE_LABEL_INK = "rgb(0, 0, 0)";
+/** In screen pixels, not points: a measurement stays readable at any zoom. */
+const MEASURE_WIDTH_PX = 1.5;
+const MEASURE_TICK_PX = 5;
+const MEASURE_LABEL_PX = 12;
 /**
  * The wash inside the comment tool's ghost bubble.
  *
@@ -1163,7 +1183,8 @@ function release(element: HTMLElement, pointerId: number): void {
  * from cropping when the reader asked to redact.
  *
  * `erase` is not a `MarkKind` for the mirror of that reason: nothing it does
- * creates a mark, so it is not a kind of one.
+ * creates a mark, so it is not a kind of one. Nor is `measure`, whose lines are
+ * not in the document at all.
  */
 export type ArmedTool =
   | { kind: "none" }
@@ -1172,7 +1193,8 @@ export type ArmedTool =
   | { kind: "crop" }
   | { kind: "redact" }
   | { kind: "place" }
-  | { kind: "region" };
+  | { kind: "region" }
+  | { kind: "measure" };
 
 /**
  * Where the reader put a visible digital signature: the page's id and the
@@ -1605,6 +1627,15 @@ export class Viewer {
    * have to ask which of the three it was at every callback.
    */
   private readonly cropDrag: PointerDrag;
+  /** The measure tool's drag. A third, because what it keeps is neither a rectangle nor a mark. */
+  private readonly measureDrag: PointerDrag;
+  /**
+   * Every measurement on this document. On screen only: see `measure.ts`.
+   * Replaced by {@link restoreMeasures}, because a tab switch rebuilds the viewer.
+   */
+  private measures = new Measurements();
+  /** The line being dragged, in its slot's laid-out points. */
+  private measuring: { slot: number; from: MeasurePoint; to: MeasurePoint } | null = null;
   /**
    * Where the pointer is, in the page's own space, while a tool is armed.
    *
@@ -2071,6 +2102,46 @@ export class Viewer {
       },
     });
 
+    // The measure tool's drag. The tool stays armed afterwards, as the redaction
+    // tool does: measuring is usually several lines in a row, and each one needs
+    // the reader's eye on the page rather than on a command.
+    this.measureDrag = new PointerDrag(root, {
+      begin: (at: DragPoint) => {
+        if (this.tool.kind !== "measure") return false;
+        const { page, x, y } = this.pageAndPoint(at);
+        const from = keepOnPage({ x, y }, this.laidSize(page));
+        this.measuring = { slot: page, from, to: from };
+        this.wake();
+        return true;
+      },
+      move: (at: DragPoint) => {
+        const live = this.measuring;
+        if (!live) return;
+        // `pointOn` and not `pageAndPoint`: a line stays on the page it started
+        // on, and past the gap the other answers in the next page's space.
+        const held = straighten(live.from, this.pointOn(live.slot, at), at.shiftKey === true);
+        live.to = keepOnPage(held, this.laidSize(live.slot));
+        this.wake();
+      },
+      end: (_at: DragPoint, committed: boolean) => {
+        const live = this.measuring;
+        this.measuring = null;
+        this.wake();
+        if (!committed || !live) {
+          if (this.tool.kind === "measure") this.tool = NO_TOOL;
+          this.showCursor();
+          return;
+        }
+        // A click, and the tool stays armed: a line of no length measures nothing.
+        if (distance(live.from, live.to) * this.zoom < CORNER_REACH_PX) return;
+        const id = this.pages.idOf(live.slot);
+        if (id === undefined) return;
+        const line = this.measures.add(id, this.filePointOn(live.slot, live.from), this.filePointOn(live.slot, live.to));
+        this.wake();
+        this.opts.onMeasured?.(this.measures.label(line), this.measures.scaled(id));
+      },
+    });
+
     this.drawDrag = new PointerDrag(root, {
       begin: (at: DragPoint) => {
         if (this.tool.kind !== "draw" && this.tool.kind !== "erase") return false;
@@ -2363,6 +2434,7 @@ export class Viewer {
     this.moveDrag.dispose();
     this.drawDrag.dispose();
     this.cropDrag.dispose();
+    this.measureDrag.dispose();
     this.scroller.destroy();
     this.root.replaceChildren();
   }
@@ -2641,9 +2713,12 @@ export class Viewer {
             ? "place"
             : this.tool.kind === "region"
             ? "region"
+            : this.tool.kind === "measure"
+            ? "measure"
             : this.drawnStrokes === null
             ? this.drawArmed
             : null,
+      measures: this.measures.count,
       search: this.searchStatus(),
     };
     const summary = [
@@ -2677,6 +2752,7 @@ export class Viewer {
       status.erasing?.strokes ?? null,
       status.erasing?.marks ?? null,
       status.armed,
+      status.measures,
       status.search.query,
       status.search.options.matchCase,
       status.search.options.wholeWord,
@@ -5448,6 +5524,94 @@ export class Viewer {
     return this.tool.kind === "region";
   }
 
+  /**
+   * Arms the measure tool: each drag on a page is a line whose length is shown.
+   * Stays armed until Escape or another tool, and what it drew stays after that.
+   */
+  armMeasure(): void {
+    if (this.markNote.openId !== null) this.closeMark();
+    if (this.popup.openId !== null) this.closeComment();
+    this.inking = null;
+    this.tool = { kind: "measure" };
+    this.showCursor();
+    this.wake();
+  }
+
+  /** Whether the measure tool is armed. For the harness. */
+  get measureArmed(): boolean {
+    return this.tool.kind === "measure";
+  }
+
+  /** How many measurements there are, on pages deleted since included. */
+  get measureCount(): number {
+    return this.measures.count;
+  }
+
+  /**
+   * Every measurement on a page still in the document, in laid-out points, as it
+   * is painted. A getter because the painter cannot be reached where no canvas is.
+   */
+  get measureLines(): { id: number; slot: number; from: MeasurePoint; to: MeasurePoint; label: string }[] {
+    return this.measures.all.flatMap((line) => {
+      const slot = this.pages.slotOfId(line.page);
+      if (slot === undefined) return [];
+      return [{
+        id: line.id,
+        slot,
+        from: this.laidPointOn(slot, line.from),
+        to: this.laidPointOn(slot, line.to),
+        label: this.measures.label(line),
+      }];
+    });
+  }
+
+  /**
+   * Where the newest measurement is, for the question a scale is an answer to:
+   * its page's number, or `null` with no line to name.
+   */
+  get measuredPage(): number | null {
+    const line = this.measures.latest((page) => this.pages.slotOfId(page) !== undefined);
+    const slot = line ? this.pages.slotOfId(line.page) : undefined;
+    return slot === undefined ? null : slot + 1;
+  }
+
+  /** Says the newest measurement is really `known` long, for every line on its page. */
+  setMeasureScale(known: KnownLength): boolean {
+    const line = this.measures.latest((page) => this.pages.slotOfId(page) !== undefined);
+    if (!line || !this.measures.setScale(line, known)) return false;
+    this.wake();
+    return true;
+  }
+
+  /** The measurements themselves, which the tab keeps while this viewer is gone. */
+  get measurements(): Measurements {
+    return this.measures;
+  }
+
+  /** Takes up the measurements of the tab this viewer is showing. */
+  restoreMeasures(measures: Measurements): void {
+    this.measures = measures;
+    this.wake();
+  }
+
+  /** Removes every measurement and scale. Leaves the tool as it is. */
+  clearMeasures(): void {
+    this.measures.clear();
+    this.wake();
+  }
+
+  /** One point of a slot's laid-out space, in the file's display space. */
+  private filePointOn(slot: number, at: MeasurePoint): MeasurePoint {
+    const [x, y] = this.fileRectOn(slot, { left: at.x, top: at.y, right: at.x, bottom: at.y });
+    return { x, y };
+  }
+
+  /** One point of the file's display space, in a slot's laid-out space. */
+  private laidPointOn(slot: number, at: MeasurePoint): MeasurePoint {
+    const placed = this.viewRectOn(slot, [at.x, at.y, at.x, at.y]);
+    return { x: placed.left, y: placed.top };
+  }
+
   /** Whether a signature placement is armed. For the status line and the harness. */
   get placeArmed(): boolean {
     return this.tool.kind === "place";
@@ -5648,6 +5812,7 @@ export class Viewer {
     // armed" --- which is what Escape means and what every caller wants --- so a
     // third named method would only leave Escape asking which of three was live.
     this.cropDrag.cancel();
+    this.measureDrag.cancel();
     // Whichever of the tools was armed, in one assignment: the crop, the
     // redaction, the eraser and every drawing kind are one field, so there is
     // nothing here to forget. The eraser is in that list deliberately --- it
@@ -5849,7 +6014,8 @@ export class Viewer {
           this.tool.kind === "crop" ||
           this.tool.kind === "redact" ||
           this.tool.kind === "place" ||
-          this.tool.kind === "region"
+          this.tool.kind === "region" ||
+          this.tool.kind === "measure"
         ? "crosshair"
         : this.overLink
           ? "pointer"
@@ -6472,7 +6638,7 @@ export class Viewer {
       this.beginSelection(event);
       return;
     }
-    if (this.cropDrag.start(event) || this.drawDrag.start(event)) {
+    if (this.cropDrag.start(event) || this.measureDrag.start(event) || this.drawDrag.start(event)) {
       event.preventDefault();
       return;
     }
@@ -7261,6 +7427,7 @@ export class Viewer {
     // merely looking through may sit on top of it. The hand still wins, because
     // what the hand is doing is the only thing more current.
     this.paintRedactions(ctx, dpr, visible);
+    this.paintMeasures(ctx, dpr, visible);
     // Last, and over everything: it is the thing the reader's hand is on.
     this.paintDrawing(ctx, dpr);
     ctx.globalCompositeOperation = "source-over";
@@ -7317,6 +7484,71 @@ export class Viewer {
       // between the two states and it carries the whole distinction: dashed is
       // a rectangle still being decided, solid is one that is in the list.
       ctx.strokeRect(x, y, w, h);
+    }
+    ctx.restore();
+  }
+
+  /**
+   * Draws every measurement on a visible page, and the one being dragged, each
+   * with its length beside it.
+   *
+   * The label is black on an opaque pale box because the overlay is multiplied
+   * onto the page (`overlayBlend`): on paper the box tints what is under it and
+   * the digits stay black, and on an inverted page, where nothing is multiplied,
+   * the same box is what keeps them readable.
+   */
+  private paintMeasures(
+    ctx: CanvasRenderingContext2D,
+    dpr: number,
+    onScreen: readonly number[],
+  ): void {
+    const live = this.measuring;
+    const liveId = live ? this.pages.idOf(live.slot) : undefined;
+    const lines = [
+      ...this.measureLines,
+      ...(live && liveId !== undefined
+        ? [{
+            id: 0,
+            slot: live.slot,
+            from: live.from,
+            to: live.to,
+            label: this.measures.lengthLabel(liveId, distance(live.from, live.to)),
+          }]
+        : []),
+    ];
+    if (lines.length === 0) return;
+    const visible = new Set(onScreen);
+    ctx.save();
+    ctx.globalCompositeOperation = "source-over";
+    ctx.lineWidth = MEASURE_WIDTH_PX * dpr;
+    ctx.font = `${MEASURE_LABEL_PX * dpr}px sans-serif`;
+    ctx.textAlign = "center";
+    ctx.textBaseline = "middle";
+    for (const line of lines) {
+      if (!visible.has(line.slot)) continue;
+      const origin = this.scroller.pageOrigin(line.slot);
+      const onCanvas = (at: MeasurePoint): MeasurePoint => ({
+        x: (origin.left + at.x * this.zoom) * dpr,
+        y: (origin.top + at.y * this.zoom - this.scrollTop) * dpr,
+      });
+      const from = onCanvas(line.from);
+      const to = onCanvas(line.to);
+      ctx.strokeStyle = MEASURE_STROKE;
+      ctx.beginPath();
+      ctx.moveTo(from.x, from.y);
+      ctx.lineTo(to.x, to.y);
+      for (const [a, b] of endTicks(from, to, MEASURE_TICK_PX * dpr)) {
+        ctx.moveTo(a.x, a.y);
+        ctx.lineTo(b.x, b.y);
+      }
+      ctx.stroke();
+      const middle = { x: (from.x + to.x) / 2, y: (from.y + to.y) / 2 };
+      const width = ctx.measureText(line.label).width + 8 * dpr;
+      const height = (MEASURE_LABEL_PX + 6) * dpr;
+      ctx.fillStyle = MEASURE_LABEL_FILL;
+      ctx.fillRect(middle.x - width / 2, middle.y - height / 2, width, height);
+      ctx.fillStyle = MEASURE_LABEL_INK;
+      ctx.fillText(line.label, middle.x, middle.y);
     }
     ctx.restore();
   }

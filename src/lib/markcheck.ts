@@ -656,6 +656,63 @@ async function run(host: MarkCheckHost): Promise<void> {
       field.remove();
     }
 
+    // --- A measurement ------------------------------------------------------
+    //
+    // Read off the overlay's pixels, since a label and a line that lay out and
+    // paint nothing would pass every unit test. Zero before is the control:
+    // nothing else on the overlay is this colour. Never a mark: the document's
+    // own list of marks does not grow, and that is the promise that nothing is
+    // written to the file.
+    const measureInk = (red = 200, green = 30, blue = 120): number => {
+      const canvas = viewer.overlaySurface;
+      const pixels = canvas.getContext("2d")?.getImageData(0, 0, canvas.width, canvas.height).data;
+      let found = 0;
+      for (let at = 0; pixels && at + 3 < pixels.length; at += 4) {
+        if (pixels[at] === red && pixels[at + 1] === green && pixels[at + 2] === blue && pixels[at + 3] === 255) found++;
+      }
+      return found;
+    };
+    const marksBefore = host.marks().length;
+    const inkBefore = measureInk();
+    const measureArmed = host.run("view.measure") && viewer.measureArmed;
+    // Well up the page, so that both lines land on one page whatever the zoom
+    // does in between: the length is what is being read, not a screen position.
+    const across = { x: low.x, y: low.y - 120 };
+    // Arming adds the tool's row, and the page refits once for it. A reader sees
+    // that happen before pressing; a script has to wait for it.
+    const zoomBefore = viewer.currentZoom;
+    await new Promise((resolve) => setTimeout(resolve, 500));
+    const zoomArmed = viewer.currentZoom;
+    if (measureArmed) drag(root, across, { x: across.x + 120, y: across.y });
+    const toldLength = await settle(() => host.told()?.includes("no scale yet") === true);
+    const lineInked = await settle(() => measureInk() > 0);
+    await new Promise((resolve) => setTimeout(resolve, 500));
+    check(
+      "a measurement paints a line on the page, and says its length",
+      measureArmed && toldLength && lineInked && inkBefore === 0,
+      `armed: ${measureArmed}; told: ${host.told()}; ink before ${inkBefore}, after ${measureInk()}; zoom ${zoomBefore}, armed ${zoomArmed}, after the first line ${viewer.currentZoom}`,
+    );
+    // The label's pale box, which is what carries the number.
+    const labelInk = measureInk(255, 244, 170);
+    check("and paints its label beside it", labelInk > 0, `${labelInk} pixels of the label's box`);
+    const measuredLine = viewer.measureLines.at(-1)?.label;
+    viewer.setMeasureScale({ value: 195, unit: "cm", decimals: 0 });
+    const down = { x: low.x, y: low.y - 90 };
+    if (measureArmed) drag(root, down, { x: down.x + 60, y: down.y });
+    await settle(() => viewer.measureLines.length === 2);
+    const scaleLabels = viewer.measureLines.map((line) => line.label);
+    const sameSlot = new Set(viewer.measureLines.map((line) => line.slot)).size === 1;
+    // The arithmetic is `measure.test.ts`'s. What only a window can show is that
+    // the scale typed for one line reaches the next line drawn on that page.
+    check(
+      "and a scale gives the next line on that page a real length",
+      sameSlot && scaleLabels[0] === "195 cm (scale)" && /^\d+(\.\d)? cm$/.test(scaleLabels[1] ?? ""),
+      `the first read ${measuredLine}; now ${JSON.stringify(scaleLabels)}; one page: ${sameSlot}; zoom ${viewer.currentZoom}`,
+    );
+    check("and no measurement is a mark", host.marks().length === marksBefore, `${host.marks().length} marks, ${marksBefore} before`);
+    viewer.clearMeasures();
+    viewer.cancelDraw();
+
     // --- A region as a picture ---------------------------------------------
     //
     // After the clipboard stage, whose picture the copy replaces. Under the

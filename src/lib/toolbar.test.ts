@@ -240,6 +240,7 @@ describe("when the colour and width controls are offered", () => {
       ["redact", false, false],
       ["place", false, false],
       ["region", false, false],
+      ["measure", false, false],
     ];
     for (const [armed, color, width] of cases) {
       expect(styleOptions({ ...idle, armed }), String(armed)).toEqual({ color, width });

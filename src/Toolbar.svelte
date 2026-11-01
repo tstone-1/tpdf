@@ -22,6 +22,7 @@
         `Drawing${strokes > 0 ? `: ${strokes} stroke${strokes === 1 ? "" : "s"}` : " - press and drag"}`,
       finish: "Finish",
       discard: "Discard",
+      setScale: "Set scale",
       cancel: "Cancel",
       erasing: "Erasing marks",
       corners: (n: number) => ` (${n} corner${n === 1 ? "" : "s"})`,
@@ -43,6 +44,7 @@
         `Zeichnen${strokes > 0 ? `: ${strokes} ${strokes === 1 ? "Strich" : "Striche"}` : " - drücken und ziehen"}`,
       finish: "Abschließen",
       discard: "Verwerfen",
+      setScale: "Maßstab festlegen",
       cancel: "Abbrechen",
       erasing: "Markierungen radieren",
       corners: (n: number) => ` (${n} ${n === 1 ? "Ecke" : "Ecken"})`,
@@ -110,7 +112,7 @@
 
   // Read from the armed kind, never from `active`: that is the reader's
   // wording, and it is translated.
-  const DRAWN: readonly ArmedTool[] = ["square", "ellipse", "line", "arrow", "polygon", "polyline", "stamp"];
+  const DRAWN: readonly ArmedTool[] = ["square", "ellipse", "line", "arrow", "polygon", "polyline", "stamp", "measure"];
 
   function toolPressed(id: string): boolean {
     if (id === "draw") return drawing !== null || erasing || DRAWN.includes(armed ?? null);
@@ -352,6 +354,7 @@
       {:else}
         <span data-testid={erasing ? "erasing" : "armed"}>{erasing ? TEXT().erasing : active}{corners ? TEXT().corners(corners) : ""}</span>
         {#if corners !== null}<button class="finish" disabled={corners === 0} onclick={finish}>{TEXT().finish}</button>{/if}
+        {#if armed === "measure"}<button class="finish" disabled={!(commandState["view.measureScale"]?.enabled ?? false)} onclick={() => run("view.measureScale")}>{TEXT().setScale}</button>{/if}
         <button onclick={cancel}>{erasing ? TEXT().stop : corners ? TEXT().discard : TEXT().cancel}</button>
       {/if}
       <!-- What the armed tool draws with, in the row that names it; see `styleOptions`. -->

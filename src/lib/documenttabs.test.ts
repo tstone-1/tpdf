@@ -1,3 +1,4 @@
+import { Measurements } from "./measure";
 import { describe, expect, it } from "vitest";
 import {
   DocumentTabs, DocumentTasks, RESTORE_POINTS, freshState, keepScope, keepState, oneEach, partnersOf, restore,
@@ -321,6 +322,7 @@ describe("what a tab keeps across a switch", () => {
     offers: [{ kind: "recover" }] as unknown as TabState["offers"],
     notice: "saved",
     redactedCopyPath: "/fixture/1-redacted.pdf",
+    measures: new Measurements(),
   });
   const blank = () => ({ doc: { id: 1 }, path: "/fixture/1.pdf" }) as unknown as DocumentTab;
 
@@ -341,6 +343,13 @@ describe("what a tab keeps across a switch", () => {
       sidebarTab: "outline", error: null, offers: [], notice: null, redactedCopyPath: null,
     });
     expect(freshState().covered.size).toBe(0);
+  });
+
+  it("keeps a tab's measurements across a switch, the same object and not a copy", () => {
+    const tab = { ...freshState() } as unknown as DocumentTab;
+    const measures = tab.measures;
+    expect(restoredState(tab).measures).toBe(measures);
+    expect(freshState().measures).not.toBe(measures);
   });
 
   it("hands every fresh document its own containers", () => {
@@ -365,6 +374,7 @@ describe("what a tab keeps across a switch", () => {
       sidebarTab: note("sidebarTab"), error: note("error"), offers: note("offers"),
       messageSuccess: note("messageSuccess"),
       notice: note("notice"), redactedCopyPath: note("redactedCopyPath"),
+      measures: note("measures"),
     };
     return { applied, seen, apply };
   }
@@ -392,7 +402,7 @@ describe("what a tab keeps across a switch", () => {
     // The message before the copy it clears the offer of: `say` resets it.
     expect(at("unmounted")).toEqual(["query", "findShown", "error", "messageSuccess", "offers", "notice", "redactedCopyPath"]);
     expect(at("model")).toEqual(["covered"]);
-    expect(at("mounted")).toEqual(["searchOptions", "searchScope", "sidebarTab"]);
+    expect(at("mounted")).toEqual(["searchOptions", "searchScope", "sidebarTab", "measures"]);
   });
 
   it("names the field another is applied with, and does nothing for it", () => {

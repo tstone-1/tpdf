@@ -30,6 +30,7 @@
  * is not claimed to be. The wiring is the half that was covered by nothing.
  */
 
+import { formatLength, parseKnownLength } from "./measure";
 import {
   pick as pickAttachment,
   placeholder as attachmentPlaceholder,
@@ -168,6 +169,13 @@ const TEXT = catalog({
     drawEllipse: "Draw an ellipse...",
     drawLine: "Add a line...",
     drawArrow: "Add an arrow...",
+    measure: "Measure a distance",
+    setScale: "Set the scale from the last measurement...",
+    clearMeasures: "Clear measurements",
+    scalePlaceholder: "Real length of that line, such as 195 cm",
+    notALength: (raw: string) => `"${raw}" is not a length: it takes a number and a unit, such as 195 cm`,
+    noLength: "A number and a unit, such as 195 cm",
+    scalePreview: (length: string, page: number) => `The last line on page ${page} is ${length}`,
     drawPolygon: "Add a polygon, a corner per click...",
     drawPolyline: "Add connected lines, a corner per click...",
     addLink: "Add a link...",
@@ -386,6 +394,13 @@ const TEXT = catalog({
     drawEllipse: "Ellipse zeichnen...",
     drawLine: "Linie hinzufügen...",
     drawArrow: "Pfeil hinzufügen...",
+    measure: "Abstand messen",
+    setScale: "Maßstab aus der letzten Messung festlegen...",
+    clearMeasures: "Messungen entfernen",
+    scalePlaceholder: "Tatsächliche Länge dieser Linie, zum Beispiel 195 cm",
+    notALength: (raw: string) => `„${raw}“ ist keine Länge: erwartet werden eine Zahl und eine Einheit, zum Beispiel 195 cm`,
+    noLength: "Eine Zahl und eine Einheit, zum Beispiel 195 cm",
+    scalePreview: (length: string, page: number) => `Die letzte Linie auf Seite ${page} ist ${length} lang`,
     drawPolygon: "Polygon hinzufügen, eine Ecke pro Klick...",
     drawPolyline: "Linienzug hinzufügen, eine Ecke pro Klick...",
     addLink: "Link hinzufügen...",
@@ -3327,6 +3342,46 @@ export function registerAppCommands(
       title: TEXT(locale).showRedactions,
       enabled: withDocument,
       run: () => actions.showTab("redactions"),
+    },
+    {
+      // In the view's commands rather than the edits: the lines are on screen
+      // only and nothing is written to the file (`measure.ts`).
+      id: "view.measure",
+      title: TEXT(locale).measure,
+      enabled: withDocument,
+      run: () => actions.viewer()?.armMeasure(),
+    },
+    {
+      // Asks for the real length of the line just drawn. Not enabled before
+      // there is one, so the question always has a line to be about.
+      id: "view.measureScale",
+      title: TEXT(locale).setScale,
+      enabled: () => withDocument() && actions.viewer()?.measuredPage != null,
+      argument: {
+        placeholder: TEXT(locale).scalePlaceholder,
+        problem: (raw: string) => {
+          const trimmed = raw.trim();
+          if (trimmed === "") return TEXT(locale).noLength;
+          return parseKnownLength(trimmed) ? null : TEXT(locale).notALength(trimmed);
+        },
+        preview: (raw: string) => {
+          const known = parseKnownLength(raw);
+          const page = actions.viewer()?.measuredPage;
+          return known && page != null
+            ? TEXT(locale).scalePreview(formatLength(known.value, known.unit, known.decimals, locale), page)
+            : "";
+        },
+        run: (raw: string) => {
+          const known = parseKnownLength(raw);
+          if (known) actions.viewer()?.setMeasureScale(known);
+        },
+      },
+    },
+    {
+      id: "view.measureClear",
+      title: TEXT(locale).clearMeasures,
+      enabled: () => withDocument() && (actions.viewer()?.measureCount ?? 0) > 0,
+      run: () => actions.viewer()?.clearMeasures(),
     },
     {
       // "Invert page colours", not "Dark mode". The chrome is already dark when
