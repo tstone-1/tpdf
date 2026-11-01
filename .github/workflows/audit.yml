@@ -55,7 +55,7 @@ jobs:
 
       - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5 (v5.0.0)
         with:
-          node-version: 24
+          node-version: 26
 
       # `rustup show` for the reason `ci.yml` gives: it installs what
       # `rust-toolchain.toml` names instead of setting RUSTUP_TOOLCHAIN.

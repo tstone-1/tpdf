@@ -255,7 +255,7 @@ the menu bar five times and once showing an unmarked page beside an empty mark l
 | Tool | Notes |
 |------|-------|
 | Rust (stable, via rustup) | `rustup update`. Do not install a second toolchain through Homebrew. |
-| Node 20+ and npm | |
+| Node 26 and npm | |
 | Python 3.9+ | Only for `scripts/`; not a runtime dependency of tpdf. |
 | `uv` | Only for the test fixtures that need `fontTools` or `pyhanko`. |
 | `qpdf` | Not needed to build or run tpdf, and **required** for the hostile corpus — `testdata/make_hostile_pdf.py` shells out to it, so without it there is no `hostile-manifest.json` and `sanitize-rewrite` cannot start. Also the structural oracle for spike 0.4. On Windows the winget package needs elevation; the release's `msvc64.zip` unpacks anywhere and needs none. |
