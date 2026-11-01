@@ -567,6 +567,16 @@ jobs:
           workers run under Landlock and seccomp. The Linux packages (deb
           and AppImage) do not update themselves: install the new one.
 
+          **New in 26.11.0.** On a new Windows computer, signing with a DigiCert
+          or GlobalSign timestamp stopped with "not trusted by this computer",
+          because Windows fetches most roots only when they are needed. tpdf now
+          lets Windows fetch a root on Microsoft's list for the authority of a
+          signing that asked for a timestamp. A signature that may read as not
+          trusted only for that reason now says so, and the properties dialog
+          offers **Ask Windows for the root**; `tpdf verify --fetch-roots` does
+          the same. Nothing of the document is sent, and opening or verifying a
+          document still goes online for nothing by itself.
+
           **New in 26.10.28.** A hardening release from a security review.
           `tpdf verify --strict` fails more forged changes appended after a
           signature, and a revocation can no longer be hidden by a look-alike

@@ -235,6 +235,66 @@ pub async fn document_properties(
     await_reply("document_properties", rx).await
 }
 
+/// Lets Windows fetch the roots this document's signatures need, then reads the
+/// document again and answers what it says now. Only ever from the reader's own
+/// press of the properties dialog's button: `docs/THREAT-MODEL.md` §T10.
+///
+/// A new worker reads it, because the one holding the document answers from what
+/// it read the first time (`docgraph`). The file read is the one that was opened,
+/// or nothing is read.
+///
+/// # Errors
+///
+/// Every refusal as a sentence. The dialog then still shows the first answer.
+#[tauri::command]
+pub async fn fetch_signature_roots(
+    app: tauri::AppHandle,
+    edits: tauri::State<'_, crate::edits::Edits>,
+    doc: u32,
+    source: String,
+) -> Result<docinfo::Properties, String> {
+    let opened_as = edits.plan(doc)?.opened_as.ok_or_else(|| {
+        said!(
+            "tpdf could not record what this file looked like when it was opened, so its \
+             signatures were not read again"
+        )
+    })?;
+    let worker = crate::save::InWorker::at(crate::pdfium_library_dir(&app));
+    tauri::async_runtime::spawn_blocking(move || {
+        use crate::save::Verifier as _;
+        let unread = |why: String| said!("the signatures could not be read again: {why}");
+        let source = std::path::PathBuf::from(source);
+        let file = std::fs::File::open(&source).map_err(|e| unread(e.to_string()))?;
+        let original = crate::save::read_to_sign(&source, &opened_as).map_err(|why| {
+            if why.changed {
+                said!(
+                    "the file on disk is not the one that was opened, so its signatures were \
+                     not read again"
+                )
+            } else {
+                unread(why.message)
+            }
+        })?;
+        let survey = worker.survey(&original).map_err(unread)?;
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_or(0, |since| since.as_secs());
+        let _asked = crate::longterm::fetch_roots(&survey, now);
+        worker
+            .properties(&file, original.len())
+            .map_err(|declined| {
+                use crate::save_outside::Declined;
+                match declined {
+                    Declined::Refused(why) | Declined::Locked(why) | Declined::Failed(why) => {
+                        unread(why)
+                    }
+                }
+            })
+    })
+    .await
+    .map_err(|e| said!("asking Windows for the root did not run: {e}"))?
+}
+
 /// Reports, per page, whether the text means anything or PDFium is guessing.
 ///
 /// A CID font with no `/ToUnicode` makes PDFium read glyph ids as character

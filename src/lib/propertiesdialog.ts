@@ -32,17 +32,29 @@
  * the `sinks` gate is what keeps that true rather than this comment.
  */
 
-import { type Properties, type Section, sections } from "./properties";
+import { type Properties, type Section, rootsMayBeFetched, sections } from "./properties";
 import { catalog } from "./i18n";
 
 const TEXT = catalog({
   "en-US": {
     title: "Document properties",
     reading: "Reading the document...",
+    askRoot: "Ask Windows for the root",
+    askingRoot: "Asking Windows...",
+    askRootHelp:
+      "Windows asks Microsoft for it. Nothing of the document is sent, and a certificate " +
+      "somebody issued to themselves stays not trusted.",
+    rootNotFound: "Windows did not fetch a root that changes this answer.",
   },
   "de-DE": {
     title: "Dokumenteigenschaften",
     reading: "Das Dokument wird gelesen...",
+    askRoot: "Windows nach dem Stammzertifikat fragen",
+    askingRoot: "Windows wird gefragt...",
+    askRootHelp:
+      "Windows fragt dafür bei Microsoft an. Nichts aus dem Dokument wird gesendet, und ein " +
+      "Zertifikat, das sich jemand selbst ausgestellt hat, bleibt nicht vertrauenswürdig.",
+    rootNotFound: "Windows hat kein Stammzertifikat abgerufen, das diese Antwort ändert.",
   },
 });
 
@@ -64,7 +76,14 @@ export class PropertiesDialog {
   /** What to focus when it closes, so Escape does not lose the page. */
   private returnFocus: HTMLElement | null = null;
 
-  constructor(host: HTMLElement) {
+  /**
+   * `askRoot` answers the document as read after Windows was asked. Injected,
+   * as every dialog's command is, so nothing here calls the backend.
+   */
+  constructor(
+    host: HTMLElement,
+    private readonly askRoot: () => Promise<Properties>,
+  ) {
     this.backdrop = document.createElement("div");
     this.backdrop.className = DIALOG_CLASS;
     this.backdrop.style.cssText =
@@ -121,8 +140,11 @@ export class PropertiesDialog {
    * show: the parse is lazy and can take a moment on a large document, and a
    * dialog that opened empty and filled in silently would read as a document
    * that states nothing about itself.
+   *
+   * `said` is what became of asking Windows for a root, when there is something
+   * to say.
    */
-  show(properties: Properties | null, problem: string): void {
+  show(properties: Properties | null, problem: string, said = ""): void {
     this.body.replaceChildren();
 
     if (problem) {
@@ -130,12 +152,44 @@ export class PropertiesDialog {
     } else if (!properties) {
       this.body.append(this.message(TEXT().reading, false));
     } else {
+      if (rootsMayBeFetched(properties)) this.body.append(this.rootOffer(properties, said));
       for (const section of sections(properties)) {
         this.body.append(this.section(section));
       }
     }
 
     this.open();
+  }
+
+  /**
+   * The offer to ask Windows for a root, above the signatures it is about. Only
+   * ever the reader's press: opening this dialog asks nobody. A failure leaves
+   * the first answer on screen and says why.
+   */
+  private rootOffer(properties: Properties, said: string): HTMLElement {
+    const offer = document.createElement("div");
+    offer.style.cssText = "margin-top:1rem;";
+    const button = document.createElement("button");
+    button.type = "button";
+    button.textContent = TEXT().askRoot;
+    button.addEventListener("click", () => {
+      button.disabled = true;
+      button.textContent = TEXT().askingRoot;
+      this.askRoot().then(
+        (answer) => {
+          if (this.isOpen) {
+            this.show(answer, "", rootsMayBeFetched(answer) ? TEXT().rootNotFound : "");
+          }
+        },
+        (why) => {
+          if (this.isOpen) this.show(properties, "", String(why));
+        },
+      );
+    });
+    const help = this.message(said || TEXT().askRootHelp, !!said);
+    help.style.margin = "0.35rem 0 0";
+    offer.append(button, help);
+    return offer;
   }
 
   private open(): void {
@@ -236,7 +290,7 @@ export class PropertiesDialog {
     return block;
   }
 
-  /** A single sentence in the body, for waiting or for a failure. */
+  /** A single sentence in the body, for waiting, for help or for a failure. */
   private message(text: string, failed: boolean): HTMLElement {
     const line = document.createElement("p");
     line.textContent = text;

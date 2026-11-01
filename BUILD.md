@@ -1981,6 +1981,21 @@ starts at 0 and increments within the month.
    (`schtasks /Create ... /IT`, then `/Run`): started from the ssh session itself the
    application has no desktop to open a window on.
 
+   **Signing on a clean Windows is a second command**, on a machine with the Windows Sandbox
+   feature on and a desktop, because every machine that builds tpdf already holds the roots this
+   is about:
+
+   ```powershell
+   python scripts\clean_windows_check.py <path>\tpdf_<version>_x64-setup.exe testdata\demo.pdf
+   ```
+
+   It installs the release in a new sandbox and signs with each timestamp authority over
+   `http://`, then in a second sandbox verifies a timestamped document before and after
+   `--fetch-roots`. Run 26.10.28 with `--expect-refused` when the script changes: that release must be
+   refused by all three. It refuses to start beside a running sandbox, because a second one attaches
+   to the first and never runs the check (`docs/TRAPS.md`, *A clean Windows holds none of the
+   timestamp authorities' roots, and HTTPS hid it for one of them*).
+
    **First run, 2026-10-09, Windows 11, against the published 26.10.13 installer:** 20 of 20
    checks passed. Two controls failed as they should: with `--version 26.10.12` the tool's
    version and the window's title failed, and with a word the document does not have the

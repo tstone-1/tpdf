@@ -102,6 +102,7 @@
       makingDocument: "Making the document...",
       saveSigned: "Save the signed document",
       saveWithValidation: "Save the document with long-term validation data",
+      noDocumentToAsk: "This document is no longer open.",
       showInExplorer: "Show PDFs in Explorer",
       replace: "Replace",
       keepIt: "Keep it",
@@ -272,6 +273,7 @@
       makingDocument: "Dokument wird erstellt...",
       saveSigned: "Signiertes Dokument speichern",
       saveWithValidation: "Dokument mit Langzeitvalidierungsdaten speichern",
+      noDocumentToAsk: "Dieses Dokument ist nicht mehr geöffnet.",
       showInExplorer: "PDFs im Explorer anzeigen",
       replace: "Ersetzen",
       keepIt: "Beibehalten",
@@ -4599,6 +4601,19 @@
   }
 
   /**
+   * The properties dialog's button: lets Windows fetch the roots this document's
+   * signatures need and answers the document read again, which becomes this
+   * document's properties. The guard is `showProperties`'s.
+   */
+  async function askWindowsForRoot(): Promise<Properties> {
+    const wanted = openDoc, view = openView, model = edits, source = openPathName;
+    if (wanted < 0 || !source) throw TEXT().noDocumentToAsk;
+    const answer = await call("fetch_signature_roots", { doc: wanted, source });
+    if (stillIn(view, model)) asDocument(view, () => { properties = answer; });
+    return answer;
+  }
+
+  /**
    * Shows what the document says about itself.
    *
    * Opens first and fills in second, deliberately. The `lopdf` parse behind this
@@ -5620,7 +5635,7 @@
       // On `document.body` rather than inside the viewer, for the reason the
       // context menu is: a modal that lives in a scroll box is clipped by it.
       signatureDialog = new SignatureDialog(document.body);
-      propertiesDialog = new PropertiesDialog(document.body);
+      propertiesDialog = new PropertiesDialog(document.body, askWindowsForRoot);
 
       // Beside it, and for its reason. A locked document is asked about
       // rather than reported, which is the whole of what this adds --- see

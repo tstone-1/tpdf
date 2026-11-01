@@ -1854,6 +1854,20 @@ ROWS += [
         "states the attested moment once, as the whole verdict's and not the reason's",
     ),
     Mutation(
+        "root offer: offer the lookup on an encrypted document, which cannot be read again",
+        "src/lib/properties.ts",
+        "    !properties.encryption &&",
+        "    properties.pages >= 0 &&",
+        "is not offered where no root may be missing, or on an encrypted document",
+    ),
+    Mutation(
+        "root offer: offer the lookup outside Windows",
+        "src/lib/integrity.ts",
+        '    trust?.store === "windows" &&',
+        '    !!trust?.store &&',
+        "is only a root or an incomplete chain, not trusted, on Windows",
+    ),
+    Mutation(
         "authority: hide that an untrusted authority was judged at the archive's moment",
         "src/lib/integrity.ts",
         "          return `not trusted${judged} — ${w.why}. So nothing establishes who attests this time.`;",

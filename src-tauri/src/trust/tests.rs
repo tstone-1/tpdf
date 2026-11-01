@@ -1036,3 +1036,24 @@ fn a_key_usage_that_forbids_signatures_does_not_serve_documents() {
     }
     assert_eq!(serves(&unreadable, Purpose::Documents), None);
 }
+
+/// `integrity.ts`'s `rootMayBeMissing`: on Windows, and only for an answer that a
+/// root it has not fetched could explain.
+#[test]
+fn only_a_missing_root_on_windows_may_be_waiting_for_a_fetch() {
+    let trust = |store, standing, why| Trust {
+        standing,
+        why,
+        store,
+        attested_at: String::new(),
+    };
+    let windows = Some(Store::Windows);
+    assert!(trust(windows, Standing::Untrusted, Some(Doubt::Root)).root_may_be_missing());
+    assert!(trust(windows, Standing::Untrusted, Some(Doubt::Incomplete)).root_may_be_missing());
+    assert!(!trust(windows, Standing::Untrusted, Some(Doubt::Dates)).root_may_be_missing());
+    assert!(!trust(windows, Standing::Trusted, None).root_may_be_missing());
+    assert!(!trust(Some(Store::Mac), Standing::Untrusted, Some(Doubt::Root)).root_may_be_missing());
+    assert!(
+        !trust(Some(Store::Linux), Standing::Untrusted, Some(Doubt::Root)).root_may_be_missing()
+    );
+}

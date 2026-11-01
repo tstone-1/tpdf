@@ -323,6 +323,8 @@ const TEXT = catalog({
           return `${whose} certificate was not in force then`;
       }
     },
+    rootMayBeMissing:
+      " Windows fetches many roots only when they are needed, so this one may simply not be on this PC yet.",
     trustName: "Trust",
     trust: (w: TrustWords): string => {
       const chained = `the signer's certificate chains to a root ${w.computer} trusts`;
@@ -721,6 +723,8 @@ const TEXT = catalog({
           return `das Zertifikat ${whose} war zu diesem Zeitpunkt nicht in Kraft`;
       }
     },
+    rootMayBeMissing:
+      " Windows ruft viele Stammzertifikate erst ab, wenn sie gebraucht werden, daher ist dieses vielleicht nur noch nicht auf diesem PC.",
     trustName: "Vertrauen",
     trust: (w: TrustWords): string => {
       const chained =
@@ -1144,6 +1148,18 @@ function row(name: string, value: string, warn: boolean): Row {
 }
 
 /**
+ * Whether this answer may only mean Windows has not fetched a root yet.
+ * `trust::Trust::root_may_be_missing`.
+ */
+export function rootMayBeMissing(trust: Trust | null): boolean {
+  return (
+    trust?.store === "windows" &&
+    trust.standing === "untrusted" &&
+    (trust.why === "root" || trust.why === "incomplete")
+  );
+}
+
+/**
  * The row that says whether an issuer the OS trusts vouches for the signer.
  *
  * `null` when there is no standing, which is every signature whose integrity
@@ -1167,7 +1183,7 @@ export function trustRow(
     attestedAt: trust.attested_at,
     from,
     until,
-  });
+  }) + (rootMayBeMissing(trust) ? said.rootMayBeMissing : "");
   const fine = trust.standing === "trusted" || trust.standing === "trusted_at_timestamp";
   return row(said.trustName, value, !fine);
 }
@@ -1269,7 +1285,7 @@ export function authorityRow(trust: Trust | null, from = "", until = ""): Row | 
     attestedAt: trust.attested_at,
     from,
     until,
-  });
+  }) + (rootMayBeMissing(trust) ? said.rootMayBeMissing : "");
   const fine = trust.standing === "trusted" || trust.standing === "trusted_at_timestamp";
   return row(said.authorityName, value, !fine);
 }

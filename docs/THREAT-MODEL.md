@@ -2379,7 +2379,12 @@ responder or CRL is asked, and on Windows no root is auto-updated. The network a
 the updater's (§T9) and, since 2026-09-28, the timestamp client's (§T10); trust asks neither. The cost is in the answer and stated there: **revocation is judged only from
 data the document carries** (§T6.25, since 2026-09-28; before that it was not judged at all), a
 missing intermediate reads as a missing link unless the document's `/DSS` carries it, and a root
-Windows would fetch on demand reads as untrusted until the machine has it.
+Windows would fetch on demand reads as untrusted until the machine has it. **Two exceptions since
+2026-11-01, both the reader's own act** (§T10): a timestamp authority not trusted offline during a
+signing, and the reader pressing *Ask Windows for the root* or passing `verify --fetch-roots`.
+Opening or verifying a document by itself still asks nothing, so on a clean Windows a sound
+signature reads as not trusted until something on that machine has fetched its root, and the
+sentence says that may be all it means.
 
 **What a standing claims.** `trusted` means the OS store's rules accept a chain from the
 signer's certificate to a root it trusts, **now**, and that the certificate names a purpose a
@@ -2680,7 +2685,7 @@ a timestamp authority's, whether that data says the certificate was revoked (`do
 whose authority this computer trusts is then judged at the time the token attests.
 
 **No network authority is added, and that is the decision.** Reading and verifying never
-fetch. Asking an OCSP responder or downloading a list while a document is open would tell each
+fetch revocation data; the one lookup a reader can ask for is a root, from Microsoft (§T10). Asking an OCSP responder or downloading a list while a document is open would tell each
 certificate authority which signed documents the reader opens, and would put a network
 authority in the read path, which runs in a worker with `(deny network*)`. So a document
 carrying no revocation data reads *not checked* for revocation, which is what it is.
@@ -3815,6 +3820,34 @@ Adding validation data to a document already signed still preselects nothing. On
 per attempt, made after the OS has signed and before anything is written; another only when the
 reader presses *Try again*. Nothing is asked on launch, on open, on verify, or by a worker. Every
 gate and test is offline: the tests' authority is a fake on 127.0.0.1.
+
+**What Windows fetches around it, since 2026-11-01.** A clean Windows holds none of the listed
+authorities' roots (measured in Windows Sandbox, 15 roots at the start), and the trust check is
+offline, so all three would be refused. When the authority of such a signing is not trusted
+offline, `trust::fetch_root` builds one chain with root auto-update on, which has Windows fetch a
+root on Microsoft's list from Microsoft and add it to its own store, and the offline judgement is
+asked again. It runs in the same process and at the same moment as the request, with AIA off, so
+the token's certificates still choose no address, and with a 10-second retrieval timeout. A substituted token gains
+nothing: the only root it can bring in is one Microsoft distributes to every Windows anyway, and a
+token from an authority of the attacker's own still ends at no root. An HTTPS request already did
+this: `reqwest`'s `rustls-platform-verifier` has Windows check the server's certificate online, which
+is why Sectigo alone worked on a clean machine in 26.10.28. `scripts/clean_windows_check.py` is the
+proof, and no gate can run it.
+
+**The same lookup for a document's own signatures, added 2026-11-01.** A hostile PDF must not be able
+to make tpdf touch the network by being opened, so nothing does this on open or on `verify`: only
+the properties dialog's button, shown on Windows when a root may be missing, or `verify
+--fetch-roots`. A worker lists the document's signatures (`SurveySignatures`), and
+`longterm::fetch_roots` hands their certificates to the same lookup in the app process or the
+tool's, at most 16 signatures and their timestamps per request. Then a new worker reads the document, because the one holding it
+answers from its first reading, and the verdict is still that offline judgement. What it adds: the
+document chooses which root on Microsoft's list is fetched, and so one fact Microsoft can see, and
+CryptoAPI meets the document's certificates outside the worker (residual 25, same bounds, and only on
+that press). What a forged signature gains is nothing: a root off that list is not fetched, measured
+with a throwaway signer that stayed not trusted. An encrypted document is not offered this.
+`scripts/clean_windows_check.py` holds the "only when asked" half: with the flag's check removed from
+`verify`, the authority read as trusted on the first plain `verify` and the script failed there
+(2026-11-01). The dialog's button has no such run: its tests use a fake backend.
 
 **Who makes it.** The coordinator, on a blocking thread, or the command-line tool's process ---
 **never a worker**, whose profile keeps `(deny network*)`, and **never the webview**, which gains
@@ -5451,6 +5484,10 @@ because the arm it ran was the one written for "any other platform".
     certificates to. Not closed: closing it means not asking the OS, which is the decision the
     trust verdict rests on. Windows trust-store access under containment was measured
     2026-09-29 (§T6.22); its chain builder runs in the worker process.
+    **Widened 2026-11-01** (§T10): on Windows, the reader's press of *Ask Windows for the root*
+    or `verify --fetch-roots` hands a document's certificates to the chain builder in the
+    coordinator or `tpdf-cli`, which is not contained, under the same bounds. Opening or
+    verifying a document without that act does not.
     **Widened 2026-09-28, at the 26.9.22 release audit** (§T6.22, §T10): a signing with
     long-term data hands the OS certificates from the network --- the timestamp token's set ---
     in the coordinator or `tpdf-cli`, which is not contained on either platform: once to judge
@@ -5510,9 +5547,11 @@ because the arm it ran was the one written for "any other platform".
     is refused for long-term data until it has. **Closed for a plain timestamped signing on
     2026-10-31**, at the same price: `commands::sign::finish` asks the same question before
     sealing, the window stops as it does for an authority that did not answer, and the command
-    line exits 3 unless `--allow-untrusted-timestamp` says to keep it. So on Windows a real
-    authority whose root has not been fetched now stops a plain signing too, and a private
-    authority needs its root in the system's store or that option.
+    line exits 3 unless `--allow-untrusted-timestamp` says to keep it. A private authority needs
+    its root in the system's store or that option. On Windows a real authority whose root had not
+    been fetched stopped every signing that way, DigiCert and GlobalSign on a clean machine
+    among them, until 2026-11-01: Windows is now asked to fetch it first (§T10). On a network that
+    blocks Microsoft's list it should still stop; that case is untested.
 30. **A signer judged at an attested moment is judged with today's trust store** (§T6.25),
     added 2026-09-28. The OS store is asked whether the chain ended at a root it trusts *at*
     `genTime`, using the roots it holds now: a root distrusted since reads as not trusted, and a

@@ -1966,3 +1966,16 @@ fn an_archive_timestamp_from_an_authority_nobody_trusts_is_not_sealed() {
     assert!(why.sentence().contains("not trusted"), "{why:?}");
     assert_eq!(asked.get(), 2, "asked of each token");
 }
+
+/// A test's anchors never reach the operating system's root lookup, which is
+/// what keeps every test here offline on Windows.
+#[test]
+fn a_tests_own_roots_never_ask_the_os_to_fetch_one() {
+    let token = archive(&[b"covered"]).expect("minted");
+    assert!(!crate::trust::fetch_root(
+        &token,
+        &[],
+        now(),
+        crate::trust::Anchors::Only(&[])
+    ));
+}

@@ -487,9 +487,23 @@ ROWS += [
     Mutation(
         "cli: hide that an untrusted authority was judged at the archive's moment",
         "src/words.rs",
-        '            format!("not trusted{judged} — {why}. So nothing establishes who attests this time.")',
-        '            format!("not trusted — {why}. So nothing establishes who attests this time.")',
+        '            "not trusted{judged} — {why}. So nothing establishes who attests this time.{}",',
+        '            "not trusted — {why}. So nothing establishes who attests this time.{}",',
         "every_json_shape_and_the_wording_match_their_committed_samples",
+    ),
+    Mutation(
+        "trust: tell a reader on any system that a root may only be missing",
+        "src/trust.rs",
+        "        self.store == Some(Store::Windows)",
+        "        self.store.is_some()",
+        "only_a_missing_root_on_windows_may_be_waiting_for_a_fetch",
+    ),
+    Mutation(
+        "trust: take a certificate out of its dates for a root not fetched yet",
+        "src/trust.rs",
+        "            && matches!(self.why, Some(Doubt::Root | Doubt::Incomplete))",
+        "            && self.why.is_some()",
+        "only_a_missing_root_on_windows_may_be_waiting_for_a_fetch",
     ),
     Mutation(
         "chain: name the leaf when an issuing certificate decides",

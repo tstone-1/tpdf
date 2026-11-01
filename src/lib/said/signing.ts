@@ -623,6 +623,14 @@ export default {
   "the file on disk is not the one that was opened, so nothing was added to it --- reopen it and try again":
     "die Datei auf dem Datenträger ist nicht die, die geöffnet wurde, daher wurde ihr nichts hinzugefügt - öffne sie erneut und versuche es noch einmal",
   "adding the validation data did not run: {e}": "das Hinzufügen der Validierungsdaten ist nicht gelaufen: {e}",
+
+  // commands/read.rs
+  "tpdf could not record what this file looked like when it was opened, so its signatures were not read again":
+    "tpdf konnte nicht festhalten, wie diese Datei beim Öffnen aussah, daher wurden ihre Signaturen nicht erneut gelesen",
+  "the signatures could not be read again: {why}": "die Signaturen konnten nicht erneut gelesen werden: {why}",
+  "the file on disk is not the one that was opened, so its signatures were not read again":
+    "die Datei auf dem Datenträger ist nicht die, die geöffnet wurde, daher wurden ihre Signaturen nicht erneut gelesen",
+  "asking Windows for the root did not run: {e}": "die Anfrage an Windows nach dem Stammzertifikat ist nicht gelaufen: {e}",
 } satisfies Record<string, Wording>;
 
 /** The entries above that say "du", addressing the reader with "Sie" instead. */

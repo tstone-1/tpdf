@@ -791,7 +791,7 @@
       }
     },
     {
-      "sentence": "Signed as Signature1 and saved to signed-2-0.pdf. Read back after writing, the signature is intact. Timestamp: 2026-09-28 10:11:12 UTC, attested by Somebody Else — the timestamp checks out under the key in its certificate and covers this signature (SHA-256, RSA). Timestamp authority: not trusted — its chain ends at a root this PC does not trust. A certificate somebody issued to themselves reads this way, and so does one whose root only Adobe's trust list carries. So nothing establishes who attests this time.",
+      "sentence": "Signed as Signature1 and saved to signed-2-0.pdf. Read back after writing, the signature is intact. Timestamp: 2026-09-28 10:11:12 UTC, attested by Somebody Else — the timestamp checks out under the key in its certificate and covers this signature (SHA-256, RSA). Timestamp authority: not trusted — its chain ends at a root this PC does not trust. A certificate somebody issued to themselves reads this way, and so does one whose root only Adobe's trust list carries. So nothing establishes who attests this time. Windows fetches many roots only when they are needed, so this one may simply not be on this PC yet.",
       "signed": {
         "field": "Signature1",
         "path": "/tmp/signed-2-0.pdf",
@@ -832,7 +832,7 @@
       }
     },
     {
-      "sentence": "Signed as Signature2 and saved to signed-2-1.pdf. Read back after writing, the signature is intact. Timestamp: 2026-09-28 10:11:12 UTC, attested by Somebody Else — the timestamp checks out under the key in its certificate and covers this signature (SHA-256, RSA). Timestamp authority: not trusted — its chain ends at a root this PC does not trust. A certificate somebody issued to themselves reads this way, and so does one whose root only Adobe's trust list carries. So nothing establishes who attests this time. Earlier signature: Signature1 intact.",
+      "sentence": "Signed as Signature2 and saved to signed-2-1.pdf. Read back after writing, the signature is intact. Timestamp: 2026-09-28 10:11:12 UTC, attested by Somebody Else — the timestamp checks out under the key in its certificate and covers this signature (SHA-256, RSA). Timestamp authority: not trusted — its chain ends at a root this PC does not trust. A certificate somebody issued to themselves reads this way, and so does one whose root only Adobe's trust list carries. So nothing establishes who attests this time. Windows fetches many roots only when they are needed, so this one may simply not be on this PC yet. Earlier signature: Signature1 intact.",
       "signed": {
         "field": "Signature2",
         "path": "/tmp/signed-2-1.pdf",
@@ -884,7 +884,7 @@
       }
     },
     {
-      "sentence": "Signed as Signature3 and saved to signed-2-2.pdf. Read back after writing, the signature is intact. Timestamp: 2026-09-28 10:11:12 UTC, attested by Somebody Else — the timestamp checks out under the key in its certificate and covers this signature (SHA-256, RSA). Timestamp authority: not trusted — its chain ends at a root this PC does not trust. A certificate somebody issued to themselves reads this way, and so does one whose root only Adobe's trust list carries. So nothing establishes who attests this time. Earlier signatures: Signature1 intact, Signature2 altered.",
+      "sentence": "Signed as Signature3 and saved to signed-2-2.pdf. Read back after writing, the signature is intact. Timestamp: 2026-09-28 10:11:12 UTC, attested by Somebody Else — the timestamp checks out under the key in its certificate and covers this signature (SHA-256, RSA). Timestamp authority: not trusted — its chain ends at a root this PC does not trust. A certificate somebody issued to themselves reads this way, and so does one whose root only Adobe's trust list carries. So nothing establishes who attests this time. Windows fetches many roots only when they are needed, so this one may simply not be on this PC yet. Earlier signatures: Signature1 intact, Signature2 altered.",
       "signed": {
         "field": "Signature3",
         "path": "/tmp/signed-2-2.pdf",
@@ -947,7 +947,7 @@
       }
     },
     {
-      "sentence": "Signed as Signature3 and saved to signed-2-3.pdf. Read back after writing, the signature is intact. Timestamp: 2026-09-28 10:11:12 UTC, attested by Somebody Else — the timestamp checks out under the key in its certificate and covers this signature (SHA-256, RSA). Timestamp authority: not trusted — its chain ends at a root this PC does not trust. A certificate somebody issued to themselves reads this way, and so does one whose root only Adobe's trust list carries. So nothing establishes who attests this time. Earlier signatures: Signature1 not checked (tpdf does not check signatures in this format), Signature2 not checked.",
+      "sentence": "Signed as Signature3 and saved to signed-2-3.pdf. Read back after writing, the signature is intact. Timestamp: 2026-09-28 10:11:12 UTC, attested by Somebody Else — the timestamp checks out under the key in its certificate and covers this signature (SHA-256, RSA). Timestamp authority: not trusted — its chain ends at a root this PC does not trust. A certificate somebody issued to themselves reads this way, and so does one whose root only Adobe's trust list carries. So nothing establishes who attests this time. Windows fetches many roots only when they are needed, so this one may simply not be on this PC yet. Earlier signatures: Signature1 not checked (tpdf does not check signatures in this format), Signature2 not checked.",
       "signed": {
         "field": "Signature3",
         "path": "/tmp/signed-2-3.pdf",
@@ -11241,7 +11241,7 @@
     },
     {
       "from": "",
-      "sentence": "not trusted — a certificate between the authority's and a root is in neither the signature nor on this PC, and tpdf does not look it up. So nothing establishes who attests this time.",
+      "sentence": "not trusted — a certificate between the authority's and a root is in neither the signature nor on this PC, and tpdf does not look it up. So nothing establishes who attests this time. Windows fetches many roots only when they are needed, so this one may simply not be on this PC yet.",
       "trust": {
         "attested_at": "",
         "standing": "untrusted",
@@ -11252,7 +11252,7 @@
     },
     {
       "from": "",
-      "sentence": "not trusted, judged at 2026-08-21 12:00:00 UTC, the time an archive timestamp later in this document attests — a certificate between the authority's and a root is in neither the signature nor on this PC, and tpdf does not look it up. So nothing establishes who attests this time.",
+      "sentence": "not trusted, judged at 2026-08-21 12:00:00 UTC, the time an archive timestamp later in this document attests — a certificate between the authority's and a root is in neither the signature nor on this PC, and tpdf does not look it up. So nothing establishes who attests this time. Windows fetches many roots only when they are needed, so this one may simply not be on this PC yet.",
       "trust": {
         "attested_at": "2026-08-21 12:00:00 UTC",
         "standing": "untrusted",
@@ -11263,7 +11263,7 @@
     },
     {
       "from": "2026-01-02 03:04:05 UTC",
-      "sentence": "not trusted — a certificate between the authority's and a root is in neither the signature nor on this PC, and tpdf does not look it up. So nothing establishes who attests this time.",
+      "sentence": "not trusted — a certificate between the authority's and a root is in neither the signature nor on this PC, and tpdf does not look it up. So nothing establishes who attests this time. Windows fetches many roots only when they are needed, so this one may simply not be on this PC yet.",
       "trust": {
         "attested_at": "",
         "standing": "untrusted",
@@ -11274,7 +11274,7 @@
     },
     {
       "from": "2026-01-02 03:04:05 UTC",
-      "sentence": "not trusted, judged at 2026-08-21 12:00:00 UTC, the time an archive timestamp later in this document attests — a certificate between the authority's and a root is in neither the signature nor on this PC, and tpdf does not look it up. So nothing establishes who attests this time.",
+      "sentence": "not trusted, judged at 2026-08-21 12:00:00 UTC, the time an archive timestamp later in this document attests — a certificate between the authority's and a root is in neither the signature nor on this PC, and tpdf does not look it up. So nothing establishes who attests this time. Windows fetches many roots only when they are needed, so this one may simply not be on this PC yet.",
       "trust": {
         "attested_at": "2026-08-21 12:00:00 UTC",
         "standing": "untrusted",
@@ -11285,7 +11285,7 @@
     },
     {
       "from": "",
-      "sentence": "not trusted — its chain ends at a root this PC does not trust. A certificate somebody issued to themselves reads this way, and so does one whose root only Adobe's trust list carries. So nothing establishes who attests this time.",
+      "sentence": "not trusted — its chain ends at a root this PC does not trust. A certificate somebody issued to themselves reads this way, and so does one whose root only Adobe's trust list carries. So nothing establishes who attests this time. Windows fetches many roots only when they are needed, so this one may simply not be on this PC yet.",
       "trust": {
         "attested_at": "",
         "standing": "untrusted",
@@ -11296,7 +11296,7 @@
     },
     {
       "from": "",
-      "sentence": "not trusted, judged at 2026-08-21 12:00:00 UTC, the time an archive timestamp later in this document attests — its chain ends at a root this PC does not trust. A certificate somebody issued to themselves reads this way, and so does one whose root only Adobe's trust list carries. So nothing establishes who attests this time.",
+      "sentence": "not trusted, judged at 2026-08-21 12:00:00 UTC, the time an archive timestamp later in this document attests — its chain ends at a root this PC does not trust. A certificate somebody issued to themselves reads this way, and so does one whose root only Adobe's trust list carries. So nothing establishes who attests this time. Windows fetches many roots only when they are needed, so this one may simply not be on this PC yet.",
       "trust": {
         "attested_at": "2026-08-21 12:00:00 UTC",
         "standing": "untrusted",
@@ -11307,7 +11307,7 @@
     },
     {
       "from": "2026-01-02 03:04:05 UTC",
-      "sentence": "not trusted — its chain ends at a root this PC does not trust. A certificate somebody issued to themselves reads this way, and so does one whose root only Adobe's trust list carries. So nothing establishes who attests this time.",
+      "sentence": "not trusted — its chain ends at a root this PC does not trust. A certificate somebody issued to themselves reads this way, and so does one whose root only Adobe's trust list carries. So nothing establishes who attests this time. Windows fetches many roots only when they are needed, so this one may simply not be on this PC yet.",
       "trust": {
         "attested_at": "",
         "standing": "untrusted",
@@ -11318,7 +11318,7 @@
     },
     {
       "from": "2026-01-02 03:04:05 UTC",
-      "sentence": "not trusted, judged at 2026-08-21 12:00:00 UTC, the time an archive timestamp later in this document attests — its chain ends at a root this PC does not trust. A certificate somebody issued to themselves reads this way, and so does one whose root only Adobe's trust list carries. So nothing establishes who attests this time.",
+      "sentence": "not trusted, judged at 2026-08-21 12:00:00 UTC, the time an archive timestamp later in this document attests — its chain ends at a root this PC does not trust. A certificate somebody issued to themselves reads this way, and so does one whose root only Adobe's trust list carries. So nothing establishes who attests this time. Windows fetches many roots only when they are needed, so this one may simply not be on this PC yet.",
       "trust": {
         "attested_at": "2026-08-21 12:00:00 UTC",
         "standing": "untrusted",
@@ -60124,7 +60124,7 @@
     },
     {
       "from": "",
-      "sentence": "not trusted — a certificate between the signer's and a root is in neither the signature nor on this PC, and tpdf does not look it up. So nothing establishes that the key belongs to the person the certificate names.",
+      "sentence": "not trusted — a certificate between the signer's and a root is in neither the signature nor on this PC, and tpdf does not look it up. So nothing establishes that the key belongs to the person the certificate names. Windows fetches many roots only when they are needed, so this one may simply not be on this PC yet.",
       "trust": {
         "attested_at": "",
         "standing": "untrusted",
@@ -60135,7 +60135,7 @@
     },
     {
       "from": "",
-      "sentence": "not trusted, judged at 2026-08-21 12:00:00 UTC, the time the timestamp attests — a certificate between the signer's and a root is in neither the signature nor on this PC, and tpdf does not look it up. So nothing establishes that the key belongs to the person the certificate names.",
+      "sentence": "not trusted, judged at 2026-08-21 12:00:00 UTC, the time the timestamp attests — a certificate between the signer's and a root is in neither the signature nor on this PC, and tpdf does not look it up. So nothing establishes that the key belongs to the person the certificate names. Windows fetches many roots only when they are needed, so this one may simply not be on this PC yet.",
       "trust": {
         "attested_at": "2026-08-21 12:00:00 UTC",
         "standing": "untrusted",
@@ -60146,7 +60146,7 @@
     },
     {
       "from": "2026-01-02 03:04:05 UTC",
-      "sentence": "not trusted — a certificate between the signer's and a root is in neither the signature nor on this PC, and tpdf does not look it up. So nothing establishes that the key belongs to the person the certificate names.",
+      "sentence": "not trusted — a certificate between the signer's and a root is in neither the signature nor on this PC, and tpdf does not look it up. So nothing establishes that the key belongs to the person the certificate names. Windows fetches many roots only when they are needed, so this one may simply not be on this PC yet.",
       "trust": {
         "attested_at": "",
         "standing": "untrusted",
@@ -60157,7 +60157,7 @@
     },
     {
       "from": "2026-01-02 03:04:05 UTC",
-      "sentence": "not trusted, judged at 2026-08-21 12:00:00 UTC, the time the timestamp attests — a certificate between the signer's and a root is in neither the signature nor on this PC, and tpdf does not look it up. So nothing establishes that the key belongs to the person the certificate names.",
+      "sentence": "not trusted, judged at 2026-08-21 12:00:00 UTC, the time the timestamp attests — a certificate between the signer's and a root is in neither the signature nor on this PC, and tpdf does not look it up. So nothing establishes that the key belongs to the person the certificate names. Windows fetches many roots only when they are needed, so this one may simply not be on this PC yet.",
       "trust": {
         "attested_at": "2026-08-21 12:00:00 UTC",
         "standing": "untrusted",
@@ -60168,7 +60168,7 @@
     },
     {
       "from": "",
-      "sentence": "not trusted — its chain ends at a root this PC does not trust. A certificate somebody issued to themselves reads this way, and so does one whose root only Adobe's trust list carries. So nothing establishes that the key belongs to the person the certificate names.",
+      "sentence": "not trusted — its chain ends at a root this PC does not trust. A certificate somebody issued to themselves reads this way, and so does one whose root only Adobe's trust list carries. So nothing establishes that the key belongs to the person the certificate names. Windows fetches many roots only when they are needed, so this one may simply not be on this PC yet.",
       "trust": {
         "attested_at": "",
         "standing": "untrusted",
@@ -60179,7 +60179,7 @@
     },
     {
       "from": "",
-      "sentence": "not trusted, judged at 2026-08-21 12:00:00 UTC, the time the timestamp attests — its chain ends at a root this PC does not trust. A certificate somebody issued to themselves reads this way, and so does one whose root only Adobe's trust list carries. So nothing establishes that the key belongs to the person the certificate names.",
+      "sentence": "not trusted, judged at 2026-08-21 12:00:00 UTC, the time the timestamp attests — its chain ends at a root this PC does not trust. A certificate somebody issued to themselves reads this way, and so does one whose root only Adobe's trust list carries. So nothing establishes that the key belongs to the person the certificate names. Windows fetches many roots only when they are needed, so this one may simply not be on this PC yet.",
       "trust": {
         "attested_at": "2026-08-21 12:00:00 UTC",
         "standing": "untrusted",
@@ -60190,7 +60190,7 @@
     },
     {
       "from": "2026-01-02 03:04:05 UTC",
-      "sentence": "not trusted — its chain ends at a root this PC does not trust. A certificate somebody issued to themselves reads this way, and so does one whose root only Adobe's trust list carries. So nothing establishes that the key belongs to the person the certificate names.",
+      "sentence": "not trusted — its chain ends at a root this PC does not trust. A certificate somebody issued to themselves reads this way, and so does one whose root only Adobe's trust list carries. So nothing establishes that the key belongs to the person the certificate names. Windows fetches many roots only when they are needed, so this one may simply not be on this PC yet.",
       "trust": {
         "attested_at": "",
         "standing": "untrusted",
@@ -60201,7 +60201,7 @@
     },
     {
       "from": "2026-01-02 03:04:05 UTC",
-      "sentence": "not trusted, judged at 2026-08-21 12:00:00 UTC, the time the timestamp attests — its chain ends at a root this PC does not trust. A certificate somebody issued to themselves reads this way, and so does one whose root only Adobe's trust list carries. So nothing establishes that the key belongs to the person the certificate names.",
+      "sentence": "not trusted, judged at 2026-08-21 12:00:00 UTC, the time the timestamp attests — its chain ends at a root this PC does not trust. A certificate somebody issued to themselves reads this way, and so does one whose root only Adobe's trust list carries. So nothing establishes that the key belongs to the person the certificate names. Windows fetches many roots only when they are needed, so this one may simply not be on this PC yet.",
       "trust": {
         "attested_at": "2026-08-21 12:00:00 UTC",
         "standing": "untrusted",

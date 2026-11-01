@@ -308,6 +308,43 @@ pub fn of_blob_vouching(
     })
 }
 
+/// Lets the operating system fetch a root it distributes on demand for the
+/// signer of `blob`, and says whether it was asked: on Windows with
+/// [`Anchors::System`], and nowhere else. The answer to whether the signer is
+/// trusted is still the offline one, asked afterwards.
+///
+/// Called only when the reader asked to go online: for a timestamp authority
+/// during a signing (`longterm::vouched_under`), and for a document's signatures
+/// when the reader presses the button or passes `verify --fetch-roots`
+/// (`longterm::fetch_roots`). Opening or verifying a document never reaches it
+/// by itself. What it can add is a root on Microsoft's own list, which the
+/// machine's TLS would fetch in the same way, so a substituted token or a hostile
+/// document gains nothing by it. Their certificates still choose no address: AIA
+/// stays off. `extra` is what [`of_blob_with`] offers beside the blob's own.
+#[must_use]
+pub fn fetch_root(blob: &[u8], extra: &[Vec<u8>], now: u64, anchors: Anchors<'_>) -> bool {
+    if !matches!(anchors, Anchors::System) {
+        return false;
+    }
+    let Some((leaf, others)) = certificates_with(blob, extra) else {
+        return false;
+    };
+    platform::fetch_root(&leaf, &others, now)
+}
+
+impl Trust {
+    /// Whether this answer may only mean Windows has not fetched a root yet: not
+    /// trusted on Windows, because the chain ended at a root it does not hold or
+    /// stopped short of one. A certificate somebody issued to themselves reads
+    /// the same, which is why this says *may*, and why the fetch decides.
+    #[must_use]
+    pub fn root_may_be_missing(&self) -> bool {
+        self.store == Some(Store::Windows)
+            && self.standing == Standing::Untrusted
+            && matches!(self.why, Some(Doubt::Root | Doubt::Incomplete))
+    }
+}
+
 /// The answer `ask` reads from the store's evaluations of the certificates in
 /// `blob`, and the chain the last of them assembled, if the store vouched for it.
 fn answer_and_chain(
@@ -704,6 +741,11 @@ pub(crate) mod platform {
         })
     }
 
+    /// macOS has no root it fetches on demand: the system holds them all.
+    pub fn fetch_root(_leaf: &[u8], _others: &[Vec<u8>], _at: u64) -> bool {
+        false
+    }
+
     pub fn evaluate(
         leaf: &[u8],
         others: &[Vec<u8>],
@@ -838,6 +880,51 @@ pub(crate) mod platform {
             }
         }
         Ok(store)
+    }
+
+    /// Builds one chain with root auto-update on, which is what makes Windows
+    /// fetch a root on Microsoft's list and add it to its own store. The chain
+    /// itself is dropped. AIA stays off, so nothing in `leaf` or `others` names
+    /// an address, and the retrieval timeout is 10 seconds.
+    pub fn fetch_root(leaf: &[u8], others: &[Vec<u8>], at: u64) -> bool {
+        let Ok(len) = u32::try_from(leaf.len()) else {
+            return false;
+        };
+        let context = unsafe { CertCreateCertificateContext(ENCODING, leaf.as_ptr(), len) };
+        if context.is_null() {
+            return false;
+        }
+        let Ok(additional) = memory(others) else {
+            unsafe { CertFreeCertificateContext(context) };
+            return false;
+        };
+        let para = CERT_CHAIN_PARA {
+            cbSize: std::mem::size_of::<CERT_CHAIN_PARA>() as u32,
+            dwUrlRetrievalTimeout: 10_000,
+            ..Default::default()
+        };
+        let time = filetime(at);
+        let mut chain: *mut CERT_CHAIN_CONTEXT = std::ptr::null_mut();
+        let built = unsafe {
+            CertGetCertificateChain(
+                std::ptr::null_mut(),
+                context,
+                &time,
+                additional,
+                &para,
+                CERT_CHAIN_DISABLE_AIA,
+                std::ptr::null(),
+                &mut chain,
+            )
+        } != 0;
+        unsafe {
+            if !chain.is_null() {
+                CertFreeCertificateChain(chain);
+            }
+            CertCloseStore(additional, 0);
+            CertFreeCertificateContext(context);
+        }
+        built
     }
 
     /// Seconds since the Unix epoch as a `FILETIME`: 100 ns since 1601.
@@ -1079,6 +1166,11 @@ pub(crate) mod platform {
             }
         }
         chain
+    }
+
+    /// Linux has no root it fetches on demand: the CA bundle is what it is.
+    pub fn fetch_root(_leaf: &[u8], _others: &[Vec<u8>], _at: u64) -> bool {
+        false
     }
 
     pub fn evaluate(

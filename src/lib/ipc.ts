@@ -626,6 +626,7 @@ export interface Commands {
     reply: void;
   };
   document_properties: { args: { doc: DocHandle }; reply: Properties };
+  fetch_signature_roots: { args: { doc: DocHandle; source: string }; reply: Properties };
   document_mapping: { args: { doc: DocHandle }; reply: PageMapping[] };
   /** The reply is the name of the event a double-click delivers a path on. */
   launch_open_event: { args: NoArgs; reply: string };

@@ -845,6 +845,7 @@ hop through the index.
 - A print job *Spooling* with 0 pages was tpdf rasterising, not a stuck spooler
 - A helper whose callers all became Windows-only passed every gate on Windows and failed on the other two
 - PDFium unpacked through a Python temporary directory could not be loaded by a low-integrity worker
+- A clean Windows holds none of the timestamp authorities' roots, and HTTPS hid it for one of them
 
 ## Fixtures
 - The test fixtures are generated, not committed
@@ -27137,3 +27138,20 @@ found it, not a gate: no check reads what a warning recommends. The replacement 
 it was written (2026-10-31): `render` of the whole file against the cut copy differed on three forged
 appends and matched byte for byte on an honest one. Run what a warning recommends, against the case
 the warning is about.
+
+### A clean Windows holds none of the timestamp authorities' roots, and HTTPS hid it for one of them
+
+26.10.28 began refusing a timestamp from an authority this computer does not trust. The trust check
+is offline, and a Windows that has been used for a while holds nearly every root, so every test
+machine passed. Windows Sandbox starts with 15 roots and none of the four the authorities lead to
+(measured 2026-11-01, Windows 11 build 26100 in the sandbox). There 26.10.28 refused DigiCert and
+GlobalSign, and *Try again* could not help. Sectigo, preselected in the window, signed, which read as
+"the default is fine" until the same authority was asked over `http://` and was refused: the HTTPS
+client (`rustls-platform-verifier`) has Windows check the server's certificate online, and that
+fetched `USERTrust RSA` as a side effect. So a change of Sectigo's TLS certificate could have broken
+the default with no change here. A check for this must use `http://` for all three, and a run with a
+store that already holds a root proves nothing: `scripts/clean_windows_check.py` refuses such a
+sandbox. One Sandbox fact cost six runs: ending its processes leaves the machine running (`wsb list`
+names it), and a new launch attaches to that machine, so its configuration is ignored and its logon
+command never runs, with no error. A check launched that way looks hung. The script refuses to start
+beside a running sandbox and ends its own with `wsb stop`.

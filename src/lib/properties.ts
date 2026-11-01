@@ -51,6 +51,7 @@ import {
   revocationRow,
   rowNames,
   timestampRow,
+  rootMayBeMissing,
   trustRow,
   type Chain,
   type Integrity,
@@ -83,7 +84,8 @@ const TEXT = catalog({
       "chains to a root this computer's own trust store trusts, which is not " +
       "Adobe's list most signed PDFs are made against. It fetches nothing to check a signature: " +
       "revocation is judged only from data the document itself carries, a document " +
-      "carrying none is not checked for it, and no missing certificate is fetched. " +
+      "carrying none is not checked for it, and no missing certificate is fetched, unless " +
+      "you press the button that asks Windows for a root, which only Windows shows. " +
       "What a certificate states its key is for is the issuer's own word. A " +
       "timestamp's own signature and whether it covers this signature are checked, " +
       "and its authority is asked about as the signer is; only when the timestamp is " +
@@ -244,7 +246,8 @@ const TEXT = catalog({
       "nicht die Liste von Adobe, gegen die die meisten signierten PDFs erstellt werden. Um eine " +
       "Signatur zu prüfen, ruft tpdf nichts ab: Ein Widerruf wird nur anhand von Daten beurteilt, " +
       "die das Dokument selbst enthält, ein Dokument ohne solche Daten wird darauf nicht geprüft, " +
-      "und kein fehlendes Zertifikat wird abgerufen. Wofür der Schlüssel eines Zertifikats laut " +
+      "und kein fehlendes Zertifikat wird abgerufen, außer über die Schaltfläche, die Windows nach " +
+      "einem Stammzertifikat fragt und die es nur unter Windows gibt. Wofür der Schlüssel eines Zertifikats laut " +
       "Zertifikat bestimmt ist, ist allein die Aussage des Ausstellers. Die eigene Signatur eines " +
       "Zeitstempels wird geprüft und ob er diese Signatur erfasst, und sein Zeitstempeldienst wird " +
       "so geprüft wie der Unterzeichner; nur wenn der Zeitstempel intakt und sein Zeitstempeldienst " +
@@ -1211,6 +1214,20 @@ export function briefly(signature: Signature, rows: Row[]): Brief[] {
   // to open the card and scroll to its last row. The row says what it rests on.
   if (signature.pades) out.push({ text: signature.pades });
   return out;
+}
+
+/**
+ * Whether the dialog offers to ask Windows for a root: a signature or its
+ * timestamp may only be waiting for one. Not for an encrypted document, whose
+ * signatures a worker started without its password cannot read again.
+ */
+export function rootsMayBeFetched(properties: Properties): boolean {
+  return (
+    !properties.encryption &&
+    properties.signatures.some(
+      (signature) => rootMayBeMissing(signature.trust) || rootMayBeMissing(signature.timestamp?.trust ?? null),
+    )
+  );
 }
 
 /**

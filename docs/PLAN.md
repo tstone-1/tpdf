@@ -16324,10 +16324,11 @@ the timestamp row stays a claim. (Asked since 2026-09-28, with the timestamping 
 - ~~**Which timestamp authorities, and how the reader picks one.**~~ **Answered by the owner
   2026-09-28**: a short list --- DigiCert, Sectigo, GlobalSign --- plus the reader's own
   address, nothing preselected, the choice remembered. Below.
-- **Should a token be written only when its authority is trusted?** Open, since 2026-09-28.
-  Today a token is written when its own arithmetic holds --- its signature, its `TSTInfo`,
+- **Should a token be written only when its authority is trusted?** Asked 2026-09-28, **answered
+  yes on 2026-10-31**, for every signing; the paragraph below is the question as it stood.
+  Until then a token was written when its own arithmetic held --- its signature, its `TSTInfo`,
   its binding, an imprint of this signature and this request's nonce --- and its authority's
-  standing is *reported* (after signing, in the properties dialog, by `tpdf verify`) but not
+  standing was *reported* (after signing, in the properties dialog, by `tpdf verify`) but not
   required. Over `http://`, which two of the three listed authorities alone serve, an
   attacker on the path can therefore substitute a token from an authority of its own; it is
   written and reads *not trusted* (`docs/THREAT-MODEL.md` residual 29). Requiring `trusted`
@@ -16337,7 +16338,14 @@ the timestamp row stays a claim. (Asked since 2026-09-28, with the timestamping 
   until it has. A decision for the owner, not an engineering default. **Answered for
   long-term signing at the 26.9.22 release audit**: there the authority must be trusted
   before anything is fetched for it, both costs accepted (*Long-term validation data when
-  signing*, below). Still open for a plain timestamped signing.
+  signing*, below). **Answered for a plain timestamped signing on 2026-10-31**, at the same
+  price (`docs/THREAT-MODEL.md` residual 29). **The second cost was real, and went on 2026-11-01**:
+  in Windows Sandbox, whose store starts with 15 roots, none of `USERTrust RSA Certification
+  Authority` (Sectigo), `DigiCert Trusted Root G4`, `DigiCert Assured ID Root CA` (DigiCert) or
+  `GlobalSign Root CA - R6` is present, and 26.10.28 refused DigiCert and GlobalSign, and Sectigo
+  over `http://`. Windows is now asked to fetch the root for a signing's authority (§T10), and
+  `scripts/clean_windows_check.py` signs with all three there. Reading a document fetches nothing
+  unless the reader asks: the dialog's button or `verify --fetch-roots` (§T10).
 - **Which moment a timestamp authority is judged at.** Answered 2026-09-28 for increment A:
   the present, like the signer, because `genTime` is the authority's own statement --- below.
   ~~Judging the *signer* at `genTime` is the open half.~~ **Answered 2026-09-28 (C1)**: at

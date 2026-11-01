@@ -574,13 +574,18 @@ class Tpdf:
         return self.edit(source, output, operations, force=force,
                          invalidate_signatures=invalidate_signatures, password=password)
 
-    def verify(self, *paths: str | os.PathLike[str], strict: bool = False) -> reports.VerifyReport:
+    def verify(
+        self, *paths: str | os.PathLike[str], strict: bool = False, fetch_roots: bool = False
+    ) -> reports.VerifyReport:
         """Inspect signatures. With strict=True, unsigned/untrusted files raise CommandError.
 
         The exception retains the full verification report and exit code. Use
         run('verify', '--strict', '--', *paths, check=False) for a Result instead.
+        fetch_roots=True lets Windows fetch a missing root first, which contacts Microsoft.
         """
         args = ['--strict'] if strict else []
+        if fetch_roots:
+            args.append('--fetch-roots')
         return self.run('verify', *args, '--', *paths).typed
 
     def _pages(

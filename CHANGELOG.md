@@ -17,6 +17,24 @@ as *downloadable*, while the release sat as a draft that GitHub showed to nobody
 are given now because they are different facts, and only the second one means a reader can
 have the binary.)
 
+## [26.11.0] - 2026-11-01
+
+### Added
+
+- On Windows, a signature that reads as not trusted because a root may be missing now says so, and
+  the properties dialog offers **Ask Windows for the root**. `tpdf verify --fetch-roots` does the
+  same. Windows fetches a root on Microsoft's list and tpdf reads the document again; nothing of the
+  document is sent. Opening or verifying a document still goes online for nothing by itself.
+
+### Fixed
+
+- On a new Windows computer, signing with a DigiCert or GlobalSign timestamp stopped with "not
+  trusted by this computer", and trying again did not help: Windows fetches most roots only when
+  they are needed, and tpdf never asked it to. tpdf now lets Windows fetch a root on Microsoft's
+  list for the authority of a signing that asked for a timestamp, then judges it as before.
+  Sectigo, the preselected authority, worked only because its HTTPS connection fetched the same
+  root.
+
 ## [26.10.28] - 2026-10-31
 
 ### Added

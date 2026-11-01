@@ -1324,7 +1324,9 @@ the page as it is displayed:
   sent anywhere. Nothing is written either if the authority's certificate does not chain to a
   root this computer trusts for timestamping, since over plain `http://` somebody on the network
   could substitute a timestamp from an authority of their own; `--allow-untrusted-timestamp`
-  keeps such a timestamp, for a private authority, and it then reads as not trusted. `--long-term`, which needs `--timestamp`, also fetches the revocation
+  keeps such a timestamp, for a private authority, and it then reads as not trusted. On Windows,
+  which fetches most roots only when they are needed, tpdf first lets the system fetch a root on
+  Microsoft's list for that authority, so a new computer can sign with any of the three. `--long-term`, which needs `--timestamp`, also fetches the revocation
   data for the signer's certificate, the timestamp authority's and the certificates above them
   from their certificate authorities, checks it, and adds it with those certificates to the
   document (PAdES B-LT), then asks the same timestamp authority for an archive timestamp over
@@ -1412,6 +1414,13 @@ the page as it is displayed:
   document. Under every signature that something was appended after, it prints the properties
   dialog's *Appended* row: what arrived, and what it did to pages. `--json` carries the same
   as each signature's `appendix`.
+  On Windows, which fetches most roots only when they are needed, a sound signature can read as not
+  trusted on a new computer, because `verify` goes online for nothing. `--fetch-roots` lets Windows
+  fetch the roots this document's signatures and timestamps need, from Microsoft, and then reads the
+  document again. Nothing of the document is sent, a certificate somebody issued to themselves
+  stays not trusted, and the root stays on that computer. Without it, `verify` says on stderr that the flag exists
+  whenever a root may be missing, and `--strict` fails. It does nothing on macOS and Linux. The
+  properties dialog offers the same as a button.
 - **`info <file.pdf>...`** describes each document as the properties dialog does: its pages
   and their sizes, PDF version, the metadata in its `/Info` dictionary, encryption and what it
   permits, whether it is tagged, the conformance its XMP metadata claims (PDF/A, PDF/UA, PDF/X

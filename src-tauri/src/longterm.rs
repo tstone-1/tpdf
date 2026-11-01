@@ -493,9 +493,48 @@ pub fn vouched_by_os(token: &[u8], now: u64) -> Vouched {
 
 /// [`vouched_by_os`] over `anchors`: the system's store, or the roots a test
 /// or the command-line tool's environment names.
+///
+/// **An authority not trusted offline is asked about once more, after the
+/// operating system has had the chance to fetch a root it distributes on
+/// demand** ([`crate::trust::fetch_root`]). This answers for a signing the
+/// reader asked to go online for, and nothing that reads a document comes this
+/// way. A clean Windows holds none of the listed authorities' roots
+/// (`docs/THREAT-MODEL.md` residual 29).
 #[must_use]
 pub fn vouched_under(token: &[u8], now: u64, anchors: crate::trust::Anchors<'_>) -> Vouched {
-    vouched_for(token, crate::trust::Purpose::Timestamping, now, anchors)
+    let purpose = crate::trust::Purpose::Timestamping;
+    let first = vouched_for(token, purpose, now, anchors);
+    if first.trust.standing == crate::trust::Standing::Untrusted
+        && crate::trust::fetch_root(token, &[], now, anchors)
+    {
+        return vouched_for(token, purpose, now, anchors);
+    }
+    first
+}
+
+/// The most signatures one request lets Windows look up a root for. Each lookup
+/// may wait for the network, and a document chooses how many it holds.
+const MOST_ROOT_LOOKUPS: usize = 16;
+
+/// Lets Windows fetch the roots a document's signatures and their timestamps
+/// need, because the reader asked, and answers how many lookups were made.
+///
+/// Reading the document afterwards is what gives the verdict: this says nothing
+/// about any signature. `survey` comes from a worker, and these certificates
+/// meet the OS in this process under the bounds of `docs/THREAT-MODEL.md`
+/// residual 25.
+#[must_use]
+pub fn fetch_roots(survey: &crate::sign_dss::Survey, now: u64) -> usize {
+    let mut asked = 0;
+    let system = crate::trust::Anchors::System;
+    for (_, value) in survey.values.iter().take(MOST_ROOT_LOOKUPS) {
+        asked += usize::from(crate::trust::fetch_root(value, &survey.store, now, system));
+        let token = signed_data(value).ok().and_then(|signed| token_of(&signed));
+        if let Some(token) = token {
+            asked += usize::from(crate::trust::fetch_root(&token, &survey.store, now, system));
+        }
+    }
+    asked
 }
 
 /// [`vouched_under`] for a stated purpose: a timestamp authority's token for

@@ -1105,6 +1105,7 @@ pub fn run() {
             document_links,
             open_web_link,
             document_properties,
+            fetch_signature_roots,
             document_mapping,
             launch_open_event,
             app_version,

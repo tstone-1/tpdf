@@ -17,7 +17,7 @@ use crate::save_outside::Declined;
 /// `verify`, registered.
 pub const COMMAND: Registered = Registered {
     name: "verify",
-    usage: "verify <file.pdf>... [--strict] [--json]",
+    usage: "verify <file.pdf>... [--strict] [--fetch-roots] [--json]",
     summary: "Says whether each signature is intact and whether this computer\n            trusts its signer, in the words the application's properties\n            dialog uses.",
     parse: boxed,
 };
@@ -33,6 +33,9 @@ pub struct Verify {
     /// signature is intact and trusted, and nothing appended after the last
     /// of them touches a page ([`After`]).
     pub strict: bool,
+    /// `--fetch-roots`: where a root may only be missing, let Windows fetch it
+    /// and read the document again. Off, nothing here goes online.
+    pub fetch_roots: bool,
 }
 
 fn boxed(args: &[String]) -> Result<Box<dyn Subcommand>, String> {
@@ -49,11 +52,13 @@ pub fn parse(args: &[String]) -> Result<Verify, String> {
     let mut json = false;
     let mut positional = false;
     let mut strict = false;
+    let mut fetch_roots = false;
     for arg in args {
         match (positional, arg.as_str()) {
             (false, "--") => positional = true,
             (false, "--json") => json = true,
             (false, "--strict") => strict = true,
+            (false, "--fetch-roots") => fetch_roots = true,
             (false, flag) if flag.starts_with('-') && flag != "-" => {
                 return Err(unknown("verify", flag))
             }
@@ -67,6 +72,7 @@ pub fn parse(args: &[String]) -> Result<Verify, String> {
         files,
         json,
         strict,
+        fetch_roots,
     })
 }
 
@@ -527,7 +533,7 @@ pub fn after_text(after: After) -> Option<String> {
 /// Reads one document's signatures through a worker, and what follows the
 /// last of them. A document that could not be read has nothing known to
 /// follow: its error decides the exit code on its own.
-fn verify_one(env: &Env<'_>, path: &Path) -> (report::File, After) {
+fn verify_one(env: &Env<'_>, path: &Path, fetch_roots: bool) -> (report::File, After) {
     let shown = path.display().to_string();
     let failed = |kind: ErrorKind, message: String| {
         (
@@ -556,6 +562,14 @@ fn verify_one(env: &Env<'_>, path: &Path) -> (report::File, After) {
     if properties.limits.locked {
         return failed(ErrorKind::Locked, locked_sentence(&shown));
     }
+    let properties = if fetch_roots && roots_may_be_missing(&properties.signatures) {
+        match read_again_after_fetching(env, &file, len) {
+            Some(read) => read,
+            None => properties,
+        }
+    } else {
+        properties
+    };
     let after = after_last_signature(&properties.signatures);
     (
         report::File {
@@ -570,6 +584,40 @@ fn verify_one(env: &Env<'_>, path: &Path) -> (report::File, After) {
         },
         after,
     )
+}
+
+/// Whether any signature or its timestamp may only be waiting for a root.
+fn roots_may_be_missing(signatures: &[docinfo::Signature]) -> bool {
+    signatures.iter().any(|signature| {
+        let own = signature.trust.as_ref();
+        let stamped = signature.timestamp.as_ref().and_then(|t| t.trust.as_ref());
+        own.into_iter()
+            .chain(stamped)
+            .any(crate::trust::Trust::root_may_be_missing)
+    })
+}
+
+/// `--fetch-roots`: lets Windows fetch the roots, and reads the document in a new
+/// worker. `None` when either step failed, which leaves the offline answer
+/// standing, and that answer is the stricter one.
+fn read_again_after_fetching(
+    env: &Env<'_>,
+    file: &std::fs::File,
+    len: usize,
+) -> Option<docinfo::Properties> {
+    use crate::save::Verifier as _;
+    use std::io::{Read as _, Seek as _};
+    let mut bytes = Vec::with_capacity(len);
+    let mut reading = file;
+    reading.seek(std::io::SeekFrom::Start(0)).ok()?;
+    reading.read_to_end(&mut bytes).ok()?;
+    let worker = env.worker();
+    let survey = worker.survey(&bytes).ok()?;
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |since| since.as_secs());
+    let _asked = crate::longterm::fetch_roots(&survey, now);
+    worker.properties(file, len).ok()
 }
 
 /// Why a document's signatures were not read: it needs a password.
@@ -636,13 +684,26 @@ fn run_verify(
     out: &mut dyn Write,
     err: &mut dyn Write,
 ) -> Result<Exit, Failure> {
-    let (files, after): (Vec<report::File>, Vec<After>) =
-        verify.files.iter().map(|p| verify_one(env, p)).unzip();
+    let (files, after): (Vec<report::File>, Vec<After>) = verify
+        .files
+        .iter()
+        .map(|p| verify_one(env, p, verify.fetch_roots))
+        .unzip();
     let report = verified_after(files, &after);
     for file in &report.files {
         if let Some(error) = &file.error {
             say(err, &format!("{}: {}", env.program, error.message));
         }
+    }
+    if !verify.fetch_roots && report_may_be_missing_a_root(&report) {
+        say(
+            err,
+            &format!(
+                "{}: Windows may not have fetched a root yet: --fetch-roots lets it, which \
+                 contacts Microsoft and sends nothing of the document",
+                env.program
+            ),
+        );
     }
     if verify.json {
         json(out, &report);
@@ -650,6 +711,28 @@ fn run_verify(
         say(out, &verify_text_after(&report, &after));
     }
     Ok(verify_exit(&report, verify.strict))
+}
+
+/// Whether a report holds an answer that may only be waiting for a root:
+/// [`crate::trust::Trust::root_may_be_missing`], over the report's words for it.
+fn report_may_be_missing_a_root(report: &report::Verified) -> bool {
+    let waiting = |trust: &report::TrustReport| {
+        crate::trust::Trust {
+            standing: trust.standing,
+            why: trust.why,
+            store: trust.store,
+            attested_at: String::new(),
+        }
+        .root_may_be_missing()
+    };
+    report
+        .files
+        .iter()
+        .flat_map(|file| &file.signatures)
+        .any(|signature| {
+            let stamped = signature.timestamp.as_ref().and_then(|t| t.trust.as_ref());
+            signature.trust.iter().chain(stamped).any(waiting)
+        })
 }
 
 /// `verify` without `--json`, with nothing known to follow any document's

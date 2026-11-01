@@ -522,6 +522,7 @@ const VALIDATION_CHECK = {
   address: "validation data is refused a timestamp authority that is not http",
   // `viewer_check.py` reads this one by name: with `--signed` it must have run.
   untrusted: "nothing is fetched for a signer this computer does not trust",
+  rootAsked: "asking for a root reads the document again, and a self-issued signer stays not trusted",
 } as const;
 
 /**
@@ -659,10 +660,9 @@ export async function validationDataChecks(path: string): Promise<void> {
   const signedPath = beside("signed");
   const signed = await opened(signedPath);
   if (!signed) {
-    skip(
-      VALIDATION_CHECK.untrusted,
-      "no signed document was put beside the scratch path",
-    );
+    const why = "no signed document was put beside the scratch path";
+    skip(VALIDATION_CHECK.untrusted, why);
+    skip(VALIDATION_CHECK.rootAsked, why);
     return;
   }
   const untrusted = await add(
@@ -676,5 +676,19 @@ export async function validationDataChecks(path: string): Promise<void> {
     untrusted.includes("will not fetch revocation data") &&
     untrusted.includes("nothing was written");
   check(VALIDATION_CHECK.untrusted, unvouched, said(unvouched, untrusted));
+
+  // What the properties dialog's button calls, through the real command and a
+  // real worker. On Windows it may contact Microsoft; nothing else can.
+  try {
+    const answer = await call("fetch_signature_roots", { doc: signed.id, source: signedPath });
+    const standing = answer.signatures.map((s) => s.trust?.standing ?? "none");
+    check(
+      VALIDATION_CHECK.rootAsked,
+      standing.length > 0 && standing.every((s) => s === "untrusted"),
+      `the signers read as ${standing.join(", ") || "nothing"}`,
+    );
+  } catch (e) {
+    check(VALIDATION_CHECK.rootAsked, false, describeThrown(e));
+  }
   await closed(signed.id);
 }

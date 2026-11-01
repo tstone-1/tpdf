@@ -494,7 +494,13 @@ fn every_other_malformed_line_is_refused_with_its_reason() {
             files: vec![PathBuf::from("a.pdf"), PathBuf::from("b.pdf")],
             json: true,
             strict: true,
+            fetch_roots: false,
         }
+    );
+    assert!(
+        verify::parse(&argv("a.pdf --fetch-roots"))
+            .expect("verify")
+            .fetch_roots
     );
 }
 

@@ -2911,7 +2911,7 @@ SOFTWARE.
 | parking_lot | 0.12.5 | MIT OR Apache-2.0 |
 | parking_lot_core | 0.9.12 | MIT OR Apache-2.0 |
 | pbkdf2 | 0.12.2 | MIT OR Apache-2.0 |
-| pdfium-render | 0.9.4 | MIT OR Apache-2.0 |
+| pdfium-render | 0.9.5 | MIT OR Apache-2.0 |
 | pem-rfc7468 | 0.7.0 | Apache-2.0 OR MIT |
 | percent-encoding | 2.3.2 | MIT OR Apache-2.0 |
 | phf | 0.13.1 | MIT |

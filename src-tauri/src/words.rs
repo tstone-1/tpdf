@@ -100,6 +100,18 @@ pub fn doubt_about(doubt: Doubt, computer: &str, whose: &str) -> String {
     }
 }
 
+/// What follows a "not trusted" that may only mean a root is not here yet, or
+/// nothing. `integrity.ts`'s `rootMayBeMissing`. Only in a verdict about a document,
+/// never in a refusal to sign, where Windows has already been asked.
+fn root_may_be_missing(trust: &Trust) -> &'static str {
+    if trust.root_may_be_missing() {
+        " Windows fetches many roots only when they are needed, so this one may simply not \
+         be on this PC yet."
+    } else {
+        ""
+    }
+}
+
 /// The trust row's value: `integrity.ts`'s `trustRow(trust, from, until).value`.
 ///
 /// `from` and `until` are the signer's certificate's dates as the certificate
@@ -155,7 +167,8 @@ pub fn trust_sentence(trust: &Trust, from: &str, until: &str) -> String {
         ),
         Standing::Untrusted => format!(
             "not trusted{judged} — {why}. So nothing establishes that the key belongs to the \
-             person the certificate names."
+             person the certificate names.{}",
+            root_may_be_missing(trust)
         ),
         Standing::Unchecked => {
             format!("not checked — {why}. This says nothing either way about who holds the key.")
@@ -573,9 +586,10 @@ pub fn authority_sentence(trust: &Trust, from: &str, until: &str) -> String {
                 format!(" on {from}")
             }
         ),
-        Standing::Untrusted => {
-            format!("not trusted{judged} — {why}. So nothing establishes who attests this time.")
-        }
+        Standing::Untrusted => format!(
+            "not trusted{judged} — {why}. So nothing establishes who attests this time.{}",
+            root_may_be_missing(trust)
+        ),
         Standing::Unchecked => format!(
             "not checked — {why}. This says nothing either way about who attests this time."
         ),
