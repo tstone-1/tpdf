@@ -73,7 +73,8 @@ you do not need to have diagnosed it.
   revocation request that the signing dialog did not name before the signing, or that
   no flag of the command asked for. The dialog opens with a timestamp authority
   selected and says which. Verification and opening a document must not contact
-  certificate authorities.
+  certificate authorities, or make Windows fetch a root, unless the reader pressed the
+  properties dialog's button or passed `verify --fetch-roots`.
 - Bypassing CLI/API input preservation, output replacement consent, edit-plan
   bounds or signature-invalidation consent. A failed split can leave the parts
   already published, and a timed-out Python call does not promise rollback;
