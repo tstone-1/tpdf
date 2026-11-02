@@ -2,6 +2,39 @@
 
 What was run for each release, what passed, and what was not run. The record of a new release goes at the top. Moved here verbatim from `BUILD.md` on 2026-10-23, which indexes this file.
 
+**26.11.1 verification and publication, 2026-11-02:** prepared on the Windows development machine.
+Step 1 took every update within its range except `zip`: `cargo update` moved it to 9.2.2, and the
+first `cargo update -p zip --precise 9.1.3` in `src-tauri` printed `Downgrading` and left
+`Cargo.lock` at 9.2.2; a second run with `-p zip@9.2.2` wrote it, read back from the file.
+`check_pdfium_age.py` found the pin at the head of 8103. The release also took signing into a
+field that carries its own `/Lock`, built during the cycle after a review form could not be
+signed; the first gate run on that tree found three mutation rows aimed at the replaced lines, a
+command-line fixture whose rich-text field had no `/RV`, and formatting, and after those all 34
+gates passed. `check_linux.py` passed. `window_checks.py` passed 17 of 17 on the second Mac
+(`run_on_mac.py`, `--wrap '~/bin/mac-build-env.zsh --'`) on the final tree, and 16 of 17 on
+Windows 11: *marks on text* failed once with `Failed to execute 'write' on 'Clipboard': Document
+is not focused`, and passed 34 of 34 run alone. Step 7 in the mutation worktree:
+`mutate_python.py` 38/38, `mutate_frontend.py --near v26.11.0` 54/54, `mutate_rust.py --near
+v26.11.0` 35/35. The locally built installer carried `tpdf_shell.dll`, and its `tpdf-cli`
+answered 26.11.1 and verified `incr-signed.pdf` with the development engine hidden. CI passed all
+three jobs on `2901c876` (run 41443200379) and `Audit` passed (run 41443200406). No rehearsal:
+`release.yml` changed only in its notes. Release run 41447356426 skipped its gates and left a
+draft of eight files whose `latest.json` offered 26.11.1. On the draft's files: the installer read
+as `Valid`, timestamped by Certum, and passed `installed_check.py` 26/26 on the Windows build
+machine; the `.dmg`'s app was accepted as Notarized Developer ID and stapled, and its `tpdf-cli`
+(Developer ID, `runtime`) answered 26.11.1 and verified the signed fixture.
+`publish_release.py v26.11.1 --publish` published it; without authentication `releases/latest` is
+v26.11.1 with 8 assets, and the `.dmg`, `-setup.exe`, `.deb`, AppImage, updater bundle and
+`latest.json` answer 200. An installed 26.11.0 updated itself: `update_check.py` 18/18 on the
+build machine, and `update_check_mac.py` 12/12 on the second Mac over ssh, and each `--control
+no-press` failed its seven checks and nothing else. **The first `update_check.py` run, minutes
+after publishing, failed one check**: the window offered no update, while the script's own read of
+`latest.json` already named 26.11.1; the run after it passed with nothing changed. The cask went to
+26.11.1; `brew audit --cask --online` was clean and `brew livecheck` reads 26.11.1. **Not run:**
+`print-probe` and `redact-reach-probe` (no printing or OCR code changed), `menu_check.py` and
+`save_check.py` on the `.dmg`, `clean_windows_check.py`, and step 7's pass after the release
+(`--since v26.11.0 --resume`). The winget pull request stays where it was.
+
 **26.11.0 verification and publication, 2026-11-01:** prepared on the Windows development machine,
 with Windows Sandbox enabled there for `clean_windows_check.py`. Step 1 took every update within its
 range except `zip`: `cargo update` moved it to 9.2.1 and it was put back to 9.1.3 with `--precise`
