@@ -1029,10 +1029,14 @@ starts at 0 and increments within the month.
    The fuzz package has a lockfile of its own, and `Audit` reads both. 26.10.19 updated only
    the application's: rustls moved to 0.23.46 there and stayed at 0.23.45 in the fuzz one,
    and four advisories published that week failed `Audit` on the release commit.
-   - **`zip` 9.2** is held at 9.1.3 (26.10.28): only `tauri-plugin-updater` names it, and a
-     release moving the updater's crates has to run step 12 on the new updater before the tag.
-     Take it in a release that does. The commands above move it anyway (9.2.1 on 26.11.0), so
-     afterwards run `cargo update -p zip --precise 9.1.3` in `src-tauri` and in `src-tauri/fuzz`.
+   - **`zip` moves with the routine updates; it is not held.** Only `tauri-plugin-updater`
+     names it, compiled on Windows only, and its `extract` calls it only when the download
+     starts with zip's magic bytes (`infer::archive::is_zip`, `updater.rs` in 2.14.1). tpdf's
+     Windows update is the NSIS `-setup.exe`, which starts with `MZ` and goes to `extract_exe`,
+     so no `zip` version reaches tpdf's update path. It was held at 9.1.3 from 26.10.28 to
+     26.11.1 on the premise that it was updater code needing step 12 before the tag; that held
+     for the updater crate itself, which stays pinned (below), and not for this one. Re-read
+     `extract` when the updater moves, and hold `zip` again if tpdf ever ships a `.zip` update.
    - `toml`, `toml_datetime`, `toml_edit`, `brotli-decompressor`, `generic-array` and
      `rand_chacha` are not named in `Cargo.toml`; what names them pins them.
    - **`windows-core` 0.100** is held by Tauri: `tao`, `wry` and `webview2-com` name 0.62.

@@ -17,6 +17,13 @@ as *downloadable*, while the release sat as a draft that GitHub showed to nobody
 are given now because they are different facts, and only the second one means a reader can
 have the binary.)
 
+## [26.11.2] - Unreleased
+
+### Changed
+
+- `zip` 9.2.2 (from 9.1.3). Only the updater names it, and only for an update delivered as a
+  `.zip`; tpdf's Windows update is the `-setup.exe`, so its update path never reaches it.
+
 ## [26.11.1] - 2026-11-02
 
 ### Added
