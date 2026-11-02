@@ -760,6 +760,7 @@ hop through the index.
 - A file added with `git add -N` cannot be stashed, so `run_on_mac.py` sent nothing
 - A new window phase is not run at a release until `window_checks.py` lists it
 - A mutant that failed to compile once was a busy machine, and `--resume` kept the verdict
+- A window check that copies to the clipboard fails when the window loses focus, and passes run alone
 
 ## Windows and portability
 - The gates had never run on the platform where they fail
@@ -27169,3 +27170,18 @@ for its whole life. State a reader expects to find on coming back belongs in `Ta
 Saving is the same again and further: `saveDocument` reopens the written file through
 `reopenAfterWrite`, without the kept tab, so even `TabState` does not cross it. Measurements go
 at that point on purpose, and the README says so.
+
+### A window check that copies to the clipboard fails when the window loses focus, and passes run alone
+
+26.11.1, 2026-11-02, Windows 11: `window_checks.py` passed 16 of 17 phases, and *marks on
+text* failed one check, *a region dragged out is copied, and the window says its size*
+(`src/lib/markcheck.ts`). The window said `The region was not copied: Failed to execute
+'write' on 'Clipboard': Document is not focused.` That is the web view refusing
+`navigator.clipboard.write` because the document did not have focus at that moment. It is
+not a fault in the copy. `--only "marks on text"` passed 34 of 34 with nothing changed.
+What took the focus is unmeasured; the run takes the screen for about ten minutes, and
+anything that raises a window in that time can do it.
+
+Read that message as a harness condition first: run the phase alone, and treat a second
+failure, or the same failure alone, as a finding about the copy. The application's own
+message for this case names the cause, which is why it could be read from the transcript.
