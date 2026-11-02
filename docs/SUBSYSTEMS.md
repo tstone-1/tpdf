@@ -70,6 +70,19 @@ not change under it. Nothing here stops a program from writing to the file: an o
 of a locked document shows the signed-save warning in its own words (`signedsave.ts`) and
 goes ahead if the reader says so.
 
+**A lock the field's author asked for (2026-11-02).** A signature field may carry its own
+`/Lock` (`/Action /All`, or `/Include` or `/Exclude` with `/Fields`, and an optional `/P`).
+Signing that field repeats it in the signature as one `/FieldMDP` transform over the catalog,
+as pyHanko's `fieldmdp_reference_dictionary` does: the action, the list unless the action is
+`All`, `/V /1.2`, and `/P` when the lock gives one (`sign_prepare::FieldLock`). The field's
+`/Lock` stays as written, and the fields are not made read-only, as pyHanko does not. A lock
+that cannot be read is refused rather than half repeated, and so is one in a certified
+document, for the reason above. A field lock at `/P 1` locks the document, so
+`Unsigned::locked` is set and the read-back looks for it. With the signer's own lock as well,
+the signer's (every field, level 1) is written in both places, since it covers the field's.
+`verify` reports a lock's level and does not compare field values across revisions, for this
+lock as for any other writer's.
+
 **The window's defaults for a signing (2026-10-13)**: visible, a timestamp from the authority
 `signtimestamp.ts` preselects for a reader who has never chosen, and the lock question with no answer. The toolbar's
 *Sign* button is `file.signDocument`. `edit.addSignature`, the picture with no certificate, is
@@ -171,7 +184,9 @@ answers in the edit journal and `Plan.forms`. Every save carrying answers takes
 an explicit-appearance rewrite; ordinary save, copy, print and raster redaction
 share that writer. Text fields, checkboxes, radio groups, dropdowns (including
 editable choices), and single/multiple-selection lists are supported. XFA,
-read-only, password, file-select, comb and rich-text controls are not editable.
+read-only, password, file-select, comb and rich-text controls are not editable; a
+rich-text control is one with a `/RV` value, since Acrobat sets the rich-text flag on
+fields that hold only plain text.
 Fields are made by `formfields.rs`: `Plan.new_fields` carries them to the same
 rewrite, which adds them before it writes answers. A new field is one object that is
 both field and widget, with its own appearance, appended to the page's annotations and

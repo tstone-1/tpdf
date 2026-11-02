@@ -3793,8 +3793,11 @@ each: the plain one leaves out by type name, the one with object streams only a 
 typed `ObjStm`. **Not covered:** the writer with object streams keeps an unreferenced
 linearization dictionary of the old file in a smaller copy (`qpdf` reads the copy as not
 linearized). **Also not
-covered:** a signature field's `/Lock` and `/SV` are not read; signing such a field sets
-the signature and locks nothing.
+covered:** a field's lock binds only the validators that read it: since 2026-11-02 signing a
+field with a `/Lock` repeats that lock as a `/FieldMDP` transform (an `/SV` with a required
+constraint is still refused), and the locked fields are not made read-only, so a writer that
+ignores the transform can still change them, and `verify` does not compare field values
+across revisions.
 
 ### T10 — Asking a timestamp authority, added 2026-09-28
 

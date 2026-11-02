@@ -17,7 +17,7 @@ as *downloadable*, while the release sat as a draft that GitHub showed to nobody
 are given now because they are different facts, and only the second one means a reader can
 have the binary.)
 
-## [26.11.1] - Unreleased
+## [26.11.1] - 2026-11-02
 
 ### Added
 
@@ -27,6 +27,20 @@ have the binary.)
   scale was typed with and at least one. Each page has its own scale. In the View menu, the
   Draw menu and the palette. On screen only, until the document is closed, saved or reloaded:
   nothing is written to the file, so a measurement cannot disturb a digital signature.
+- **A signature field that locks other fields can be signed.** A form's author can ask that
+  signing a field locks the form's other fields (`/Lock`); tpdf refused every such field, so a
+  review form whose signature field locks all the others could not be signed at all. The
+  signature now states the lock the field asks for, as a `/FieldMDP` transform it covers, so a
+  validator such as Acrobat reports a later change to a locked field. A lock tpdf cannot read,
+  or one in a certified document, is still refused and says so.
+
+### Fixed
+
+- **Text fields made in Acrobat with "Allow rich text formatting" can be filled.** Acrobat
+  marks such a field as rich text even when it holds no formatted text, and tpdf refused every
+  one: on a review form with seven text fields only its dropdown could be filled. A field is
+  now refused as rich text only when it holds formatted text (`/RV`), since writing the plain
+  answer would leave the formatted copy saying the old one.
 
 ## [26.11.0] - 2026-11-01
 

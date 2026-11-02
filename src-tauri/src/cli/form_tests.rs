@@ -205,7 +205,14 @@ fn every_reason_a_field_is_not_editable_is_named_and_refused() {
         (flagged(1 << 13), NotEditable::Password),
         (flagged(1 << 20), NotEditable::FileSelect),
         (flagged(1 << 24), NotEditable::Comb),
-        (flagged(1 << 25), NotEditable::RichText),
+        (
+            acme_with(|doc, field, _| {
+                let field = doc.get_dictionary_mut(field).expect("field");
+                field.set("Ff", 1 << 25);
+                field.set("RV", Object::string_literal("<body><p>old</p></body>"));
+            }),
+            NotEditable::RichText,
+        ),
         (
             acme_with(|doc, field, _| {
                 // One of its two widgets hidden: the field is not filled at all.
@@ -265,6 +272,13 @@ fn every_reason_a_field_is_not_editable_is_named_and_refused() {
     let plain = acme_with(|_, _, _| {});
     assert!(fields::report("acme.pdf", &plain).fields[0].editable);
     assert!(resolve(&plain, &given(r#"{"ACME.answer": "new"}"#)).is_ok());
+    // The rich-text flag with no `/RV` is what Acrobat writes for any field made
+    // with "Allow rich text formatting" ticked; its answer is plain `/V`, so it
+    // is filled like the control. Only the `/RV` above makes it rich text.
+    let flag_only = flagged(1 << 25);
+    let report = fields::report("acme.pdf", &flag_only);
+    assert!(report.fields[0].editable, "{:?}", report.fields[0].why);
+    assert!(resolve(&flag_only, &given(r#"{"ACME.answer": "new"}"#)).is_ok());
     // And a sentence nobody named is `other`, not a guess.
     assert_eq!(fields::not_editable("Something new"), NotEditable::Other);
 }

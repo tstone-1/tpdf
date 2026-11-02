@@ -296,6 +296,13 @@ pub(super) fn every_control_pdf() -> Vec<u8> {
             "Ff" => flags, "F" => annotation_flags, "Rect" => rect(240, y, 390, y + 20),
             "V" => text("kept"), "MaxLen" => 6,
         });
+        if name == "rich" {
+            // The flag alone is a plain text field (Acrobat sets it on fields
+            // that never held formatted text); rich text is a field with `/RV`.
+            doc.get_dictionary_mut(field)
+                .expect("the field")
+                .set("RV", text("<body><p>kept</p></body>"));
+        }
         first.push(field);
         fields.push(field);
     }

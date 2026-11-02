@@ -254,8 +254,10 @@ export default {
   "`{name}` is read-only, so it cannot be signed": "„{name}“ ist schreibgeschützt und kann deshalb nicht signiert werden",
   "the page the signature field is on is not in this document":
     "die Seite, auf der das Signaturfeld liegt, ist nicht in diesem Dokument",
-  "`{name}` asks its signer to lock other fields of the form, which tpdf does not do, so it does not sign this field":
-    "„{name}“ verlangt von seinem Unterzeichner, andere Felder des Formulars zu sperren, was tpdf nicht tut, daher signiert es dieses Feld nicht",
+  "`{name}` asks its signer to lock fields of the form in a way tpdf cannot read, so it does not sign this field":
+    "„{name}“ verlangt von seinem Unterzeichner, Felder des Formulars auf eine Weise zu sperren, die tpdf nicht lesen kann, daher signiert es dieses Feld nicht",
+  "This document is certified, and its signature field asks for a lock beside the certification. No reader has been measured on the two together, so tpdf does not sign this field.":
+    "Dieses Dokument ist zertifiziert, und sein Signaturfeld verlangt neben der Zertifizierung eine Sperre. Kein Programm ist an beidem zusammen gemessen worden, daher signiert tpdf dieses Feld nicht.",
   "`{name}` sets requirements its signature has to meet, which tpdf does not check, so it does not sign this field":
     "„{name}“ stellt Anforderungen an seine Signatur, die tpdf nicht prüft, daher signiert es dieses Feld nicht",
   "a signature preview is between {least} and {PREVIEW_MAX_SIDE} points a side":

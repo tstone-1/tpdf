@@ -504,8 +504,9 @@ measured the Windows render constants come out 1.5–1.8x worse.
   run *Sign in the signature field…*, which takes the first empty one, and the signature
   goes into that field. A visible signature is then drawn in the field's rectangle, so
   nothing is dragged. *Add a form field: signature* makes such a field. A field that asks
-  its signer to lock other fields of the form, or that sets requirements its signature has
-  to meet, is not signed: tpdf does neither, and says so.
+  its signer to lock fields of the form is signed with that lock, which the signature
+  states so a validator reports a later change to a locked field; a field that sets
+  requirements its signature has to meet is not signed: tpdf does not check them, and says so.
   On Linux the certificates are those on a smart card or token, read through p11-kit, and
   those in certificate files you added with *Add a certificate file for signing…*, which
   asks the file's password once and remembers the file but not the password or the key.
@@ -1303,8 +1304,8 @@ the page as it is displayed:
   signs an empty signature field the document already has, one `tpdf form` or another
   program made: the signature is written into that field and no field is added, and with
   `--visible` it is drawn in the field's rectangle, so `--rect`, `--page` and `--anchor`
-  are left out. A field that asks its signer to lock other fields, or sets requirements
-  its signature has to meet, is refused. `tpdf fields` lists the names. `--text` draws your own lines instead of the standard ones: `{name}`, `{date}`,
+  are left out. A field that asks its signer to lock fields is signed with that lock; one
+  that sets requirements its signature has to meet is refused. `tpdf fields` lists the names. `--text` draws your own lines instead of the standard ones: `{name}`, `{date}`,
   `{reason}` and `{location}` are replaced by the certificate's name, the signing time, and
   the reason and location you gave, `{{` and `}}` are a brace each, the two characters `\n`
   start a new line, and `--text` may be given more than once, each adding lines. With
@@ -1448,7 +1449,7 @@ the page as it is displayed:
   them: each one's full name (its ancestors' names and its own, joined by periods — the name
   `fill` takes), its kind, its current value in the form `fill` takes an answer, the options of
   a radio group or a choice, and whether it can be filled and, when not, why: read-only, a
-  password, file-select, comb or rich-text field, hidden, or a kind tpdf does not fill, such as
+  password, file-select, comb or rich-text field (one holding formatted text), hidden, or a kind tpdf does not fill, such as
   a signature field. A document with an XFA form is refused: tpdf neither reads nor fills one.
 - **`fill <in.pdf> -o <out.pdf> --values <answers.json>`** fills the form and writes the result
   as a new file; `--values -` reads the answers from standard input. An answer is a string for

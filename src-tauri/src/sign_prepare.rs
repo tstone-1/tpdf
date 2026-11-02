@@ -68,10 +68,12 @@
 //!   revision breaks it, and a second signature is a further revision.
 //! - **A document a signature has locked** against any change, for the same
 //!   reason.
-//! - **A field that asks something of its signer** (`/Lock`, or an `/SV` with
-//!   a constraint marked required), when the signature goes into a field the
-//!   document already has. [`asked_of_the_signer`] says what each asks and why
-//!   signing without doing it is the wrong answer.
+//! - **A field that asks what this does not do** (an `/SV` with a constraint
+//!   marked required, a `/Lock` that cannot be read, or a `/Lock` in a
+//!   certified document), when the signature goes into a field the document
+//!   already has. A `/Lock` that can be read is honoured: the signature
+//!   repeats it as a `/FieldMDP` transform. [`asked_of_the_signer`] says what
+//!   each asks and why signing without doing it is the wrong answer.
 //! - **A placeholder that is not where it was put.** The two holes are found in
 //!   the serialised update by their bytes, and exactly one of each must be
 //!   there. A cloned page dictionary is the document's own bytes, and a string
@@ -343,6 +345,8 @@ struct Target {
     page: ObjectId,
     /// The widget's rectangle, in the page's own space.
     rect: [f64; 4],
+    /// What the field's own `/Lock` asks the signature to lock.
+    lock: Option<FieldLock>,
 }
 
 /// The empty signature field called `name`.
@@ -373,7 +377,7 @@ fn empty_field(document: &Document, pages: &[ObjectId], name: &str) -> Result<Ta
     if crate::forms::integer(document, widget.object, b"Ff") & 1 != 0 {
         return Err(said!("`{name}` is read-only, so it cannot be signed"));
     }
-    asked_of_the_signer(document, (widget.widget.0, widget.widget.1), name)?;
+    let lock = asked_of_the_signer(document, (widget.widget.0, widget.widget.1), name)?;
     let page = *pages
         .get(widget.page as usize)
         .ok_or_else(|| said!("the page the signature field is on is not in this document"))?;
@@ -382,20 +386,79 @@ fn empty_field(document: &Document, pages: &[ObjectId], name: &str) -> Result<Ta
         widget: (widget.widget.0, widget.widget.1),
         page,
         rect: widget.rect,
+        lock,
     })
 }
 
-/// Refuses a field whose author asked something of its signer that this
+/// The most fields a field's `/Lock` may name for this writer to repeat it.
+///
+/// A bound on hostile input, not a limit any form reaches: the list is copied
+/// into the signature dictionary, and a form names the fields it has.
+const MAX_LOCKED_FIELDS: usize = 4096;
+
+/// The longest field name a `/Lock` may list, in bytes, on the same terms.
+const MAX_LOCKED_NAME: usize = 4096;
+
+/// What a signature field's own `/Lock` asks its signer to lock (PDF 32000-1
+/// §12.7.4.5, Table 233; PDF 32000-2 §12.7.5.5): every field, the fields it
+/// names, or every field but those, and the DocMDP level it leaves the
+/// document at when it gives one.
+///
+/// Acrobat's form editor writes one when the author ticks *Mark as read-only*
+/// for the fields a signature is to freeze, and a review form with
+/// `/Action /All` was what made this more than a refusal (2026-11-02).
+#[derive(Debug, Clone, PartialEq)]
+struct FieldLock {
+    /// `All`, `Include` or `Exclude`.
+    action: &'static str,
+    /// The names it lists, as hex text strings with the bytes the form wrote.
+    /// Empty for `All`, which lists none.
+    fields: Vec<Object>,
+    /// `/P`, 1 to 3, when the lock gives a level.
+    level: Option<i64>,
+}
+
+impl FieldLock {
+    /// The statement inside the signature dictionary, where the signature
+    /// covers it: a `/FieldMDP` transform over the catalog repeating the lock,
+    /// as pyHanko's `fieldmdp_reference_dictionary` writes it for a field's
+    /// lock, and in the order [`lock_reference`] writes its own.
+    fn reference(&self, root: ObjectId) -> Object {
+        let mut params = dictionary! {
+            "Type" => "TransformParams",
+            "Action" => Object::Name(self.action.as_bytes().to_vec()),
+        };
+        if self.action != "All" {
+            params.set("Fields", Object::Array(self.fields.clone()));
+        }
+        params.set("V", "1.2");
+        if let Some(level) = self.level {
+            params.set("P", level);
+        }
+        Object::Array(vec![Object::Dictionary(dictionary! {
+            "Type" => "SigRef",
+            "TransformMethod" => "FieldMDP",
+            "TransformParams" => params,
+            "Data" => root,
+        })])
+    }
+}
+
+/// Reads what the field's author asked of its signer, and refuses what this
 /// writer does not do.
 ///
 /// PDF 32000-1 §12.7.4.5 gives a signature field two entries for that:
 ///
 /// - `/Lock` names fields the signature is to lock. A signer honours it by
-///   writing a `/FieldMDP` transform into the signature's `/Reference` and
-///   making those fields read-only; [`build`] writes neither. Signed here, the
-///   field would read as signed while the fields its author meant to freeze
-///   stayed open, and a validator that reads the lock reports the signature
-///   as not what the form asked for.
+///   writing a `/FieldMDP` transform into the signature's `/Reference`, which
+///   [`build`] does from what this returns: the signature then states the
+///   lock, under its own coverage, and a validator that reads it reports a
+///   later change to a locked field as one the signer did not permit. A lock
+///   this cannot read is refused rather than half-repeated: an action other
+///   than the three, a list that is not one of text strings, or a level
+///   outside 1 to 3. **The fields are not made read-only here**, as pyHanko
+///   does not; the lock is the transform, and every reader that enforces it
+///   reads it there. Until 2026-11-02 every `/Lock` was refused.
 /// - `/SV`, the seed value, constrains the signature itself: the filter, the
 ///   digest, the certificate, the reasons allowed, whether a timestamp is
 ///   required. Its `/Ff` says which of them are **required**; with none set
@@ -405,18 +468,27 @@ fn empty_field(document: &Document, pages: &[ObjectId], name: &str) -> Result<Ta
 ///
 /// Read from the widget up through `/Parent`, which covers a field written
 /// apart from its widget. Neither entry is inheritable by the specification;
-/// an ancestor carrying one is refused too, which is the direction to be
-/// wrong in. A `null` is no entry.
-fn asked_of_the_signer(document: &Document, widget: ObjectId, name: &str) -> Result<(), String> {
+/// an ancestor carrying one is read too, which is the direction to be wrong
+/// in. A `null` is no entry.
+fn asked_of_the_signer(
+    document: &Document,
+    widget: ObjectId,
+    name: &str,
+) -> Result<Option<FieldLock>, String> {
     let asked = |key: &[u8]| {
-        crate::forms::inherited(document, widget, key).filter(|o| !matches!(o, Object::Null))
+        crate::forms::inherited(document, widget, key)
+            .map(|o| resolve(document, o))
+            .filter(|o| !matches!(o, Object::Null))
     };
-    if asked(b"Lock").is_some() {
-        return Err(said!(
-            "`{name}` asks its signer to lock other fields of the form, which tpdf does not \
-             do, so it does not sign this field"
-        ));
-    }
+    let lock = match asked(b"Lock") {
+        None => None,
+        Some(lock) => Some(field_lock_of(document, lock).ok_or_else(|| {
+            said!(
+                "`{name}` asks its signer to lock fields of the form in a way tpdf cannot \
+                 read, so it does not sign this field"
+            )
+        })?),
+    };
     if let Some(seed) = asked(b"SV") {
         // A seed value that is not a dictionary cannot be read for what it
         // requires, so it is taken to require something.
@@ -433,7 +505,51 @@ fn asked_of_the_signer(document: &Document, widget: ObjectId, name: &str) -> Res
             ));
         }
     }
-    Ok(())
+    Ok(lock)
+}
+
+/// A `/Lock` dictionary as [`FieldLock`], or `None` for one that cannot be
+/// repeated as written: see [`asked_of_the_signer`].
+fn field_lock_of(document: &Document, lock: &Object) -> Option<FieldLock> {
+    let lock = lock.as_dict().ok()?;
+    let action = match resolve(document, lock.get(b"Action").ok()?)
+        .as_name()
+        .ok()?
+    {
+        b"All" => "All",
+        b"Include" => "Include",
+        b"Exclude" => "Exclude",
+        _ => return None,
+    };
+    let fields = if action == "All" {
+        Vec::new()
+    } else {
+        let listed = resolve(document, lock.get(b"Fields").ok()?)
+            .as_array()
+            .ok()?;
+        if listed.len() > MAX_LOCKED_FIELDS {
+            return None;
+        }
+        listed
+            .iter()
+            .map(|entry| match resolve(document, entry) {
+                Object::String(bytes, _) if bytes.len() <= MAX_LOCKED_NAME => {
+                    Some(Object::String(bytes.clone(), StringFormat::Hexadecimal))
+                }
+                _ => None,
+            })
+            .collect::<Option<Vec<_>>>()?
+    };
+    let level = match lock.get(b"P").ok().map(|p| resolve(document, p)) {
+        None | Some(Object::Null) => None,
+        Some(Object::Integer(level)) if (1..=3).contains(level) => Some(*level),
+        Some(_) => return None,
+    };
+    Some(FieldLock {
+        action,
+        fields,
+        level,
+    })
 }
 
 /// A visible signature's appearance, drawn before anything is signed.
@@ -615,6 +731,22 @@ fn build(
         Some(name) => Some(empty_field(&prev, &pages, name)?),
         None => None,
     };
+    // The lock the field's author asked for, repeated in the signature. A
+    // lock asked of the signer (`details.lock`) is every field at level 1,
+    // which covers whatever the field asks, and is written instead.
+    let asked = target
+        .as_ref()
+        .and_then(|target| target.lock.as_ref())
+        .filter(|_| !details.lock);
+    // The same pair as above, asked by the form rather than the signer, and
+    // refused for the same reason.
+    if asked.is_some() && certification(&prev) > 0 {
+        return Err(said!(
+            "This document is certified, and its signature field asks for a lock beside \
+             the certification. No reader has been measured on the two together, so tpdf \
+             does not sign this field."
+        ));
+    }
     // The page, its rectangle in page space and its turns, for a visible one.
     let placed = match (visible, &target) {
         (None, _) => None,
@@ -665,9 +797,16 @@ fn build(
     let mut incremental = IncrementalDocument::create_from(original, prev);
     let at = std::time::UNIX_EPOCH + std::time::Duration::from_secs(signed_at);
     let date = crate::save::pdf_date(at);
+    let reference = if details.document_timestamp {
+        None
+    } else if details.lock {
+        Some(lock_reference(root))
+    } else {
+        asked.map(|lock| lock.reference(root))
+    };
     let signature = incremental
         .new_document
-        .add_object(signature_dictionary(&date, details, root));
+        .add_object(signature_dictionary(&date, details, reference));
     let drawn = placed.map(|(_, rect, turns, visible)| {
         let lines = appearance::words(&visible.name, &date, &visible.options);
         let form = appearance::stream(
@@ -752,7 +891,10 @@ fn build(
         range,
         digest,
         field,
-        locked: details.lock && !details.document_timestamp,
+        // Level 1 from the field's own lock locks the document as `--lock`
+        // does, and the read-back is to find it so.
+        locked: !details.document_timestamp
+            && (details.lock || asked.is_some_and(|lock| lock.level == Some(LOCKED))),
     })
 }
 
@@ -953,9 +1095,10 @@ fn lock_reference(root: ObjectId) -> Object {
     })])
 }
 
-/// The signature dictionary with both holes still unfilled. `root` is the
-/// catalog, which a lock's transform names as what it is about.
-fn signature_dictionary(date: &str, details: &Details, root: ObjectId) -> Dictionary {
+/// The signature dictionary with both holes still unfilled. `reference` is a
+/// lock's `/Reference`, [`lock_reference`] or [`FieldLock::reference`], when
+/// the signature states one.
+fn signature_dictionary(date: &str, details: &Details, reference: Option<Object>) -> Dictionary {
     let mut sig = Dictionary::new();
     if details.document_timestamp {
         // No `/M`: the time is the token's, and a second, unchecked date
@@ -994,8 +1137,8 @@ fn signature_dictionary(date: &str, details: &Details, root: ObjectId) -> Dictio
     if let Some(contact) = &details.contact {
         sig.set("ContactInfo", text_string(contact));
     }
-    if details.lock && !details.document_timestamp {
-        sig.set("Reference", lock_reference(root));
+    if let Some(reference) = reference {
+        sig.set("Reference", reference);
     }
     sig
 }

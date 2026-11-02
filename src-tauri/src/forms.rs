@@ -242,7 +242,8 @@ pub const PASSWORD: &str = "Password fields are not supported yet";
 pub const FILE_SELECT: &str = "File-select fields are not supported yet";
 /// `/Ff` bit 25, on a text field.
 pub const COMB: &str = "Comb fields are not supported yet";
-/// `/Ff` bit 26, on a text field.
+/// `/Ff` bit 26, on a text field that holds a rich value (`/RV`); the bit
+/// without one is filled as plain text.
 pub const RICH_TEXT: &str = "Rich-text fields are not supported yet";
 /// The widget's `/F` says hidden, invisible or no-view.
 pub const HIDDEN: &str = "This field is hidden";
@@ -664,7 +665,14 @@ pub fn scan(doc: &Document) -> Result<Form, String> {
                 Some(said!("File-select fields are not supported yet"))
             } else if text && flags & (1 << 24) != 0 {
                 Some(said!("Comb fields are not supported yet"))
-            } else if text && flags & (1 << 25) != 0 {
+            } else if text && flags & (1 << 25) != 0 && inherited(doc, object, b"RV").is_some() {
+                // The flag alone is not rich text: Acrobat sets it on every
+                // field made with "Allow rich text formatting" ticked, and a
+                // field never given formatted text has no `/RV` and holds its
+                // answer in `/V` alone, so it fills like any text field
+                // (a QA-label form had seven such fields and none fillable).
+                // A field with `/RV` is refused, because writing `/V` would
+                // leave the formatted copy saying the old answer.
                 Some(said!("Rich-text fields are not supported yet"))
             } else if annotation_flags & (1 | 2 | 32) != 0 {
                 Some(said!("This field is hidden"))

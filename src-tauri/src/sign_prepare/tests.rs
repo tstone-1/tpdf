@@ -2564,9 +2564,11 @@ fn asking(entry: &str, value: Object) -> Vec<u8> {
     bytes
 }
 
-/// A field whose author asked its signer to lock fields, or set requirements
-/// the signature has to meet, is refused: neither is done here, and signing
-/// it would say the form's request was met.
+/// A field whose author asked its signer to lock fields in a way that cannot
+/// be read, or set requirements the signature has to meet, is refused:
+/// neither is done here, and signing it would say the form's request was met.
+/// A lock that can be read is honoured:
+/// `a_lock_the_field_asks_for_is_repeated_inside_the_signature`.
 #[test]
 fn a_field_that_asks_something_of_its_signer_is_refused() {
     use lopdf::dictionary;
@@ -2576,9 +2578,28 @@ fn a_field_that_asks_something_of_its_signer_is_refused() {
     let signed = |bytes: Vec<u8>| {
         prepare_noted(bytes, NOW, None, None, &into("Approved")).expect("prepared")
     };
-    let lock = dictionary! { "Type" => "SigFieldLock", "Action" => "All" };
-    let why = refused(asking("Lock", lock.clone().into()));
-    assert!(why.contains("`Approved` asks its signer to lock"), "{why}");
+    // A lock that cannot be repeated as written: an action the specification
+    // does not name, a list missing or holding something but text, a level
+    // outside 1 to 3, or not a dictionary at all.
+    let lock = dictionary! { "Type" => "SigFieldLock", "Action" => "Some" };
+    for unreadable in [
+        Object::Dictionary(lock.clone()),
+        dictionary! { "Action" => "Include" }.into(),
+        dictionary! { "Action" => "Exclude", "Fields" => vec![Object::Integer(1)] }.into(),
+        dictionary! { "Action" => "All", "P" => 4 }.into(),
+        Object::Integer(1),
+    ] {
+        let why = refused(asking("Lock", unreadable.clone()));
+        assert!(
+            why.contains("`Approved` asks its signer to lock fields of the form in a way"),
+            "{unreadable:?}: {why}"
+        );
+    }
+    // The control: the same field with a lock that can be read is signed.
+    signed(asking(
+        "Lock",
+        dictionary! { "Type" => "SigFieldLock", "Action" => "All" }.into(),
+    ));
 
     // A seed value with a constraint marked required, and one whose flags
     // cannot be read.
@@ -2684,6 +2705,178 @@ fn a_field_that_asks_something_of_its_signer_is_refused() {
         );
         assert!(refused(bytes).contains("`Approved`"), "{entry}");
     }
+}
+
+/// The `/FieldMDP` transform of the signature put into `name` in `after`:
+/// the field's `/Lock`, if it has one, and the transform's parameters.
+fn asked_lock(after: &Document, name: &str) -> (Option<Dictionary>, Dictionary) {
+    let id = scanned(after, name).object;
+    let field = after.get_dictionary((id.0, id.1)).expect("the field");
+    let on_field = field.get(b"Lock").and_then(Object::as_dict).ok().cloned();
+    let signature = signature_of(after, field);
+    let references = signature
+        .get(b"Reference")
+        .and_then(Object::as_array)
+        .expect("a /Reference");
+    let [reference] = references.as_slice() else {
+        panic!("one transform, and {} were written", references.len());
+    };
+    let reference = reference.as_dict().expect("a dictionary");
+    assert_eq!(name_in(reference, b"Type"), "SigRef");
+    assert_eq!(name_in(reference, b"TransformMethod"), "FieldMDP");
+    assert_eq!(
+        reference.get(b"Data").and_then(Object::as_reference).ok(),
+        after
+            .trailer
+            .get(b"Root")
+            .and_then(Object::as_reference)
+            .ok(),
+        "the transform is over the catalog"
+    );
+    let params = reference
+        .get(b"TransformParams")
+        .and_then(Object::as_dict)
+        .expect("parameters")
+        .clone();
+    assert_eq!(name_in(&params, b"Type"), "TransformParams");
+    assert_eq!(name_in(&params, b"V"), "1.2");
+    (on_field, params)
+}
+
+/// The names a transform's `/Fields` lists, as text.
+fn listed(params: &Dictionary) -> Option<Vec<String>> {
+    params.get(b"Fields").ok().map(|fields| {
+        fields
+            .as_array()
+            .expect("an array")
+            .iter()
+            .map(|name| String::from_utf8_lossy(name.as_str().expect("text")).into_owned())
+            .collect()
+    })
+}
+
+/// A field whose author asked for a lock is signed, and the signature repeats
+/// the lock as a `/FieldMDP` transform it covers, as pyHanko does for a
+/// field's lock: the action, the fields it lists unless it locks all, and the
+/// level when the lock gives one. The field's own `/Lock` stays as written.
+/// Until 2026-11-02 every such field was refused, which left a review form
+/// whose one signature field locks all others unsignable.
+#[test]
+fn a_lock_the_field_asks_for_is_repeated_inside_the_signature() {
+    use lopdf::dictionary;
+    let sign = |lock: Dictionary, notes: &Notes| {
+        let original = asking("Lock", lock.into());
+        let unsigned = prepare_noted(original.clone(), NOW, None, None, notes).expect("prepared");
+        let whole = [original.as_slice(), unsigned.update.as_slice()].concat();
+        let locked = crate::docinfo::locked(&Document::load_mem(&whole).expect("loads"));
+        let level = crate::docinfo::scan(&whole, 2, None)
+            .expect("scanned")
+            .signatures[0]
+            .lock;
+        (reread(&original, &unsigned), unsigned.locked, locked, level)
+    };
+    let names = || {
+        vec![
+            Object::string_literal("Name"),
+            Object::string_literal("Address"),
+        ]
+    };
+
+    // Every field, no level: the document is not locked, its fields are.
+    let all = dictionary! { "Type" => "SigFieldLock", "Action" => "All" };
+    let (after, locked, read, level) = sign(all.clone(), &into("Approved"));
+    let (on_field, params) = asked_lock(&after, "Approved");
+    assert_eq!(on_field.as_ref(), Some(&all), "the field's lock as written");
+    assert_eq!(name_in(&params, b"Action"), "All");
+    assert_eq!(listed(&params), None, "`All` lists no fields");
+    assert!(!params.has(b"P"));
+    assert_eq!((locked, read, level), (false, Ok(false), 0));
+
+    // The fields named, and every field but those.
+    for action in ["Include", "Exclude"] {
+        let lock =
+            dictionary! { "Type" => "SigFieldLock", "Action" => action, "Fields" => names() };
+        let (after, locked, read, _) = sign(lock.clone(), &into("Approved"));
+        let (on_field, params) = asked_lock(&after, "Approved");
+        assert_eq!(on_field.as_ref(), Some(&lock));
+        assert_eq!(name_in(&params, b"Action"), action);
+        assert_eq!(
+            listed(&params),
+            Some(vec!["Name".to_string(), "Address".to_string()]),
+            "{action}"
+        );
+        assert_eq!((locked, read), (false, Ok(false)), "{action}");
+    }
+
+    // A level 1 lock locks the document, and the read-back is told to look.
+    let at_one = dictionary! { "Action" => "Exclude", "Fields" => names(), "P" => 1 };
+    let (after, locked, read, level) = sign(at_one.clone(), &into("Approved"));
+    let (_, params) = asked_lock(&after, "Approved");
+    assert_eq!(params.get(b"P").and_then(Object::as_i64).ok(), Some(1));
+    assert_eq!((locked, read, level), (true, Ok(true), 1));
+    // At level 2 it leaves forms open, and the document is not locked.
+    let at_two = dictionary! { "Action" => "All", "P" => 2 };
+    let (after, locked, read, level) = sign(at_two, &into("Approved"));
+    let (_, params) = asked_lock(&after, "Approved");
+    assert_eq!(params.get(b"P").and_then(Object::as_i64).ok(), Some(2));
+    assert_eq!((locked, read, level), (false, Ok(false), 2));
+
+    // Asked to lock as well, the signer's lock is every field at level 1,
+    // which covers the field's, and is what both places say.
+    let notes = Notes {
+        lock: true,
+        ..into("Approved")
+    };
+    let (after, locked, read, _) = sign(at_one, &notes);
+    let (on_field, params) = asked_lock(&after, "Approved");
+    let on_field = on_field.expect("a lock");
+    assert_eq!(name_in(&on_field, b"Action"), "All");
+    assert_eq!(on_field.get(b"P").and_then(Object::as_i64).ok(), Some(1));
+    assert_eq!(name_in(&params, b"Action"), "All");
+    assert_eq!(listed(&params), None);
+    assert_eq!((locked, read), (true, Ok(true)));
+}
+
+/// In a certified document a field's lock is refused, as a lock asked of the
+/// signer is: no reader has been measured on a lock beside a certification.
+/// The same field without the lock is signed.
+#[test]
+fn a_lock_the_field_asks_for_in_a_certified_document_is_refused() {
+    use lopdf::dictionary;
+    let certified = |lock: Option<Dictionary>| {
+        let mut doc = Document::load_mem(&match lock {
+            Some(lock) => asking("Lock", lock.into()),
+            None => with_fields(0),
+        })
+        .expect("loads");
+        let certification = doc.add_object(dictionary! {
+            "Type" => "Sig",
+            "Reference" => vec![Object::Dictionary(dictionary! {
+                "Type" => "SigRef",
+                "TransformMethod" => "DocMDP",
+                "TransformParams" => dictionary! { "Type" => "TransformParams", "P" => 2 },
+            })],
+        });
+        let root = doc
+            .trailer
+            .get(b"Root")
+            .and_then(Object::as_reference)
+            .expect("a catalog");
+        doc.get_dictionary_mut(root)
+            .expect("the catalog")
+            .set("Perms", dictionary! { "DocMDP" => certification });
+        let mut bytes = Vec::new();
+        doc.save_to(&mut bytes).expect("saved");
+        bytes
+    };
+    let lock = dictionary! { "Type" => "SigFieldLock", "Action" => "All" };
+    let why = prepare_noted(certified(Some(lock)), NOW, None, None, &into("Approved"))
+        .expect_err("refused");
+    assert!(
+        why.starts_with("This document is certified, and its signature field asks for a lock"),
+        "{why}"
+    );
+    prepare_noted(certified(None), NOW, None, None, &into("Approved")).expect("signed");
 }
 
 #[test]

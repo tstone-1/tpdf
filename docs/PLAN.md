@@ -18044,7 +18044,8 @@ since a script's output must not change under it; a lock is not written into a c
 document; a field whose author asks for a lock is still refused whole.
 
 **Not built.** Merging a picture of a signature into the page content. A certification signature. Honouring a field author's `/Lock`
-that names fields. Refusing to edit a locked document in the window: an ordinary save warns in
+that names fields (built 2026-11-02, for any field lock: the signature repeats it as a
+`/FieldMDP` transform; `docs/SUBSYSTEMS.md`). Refusing to edit a locked document in the window: an ordinary save warns in
 its own words and proceeds on consent, as it does for a certification.
 
 **Not run.** `window_checks.py`'s signing phase, which was brought in line with the new

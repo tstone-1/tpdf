@@ -567,6 +567,16 @@ jobs:
           workers run under Landlock and seccomp. The Linux packages (deb
           and AppImage) do not update themselves: install the new one.
 
+          **New in 26.11.1.** Measure a distance: drag along something on a
+          page and the line shows its length, and **Set the scale** turns it
+          into a real unit such as centimetres. Measurements stay on screen and
+          are never written to the file. A signature field whose form asks
+          that signing it locks other fields can now be signed: the signature
+          states that lock, so a validator reports a later change to a locked
+          field. And text fields made in Acrobat with "Allow rich text
+          formatting" can now be filled; tpdf refused them before, so on some
+          forms only the dropdowns could be answered.
+
           **New in 26.11.0.** On a new Windows computer, signing with a DigiCert
           or GlobalSign timestamp stopped with "not trusted by this computer",
           because Windows fetches most roots only when they are needed. tpdf now
