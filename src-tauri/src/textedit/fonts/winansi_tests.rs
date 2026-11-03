@@ -230,3 +230,70 @@ fn textedit_winansi_mapping_must_restate_winansi_and_unicode_cmaps_must_agree() 
     let (doc, _) = word_font(cmap(&[(3, 1, format6(&unicode_entries()))]), EXTRA_MAP);
     assert!(textedit::scan(&doc, 0).is_ok());
 }
+
+// Word's own export (no Acrobat) writes WinAnsi TrueType subsets with no
+// ToUnicode at all. WinAnsi then names each code's character by itself, so
+// curly quotes in the source used to refuse the page and now read, measure
+// and write exactly as with a ToUnicode that restates WinAnsi.
+#[test]
+fn textedit_winansi_without_tounicode_reads_and_writes_punctuation() {
+    let unmapped = |entries: Vec<(u32, u16)>| {
+        let (mut doc, ids) = word_font(cmap(&[(3, 1, format6(&entries))]), EXTRA_MAP);
+        doc.get_dictionary_mut(ids[0]).unwrap().remove(b"ToUnicode");
+        let page = crate::pagetree::ordered_pages(&doc)[0];
+        let content = doc.add_object(lopdf::Stream::new(
+            Dictionary::new(),
+            b"BT /F1 12 Tf 40 180 Td (FIRST\x92S SYNTHETIC SECOND) Tj ET".to_vec(),
+        ));
+        doc.get_dictionary_mut(page)
+            .unwrap()
+            .set("Contents", content);
+        (doc, ids)
+    };
+    let (mut doc, ids) = unmapped(unicode_entries());
+    let objects = doc.objects.clone();
+    assert_eq!(
+        textedit::scan(&doc, 0).unwrap().runs[0].text,
+        "FIRST\u{2019}S SYNTHETIC SECOND"
+    );
+    let edit = change(&doc, "FIRST\u{2019}S \u{2014} \u{a7}");
+    textedit::write(&mut doc, &[edit]).unwrap();
+    assert_eq!(
+        textedit::scan(&doc, 0).unwrap().runs[0].text,
+        "FIRST\u{2019}S \u{2014} \u{a7}"
+    );
+    let page = crate::pagetree::ordered_pages(&doc)[0];
+    let content = doc.get_page_content(page);
+    let written = b"FIRST\x92S \x97 \xa7";
+    assert!(content.windows(written.len()).any(|w| w == written));
+    for id in [ids[0], ids[1]] {
+        assert_eq!(doc.objects[&id], objects[&id]);
+    }
+    // The space and hyphen aliases are never offered, even with a glyph at
+    // their Unicode value; the same table offers the section sign beside them.
+    let mut aliased = unicode_entries();
+    aliased.extend([(0xA0, glyph('A')), (0xAD, glyph('B'))]);
+    for alias in ["\u{a0}", "\u{ad}"] {
+        let (mut doc, _) = unmapped(aliased.clone());
+        let objects = doc.objects.clone();
+        let edit = change(&doc, &format!("FIRST{alias}"));
+        assert_eq!(
+            textedit::write(&mut doc, &[edit]).unwrap_err(),
+            "the font has no validated glyph for this character",
+            "{alias:?}"
+        );
+        assert_eq!(doc.objects, objects);
+    }
+    let (mut doc, _) = unmapped(aliased);
+    let edit = change(&doc, "FIRST\u{a7}");
+    textedit::write(&mut doc, &[edit]).unwrap();
+    // Without a Unicode table the punctuation has no glyph to select.
+    let (doc, ids) = unmapped(unicode_entries());
+    let mut doc = doc;
+    doc.get_object_mut(ids[1])
+        .unwrap()
+        .as_stream_mut()
+        .unwrap()
+        .content = program(cmap(&[(1, 0, format0(&mac_entries()))]));
+    assert!(textedit::scan(&doc, 0).is_err());
+}

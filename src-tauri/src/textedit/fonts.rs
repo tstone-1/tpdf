@@ -28,6 +28,7 @@ mod type1;
 mod type3;
 mod unicode;
 pub(super) use composite::embedded as composite;
+pub(super) use composite::read_only as composite_read_only;
 pub(super) use type3::embedded as type3;
 
 pub(super) fn type1(doc: &Document, font: &Dictionary) -> Result<Metrics, String> {
@@ -88,6 +89,29 @@ pub(super) fn type1(doc: &Document, font: &Dictionary) -> Result<Metrics, String
 enum Codes {
     Single(Box<[Option<u8>; 256]>),
     Double(std::collections::BTreeMap<u16, u8>),
+    // Two-byte codes of a composite font kept for measuring only: every code
+    // is opaque (`composite::read_only`).
+    Opaque(Box<OpaqueCids>),
+}
+
+/// The advances of a composite font whose text stays read-only, in
+/// thousandths of an em: its `/W` entries, `/DW` for every other CID, and the
+/// horizontal extent of its `FontBBox`, which bounds every glyph it draws.
+pub(super) struct OpaqueCids {
+    default: f64,
+    widths: std::collections::BTreeMap<u16, f64>,
+    left: f64,
+    right: f64,
+}
+
+impl OpaqueCids {
+    fn glyph(&self, code: u16) -> Opaque {
+        let width = self.widths.get(&code).copied().unwrap_or(self.default);
+        Opaque {
+            width,
+            overhang: [self.left.min(0.), (self.right - width).max(0.)],
+        }
+    }
 }
 
 pub(super) fn gap_spaces() -> String {
@@ -123,7 +147,7 @@ pub(super) struct Metrics {
     // its ink reserved, instead of refusing the page. Never used to encode.
     opaque: Option<Box<[Option<Opaque>; 256]>>,
     // PDF codes to metric slots. Each font path validates its offered repertoire.
-    // None retains the WinAnsi/Latin-1 path.
+    // None: each code is its own Latin-1 slot (`decode_text`).
     codes: Option<Codes>,
     // The program's embedding rights forbid editing with it (`restricts`). Its
     // text is still read and measured, so a run in it can be replaced, but no
@@ -135,6 +159,11 @@ pub(super) struct Metrics {
 /// The message for a font whose embedding rights forbid editing with it.
 pub(super) fn forbidden() -> String {
     said!("embedded font does not permit this editable use")
+}
+
+/// The message for a character the font encodes but its subset cannot draw.
+pub(super) fn missing_glyph() -> String {
+    said!("the font has no validated glyph for this character")
 }
 
 /// Whether OS/2 `fsType` rights, or a Type 1 or CFF program's `FSType`, forbid
@@ -314,6 +343,12 @@ impl Metrics {
         let Some(codes) = &self.codes else {
             return super::decode_text(bytes);
         };
+        if let Codes::Opaque(_) = codes {
+            if bytes.len() % 2 != 0 || bytes.len() / 2 > super::MAX_TEXT {
+                return Err(said!("invalid or oversized two-byte text"));
+            }
+            return Ok(std::iter::repeat_n(OPAQUE, bytes.len() / 2).collect());
+        }
         if let Codes::Double(codes) = codes {
             if bytes.len() % 2 != 0 || bytes.len() / 2 > super::MAX_TEXT {
                 return Err(said!("invalid or oversized two-byte text"));
@@ -381,7 +416,7 @@ impl Metrics {
     pub(super) fn code_len(&self) -> usize {
         match (&self.unicode, &self.codes) {
             (Some(metrics), _) => metrics.code_len(),
-            (None, Some(Codes::Double(_))) => 2,
+            (None, Some(Codes::Double(_) | Codes::Opaque(_))) => 2,
             _ => 1,
         }
     }
@@ -468,6 +503,9 @@ impl Metrics {
             super::decode_text(&bytes)?;
             return Ok(bytes);
         };
+        if let Codes::Opaque(_) = codes {
+            return Err(said!("the font has no validated glyph for this character"));
+        }
         if let Codes::Double(codes) = codes {
             let mut result = Vec::with_capacity(bytes.len() * 2);
             for byte in bytes {
@@ -589,6 +627,16 @@ impl Metrics {
                 .map(|pair| codes[&u16::from_be_bytes([pair[0], pair[1]])])
                 .collect::<Vec<_>>();
             self.spaced_slots(&slots, size, spacing, word_spacing)?
+        } else if let Some(Codes::Opaque(cids)) = &self.codes {
+            // Identity-H has no single-byte code 32, so Tw applies to none.
+            let glyphs = bytes
+                .chunks_exact(2)
+                .map(|pair| {
+                    let glyph = cids.glyph(u16::from_be_bytes([pair[0], pair[1]]));
+                    (glyph.width, glyph.overhang, false)
+                })
+                .collect::<Vec<_>>();
+            self.spaced_glyphs(&glyphs, size, spacing, word_spacing)?
         } else {
             self.spaced_layout(&text, size, spacing, word_spacing)?
         };
@@ -623,7 +671,7 @@ impl Metrics {
         let word_slot = match &self.codes {
             None => Some(32),
             Some(Codes::Single(codes)) => codes[32],
-            Some(Codes::Double(_)) => None,
+            Some(Codes::Double(_) | Codes::Opaque(_)) => None,
         };
         let glyphs = slots
             .iter()
@@ -924,12 +972,30 @@ pub(super) fn is_unembedded(doc: &Document, font: &Dictionary) -> bool {
         })
 }
 
+/// WinAnsi's own codes, each its own slot: ASCII, WinAnsi punctuation and
+/// Latin-1, without 0x80 (the minus slot). The space and hyphen aliases 0xA0
+/// and 0xAD still read as Latin-1, as they did before this table, but are
+/// never offered (`embedded`): their glyph is not proven by a Unicode lookup.
+fn winansi_codes() -> Box<[Option<u8>; 256]> {
+    let mut codes = Box::new([None; 256]);
+    for code in (0x20..=0x7E).chain(0xA0..=0xFF) {
+        codes[code as usize] = Some(code);
+    }
+    for (code, _) in super::WINANSI_EXTRA {
+        codes[code as usize] = Some(code);
+    }
+    codes
+}
+
 pub(super) fn embedded(doc: &Document, font: &Dictionary) -> Result<Metrics, String> {
     let invalid = || said!("unsupported embedded TrueType font or character mapping");
     let custom = !font.has(b"Encoding") && font.has(b"ToUnicode");
     let mac_roman =
         font.get(b"Encoding").and_then(Object::as_name).ok() == Some(b"MacRomanEncoding");
     let named_unicode = !custom && !mac_roman && font.has(b"ToUnicode");
+    // WinAnsi without ToUnicode: the encoding alone names each code's
+    // character (ISO 32000-1 Annex D.2), so its glyph is found the same way.
+    let named_winansi = !custom && !mac_roman && !named_unicode;
     if font.get(b"Type").and_then(Object::as_name).ok() != Some(b"Font")
         || (!mac_roman
             && !custom
@@ -1020,6 +1086,8 @@ pub(super) fn embedded(doc: &Document, font: &Dictionary) -> Result<Metrics, Str
         } else {
             mapping::parse_named(stream)?
         })
+    } else if named_winansi {
+        Some(winansi_codes())
     } else {
         None
     };
@@ -1044,9 +1112,10 @@ pub(super) fn embedded(doc: &Document, font: &Dictionary) -> Result<Metrics, Str
     let mut result = Box::new([None; 256]);
     let mut vertical_bounds = [0_f64; 2];
     let mut horizontal_overhangs = Box::new([[0_f64; 2]; 256]);
-    // Standard maps share ASCII codes; symbolic maps select the PDF code and
-    // its Unicode value separately. WinAnsi's nonbreaking-space/soft-hyphen aliases,
-    // extended glyph names and custom ToUnicode maps require separate proof.
+    // MacRoman shares only ASCII codes; WinAnsi, with or without ToUnicode,
+    // selects by each code's Unicode value; symbolic maps select the PDF code
+    // and its Unicode value separately. WinAnsi's nonbreaking-space/soft-hyphen
+    // aliases are never offered.
     let mut opaque = Box::new([None; 256]);
     for code_byte in 0_u8..=255 {
         if kept[code_byte as usize] {
@@ -1084,10 +1153,13 @@ pub(super) fn embedded(doc: &Document, font: &Dictionary) -> Result<Metrics, Str
         } else {
             continue;
         };
+        if named_winansi && matches!(byte, 0xA0 | 0xAD) {
+            continue;
+        }
         // ISO 32000-1 9.6.6.4: a nonsymbolic WinAnsi font selects glyphs in the
         // (3,1) cmap by the Unicode value of the code's WinAnsi glyph name. For
         // ASCII and Latin-1 that value is the code itself.
-        let code = if named_unicode {
+        let code = if named_unicode || named_winansi {
             u32::from(super::slot_character(byte))
         } else {
             u32::from(code_byte)

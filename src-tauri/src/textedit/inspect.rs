@@ -556,8 +556,9 @@ impl<'a> Checked<'a> {
             if self.font_metrics.len() >= 32 {
                 return Err(said!("too many fonts on an editable page"));
             }
-            // A simple font the editor cannot write with keeps its
-            // text read-only (`fonts::read_only`) rather than refusing
+            // A font the editor cannot write with keeps its text
+            // read-only (`fonts::read_only`, `fonts::symbolic`,
+            // `fonts::composite_read_only`) rather than refusing
             // the page; when even that cannot measure it, the page is
             // refused with the font's own reason.
             let metrics = match font(self.doc, self.resources, name) {

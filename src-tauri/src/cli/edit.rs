@@ -1031,6 +1031,13 @@ mod tests {
                 "",
                 true,
             ),
+            // A subset without the typed letter: Word's subsets end where the
+            // document's text does, so an umlaut is usually missing.
+            (
+                "the font has no validated glyph for this character",
+                "",
+                true,
+            ),
             ("text changed since this run was inspected", "", false),
             (
                 "text editing currently supports printable Latin-1 only",

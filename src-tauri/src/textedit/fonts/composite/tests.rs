@@ -987,3 +987,107 @@ fn textedit_a_glyph_mapped_to_a_control_character_is_read_only() {
     assert_eq!(texts, ["EDITED"]);
     assert_eq!(doc.objects[&font], before);
 }
+
+// Word sets bullets in an Identity-H SymbolMT subset with no ToUnicode. That
+// font cannot be read, and it used to refuse the whole page. It is measured
+// for read-only text instead: `/W` and `/DW` give each code's advance, the
+// descriptor's FontBBox its ink, the bullet run is written back byte for
+// byte, and the rest of the page edits. Without a box it still refuses.
+#[test]
+fn textedit_a_composite_font_without_tounicode_keeps_its_text_read_only() {
+    let bullets = || {
+        let (mut doc, [font, child, descriptor, _]) = fixture();
+        doc.get_dictionary_mut(font).unwrap().remove(b"ToUnicode");
+        doc.get_dictionary_mut(child)
+            .unwrap()
+            .set("W", vec![5.into(), vec![Object::Integer(300)].into()]);
+        let helvetica = doc.add_object(dictionary! {
+            "Type" => "Font", "Subtype" => "Type1", "BaseFont" => "Helvetica"
+        });
+        let page = crate::pagetree::ordered_pages(&doc)[0];
+        doc.get_dictionary_mut(page).unwrap().set(
+            "Resources",
+            dictionary! { "Font" => dictionary! { "F1" => font, "F2" => helvetica } },
+        );
+        let content = doc.add_object(Stream::new(
+            Dictionary::new(),
+            b"BT /F1 12 Tf 40 180 Td <00050007> Tj ET BT /F2 12 Tf 40 140 Td (SECOND) Tj ET"
+                .to_vec(),
+        ));
+        doc.get_dictionary_mut(page)
+            .unwrap()
+            .set("Contents", content);
+        (doc, font, child, descriptor)
+    };
+    let (doc, font, _, _) = bullets();
+    let metrics = read_only(&doc, doc.get_dictionary(font).unwrap()).unwrap();
+    // CID 5 takes its /W width, CID 7 the /DW of 600; the box reaches 400.
+    let (text, advance, bounds) = metrics
+        .source_layout(b"\x00\x05\x00\x07", 10., 0., 0.)
+        .unwrap();
+    assert_eq!(text, super::super::OPAQUE.to_string().repeat(2));
+    assert!((advance - 9.).abs() < 1e-9, "{advance}");
+    assert_eq!(
+        metrics.source_layout(b"\x00\x05", 10., 0., 0.).unwrap().2,
+        [0., 4.]
+    );
+    assert!((bounds[1] - 9.).abs() < 1e-9, "{bounds:?}");
+    assert!(metrics.decode(b"\x00\x05\x00").is_err());
+    assert!(metrics.encode("A").is_err());
+    assert_eq!(metrics.code_len(), 2);
+
+    let (mut doc, font, _, _) = bullets();
+    let scan = textedit::scan(&doc, 0).unwrap();
+    let offered: Vec<&str> = scan.runs.iter().map(|run| run.text.as_str()).collect();
+    assert_eq!(offered, ["SECOND"]);
+    let kept = doc.objects[&font].clone();
+    textedit::write(
+        &mut doc,
+        &[Change {
+            layout: None,
+            page: 0,
+            operator: scan.runs[0].operator,
+            revision: scan.revision.clone(),
+            original: "SECOND".into(),
+            replacement: "IN".into(),
+        }],
+    )
+    .unwrap();
+    assert_eq!(textedit::scan(&doc, 0).unwrap().runs[0].text, "IN");
+    assert_eq!(doc.objects[&font], kept);
+    let page = crate::pagetree::ordered_pages(&doc)[0];
+    let written = doc.get_page_content(page);
+    let shown = b"<00050007> Tj";
+    assert!(
+        written.windows(shown.len()).any(|w| w == shown),
+        "{}",
+        String::from_utf8_lossy(&written)
+    );
+
+    // What the fallback cannot measure still refuses the page.
+    for broken in 0..3 {
+        let (mut doc, font, child, descriptor) = bullets();
+        match broken {
+            0 => {
+                doc.get_dictionary_mut(descriptor)
+                    .unwrap()
+                    .remove(b"FontBBox");
+            }
+            1 => {
+                doc.get_dictionary_mut(font)
+                    .unwrap()
+                    .set("Encoding", "Identity-V");
+            }
+            _ => {
+                doc.get_dictionary_mut(child)
+                    .unwrap()
+                    .set("W", vec![5.into(), vec![Object::Integer(3000)].into()]);
+            }
+        }
+        assert!(
+            read_only(&doc, doc.get_dictionary(font).unwrap()).is_none(),
+            "{broken}"
+        );
+        assert!(textedit::scan(&doc, 0).is_err(), "{broken}");
+    }
+}

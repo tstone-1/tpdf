@@ -298,9 +298,10 @@ impl Layout {
 }
 
 /// Whether a change without a layout was refused for a reason another font
-/// answers: the run's font forbids editing, or lacks a typed character.
+/// answers: the run's font forbids editing, cannot encode a typed character,
+/// or encodes it but its subset has no glyph for it.
 pub(crate) fn wants_fallback(refusal: &str) -> bool {
-    refusal == fonts::forbidden() || refusal == latin_only()
+    refusal == fonts::forbidden() || refusal == latin_only() || refusal == fonts::missing_glyph()
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Serialize, Deserialize)]
@@ -378,11 +379,14 @@ fn placed_content(doc: &Document, resources: &Dictionary, name: &[u8]) -> Result
 }
 
 // The font named `name` measured for read-only text only, if it is a simple
-// font with the widths and bounding box that takes, or Symbol or ZapfDingbats.
+// font with the widths and bounding box that takes, Symbol or ZapfDingbats,
+// or an Identity-H composite font with widths and a bounding box.
 fn read_only_font(doc: &Document, resources: &Dictionary, name: &[u8]) -> Option<fonts::Metrics> {
     let fonts = dictionary(doc, resources.get(b"Font").ok()?).ok()?;
     let font = dictionary(doc, fonts.get(name).ok()?).ok()?;
-    fonts::read_only(doc, font).or_else(|| fonts::symbolic(font))
+    fonts::read_only(doc, font)
+        .or_else(|| fonts::symbolic(font))
+        .or_else(|| fonts::composite_read_only(doc, font))
 }
 
 // The FontBBox named by a font's BaseFont, if it is a Latin standard font's.

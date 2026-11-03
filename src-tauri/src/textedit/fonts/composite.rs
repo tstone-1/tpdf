@@ -117,6 +117,50 @@ fn cid_program(doc: &Document, descriptor: &Dictionary) -> Result<Vec<u8>, Strin
     super::filters::decode(stream, crate::textedit::MAX_CONTENT)
 }
 
+/// An Identity-H composite font the editor cannot write with -- no ToUnicode,
+/// as Word sets its Symbol bullets, or a program it does not validate --
+/// kept for measuring only, like `fonts::read_only` keeps a simple font. Every
+/// two-byte code is opaque: its advance is the descendant's `/W` entry or
+/// `/DW`, and its ink is held to the descriptor's `FontBBox`. Neither the
+/// program nor any character map is read, so nothing in them is trusted.
+pub(in crate::textedit) fn read_only(doc: &Document, font: &Dictionary) -> Option<Metrics> {
+    if font.get(b"Subtype").and_then(Object::as_name).ok()? != b"Type0"
+        || font.get(b"Encoding").and_then(Object::as_name).ok()? != b"Identity-H"
+    {
+        return None;
+    }
+    let children = crate::encoding::resolve(doc, font.get(b"DescendantFonts").ok()?)
+        .as_array()
+        .ok()?;
+    let [child] = children.as_slice() else {
+        return None;
+    };
+    let child = dictionary(doc, child).ok()?;
+    if !matches!(
+        child.get(b"Subtype").and_then(Object::as_name).ok()?,
+        b"CIDFontType0" | b"CIDFontType2"
+    ) {
+        return None;
+    }
+    let descriptor = dictionary(doc, child.get(b"FontDescriptor").ok()?).ok()?;
+    let [left, bottom, right, top] = super::font_box(doc, descriptor)?;
+    let (default, widths) = widths(doc, child).ok()?;
+    Some(Metrics {
+        restricted: false,
+        opaque: None,
+        unicode: None,
+        vertical_bounds: Some([bottom.min(0.), top.max(0.)]),
+        widths: Box::new([None; 256]),
+        horizontal_overhangs: None,
+        codes: Some(Codes::Opaque(Box::new(super::OpaqueCids {
+            default,
+            widths,
+            left,
+            right,
+        }))),
+    })
+}
+
 pub(in crate::textedit) fn embedded(doc: &Document, font: &Dictionary) -> Result<Metrics, String> {
     keys(
         font,

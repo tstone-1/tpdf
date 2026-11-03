@@ -19,6 +19,20 @@ have the binary.)
 
 ## [26.11.2] - Unreleased
 
+### Fixed
+
+- **Text with curly quotes in documents exported from Word can be edited.** Word embeds
+  its fonts as WinAnsi subsets without a Unicode map, and tpdf read only plain ASCII from
+  them, so a single “, „ or ’ refused text editing on the whole page. Those fonts now read and
+  write WinAnsi punctuation and Latin-1 letters, where the subset has the glyph.
+- **A page with Word's Symbol bullets is no longer refused for text editing.** The bullets
+  are set in a font tpdf cannot read; they now stay as they are, and the rest of the page
+  can be edited.
+- **`tpdf-cli edit` says how to type a letter the document's font subset lacks.** The
+  refusal now ends with the hint to add `"font":"auto"`, as it already did for a character the
+  font cannot encode. In the window, automatic font mode already set such a letter in the
+  installed copy of the font, or in Noto Sans when none is installed.
+
 ### Changed
 
 - `zip` 9.2.2 (from 9.1.3). Only the updater names it, and only for an update delivered as a

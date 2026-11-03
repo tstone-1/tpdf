@@ -490,6 +490,13 @@ WinAnsi TrueType fonts with ToUnicode may map WinAnsi punctuation at its own
 code (0x82-0x9F except 0x80, plus Latin-1 except 0xA0/0xAD); glyphs come from
 the (3,1) cmap by Unicode value, and a Macintosh cmap need only agree for ASCII.
 The same (1,0) agreement rule admits a Mac cmap beside (3,1) without ToUnicode.
+Since 2026-11-03 a WinAnsi TrueType font **without** ToUnicode reads the same
+repertoire (`fonts::winansi_codes`): WinAnsi alone names each code's character
+(ISO 32000-1 9.6.6.4, Annex D.2), so glyphs come from (3,1) by that Unicode value
+just as they do when a ToUnicode restates it. Word's own export writes exactly
+these subsets, and until then one curly quote in one ordinary line refused the
+page. 0xA0 and 0xAD still read as Latin-1, as they did before, and are never
+offered.
 Metric slots reuse the WinAnsi codes, so the minus keeps 0x80 and the euro sign
 stays unsupported. Two-byte fonts keep their Latin-1 and en dash repertoire.
 A continued run's TJ compensation is an exact integer plus an f32 remainder,
@@ -644,7 +651,12 @@ Every code is then opaque, advanced by its `Widths` entry or `MissingWidth` and
 inked to the box, so its text is read-only with that ink reserved and the other
 text on the page edits. The program is never read. A page left with nothing to
 edit is refused with the first such font's own reason, not *page contains only
-read-only text*. Composite and Type 3 fonts keep their own refusals.
+read-only text*. Type 3 fonts keep their own refusals. An Identity-H composite font
+(`composite::read_only`, since 2026-11-03) is measured the same way when its descendant is
+`CIDFontType0` or `CIDFontType2` and has a valid `/W`/`/DW` and a descriptor `FontBBox`:
+every two-byte code is opaque (`Codes::Opaque`). Word sets list bullets in an Identity-H
+SymbolMT subset with no ToUnicode, and that one font used to refuse a whole supplier form.
+Identity-V, or a CMap stream as the encoding, still refuses.
 Symbol and ZapfDingbats named with no program and no key but `Type`, `Subtype`,
 `BaseFont` and `Name`, as ReportLab sets bullets, are measured the same way by
 `fonts::symbolic` from `standard::SYMBOLIC`: each code of the built-in encoding with
