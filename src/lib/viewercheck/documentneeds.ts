@@ -8,7 +8,7 @@
  */
 
 /** Registered commands withheld with one document open and nothing else: no selection, no search, no history, no attachment. In registry order. */
-export function needsMoreThanADocument(linux: boolean): string[] {
+export function needsMoreThanADocument(linux: boolean, windows: boolean): string[] {
   return [
     // One tab, so no other to close, and none closed earlier to reopen.
     "file.closeOtherTabs",
@@ -159,6 +159,10 @@ export function needsMoreThanADocument(linux: boolean): string[] {
     // Declared with the commands.
     "nav.nextChange",
     "nav.previousChange",
+    // Windows only (the copy is an enhanced metafile), so withheld on macOS and
+    // Linux, document or not. Missing here from the day it was registered
+    // until the release's macOS run of this check, 2026-11-03.
+    ...(windows ? [] : ["edit.copyPageForPowerPoint"]),
     // No measurement yet, so no line for a scale to name and none to clear.
     // Both are driven below, from a line drawn with a real drag.
     "view.measureScale",

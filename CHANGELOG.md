@@ -17,11 +17,12 @@ as *downloadable*, while the release sat as a draft that GitHub showed to nobody
 are given now because they are different facts, and only the second one means a reader can
 have the binary.)
 
-## [26.11.2] - Unreleased
+## [26.11.2] - 2026-11-03
 
 ### Added
 
-- **Copy page for PowerPoint** (Windows, in the command palette): the page in view goes to
+- **Copy page for PowerPoint** (Windows, in the command palette and the page's right-click
+  menu): the page in view goes to
   the clipboard as a picture that PowerPoint's *Ungroup* turns into shapes and text boxes.
   An org chart printed to PDF from PowerPoint pastes back as its boxes and lines plus a text
   box for each piece of text, umlauts included, in the document's font where it is
@@ -46,7 +47,7 @@ have the binary.)
 
 ### Changed
 
-- `zip` 9.2.2 (from 9.1.3). Only the updater names it, and only for an update delivered as a
+- `zip` 9.3.0 (from 9.1.3). Only the updater names it, and only for an update delivered as a
   `.zip`; tpdf's Windows update is the `-setup.exe`, so its update path never reaches it.
 
 ## [26.11.1] - 2026-11-02

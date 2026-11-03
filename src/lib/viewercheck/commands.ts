@@ -2132,7 +2132,7 @@ export async function appCommandChecks(
   // check red on the way, which is the arrangement working: it needs a
   // selection, exactly as `find.inSelection` does, and a check that subtracted
   // a count would have absorbed it in silence.
-  const NEEDS_MORE_THAN_A_DOCUMENT = needsMoreThanADocument(isLinux());
+  const NEEDS_MORE_THAN_A_DOCUMENT = needsMoreThanADocument(isLinux(), !isMac() && !isLinux());
   const NEEDS_NO_DOCUMENT = needsNoDocument(isLinux());
 
   // And the other direction, declared for the same reason. This list was the

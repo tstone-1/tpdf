@@ -992,7 +992,7 @@ describe("the window check's lists, held here so vitest sees them", () => {
     );
     const offered = new Set(registry.search("").map((ranked) => ranked.command.id));
     const withheld = registry.all().map((command) => command.id).filter((id) => !offered.has(id));
-    expect(withheld).toEqual(needsMoreThanADocument(false));
+    expect(withheld).toEqual(needsMoreThanADocument(false, true));
   });
 
   it("offers, with no document, exactly what the window check expects", () => {

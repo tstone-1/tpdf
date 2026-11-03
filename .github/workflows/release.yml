@@ -567,6 +567,12 @@ jobs:
           workers run under Landlock and seccomp. The Linux packages (deb
           and AppImage) do not update themselves: install the new one.
 
+          **New in 26.11.2.** On Windows, **Copy page for PowerPoint** puts the
+          page in view on the clipboard as a picture that PowerPoint's Ungroup
+          turns into shapes and text boxes you can edit. Text in documents
+          exported from Word can now be edited when it has curly quotes or
+          Symbol bullets; tpdf refused the whole page before.
+
           **New in 26.11.1.** Measure a distance: drag along something on a
           page and the line shows its length, and **Set the scale** turns it
           into a real unit such as centimetres. Measurements stay on screen and

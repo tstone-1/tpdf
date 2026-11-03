@@ -614,6 +614,7 @@ hop through the index.
 - A ratio of ink totals read 0.945 with every comment gone, because the text is the rest
 - A turned page's ink ran the wrong way for the check, because a page's shape is not its ink's
 - A mutation that replaced `cfg!(windows)` with `true` changed nothing on Windows
+- The vitest copy of the window check's lists runs as Windows, so a command withheld on macOS reached `main` unlisted
 
 ## Harnesses: running checks and reading what they print
 - A mutation harness needs the same control as the thing it is testing
@@ -27237,3 +27238,21 @@ the usual one. Which process it was is unmeasured. Read this failure as a harnes
 first: rerun its section alone, and treat a second failure, or a failure alone, as a finding
 about the publish step. The two earlier *Access is denied* entries are about integrity levels
 and a worker's exit, and do not explain this one.
+
+### The vitest copy of the window check's lists runs as Windows, so a command withheld on macOS reached `main` unlisted
+
+2026-11-03, 26.11.2. *Copy page for PowerPoint* is enabled with `!isMac() && !isLinux()`, so on
+macOS and Linux it is withheld with a document open. `viewercheck/documentneeds.ts` did not list
+it, and the viewer check failed on the second Mac (`run_on_mac.py`) and in CI's Ubuntu job
+(*The window starts and shows a document, under Xvfb*) on `43904470`, already on `main`.
+
+`appcommands.test.ts` holds the same lists "so vitest sees them", and passed. Under jsdom
+`isMac()` and `isLinux()` are both false, so that test only ever checks the Windows answer;
+`needsMoreThanADocument` took only a `linux` flag, and the test passed `false`. A command whose
+enabled guard names a platform is therefore checked on its other platforms only by the window
+check, which needs a screen. The function now takes `windows` too. When a command's guard names
+a platform, declare its entry in `documentneeds.ts` in the same change, and run the viewer check
+on a Mac (`run_on_mac.py --only viewer`) or let the Ubuntu job read it before calling it done.
+
+The same CI run also failed first with `No space left on device` on the Ubuntu runner while the
+Rust cache was restored, before any step of ours ran; `gh run rerun --failed` got past it.
