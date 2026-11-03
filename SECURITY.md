@@ -49,6 +49,11 @@ you do not need to have diagnosed it.
   system's own PDF parser into the app process on macOS and Windows (Linux parses nothing
   there to print), which is stated rather
   than hidden, and is measured by `examples/print_probe.rs`.
+- On Windows, *Copy page for PowerPoint*: the worker draws the page into an enhanced
+  metafile, and the app process hands those bytes to GDI to put them on the clipboard. The
+  document chooses the drawing's parameters, not the record format, which is GDI's own. A
+  document that steers that step into a defect in the app process, or into PowerPoint
+  through the paste, is in scope (`docs/THREAT-MODEL.md`, T6.49).
 - Recovering content from a document tpdf reported as successfully redacted.
 - A redaction reported as **clean** that is not. A result of *not verified* is a correct
   answer, by design, and is not a vulnerability. One case is disclosed rather than a
