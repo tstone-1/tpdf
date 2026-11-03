@@ -130,6 +130,20 @@ pub enum Request {
     /// text: a scan with a typed line is read, a page of text with a photo is
     /// not (`ocr_layer::SCAN_SHARE`). Per page, for the reason `Content` is.
     Pictures { page: u32 },
+    /// One page as a Windows metafile with its words as text
+    /// (*Copy page for PowerPoint*, `pagecopy.rs`).
+    ///
+    /// The bytes go into the tile mapping, [`Request::Picture`]'s way, and the
+    /// answer is [`Reply::PageCopy`]. Refused on every other platform.
+    PageCopy {
+        page: u32,
+        /// The reader's crop, as [`Request::Tile`] has it.
+        #[serde(default)]
+        crop: Option<[f32; 4]>,
+        /// The reader's view turn, as [`Request::Tile`] has it.
+        #[serde(default)]
+        turns: u8,
+    },
     /// One page's displayed size under a crop box, or under the file's own.
     ///
     /// The frontend lays out from this, and it cannot compute it: the crop is in
@@ -607,6 +621,8 @@ pub enum Reply {
     Content(Option<[f64; 4]>),
     /// The share of a page that pictures cover, from 0 to 1.
     Pictures(f32),
+    /// A page's metafile is in the tile mapping, [`Response::bytes`] long.
+    PageCopy,
     /// A page's size and origin under the crop the reader has.
     Geometry(crate::render::CropGeometry),
     /// The rectangle a proposed crop would actually produce.
@@ -955,7 +971,11 @@ impl Request {
     pub(crate) fn supports_text_view(&self) -> bool {
         matches!(
             self,
-            Self::Tile { .. } | Self::Text { .. } | Self::Search { .. } | Self::Content { .. }
+            Self::Tile { .. }
+                | Self::Text { .. }
+                | Self::Search { .. }
+                | Self::Content { .. }
+                | Self::PageCopy { .. }
         )
     }
 
@@ -1002,6 +1022,7 @@ mod tests {
             ("Search", "search"),
             ("Content", "content"),
             ("Pictures", "pictures"),
+            ("PageCopy", "page_copy"),
             ("Geometry", "geometry"),
             ("CropBox", "crop_box"),
             ("RedactPlans", "redaction_plans"),
@@ -1401,6 +1422,7 @@ mod tests {
             // the tag can tell them apart.
             Reply::Content(Some([1.0, 2.0, 3.0, 4.0])),
             Reply::Pictures(0.5),
+            Reply::PageCopy,
             Reply::CropBox([1.0, 2.0, 3.0, 4.0]),
             Reply::Geometry(crate::render::CropGeometry {
                 width_pt: 595.0,
@@ -1494,6 +1516,7 @@ mod tests {
                 | Reply::Search(_)
                 | Reply::Content(_)
                 | Reply::Pictures(_)
+                | Reply::PageCopy
                 | Reply::CropBox(_)
                 | Reply::RedactPlans(_)
                 | Reply::Geometry(_)

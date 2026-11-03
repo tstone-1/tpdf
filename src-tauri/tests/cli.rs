@@ -117,6 +117,9 @@ mod long_term;
 mod ocr;
 #[path = "cli/os_key.rs"]
 mod os_key;
+#[cfg(windows)]
+#[path = "cli/pagecopy.rs"]
+mod pagecopy;
 #[path = "cli/pages.rs"]
 mod pages;
 #[path = "cli/protect.rs"]
@@ -177,6 +180,11 @@ fn main() {
         (
             "a picture for a page is decoded in a worker and arrives as decoded here",
             picture_in_a_worker,
+        ),
+        #[cfg(windows)]
+        (
+            "a page copied for PowerPoint keeps its words as text",
+            pagecopy::writes_words_as_text,
         ),
         (
             "an attachment is decoded in a worker and saved as the bytes put in",

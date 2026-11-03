@@ -43,6 +43,13 @@ installed, opened a document and updated itself on an ARM64 Windows 11 machine.
 - **A drawn signature is not kept** between sessions; draw or import it each time. <!-- linux-difference: drawn-signature -->
 <!-- /linux-differences -->
 
+**On Windows only:**
+
+<!-- windows-only-list: each item names the code it describes, and `scripts/check_platform_arms.py` holds the two equal -->
+- **Copy page for PowerPoint**, because the copy is an enhanced metafile, which PowerPoint for
+  Windows turns into shapes and text boxes. <!-- windows-only: page-copy -->
+<!-- /windows-only-list -->
+
 tpdf does not start on an older Linux, such as Ubuntu 22.04 or Debian 12: it needs glibc 2.39
 or newer. <!-- glibc-floor: 2.39 --> The Linux packages are tested on Ubuntu 24.04. Other
 distributions and desktops have not been tried; a report of what works or does not is welcome
@@ -259,6 +266,11 @@ project conventions.
   screen and never under 144 pixels an inch. It is the page as the file draws it, under the
   crop and turn you see: marks you have not saved yet are not in it.
   <!-- built: edit.copyRegionAsPicture file.saveRegionAsPicture -->
+- **Copy page for PowerPoint** (Windows): the page in view goes to the clipboard as a picture
+  that PowerPoint's *Ungroup* turns into shapes and text boxes, so its boxes, lines and words
+  can be edited on a slide. Text the page draws with a font tpdf cannot read as characters
+  stays a drawing rather than becoming wrong words.
+  <!-- built: edit.copyPageForPowerPoint -->
 - **Measure a distance**: drag along something on a page and the line shows its length, in
   points at first; hold Shift for a straight line. **Set the scale** takes the real length of
   the last line, such as `195 cm`, and every line on that page then reads in that unit.

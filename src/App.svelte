@@ -53,6 +53,8 @@
       pictures: "Pictures",
       pressPaste: "Press Ctrl+V on the page to paste the picture on the clipboard.",
       regionNotCopied: (why: string) => `The region was not copied: ${why}`,
+      pageCopied: (page: number) =>
+        `Copied page ${page} for PowerPoint. Paste it there and choose Ungroup to edit its shapes and text.`,
       saveRegion: "Save a region as a picture",
       pngPicture: "PNG picture",
       noAttachments: "This document carries no attachments.",
@@ -228,6 +230,8 @@
       pictures: "Bilder",
       pressPaste: "Drücke Strg+V auf der Seite, um das Bild aus der Zwischenablage einzufügen.",
       regionNotCopied: (why: string) => `Der Bereich wurde nicht kopiert: ${why}`,
+      pageCopied: (page: number) =>
+        `Seite ${page} für PowerPoint kopiert. Füge sie dort ein und wähle „Gruppierung aufheben“, um Formen und Text zu bearbeiten.`,
       saveRegion: "Bereich als Bild speichern",
       pngPicture: "PNG-Bild",
       noAttachments: "Dieses Dokument hat keine Anhänge.",
@@ -372,6 +376,8 @@
       formEditing: "Sie können die Felder des Dokuments ziehen, an einer Ecke in der Größe ändern, umbenennen und entfernen. Beenden können Sie das im Menü „Bearbeiten“.",
       choiceNotKept: " Die Auswahl konnte nicht gespeichert werden und gilt nur, bis Sie tpdf schließen.",
       pressPaste: "Drücken Sie Strg+V auf der Seite, um das Bild aus der Zwischenablage einzufügen.",
+      pageCopied: (page: number) =>
+        `Seite ${page} für PowerPoint kopiert. Fügen Sie sie dort ein und wählen Sie „Gruppierung aufheben“, um Formen und Text zu bearbeiten.`,
       redactionsBeforeTextEdit: "Wenden Sie ausstehende Schwärzungen an oder entfernen Sie sie, bevor Sie Text bearbeiten.",
       updatesOff: "Die automatische Suche nach Updates ist ausgeschaltet. „Nach Updates suchen“ können Sie weiterhin verwenden. Eine bereits gestartete Suche kann noch zu Ende laufen.",
       restoreNotKept: "Die Auswahl konnte nicht gespeichert werden und gilt, bis Sie tpdf schließen.",
@@ -2143,6 +2149,7 @@
     picture: () => void addPicture(),
     pastePicture: () => void pastePicture(),
     copyRegion: () => void copyRegion(),
+    copyPageForPowerPoint: () => void copyPageForPowerPoint(),
     saveRegion: () => void saveRegion(),
     saveAttachment: () => void saveAttachment(),
     attachmentsAsked: () => attachmentQuestion?.files ?? null,
@@ -2505,6 +2512,23 @@
       tell(regionSaid(request));
     } catch (e) {
       say(TEXT().regionNotCopied(spokenError(e)));
+    }
+  }
+
+  /**
+   * *Copy page for PowerPoint*: the page in view, drawn by its worker as a
+   * metafile whose words stay text, put on the clipboard by the backend
+   * (`page_copy_powerpoint`, `pagecopy.rs`). Windows only.
+   */
+  async function copyPageForPowerPoint(): Promise<void> {
+    const shown = viewer?.pageInView();
+    if (!shown || openDoc < 0) return;
+    const { number, doc, page, turns, crop } = shown;
+    try {
+      await call("page_copy_powerpoint", { doc, page, turns, crop });
+      tell(TEXT().pageCopied(number));
+    } catch (e) {
+      say(spokenError(e));
     }
   }
 

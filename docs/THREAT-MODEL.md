@@ -3604,6 +3604,32 @@ by `MAX_WORDS` a side, refused past it, by `MAX_TABLE_CELLS` for any one aligned
 a recursion depth; it runs on a blocking thread so a long comparison holds no runtime thread.
 A document's text can make the comparison slow up to those bounds and no further.
 
+#### T6.49 — A page copied for PowerPoint, added 2026-11-03
+
+*Copy page for PowerPoint* (Windows) hands one page out as an enhanced metafile whose words
+are text records (`pagecopy.rs`).
+
+- **The page is drawn in the document's worker, under its low-integrity token and job.**
+  `Request::PageCopy` names a page, a crop and a turn, nothing the worker could act on. The
+  worker opens a second PDFium document over the mapping it already holds, takes the page's
+  text objects off that copy, has PDFium draw the rest into a memory metafile and writes each
+  text back with `CreateFontW` and `ExtTextOutW`. That is new authority in use, not new
+  authority granted: GDI was already reachable in the worker, which has no win32k lockdown,
+  and the font it asks for by name is read from the system fonts a low-integrity process
+  may read. The face name, size, colour and text come from the document: a hostile page can
+  choose which installed font GDI loads and what it writes, and both are bounded (31
+  characters of face name, a text object's text at most 1 MiB of UTF-16).
+- **The answer is bytes in the tile mapping, at most its 16 MiB**, refused past it, like a
+  decoded picture. The app process never parses them: `SetEnhMetaFileBits` turns them into a
+  handle for the clipboard, and the reader's paste is where they are first drawn, by the
+  program pasted into. Their contents are a drawing of a page the reader opened, and a page
+  that can run the command can put a drawing of an open document on the clipboard, as
+  *Copy a region as a picture* already can.
+- **Not covered.** GDI's own parsing of the metafile, in the app process at
+  `SetEnhMetaFileBits` and in PowerPoint at the paste. Metafile records are GDI's own
+  structures written by GDI in the worker; the document chooses their parameters, not their
+  layout.
+
 ### T9 — The updater
 
 **The threat.** The updater is the only code path in tpdf that fetches bytes and then

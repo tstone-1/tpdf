@@ -39,7 +39,7 @@ import {
 } from "./attachments";
 import { CommandRegistry } from "./commands";
 import { attachKeywords } from "./keywords";
-import { BINDINGS, copyInterfaceText, inTextField, isLinux, label, matches, type BoundCommand } from "./keys";
+import { BINDINGS, copyInterfaceText, inTextField, isLinux, isMac, label, matches, type BoundCommand } from "./keys";
 import {
   describeRange,
   describeSplit,
@@ -293,6 +293,7 @@ const TEXT = catalog({
     selectAll: "Select all on page",
     copy: "Copy selection",
     copyRegionAsPicture: "Copy a region as a picture",
+    copyPageForPowerPoint: "Copy page for PowerPoint",
     clearSelection: "Clear selection",
     toggleSidebar: "Toggle sidebar",
     showOutline: "Show outline",
@@ -518,6 +519,7 @@ const TEXT = catalog({
     selectAll: "Alles auf der Seite auswählen",
     copy: "Auswahl kopieren",
     copyRegionAsPicture: "Bereich als Bild kopieren",
+    copyPageForPowerPoint: "Seite für PowerPoint kopieren",
     clearSelection: "Auswahl aufheben",
     toggleSidebar: "Seitenleiste ein- oder ausblenden",
     showOutline: "Gliederung anzeigen",
@@ -978,6 +980,8 @@ export interface AppActions {
   copyRegion(): void;
   /** Arm a drag over a page; the region it covers is saved as a PNG file. */
   saveRegion(): void;
+  /** Put the page in view on the clipboard as a picture PowerPoint ungroups into shapes and text. */
+  copyPageForPowerPoint(): void;
   /**
    * Read the document's embedded files: save the one there is, or ask which
    * with {@link attachmentsAsked}'s list. See `attachments.ts`.
@@ -3290,6 +3294,15 @@ export function registerAppCommands(
       title: TEXT(locale).copyRegionAsPicture,
       enabled: withDocument,
       run: () => actions.copyRegion(),
+    },
+    {
+      // Windows only, and greyed elsewhere: the copy is an enhanced metafile,
+      // which PowerPoint for Windows ungroups into shapes and text boxes
+      // (`pagecopy.rs`). The page in view, with its crop and turn.
+      id: "edit.copyPageForPowerPoint",
+      title: TEXT(locale).copyPageForPowerPoint,
+      enabled: () => withDocument() && !isMac() && !isLinux(),
+      run: () => actions.copyPageForPowerPoint(),
     },
     {
       id: "edit.clearSelection",

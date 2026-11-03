@@ -48,6 +48,15 @@ or a platform `only`) without saying Linux fails, unless a `linux-difference:`
 marker is within `MARKER_REACH` lines above it. That is the sentence Linux was
 shown for "Show in folder" until 2026-10-15, and the planted self-test holds it.
 
+**3. The README's list of what exists on Windows only names its code, both ways.**
+A feature missing on macOS *and* Linux is not a Linux difference, and until
+2026-11-03 the only way past the sentence check above was to list it as one or
+to reword it. So the README has a second list, between `<!-- windows-only-list` and
+`<!-- /windows-only-list -->`, whose items carry `<!-- windows-only: <key> -->`, held
+equal to `windows-only: <key>` markers in code the same way. Such a marker
+excuses a sentence that names Windows and not macOS; a sentence naming macOS
+still needs a `linux-difference:` marker.
+
 Run with `--self-test` to check the planted cases before the tree.
 """
 
@@ -72,6 +81,8 @@ PLATFORMS = {"macos", "windows", "linux"}
 HEADS = re.compile(r"#!?\[cfg\(|#!?\[cfg_attr\(|\bcfg!\(")
 MARKER = re.compile(r"linux-difference:\s*([a-z0-9-]+)")
 BLOCK = re.compile(r"<!-- linux-differences\b.*?-->(.*?)<!-- /linux-differences -->", re.S)
+WIN_MARKER = re.compile(r"windows-only:\s*([a-z0-9-]+)")
+WIN_BLOCK = re.compile(r"<!-- windows-only-list\b.*?-->(.*?)<!-- /windows-only-list -->", re.S)
 STRING = re.compile(r'"((?:[^"\\]|\\.)*)"', re.S)
 REFUSAL = re.compile(
     r"\b(?:supported|available|implemented)\b[^.;]{0,40}?\bon\b[^.;]{0,20}?\b(?:macOS|Windows)\b"
@@ -215,28 +226,32 @@ def refusal_problems(path: str, text: str) -> list[str]:
             continue
         line = text.count("\n", 0, m.start()) + 1
         above = lines[max(0, line - 1 - MARKER_REACH):line]
-        if not any(MARKER.search(l) for l in above):
-            problems.append(
-                f"{path}:{line}: \"{body[:70]}\" says where this works and leaves Linux out -- "
-                "make it work on Linux, or list it in the README's Linux differences and "
-                "mark it `linux-difference: <key>`"
-            )
+        if any(MARKER.search(l) for l in above):
+            continue
+        if "macOS" not in body and any(WIN_MARKER.search(l) for l in above):
+            continue
+        problems.append(
+            f"{path}:{line}: \"{body[:70]}\" says where this works and leaves Linux out -- "
+            "make it work on Linux, or list it in the README's Linux differences and "
+            "mark it `linux-difference: <key>`, or, for a thing on Windows alone, in the "
+            "README's Windows-only list and mark it `windows-only: <key>`"
+        )
     return problems
 
 
-def readme_keys(text: str) -> list[str] | None:
-    """The keys of the README's Linux list, or None when the list is not found."""
-    block = BLOCK.search(text)
-    return None if block is None else MARKER.findall(block.group(1))
+def readme_keys(text: str, block_re: re.Pattern[str] = BLOCK, marker: re.Pattern[str] = MARKER) -> list[str] | None:
+    """The keys of one README list (the Linux one by default), or None when it is not found."""
+    block = block_re.search(text)
+    return None if block is None else marker.findall(block.group(1))
 
 
-def code_keys() -> dict[str, list[str]]:
-    """Every `linux-difference:` marker in code, key to where."""
+def code_keys(marker: re.Pattern[str] = MARKER) -> dict[str, list[str]]:
+    """Every marker of one kind in code (`linux-difference:` by default), key to where."""
     found: dict[str, list[str]] = {}
     files = sorted(RUST.rglob("*.rs")) + sorted(p for p in TS.rglob("*.ts") if not p.name.endswith(".test.ts"))
     for path in files:
         for n, line in enumerate(path.read_text(encoding="utf-8").split("\n"), 1):
-            for key in MARKER.findall(line):
+            for key in marker.findall(line):
                 found.setdefault(key, []).append(f"{path.relative_to(ROOT).as_posix()}:{n}")
     return found
 
@@ -275,12 +290,27 @@ def check_tree() -> list[str]:
         problems.append(f"code marks the Linux difference `{key}` ({', '.join(marked[key])}) and the README does not list it")
     for key in sorted({k for k in listed if listed.count(k) > 1}):
         problems.append(f"README lists the Linux difference `{key}` twice")
+    readme = README.read_text(encoding="utf-8")
+    windows = readme_keys(readme, WIN_BLOCK, WIN_MARKER)
+    if windows is None:
+        problems.append("README.md has no <!-- windows-only-list --> ... <!-- /windows-only-list --> list")
+        windows = []
+    win_marked = code_keys(WIN_MARKER)
+    for key in sorted(set(windows) - set(win_marked)):
+        problems.append(f"README lists `{key}` as Windows only and no code is marked with it")
+    for key in sorted(set(win_marked) - set(windows)):
+        problems.append(
+            f"code marks `{key}` as Windows only ({', '.join(win_marked[key])}) and the README does not list it"
+        )
+    for key in sorted({k for k in windows if windows.count(k) > 1}):
+        problems.append(f"README lists `{key}` as Windows only twice")
     if not problems:
         print(
             f"[OK]   every platform arm names its platforms ({linux} explicit Linux predicates, "
             "one compile-time guard)"
         )
         print(f"[OK]   the README's {len(listed)} Linux differences and the code's markers agree")
+        print(f"[OK]   the README's {len(windows)} Windows-only items and the code's markers agree")
     return problems
 
 
@@ -302,6 +332,9 @@ PLANTED = [
     ("one that names Linux", 'fn f() -> &str { "available on macOS, Windows and Linux" }', 0, 0, 0),
     ("a marked difference", '// linux-difference: x\nfn f() -> &str { "implemented on macOS only" }', 0, 0, 0),
     ("a marker too far above", "// linux-difference: x\n" + "\n" * 8 + 'fn f() -> &str { "implemented on macOS only" }', 0, 1, 0),
+    ("a Windows-only thing, marked", '// windows-only: x\nfn f() -> &str { "copied on Windows only" }', 0, 0, 0),
+    ("a Windows-only marker on a macOS sentence", '// windows-only: x\nfn f() -> &str { "implemented on macOS only" }', 0, 1, 0),
+    ("a Windows-only thing, unmarked", 'fn f() -> &str { "copied on Windows only" }', 0, 1, 0),
 ]
 
 
@@ -320,6 +353,12 @@ def self_test() -> list[str]:
         failures.append(f"self-test README list: read {readme_keys(block)!r}, expected ['one']")
     if readme_keys("no list here") is not None:
         failures.append("self-test README list: a README with no list read as one")
+    both = block + "<!-- windows-only-list: z -->\n- b <!-- windows-only: two -->\n<!-- /windows-only-list -->\n"
+    if readme_keys(both, WIN_BLOCK, WIN_MARKER) != ["two"] or readme_keys(both) != ["one"]:
+        failures.append(
+            f"self-test README lists: read {readme_keys(both, WIN_BLOCK, WIN_MARKER)!r} and "
+            f"{readme_keys(both)!r}, expected ['two'] and ['one']"
+        )
     if not failures:
         print(f"[OK]   self-test: {len(PLANTED)} planted cases and the README list reader")
     return failures

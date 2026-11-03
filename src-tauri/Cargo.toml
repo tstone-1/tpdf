@@ -336,6 +336,12 @@ objc2-core-text = { version = "0.3.2", default-features = false, features = ["CT
 [target.'cfg(windows)'.dependencies]
 windows-sys = { version = "0.61", features = [
     "Win32_Foundation",
+    # *Copy page for PowerPoint* (`pagecopy.rs`): a metafile DC and the text
+    # written into it, `FPDF_RenderPage` found in the mapped engine, and the
+    # clipboard the picture goes on. Features on a crate already here.
+    "Win32_Graphics_Gdi",
+    "Win32_System_LibraryLoader",
+    "Win32_System_DataExchange",
     "Win32_Security",
     "Win32_Security_Cryptography",
     # Toolhelp: `backend-probe` reads its own module list and finds its worker

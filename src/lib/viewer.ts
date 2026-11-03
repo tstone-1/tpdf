@@ -2673,6 +2673,27 @@ export class Viewer {
   }
 
   /**
+   * The page in view as the renderer addresses it: its document, its page
+   * there, the turn it is shown at and the reader's crop. What *Copy page for
+   * PowerPoint* draws, and `undefined` while no document is shown. `number`
+   * is the page number the reader sees, from 1.
+   */
+  pageInView():
+    | { number: number; doc: number; page: number; turns: number; crop: [number, number, number, number] | null }
+    | undefined {
+    const slot = this.currentPage();
+    const source = this.scroller.tileSource(slot);
+    if (!source) return undefined;
+    return {
+      number: slot + 1,
+      doc: source.doc,
+      page: source.page,
+      turns: source.turns ?? 0,
+      crop: source.crop ? [...source.crop] : null,
+    };
+  }
+
+  /**
    * Emits a status only when something a reader could notice has changed.
    *
    * The summary below is the whole of that decision, so every field the UI

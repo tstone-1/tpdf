@@ -181,6 +181,28 @@ impl DocumentGraph {
         }
     }
 
+    /// A second PDFium document over the same bytes and password, sharing no
+    /// page with the first: what `pagecopy` changes and then drops, so a page
+    /// the viewer holds cached is never touched (`docs/TRAPS.md`, *Two handles
+    /// to one cached page are aliases*).
+    #[cfg(windows)]
+    pub(crate) fn reopen(
+        &self,
+        bindings: crate::progressive::Bindings,
+    ) -> Result<crate::progressive::RawDocument, String> {
+        use crate::progressive::RawDocument;
+        let password = self.password.as_deref();
+        match &self.source {
+            Some(Source::Bytes(bytes)) => RawDocument::open_bytes(bindings, bytes, password),
+            Some(Source::Owned(bytes)) => {
+                RawDocument::open_owned(bindings, bytes.clone(), password)
+            }
+            Some(Source::Path(path)) => RawDocument::open(bindings, path, password),
+            None => return Err(said!("the document has no bytes to open again")),
+        }
+        .map_err(|refusal| refusal.reason)
+    }
+
     /// The password this document was opened with, for a parser that needs it.
     ///
     /// Every caller is a `lopdf` parse of the same bytes PDFium already holds

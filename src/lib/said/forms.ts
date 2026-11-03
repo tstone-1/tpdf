@@ -297,6 +297,24 @@ export default {
   "The region is copied by the web view on this platform.": "Auf diesem System kopiert die Webansicht den Bereich.",
   "The attachment was not saved: {e}": "Der Anhang wurde nicht gespeichert: {e}",
   "its render was abandoned.": "Seine Darstellung wurde abgebrochen.",
+
+  // commands/edit.rs, pagecopy.rs: Copy page for PowerPoint
+  "The page was not copied: {why}": "Die Seite wurde nicht kopiert: {why}",
+  "Windows could not read the picture.": "Windows konnte das Bild nicht lesen.",
+  "another program is holding the clipboard.": "Ein anderes Programm hält die Zwischenablage.",
+  "the clipboard refused it.": "Die Zwischenablage hat sie abgelehnt.",
+  "A page is copied for PowerPoint on Windows only.": "Eine Seite wird nur unter Windows für PowerPoint kopiert.",
+  "a page is copied for PowerPoint on Windows only": "Eine Seite wird nur unter Windows für PowerPoint kopiert",
+  "the PDF engine is not loaded in this process": "Die PDF-Engine ist in diesem Prozess nicht geladen",
+  "the PDF engine cannot draw a metafile": "Die PDF-Engine kann keine Metadatei zeichnen",
+  "the PDF engine refused to draw a metafile": "Die PDF-Engine hat das Zeichnen einer Metadatei abgelehnt",
+  "Windows would not start a picture": "Windows hat kein Bild angelegt",
+  "Windows would not finish the picture": "Windows hat das Bild nicht abgeschlossen",
+  "Windows would not read the picture back": "Windows hat das Bild nicht zurückgelesen",
+  "the page is too detailed to copy as a picture": "Die Seite ist zu detailreich, um sie als Bild zu kopieren",
+  "the worker claimed more bytes than its mapping holds":
+    "Der Worker meldete mehr Bytes, als sein Speicherbereich fasst",
+  "the document has no bytes to open again": "Das Dokument hat keine Bytes, die sich erneut öffnen ließen",
   "the picture was not used: {why}": "Das Bild wurde nicht verwendet: {why}",
   "the page lists no annotations": "Die Seite führt keine Anmerkungen",
 

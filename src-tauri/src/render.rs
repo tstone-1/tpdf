@@ -445,6 +445,13 @@ pub(crate) enum Job {
         page: u32,
         reply: Reply<f32>,
     },
+    PageCopy {
+        doc: u32,
+        page: u32,
+        crop: Option<[f32; 4]>,
+        turns: u8,
+        reply: Reply<Vec<u8>>,
+    },
     Geometry {
         doc: u32,
         page: u32,
@@ -932,6 +939,28 @@ impl RenderService {
         }
     }
 
+    /// One page as a Windows metafile with its words as text, invoking `reply`
+    /// on a service thread (`pagecopy.rs`).
+    pub fn page_copy(
+        &self,
+        doc: u32,
+        page: u32,
+        crop: Option<[f32; 4]>,
+        turns: u8,
+        reply: Reply<Vec<u8>>,
+    ) {
+        let job = Job::PageCopy {
+            doc,
+            page,
+            crop,
+            turns,
+            reply,
+        };
+        if self.tx.send(job).is_err() {
+            // Render thread is gone; nothing left to reply with.
+        }
+    }
+
     /// Reports a page's displayed size under a crop, on a service thread.
     pub fn geometry(
         &self,
@@ -1297,6 +1326,13 @@ pub(crate) trait Engine {
     ) -> Result<PageMatches, String>;
     fn content(&self, doc: u32, page: u32) -> Result<Option<[f64; 4]>, String>;
     fn pictures(&self, doc: u32, page: u32) -> Result<f32, String>;
+    fn page_copy(
+        &self,
+        doc: u32,
+        page: u32,
+        crop: Option<[f32; 4]>,
+        turns: u8,
+    ) -> Result<Vec<u8>, String>;
     fn geometry(&self, doc: u32, page: u32, crop: Option<[f32; 4]>)
         -> Result<CropGeometry, String>;
     fn crop_box(&self, doc: u32, page: u32, rect: [f32; 4]) -> Result<[f32; 4], String>;
@@ -1386,6 +1422,13 @@ pub(crate) fn dispatch(job: Job, engine: &dyn Engine) {
         }
         Job::Content { doc, page, reply } => reply(engine.content(doc, page)),
         Job::Pictures { doc, page, reply } => reply(engine.pictures(doc, page)),
+        Job::PageCopy {
+            doc,
+            page,
+            crop,
+            turns,
+            reply,
+        } => reply(engine.page_copy(doc, page, crop, turns)),
         Job::Geometry {
             doc,
             page,
@@ -1464,6 +1507,7 @@ fn drain(rx: Receiver<Job>, error: &str) {
             Job::Search { reply, .. } => reply(Err(error.to_string())),
             Job::Content { reply, .. } => reply(Err(error.to_string())),
             Job::Pictures { reply, .. } => reply(Err(error.to_string())),
+            Job::PageCopy { reply, .. } => reply(Err(error.to_string())),
             Job::Geometry { reply, .. } => reply(Err(error.to_string())),
             Job::CropBox { reply, .. } => reply(Err(error.to_string())),
             Job::RedactPlans { reply, .. } => reply(Err(error.to_string())),
@@ -1646,6 +1690,18 @@ impl Engine for InProcess {
     fn pictures(&self, doc: u32, page: u32) -> Result<f32, String> {
         open_slot(&self.docs.borrow(), doc)?
             .with_text_view(&self.views.view(doc), |view| run_pictures(view, page))
+    }
+
+    fn page_copy(
+        &self,
+        doc: u32,
+        page: u32,
+        crop: Option<[f32; 4]>,
+        turns: u8,
+    ) -> Result<Vec<u8>, String> {
+        open_slot(&self.docs.borrow(), doc)?.with_text_view(&self.views.view(doc), |view| {
+            run_page_copy(view, page, crop, turns)
+        })
     }
 
     fn geometry(
@@ -2055,6 +2111,29 @@ pub fn run_pictures(document: &OpenDocument, page: u32) -> Result<f32, String> {
         page.crop_pt(),
         &objects::pictures(&page),
     ))
+}
+
+/// One page as a Windows metafile with its words as text (`pagecopy.rs`).
+#[cfg(windows)]
+pub(crate) fn run_page_copy(
+    document: &OpenDocument,
+    page: u32,
+    crop: Option<[f32; 4]>,
+    turns: u8,
+) -> Result<Vec<u8>, String> {
+    crate::pagecopy::emf(document, page, crop, turns)
+}
+
+/// The other platforms: refused. See the Windows arm.
+#[cfg(any(target_os = "macos", target_os = "linux"))]
+pub(crate) fn run_page_copy(
+    _: &OpenDocument,
+    _: u32,
+    _: Option<[f32; 4]>,
+    _: u8,
+) -> Result<Vec<u8>, String> {
+    // windows-only: page-copy
+    Err(said!("a page is copied for PowerPoint on Windows only"))
 }
 
 /// Where a crop box lands inside the page the file describes, and how big it is.

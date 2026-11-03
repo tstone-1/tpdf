@@ -99,6 +99,7 @@ pub mod opener;
 pub mod outline;
 pub mod outline_repair;
 pub mod pades;
+pub mod pagecopy;
 pub mod pagetree;
 pub mod pathcut;
 pub mod picture;
@@ -1062,6 +1063,7 @@ pub fn run() {
             picture_decode,
             region_save,
             region_copy,
+            page_copy_powerpoint,
             attachment_save,
             signature_store,
             edit_undo,

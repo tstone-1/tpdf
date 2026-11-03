@@ -232,6 +232,8 @@ FILTERS = [
     # mutations. `cli::` would not reach `clitool::` --- libtest filters on a
     # substring, and "cli::" is not in "clitool::tests::..." --- so both.
     "cli::",
+    # Copy page for PowerPoint, 2026-11-03, with its mutations.
+    "pagecopy::",
     # "Show in folder" on Linux, 2026-10-15.
     "commands::document::",
     "clitool::",

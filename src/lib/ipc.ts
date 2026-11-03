@@ -444,6 +444,11 @@ export interface Commands {
   region_save: { args: { tile: string; path: string }; reply: void };
   /** A region rendered by a worker and put on the clipboard as a PNG; macOS only. */
   region_copy: { args: { tile: string }; reply: void };
+  /** One page drawn by a worker as a metafile with its words as text, put on the clipboard; Windows only. */
+  page_copy_powerpoint: {
+    args: { doc: DocHandle; page: number; crop: [number, number, number, number] | null; turns: number };
+    reply: void;
+  };
   /** An embedded file decoded in a worker and saved; the reply is its size in bytes. */
   attachment_save: { args: { doc: DocHandle; source: string; index: number; path: string }; reply: number };
   signature_store: { args: { action: { kind: "load" } | { kind: "save"; image: import("./signature").SignatureImage } | { kind: "forget" } }; reply: import("./signature").SignatureImage | null };

@@ -1896,6 +1896,36 @@ impl Engine for Workers {
         }
     }
 
+    /// The metafile is in the tile mapping, so this reads the response's
+    /// length rather than only its reply, as [`Workers::render`] does.
+    fn page_copy(
+        &self,
+        doc: u32,
+        page: u32,
+        crop: Option<[f32; 4]>,
+        turns: u8,
+    ) -> Result<Vec<u8>, String> {
+        let request = self
+            .views
+            .request(doc, Request::PageCopy { page, crop, turns });
+        self.with_worker(doc, |worker| {
+            let response = worker.call(&request)?;
+            if !response.ok {
+                return Err(response.error);
+            }
+            match response.reply {
+                Some(Reply::PageCopy) if response.bytes <= worker.tile.len() => {
+                    Ok(worker.tile.as_slice()[..response.bytes].to_vec())
+                }
+                Some(Reply::PageCopy) => Err(said!(
+                    "the worker claimed more bytes than its mapping holds"
+                )),
+                Some(other) => Err(mismatched("page copy", &other)),
+                None => Err("worker replied without a payload".to_string()),
+            }
+        })
+    }
+
     fn geometry(
         &self,
         doc: u32,

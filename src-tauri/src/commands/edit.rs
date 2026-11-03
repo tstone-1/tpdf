@@ -543,6 +543,49 @@ pub async fn region_copy(tile: String) -> Result<(), String> {
     ))
 }
 
+/// *Copy page for PowerPoint*: one page drawn in a worker as a Windows
+/// metafile with its words as text (`pagecopy.rs`), put on the clipboard as
+/// `CF_ENHMETAFILE`. PowerPoint pastes it as a picture that *Ungroup* turns
+/// into shapes and text boxes.
+#[cfg(windows)]
+#[tauri::command]
+pub async fn page_copy_powerpoint(
+    window: tauri::WebviewWindow,
+    service: tauri::State<'_, crate::render::RenderService>,
+    doc: u32,
+    page: u32,
+    crop: Option<[f32; 4]>,
+    turns: u8,
+) -> Result<(), String> {
+    let (reply, rx) = super::reply_channel();
+    service.page_copy(doc, page, crop, turns, reply);
+    let emf = super::await_reply::<_, String>("page copy", rx)
+        .await
+        .map_err(|why| said!("The page was not copied: {why}"))?;
+    let owner = window
+        .hwnd()
+        .map_err(|e| said!("The page was not copied: {why}", why = e))?
+        .0 as isize;
+    tauri::async_runtime::spawn_blocking(move || crate::pagecopy::clipboard(owner, &emf))
+        .await
+        .map_err(|e| said!("The page was not copied: {why}", why = e))?
+        .map_err(|why| said!("The page was not copied: {why}"))
+}
+
+/// The other platforms have no metafile to put on a clipboard.
+#[cfg(any(target_os = "macos", target_os = "linux"))]
+#[tauri::command]
+pub async fn page_copy_powerpoint(
+    doc: u32,
+    page: u32,
+    crop: Option<[f32; 4]>,
+    turns: u8,
+) -> Result<(), String> {
+    let _ = (doc, page, crop, turns);
+    // windows-only: page-copy
+    Err(said!("A page is copied for PowerPoint on Windows only."))
+}
+
 /// Saves the embedded file at `index` of the open document to `path`
 /// (*Save an attachment*), and answers how many bytes it holds.
 ///

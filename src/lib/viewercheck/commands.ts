@@ -20,7 +20,7 @@ import { CommandRegistry } from "../commands";
 import { UI_LOCALES } from "../i18n";
 import type { DocumentInfo } from "../ipc";
 import { Palette } from "../palette";
-import { isLinux } from "../keys";
+import { isLinux, isMac } from "../keys";
 import type { StampName } from "../pages";
 import { SINGLE } from "../scroller";
 import { kindOf } from "../spreads";
@@ -367,6 +367,7 @@ export async function appCommandChecks(
     pastePicture: () => { fired.push("pastePicture"); },
     pasteKey: () => false,
     copyRegion: () => { fired.push("copyRegion"); },
+    copyPageForPowerPoint: () => { fired.push("copyPageForPowerPoint"); },
     saveRegion: () => { fired.push("saveRegion"); },
     fillForm: () => {},
     viewer: () => viewer,
@@ -1411,6 +1412,14 @@ export async function appCommandChecks(
     { id: "edit.addPicture", ...shell("picture"), read: () => fired.join(",") },
     { id: "edit.pastePicture", ...shell("pastePicture"), read: () => fired.join(",") },
     { id: "edit.copyRegionAsPicture", ...shell("copyRegion"), read: () => fired.join(",") },
+    {
+      // A recorder, so nothing reaches the clipboard. Windows only, where the
+      // command is enabled; the metafile itself is `tests/cli/pagecopy.rs`.
+      id: "edit.copyPageForPowerPoint",
+      ...shell("copyPageForPowerPoint"),
+      read: () => fired.join(","),
+      unless: () => (isMac() || isLinux() ? "a page is copied for PowerPoint on Windows only" : null),
+    },
     { id: "file.saveRegionAsPicture", ...shell("saveRegion"), read: () => fired.join(",") },
     {
       // The third drag tool, aimed separately for the reason the two above it

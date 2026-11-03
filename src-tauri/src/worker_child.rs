@@ -630,6 +630,7 @@ fn handle(
             Ok(share) => Response::reply(Reply::Pictures(share)),
             Err(e) => Response::err(e),
         },
+        Request::PageCopy { page, crop, turns } => page_copy(document, tile, *page, *crop, *turns),
         Request::Geometry { page, crop } => match render::geometry_of(document, *page, *crop) {
             Ok(size) => Response::reply(Reply::Geometry(size)),
             Err(e) => Response::err(e),
@@ -920,6 +921,27 @@ fn images(
             pages,
         }),
         Err(e) => Response::err(said!("the document could not be written: {e}")),
+    }
+}
+
+/// One page as a metafile, into the tile mapping (`pagecopy.rs`).
+fn page_copy(
+    document: &OpenDocument,
+    tile: &mut Shm,
+    page: u32,
+    crop: Option<[f32; 4]>,
+    turns: u8,
+) -> Response {
+    match render::run_page_copy(document, page, crop, turns) {
+        Ok(bytes) if bytes.len() <= tile.len() => {
+            tile.as_mut_slice()[..bytes.len()].copy_from_slice(&bytes);
+            Response {
+                bytes: bytes.len(),
+                ..Response::reply(Reply::PageCopy)
+            }
+        }
+        Ok(_) => Response::err("the page is too detailed to copy as a picture"),
+        Err(why) => Response::err(why),
     }
 }
 

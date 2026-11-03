@@ -54,6 +54,7 @@ hop through the index.
 - PDFium paints a pixel-aligned rectangle one pixel wider, so cutting it changes an edge the cut did not touch
 - PDFium makes no text object of a show operator that draws nothing, so counting operators counts too many
 - Removing an operator removes everything it did, not only what it drew
+- PDFium's EMF output draws every glyph as an outline, so a page pasted into PowerPoint has no text
 
 ## PDFium: text, coordinates and outlines
 - A watermark turned across the page merged the lines it crossed in the reading order
@@ -761,6 +762,7 @@ hop through the index.
 - A new window phase is not run at a release until `window_checks.py` lists it
 - A mutant that failed to compile once was a busy machine, and `--resume` kept the verdict
 - A window check that copies to the clipboard fails when the window loses focus, and passes run alone
+- `-o --force` failed once with Access is denied in the full suite, and passed three times alone
 
 ## Windows and portability
 - The gates had never run on the platform where they fail
@@ -27185,3 +27187,53 @@ anything that raises a window in that time can do it.
 Read that message as a harness condition first: run the phase alone, and treat a second
 failure, or the same failure alone, as a finding about the copy. The application's own
 message for this case names the cause, which is why it could be read from the transcript.
+
+### PDFium's EMF output draws every glyph as an outline, so a page pasted into PowerPoint has no text
+
+Spike, 2026-11-03, Windows 11, PDFium `pdfium-8103-tpdf.1`, for a possible *copy page as a
+vector picture*: one page of a two-page org chart (PowerPoint printed through Microsoft Print
+to PDF, Verdana subsets) drawn by `FPDF_RenderPage` into `CreateEnhMetaFileW` under
+`FPDF_SetPrintMode(0)` with `FPDF_ANNOT | FPDF_PRINTING`. The EMF had **no `EMR_EXTTEXTOUTW`
+record at all**: 730 paths and 9,516 Bézier records, the text among them. Mode 6 wrote the same
+records; mode 1 (text only) wrote 57 `EMR_GDICOMMENT` and nothing drawable. PowerPoint inserted
+the mode 0 EMF and, after two `Ungroup`s through COM, gave 775 shapes, 729 of them freeforms,
+and **0 with text**. The boxes and lines were editable; not one word was.
+
+What did work: remove the page's text objects (`FPDFPage_RemoveObject`), draw the rest into the
+EMF, then write each text object back with `ExtTextOutW` in a font created by its family name
+(`FPDFFont_GetFamilyName`), its size times the object's matrix scale, its fill colour, at its
+matrix origin with `TA_BASELINE`. The same page then ungrouped into 118 shapes, **57 of them
+text boxes with the text**, umlauts included, laid out close to the PDF. Three defects remain
+in that result: PowerPoint gives each converted fill a thin black outline the PDF does not
+have; each PDF text object becomes its own text box, so a name and its superscript are two;
+and the installed font's advances differ slightly from the subset's, so a superscript can
+touch its name. `FPDFFont_GetWeight` answered 4028 for Verdana, which is not a weight;
+read weight from the descriptor before trusting it.
+
+Built the same day as *Copy page for PowerPoint* (`pagecopy.rs`). Through the sandboxed
+worker and the clipboard (`Shapes.Paste()`, not `AddPicture`) the same page gave the same
+118 shapes and 57 text boxes, with U+00FC intact in the saved slide. Two facts the build paid
+for. `FPDF_RenderPage` and `FPDF_SetPrintMode` are bound by `pdfium-render` only behind its
+`pdfium_use_win32` feature, so they are looked up in the mapped `pdfium.dll`. And the text's
+escapement must count the page's own `/Rotate` as well as the reader's turn: PDFium's drawing
+and `FPDF_PageToDevice` apply both, and with only the reader's turn the words on a `/Rotate
+90` page came out horizontal across a turned page (`tests/cli/pagecopy.rs` checks 2700).
+A reader of the EMF should also know that PDFium paints an upright filled rectangle as a brush
+`EMR_BITBLT` with no source, not as a path: a check counting path records found 0 shapes on a
+page with a filled box.
+
+Not measured: macOS, where PowerPoint takes a pasted PDF as a picture.
+
+### `-o --force` failed once with Access is denied in the full suite, and passed three times alone
+
+2026-11-03, Windows 11, `scripts/gates.py` (`test`, 465 s): the CLI check *-o --force replaces
+an existing file, and leaves no staging directory* failed with `could not put ... out.txt in
+place: Access is denied. (os error 5)`. Nothing the session had changed touches `tpdf text -o`.
+`cargo test --test cli -- --filter "text agrees"` then passed it three runs out of three.
+
+Replacing a file by rename on Windows fails with error 5 while another process has it open
+without `FILE_SHARE_DELETE`; a virus scan or the search indexer opening a file just written is
+the usual one. Which process it was is unmeasured. Read this failure as a harness condition
+first: rerun its section alone, and treat a second failure, or a failure alone, as a finding
+about the publish step. The two earlier *Access is denied* entries are about integrity levels
+and a worker's exit, and do not explain this one.

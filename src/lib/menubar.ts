@@ -540,6 +540,12 @@ export const MENU_LAYOUT: LayoutSection[] = [
  */
 export const NOT_IN_MENU: { prefix: string; reason: string }[] = [
   {
+    prefix: "edit.copyPageForPowerPoint",
+    reason:
+      "offered on Windows only, which has no menu bar: on macOS and Linux the " +
+      "item would sit greyed for good; the page's right-click menu offers it",
+  },
+  {
     prefix: "file.addCertificateFile",
     reason:
       "offered on Linux only, and the menu is built once for every platform: " +

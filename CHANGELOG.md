@@ -19,6 +19,17 @@ have the binary.)
 
 ## [26.11.2] - Unreleased
 
+### Added
+
+- **Copy page for PowerPoint** (Windows, in the command palette): the page in view goes to
+  the clipboard as a picture that PowerPoint's *Ungroup* turns into shapes and text boxes.
+  An org chart printed to PDF from PowerPoint pastes back as its boxes and lines plus a text
+  box for each piece of text, umlauts included, in the document's font where it is
+  installed. Text tpdf cannot read as characters stays a drawing; invisible text, such as a
+  scan's OCR layer, is left out. Each piece of text the PDF draws separately is its own text
+  box, so a name and its superscript are two, and PowerPoint draws a thin outline round the
+  boxes it converts.
+
 ### Fixed
 
 - **Text with curly quotes in documents exported from Word can be edited.** Word embeds
