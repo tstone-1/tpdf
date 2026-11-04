@@ -1037,6 +1037,16 @@ starts at 0 and increments within the month.
      26.11.1 on the premise that it was updater code needing step 12 before the tag; that held
      for the updater crate itself, which stays pinned (below), and not for this one. Re-read
      `extract` when the updater moves, and hold `zip` again if tpdf ever ships a `.zip` update.
+   - **`lopdf` 0.47** (2026-11-04) is held for a change of its own, not taken inside a
+     release. It writes a whole-number real as `100.0` where 0.46 wrote `100` (lopdf #649),
+     and 33 Rust tests (`pathcut`, `redact::glyph_cut`, `redact`, `save`) and two in
+     `api/python` compare the rewritten content stream byte for byte. It also drops an
+     object a later section frees from the merged table (#642), which makes the premise in
+     `docinfo/freed.rs`'s header false; `read_appendix` still counts such an object through
+     `freed::after` and no longer sees it as unchanged. It writes from a copy of the trailer
+     and leaves `max_id` alone (#633), and bounds decompression at 256 MiB by default (#656),
+     which tpdf's own `MAX_DECODE` already does at every non-test load. Measured on
+     26.11.3's tree: everything else passed.
    - `toml`, `toml_datetime`, `toml_edit`, `brotli-decompressor`, `generic-array` and
      `rand_chacha` are not named in `Cargo.toml`; what names them pins them.
    - **`windows-core` 0.100** is held by Tauri: `tao`, `wry` and `webview2-com` name 0.62.

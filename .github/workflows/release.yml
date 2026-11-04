@@ -567,6 +567,12 @@ jobs:
           workers run under Landlock and seccomp. The Linux packages (deb
           and AppImage) do not update themselves: install the new one.
 
+          **New in 26.11.3.** Fixes. On Windows, another program can now
+          overwrite a document while it is open in tpdf; it failed with
+          *Invalid argument* until the tab was closed. On every platform, a
+          file another program rewrites before your first edit is reported as
+          changed and is not saved over.
+
           **New in 26.11.2.** On Windows, **Copy page for PowerPoint** puts the
           page in view on the clipboard as a picture that PowerPoint's Ungroup
           turns into shapes and text boxes you can edit. Text in documents

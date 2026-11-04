@@ -3063,14 +3063,14 @@ SOFTWARE.
 | tokio | 1.54.1 | MIT |
 | tokio-rustls | 0.26.6 | MIT OR Apache-2.0 |
 | tokio-util | 0.7.20 | MIT |
-| toml | 1.1.8+spec-1.1.0 | MIT OR Apache-2.0 |
+| toml | 1.2.0+spec-1.1.0 | MIT OR Apache-2.0 |
 | toml_datetime | 0.6.3 | MIT OR Apache-2.0 |
 | toml_datetime | 1.1.2+spec-1.1.0 | MIT OR Apache-2.0 |
 | toml_edit | 0.19.15 | MIT OR Apache-2.0 |
 | toml_edit | 0.20.2 | MIT OR Apache-2.0 |
-| toml_edit | 0.25.17+spec-1.1.0 | MIT OR Apache-2.0 |
+| toml_edit | 0.25.18+spec-1.1.0 | MIT OR Apache-2.0 |
 | toml_parser | 1.1.5+spec-1.1.0 | MIT OR Apache-2.0 |
-| toml_writer | 1.1.3+spec-1.1.0 | MIT OR Apache-2.0 |
+| toml_writer | 1.2.0+spec-1.1.0 | MIT OR Apache-2.0 |
 | tower | 0.5.3 | MIT |
 | tower-http | 0.6.11 | MIT |
 | tower-layer | 0.3.3 | MIT |
