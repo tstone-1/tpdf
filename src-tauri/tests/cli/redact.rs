@@ -1755,10 +1755,10 @@ fn app_path(
     edits.open(
         info.id,
         count,
-        Some(tpdf_lib::fingerprint::Opened {
-            file: hashing,
-            what: path.to_path_buf(),
-        }),
+        Some(tpdf_lib::fingerprint::Opened::new(
+            hashing,
+            path.to_path_buf(),
+        )),
     );
     for (page, areas) in match_regions(&found) {
         for area in areas {

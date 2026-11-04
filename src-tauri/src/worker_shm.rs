@@ -40,10 +40,12 @@ pub struct Shm {
 /// Passing `NULL` for `lpName` makes the section reachable only through a handle,
 /// which is the exact property the unlinked temp file buys on the other side.
 ///
-/// It is simpler than the POSIX version in one way worth knowing. A section holds
-/// a reference to whatever backs it, so once `map_file` has created the section
-/// the *file* handle can be closed and the child needs only the section handle.
-/// There is no Windows analogue of passing a file descriptor alongside.
+/// It differs from the POSIX version in what backs a document. `map_file` does
+/// not map the file: it copies it into a pagefile section, because a section
+/// over the file itself would stop every other program rewriting that file
+/// while the document is open (`Shm::section` has the account). The child needs
+/// only the section handle either way; there is no Windows analogue of passing
+/// a file descriptor alongside.
 ///
 /// This replaced a stub whose constructors all refused. The stub's doc recorded a
 /// dead end that is still worth keeping: it was an **uninhabited** `enum` first,
@@ -408,43 +410,95 @@ impl Shm {
         Self::section(dup, len)
     }
 
-    /// Builds a read-only section over an open file and maps it.
+    /// Copies an open file into a pagefile section, and hands back a read-only one.
     ///
-    /// The half [`Shm::map_file`] and [`Shm::map_open_file`] share. Split out
-    /// rather than written twice: the `PAGE_READONLY` below is a security
-    /// property, and a second copy of it is a second place for it to stop being
-    /// read-only.
+    /// The half [`Shm::map_file`] and [`Shm::map_open_file`] share.
+    ///
+    /// **A copy, not a section over the file, and the reason is the reader's
+    /// other programs.** This used to be `CreateFileMappingW` on the file
+    /// itself, and Windows holds a file with a section open on it against
+    /// truncation and replacement: every `open(path, "wb")` from another
+    /// program failed with `ERROR_USER_MAPPED_FILE` (1224) for as long as the
+    /// document was open in tpdf, which Python reports as `EINVAL` (issue #7).
+    /// A copy leaves the file free the moment this returns. It also means the
+    /// worker never sees bytes a writer puts there later, so a half-written
+    /// file is not shown and a valid in-place rewrite does not mix two
+    /// revisions in one document --- `rewrite-probe` measured both before this.
+    ///
+    /// Read through the handle, positionally, and never by name: the
+    /// fingerprint and the save's read-back rest on this being the file the
+    /// caller opened.
+    ///
+    /// The cost is one read of the file at open, and the document's length in
+    /// committed memory where the section over the file used the file cache.
+    ///
+    /// # Errors
+    ///
+    /// The section not being created, the read failing, or the file being
+    /// shorter than `len` --- a writer cutting it while it is read, which is
+    /// refused rather than handed to a worker as a document of zeroes.
     fn section(file: std::fs::File, len: usize) -> Result<Self, String> {
-        use std::os::windows::io::AsRawHandle;
-        use windows_sys::Win32::System::Memory::{CreateFileMappingW, PAGE_READONLY};
+        use std::os::windows::fs::FileExt;
 
-        let mut attributes = inheritable_attributes();
-        // `PAGE_READONLY`, for the reason the POSIX side gives: a worker holding
-        // a writable mapping of the reader's own document could corrupt the file
-        // it was asked to display, which is precisely the authority the boundary
-        // exists to withhold.
-        //
-        // A zero maximum size is correct *here* and wrong in `create` above ---
-        // backed by a real file it means "as large as the file", which is what a
-        // document mapping wants.
-        // SAFETY: `file` is live for the call and `attributes` outlives it.
-        let mapping = unsafe {
-            CreateFileMappingW(
-                file.as_raw_handle().cast(),
-                &raw mut attributes,
-                PAGE_READONLY,
+        let mut copy = Self::create(len)?;
+        let into = copy.as_mut_slice();
+        let mut at = 0usize;
+        while at < len {
+            let read = file
+                .seek_read(&mut into[at..], at as u64)
+                .map_err(|e| format!("could not read the document at byte {at}: {e}"))?;
+            if read == 0 {
+                return Err(format!(
+                    "the document ended at byte {at} of {len} while it was being read"
+                ));
+            }
+            at += read;
+        }
+        drop(file);
+        copy.read_only()
+    }
+
+    /// The same section behind a handle that can only map it for reading.
+    ///
+    /// `create` makes a `PAGE_READWRITE` section, because the parent has to
+    /// write the copy into it. The worker must not be able to: the parent reads
+    /// the same pages back for the save's verification, so a hostile worker
+    /// that could write them could make a refused read-back pass. The handle
+    /// is what carries that, since [`duplicate_into`] passes it on with
+    /// `DUPLICATE_SAME_ACCESS` --- so the writable handle and its view are
+    /// closed here, and the only handle left is one opened with
+    /// `FILE_MAP_READ` alone, which a holder cannot upgrade.
+    fn read_only(self) -> Result<Self, String> {
+        use windows_sys::Win32::Foundation::{DuplicateHandle, HANDLE};
+        use windows_sys::Win32::System::Memory::FILE_MAP_READ;
+        use windows_sys::Win32::System::Threading::GetCurrentProcess;
+
+        let mut reader: HANDLE = std::ptr::null_mut();
+        // SAFETY: `self.mapping` is live and owned here; the pseudo-handle to
+        // this process and the out pointer outlive the call. Inheritable, for
+        // the reason `create` gives.
+        let ok = unsafe {
+            DuplicateHandle(
+                GetCurrentProcess(),
+                self.mapping,
+                GetCurrentProcess(),
+                &raw mut reader,
+                FILE_MAP_READ,
+                1,
                 0,
-                0,
-                std::ptr::null(),
             )
         };
-        if mapping.is_null() {
-            return Err(std::io::Error::last_os_error().to_string());
+        if ok == 0 {
+            return Err(format!(
+                "could not make the document section read-only: {}",
+                std::io::Error::last_os_error()
+            ));
         }
-        // Dropped deliberately: the section holds its own reference to the file,
-        // so the mapping outlives this handle and the child never needs it.
-        drop(file);
-        Self::view(mapping, len, false)
+        let len = self.len;
+        // The writable view and handle go first; the section lives on through
+        // `reader`.
+        drop(self);
+        Self::view(reader, len, false)
     }
 
     /// Adopts a section handle the parent passed in, and maps it.
@@ -521,21 +575,11 @@ impl Shm {
     /// Always `None` here, and the reason is a real platform difference.
     ///
     /// The POSIX twin exists because a `MAP_SHARED` mapping does not stop
-    /// another process shortening the file underneath it. Windows does stop it:
-    /// while a section object exists over a file, the file is held against
-    /// truncation, and `SetEndOfFile` fails with `ERROR_USER_MAPPED_FILE`. So
-    /// the condition the twin diagnoses is believed unreachable here rather than
-    /// merely undiagnosed.
-    ///
-    /// **Believed, not measured.** Nothing in this repository has provoked it on
-    /// Windows, and `AGENTS.md` is explicit that a refusal existing because
-    /// nobody wrote the code is not a guarantee. `None` is therefore the honest
-    /// answer and not a claim: the caller reads it as "no diagnosis available"
-    /// and falls through to the ordinary crash path, which is what would happen
-    /// anyway if the belief turns out to be wrong. There is a second reason it
-    /// could not answer even if we wanted it to --- `map_file` closes the file
-    /// handle once the section holds a reference to it, so there is nothing left
-    /// here to ask.
+    /// another process shortening the file underneath it. On Windows a document
+    /// mapping is a copy in a pagefile section (see `section`), so nothing a
+    /// writer does to the file reaches it, and there is no backing file left to
+    /// measure. `rewrite-probe` truncates the file under an open document and
+    /// records that the worker goes on drawing it.
     #[must_use]
     pub fn backing_len(&self) -> Option<u64> {
         None
@@ -570,6 +614,14 @@ impl Shm {
     }
 }
 
+/// Whether a document mapping is a copy of the file rather than a view of it.
+///
+/// `true` on Windows, where a section over the file would stop other programs
+/// rewriting it (issue #7); `false` on unix, where a shared mapping blocks no
+/// writer. What a reader sees after another program rewrites an open document
+/// depends on it, which is why `rewrite-probe` reads it rather than `cfg!`.
+pub const DOCUMENTS_ARE_COPIED: bool = cfg!(windows);
+
 /// Security attributes whose only content is "this handle may be inherited".
 #[cfg(windows)]
 fn inheritable_attributes() -> windows_sys::Win32::Security::SECURITY_ATTRIBUTES {
@@ -593,10 +645,10 @@ fn inheritable_attributes() -> windows_sys::Win32::Security::SECURITY_ATTRIBUTES
 /// number is meaningful in exactly one process.
 ///
 /// `DUPLICATE_SAME_ACCESS` rather than a named access mask on purpose: the
-/// document section is created `PAGE_READONLY` by `Shm::map_file`, so "the same
-/// access" is read-only, and re-stating the mask here would be a second place
-/// for the worker's read-only guarantee to live. The one that matters is where
-/// the section is made.
+/// document section's only handle is opened `FILE_MAP_READ` by
+/// `Shm::read_only`, so "the same access" is read-only, and re-stating the mask
+/// here would be a second place for the worker's read-only guarantee to live.
+/// The one that matters is where that handle is made.
 ///
 /// # Safety
 ///
@@ -868,6 +920,123 @@ mod tests {
         // Deleted only after the mapping is dropped, which also asserts the
         // section did not keep the file locked beyond its own lifetime.
         std::fs::remove_file(&path).expect("the mapping must not outlive its Shm");
+    }
+
+    /// Another program can rewrite a document while it is open (issue #7).
+    ///
+    /// The writes the issue names, each against an open mapping: a
+    /// share-mode-0 open, a truncating `open(path, "wb")` with a caller's
+    /// handle also open, as the app keeps one for the fingerprint, and a
+    /// rename over the path. Then the mapping is read again, because the fix is a copy and
+    /// a copy is only right if it still holds the bytes it was taken from.
+    /// Before the fix the first write fails with `ERROR_USER_MAPPED_FILE`
+    /// (1224).
+    #[cfg(windows)]
+    #[test]
+    fn an_open_document_does_not_stop_another_program_rewriting_its_file() {
+        use std::io::Write;
+        use std::os::windows::fs::OpenOptionsExt;
+
+        let dir = std::env::temp_dir().join(format!("tpdf-shm-rewrite-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).expect("temp dir");
+        let path = dir.join("doc.pdf");
+        let original = vec![7u8; 8192];
+        std::fs::write(&path, &original).expect("write fixture");
+
+        let by_name = Shm::map_file(&path).expect("map_file");
+        // Exclusive first, while no handle to the file is open in this test:
+        // any open handle refuses a share-mode-0 open, whoever holds it, so
+        // this asks only whether the mapping holds one. The old section over
+        // the file did, and failed this with a sharing violation (32).
+        std::fs::OpenOptions::new()
+            .write(true)
+            .share_mode(0)
+            .open(&path)
+            .expect("an exclusive open must succeed while the document is mapped");
+
+        let held = std::fs::File::open(&path).expect("open as the app does");
+        let by_handle = Shm::map_open_file(&held, 8192).expect("map_open_file");
+
+        std::fs::File::create(&path)
+            .and_then(|mut f| f.write_all(b"x"))
+            .expect("a truncating write must succeed while the document is open");
+        let staged = dir.join("doc.new");
+        std::fs::write(&staged, b"y").expect("write the replacement");
+        std::fs::rename(&staged, &path).expect("a rename over the path must succeed");
+
+        // The control: the file really is one byte now.
+        assert_eq!(std::fs::metadata(&path).expect("stat").len(), 1);
+        assert_eq!(by_name.as_slice(), &original[..], "map_file kept its bytes");
+        assert_eq!(
+            by_handle.as_slice(),
+            &original[..],
+            "map_open_file kept its bytes"
+        );
+
+        drop((by_name, by_handle, held));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// A document section's handle cannot be mapped for writing.
+    ///
+    /// The section is created writable so the copy can go in, and the parent
+    /// reads it back for the save's verification, so a worker able to write it
+    /// could make a refused read-back pass. `MapViewOfFile` with
+    /// `FILE_MAP_WRITE` on the handle a worker receives is the attempt a
+    /// hostile one would make. The control is the same call on a tile mapping,
+    /// which is meant to be writable: without it, a call that failed for any
+    /// other reason would pass this test.
+    #[cfg(windows)]
+    #[test]
+    fn a_document_section_cannot_be_mapped_for_writing() {
+        use windows_sys::Win32::System::Memory::{MapViewOfFile, UnmapViewOfFile, FILE_MAP_WRITE};
+
+        let path = std::env::temp_dir().join(format!("tpdf-shm-ro-{}", std::process::id()));
+        std::fs::write(&path, vec![1u8; 4096]).expect("write fixture");
+        let doc = Shm::map_file(&path).expect("map_file");
+        let tile = Shm::create(4096).expect("create");
+
+        let attempt = |handle: usize| {
+            // SAFETY: a live section handle owned by a `Shm` in this scope.
+            let view = unsafe { MapViewOfFile(handle as _, FILE_MAP_WRITE, 0, 0, 4096) };
+            let mapped = !view.Value.is_null();
+            if mapped {
+                // SAFETY: unmapping the view just made.
+                unsafe { UnmapViewOfFile(view) };
+            }
+            mapped
+        };
+        assert!(
+            attempt(tile.raw_handle()),
+            "control: a tile section maps writable"
+        );
+        assert!(
+            !attempt(doc.raw_handle()),
+            "the document section's handle must not grant write access"
+        );
+
+        drop(doc);
+        let _ = std::fs::remove_file(&path);
+    }
+
+    /// A file shorter than the length asked for is refused, not padded.
+    ///
+    /// `map_open_file` takes the length from the caller, and a writer can cut
+    /// the file between that measurement and the copy. Copying what is there
+    /// would hand the worker a document whose tail is zeroes.
+    #[cfg(windows)]
+    #[test]
+    fn a_file_shorter_than_its_stated_length_is_refused() {
+        let path = std::env::temp_dir().join(format!("tpdf-shm-short-{}", std::process::id()));
+        std::fs::write(&path, vec![1u8; 100]).expect("write fixture");
+        let file = std::fs::File::open(&path).expect("open");
+        let err = Shm::map_open_file(&file, 4096)
+            .map(|_| ())
+            .expect_err("a short file must be refused");
+        drop(file);
+        let _ = std::fs::remove_file(&path);
+        assert!(err.contains("ended at byte 100 of 4096"), "{err}");
     }
 
     /// An empty document is refused, since a zero-length view is not a mapping.

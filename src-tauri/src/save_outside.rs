@@ -114,10 +114,13 @@ fn awaited_then<T>(
 /// rewritten. The coordinator's answer to a bad read-back is
 /// `save::append_through`'s roll-back, which is `set_len` on that same file ---
 /// and on Windows a file with a section object open on it cannot be resized at
-/// all. `SetFileInformationByHandle` fails with `ERROR_USER_MAPPED_FILE`
-/// (1224), so the reader was told *"the saved file could not be read back ---
-/// and it could not be put back"* and kept the update the re-read had just
-/// refused, on the platform this cannot be tested from.
+/// all. Until issue #7 a document mapping was such a section, and
+/// `SetFileInformationByHandle` failed with `ERROR_USER_MAPPED_FILE` (1224), so
+/// the reader was told *"the saved file could not be read back --- and it could
+/// not be put back"* and kept the update the re-read had just refused. A
+/// document mapping is now a copy on Windows, so that refusal no longer
+/// happens; the ordering stays, because a worker outliving the answer it gave
+/// is wrong on its own.
 ///
 /// Sending last is what makes the release *observable* to the waiter: a `drop`
 /// written after the `send` runs at some unrelated moment on a thread nobody is
@@ -1431,19 +1434,20 @@ mod tests {
         assert!(waited < bound * 20, "{waited:?}");
     }
 
-    /// Why the ordering above is load-bearing, in the platform's own terms.
+    /// The roll-back can resize a file a worker is still holding.
     ///
-    /// Windows refuses to resize a file while a section object is open on it, so
-    /// `save::append_through`'s roll-back --- a `set_len` back to the length the
-    /// file had before the update --- fails outright while the worker still
-    /// holds its mapping. Both directions are asserted: the refusal while it is
-    /// mapped is what makes the success after the drop mean something.
-    ///
-    /// Cannot run on macOS, where `ftruncate` succeeds either way. The
-    /// consequence it describes is Windows-only for exactly that reason.
+    /// Windows refuses to resize a file while a section object is open on it,
+    /// and until issue #7 a worker's document mapping was one, so
+    /// `save::append_through`'s roll-back failed with `ERROR_USER_MAPPED_FILE`
+    /// (1224) while the worker held its mapping. A document mapping is now a
+    /// copy, so the roll-back succeeds with the mapping alive. The ordering in
+    /// `asked_on_a_thread` stays: it costs nothing, and it keeps a worker from
+    /// outliving the answer it gave on both platforms. The mapping is read
+    /// after the resize, which is what says it holds the bytes the worker was
+    /// given rather than whatever the file holds now.
     #[test]
     #[cfg(windows)]
-    fn a_mapped_file_cannot_be_cut_back_until_the_mapping_is_released() {
+    fn a_mapped_file_can_be_cut_back_while_the_mapping_is_held() {
         use crate::worker_shm::Shm;
 
         let dir = std::env::temp_dir().join(format!("tpdf-mapped-cut-back-{}", std::process::id()));
@@ -1458,23 +1462,12 @@ mod tests {
             .expect("open it as the save does");
 
         let mapped = Shm::map_open_file(&file, 2_048).expect("map it as a worker would");
-        let refused = file.set_len(1_024);
-        assert!(
-            refused.is_err(),
-            "a file with a section open on it must not resize, or this test is measuring nothing"
-        );
-        // ERROR_USER_MAPPED_FILE. Named as a number because that is what the
-        // reader sees in the refusal, and what a search for this failure finds.
-        assert_eq!(
-            refused.unwrap_err().raw_os_error(),
-            Some(1224),
-            "and the reason is the mapping, not permissions"
-        );
+        file.set_len(1_024)
+            .expect("the roll-back must not be refused while a worker holds the document");
+        assert_eq!(file.metadata().expect("stat").len(), 1_024);
+        assert_eq!(mapped.as_slice(), &[b'x'; 2_048][..]);
 
         drop(mapped);
-        file.set_len(1_024)
-            .expect("with the mapping released the roll-back is an ordinary truncation");
-
         drop(file);
         let _ = std::fs::remove_dir_all(&dir);
     }

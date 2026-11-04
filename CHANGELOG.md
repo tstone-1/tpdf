@@ -17,6 +17,23 @@ as *downloadable*, while the release sat as a draft that GitHub showed to nobody
 are given now because they are different facts, and only the second one means a reader can
 have the binary.)
 
+## [26.11.3] - Unreleased
+
+### Fixed
+
+- **Other programs can overwrite a document while it is open in tpdf on Windows** (#7). A
+  script that regenerates a report into the same path failed with `Invalid argument` until
+  the tab was closed, because tpdf kept the file mapped. tpdf now reads the file into memory
+  when it opens it and lets go of it. The open document stays as it was opened, also when
+  another program rewrites or cuts the file in place, instead of mixing pages from two
+  versions. Opening a file now reads it once in full, and its size counts against memory.
+- **A file another program rewrites before your first edit is noticed** (all platforms). tpdf
+  reads what a file holds only when you first edit or save it, and a file rewritten before
+  then could be taken for the one you opened: no notice that it changed, and a save would
+  write your edits into the other version. tpdf now records the file's size and time when it
+  opens, and a file that changed since then is reported as changed and is not saved over.
+  Reopen it to save.
+
 ## [26.11.2] - 2026-11-03
 
 ### Added

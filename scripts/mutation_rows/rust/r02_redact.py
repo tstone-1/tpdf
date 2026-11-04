@@ -2152,6 +2152,55 @@ ROWS += [
         "opening_a_document_does_not_start_the_hash",
     ),
     Mutation(
+        # Defer the fingerprint on Windows too. A Windows document is a copy
+        # (issue #7), so another program can rewrite the file before the first
+        # edit, and the deferred hash would then describe the new file while the
+        # reader looks at the old one. On unix the branch is never taken, so
+        # this only runs on Windows.
+        "hash: defer the fingerprint where the document is a copy",
+        "src/edits.rs",
+        "        if crate::worker_shm::DOCUMENTS_ARE_COPIED {\n            self.wake(doc);\n        }",
+        "        if crate::worker_shm::DOCUMENTS_ARE_COPIED {\n        }",
+        "the_hash_starts_at_open_only_where_the_document_is_a_copy",
+        only_on="windows",
+    ),
+    Mutation(
+        # Record the deferred hash even when the file moved since the open. It
+        # is then of bytes the reader never saw: the watch calls the file
+        # unchanged and a save replays the edits onto it.
+        "hash: keep a fingerprint taken after the file changed",
+        "src/edits.rs",
+        "                    Ok(_) if opened.moved() => {",
+        "                    Ok(_) if false && opened.moved() => {",
+        "a_file_rewritten_before_the_hash_is_refused_and_reported_as_changed",
+    ),
+    Mutation(
+        # Compare only the length, so a same-length rewrite that moved only the
+        # modification time is not a change.
+        "hash: a moved timestamp alone is not a change before the hash",
+        "src/fingerprint.rs",
+        "        stamp(&now) != *was",
+        "        now.len().to_string() != was.split(':').next().unwrap_or_default()",
+        "a_file_rewritten_before_the_hash_is_refused_and_reported_as_changed",
+    ),
+    Mutation(
+        # Answer "could not tell" for a fingerprint refused because the file
+        # moved, so the reader is never told the file changed.
+        "watch: a file that moved before its hash reads as could-not-tell",
+        "src/edits.rs",
+        "            None => self.moved_before_fingerprint(doc).then_some(true),",
+        "            None => None,",
+        "a_file_rewritten_before_the_hash_is_refused_and_reported_as_changed",
+    ),
+    Mutation(
+        # Treat every deferred hash as moved. The control test is what fails.
+        "hash: refuse every deferred fingerprint as moved",
+        "src/edits.rs",
+        "                    Ok(_) if opened.moved() => {",
+        "                    Ok(_) if true || opened.moved() => {",
+        "an_untouched_or_renamed_over_file_keeps_its_fingerprint",
+    ),
+    Mutation(
         # Leave the edit path to somebody else. `edits.rs` has no chokepoint, so
         # a trigger missing from one mutator is a document whose hash does not
         # start until the save that waits for it.

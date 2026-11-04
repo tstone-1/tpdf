@@ -928,10 +928,10 @@ fn run_redact(
     edits.open(
         doc,
         count,
-        Some(crate::fingerprint::Opened {
-            file: hashing,
-            what: command.input.clone(),
-        }),
+        Some(crate::fingerprint::Opened::new(
+            hashing,
+            command.input.clone(),
+        )),
     );
     for (page, areas) in &marked {
         for area in areas {

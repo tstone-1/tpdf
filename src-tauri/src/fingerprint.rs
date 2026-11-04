@@ -482,6 +482,45 @@ pub struct Opened {
     pub file: File,
     /// What to call it in a message.
     pub what: std::path::PathBuf,
+    /// The handle's [`stamp`] when this was made, which is before anything has
+    /// read the document. `None` when its metadata could not be read.
+    ///
+    /// **Taken here and not at the hash**, because the hash is deferred to the
+    /// first edit (`Edits::open_deferred`) and a file rewritten in between would
+    /// otherwise be hashed as if it were what the reader opened. See
+    /// [`Opened::moved`].
+    pub stamp: Option<String>,
+}
+
+impl Opened {
+    /// Wraps a handle the caller has just opened, recording its stamp now.
+    ///
+    /// Call it before the document is handed to the render service, so the
+    /// stamp is of the file as it was before anything read it.
+    #[must_use]
+    pub fn new(file: File, what: std::path::PathBuf) -> Self {
+        let stamp = file.metadata().ok().map(|meta| stamp(&meta));
+        Self { file, what, stamp }
+    }
+
+    /// Whether the file under this handle has changed since [`Opened::new`].
+    ///
+    /// Asked after hashing: a write at any moment between the open and the end
+    /// of the hash moves the length or the modification time, so a hash that
+    /// passes this was taken of the file the reader opened. Through the handle,
+    /// so a file renamed over the path is not a change; the handle still names
+    /// the one that was opened.
+    ///
+    /// `false` when either stamp cannot be read, which leaves the hash to stand
+    /// or fail on its own. Blind to a rewrite that keeps the length and puts the
+    /// modification time back, which a timestamp cannot see.
+    #[must_use]
+    pub fn moved(&self) -> bool {
+        let (Some(was), Ok(now)) = (&self.stamp, self.file.metadata()) else {
+            return false;
+        };
+        stamp(&now) != *was
+    }
 }
 
 /// A file's length and modification time as one string, for the watch on an

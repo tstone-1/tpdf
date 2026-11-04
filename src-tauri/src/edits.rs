@@ -96,6 +96,14 @@ struct Open {
     /// and the watch on an open document runs from the first second. This costs
     /// one `fstat`. `None` for a document opened with no file.
     stamp: Option<String>,
+    /// Set when the hash found the file changed since it was opened.
+    ///
+    /// The fingerprint is then `None`, so a save refuses, and this is what
+    /// tells the watch the `None` means "changed" rather than "could not
+    /// look" (`commands::document::document_differs`). Written before the cell
+    /// is set, so whoever waited on the cell reads it. See
+    /// [`crate::fingerprint::Opened::moved`].
+    moved: Arc<std::sync::atomic::AtomicBool>,
     /// The render handle each other file is open under, by the model's id for it.
     ///
     /// **Held here, beside the journal, because this is the only owner that
@@ -891,7 +899,31 @@ impl Edits {
     /// frontend's view ids depend on the list growing, since a first view is
     /// numbered by its handle: a backend that reused a number would give two
     /// tabs one id.
+    ///
+    /// **On Windows the fingerprint starts here**, and the deferral described in
+    /// [`Edits::open_deferred`] applies only where the worker maps the file.
+    /// There a document is a copy taken at open (`worker_shm::Shm::section`,
+    /// issue #7), so other programs can rewrite the file while it is open. A
+    /// hash deferred to the first edit would then be of the *new* file while
+    /// the reader looks at the old one: the watch would find the file
+    /// unchanged and say nothing, and a save would replay the reader's edits
+    /// onto a document they never saw. Starting it now leaves milliseconds
+    /// between the copy and the hash instead of minutes, and costs no disk
+    /// read of its own, since the copy has just read the whole file into the
+    /// cache.
     pub fn open(&self, doc: u32, pages: u32, source: Option<Opened>) {
+        self.open_deferred(doc, pages, source);
+        if crate::worker_shm::DOCUMENTS_ARE_COPIED {
+            self.wake(doc);
+        }
+    }
+
+    /// [`Edits::open`] without starting the fingerprint on any platform.
+    ///
+    /// What `open` does on unix, and what the tests of the deferral open
+    /// through, so they test the wake on every platform rather than only
+    /// where `open` defers.
+    fn open_deferred(&self, doc: u32, pages: u32, source: Option<Opened>) {
         let opened_as: Arc<OnceLock<Option<Fingerprint>>> = Arc::new(OnceLock::new());
         // **Recorded, not started.** Hashing reads the whole file --- 452 ms cold
         // on the 337 MB scan fixture --- and starting it here put that read on
@@ -905,11 +937,12 @@ impl Edits {
         // and note that the deferral changes nothing about the *guarantee* --- a
         // save still blocks on the cell, and the handle it hashes is still the
         // one the document was opened through.
+        //
+        // What the deferral needs in return is the stamp from before anything
+        // read the file, which `Opened::new` took. A hash that finds the file
+        // moved since then is refused rather than recorded (see `wake`).
         let to_hash = source;
-        let stamp = to_hash
-            .as_ref()
-            .and_then(|opened| opened.file.metadata().ok())
-            .map(|meta| crate::fingerprint::stamp(&meta));
+        let stamp = to_hash.as_ref().and_then(|opened| opened.stamp.clone());
         match &to_hash {
             // A handle to hash later, so the cell stays unset until `wake`.
             Some(_) => {}
@@ -926,6 +959,7 @@ impl Edits {
                 opened_as,
                 to_hash,
                 stamp,
+                moved: Arc::default(),
                 sources: HashMap::new(),
                 pending: None,
             },
@@ -955,9 +989,9 @@ impl Edits {
             .and_then(|open| {
                 open.to_hash
                     .take()
-                    .map(|opened| (opened, Arc::clone(&open.opened_as)))
+                    .map(|opened| (opened, Arc::clone(&open.opened_as), Arc::clone(&open.moved)))
             });
-        let Some((opened, cell)) = taken else {
+        let Some((opened, cell, moved)) = taken else {
             return;
         };
         // Detached on purpose: nothing joins it, and the only reader blocks on
@@ -967,6 +1001,19 @@ impl Edits {
         std::thread::spawn(move || {
             let taken = answered(|| {
                 match Fingerprint::of_open(&opened.file, &opened.what) {
+                    // Changed between the open and the end of the hash, so the
+                    // hash is of bytes the reader never saw: recording it would
+                    // let the watch call the file unchanged and a save replay
+                    // the edits onto it. Refused, and marked as a change.
+                    Ok(_) if opened.moved() => {
+                        moved.store(true, std::sync::atomic::Ordering::SeqCst);
+                        diag::note(&format!(
+                            "[WARN] {} changed on disk before it was fingerprinted, so Save is \
+                             refused for it until it is reopened",
+                            opened.what.display()
+                        ));
+                        None
+                    }
                     Ok(print) => Some(print),
                     Err(why) => {
                         // Through `diag` rather than `eprintln!`, which is the
@@ -1034,6 +1081,35 @@ impl Edits {
         let pending = self.pending(doc)?;
         // Waited on with no lock held --- see `pending`.
         Some(pending.wait().clone())
+    }
+
+    /// Whether `path` now holds different bytes than the document was opened
+    /// with, for the watch (`commands::document::document_differs`).
+    ///
+    /// Waits for the fingerprint, starting it if nothing has. `None` when it
+    /// cannot tell: no document, no fingerprint, or a file that cannot be read
+    /// at the moment --- except that a fingerprint refused because the file
+    /// changed before it was taken is a change, and answers `Some(true)`.
+    #[must_use]
+    pub fn file_differs(&self, doc: u32, path: &std::path::Path) -> Option<bool> {
+        match self.opened_as(doc)? {
+            Some(was) => was.same_bytes_as(path).map(|same| !same),
+            None => self.moved_before_fingerprint(doc).then_some(true),
+        }
+    }
+
+    /// Whether the file changed on disk before its fingerprint was taken.
+    ///
+    /// The one case where [`Edits::opened_as`]'s `Some(None)` is known to mean
+    /// "changed" rather than "could not look". Only meaningful after
+    /// `opened_as` has returned, since the hash sets it before the cell.
+    #[must_use]
+    pub fn moved_before_fingerprint(&self, doc: u32) -> bool {
+        self.docs
+            .lock()
+            .expect("edits lock")
+            .get(&doc)
+            .is_some_and(|open| open.moved.load(std::sync::atomic::Ordering::SeqCst))
     }
 
     /// The cell holding a document's fingerprint, without waiting for it.
@@ -3840,23 +3916,60 @@ mod tests {
         let file = dir.join("source.bin");
         std::fs::write(&file, b"some bytes").expect("write");
         let edits = Edits::default();
-        edits.open(
+        // Deferred on every platform, so the tests below test the wake itself.
+        // What `open` does per platform is `the_hash_starts_at_open_only_where_the_document_is_a_copy`.
+        edits.open_deferred(
             1,
             3,
-            Some(Opened {
-                file: std::fs::File::open(&file).expect("open the subject"),
-                what: file.clone(),
-            }),
+            Some(Opened::new(
+                std::fs::File::open(&file).expect("open the subject"),
+                file.clone(),
+            )),
         );
         (file, edits)
     }
 
-    /// Opening a document starts no hash.
+    /// `open` starts the hash on Windows, and defers it on unix.
+    ///
+    /// On Windows a document is a copy, so another program can rewrite the
+    /// file after open, and a hash deferred past that would describe the new
+    /// file (issue #7; see `Edits::open`). On unix the deferral stands. One
+    /// test on both platforms, so a `--list` diff shows no gap.
+    #[test]
+    fn the_hash_starts_at_open_only_where_the_document_is_a_copy() {
+        let dir = std::env::temp_dir().join(format!("tpdf-wake-at-open-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).expect("scratch");
+        let file = dir.join("source.bin");
+        std::fs::write(&file, b"the bytes the reader sees").expect("write");
+        let edits = Edits::default();
+        edits.open(
+            1,
+            3,
+            Some(Opened::new(
+                std::fs::File::open(&file).expect("open the subject"),
+                file.clone(),
+            )),
+        );
+        assert_eq!(
+            edits.hashing_started(1),
+            Some(crate::worker_shm::DOCUMENTS_ARE_COPIED)
+        );
+        if crate::worker_shm::DOCUMENTS_ARE_COPIED {
+            // Waited for before the rewrite, so this checks the hash is of the
+            // opened bytes rather than racing the thread.
+            let taken = edits.opened_as(1).flatten().expect("a fingerprint");
+            std::fs::write(&file, b"a different file").expect("rewrite");
+            assert_eq!(taken.same_bytes_as(&file), Some(false));
+        }
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// A deferred open starts no hash.
     ///
     /// The whole of the deferral: hashing reads the file end to end --- 452 ms
     /// cold on the 337 MB scan fixture --- and doing it here put that read on the
     /// wire while the first page was being drawn. Nothing needs the answer until
-    /// a save.
+    /// a save. `open` defers on unix only; see the test above.
     #[test]
     fn opening_a_document_does_not_start_the_hash() {
         let (_file, edits) = with_a_file("open");
@@ -3950,7 +4063,7 @@ mod tests {
         assert_eq!(edits.hashing_started(1), Some(false));
         assert_eq!(edits.stamp_at_open(2), None, "no such document");
 
-        edits.open(3, 1, None);
+        edits.open_deferred(3, 1, None);
         assert_eq!(edits.stamp_at_open(3), None, "a document with no file");
     }
 
@@ -3986,6 +4099,84 @@ mod tests {
             taken,
             Fingerprint::of(&file).ok(),
             "and it has to be this file's"
+        );
+    }
+
+    /// A file rewritten between the open and the hash gets no fingerprint.
+    ///
+    /// The gap the deferral leaves: the hash reads the file at the first edit,
+    /// and a program that rewrote it before then would have its bytes recorded
+    /// as what the reader opened. The watch would call the file unchanged and
+    /// a save would replay the edits onto it. Two rewrites, because they fail
+    /// to different halves of the stamp: a new length, and the same length
+    /// with only the modification time moved.
+    #[test]
+    fn a_file_rewritten_before_the_hash_is_refused_and_reported_as_changed() {
+        let (file, edits) = with_a_file("moved-length");
+        std::fs::write(&file, b"a longer set of bytes").expect("rewrite");
+        assert_eq!(
+            edits.opened_as(1),
+            Some(None),
+            "no fingerprint of the new bytes"
+        );
+        assert!(edits.moved_before_fingerprint(1));
+        assert_eq!(
+            edits.file_differs(1, &file),
+            Some(true),
+            "and the watch is told"
+        );
+
+        let (file, edits) = with_a_file("moved-time");
+        let later = std::fs::metadata(&file)
+            .expect("stat")
+            .modified()
+            .expect("mtime")
+            + std::time::Duration::from_secs(60);
+        // Ten bytes, as `with_a_file` writes, so only the time can tell.
+        std::fs::write(&file, b"SOME BYTES").expect("same length");
+        assert_eq!(std::fs::metadata(&file).expect("stat").len(), 10);
+        std::fs::File::options()
+            .write(true)
+            .open(&file)
+            .and_then(|f| f.set_modified(later))
+            .expect("move the time");
+        assert_eq!(edits.opened_as(1), Some(None));
+        assert_eq!(edits.file_differs(1, &file), Some(true));
+    }
+
+    /// The control for the test above: a file nobody touched, and one
+    /// renamed over the path, keep their fingerprint.
+    ///
+    /// Without the first, a check that refused every deferred hash would pass
+    /// the test above. The second is the common way to replace a file, and the
+    /// handle still names the one the reader opened, so its hash is right and
+    /// must stand; the watch still sees the new file at the path.
+    #[test]
+    fn an_untouched_or_renamed_over_file_keeps_its_fingerprint() {
+        let (file, edits) = with_a_file("unmoved");
+        assert!(edits.opened_as(1).flatten().is_some());
+        assert!(!edits.moved_before_fingerprint(1));
+        assert_eq!(edits.file_differs(1, &file), Some(false));
+
+        let (file, edits) = with_a_file("renamed-over");
+        let staged = file.with_extension("new");
+        std::fs::write(&staged, b"a replacement").expect("stage");
+        std::fs::rename(&staged, &file).expect("rename over");
+        let taken = edits
+            .opened_as(1)
+            .flatten()
+            .expect("the opened file's fingerprint");
+        assert!(!edits.moved_before_fingerprint(1));
+        // Of the bytes `with_a_file` wrote, which only the handle still reaches.
+        let original: [u8; 32] = {
+            use sha2::Digest;
+            sha2::Sha256::digest(b"some bytes").into()
+        };
+        assert_eq!(taken.digest, original);
+        assert_eq!(
+            edits.file_differs(1, &file),
+            Some(true),
+            "the path is a new file"
         );
     }
 
@@ -4050,10 +4241,10 @@ mod tests {
         edits.open(
             1,
             2,
-            Some(Opened {
-                file: std::fs::File::open(&file).expect("open the subject"),
-                what: file.clone(),
-            }),
+            Some(Opened::new(
+                std::fs::File::open(&file).expect("open the subject"),
+                file.clone(),
+            )),
         );
         let plan = edits.plan(1).expect("plan");
         assert!(
@@ -4094,14 +4285,7 @@ mod tests {
         std::fs::rename(&replacement, &file).expect("replace the name");
 
         let edits = Edits::default();
-        edits.open(
-            1,
-            2,
-            Some(Opened {
-                file: handle,
-                what: file.clone(),
-            }),
-        );
+        edits.open(1, 2, Some(Opened::new(handle, file.clone())));
         let taken = edits
             .plan(1)
             .expect("plan")

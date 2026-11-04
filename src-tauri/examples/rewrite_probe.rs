@@ -3,12 +3,18 @@
 //! The viewer has no file watcher and no reload command, so a document that
 //! changes on disk is not picked up --- that much is readable from the source.
 //! What is *not* readable from the source is what the reader is looking at
-//! afterwards, and the answer depends on how the rewrite lands, because
+//! afterwards, and the answer depends on how the rewrite lands, because on unix
 //! `Shm::map_file` hands the worker a **`MAP_SHARED` mapping of the real file**
 //! rather than a copy of its bytes.
 //!
-//! Three ways a background process can change a PDF, and they are not variations
-//! on one behaviour:
+//! **On Windows it is a copy** (`worker_shm::DOCUMENTS_ARE_COPIED`), since a
+//! section over the file stopped other programs rewriting it (issue #7). There
+//! every scenario below predicts the same thing as the rename on unix: the
+//! reader keeps the document as it was opened, intact. The check names are the
+//! same on both platforms; the verdicts read the constant.
+//!
+//! Three ways a background process can change a PDF, and on unix they are not
+//! variations on one behaviour:
 //!
 //! - **Write a temporary and rename over it.** The old inode stays alive under
 //!   the mapping. The prediction is that the reader keeps the old document,
@@ -66,6 +72,7 @@ use std::time::{Duration, Instant};
 use tpdf_lib::worker;
 use tpdf_lib::worker::{Reply, Request, Response, Worker};
 use tpdf_lib::worker_child;
+use tpdf_lib::worker_shm::DOCUMENTS_ARE_COPIED;
 
 /// Tiles are compared at this size --- large enough to hold recognisable
 /// content, small enough that 775 pages of fixture render quickly.
@@ -129,12 +136,11 @@ struct Observed {
     mutation: String,
     /// Why the mutation could not be performed at all, if it could not.
     ///
-    /// Distinct from every other failure here, and the distinction is a
-    /// platform fact rather than bookkeeping: Windows refuses to shorten a file
-    /// that has a section object mapped over it, so the truncation scenario
-    /// cannot run there **and that refusal is the finding**. Folded into
-    /// `baseline` --- which is what this used to do --- it reported the baseline
-    /// render as broken, which is both wrong and the opposite of the news.
+    /// Kept apart from `baseline` so a refused rewrite is not reported as a
+    /// broken render. Windows used to refuse the truncation with
+    /// `ERROR_USER_MAPPED_FILE` while a document was open, and the probe
+    /// reported that as a skip; since issue #7 no platform should refuse, so a
+    /// refusal is a failure.
     mutation_error: Option<String>,
     /// Whether the file on disk really differs from the fixture afterwards.
     disk_changed: bool,
@@ -535,27 +541,38 @@ fn judge_valid_in_place(checks: &mut Checks, dir: &Path, library_dir: &Path) {
     );
 
     // The finding. Named for what is true rather than for what would be
-    // convenient: the page comes from the replacement, so the open document is
-    // now one revision in its cache and another on disk, and **nothing errors**.
+    // convenient. On unix the page comes from the replacement, so the open
+    // document is now one revision in its cache and another on disk, and
+    // **nothing errors**. On Windows the worker holds a copy, so the page is
+    // revision A like the rest of what the reader sees.
     let served_new = matches!((&fresh_page, &ref_b), (Ok(p), Ok(b)) if p == b);
     let served_old = matches!((&fresh_page, &ref_a), (Ok(p), Ok(a)) if p == a);
     checks.record(
-        "a page not yet read comes from the replacement, silently",
-        served_new,
+        "a page not yet read comes from the revision the mapping predicts",
+        if DOCUMENTS_ARE_COPIED {
+            served_old
+        } else {
+            served_new
+        },
         match (&fresh_page, served_new, served_old) {
             (Ok(p), true, _) => format!(
                 "page {fresh} is revision B while page {baseline_page} is revision A, {} bytes, no error",
                 p.len()
             ),
+            (Ok(_), _, true) if DOCUMENTS_ARE_COPIED => {
+                format!("page {fresh} is revision A, from the copy taken at open")
+            }
             (Ok(_), _, true) => "it served revision A --- PDFium had already read that page".into(),
             (Ok(p), _, _) => format!("{} bytes matching neither revision", p.len()),
             (Err(e), _, _) => e.clone(),
         },
     );
-    println!(
-        "       note: nothing detects this --- the length is unchanged, so the guard in \
-         `workers.rs` has nothing to compare"
-    );
+    if !DOCUMENTS_ARE_COPIED {
+        println!(
+            "       note: nothing detects this --- the length is unchanged, so the guard in \
+             `workers.rs` has nothing to compare"
+        );
+    }
 }
 
 /// Drives the real render service through a truncation, end to end.
@@ -649,34 +666,63 @@ fn judge_service(checks: &mut Checks, fixture: &Path, work: &Path, library_dir: 
 
     let len = fs::metadata(work).map(|m| m.len()).unwrap_or(0);
     let kept = len / 4;
-    // The platform fact `judge_truncate` already states, arriving one level up.
-    // Windows refuses to shorten a file that has a section mapped over it, so
-    // the fault this scenario exists to provoke is unreachable there, and the
-    // refusal is a result rather than an obstacle. Recorded as a hard failure
-    // --- which is what this did until the first Windows run --- it reads as a
-    // broken probe; worse, the three checks below then vanished from the name
-    // set rather than skipping, which is the shape a run is meant to catch
-    // rather than produce. The name is recorded on the way through when the
-    // truncation *does* land, so all four exist on both platforms and only
-    // their verdicts differ.
+    // Windows refused this truncation with `ERROR_USER_MAPPED_FILE` until
+    // issue #7 made a document mapping a copy, and the probe recorded that as a
+    // skip. No platform should refuse now, so a refusal is a failure. The three
+    // checks below are still skipped by name on that path, so the name set
+    // stays the same on both platforms; the earlier version of this probe
+    // `return`ed there and the names vanished, which is the shape a run is
+    // meant to catch rather than produce.
+    let later = [
+        "the first request past the truncation is diagnosed, or drawn from a copy",
+        "every later request is refused with the same diagnosis",
+        "a refused request costs nothing, so no process is being spawned",
+    ];
     let refused = fs::OpenOptions::new()
         .write(true)
         .open(work)
         .and_then(|f| f.set_len(kept))
         .err();
     if let Some(why) = &refused {
-        checks.skip(
+        checks.record(
             "the file is truncated under the service",
-            &format!("the platform refused to shorten a mapped file: {why}"),
+            false,
+            format!("the platform refused to shorten the file of an open document: {why}"),
         );
-        for name in [
-            "the first request past the truncation is diagnosed, not just failed",
-            "every later request is refused with the same diagnosis",
-            "a refused request costs nothing, so no process is being spawned",
-        ] {
+        for name in later {
             checks.skip(
                 name,
                 "no truncation happened, so there was nothing to refuse",
+            );
+        }
+    } else if DOCUMENTS_ARE_COPIED {
+        checks.record(
+            "the file is truncated under the service",
+            true,
+            format!("{len} bytes cut to {kept}"),
+        );
+        // The worker holds a copy, so nothing is past the end for it: the
+        // request is answered from the document as it was opened. A refusal
+        // here would mean the copy is not what the worker reads.
+        let (first, first_ms) = ask(page);
+        checks.record(
+            later[0],
+            matches!(&first, Ok(TileOutcome::Rendered(_))),
+            match &first {
+                Ok(TileOutcome::Rendered(t)) => {
+                    format!(
+                        "{first_ms:.1} ms: {} bytes from the copy taken at open",
+                        t.bytes.len()
+                    )
+                }
+                Ok(TileOutcome::Abandoned) => "abandoned".into(),
+                Err(e) => format!("{first_ms:.1} ms: {e}"),
+            },
+        );
+        for name in &later[1..] {
+            checks.skip(
+                name,
+                "the worker reads a copy, so a truncation leaves nothing to refuse",
             );
         }
     } else {
@@ -689,7 +735,7 @@ fn judge_service(checks: &mut Checks, fixture: &Path, work: &Path, library_dir: 
         let (first, first_ms) = ask(page);
         let diagnosed = matches!(&first, Err(e) if e.contains(tpdf_lib::workers::OUTLIVED_MARK));
         checks.record(
-            "the first request past the truncation is diagnosed, not just failed",
+            later[0],
             diagnosed,
             match &first {
                 Err(e) => format!("{first_ms:.1} ms: {e}"),
@@ -890,14 +936,15 @@ fn tile(worker: &mut Worker, page: u32) -> Result<Vec<u8>, String> {
 /// have produced content --- "the pixels are unchanged" is satisfied by two
 /// blank tiles, which is exactly what a render that never ran produces.
 fn baseline_usable(checks: &mut Checks, observed: &Observed) -> bool {
-    // A mutation the platform refused is reported before anything else, and as
-    // a skip rather than a failure: nothing about the document is in doubt, the
-    // scenario simply cannot be performed here. `judge_truncate` says what the
-    // refusal means, since on Windows it is the whole result.
+    // A mutation the platform refused is reported before anything else, and
+    // as a failure: since issue #7 no platform holds an open document's file
+    // against rewriting, so a refusal is that regression. Under this name
+    // because the baseline is the first check every scenario records.
     if let Some(why) = &observed.mutation_error {
-        checks.skip(
+        checks.record(
             "the page rendered before the file was touched, and has content",
-            &format!("the platform refused the rewrite: {why}"),
+            false,
+            format!("the platform refused the rewrite of an open document: {why}"),
         );
         return false;
     }
@@ -1011,10 +1058,16 @@ fn judge_in_place(checks: &mut Checks, observed: &Observed) {
             (Err(e), _) => e.clone(),
         },
     );
+    // The filler is not a PDF, so on Windows, where the worker holds a copy, a
+    // render here can only have come from the bytes as opened --- which is the
+    // prediction there. On unix the worker reaches the filler and must refuse.
     checks.record(
-        "a page read after the overwrite fails rather than drawing the new bytes",
-        observed.fresh_page.is_err(),
+        "a page read after the overwrite never draws the new bytes",
+        observed.fresh_page.is_ok() == DOCUMENTS_ARE_COPIED,
         match &observed.fresh_page {
+            Ok(pixels) if DOCUMENTS_ARE_COPIED => {
+                format!("{} bytes from the copy taken at open", pixels.len())
+            }
             Ok(pixels) => format!(
                 "it rendered {} bytes --- from a file that is half fixture and half filler",
                 pixels.len()
@@ -1044,27 +1097,8 @@ fn judge_in_place(checks: &mut Checks, observed: &Observed) {
 
 /// Judges the truncation scenario: this is the one that may be a fault.
 fn judge_truncate(checks: &mut Checks, observed: &Observed) {
-    // The one scenario whose refusal is a result rather than an obstacle.
-    // `Shm::backing_len` records, as a *belief*, that Windows holds a mapped
-    // file against truncation and so cannot reach the fault this scenario
-    // exists to provoke. Nothing in this repository had ever tested that. A
-    // refusal here is that test, and it is stated as one so the first Windows
-    // run turns the belief into a measurement instead of into a red line.
-    if let Some(why) = &observed.mutation_error {
-        checks.skip(
-            "a page beyond the new end of file never renders",
-            &format!(
-                "the file could not be shortened while mapped: {why} --- which is the \
-                 documented Windows behaviour, and the fault below is unreachable here"
-            ),
-        );
-        checks.skip(
-            "the parent survives a truncation under its worker",
-            "no truncation happened, so there was nothing to survive",
-        );
-        let _ = baseline_usable(checks, observed);
-        return;
-    }
+    // Windows refused this truncation with `ERROR_USER_MAPPED_FILE` until
+    // issue #7; `baseline_usable` now reports a refusal as a failure.
     if !baseline_usable(checks, observed) || !mutation_landed(checks, observed) {
         return;
     }
@@ -1093,12 +1127,18 @@ fn judge_truncate(checks: &mut Checks, observed: &Observed) {
     // tell. The detail still names the signal, so the finding is on the line
     // either way, and the scenario below is what turns it into something a
     // reader is told.
+    //
+    // On Windows the worker holds a copy, so the page is not gone for it and
+    // rendering it from the document as opened is the prediction.
     checks.record(
-        "a page beyond the new end of file never renders",
-        observed.fresh_page.is_err(),
+        "a page beyond the new end of file is never drawn from bytes that are gone",
+        observed.fresh_page.is_ok() == DOCUMENTS_ARE_COPIED,
         match (&observed.fresh_page, &observed.epitaph) {
             (Err(e), None) => format!("refused: {e} --- and the worker still answers"),
             (Err(e), Some(epitaph)) => format!("{e} --- worker {epitaph}{}", signal_note(epitaph)),
+            (Ok(pixels), _) if DOCUMENTS_ARE_COPIED => {
+                format!("{} bytes from the copy taken at open", pixels.len())
+            }
             (Ok(pixels), _) => format!(
                 "it rendered {} bytes from a file that no longer holds that page",
                 pixels.len()
@@ -1150,11 +1190,9 @@ fn signal_note(epitaph: &str) -> &'static str {
 /// platform it was protecting. Worth keeping as written rather than tidying
 /// away, because the reasoning was right and the mechanism was not.
 ///
-/// It should also never be reachable here. A file with a section object mapped
-/// over it cannot be shortened on Windows --- `SetEndOfFile` fails with
-/// `ERROR_USER_MAPPED_FILE` --- so the truncation this annotates is refused
-/// before any worker can fault on it. The scenario reports that refusal as its
-/// finding; see `judge_truncate`.
+/// It should also never be reachable here. A Windows worker reads a copy of the
+/// document (`worker_shm::DOCUMENTS_ARE_COPIED`), so a truncation of the file
+/// leaves it nothing to fault on; see `judge_truncate`.
 #[cfg(not(unix))]
 fn signal_note(_epitaph: &str) -> &'static str {
     ""

@@ -303,10 +303,9 @@ pub async fn open_document(
     let handed = std::fs::File::open(&wanted).ok();
     let fingerprinting = handed.as_ref().and_then(|file| {
         let cloned = file.try_clone().ok()?;
-        Some(crate::fingerprint::Opened {
-            file: cloned,
-            what: wanted.clone(),
-        })
+        // Here, before the render service reads the file, so the stamp it
+        // records is of the file as it was before anything read it.
+        Some(crate::fingerprint::Opened::new(cloned, wanted.clone()))
     });
     // The receiver comes out of the lock before anything is awaited, and it has
     // to: the guard is not `Send`, so holding one across the wait below would
@@ -846,15 +845,9 @@ pub async fn document_differs(
     path: String,
 ) -> Result<Option<bool>, String> {
     let edits = edits.inner().clone();
-    tauri::async_runtime::spawn_blocking(move || {
-        edits
-            .opened_as(doc)
-            .flatten()
-            .and_then(|was| was.same_bytes_as(Path::new(&path)))
-            .map(|same| !same)
-    })
-    .await
-    .map_err(|e| said!("the file check did not run: {e}"))
+    tauri::async_runtime::spawn_blocking(move || edits.file_differs(doc, Path::new(&path)))
+        .await
+        .map_err(|e| said!("the file check did not run: {e}"))
 }
 
 #[cfg(test)]

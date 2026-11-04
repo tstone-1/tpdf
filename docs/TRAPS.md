@@ -851,6 +851,7 @@ hop through the index.
 - A helper whose callers all became Windows-only passed every gate on Windows and failed on the other two
 - PDFium unpacked through a Python temporary directory could not be loaded by a low-integrity worker
 - A clean Windows holds none of the timestamp authorities' roots, and HTTPS hid it for one of them
+- A section over the document's file held every other program off it, and Python called that `Invalid argument`
 
 ## Fixtures
 - The test fixtures are generated, not committed
@@ -8812,6 +8813,10 @@ test of a belief `Shm::backing_len` records and nothing had ever exercised — s
 reports it as a `[SKIP]` naming the OS error rather than failing three checks that are not
 about the document.
 
+*Superseded 2026-11-04 by issue #7:* that refusal was the defect, not a result. A Windows
+document is now a copy, the truncation lands, and a refusal fails the probe. See *A section over
+the document's file held every other program off it*.
+
 ### The same platform refusal, a result in one scenario and a failure in the next
 
 The entry above is the reasoning, and it was applied to exactly one of the two places that
@@ -11758,6 +11763,11 @@ two.** A file with an open section mapping cannot be replaced there, so the rena
 refused outright — visibly, immediately, and on the platform where nobody would have gone
 looking. Closing the document before the rename is correct on both, and it is not a Windows
 workaround: it is what macOS needs too, and macOS is the platform that will not tell you.
+
+*Corrected 2026-11-04:* `rewrite-probe` renamed over an open document on Windows 11 build 26300
+with no refusal, before issue #7 changed the mapping, so the refusal this paragraph describes
+was not measured there. Since issue #7 a Windows document is a copy, and the rename behaves as
+on macOS: nothing fails and the reader keeps the old document. The order is still the argument.
 
 What the code does with that is close the *shape* rather than remember the rule.
 `save.rs`'s single atomic write is two functions — `stage_in_place` writes the sibling
@@ -22417,6 +22427,10 @@ cannot see the answer until the drop has finished. `asked_on_a_thread` is where 
 ordering lives, generic over what is being released so that a `Drop` marker can stand in
 for a worker a `cargo test` cannot spawn.
 
+*2026-11-04, issue #7:* a Windows document mapping is now a copy, so the roll-back no longer
+meets 1224 at all (`a_mapped_file_can_be_cut_back_while_the_mapping_is_held`). The ordering
+stays.
+
 ### The overdue worker was signalled after the table said it was dead
 
 2026-09-06. `kill_overdue` marked `killed` under the `calls` lock, released it, and then signalled. The
@@ -27256,3 +27270,56 @@ on a Mac (`run_on_mac.py --only viewer`) or let the Ubuntu job read it before ca
 
 The same CI run also failed first with `No space left on device` on the Ubuntu runner while the
 Rust cache was restored, before any step of ours ran; `gh run rerun --failed` got past it.
+
+### A section over the document's file held every other program off it, and Python called that `Invalid argument`
+
+2026-11-04, issue #7. On Windows `Shm::map_file` and `Shm::map_open_file` made a read-only
+section over the document file itself and kept it for as long as the document was open. Windows
+refuses to truncate a file with a section open on it (`ERROR_USER_MAPPED_FILE`, 1224), so a
+script regenerating a report into the same path failed on every run until the tab was closed.
+Python's `open(path, "wb")` reports 1224 as `OSError: [Errno 22] Invalid argument`, which reads
+like a bad path. An exclusive `CreateFileW` failed with a sharing violation (32).
+
+Everything in this repository had treated the refusal as a safety property: `backing_len`
+called the truncation fault "unreachable" there, `rewrite-probe` reported the refusal as `[SKIP]`
+on Windows, and a `save_outside.rs` test asserted it as its precondition. All three were right
+about the mechanism and none of them asked what it cost the reader's other programs.
+
+The fix copies the document into a pagefile section at open, reading through the caller's
+handle, and then replaces the writable section handle with one opened `FILE_MAP_READ` alone, so
+a worker still cannot write the bytes the save's read-back reads (`Shm::read_only`, and
+`a_document_section_cannot_be_mapped_for_writing`). Unix is unchanged: a `MAP_SHARED` mapping
+blocks no writer. `worker_shm::DOCUMENTS_ARE_COPIED` names the difference, and `rewrite-probe`
+reads it, so its check names are the same on both platforms while the Windows verdicts now
+expect the document as it was opened in all four rewrite scenarios.
+
+Two measurements came out of the baseline run before the change, on Windows 11 build 26300:
+a rename over the path of an open document already succeeded there, so the entry *Windows
+fails the other way* overstated the refusal; and a valid same-length rewrite in place showed
+page 190 from the new revision and page 2 from the old one with no error, as on macOS. The copy
+ends the second on Windows.
+
+The cost is one read of the file at open, and the document's length in committed memory where
+the section over the file used the file cache.
+
+**The copy reopened a gap in the fingerprint.** `Edits::open` defers the hash to the first
+edit, to keep a whole-file read off the first page draw. With the file free, a program that
+rewrites it between open and that edit gets the new bytes hashed while the reader looks at the
+old ones: the watch (`document_differs`) then finds the file unchanged and says nothing, and a
+save replays the edits onto a document the reader never saw. On Windows `open` now starts the
+hash at once, which leaves milliseconds between the copy and the hash and reads from the cache
+the copy just filled. The deferral stands on unix, where the same gap existed for a program that
+rewrites in place. The deferral's tests open through `open_deferred`, so they test the wake on
+every platform, and `the_hash_starts_at_open_only_where_the_document_is_a_copy` pins what `open`
+does on each.
+
+The gap is closed on every platform by a stamp, not by hashing earlier. `Opened::new` records
+the handle's length and modification time before the render service reads the file, and the
+hash, whenever it runs, checks that stamp again when it is done (`Opened::moved`). A file that
+moved in between gets no fingerprint, so Save is refused, and `Edits::file_differs` reports it
+as changed, so the watch tells the reader. A rename over the path is not a move, because the
+handle still names the file that was opened. What a timestamp cannot see is a same-length
+rewrite that also puts the modification time back. The cost on the other side: a `touch` before
+the first edit now reads as a change and refuses Save until the document is reopened. The
+same-length half of the test first rewrote ten bytes as eleven, so it tested the length twice;
+the mutation that ignores the timestamp survived and showed it.

@@ -281,10 +281,10 @@ fn app_path(path: &Path, out: &Path, ask: Ask) -> (Result<Recognised, String>, V
     edits.open(
         info.id,
         count,
-        Some(tpdf_lib::fingerprint::Opened {
-            file: hashing,
-            what: path.to_path_buf(),
-        }),
+        Some(tpdf_lib::fingerprint::Opened::new(
+            hashing,
+            path.to_path_buf(),
+        )),
     );
     if ask == Ask::Unsaved {
         edits.rotate(info.id, 1, 1).expect("the page turns");
