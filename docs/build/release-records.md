@@ -2,6 +2,38 @@
 
 What was run for each release, what passed, and what was not run. The record of a new release goes at the top. Moved here verbatim from `BUILD.md` on 2026-10-23, which indexes this file.
 
+**26.11.3 verification and publication, 2026-11-04:** prepared on the Windows development machine.
+Step 1 took `toml` 1.2 and its two siblings, and `lopdf` 0.47.0, published that morning. With it
+the gates passed 32 of 34: 33 Rust tests and two `api/python` tests compare a rewritten content
+stream byte for byte, and 0.47 writes a whole-number real as `100.0`. `lopdf` went back to 0.46
+and is held in step 1's list with what else it changes. `check_pdfium_age.py` found the pin at
+the head of 8103; `npm audit` reports the two known low `deepmerge` findings. All 34 gates passed
+on the release tree, and `check_linux.py` passed. `window_checks.py` 17 of 17 on Windows 11 on a
+`--no-bundle` checks build, and 17 of 17 on the second Mac (`run_on_mac.py`, `--wrap
+'~/bin/mac-build-env.zsh --'`). Step 7 in the mutation worktree: `mutate_python.py` 38/38,
+`mutate_frontend.py --near v26.11.2` 1/1, `mutate_rust.py --near v26.11.2` 11/11 with 1 skipped
+as not runnable on Windows. The locally built installer carried `tpdf_shell.dll`, and its
+`tpdf-cli` answered 26.11.3 and verified `incr-signed.pdf` with the development engine hidden. CI
+passed all three jobs on `c35b977e` (run 41879850630) and `Audit` passed (run 41879850655). No
+rehearsal: `release.yml` changed only in its notes. Twice that day a macOS job was given no runner
+and GitHub cancelled it after 15 minutes with no step run: CI on `bcef4b5d` and the release run's
+macOS job, whose Linux job also failed fetching the Tesseract data (read timeout). A re-run of
+the failed jobs of release run 41887065586 adopted the draft and left eight files whose
+`latest.json` offered 26.11.3. On the draft's files: the installer read as `Valid`, timestamped
+by Certum, and passed `installed_check.py` 26/26 on the Windows build machine; the `.dmg`'s app
+was accepted as Notarized Developer ID and stapled, and its `tpdf-cli` (Developer ID, `runtime`)
+answered 26.11.3 and verified the signed fixture. `publish_release.py v26.11.3 --publish`
+published it; without authentication `releases/latest` is v26.11.3 with 8 assets, and the
+`.dmg`, `-setup.exe`, `.deb`, AppImage, updater bundle and `latest.json` answer 200. An installed
+26.11.2 updated itself: `update_check.py` 18/18 on the build machine and `update_check_mac.py`
+12/12 on the second Mac over ssh, and each `--control no-press` failed its seven checks and
+nothing else. The cask went to 26.11.3; `brew audit --cask --online` was clean and `brew
+livecheck` reads 26.11.3. **Not run:** `print-probe` and `redact-reach-probe` (no printing or OCR
+code changed), `menu_check.py` and `save_check.py` on the `.dmg`, `clean_windows_check.py`, an
+overwrite of an open document from another program on the installed release (measured on the
+development build by `rewrite_probe`, 25/25 on Windows), and step 7's pass after the release.
+The winget pull request stays where it was.
+
 **26.11.2 verification and publication, 2026-11-03:** prepared on the Windows development machine.
 Step 1 took every update within its range, `zip` 9.3.0 among them; `signature` 3 is held with
 the `cms`/`rsa` generation. `check_pdfium_age.py` found the pin at the head of 8103. All 34 gates
