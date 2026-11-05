@@ -32,7 +32,9 @@ livecheck` reads 26.11.3. **Not run:** `print-probe` and `redact-reach-probe` (n
 code changed), `menu_check.py` and `save_check.py` on the `.dmg`, `clean_windows_check.py`, an
 overwrite of an open document from another program on the installed release (measured on the
 development build by `rewrite_probe`, 25/25 on Windows), and step 7's pass after the release.
-The winget pull request stays where it was.
+On 2026-11-05 the winget pull request (445804, a new package waiting for a moderator since
+2026-10-02) moved from 26.10.27 to 26.11.3 on manifest version 1.28.0, still the newest; `winget
+validate` passed and the downloaded installer's SHA-256 equals the manifest's.
 
 **26.11.2 verification and publication, 2026-11-03:** prepared on the Windows development machine.
 Step 1 took every update within its range, `zip` 9.3.0 among them; `signature` 3 is held with
