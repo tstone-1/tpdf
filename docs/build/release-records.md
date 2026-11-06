@@ -2,7 +2,7 @@
 
 What was run for each release, what passed, and what was not run. The record of a new release goes at the top. Moved here verbatim from `BUILD.md` on 2026-10-23, which indexes this file.
 
-**26.11.4 verification, 2026-11-06:** prepared on the Windows development machine, the first
+**26.11.4 verification and publication, 2026-11-06:** prepared on the Windows development machine, the first
 release on PDFium `8127-tpdf.1` (its own record is in `pdfium-records.md`). Step 1 took Vite
 8.3.6 and six crates, `zip` 9.4.1 among them, in both lockfiles; `lopdf` 0.47 stays held.
 `check_pdfium_age.py` found the pin at the head of 8127. All 34 gates passed on the release
@@ -22,7 +22,24 @@ exited 3. `print-probe` passed 15 of 15. `redact-reach-probe` over 192 documents
 columns: a region the gate refuses to certify. The same probe binary on the same corpus with
 8103's engine in `vendor/pdfium` gave every one of those figures to the digit, so the one region
 is the corpus's, which grew from 141 documents, not the engine's. No rehearsal: `release.yml`
-changed only in its notes.
+changed only in its notes. CI passed all three jobs on `55550b48` (run 42209043908) and `Audit`
+passed (run 42209043932); the release run 42212192789 skipped its gates on CI's pass and made a
+draft of 8 files. On the draft's files: the installer read as `Valid`, timestamped by Certum,
+and passed `installed_check.py` 26/26 on the Windows build machine; the `.dmg`'s app was
+accepted as Notarized Developer ID and stapled, and its `tpdf-cli` (Developer ID, `runtime`)
+answered 26.11.4 and verified the signed fixture. `publish_release.py v26.11.4 --publish`
+published it; without authentication `releases/latest` is v26.11.4 with 8 assets, the `.dmg`,
+`-setup.exe`, `.deb`, AppImage, updater bundle and `latest.json` answer 200, and `latest.json`
+offers 26.11.4. An installed 26.11.3 updated itself: `update_check.py` 18/18 on the build
+machine, and `update_check_mac.py` on the Mac mini over ssh 12/12 on its second run. Its first
+run, about ten minutes after publishing, failed only *the menu offers Install update*
+(disabled), while a `curl` of `latest.json` there already read 26.11.4: the Mac twin of
+26.11.1's first Windows run (step 12). Each `--control no-press` failed its seven checks and
+nothing else. The cask went to 26.11.4 with the published `.dmg`'s SHA-256; `brew audit --cask
+--online` was clean and `brew livecheck` reads 26.11.4. **Not run:** `menu_check.py` and
+`save_check.py` on the `.dmg`, `clean_windows_check.py`, and step 7's pass after the release.
+**The winget pull request still names 26.11.3**: the 26.11.4 manifests passed `winget validate`
+and the move was not pushed from this session.
 
 **26.11.3 verification and publication, 2026-11-04:** prepared on the Windows development machine.
 Step 1 took `toml` 1.2 and its two siblings, and `lopdf` 0.47.0, published that morning. With it

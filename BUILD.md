@@ -2556,7 +2556,10 @@ starts at 0 and increments within the month.
     while the script's own read of `latest.json` already named 26.11.1. The second run,
     with nothing changed, passed 18/18. The cause is unmeasured; the application fetches
     `latest.json` itself, and that fetch may still have been served the previous file. Run
-    it again before diagnosing, and diagnose a second failure.
+    it again before diagnosing, and diagnose a second failure. **The Mac check does the
+    same** (26.11.4, 2026-11-06): its first run, about ten minutes after publishing, failed
+    only *the menu offers Install update* (disabled), while a `curl` of `latest.json` on that
+    Mac already read 26.11.4, and the second run passed 12/12.
 
     **First run, 2026-10-10, Windows 11, from 26.10.13 to the published 26.10.14:** 16 of 17
     checks passed and the control failed its seven. The one failure is a defect in every
