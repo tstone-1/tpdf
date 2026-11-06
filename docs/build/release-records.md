@@ -38,8 +38,9 @@ run, about ten minutes after publishing, failed only *the menu offers Install up
 nothing else. The cask went to 26.11.4 with the published `.dmg`'s SHA-256; `brew audit --cask
 --online` was clean and `brew livecheck` reads 26.11.4. **Not run:** `menu_check.py` and
 `save_check.py` on the `.dmg`, `clean_windows_check.py`, and step 7's pass after the release.
-**The winget pull request still names 26.11.3**: the 26.11.4 manifests passed `winget validate`
-and the move was not pushed from this session.
+The winget pull request (445804) moved from 26.11.3 to 26.11.4 the same day on manifest version
+1.28.0, still the newest; `winget validate` passed and the installer's SHA-256 equals the
+published `-setup.exe`'s.
 
 **26.11.3 verification and publication, 2026-11-04:** prepared on the Windows development machine.
 Step 1 took `toml` 1.2 and its two siblings, and `lopdf` 0.47.0, published that morning. With it
