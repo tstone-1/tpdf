@@ -24,6 +24,14 @@ WHAT IT ASKS, and both are questions about the world, not about the commit:
 Either is exit 1, with what to build. The pin is read from
 `scripts/pdfium_build.json`, which is what the build uses.
 
+  3. Does the application ship that pin? `TAG` in `scripts/fetch_pdfium.py`
+     names the engine release the app bundles, and it moves after the build
+     pin: BUILD.md's order is build pin, candidate, published archives, then
+     `TAG`. Until 2026-11-06 nothing compared the two, so between the first
+     step and the last this check was green while the app still shipped the
+     old engine, and a release could be published from that window. A `TAG`
+     that is not the build pin is exit 1 with nothing to build.
+
 NOT A GATE, for the reason `audit.yml` gives for itself: the answer changes
 when upstream moves and not when the code does, and `gates.py` has to pass
 offline. `audit.yml` runs it weekly and on a push.
@@ -55,6 +63,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 PINS = ROOT / "scripts" / "pdfium_build.json"
+FETCH = ROOT / "scripts" / "fetch_pdfium.py"
 STABLE = "https://chromiumdash.appspot.com/fetch_releases?channel=Stable&platform=Windows&num=1"
 HEAD = "https://pdfium.googlesource.com/pdfium/+/refs/heads/chromium/{branch}?format=JSON"
 
@@ -71,6 +80,22 @@ def pinned(text: str) -> tuple[int, str]:
     if not branch or not re.fullmatch(r"[0-9a-f]{40}", commit):
         raise Unanswered(f"{PINS.name} names no <branch>-tpdf.<n> version and 40-digit commit")
     return int(branch[1]), commit
+
+
+def shipped(text: str) -> str:
+    """The version `fetch_pdfium.py`'s `TAG` names, without its `pdfium-` prefix."""
+    tags = re.findall(r'^TAG = "pdfium-(\d+-tpdf\.\d+)"$', text, re.MULTILINE)
+    if len(tags) != 1:
+        raise Unanswered(f"{FETCH.name} has {len(tags)} lines TAG = \"pdfium-<branch>-tpdf.<n>\", not one")
+    return tags[0]
+
+
+def unshipped(version: str, tag: str) -> list[str]:
+    """A sentence when the app ships another engine than the build pin names."""
+    if version == tag:
+        return []
+    return [f"The build pin is {version}, but the app ships pdfium-{tag} ({FETCH.name} TAG). "
+            "Publish the candidate's archives and move TAG and PINS there."]
 
 
 def stable_branch(text: str) -> tuple[int, str]:
@@ -176,6 +201,11 @@ def self_test() -> int:
         ("a branch that moved proposes its next build",
          proposal("8078-tpdf.1", (8078, commit), stable, later, None) == ("8078-tpdf.2", later)),
         ("a current pin proposes nothing", proposal("8078-tpdf.1", (8078, commit), stable, commit, None) is None),
+        ("the shipped TAG is read", shipped('x = 1\nTAG = "pdfium-8103-tpdf.1"\n') == "8103-tpdf.1"),
+        ("a shipped TAG equal to the build pin finds nothing", unshipped("8103-tpdf.1", "8103-tpdf.1") == []),
+        ("a shipped TAG behind the build pin is found", len(unshipped("8127-tpdf.1", "8103-tpdf.1")) == 1),
+        ("a shipped TAG of another build of the branch is found", len(unshipped("8127-tpdf.2", "8127-tpdf.1")) == 1),
+        ("the repository's own TAG is read", re.fullmatch(r"\d+-tpdf\.\d+", shipped(FETCH.read_text(encoding="utf-8"))) is not None),
         ("a repin changes the two pins and keeps the rest",
          json.loads(repinned(json.dumps({"version": "8066-tpdf.1", "pdfium": commit, "builder": "x"}, indent=2),
                              "8078-tpdf.1", later)) == {"version": "8078-tpdf.1", "pdfium": later, "builder": "x"}),
@@ -188,6 +218,9 @@ def self_test() -> int:
         ("a version of three numbers is not read", json.dumps([{"version": "156.0.8078"}]), stable_branch),
         ("a page that is not JSON is not read", "<html>", branch_head),
         ("a head that is not a commit is not read", json.dumps({"commit": "main"}), branch_head),
+        ("a file with no TAG is not read", "TAGS = 1\n", shipped),
+        ("a file with two TAGs is not read", 'TAG = "pdfium-1-tpdf.1"\nTAG = "pdfium-2-tpdf.1"\n', shipped),
+        ("an indented TAG is not read", '    TAG = "pdfium-1-tpdf.1"\n', shipped),
     ):
         try:
             reader(text)
@@ -218,11 +251,13 @@ def main() -> int:
         stable = stable_branch(ask(STABLE))
         head = branch_head(ask(HEAD.format(branch=pin[0])))
         stable_head = branch_head(ask(HEAD.format(branch=stable[0]))) if stable[0] > pin[0] else None
-        build = proposal(str(json.loads(text)["version"]), pin, stable, head, stable_head)
+        version = str(json.loads(text)["version"])
+        build = proposal(version, pin, stable, head, stable_head)
+        tag = shipped(FETCH.read_text(encoding="utf-8"))
     except (Unanswered, OSError) as error:
         print(f"[FAIL] could not ask, so the pin is not known to be current: {error}")
         return 2
-    found = findings(pin, stable, head)
+    found = findings(pin, stable, head) + unshipped(version, tag)
     for line in found:
         print(f"[FAIL] {line}")
     if build and args.output:

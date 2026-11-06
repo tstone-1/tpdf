@@ -112,19 +112,25 @@ def canonical_archive(tree, dest):
 def complete_licenses(source, stage, log):
     # The supplier at the pinned revision only warns on these libraries. All are
     # permissive; copy notices from the actual DEPS-pinned sources. libyuv is
-    # compiled in from chromium/8103 on; its LICENSE is BSD-3-Clause.
+    # compiled in from chromium/8103 on; its LICENSE is BSD-3-Clause. Dragonbox
+    # and HarfBuzz were supplemented here until the builder pin of 2026-11-06,
+    # whose collector copies both itself.
     supplements = {
-        "dragonbox": ("third_party/dragonbox/src/LICENSE-Boost", "dragonbox.txt"),
-        "harfbuzz": ("third_party/harfbuzz/src/COPYING", "harfbuzz.txt"),
         "libyuv": ("third_party/libyuv/LICENSE", "libyuv.txt"),
     }
+    # That builder reports an unknown library as a GitHub annotation on stdout,
+    # `::warning file=steps/08-licenses.sh::Unknown library X`; the one before
+    # wrote `WARNING: unknow library X` to stderr. Any warning-shaped line that
+    # is not the current form refuses, so a third spelling cannot pass unread.
     for line in log.splitlines():
-        if line.startswith("WARNING:"):
-            match = re.fullmatch(r"WARNING: unknow library (\w+)", line)
-            if not match or match[1] not in supplements:
-                raise ValueError("License inventory incomplete: " + line)
-            src, name = supplements[match[1]]
-            shutil.copy2(source / src, stage / "licenses" / name)
+        line = line.strip()
+        if not re.match(r"(?i)(::warning|::error|warning:)", line) and not re.search(r"(?i)unknown? library", line):
+            continue
+        match = re.fullmatch(r"::warning file=steps/08-licenses\.sh::Unknown library ([\w.+-]+)", line)
+        if not match or match[1] not in supplements:
+            raise ValueError("License inventory incomplete: " + line)
+        src, name = supplements[match[1]]
+        shutil.copy2(source / src, stage / "licenses" / name)
     if not (stage / "licenses/pdfium.txt").is_file():
         raise ValueError("PDFium license is absent")
     for path in (stage / "licenses").iterdir():

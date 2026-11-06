@@ -78,9 +78,16 @@ The build is defined by `.github/workflows/pdfium.yml` and `scripts/build_pdfium
 with source/tool revisions in `scripts/pdfium_build.json`. It builds one unpatched
 native engine each for mac-arm64 and win-x64, and emits an archive only after the engine
 passes the RTL observation `scripts/pdfium_verify.py` pins and upstream's text tests.
-The supplier's license collector omits Dragonbox and HarfBuzz; the wrapper adds
-their permissive notices from the pinned sources, includes the builder's own
-`LICENSE`, and refuses any other unknown library. Windows selects Git Bash explicitly and
+The supplier's license collector omits libyuv; the wrapper adds its permissive
+notice from the pinned source, includes the builder's own `LICENSE`, and refuses
+any other unknown library. **The builder pin moves with the PDFium branch**: the
+supplier follows PDFium's tree, and on 2026-11-06 the builder that collected 8103's
+notices could not find `lcms2.h`, `openjpeg.c` and `t4.h` under 8127's `src/`
+directories, while the builder that finds them cannot find them in 8103. `--repin`
+changes only the version and the commit, so when a candidate fails in
+`steps/08-licenses.sh`, compare the builder's history of that script with the pin.
+`check_pdfium_age.py` also holds the build pin against `TAG` in `fetch_pdfium.py`,
+so `Audit` stays red from the moment the build pin moves until the app ships it. Windows selects Git Bash explicitly and
 checks it before compiling: PATH can otherwise select the WSL launcher.
 Run its safeguards with `python3 -m unittest discover -s scripts -p test_pdfium_build.py`.
 Building locally needs full Xcode or VS with the pinned Windows SDK; use

@@ -28,6 +28,12 @@ have the binary.)
   draws it, or is left out when a clip hides all of it. A word only partly cut by a clip is
   still shown whole after *Ungroup*.
 
+### Changed
+
+- The PDFium build follows the supplier's newer licence collector, which the move to
+  `chromium/8127` needs, and the dependency audit stays red until the app ships the engine the
+  build is pinned to.
+
 ## [26.11.3] - 2026-11-04
 
 ### Fixed

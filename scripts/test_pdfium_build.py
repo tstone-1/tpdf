@@ -157,22 +157,23 @@ class ArtifactTests(unittest.TestCase):
             licenses.mkdir()
             (licenses / "pdfium.txt").write_text("Synthetic license fixture")
             complete_licenses(root, root, "")
-            with self.assertRaisesRegex(ValueError, "incomplete"):
-                complete_licenses(root, root, "WARNING: unknow library unlisted")
+            complete_licenses(root, root, "[..] some ordinary output line\n")
+            for line in (
+                "::warning file=steps/08-licenses.sh::Unknown library unlisted",
+                "::warning file=steps/08-licenses.sh::Unknown library abseil-cpp",
+                # The previous builder's spelling, and any other warning shape,
+                # refuse rather than pass unread.
+                "WARNING: unknow library libyuv",
+                "warning: something else",
+                "::warning::Unknown library libyuv",
+                "::error file=steps/08-licenses.sh::anything",
+                "Unknown library libyuv",
+            ):
+                with self.subTest(line=line), self.assertRaisesRegex(ValueError, "incomplete"):
+                    complete_licenses(root, root, "first line\n  " + line + "\nlast line")
             (licenses / "pdfium.txt").write_text("")
             with self.assertRaisesRegex(ValueError, "empty"):
                 complete_licenses(root, root, "")
-
-    def test_supplemented_notice_is_copied_from_source(self):
-        with tempfile.TemporaryDirectory() as d:
-            root = Path(d)
-            (root / "licenses").mkdir()
-            (root / "licenses/pdfium.txt").write_text("Synthetic PDFium license fixture")
-            source = root / "third_party/dragonbox/src/LICENSE-Boost"
-            source.parent.mkdir(parents=True)
-            source.write_text("Synthetic Dragonbox license fixture")
-            complete_licenses(root, root, "WARNING: unknow library dragonbox")
-            self.assertEqual((root / "licenses/dragonbox.txt").read_bytes(), source.read_bytes())
 
     def test_libyuv_notice_is_copied_from_its_license_file(self):
         with tempfile.TemporaryDirectory() as d:
@@ -182,7 +183,7 @@ class ArtifactTests(unittest.TestCase):
             source = root / "third_party/libyuv/LICENSE"
             source.parent.mkdir(parents=True)
             source.write_text("Synthetic libyuv license fixture")
-            complete_licenses(root, root, "WARNING: unknow library libyuv")
+            complete_licenses(root, root, "::warning file=steps/08-licenses.sh::Unknown library libyuv")
             self.assertEqual((root / "licenses/libyuv.txt").read_bytes(), source.read_bytes())
 
 
