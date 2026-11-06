@@ -2,6 +2,28 @@
 
 What was run for each release, what passed, and what was not run. The record of a new release goes at the top. Moved here verbatim from `BUILD.md` on 2026-10-23, which indexes this file.
 
+**26.11.4 verification, 2026-11-06:** prepared on the Windows development machine, the first
+release on PDFium `8127-tpdf.1` (its own record is in `pdfium-records.md`). Step 1 took Vite
+8.3.6 and six crates, `zip` 9.4.1 among them, in both lockfiles; `lopdf` 0.47 stays held.
+`check_pdfium_age.py` found the pin at the head of 8127. All 34 gates passed on the release
+tree, and `check_linux.py` passed. `window_checks.py` 17 of 17 on the second Mac (`run_on_mac.py`,
+`--wrap '~/bin/mac-build-env.zsh --'`). On Windows 11 on a `--no-bundle` checks build, 16 of 17,
+then 1 of 1 on a re-run of *marks on links*: its region copy had failed with *Document is not
+focused*, the window having lost focus during the run. `viewer_check.py` on `vector-heavy.pdf`
+282 of 282 on that build. Step 7 in the mutation worktree: `mutate_python.py` 38/38,
+`mutate_frontend.py --near v26.11.3` 1/1, `mutate_rust.py --near v26.11.3` 1/1. The table's one
+page-copy row predates the hidden-word guards; those were mutated by hand while they were built,
+six guards and the clipped-word rule each turning `pagecopy` red. The local installer carried
+`tpdf_shell.dll` and the pinned `pdfium.dll`; with the development engine hidden its `tpdf-cli`
+answered 26.11.4 and verified `incr-signed.pdf`, and with the bundled engine also removed it
+exited 3. `print-probe` passed 15 of 15. `redact-reach-probe` over 192 documents: 16,594 regions,
+15,420 taken whole (92.9%); the gate read back 15,205 on 427 pages, 6,207 shown unreadable
+(40.82%), 8,997 not verified, and **1 still read as text**, with every span inside the region's
+columns: a region the gate refuses to certify. The same probe binary on the same corpus with
+8103's engine in `vendor/pdfium` gave every one of those figures to the digit, so the one region
+is the corpus's, which grew from 141 documents, not the engine's. No rehearsal: `release.yml`
+changed only in its notes.
+
 **26.11.3 verification and publication, 2026-11-04:** prepared on the Windows development machine.
 Step 1 took `toml` 1.2 and its two siblings, and `lopdf` 0.47.0, published that morning. With it
 the gates passed 32 of 34: 33 Rust tests and two `api/python` tests compare a rewritten content

@@ -269,7 +269,9 @@ project conventions.
 - **Copy page for PowerPoint** (Windows): the page in view goes to the clipboard as a picture
   that PowerPoint's *Ungroup* turns into shapes and text boxes, so its boxes, lines and words
   can be edited on a slide. Text the page draws with a font tpdf cannot read as characters
-  stays a drawing rather than becoming wrong words.
+  stays a drawing rather than becoming wrong words. Words the page hides do not become text
+  boxes: a covered or transparent word stays a drawing under its cover, and a word a clip
+  cuts is left out, because *Ungroup* would show it whole.
   <!-- built: edit.copyPageForPowerPoint -->
 - **Measure a distance**: drag along something on a page and the line shows its length, in
   points at first; hold Shift for a straight line. **Set the scale** takes the real length of

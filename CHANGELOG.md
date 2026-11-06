@@ -17,7 +17,7 @@ as *downloadable*, while the release sat as a draft that GitHub showed to nobody
 are given now because they are different facts, and only the second one means a reader can
 have the binary.)
 
-## [26.11.4] - Unreleased
+## [26.11.4] - 2026-11-06
 
 ### Fixed
 
@@ -35,6 +35,7 @@ have the binary.)
 - The PDFium build follows the supplier's newer licence collector, which the move to
   `chromium/8127` needs, and the dependency audit stays red until the app ships the engine the
   build is pinned to.
+- Dependency updates: Vite 8.3.6, `zip` 9.4.1, `flate2` 1.1.11 and four other crates.
 
 ## [26.11.3] - 2026-11-04
 

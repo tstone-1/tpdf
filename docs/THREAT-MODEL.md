@@ -3625,7 +3625,18 @@ are text records (`pagecopy.rs`).
   program pasted into. Their contents are a drawing of a page the reader opened, and a page
   that can run the command can put a drawing of an open document on the clipboard, as
   *Copy a region as a picture* already can.
-- **Not covered.** GDI's own parsing of the metafile, in the app process at
+- **What the page hides stays hidden on the slide** (since 26.11.4). Words written back land
+  above everything PDFium drew, and *Ungroup* drops a metafile's clip, so until 26.11.4 a word
+  under a later box or annotation (an unapplied redaction mark is one), cut by a clip or at
+  alpha 0 became a readable text box. A word is now written back only when nothing drawn
+  after it covers a quarter of its height, its clip is an upright rectangle around it and its
+  colours are opaque (`take_words`); a covered or transparent word stays as PDFium's outlines
+  under its cover, and a clipped word is left out. `tests/cli/pagecopy.rs` holds each case and
+  a word cut by its clip draws no record at all; measured in PowerPoint through paste,
+  *Ungroup*, save and reopen.
+- **Not covered.** Clipped images and paths are drawn as PDFium draws them, and *Ungroup*
+  shows them whole. A covered word's outlines remain under the cover on the slide, as its
+  glyphs remain under it in the PDF. GDI's own parsing of the metafile, in the app process at
   `SetEnhMetaFileBits` and in PowerPoint at the paste. Metafile records are GDI's own
   structures written by GDI in the worker; the document chooses their parameters, not their
   layout.
