@@ -2,6 +2,30 @@
 
 Each engine pin since 8044: what moved, the candidate run that built it, the probes that cleared it, and the release verifications that turned on the engine. Newest first; the record of a new pin goes at the top. Moved here verbatim from `BUILD.md` on 2026-10-23, which indexes this file.
 
+**PDFium 8127-tpdf.1 (2026-11-06).** `Audit` went red with Chrome stable 158 on
+`chromium/8127`, and `pdfium-bump` opened issue #8 and started the candidate, which failed on all
+three platforms in the same step: the supplier's `steps/08-licenses.sh` at `976ce1f` read
+`third_party/lcms/include/lcms2.h`, and 8127 moved it, `libopenjpeg/openjpeg.c` and
+`libtiff/t4.h` under `src/`. Gitiles answered both ways: at 8127 (`43d55e42`) only the new paths
+exist, at 8103 (`a4d199fb`) only the old ones. The supplier fixed the script on 2026-10-26
+(`71f3e60`, `4bdb7ac`); builder `0eb94b2` changes no patch this build applies, so the build pin
+moved to 8127 and that builder together (`cac3808d`). That builder reports an unknown library as
+a `::warning` annotation on stdout, so `complete_licenses` reads that form and refuses any other
+warning-shaped line, and it copies Dragonbox and HarfBuzz itself. `check_pdfium_age.py` now also
+holds the build pin against `TAG`, so `Audit` stayed red until this pin.
+[Run 42193048302](https://github.com/tstone-1/tpdf/actions/runs/42193048302) at `cac3808d` built
+all three platforms: 63 upstream text tests on macOS and Linux, 62 on Windows, 9 of 11 ordering
+cases with the two mixed-direction limitations unchanged. The archives' licences gain Highway
+(Apache-2.0 or BSD-3-Clause), which 8127 compiles in, and Dragonbox's notice is now its two files;
+`THIRD-PARTY-NOTICES.md` was regenerated with exactly those sections changed. Probes on Windows 11:
+`remove-probe c`; multilingual search 68/68 and encoding search 23/23 with `--lib
+vendor/pdfium/bin`; `progressive-probe` identical on vector-heavy and the form; `backend-probe`
+42/44 on `vector-heavy.pdf` with two skipped and 41/44 on `text-heavy.pdf` with three skipped;
+`worker-probe` 48/48, the same counts as 8103. On the Mac mini the engine scan of the published
+mac archive (digest checked) found no V8 and no XFA. All 34 gates passed on the installed
+engine, among them 3,353 unit tests and 642 command-line checks with 3 skipped, the page copy's
+clip checks included.
+
 **PDFium 8103-tpdf.1 (2026-10-23).** `Audit` went red on the 26.10.25 release commit: Chrome
 stable 157 had moved to `chromium/8103`, and `chromium/8078` had gained commits after the pin.
 `pdfium-bump` started the build and opened issue #5, and the build failed on all three

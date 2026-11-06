@@ -31,6 +31,7 @@ have the binary.)
 
 ### Changed
 
+- The PDF engine is PDFium 8127, the branch Chrome 158 ships.
 - The PDFium build follows the supplier's newer licence collector, which the move to
   `chromium/8127` needs, and the dependency audit stays red until the app ships the engine the
   build is pinned to.
