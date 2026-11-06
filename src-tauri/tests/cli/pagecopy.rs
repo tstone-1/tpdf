@@ -98,6 +98,100 @@ fn fixture(path: &Path) {
     doc.save(path).unwrap();
 }
 
+/// One page whose words the page itself does not show, beside three that it
+/// does. Each "secret" is hidden a different way: under a white box drawn
+/// after it, outside its clip, inside a clip of no area, at fill alpha 0, and
+/// under an opaque square annotation. The controls are an uncovered word, a
+/// word inside a clip just inside the page (producers write one around
+/// everything), and a
+/// word with a thin line drawn through it afterwards, as a strike-through or a
+/// table rule is: it crosses the glyphs (PDFium's bounds for this word start at
+/// its baseline, so a line under it would touch nothing) and hides nothing.
+fn hidden_fixture(path: &Path) {
+    let mut doc = Document::with_version("1.7");
+    let tree = doc.new_object_id();
+    let font = doc.add_object(dictionary! {
+        "Type"=>"Font", "Subtype"=>"Type1", "BaseFont"=>"Helvetica", "Encoding"=>"WinAnsiEncoding",
+    });
+    let mut content = Vec::new();
+    content.extend_from_slice(b"BT /F1 14 Tf 0 0 0 rg 60 760 Td (Visible note) Tj ET ");
+    content.extend_from_slice(
+        b"q 10 10 575 822 re W n BT /F1 14 Tf 0 0 0 rg 60 730 Td (Inside page clip) Tj ET Q ",
+    );
+    content.extend_from_slice(
+        b"q 60 470 0 0 re W n BT /F1 14 Tf 0 0 0 rg 60 470 Td (Zero clip secret) Tj ET Q ",
+    );
+    content.extend_from_slice(b"BT /F1 14 Tf 0 0 0 rg 60 700 Td (Struck words) Tj ET ");
+    content.extend_from_slice(b"0 0 0 rg 60 704 120 0.8 re f ");
+    content.extend_from_slice(b"BT /F1 14 Tf 0 0 0 rg 60 650 Td (Covered secret) Tj ET ");
+    content.extend_from_slice(b"1 1 1 rg 55 640 200 30 re f ");
+    content.extend_from_slice(
+        b"q 60 600 12 20 re W n BT /F1 14 Tf 0 0 0 rg 60 605 Td (Clipped secret) Tj ET Q ",
+    );
+    content.extend_from_slice(
+        b"q /GS0 gs BT /F1 14 Tf 0 0 0 rg 60 560 Td (Transparent secret) Tj ET Q ",
+    );
+    content.extend_from_slice(b"BT /F1 14 Tf 0 0 0 rg 60 505 Td (Annotated secret) Tj ET");
+    let stream = doc.add_object(Stream::new(dictionary! {}, content));
+    let look = doc.add_object(Stream::new(
+        dictionary! {
+            "Type"=>"XObject", "Subtype"=>"Form",
+            "BBox"=>vec![0.into(), 0.into(), 200.into(), 30.into()],
+        },
+        b"1 1 1 rg 0 0 200 30 re f".to_vec(),
+    ));
+    let square = doc.add_object(dictionary! {
+        "Type"=>"Annot", "Subtype"=>"Square", "F"=>4,
+        "Rect"=>vec![55.into(), 495.into(), 255.into(), 525.into()],
+        "AP"=>dictionary! { "N"=>look },
+    });
+    let resources = dictionary! {
+        "Font" => dictionary! { "F1" => font },
+        "ExtGState" => dictionary! { "GS0" => dictionary! { "ca" => 0 } },
+    };
+    let page = doc.add_object(dictionary! {
+        "Type"=>"Page", "Parent"=>tree, "MediaBox"=>vec![0.into(),0.into(),595.into(),842.into()],
+        "Contents"=>stream, "Resources"=>resources, "Annots"=>vec![Object::Reference(square)],
+    });
+    doc.objects.insert(
+        tree,
+        dictionary! {"Type"=>"Pages", "Kids"=>vec![Object::Reference(page)], "Count"=>1}.into(),
+    );
+    let catalog = doc.add_object(dictionary! {"Type"=>"Catalog", "Pages"=>tree});
+    doc.trailer.set("Root", catalog);
+    doc.save(path).unwrap();
+}
+
+/// What the page hides stays out of the copy's text: a pasted picture is
+/// ungrouped in PowerPoint, and a word written as text above the box, clip or
+/// annotation that hid it is then a word anyone can read.
+fn keeps_hidden_words_hidden(report: &mut Report, dir: &Path) {
+    let source = dir.join("hidden.pdf");
+    hidden_fixture(&source);
+    let copied = Worker::spawn(&source, &library_dir()).and_then(|mut worker| {
+        let _ = worker.call(&Request::Open {
+            lazy_geometry: false,
+        });
+        copy(&mut worker, 0)
+    });
+    let seen = match copied {
+        Ok(bytes) => read(&bytes),
+        Err(why) => return report.check("the worker draws the hidden-words page", false, &why),
+    };
+    report.check(
+        "words the page shows stay text: uncovered, inside a page-sized clip, struck through",
+        ["Visible note", "Inside page clip", "Struck words"]
+            .iter()
+            .all(|word| seen.words.iter().any(|w| w == word)),
+        &format!("{:?}", seen.words),
+    );
+    report.check(
+        "no covered, clipped, transparent or annotated word is written as text",
+        !seen.words.iter().any(|w| w.contains("secret")),
+        &format!("{:?}", seen.words),
+    );
+}
+
 fn copy(worker: &mut Worker, page: u32) -> Result<Vec<u8>, String> {
     let response = worker.call(&Request::PageCopy {
         page,
@@ -161,6 +255,7 @@ pub(super) fn writes_words_as_text(report: &mut Report) {
         missing.is_err() && copy(&mut worker, 0).is_ok(),
         &format!("{:?}", missing.map(|bytes| bytes.len())),
     );
+    keeps_hidden_words_hidden(report, &dir);
     if let Some(from) = std::env::var_os("TPDF_PAGECOPY_FROM") {
         by_hand(report, Path::new(&from));
     }

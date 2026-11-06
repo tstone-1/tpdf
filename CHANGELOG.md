@@ -17,6 +17,17 @@ as *downloadable*, while the release sat as a draft that GitHub showed to nobody
 are given now because they are different facts, and only the second one means a reader can
 have the binary.)
 
+## [26.11.4] - Unreleased
+
+### Fixed
+
+- **Copy page for PowerPoint no longer puts hidden words into the picture as text.** Each
+  word was written on top of the page, so a word under a white box, under an annotation such
+  as a redaction mark, cut away by a clip, or fully transparent became a text box after
+  *Ungroup* in PowerPoint, where anyone could read it. Such a word now stays where the page
+  draws it, or is left out when a clip hides all of it. A word only partly cut by a clip is
+  still shown whole after *Ungroup*.
+
 ## [26.11.3] - 2026-11-04
 
 ### Fixed

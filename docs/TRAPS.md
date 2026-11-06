@@ -55,6 +55,7 @@ hop through the index.
 - PDFium makes no text object of a show operator that draws nothing, so counting operators counts too many
 - Removing an operator removes everything it did, not only what it drew
 - PDFium's EMF output draws every glyph as an outline, so a page pasted into PowerPoint has no text
+- Text written on top of a metafile shows what the page covered
 
 ## PDFium: text, coordinates and outlines
 - A watermark turned across the page merged the lines it crossed in the reading order
@@ -27323,3 +27324,42 @@ rewrite that also puts the modification time back. The cost on the other side: a
 the first edit now reads as a change and refuses Save until the document is reopened. The
 same-length half of the test first rewrote ten bytes as eleven, so it tested the length twice;
 the mutation that ignores the timestamp survived and showed it.
+
+### Text written on top of a metafile shows what the page covered
+
+Found 2026-11-06 by reading `pagecopy.rs` after an outside review asked whether *Copy page for
+PowerPoint* could reveal hidden text, then reproduced through a worker before any fix. The
+copy takes the page's text objects off, lets PDFium draw the rest, and writes each word back
+with `ExtTextOutW` afterwards, so every word lands **above everything else on the page**. A
+word under a white box drawn after it, under an opaque annotation (an unapplied redaction mark
+is one), cut away by a clip, or at fill alpha 0 came out as a text record: the fixture's hidden
+words were all in the metafile, and after *Ungroup* in PowerPoint each is a text box anyone
+can read or drag out from under its cover. The viewer showed none of them.
+
+A word is now moved only where writing it on top changes nothing: nothing drawn after it,
+annotations included, overlaps it across a quarter of its height or more; its clip is an
+upright rectangle around it; its colours are opaque. Otherwise it stays on the page and PDFium
+draws it as outlines in its place, the fallback the module already had for a word it cannot
+read. The quarter-height rule exists because an underline, a strike-through or a table rule
+drawn after a word crosses it without hiding it, and counting those would have turned every
+underlined word into outlines.
+
+Two facts the fix paid for. `FPDFPageObj_GetClipPath` is never null for a page object, and
+`FPDFClipPath_CountPaths` answers **-1 for an object with no clip at all**, not 0; reading -1
+as "could not read" refused every word on every page while the unit tests passed. And the
+first diagnostic printed the same `[[]]` for "no path" and for "not read", which sent the fix
+down a wrong explanation (a zero-segment path for unclipped text) for one round: a diagnostic
+must print the raw answer, not the value the code turned it into. `tests/cli/pagecopy.rs`
+holds the hidden words and three controls that must stay text; one mutation per guard turns it
+red. Its first underline control could not fail: PDFium's bounds for a word with no descender
+start at the baseline, so a line under it touched nothing, and the mutation removing the
+quarter-height rule survived until the line went through the letters.
+
+**Outlines are not a safe fallback for a clip.** Round trip in installed PowerPoint the same
+day (clipboard, `Shapes.Paste()`, *Ungroup* until nothing is grouped, save, reopen, slide
+exported as a picture): covered, transparent and annotated words stayed hidden, but the words
+PDFium drew under a clip showed **in full** — *Ungroup* drops the metafile's clip. A word a
+clip hides entirely is therefore left out of the copy, as invisible text is (`clip_hides`). A
+word a clip hides only partly is still drawn as outlines and shows in full after *Ungroup*;
+the same holds for clipped images and paths. The text-box check alone passed throughout: only
+the exported picture showed it.

@@ -14,7 +14,9 @@
 //! the page and is drawn as PDFium draws it, as outlines: the copy may then
 //! hold a shape where a word would be editable, but never a wrong word.
 //! Invisible text (an OCR layer over a scan) is taken off and not written, so
-//! the picture shows what the page shows.
+//! the picture shows what the page shows. For the same reason a word stays on
+//! the page, as outlines, when anything drawn after it covers it, a clip cuts
+//! it, or it is not opaque: written back it would land above all of that.
 //!
 //! The copy is a second PDFium document over the same bytes
 //! (`DocumentGraph::reopen`), because removing an object changes the page for
@@ -126,6 +128,83 @@ pub(crate) fn escapement(angle: f64, turns: u8) -> i32 {
     ((degrees * 10.0).round() as i32).rem_euclid(3600)
 }
 
+/// A rectangle in page space, points: left, bottom, right, top.
+#[cfg(any(windows, test))]
+pub(crate) type Bounds = [f64; 4];
+
+/// Whether `cover`, drawn after a text object with bounds `text`, can hide
+/// any of its glyphs.
+///
+/// It can when the two overlap across at least a quarter of the text's
+/// height. A thinner overlap is an underline, a strike-through or a table
+/// rule, which crosses glyphs without hiding them, and treating those as
+/// covers would turn every underlined word into outlines. A box over even one
+/// letter of a number covers its full height and is caught.
+#[cfg(any(windows, test))]
+pub(crate) fn hides(text: Bounds, cover: Bounds) -> bool {
+    let [l, b, r, t] = text;
+    let wide = r.min(cover[2]) - l.max(cover[0]);
+    let high = t.min(cover[3]) - b.max(cover[1]);
+    wide > 0.0 && high > 0.0 && high >= 0.25 * (t - b)
+}
+
+/// Whether a clip made of `paths` (each a list of points, page space) leaves
+/// all of `text` showing.
+///
+/// Only an upright rectangle is read, which is what producers write: a
+/// page-sized one around everything, a cell or a column. Any other shape, or
+/// a rectangle that cuts into the text, means part of the text may be hidden,
+/// so the text is not moved.
+#[cfg(any(windows, test))]
+pub(crate) fn clip_shows(text: Bounds, paths: &[Vec<(f64, f64)>]) -> bool {
+    const SLACK: f64 = 0.01;
+    paths.iter().all(|points| {
+        upright(points).is_some_and(|[left, bottom, right, top]| {
+            text[0] >= left - SLACK
+                && text[1] >= bottom - SLACK
+                && text[2] <= right + SLACK
+                && text[3] <= top + SLACK
+        })
+    })
+}
+
+/// Whether a clip made of `paths` hides all of `text`: one of its paths is an
+/// upright rectangle that leaves no area of the text showing, a clip of no
+/// area included.
+///
+/// Such a word shows nothing on the page, so the copy leaves it out, as it
+/// does invisible text. Drawing it is not safe even as PDFium's outlines,
+/// because PowerPoint's *Ungroup* drops the metafile's clip and the outlines
+/// then show in full (measured 2026-11-06, `docs/TRAPS.md`, *Text written on
+/// top of a metafile shows what the page covered*).
+#[cfg(any(windows, test))]
+pub(crate) fn clip_hides(text: Bounds, paths: &[Vec<(f64, f64)>]) -> bool {
+    paths.iter().any(|points| {
+        upright(points).is_some_and(|[left, bottom, right, top]| {
+            text[2].min(right) - text[0].max(left) <= 0.0
+                || text[3].min(top) - text[1].max(bottom) <= 0.0
+        })
+    })
+}
+
+/// The rectangle `points` trace, when they trace an upright one.
+#[cfg(any(windows, test))]
+fn upright(points: &[(f64, f64)]) -> Option<Bounds> {
+    const SLACK: f64 = 0.01;
+    if points.len() < 4 || points.iter().any(|(x, y)| !x.is_finite() || !y.is_finite()) {
+        return None;
+    }
+    let left = points.iter().map(|p| p.0).fold(f64::INFINITY, f64::min);
+    let right = points.iter().map(|p| p.0).fold(f64::NEG_INFINITY, f64::max);
+    let bottom = points.iter().map(|p| p.1).fold(f64::INFINITY, f64::min);
+    let top = points.iter().map(|p| p.1).fold(f64::NEG_INFINITY, f64::max);
+    let corner = |v: f64, a: f64, b: f64| (v - a).abs() <= SLACK || (v - b).abs() <= SLACK;
+    points
+        .iter()
+        .all(|&(x, y)| corner(x, left, right) && corner(y, bottom, top))
+        .then_some([left, bottom, right, top])
+}
+
 #[cfg(windows)]
 pub(crate) use platform::emf;
 
@@ -186,14 +265,16 @@ mod platform {
     };
     use windows_sys::Win32::System::LibraryLoader::{GetModuleHandleW, GetProcAddress};
 
-    use super::{escapement, movable, style, Words};
+    use super::{clip_hides, clip_shows, escapement, hides, movable, style, Bounds, Words};
     use crate::document::OpenDocument;
     use crate::progressive::{Bindings, RawPage};
 
     const PAGEOBJ_TEXT: c_int = 1;
     const RENDER_INVISIBLE: i32 = 3;
     const RENDER_STROKE: i32 = 1;
+    const RENDER_FILL_STROKE: i32 = 2;
     const RENDER_STROKE_CLIP: i32 = 5;
+    const RENDER_FILL_STROKE_CLIP: i32 = 6;
     /// Clip only: draws nothing, like invisible text.
     const RENDER_CLIP: i32 = 7;
     /// `FPDF_PRINTMODE_EMF`: draw paths, not bitmaps or PostScript.
@@ -310,40 +391,204 @@ mod platform {
         }
     }
 
+    /// What one top-level object is to the copy.
+    enum Seen {
+        /// A visible text object: its words if they can be written back, and
+        /// its bounds if PDFium reports them.
+        Text {
+            object: FPDF_PAGEOBJECT,
+            words: Option<Words>,
+            bounds: Option<Bounds>,
+        },
+        /// Anything else PDFium draws: it may hide text drawn before it.
+        Cover(Bounds),
+        /// Taken off and not drawn: invisible text.
+        Nothing,
+    }
+
+    /// Bounds that hide everything, for a cover whose extent is unknown.
+    const EVERYWHERE: Bounds = [
+        f64::NEG_INFINITY,
+        f64::NEG_INFINITY,
+        f64::INFINITY,
+        f64::INFINITY,
+    ];
+
     /// Reads every movable top-level text object and takes it off the page.
+    ///
+    /// The words are written after PDFium has drawn everything else, so they
+    /// land above it. A word is moved only where that changes nothing the
+    /// page shows: nothing drawn after it covers it, no clip cuts it, and it
+    /// is fully opaque. Otherwise it stays on the page and PDFium draws it as
+    /// outlines in its place, as it does a word it cannot read. Writing it
+    /// on top would put text the page hides --- under a white box, a
+    /// redaction mark or outside a clip --- into the picture as readable
+    /// words (`docs/TRAPS.md`, *Text written on top of a metafile shows what
+    /// the page covered*).
     fn take_words(bindings: Bindings, page: &RawPage<'_>) -> Vec<Words> {
         let handle = page.handle();
         let mut found = Vec::new();
         let mut taken = Vec::new();
-        // SAFETY: the text page is closed before any object is removed, and
-        // every object handle is valid while the page is.
+        // SAFETY: the text page is closed before any object is removed, every
+        // object handle is valid while the page is, and every annotation
+        // handle is closed in the loop that opened it.
         unsafe {
             let text_page = bindings.FPDFText_LoadPage(handle);
             if text_page.is_null() {
                 return found;
             }
+            let mut seen = Vec::new();
             for index in 0..bindings.FPDFPage_CountObjects(handle).max(0) {
                 let object = bindings.FPDFPage_GetObject(handle, index);
-                if object.is_null() || bindings.FPDFPageObj_GetType(object) != PAGEOBJ_TEXT {
+                if object.is_null() {
+                    continue;
+                }
+                let bounds = bounds(bindings, object);
+                if bindings.FPDFPageObj_GetType(object) != PAGEOBJ_TEXT {
+                    seen.push(Seen::Cover(bounds.unwrap_or(EVERYWHERE)));
                     continue;
                 }
                 let mode = bindings.FPDFTextObj_GetTextRenderMode(object);
                 if mode == RENDER_INVISIBLE || mode == RENDER_CLIP {
                     taken.push(object);
+                    seen.push(Seen::Nothing);
                     continue;
                 }
-                if let Some(words) = read(bindings, object, text_page, mode) {
-                    found.push(words);
-                    taken.push(object);
+                let clipped = clip(bindings, object);
+                if let (Some(at), Some(paths)) = (bounds, &clipped) {
+                    if clip_hides(at, paths) {
+                        taken.push(object);
+                        seen.push(Seen::Nothing);
+                        continue;
+                    }
                 }
+                let words = match (bounds, &clipped) {
+                    (Some(at), Some(paths)) if clip_shows(at, paths) => {
+                        read(bindings, object, text_page, mode)
+                    }
+                    _ => None,
+                };
+                seen.push(Seen::Text {
+                    object,
+                    words,
+                    bounds,
+                });
             }
             bindings.FPDFText_ClosePage(text_page);
+            // Annotations are drawn after all page content.
+            let mut covers = annotation_covers(bindings, handle);
+            for item in seen.into_iter().rev() {
+                match item {
+                    Seen::Text {
+                        object,
+                        words: Some(words),
+                        bounds: Some(at),
+                    } if !covers.iter().any(|&cover| hides(at, cover)) => {
+                        found.push(words);
+                        taken.push(object);
+                    }
+                    Seen::Text { bounds, .. } => covers.push(bounds.unwrap_or(EVERYWHERE)),
+                    Seen::Cover(at) => covers.push(at),
+                    Seen::Nothing => {}
+                }
+            }
+            // Walked from the last object back; written in page order.
+            found.reverse();
             for object in taken {
                 // Not destroyed: see the module note.
                 bindings.FPDFPage_RemoveObject(handle, object);
             }
         }
         found
+    }
+
+    /// An object's bounds in page space, when PDFium reports finite ones.
+    unsafe fn bounds(bindings: Bindings, object: FPDF_PAGEOBJECT) -> Option<Bounds> {
+        let (mut l, mut b, mut r, mut t) = (0f32, 0f32, 0f32, 0f32);
+        if bindings.FPDFPageObj_GetBounds(object, &mut l, &mut b, &mut r, &mut t) == 0 {
+            return None;
+        }
+        let at = [l, b, r, t].map(f64::from);
+        (at.iter().all(|v| v.is_finite()) && at[0] <= at[2] && at[1] <= at[3]).then_some(at)
+    }
+
+    /// The paths of an object's clip, each as its points; `None` when PDFium
+    /// cannot read one out.
+    unsafe fn clip(bindings: Bindings, object: FPDF_PAGEOBJECT) -> Option<Vec<Vec<(f64, f64)>>> {
+        let clip = bindings.FPDFPageObj_GetClipPath(object);
+        if clip.is_null() {
+            return Some(Vec::new());
+        }
+        // The handle is never null for a page object: it points at the
+        // object's clip state. That state holding no clip at all is a count
+        // of -1 (`FPDFClipPath_CountPaths` without a reference), which is
+        // every object no `W` applies to (measured 2026-11-06, PDFium 8103).
+        let count = bindings.FPDFClipPath_CountPaths(clip);
+        if count < 0 {
+            return Some(Vec::new());
+        }
+        let mut paths = Vec::new();
+        for path in 0..count {
+            let segments = bindings.FPDFClipPath_CountPathSegments(clip, path);
+            if segments < 0 {
+                return None;
+            }
+            let mut points = Vec::new();
+            for index in 0..segments {
+                let segment = bindings.FPDFClipPath_GetPathSegment(clip, path, index);
+                let (mut x, mut y) = (0f32, 0f32);
+                if segment.is_null()
+                    || bindings.FPDFPathSegment_GetPoint(segment, &mut x, &mut y) == 0
+                {
+                    return None;
+                }
+                points.push((f64::from(x), f64::from(y)));
+            }
+            paths.push(points);
+        }
+        Some(paths)
+    }
+
+    /// The rectangles of the annotations PDFium draws over the page. A link
+    /// and a popup draw nothing there, and a hidden annotation is not drawn.
+    unsafe fn annotation_covers(bindings: Bindings, page: FPDF_PAGE) -> Vec<Bounds> {
+        const LINK: i32 = 2;
+        const POPUP: i32 = 16;
+        const HIDDEN: c_int = 2;
+        let mut covers = Vec::new();
+        for index in 0..bindings.FPDFPage_GetAnnotCount(page).max(0) {
+            let annot = bindings.FPDFPage_GetAnnot(page, index);
+            if annot.is_null() {
+                covers.push(EVERYWHERE);
+                continue;
+            }
+            let subtype = bindings.FPDFAnnot_GetSubtype(annot);
+            if subtype != LINK
+                && subtype != POPUP
+                && bindings.FPDFAnnot_GetFlags(annot) & HIDDEN == 0
+            {
+                let mut rect = FS_RECTF {
+                    left: 0.0,
+                    top: 0.0,
+                    right: 0.0,
+                    bottom: 0.0,
+                };
+                let at = if bindings.FPDFAnnot_GetRect(annot, &mut rect) == 0 {
+                    EVERYWHERE
+                } else {
+                    let [l, b, r, t] =
+                        [rect.left, rect.bottom, rect.right, rect.top].map(f64::from);
+                    if [l, b, r, t].iter().all(|v| v.is_finite()) {
+                        [l.min(r), b.min(t), l.max(r), b.max(t)]
+                    } else {
+                        EVERYWHERE
+                    }
+                };
+                covers.push(at);
+            }
+            bindings.FPDFPage_CloseAnnot(annot);
+        }
+        covers
     }
 
     unsafe fn read(
@@ -392,8 +637,19 @@ mod platform {
         } else {
             bindings.FPDFPageObj_GetFillColor(object, &mut r, &mut g, &mut bl, &mut alpha)
         };
-        if coloured == 0 {
-            (r, g, bl) = (0, 0, 0);
+        // A colour PDFium cannot report, or one that is not opaque, is drawn
+        // by PDFium: GDI text has no alpha, so written back it would be
+        // solid, and text at alpha 0 the page does not show would appear.
+        if coloured == 0 || alpha != 255 {
+            return None;
+        }
+        if mode == RENDER_FILL_STROKE || mode == RENDER_FILL_STROKE_CLIP {
+            let (mut sr, mut sg, mut sb, mut sa) = (0u32, 0u32, 0u32, 0u32);
+            if bindings.FPDFPageObj_GetStrokeColor(object, &mut sr, &mut sg, &mut sb, &mut sa) == 0
+                || sa != 255
+            {
+                return None;
+            }
         }
         let font = bindings.FPDFTextObj_GetFont(object);
         let (family, base, flags, weight) = if font.is_null() {
@@ -565,6 +821,97 @@ mod tests {
         assert_eq!(style("", "", 0, 0).0, "Arial");
         // A six-letter prefix that is not a subset tag is part of the name.
         assert_eq!(style("", "abcdef+Font", 0, 0).0, "abcdef+Font");
+    }
+
+    #[test]
+    fn pagecopy_a_cover_hides_text_only_across_a_quarter_of_its_height() {
+        let text = [60.0, 646.0, 160.0, 664.0];
+        // A box over the whole word, and over one letter of it.
+        assert!(hides(text, [55.0, 640.0, 255.0, 670.0]));
+        assert!(hides(text, [150.0, 640.0, 170.0, 670.0]));
+        // The top half of the word.
+        assert!(hides(text, [55.0, 655.0, 255.0, 670.0]));
+        // An underline and a strike-through cross it without hiding it.
+        assert!(!hides(text, [60.0, 645.0, 160.0, 647.0]));
+        assert!(!hides(text, [60.0, 654.6, 160.0, 655.4]));
+        // Beside it, above it, touching its edge.
+        assert!(!hides(text, [170.0, 640.0, 200.0, 670.0]));
+        assert!(!hides(text, [60.0, 670.0, 160.0, 690.0]));
+        assert!(!hides(text, [160.0, 640.0, 200.0, 670.0]));
+    }
+
+    #[test]
+    fn pagecopy_a_clip_must_be_an_upright_rectangle_around_the_text() {
+        let text = [60.0, 600.0, 160.0, 620.0];
+        let rect = |l: f64, b: f64, r: f64, t: f64| vec![(l, b), (r, b), (r, t), (l, t), (l, b)];
+        assert!(clip_shows(text, &[]));
+        assert!(clip_shows(text, &[rect(0.0, 0.0, 595.0, 842.0)]));
+        // A path with no points is not read, and a clip of no area hides
+        // everything.
+        assert!(!clip_shows(text, &[Vec::new()]));
+        assert!(!clip_shows(text, &[rect(60.0, 600.0, 60.0, 600.0)]));
+        assert!(clip_shows(
+            text,
+            &[
+                rect(0.0, 0.0, 595.0, 842.0),
+                rect(50.0, 590.0, 170.0, 630.0)
+            ]
+        ));
+        // A rectangle that cuts the text, in either direction.
+        assert!(!clip_shows(text, &[rect(60.0, 600.0, 72.0, 620.0)]));
+        assert!(!clip_shows(text, &[rect(0.0, 610.0, 595.0, 842.0)]));
+        // The page clip and one that cuts: the intersection cuts.
+        assert!(!clip_shows(
+            text,
+            &[rect(0.0, 0.0, 595.0, 842.0), rect(60.0, 600.0, 72.0, 620.0)]
+        ));
+        // A diamond whose bounding box holds the text is still not read.
+        let diamond = vec![
+            (110.0, 500.0),
+            (300.0, 610.0),
+            (110.0, 720.0),
+            (-80.0, 610.0),
+        ];
+        assert!(!clip_shows(text, &[diamond]));
+        // Too few points, or a point that is not a number.
+        assert!(!clip_shows(text, &[vec![(0.0, 0.0), (595.0, 842.0)]]));
+        assert!(!clip_shows(
+            text,
+            &[vec![
+                (0.0, 0.0),
+                (f64::NAN, 0.0),
+                (595.0, 842.0),
+                (0.0, 842.0)
+            ]]
+        ));
+    }
+
+    #[test]
+    fn pagecopy_a_clip_that_leaves_no_area_hides_the_word() {
+        let text = [60.0, 600.0, 160.0, 620.0];
+        let rect = |l: f64, b: f64, r: f64, t: f64| vec![(l, b), (r, b), (r, t), (l, t), (l, b)];
+        assert!(!clip_hides(text, &[]));
+        assert!(!clip_hides(text, &[rect(0.0, 0.0, 595.0, 842.0)]));
+        // Partly showing is not hidden.
+        assert!(!clip_hides(text, &[rect(60.0, 600.0, 72.0, 620.0)]));
+        // No area, beside it, above it, and touching its edge.
+        assert!(clip_hides(text, &[rect(60.0, 600.0, 60.0, 600.0)]));
+        assert!(clip_hides(text, &[rect(200.0, 600.0, 300.0, 620.0)]));
+        assert!(clip_hides(text, &[rect(60.0, 700.0, 160.0, 720.0)]));
+        assert!(clip_hides(text, &[rect(160.0, 600.0, 300.0, 620.0)]));
+        // One path of several is enough.
+        assert!(clip_hides(
+            text,
+            &[
+                rect(0.0, 0.0, 595.0, 842.0),
+                rect(200.0, 600.0, 300.0, 620.0)
+            ]
+        ));
+        // A shape that is not an upright rectangle is not read.
+        assert!(!clip_hides(
+            text,
+            &[vec![(500.0, 0.0), (501.0, 1.0), (500.0, 2.0), (499.0, 1.0)]]
+        ));
     }
 
     #[test]
