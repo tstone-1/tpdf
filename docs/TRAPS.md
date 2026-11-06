@@ -27358,8 +27358,10 @@ quarter-height rule survived until the line went through the letters.
 **Outlines are not a safe fallback for a clip.** Round trip in installed PowerPoint the same
 day (clipboard, `Shapes.Paste()`, *Ungroup* until nothing is grouped, save, reopen, slide
 exported as a picture): covered, transparent and annotated words stayed hidden, but the words
-PDFium drew under a clip showed **in full** — *Ungroup* drops the metafile's clip. A word a
-clip hides entirely is therefore left out of the copy, as invisible text is (`clip_hides`). A
-word a clip hides only partly is still drawn as outlines and shows in full after *Ungroup*;
-the same holds for clipped images and paths. The text-box check alone passed throughout: only
-the exported picture showed it.
+PDFium drew under a clip showed **in full** — *Ungroup* drops the metafile's clip. So a word
+its clip cuts at all, or whose clip is not an upright rectangle PDFium can read out, is left
+out of the copy, as invisible text is; for a partly clipped word that loses the letters the
+clip let through, chosen over showing the rest (decided 2026-11-06). Page 2 of the fixture
+holds only such a word and its copy must have no text and no shape record; with the outlines
+put back it has 200. Clipped images and paths are still drawn and show whole after *Ungroup*.
+The text-box check alone passed throughout: only the exported picture showed it.

@@ -24,9 +24,10 @@ have the binary.)
 - **Copy page for PowerPoint no longer puts hidden words into the picture as text.** Each
   word was written on top of the page, so a word under a white box, under an annotation such
   as a redaction mark, cut away by a clip, or fully transparent became a text box after
-  *Ungroup* in PowerPoint, where anyone could read it. Such a word now stays where the page
-  draws it, or is left out when a clip hides all of it. A word only partly cut by a clip is
-  still shown whole after *Ungroup*.
+  *Ungroup* in PowerPoint, where anyone could read it. A covered or transparent word now stays
+  where the page draws it. A word a clip cuts, even partly, is left out of the copy, because
+  *Ungroup* drops the clip and would show the whole word; the copy then lacks the part the
+  clip let through. Clipped pictures and shapes still show whole after *Ungroup*.
 
 ### Changed
 

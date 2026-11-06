@@ -15,8 +15,9 @@
 //! hold a shape where a word would be editable, but never a wrong word.
 //! Invisible text (an OCR layer over a scan) is taken off and not written, so
 //! the picture shows what the page shows. For the same reason a word stays on
-//! the page, as outlines, when anything drawn after it covers it, a clip cuts
-//! it, or it is not opaque: written back it would land above all of that.
+//! the page, as outlines, when anything drawn after it covers it or it is not
+//! opaque: written back it would land above all of that. A word a clip cuts is
+//! left out altogether, because *Ungroup* drops the clip from outlines too.
 //!
 //! The copy is a second PDFium document over the same bytes
 //! (`DocumentGraph::reopen`), because removing an object changes the page for
@@ -154,7 +155,10 @@ pub(crate) fn hides(text: Bounds, cover: Bounds) -> bool {
 /// Only an upright rectangle is read, which is what producers write: a
 /// page-sized one around everything, a cell or a column. Any other shape, or
 /// a rectangle that cuts into the text, means part of the text may be hidden,
-/// so the text is not moved.
+/// so the copy leaves the text out: PowerPoint's *Ungroup* drops the
+/// metafile's clip, and even PDFium's clipped outlines then show the whole
+/// word (measured 2026-11-06, `docs/TRAPS.md`, *Text written on top of a
+/// metafile shows what the page covered*).
 #[cfg(any(windows, test))]
 pub(crate) fn clip_shows(text: Bounds, paths: &[Vec<(f64, f64)>]) -> bool {
     const SLACK: f64 = 0.01;
@@ -164,25 +168,6 @@ pub(crate) fn clip_shows(text: Bounds, paths: &[Vec<(f64, f64)>]) -> bool {
                 && text[1] >= bottom - SLACK
                 && text[2] <= right + SLACK
                 && text[3] <= top + SLACK
-        })
-    })
-}
-
-/// Whether a clip made of `paths` hides all of `text`: one of its paths is an
-/// upright rectangle that leaves no area of the text showing, a clip of no
-/// area included.
-///
-/// Such a word shows nothing on the page, so the copy leaves it out, as it
-/// does invisible text. Drawing it is not safe even as PDFium's outlines,
-/// because PowerPoint's *Ungroup* drops the metafile's clip and the outlines
-/// then show in full (measured 2026-11-06, `docs/TRAPS.md`, *Text written on
-/// top of a metafile shows what the page covered*).
-#[cfg(any(windows, test))]
-pub(crate) fn clip_hides(text: Bounds, paths: &[Vec<(f64, f64)>]) -> bool {
-    paths.iter().any(|points| {
-        upright(points).is_some_and(|[left, bottom, right, top]| {
-            text[2].min(right) - text[0].max(left) <= 0.0
-                || text[3].min(top) - text[1].max(bottom) <= 0.0
         })
     })
 }
@@ -265,7 +250,7 @@ mod platform {
     };
     use windows_sys::Win32::System::LibraryLoader::{GetModuleHandleW, GetProcAddress};
 
-    use super::{clip_hides, clip_shows, escapement, hides, movable, style, Bounds, Words};
+    use super::{clip_shows, escapement, hides, movable, style, Bounds, Words};
     use crate::document::OpenDocument;
     use crate::progressive::{Bindings, RawPage};
 
@@ -454,20 +439,23 @@ mod platform {
                     seen.push(Seen::Nothing);
                     continue;
                 }
-                let clipped = clip(bindings, object);
-                if let (Some(at), Some(paths)) = (bounds, &clipped) {
-                    if clip_hides(at, paths) {
-                        taken.push(object);
-                        seen.push(Seen::Nothing);
-                        continue;
-                    }
-                }
-                let words = match (bounds, &clipped) {
-                    (Some(at), Some(paths)) if clip_shows(at, paths) => {
-                        read(bindings, object, text_page, mode)
-                    }
-                    _ => None,
+                // A word its clip cuts, or whose clip cannot be read as an
+                // upright rectangle around it, is left out: PowerPoint's
+                // *Ungroup* drops the metafile's clip, so even PDFium's
+                // clipped outlines would show the whole word. The copy then
+                // lacks what the clip let through, and never shows more than
+                // the page does.
+                let shows = match (bounds, clip(bindings, object)) {
+                    (_, Some(paths)) if paths.is_empty() => true,
+                    (Some(at), Some(paths)) => clip_shows(at, &paths),
+                    _ => false,
                 };
+                if !shows {
+                    taken.push(object);
+                    seen.push(Seen::Nothing);
+                    continue;
+                }
+                let words = bounds.and_then(|_| read(bindings, object, text_page, mode));
                 seen.push(Seen::Text {
                     object,
                     words,
@@ -883,34 +871,6 @@ mod tests {
                 (595.0, 842.0),
                 (0.0, 842.0)
             ]]
-        ));
-    }
-
-    #[test]
-    fn pagecopy_a_clip_that_leaves_no_area_hides_the_word() {
-        let text = [60.0, 600.0, 160.0, 620.0];
-        let rect = |l: f64, b: f64, r: f64, t: f64| vec![(l, b), (r, b), (r, t), (l, t), (l, b)];
-        assert!(!clip_hides(text, &[]));
-        assert!(!clip_hides(text, &[rect(0.0, 0.0, 595.0, 842.0)]));
-        // Partly showing is not hidden.
-        assert!(!clip_hides(text, &[rect(60.0, 600.0, 72.0, 620.0)]));
-        // No area, beside it, above it, and touching its edge.
-        assert!(clip_hides(text, &[rect(60.0, 600.0, 60.0, 600.0)]));
-        assert!(clip_hides(text, &[rect(200.0, 600.0, 300.0, 620.0)]));
-        assert!(clip_hides(text, &[rect(60.0, 700.0, 160.0, 720.0)]));
-        assert!(clip_hides(text, &[rect(160.0, 600.0, 300.0, 620.0)]));
-        // One path of several is enough.
-        assert!(clip_hides(
-            text,
-            &[
-                rect(0.0, 0.0, 595.0, 842.0),
-                rect(200.0, 600.0, 300.0, 620.0)
-            ]
-        ));
-        // A shape that is not an upright rectangle is not read.
-        assert!(!clip_hides(
-            text,
-            &[vec![(500.0, 0.0), (501.0, 1.0), (500.0, 2.0), (499.0, 1.0)]]
         ));
     }
 

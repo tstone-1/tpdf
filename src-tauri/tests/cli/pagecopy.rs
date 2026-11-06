@@ -151,11 +151,25 @@ fn hidden_fixture(path: &Path) {
     };
     let page = doc.add_object(dictionary! {
         "Type"=>"Page", "Parent"=>tree, "MediaBox"=>vec![0.into(),0.into(),595.into(),842.into()],
-        "Contents"=>stream, "Resources"=>resources, "Annots"=>vec![Object::Reference(square)],
+        "Contents"=>stream, "Resources"=>resources.clone(), "Annots"=>vec![Object::Reference(square)],
+    });
+    // Page 2: nothing but a word its clip cuts after the first letter.
+    let cut = doc.add_object(Stream::new(
+        dictionary! {},
+        b"q 60 600 12 20 re W n BT /F1 14 Tf 0 0 0 rg 60 605 Td (Clipped secret) Tj ET Q".to_vec(),
+    ));
+    let alone = doc.add_object(dictionary! {
+        "Type"=>"Page", "Parent"=>tree, "MediaBox"=>vec![0.into(),0.into(),595.into(),842.into()],
+        "Contents"=>cut, "Resources"=>resources,
     });
     doc.objects.insert(
         tree,
-        dictionary! {"Type"=>"Pages", "Kids"=>vec![Object::Reference(page)], "Count"=>1}.into(),
+        dictionary! {
+            "Type"=>"Pages",
+            "Kids"=>vec![Object::Reference(page), Object::Reference(alone)],
+            "Count"=>2,
+        }
+        .into(),
     );
     let catalog = doc.add_object(dictionary! {"Type"=>"Catalog", "Pages"=>tree});
     doc.trailer.set("Root", catalog);
@@ -172,12 +186,19 @@ fn keeps_hidden_words_hidden(report: &mut Report, dir: &Path) {
         let _ = worker.call(&Request::Open {
             lazy_geometry: false,
         });
-        copy(&mut worker, 0)
+        Ok((copy(&mut worker, 0)?, copy(&mut worker, 1)?))
     });
-    let seen = match copied {
-        Ok(bytes) => read(&bytes),
-        Err(why) => return report.check("the worker draws the hidden-words page", false, &why),
+    let (seen, cut) = match copied {
+        Ok((page, alone)) => (read(&page), read(&alone)),
+        Err(why) => return report.check("the worker draws the hidden-words pages", false, &why),
     };
+    // PowerPoint's Ungroup drops a metafile's clip, so a clipped word drawn
+    // as outlines would show whole on the slide: it must not be drawn at all.
+    report.check(
+        "a word its clip cuts is left out of the copy, as text and as outlines",
+        cut.header && cut.words.is_empty() && cut.shapes == 0,
+        &format!("{cut:?}"),
+    );
     report.check(
         "words the page shows stay text: uncovered, inside a page-sized clip, struck through",
         ["Visible note", "Inside page clip", "Struck words"]
