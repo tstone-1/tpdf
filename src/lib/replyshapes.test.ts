@@ -198,6 +198,8 @@ const SCHEMA = {
     width: ["number"],
     height: ["number"],
     extension: ["string"],
+    object: ["number", "null"],
+    rect: ["array", "null"],
   } satisfies Shape<GraphicFound>,
   Opening: {
     path: ["string"],

@@ -557,16 +557,21 @@ pub async fn region_copy(tile: String) -> Result<(), String> {
 /// What the region in `request` holds (*Copy a graphic*, *Save a graphic*,
 /// `graphic.rs`): how many pictures and drawings, whether one stored picture,
 /// whether an SVG can be made, and the PNG's size. Nothing is exported.
+///
+/// A `hit` request is a click: the answer names the graphic under it and its
+/// rectangle, for the window to outline. Any other format is described.
 #[tauri::command]
 pub async fn graphic_find(
     service: tauri::State<'_, crate::render::RenderService>,
     doc: u32,
     request: crate::graphic::GraphicRequest,
 ) -> Result<crate::graphic::GraphicFound, String> {
-    let request = crate::graphic::GraphicRequest {
-        format: crate::graphic::GraphicFormat::Describe,
-        ..request
+    use crate::graphic::GraphicFormat;
+    let format = match request.format {
+        GraphicFormat::Hit => GraphicFormat::Hit,
+        _ => GraphicFormat::Describe,
     };
+    let request = crate::graphic::GraphicRequest { format, ..request };
     Ok(graphic(&service, doc, request).await?.1)
 }
 

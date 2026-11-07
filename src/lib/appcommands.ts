@@ -3299,7 +3299,7 @@ export function registerAppCommands(
       title: TEXT(locale).copy,
       keys: label("edit.copy"),
       enabled: withDocument,
-      run: () => void actions.viewer()?.copySelection(),
+      run: () => actions.viewer()?.copy(),
     },
     {
       // The page as a picture rather than as text: a figure, a signature, a
@@ -3669,7 +3669,7 @@ export function handleWindowKey(
     // something visibly wrong, ⌘C there did nothing at all, which reads as a
     // copy that silently failed.
     event.preventDefault();
-    void actions.viewer()?.copySelection();
+    actions.viewer()?.copy();
   } else if (title && !inTextField(event) && !event.defaultPrevented && matches("edit.highlightSelection", event)) {
     // The bare letters for the frequent edits; see `BINDINGS`. Guarded on the
     // field for every one of them, where ⌘Z is the only chord above that needs

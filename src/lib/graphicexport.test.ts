@@ -6,6 +6,8 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  clickedBox,
+  clickRequest,
   formatFor,
   graphicChoices,
   graphicName,
@@ -17,10 +19,33 @@ import {
 import { regionRequest } from "./regionshot";
 
 const DRAWING: GraphicFound = {
-  objects: 1, original: null, no_svg: null, width: 2015, height: 363, extension: "",
+  objects: 1, original: null, no_svg: null, width: 2015, height: 363, extension: "", object: null, rect: null,
 };
 const JPEG: GraphicFound = { ...DRAWING, original: "jpg", no_svg: null, width: 157, height: 51 };
 const TEXTUAL: GraphicFound = { ...DRAWING, objects: 2, no_svg: "it holds text, which the SVG cannot draw yet; save it as PNG" };
+
+describe("a click", () => {
+  it("is sent as a point-sized square centred where it landed", () => {
+    const source = { doc: 1, page: 0 };
+    const { request } = clickRequest(source, 100, 50, 2);
+    const [x, y, width, height] = request.rect;
+    expect(request.format).toBe("hit");
+    // Mutation: the square not centred on the click -> red.
+    expect((x + width / 2) / request.scale).toBeCloseTo(100, 0);
+    expect((y + height / 2) / request.scale).toBeCloseTo(50, 0);
+    expect(width / request.scale).toBeLessThan(3);
+  });
+
+  it("outlines the graphic in laid-out points, and nothing when the click found none", () => {
+    const { request } = clickRequest({ doc: 1, page: 0 }, 100, 50, 2);
+    const s = request.scale;
+    const found = { ...DRAWING, object: 3, rect: [10 * s, 20 * s, 250 * s, 65 * s] as [number, number, number, number] };
+    // Mutation: the rectangle not divided by the tile's scale -> red.
+    expect(clickedBox(request, found)).toEqual({ left: 10, top: 20, right: 250, bottom: 65 });
+    expect(clickedBox(request, DRAWING)).toBeNull();
+    expect(clickedBox(request, { ...found, object: null })).toBeNull();
+  });
+});
 
 describe("graphicRequest", () => {
   it("measures the region in the pixels of the tile a region copy would render", () => {

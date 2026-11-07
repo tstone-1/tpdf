@@ -775,6 +775,8 @@ fn samples() -> BTreeMap<&'static str, String> {
             width: 157,
             height: 51,
             extension: "jpg".to_owned(),
+            object: Some(3),
+            rect: Some([12.5, 40.0, 220.0, 95.5]),
         },
     );
 

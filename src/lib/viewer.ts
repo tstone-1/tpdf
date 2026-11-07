@@ -39,6 +39,7 @@ import { forgetPageSurface, inTextField, isMac, matches, namePageSurface, native
 import { drawSignature, fitSignature, rotateSignature, signatureCanvas, validSignature, type SignatureImage } from "./signature";
 import { PictureCache, pictureCanvas, rotatePixels, visible, type PicturePixels } from "./picture";
 import type { TileSource } from "./tiles";
+import type { GraphicRequest } from "./graphicexport";
 import type { SourceRect } from "./forward";
 import type { Painted } from "./comparison";
 import { CommentPopup } from "./commentpopup";
@@ -761,7 +762,69 @@ export interface ViewerOptions {
    * it. Marking is not removing, as for {@link onRedacted}.
    */
   onRedactSelection?: () => void;
+  /**
+   * A plain click on the page, away from text, links and notes, with no tool
+   * armed: where it landed, in the page's laid-out points, and the tile that
+   * page is drawn from. The caller asks the worker what graphic is under it
+   * and answers with {@link Viewer.showGraphic} (`graphicexport.ts`).
+   */
+  onPageClick?: (click: PageClick) => void;
+  /** The copy chord with a graphic selected and no text: *Copy a graphic*. */
+  onCopyGraphic?: () => void;
 }
+
+/**
+ * Whether a released press is a click that asks for the graphic under it: no
+ * tool armed, a single press, not on text, nothing selected, and the pointer
+ * still within {@link CLICK_SLOP} of where it went down.
+ */
+export function isGraphicClick(
+  press: { x: number; y: number; text: boolean },
+  release: { clientX: number; clientY: number },
+  tool: string,
+  unit: string,
+  selected: boolean,
+): boolean {
+  return (
+    tool === "none" &&
+    unit === "char" &&
+    !press.text &&
+    !selected &&
+    Math.hypot(release.clientX - press.x, release.clientY - press.y) < CLICK_SLOP
+  );
+}
+
+/** A plain click on a page, as {@link ViewerOptions.onPageClick} gets it. */
+export interface PageClick {
+  slot: number;
+  pageNumber: number;
+  source: TileSource;
+  /** Laid-out points from the page's top left. */
+  x: number;
+  y: number;
+  screenScale: number;
+}
+
+/** What names a selected graphic to the worker, held by the viewer that outlines it. */
+export interface SelectedGraphic {
+  doc: number;
+  request: GraphicRequest;
+  pageNumber: number;
+}
+
+/** A graphic's rectangle, laid-out points from the page's top left. */
+export interface GraphicBox {
+  left: number;
+  top: number;
+  right: number;
+  bottom: number;
+}
+
+/**
+ * How far, in CSS pixels, the pointer may move between press and release for
+ * the press to count as a click on a graphic rather than a drag.
+ */
+const CLICK_SLOP = 4;
 
 /**
  * Width of the scrollbar gutter, in CSS pixels.
@@ -1014,6 +1077,8 @@ const SELECTION_FILL = "rgba(80, 140, 255, 0.35)";
  * at a glance.
  */
 const PREVIEW_STROKE = "rgba(80, 140, 255, 0.95)";
+/** The tint inside a selected graphic's outline. */
+const GRAPHIC_FILL = "rgba(80, 140, 255, 0.12)";
 
 /** A measurement's line. Magenta, which technical drawings rarely use. */
 const MEASURE_STROKE = "rgb(200, 30, 120)";
@@ -1616,6 +1681,10 @@ export class Viewer {
    * answering two questions" trap wearing a rectangle.
    */
   private cropDrawing: { slot: number; from: Point; to: Point } | null = null;
+  /** The graphic a click selected, outlined until the next press elsewhere. */
+  private graphic: { slot: number; box: GraphicBox; held: SelectedGraphic } | null = null;
+  /** Where the press that may become a click went down, and whether on text. */
+  private press: { x: number; y: number; text: boolean } | null = null;
 
   /**
    * The crop's drag, which owns its own listener pair.
@@ -3430,6 +3499,8 @@ export class Viewer {
     const before = this.pages;
     const after = new PageMap(views);
     this.pages = after;
+    // A selected graphic is held by slot, and a slot is not a name for a page.
+    this.graphic = null;
     // The marks have not changed and every one of them may have moved: the
     // index is by slot, and a deletion renumbers every slot after the gap.
     this.markIndex = null;
@@ -3837,7 +3908,7 @@ export class Viewer {
     } else if (matches("view.rotateCounterClockwise", event)) {
       this.rotateBy(-1);
     } else if (matches("edit.copy", event)) {
-      void this.copySelection();
+      this.copy();
     } else if (matches("edit.selectAll", event)) {
       this.selectPage();
     } else if (matches("find.previous", event)) {
@@ -3947,6 +4018,7 @@ export class Viewer {
       else if (this.popup.openId !== null) this.closeComment();
       else if (this.focusedLink) this.clearLinkFocus();
       else if (this.selection) this.clearSelection();
+      else if (this.graphic) this.clearGraphic();
       else if (this.sourceBoxes) this.clearSourceBoxes();
       // With nothing to dismiss the key is the window's, which leaves full
       // screen and presentation with it.
@@ -6824,6 +6896,10 @@ export class Viewer {
       performance.now(),
     );
     this.selectUnit = count === 2 ? "word" : count === 3 ? "line" : "char";
+    // A press anywhere ends the graphic selected before it; a click that
+    // lands on one selects it again when the worker answers.
+    this.clearGraphic();
+    this.press = { x: event.clientX, y: event.clientY, text: this.pressOnText(event) };
 
     if (this.selectUnit === "char") {
       const caret = this.caretFrom(event);
@@ -6896,7 +6972,50 @@ export class Viewer {
     // With the redaction tool armed the selection was made to be marked. A
     // press that selected nothing is a click, and marks nothing.
     if (this.tool.kind === "redact" && this.hasSelection) this.opts.onRedactSelection?.();
+    const press = this.press;
+    this.press = null;
+    if (press && isGraphicClick(press, event, this.tool.kind, this.selectUnit, this.hasSelection)) {
+      const { page, x, y } = this.pageAndPoint(event);
+      const source = this.scroller.tileSource(page);
+      if (source) {
+        this.opts.onPageClick?.({
+          slot: page,
+          pageNumber: page + 1,
+          source,
+          x,
+          y,
+          screenScale: this.zoom * (window.devicePixelRatio || 1),
+        });
+      }
+    }
   };
+
+  /** Outlines the graphic a click found, `box` on the page in `slot`, and holds what names it. */
+  showGraphic(slot: number, box: GraphicBox, held: SelectedGraphic): void {
+    this.graphic = { slot, box, held };
+    this.wake();
+  }
+
+  /** What names the selected graphic, or `null` when none is selected. */
+  selectedGraphic(): SelectedGraphic | null {
+    return this.graphic?.held ?? null;
+  }
+
+  /** Ends the graphic selection. */
+  clearGraphic(): void {
+    if (!this.graphic) return;
+    this.graphic = null;
+    this.wake();
+  }
+
+  /**
+   * The copy chord and *Copy*: the selected text, or with none and a graphic
+   * selected, the graphic.
+   */
+  copy(): void {
+    if (this.graphic && !this.hasSelection) this.opts.onCopyGraphic?.();
+    else void this.copySelection();
+  }
 
   /** Clears the selection. */
   clearSelection(): void {
@@ -7946,6 +8065,7 @@ export class Viewer {
     this.paintInkPreview(ctx, dpr);
     this.paintCommentGhost(ctx, dpr);
     this.paintCropPreview(ctx, dpr);
+    this.paintGraphic(ctx, dpr);
 
     const live = this.drawing;
     if (!live || !dragsABox(this.drawArmed)) return;
@@ -7982,6 +8102,26 @@ export class Viewer {
     // Put back, or every later stroke on this context is dashed --- the mark
     // outlines above are painted on the same canvas on the next frame.
     ctx.setLineDash([]);
+  }
+
+  /** The selected graphic: a solid outline and a light tint inside it. */
+  private paintGraphic(ctx: CanvasRenderingContext2D, dpr: number): void {
+    const live = this.graphic;
+    if (!live) return;
+    const origin = this.scroller.pageOrigin(live.slot);
+    const x0 = (origin.left + live.box.left * this.zoom) * dpr;
+    const y0 = (origin.top + live.box.top * this.zoom - this.scrollTop) * dpr;
+    const x1 = (origin.left + live.box.right * this.zoom) * dpr;
+    const y1 = (origin.top + live.box.bottom * this.zoom - this.scrollTop) * dpr;
+    ctx.save();
+    ctx.globalCompositeOperation = "source-over";
+    ctx.fillStyle = GRAPHIC_FILL;
+    ctx.fillRect(x0, y0, x1 - x0, y1 - y0);
+    ctx.strokeStyle = PREVIEW_STROKE;
+    ctx.lineWidth = 2 * dpr;
+    ctx.setLineDash([]);
+    ctx.strokeRect(x0 - dpr, y0 - dpr, x1 - x0 + 2 * dpr, y1 - y0 + 2 * dpr);
+    ctx.restore();
   }
 
   /**

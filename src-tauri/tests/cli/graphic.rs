@@ -81,6 +81,11 @@ BT /F1 14 Tf 0 0 0 rg 100 300 Td (Words) Tj ET"
 }
 
 /// A region from page-space `left, bottom, right, top`, at one pixel a point.
+/// A click at page-space `x, y`, at one pixel a point.
+fn click(x: i32, y: i32) -> GraphicRequest {
+    region(x, y, x + 1, y + 1, GraphicFormat::Hit)
+}
+
 fn region(left: i32, bottom: i32, right: i32, top: i32, format: GraphicFormat) -> GraphicRequest {
     GraphicRequest {
         page: 0,
@@ -89,6 +94,7 @@ fn region(left: i32, bottom: i32, right: i32, top: i32, format: GraphicFormat) -
         scale: 1.0,
         rect: [left, HEIGHT - top, right - left, top - bottom],
         format,
+        object: None,
     }
 }
 
@@ -233,6 +239,61 @@ pub(super) fn exports_what_the_region_holds(report: &mut Report) {
             .as_ref()
             .is_err_and(|why| why.contains("drag around all of it")),
         &format!("{empty:?}"),
+    );
+
+    // A click on the drawing: the page's objects are the white, the drawing,
+    // the picture, the JPEG and the text, so the drawing is index 1.
+    let clicked = export(&mut worker, click(150, 720));
+    let rect = clicked.as_ref().ok().and_then(|(_, found)| found.rect);
+    report.check(
+        "a click on the drawing selects it and answers its rectangle in the tile's pixels",
+        clicked
+            .as_ref()
+            .is_ok_and(|(bytes, found)| bytes.is_empty() && found.object == Some(1))
+            && rect.is_some_and(|[l, t, r, b]| {
+                // 100..300 by 700..740 points, plus up to 2 of stroke, y down from 842.
+                (97.0..=101.0).contains(&l)
+                    && (99.0..=103.0).contains(&t)
+                    && (299.0..=303.0).contains(&r)
+                    && (141.0..=145.0).contains(&b)
+            }),
+        &format!("{clicked:?}"),
+    );
+    let mut chosen = region(0, 0, 1, 1, GraphicFormat::Png);
+    chosen.object = Some(1);
+    let by_index = export(&mut worker, chosen)
+        .ok()
+        .and_then(|(bytes, _)| decoded(&bytes));
+    let by_region = png.as_ref().ok().and_then(|(bytes, _)| decoded(bytes));
+    report.check(
+        "the clicked object exported by its index is the drawing the region gave",
+        by_index.is_some() && by_index == by_region,
+        &format!(
+            "{:?} / {:?}",
+            by_index.as_ref().map(|p| (p.0, p.1)),
+            by_region.as_ref().map(|p| (p.0, p.1))
+        ),
+    );
+    let margin = export(&mut worker, click(500, 100));
+    let words = export(&mut worker, click(110, 305));
+    report.check(
+        "a click on the margin or on text selects nothing, though the page white lies under both",
+        margin
+            .as_ref()
+            .is_ok_and(|(_, found)| found.object.is_none() && found.objects == 0)
+            && words
+                .as_ref()
+                .is_ok_and(|(_, found)| found.object.is_none()),
+        &format!("{margin:?} / {words:?}"),
+    );
+    let mut gone = region(0, 0, 1, 1, GraphicFormat::Png);
+    gone.object = Some(99);
+    let gone = export(&mut worker, gone);
+    report.check(
+        "an index the page does not have is refused",
+        gone.as_ref()
+            .is_err_and(|why| why.contains("no longer on the page")),
+        &format!("{gone:?}"),
     );
 
     let page = export(&mut worker, region(0, 0, 595, 842, GraphicFormat::Describe));

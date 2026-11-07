@@ -44,6 +44,10 @@ pub const SLACK_PT: f64 = 2.0;
 pub enum GraphicFormat {
     /// Only what the region holds: the other three answers' options.
     Describe,
+    /// The picture or drawing under the region's centre, which is where the
+    /// reader clicked: its index on the page and its rectangle, for the window
+    /// to outline it. See [`hit`].
+    Hit,
     Png,
     Original,
     Svg,
@@ -64,6 +68,38 @@ pub struct GraphicFound {
     pub height: u32,
     /// The file ending of the bytes in the tile mapping; empty for `Describe`.
     pub extension: String,
+    /// For `Hit`: the index among the page's objects of the one clicked, which
+    /// a later request names in [`GraphicRequest::object`]. `None` when the
+    /// click found nothing.
+    #[serde(default)]
+    pub object: Option<u32>,
+    /// For `Hit`: that object's rectangle in the request's tile pixels, left,
+    /// top, right, bottom.
+    #[serde(default)]
+    pub rect: Option<[f64; 4]>,
+}
+
+/// The largest share of the page a clicked object may cover. A white
+/// rectangle under the whole page, which word processors write, would
+/// otherwise be what every click on a margin selects.
+pub const HIT_SHARE: f64 = 0.6;
+
+/// Which of `objects`, given in page order with their kind's text flag and
+/// bounds, a click at `point` selects: the topmost one that is not text,
+/// whose bounds hold the point with [`SLACK_PT`] around them, and that covers
+/// less than [`HIT_SHARE`] of `page_area`.
+pub fn hit(objects: &[(bool, Bounds)], point: (f64, f64), page_area: f64) -> Option<usize> {
+    let (x, y) = point;
+    objects.iter().rposition(|&(text, at)| {
+        let area = (at[2] - at[0]) * (at[3] - at[1]);
+        !text
+            && area > 0.0
+            && area < HIT_SHARE * page_area
+            && x >= at[0] - SLACK_PT
+            && x <= at[2] + SLACK_PT
+            && y >= at[1] - SLACK_PT
+            && y <= at[3] + SLACK_PT
+    })
 }
 
 /// A rectangle in page space, points: left, bottom, right, top.
@@ -358,6 +394,10 @@ pub struct GraphicRequest {
     /// The region in that tile's pixels: x, y, width, height.
     pub rect: [i32; 4],
     pub format: GraphicFormat,
+    /// One object by its index on the page, as a `Hit` answered it, in place
+    /// of the objects inside `rect`.
+    #[serde(default)]
+    pub object: Option<u32>,
 }
 
 pub use engine::export;
@@ -369,7 +409,7 @@ mod engine {
     use pdfium_render::prelude::*;
 
     use super::{
-        concat, inside, scale_for, union, Bounds, GraphicFormat, GraphicFound, GraphicRequest,
+        concat, hit, inside, scale_for, union, Bounds, GraphicFormat, GraphicFound, GraphicRequest,
         Matrix, Rule, Shape, Step, Stroke, Svg, IDENTITY,
     };
     use crate::document::OpenDocument;
@@ -404,20 +444,54 @@ mod engine {
         // this function's use of them; removed objects are never destroyed.
         unsafe {
             let handle = page.handle();
-            let mut chosen = Vec::new();
-            let mut boxes = Vec::new();
+            let mut listed = Vec::new();
             for index in 0..bindings.FPDFPage_CountObjects(handle).max(0) {
                 let object = bindings.FPDFPage_GetObject(handle, index);
                 if object.is_null() {
                     continue;
                 }
                 if let Some(at) = bounds(bindings, object) {
-                    if inside(at, region) {
-                        chosen.push(object);
-                        boxes.push(at);
-                    }
+                    listed.push((index as u32, object, at));
                 }
             }
+            let picked: Vec<usize> = if let Some(wanted) = request.object {
+                let at = listed.iter().position(|(index, ..)| *index == wanted);
+                let Some(at) = at else {
+                    return Err(said!("the selected graphic is no longer on the page"));
+                };
+                vec![at]
+            } else if request.format == GraphicFormat::Hit {
+                let kinds: Vec<(bool, Bounds)> = listed
+                    .iter()
+                    .map(|&(_, object, at)| (bindings.FPDFPageObj_GetType(object) == TEXT, at))
+                    .collect();
+                let centre = ((region[0] + region[2]) / 2.0, (region[1] + region[3]) / 2.0);
+                let area = f64::from(page.width_pt()) * f64::from(page.height_pt());
+                match hit(&kinds, centre, area) {
+                    Some(at) => vec![at],
+                    None => {
+                        return Ok((
+                            Vec::new(),
+                            GraphicFound {
+                                objects: 0,
+                                original: None,
+                                no_svg: None,
+                                width: 0,
+                                height: 0,
+                                extension: String::new(),
+                                object: None,
+                                rect: None,
+                            },
+                        ))
+                    }
+                }
+            } else {
+                (0..listed.len())
+                    .filter(|&at| inside(listed[at].2, region))
+                    .collect()
+            };
+            let chosen: Vec<FPDF_PAGEOBJECT> = picked.iter().map(|&at| listed[at].1).collect();
+            let boxes: Vec<Bounds> = picked.iter().map(|&at| listed[at].2).collect();
             let Some(around) = union(&boxes) else {
                 return Err(said!(
                     "no picture or drawing lies wholly inside the region; drag around all of it"
@@ -462,9 +536,15 @@ mod engine {
                 width,
                 height,
                 extension: String::new(),
+                object: None,
+                rect: None,
             };
+            if request.format == GraphicFormat::Hit {
+                found.object = picked.first().map(|&at| listed[at].0);
+                found.rect = Some(to_tile(bindings, &page, request, around));
+            }
             let bytes = match (request.format, single) {
-                (GraphicFormat::Describe, _) => Vec::new(),
+                (GraphicFormat::Describe | GraphicFormat::Hit, _) => Vec::new(),
                 (GraphicFormat::Original, Some(image)) if original == Some("jpg") => {
                     found.extension = "jpg".to_owned();
                     raw_data(bindings, image)?
@@ -503,6 +583,57 @@ mod engine {
             };
             Ok((bytes, found))
         }
+    }
+
+    /// `bounds` in the request's tile pixels: left, top, right, bottom.
+    fn to_tile(
+        bindings: Bindings,
+        page: &RawPage<'_>,
+        request: &GraphicRequest,
+        bounds: Bounds,
+    ) -> [f64; 4] {
+        // Sixteen times the tile, because the answer is in whole pixels and
+        // the outline should not move by one when the zoom does.
+        const FINE: f32 = 16.0;
+        let width = (page.width_pt() * request.scale * FINE).round() as c_int;
+        let height = (page.height_pt() * request.scale * FINE).round() as c_int;
+        let (size_x, size_y) = if request.turns % 2 == 0 {
+            (width, height)
+        } else {
+            (height, width)
+        };
+        let mut xs = Vec::new();
+        let mut ys = Vec::new();
+        for (x, y) in [
+            (bounds[0], bounds[1]),
+            (bounds[2], bounds[1]),
+            (bounds[0], bounds[3]),
+            (bounds[2], bounds[3]),
+        ] {
+            let (mut dx, mut dy) = (0 as c_int, 0 as c_int);
+            // SAFETY: the page is live; the out-pointers are locals.
+            let ok = unsafe {
+                bindings.FPDF_PageToDevice(
+                    page.handle(),
+                    0,
+                    0,
+                    size_x,
+                    size_y,
+                    c_int::from(request.turns % 4),
+                    x,
+                    y,
+                    &mut dx,
+                    &mut dy,
+                )
+            };
+            if ok != 0 {
+                xs.push(f64::from(dx) / f64::from(FINE));
+                ys.push(f64::from(dy) / f64::from(FINE));
+            }
+        }
+        let low = |v: &[f64]| v.iter().copied().fold(f64::INFINITY, f64::min);
+        let high = |v: &[f64]| v.iter().copied().fold(f64::NEG_INFINITY, f64::max);
+        [low(&xs), low(&ys), high(&xs), high(&ys)]
     }
 
     /// The region as page space, from the tile's pixels.
@@ -919,6 +1050,37 @@ mod tests {
             "sticks out on the left"
         );
         assert!(!inside([150.0, 150.0, 150.0, 160.0], region), "no width");
+    }
+
+    #[test]
+    fn a_click_takes_the_topmost_graphic_under_it_and_never_text_or_the_page() {
+        let page = 595.0 * 842.0;
+        let background = (false, [0.0, 0.0, 595.0, 842.0]);
+        let logo = (false, [50.0, 760.0, 290.0, 805.0]);
+        let mark = (false, [60.0, 770.0, 80.0, 790.0]);
+        let words = (true, [55.0, 765.0, 200.0, 800.0]);
+        // Mutation: `position` for `rposition` -> the logo under the mark.
+        assert_eq!(hit(&[background, logo, mark], (70.0, 780.0), page), Some(2));
+        assert_eq!(
+            hit(&[background, logo, mark], (200.0, 780.0), page),
+            Some(1)
+        );
+        assert_eq!(
+            hit(&[background, logo, words], (100.0, 780.0), page),
+            Some(1),
+            "text is passed over"
+        );
+        assert_eq!(
+            hit(&[background, logo], (300.0, 100.0), page),
+            None,
+            "the page white is not a graphic"
+        );
+        assert_eq!(
+            hit(&[logo], (291.0, 780.0), page),
+            Some(0),
+            "within the slack"
+        );
+        assert_eq!(hit(&[logo], (295.0, 780.0), page), None);
     }
 
     #[test]

@@ -54,7 +54,7 @@ const TEXT = catalog({
 });
 
 /** What the worker is asked for: `GraphicFormat` in `graphic.rs`. */
-export type GraphicFormat = "describe" | "png" | "original" | "svg";
+export type GraphicFormat = "describe" | "hit" | "png" | "original" | "svg";
 
 /** A region, as `GraphicRequest` in `graphic.rs` takes it. */
 export interface GraphicRequest {
@@ -66,6 +66,8 @@ export interface GraphicRequest {
   /** x, y, width, height in that tile's pixels. */
   rect: [number, number, number, number];
   format: GraphicFormat;
+  /** One object by its index on the page, as a click found it. */
+  object?: number;
 }
 
 /** What a region holds: `GraphicFound` in `graphic.rs`. */
@@ -79,6 +81,41 @@ export interface GraphicFound {
   height: number;
   /** The ending of the bytes made; empty for a description. */
   extension: string;
+  /** For a click: the index of the graphic under it, `null` for none. */
+  object: number | null;
+  /** For a click: its rectangle in the request's tile pixels, left, top, right, bottom. */
+  rect: [number, number, number, number] | null;
+}
+
+/** Half the side, in points, of the square a click is sent as. */
+const CLICK_HALF = 0.5;
+
+/**
+ * The request a click at `x, y` (laid-out points) becomes: a point-sized
+ * square, which the worker reads as its centre (`hit` in `graphic.rs`).
+ */
+export function clickRequest(
+  source: TileSource,
+  x: number,
+  y: number,
+  screenScale: number,
+): { doc: number; request: GraphicRequest } {
+  const quad = { left: x - CLICK_HALF, top: y - CLICK_HALF, right: x + CLICK_HALF, bottom: y + CLICK_HALF };
+  return graphicRequest(source, quad, screenScale, "hit");
+}
+
+/**
+ * The selected graphic's rectangle in laid-out points, from the worker's
+ * answer in the request's tile pixels; `null` when the click found nothing.
+ */
+export function clickedBox(
+  request: GraphicRequest,
+  found: GraphicFound,
+): { left: number; top: number; right: number; bottom: number } | null {
+  if (found.object === null || !found.rect) return null;
+  const [left, top, right, bottom] = found.rect;
+  const scale = request.scale;
+  return { left: left / scale, top: top / scale, right: right / scale, bottom: bottom / scale };
 }
 
 /**
@@ -108,7 +145,7 @@ export function graphicRequest(
 
 /** One format the save panel offers. */
 export interface GraphicChoice {
-  format: Exclude<GraphicFormat, "describe">;
+  format: Exclude<GraphicFormat, "describe" | "hit">;
   name: string;
   extensions: string[];
 }

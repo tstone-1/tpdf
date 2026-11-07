@@ -1440,6 +1440,8 @@ mod tests {
                 width: 157,
                 height: 51,
                 extension: "png".to_owned(),
+                object: None,
+                rect: None,
             }),
             Reply::CropBox([1.0, 2.0, 3.0, 4.0]),
             Reply::Geometry(crate::render::CropGeometry {

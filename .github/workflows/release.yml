@@ -567,6 +567,15 @@ jobs:
           workers run under Landlock and seccomp. The Linux packages (deb
           and AppImage) do not update themselves: install the new one.
 
+          **New in 26.11.5.** **Copy a graphic** and **Save a graphic...**
+          take a logo or figure out of a page on its own: click it, or drag
+          around it, and copy it as a PNG on a transparent background or save
+          it as SVG, PNG or the JPEG the document stores. On Windows, **Copy
+          page for PowerPoint** leaves out a word a box or an annotation
+          covers, and says how many pieces of text it left out. A stalled
+          update check now fails after 30 seconds instead of blocking the
+          next one.
+
           **New in 26.11.4.** On Windows, **Copy page for PowerPoint** no
           longer puts words the page hides into the picture as text: a word
           under a box or a redaction mark, cut away by a clip, or fully

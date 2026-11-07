@@ -2056,10 +2056,7 @@ describe("the window shortcuts for editing", () => {
       viewer: () =>
         ({
           selectPage: () => fired.push("selectPage"),
-          copySelection: () => {
-            fired.push("copySelection");
-            return Promise.resolve();
-          },
+          copy: () => fired.push("copy"),
         }) as never,
       pageCount: () => 3,
       openDocument: () => fired.push("openDocument"),
@@ -2228,7 +2225,7 @@ describe("the window shortcuts for editing", () => {
     // --- the Open button, the find toggles and the field's contents --- because
     // the event never reaches the viewer's own handler. Reported from use.
     expect(press("a").fired).toEqual(["selectPage"]);
-    expect(press("c").fired).toEqual(["copySelection"]);
+    expect(press("c").fired).toEqual(["copy"]);
   });
 
   it("claims both chords, so the web view never sees them", () => {
@@ -2245,7 +2242,7 @@ describe("the window shortcuts for editing", () => {
       const selection = { type, toString: () => (type === "Range" ? "Cannot edit this text" : "") };
       const target = { tagName: "PRE", ownerDocument: { getSelection: () => selection } };
       const result = press("c", {}, target);
-      expect(result.fired).toEqual(type === "Range" ? [] : ["copySelection"]);
+      expect(result.fired).toEqual(type === "Range" ? [] : ["copy"]);
       // Taken either way: the page's copy is this handler's, and the selected
       // words are written out here because the web view does not copy them.
       expect(result.prevented).toBe(1);

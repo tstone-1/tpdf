@@ -133,6 +133,7 @@ PER_WINDOW: dict[str, str] = {
     "findingHidden": "whether the blocking task is the hidden-text check",
     "committingPopup": "raised and lowered inside one synchronous commit",
     "textEditorGeneration": "counted up across documents on purpose, see `unmountDocument`",
+    "graphicClicks": "counted up across documents on purpose: a click's answer is outlined only if no later click was made, in any document",
     # What the reader picked, which goes with them from one document to the next.
     "armedField": "the kind of field the armed tool places",
     "armedGroup": "the group the next radio buttons join",

@@ -271,7 +271,8 @@ project conventions.
   page behind them. The copy is a PNG at 600 dpi on a transparent background, for pasting
   into a picture editor. The saved file is an SVG that stays sharp at any size, a PNG, or,
   for a JPEG photo, the JPEG the document stores. A drawing with text or a gradient in it is
-  saved as PNG only.
+  saved as PNG only. A click on a picture or drawing selects it, and Ctrl+C or either command
+  then takes that one without a drag.
   <!-- built: edit.copyGraphic file.saveGraphic -->
 - **Copy page for PowerPoint** (Windows): the page in view goes to the clipboard as a picture
   that PowerPoint's *Ungroup* turns into shapes and text boxes, so its boxes, lines and words

@@ -378,6 +378,7 @@ export default {
   "the region holds more than one picture, or a drawing":
     "Der Bereich enthält mehr als ein Bild oder eine Zeichnung",
   "the picture has no size": "Das Bild hat keine Größe",
+  "the selected graphic is no longer on the page": "Die gewählte Grafik ist nicht mehr auf der Seite",
   "the picture came back in a form tpdf does not read": "Das Bild kam in einer Form zurück, die tpdf nicht liest",
   "the picture's data could not be read": "Die Daten des Bildes konnten nicht gelesen werden",
   "a {width} x {height} picture could not be made": "Ein Bild von {width} × {height} konnte nicht erstellt werden",

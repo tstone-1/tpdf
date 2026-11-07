@@ -17,7 +17,7 @@ as *downloadable*, while the release sat as a draft that GitHub showed to nobody
 are given now because they are different facts, and only the second one means a reader can
 have the binary.)
 
-## [26.11.5] - Unreleased
+## [26.11.5] - 2026-11-07
 
 ### Fixed
 
@@ -40,8 +40,11 @@ have the binary.)
   transparent background, ready to paste into a picture editor. *Save a graphic...* saves
   them as SVG, which stays sharp at any size, as PNG, or, for a single JPEG photo, as the
   JPEG the document stores. A drawing that holds text or a gradient is saved as PNG only.
-  Both commands are in the palette, the File and Edit menus, and the page's context menu
-  (*Copy a graphic*).
+  Both commands are in the palette, the File and Edit menus, and the page's context menu.
+- **A click on a picture or drawing selects it.** The graphic under the pointer is outlined,
+  and *Copy* (Ctrl+C), *Copy a graphic* and *Save a graphic...* then take it without a drag.
+  A click on text, on a link or on the page's own background selects no graphic, and a press
+  anywhere else ends the selection.
 - **Copy page for PowerPoint says when the copy leaves text out.** A word the page cuts off
   at the edge of an area, or covers with something drawn after it, is left out of the copy,
   because after *Ungroup* PowerPoint could show all of it. The notice after copying now says

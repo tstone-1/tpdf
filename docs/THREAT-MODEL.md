@@ -3663,6 +3663,13 @@ inside a dragged region, without the page behind them (`graphic.rs`, `graphicexp
   in the worker and embedded as base64. No name, string or stream from the file reaches the
   SVG, so a hostile document cannot put markup or script into it. A region holding text or
   a gradient is refused as SVG rather than drawn as something else.
+- **A click names a point and then an index, and the worker checks the index.** A click on
+  the page sends a point-sized rectangle with the format `hit`; the worker answers the index
+  of the topmost picture or drawing under it among the page's objects, and its rectangle in
+  tile pixels, and passes over text and any object covering more than `HIT_SHARE` of the
+  page. A later request carrying `object` takes that one object; an index the page does not
+  have is refused, and the window drops the selection on every edit, because an edit to the
+  page's content can renumber its objects.
 - **A stored JPEG is handed out as the document's bytes.** When the region is one picture with
   one `DCTDecode` filter and no transparent pixel, *Save a graphic...* offers it as stored, and
   `FPDFImageObj_GetImageDataRaw` returns the stream undecoded, at most the 16 MiB tile

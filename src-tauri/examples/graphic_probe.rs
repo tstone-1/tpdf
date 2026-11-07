@@ -62,7 +62,14 @@ fn run(args: &[String]) -> Result<(), String> {
             ((top - bottom) * 4.0).ceil() as i32,
         ],
         format,
+        object: None,
     };
+    // What a click at the region's centre selects, as the window asks it.
+    let (_, clicked) = export(&document, &request(GraphicFormat::Hit))?;
+    println!(
+        "[INFO] click at the centre: object {:?}, rect {:?} (pixels at 4 a point)",
+        clicked.object, clicked.rect
+    );
     let (_, found) = export(&document, &request(GraphicFormat::Describe))?;
     println!("[INFO] {found:?}");
     let (png, _) = export(&document, &request(GraphicFormat::Png))?;

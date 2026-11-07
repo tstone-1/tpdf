@@ -511,7 +511,7 @@
   import { regionName, regionRequest, regionSaid } from "./lib/regionshot";
   import { pick as pickAttachmentIn, saved as attachmentSaved, type Embedded } from "./lib/attachments";
   import { fetchTilePng, tileSpec, type TileRequest } from "./lib/tiles";
-  import { formatFor, graphicChoices, graphicName, graphicRequest, graphicSaid, saveGraphicTitle, wrongEnding } from "./lib/graphicexport";
+  import { clickedBox, clickRequest, formatFor, graphicChoices, graphicName, graphicRequest, graphicSaid, saveGraphicTitle, wrongEnding, type GraphicRequest } from "./lib/graphicexport";
   import { afterProtect, suggestedName as protectedName } from "./lib/protect";
   import { afterCompress, suggestedName as smallerName } from "./lib/compress";
   import { CompressDialog } from "./lib/compressdialog";
@@ -591,7 +591,7 @@
     finishUpdate, pluginUpdater, stepEndsProcess, stepFor, Updates, updateLabel, updateNotice,
     type FinishStep, type UpdateState,
   } from "./lib/update";
-  import { Viewer, type ViewerOptions, type ViewerStatus } from "./lib/viewer";
+  import { Viewer, type PageClick, type ViewerOptions, type ViewerStatus } from "./lib/viewer";
   import { Stage, blankLive, scoped, type LiveDocument, type Slots } from "./lib/livedocument";
   import {
     dropAbandoned, openFailure, pageTable, placeOnSide, placeToResume, readerIsIn, repoint, sharedByTwin, tabToKeep,
@@ -2513,20 +2513,63 @@
     }
   }
 
+  /** Counts clicks on a page, so only the latest one's answer is outlined. */
+  let graphicClicks = 0;
+
   /**
-   * *Copy a graphic*: arms a drag, and the pictures and drawings wholly inside
-   * it go to the clipboard alone, on a transparent background, at 600 dpi
-   * (`graphicexport.ts`, `graphic.rs`). The clipboard is written where
-   * *Copy a region as a picture* writes it: by the backend on macOS and
-   * Linux, by the web view on Windows, its write started with the PNG as a
-   * promise while the region is described.
+   * A plain click on a page asks the worker for the graphic under it, and
+   * the viewer outlines what it answers (`clickRequest`, `hit` in
+   * `graphic.rs`). A click that finds nothing, or fails, says nothing: it was
+   * a click on paper, not a command.
+   */
+  async function pickGraphic(click: PageClick): Promise<void> {
+    const target = viewer, model = edits, view = openView;
+    if (!target) return;
+    const asked = ++graphicClicks;
+    const { doc, request } = clickRequest(click.source, click.x, click.y, click.screenScale);
+    try {
+      const found = await call("graphic_find", { doc, request });
+      // The viewer outlines it and holds its request, so the selection is
+      // the document's and goes with it when the reader changes tabs.
+      if (asked !== graphicClicks || !stillIn(view, model, target)) return;
+      const box = clickedBox(request, found);
+      if (!box || found.object === null) return;
+      target.showGraphic(click.slot, box, {
+        doc,
+        request: { ...request, object: found.object },
+        pageNumber: click.pageNumber,
+      });
+    } catch {
+      // See above: nothing was asked for.
+    }
+  }
+
+  /** The request for the selected graphic, or for the graphics in a region dragged now. */
+  async function graphicTarget(
+    target: Viewer,
+    format: GraphicRequest["format"],
+  ): Promise<{ doc: number; request: GraphicRequest; pageNumber: number } | null> {
+    const picked = target.selectedGraphic();
+    if (picked) return { doc: picked.doc, request: { ...picked.request, format }, pageNumber: picked.pageNumber };
+    const region = await target.armRegion();
+    if (!region) return null;
+    return { ...graphicRequest(region.source, region.quad, region.screenScale, format), pageNumber: region.pageNumber };
+  }
+
+  /**
+   * *Copy a graphic*: the graphic a click selected, or else arms a drag, and
+   * the pictures and drawings wholly inside it go to the clipboard alone, on a
+   * transparent background, at 600 dpi (`graphicexport.ts`, `graphic.rs`).
+   * The clipboard is written where *Copy a region as a picture* writes it: by
+   * the backend on macOS and Linux, by the web view on Windows, its write
+   * started with the PNG as a promise while the region is described.
    */
   async function copyGraphic(): Promise<void> {
     const target = viewer;
     if (!target || openDoc < 0) return;
-    const region = await target.armRegion();
-    if (!region) return;
-    const { doc, request } = graphicRequest(region.source, region.quad, region.screenScale, "png");
+    const chosen = await graphicTarget(target, "png");
+    if (!chosen) return;
+    const { doc, request } = chosen;
     try {
       if (isMac() || isLinux()) {
         tell(graphicSaid(await call("graphic_copy", { doc, request })));
@@ -2550,13 +2593,13 @@
   async function saveGraphic(): Promise<void> {
     const target = viewer, name = openPathName;
     if (!target || openDoc < 0 || !name) return;
-    const region = await target.armRegion();
-    if (!region) return;
-    const { doc, request } = graphicRequest(region.source, region.quad, region.screenScale, "describe");
+    const chosenGraphic = await graphicTarget(target, "describe");
+    if (!chosenGraphic) return;
+    const { doc, request, pageNumber } = chosenGraphic;
     try {
       const found = await call("graphic_find", { doc, request });
       const choices = graphicChoices(found);
-      const suggested = graphicName(basename(name), region.pageNumber, choices[0]!);
+      const suggested = graphicName(basename(name), pageNumber, choices[0]!);
       const panel = () => saveDialog({
         title: saveGraphicTitle(),
         defaultPath: suggested,
@@ -3332,6 +3375,9 @@
   function adoptEdit(model: Edits, after: EditState): boolean {
     if (edits !== model) return false;
     viewer?.clearRecognition();
+    // A graphic is named by its index among the page's objects, which an
+    // edit to the page's content can renumber.
+    viewer?.clearGraphic();
     // Only when the pages moved, and the viewer is what answers that: every
     // call below throws work away --- the strip's thumbnails, the panels' rows
     // --- and a turn moves no page, so doing it unconditionally would make
@@ -6677,6 +6723,8 @@
       // A pending redaction is held in exactly the space handed here.
       onRedacted: (page, area) => void applyEdit((e) => e.redact(page, area)),
       onMeasured: (label, scaled) => tell(scaled ? label : TEXT().measuredNoScale(label)),
+      onPageClick: (click) => void pickGraphic(click),
+      onCopyGraphic: () => void copyGraphic(),
       onRedactSelection: () =>
         void redactSelection().then(() => asDocument(view, () => viewer?.clearSelection())),
       onMarkMoved: (id, dx, dy) =>

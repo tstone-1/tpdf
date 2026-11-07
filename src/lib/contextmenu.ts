@@ -171,6 +171,9 @@ export const SELECTION_MENU: Entry[] = [
   "edit.copyRegionAsPicture",
   // A logo or figure alone, beside it: the same pointing, without the page.
   "edit.copyGraphic",
+  // And saved, under the copy: a click selects a logo and a right-click on it
+  // is where the reader then looks for what to do with it. Reported from use.
+  "file.saveGraphic",
   // The whole page for a slide, on Windows only; left out elsewhere, where
   // it is never enabled.
   "edit.copyPageForPowerPoint",

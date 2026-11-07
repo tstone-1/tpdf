@@ -4,5 +4,12 @@
   "no_svg": "it holds text, which the SVG cannot draw yet; save it as PNG",
   "width": 157,
   "height": 51,
-  "extension": "jpg"
+  "extension": "jpg",
+  "object": 3,
+  "rect": [
+    12.5,
+    40.0,
+    220.0,
+    95.5
+  ]
 }
