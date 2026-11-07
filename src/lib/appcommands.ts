@@ -257,6 +257,7 @@ const TEXT = catalog({
     noLanguageList: "No list of languages is waiting",
     compress: "Save a smaller copy...",
     saveRegionAsPicture: "Save a region as a picture...",
+    saveGraphic: "Save a graphic...",
     saveAttachment: "Save an attachment...",
     saveAttachmentChoice: "Save which attachment",
     noAttachmentList: "No list of attachments is waiting",
@@ -293,6 +294,7 @@ const TEXT = catalog({
     selectAll: "Select all on page",
     copy: "Copy selection",
     copyRegionAsPicture: "Copy a region as a picture",
+    copyGraphic: "Copy a graphic",
     copyPageForPowerPoint: "Copy page for PowerPoint",
     clearSelection: "Clear selection",
     toggleSidebar: "Toggle sidebar",
@@ -483,6 +485,7 @@ const TEXT = catalog({
     noLanguageList: "Es wartet keine Liste von Sprachen",
     compress: "Kleinere Kopie speichern...",
     saveRegionAsPicture: "Bereich als Bild speichern...",
+    saveGraphic: "Grafik speichern...",
     saveAttachment: "Anhang speichern...",
     saveAttachmentChoice: "Welchen Anhang speichern",
     noAttachmentList: "Es wartet keine Liste von Anhängen",
@@ -519,6 +522,7 @@ const TEXT = catalog({
     selectAll: "Alles auf der Seite auswählen",
     copy: "Auswahl kopieren",
     copyRegionAsPicture: "Bereich als Bild kopieren",
+    copyGraphic: "Grafik kopieren",
     copyPageForPowerPoint: "Seite für PowerPoint kopieren",
     clearSelection: "Auswahl aufheben",
     toggleSidebar: "Seitenleiste ein- oder ausblenden",
@@ -980,6 +984,10 @@ export interface AppActions {
   copyRegion(): void;
   /** Arm a drag over a page; the region it covers is saved as a PNG file. */
   saveRegion(): void;
+  /** Arm a drag over a page; the pictures and drawings inside it go to the clipboard, alone. */
+  copyGraphic(): void;
+  /** Arm a drag over a page; the pictures and drawings inside it are saved as SVG, PNG or the stored JPEG. */
+  saveGraphic(): void;
   /** Put the page in view on the clipboard as a picture PowerPoint ungroups into shapes and text. */
   copyPageForPowerPoint(): void;
   /**
@@ -2909,6 +2917,15 @@ export function registerAppCommands(
       run: () => actions.saveRegion(),
     },
     {
+      // A logo or a figure as a file of its own: what lies wholly inside the
+      // drag, without the page behind it, as SVG, PNG at 600 dpi, or the
+      // JPEG the document stores (`graphicexport.ts`, `graphic.rs`).
+      id: "file.saveGraphic",
+      title: TEXT(locale).saveGraphic,
+      enabled: withDocument,
+      run: () => actions.saveGraphic(),
+    },
+    {
       // A file the document carries, saved where the reader chooses and never
       // opened. With one there is no question; with several the palette asks
       // which, below, once the list is read. Offered on every document: one
@@ -3294,6 +3311,15 @@ export function registerAppCommands(
       title: TEXT(locale).copyRegionAsPicture,
       enabled: withDocument,
       run: () => actions.copyRegion(),
+    },
+    {
+      // The same drag as the region copy, and what lies wholly inside it on
+      // a transparent background at 600 dpi: a logo to paste into a picture
+      // editor without the page's white (`graphicexport.ts`).
+      id: "edit.copyGraphic",
+      title: TEXT(locale).copyGraphic,
+      enabled: withDocument,
+      run: () => actions.copyGraphic(),
     },
     {
       // Windows only, and greyed elsewhere: the copy is an enhanced metafile,

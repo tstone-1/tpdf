@@ -56,6 +56,7 @@ hop through the index.
 - Removing an operator removes everything it did, not only what it drew
 - PDFium's EMF output draws every glyph as an outline, so a page pasted into PowerPoint has no text
 - Text written on top of a metafile shows what the page covered
+- `FPDFImageObj_GetRenderedBitmap` draws a picture at its size on the page, not at its own pixels
 
 ## PDFium: text, coordinates and outlines
 - A watermark turned across the page merged the lines it crossed in the reading order
@@ -895,6 +896,7 @@ hop through the index.
 - A test that skips on an absent fixture passes on every machine where nobody wrote it
 
 ## Documents as controls
+- A count written as a word stops matching `\w+` at twenty-one
 - A remedy written into a warning is a claim about another command, and nobody checked it
 - A mitigation present and disclaimed is quieter than one claimed and absent
 - A mitigation that moved half a path reads exactly like one that moved the path
@@ -26853,6 +26855,11 @@ a Python traceback after under a second, which a background run reports as finis
 scripts now print git's words and the fix, `git add` the file, and exit 2. The header already
 said to stage new files; it did not say that `-N` is not staging.
 
+`scripts/check_linux.py` sends its tree the same way and had not been given that fix: on
+2026-11-07 it ended in the same traceback (`git stash create` exit 128) after the `untracked`
+gate's refusal had been answered with `git add -N`. A full `git add` fixed it. The gate's
+message says to add the file; `-N` satisfies the gate and breaks the next script.
+
 ### A new window phase is not run at a release until `window_checks.py` lists it
 
 Found 2026-10-18. `tabs_check.py --phase compare` and `--phase add-text` were written and passed
@@ -27365,3 +27372,46 @@ clip let through, chosen over showing the rest (decided 2026-11-06). Page 2 of t
 holds only such a word and its copy must have no text and no shape record; with the outlines
 put back it has 200. Clipped images and paths are still drawn and show whole after *Ungroup*.
 The text-box check alone passed throughout: only the exported picture showed it.
+
+**Outlines are not a safe fallback for a cover either, and the exported picture could not show
+it** (2026-11-07). The same round trip, driven through PowerPoint's COM interface
+(`Shapes.PasteSpecial(2)`, `Ungroup` until no picture or group is left), then every shape
+listed with its box and fill: 36 shapes, of which 13 were the glyphs of *Covered secret* and
+15 those of *Annotated secret*, each set below a white rectangle that was now a shape of its
+own. The exported slide showed neither word, because the rectangles still sat on top; moving
+either rectangle shows the word. The paragraph above, which says covered and annotated words
+"stayed hidden", described the picture and not the slide. So a covered word is now left out as
+a clipped one is, and a word at alpha 0 as invisible text (PDFium had drawn it as a picture);
+the slide then has 7 shapes. A picture check compares the layout the program left; a hidden
+thing is hidden only if no shape on the slide carries it, so list the shapes. The control in
+`tests/cli/pagecopy.rs` is a page beside the same page without its hidden word: equal record
+counts (15 against 405 with the outlines left in).
+
+### `FPDFImageObj_GetRenderedBitmap` draws a picture at its size on the page, not at its own pixels
+
+*Save a graphic* hands out a picture at its own pixel size, and the call that applies its mask,
+`FPDFImageObj_GetRenderedBitmap`, looked like the one to use: PDFium's header says it takes
+"the image mask and image matrix into account". The second half is the trap. The matrix is the
+one that places the picture on the page, read as one pixel a point, so a 4 x 2 picture shown
+80 x 40 points wide came back as 80 x 40 pixels, smoothed (`tests/cli/graphic.rs`, 2026-11-07).
+A logo placed small would have come back smaller than its file, and one placed large, larger.
+`FPDFImageObj_GetBitmap` gives the stored pixels without the mask, so it is no answer for a
+logo with a transparent background.
+
+`graphic.rs` sets the object's matrix to the picture's pixel size, upright, for the one call,
+and puts it back after; it works on a second document over the same bytes, so the reader's page
+is never touched. A picture past `MAX_PIXELS` is asked for at a proportional smaller size,
+because the bitmap has to fit the tile mapping. The check holds a 4 x 2 picture drawn 80 x 40
+points to 4 x 2 pixels with its masked half transparent, and goes red with the matrix line
+removed.
+
+### A count written as a word stops matching `\w+` at twenty-one
+
+`check_writers.py` reads the number of writing commands from the threat model's §3 boundary
+row with `\b(\w+) of which write files`. With `graphic_save` the row says *twenty-one*, and
+`\w` does not match the hyphen, so the capture was `one` and the gate said the row was wrong
+when it was right (2026-11-07). Nothing had gone wrong before because every count up to
+twenty is one word. The same holds for any check that reads a number spelled out in prose:
+twenty-one to ninety-nine are hyphenated. The pattern is now `(?<![\w-])([\w-]+)`, and the
+gate's `NUMBERS` table runs to thirty, since past its end the gate compares the digits with
+the word and fails on its own table.

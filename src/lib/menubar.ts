@@ -175,6 +175,8 @@ export const MENU_LAYOUT: LayoutSection[] = [
       "file.compress",
       // A copy of part of a page rather than of the document.
       "file.saveRegionAsPicture",
+      // What lies inside the drag on its own, as SVG, PNG or the stored JPEG.
+      "file.saveGraphic",
       // A file the document carries, written out as it is.
       "file.saveAttachment",
       "file.protect",
@@ -228,6 +230,7 @@ export const MENU_LAYOUT: LayoutSection[] = [
       SEPARATOR,
       "edit.copy",
       "edit.copyRegionAsPicture",
+      "edit.copyGraphic",
       SEPARATOR,
       // The three marks together, then the removal, then the selection items.
       // Grouped rather than listed in one run because "Remove mark" is the

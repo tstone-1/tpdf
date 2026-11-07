@@ -450,7 +450,12 @@ pub(crate) enum Job {
         page: u32,
         crop: Option<[f32; 4]>,
         turns: u8,
-        reply: Reply<Vec<u8>>,
+        reply: Reply<CopiedPage>,
+    },
+    Graphic {
+        doc: u32,
+        request: crate::graphic::GraphicRequest,
+        reply: Reply<Graphic>,
     },
     Geometry {
         doc: u32,
@@ -947,7 +952,7 @@ impl RenderService {
         page: u32,
         crop: Option<[f32; 4]>,
         turns: u8,
-        reply: Reply<Vec<u8>>,
+        reply: Reply<CopiedPage>,
     ) {
         let job = Job::PageCopy {
             doc,
@@ -957,6 +962,27 @@ impl RenderService {
             reply,
         };
         if self.tx.send(job).is_err() {
+            // Render thread is gone; nothing left to reply with.
+        }
+    }
+
+    /// The pictures and drawings inside a region, alone (`graphic.rs`),
+    /// invoking `reply` on a service thread.
+    pub fn graphic(
+        &self,
+        doc: u32,
+        request: crate::graphic::GraphicRequest,
+        reply: Reply<Graphic>,
+    ) {
+        if self
+            .tx
+            .send(Job::Graphic {
+                doc,
+                request,
+                reply,
+            })
+            .is_err()
+        {
             // Render thread is gone; nothing left to reply with.
         }
     }
@@ -1332,7 +1358,12 @@ pub(crate) trait Engine {
         page: u32,
         crop: Option<[f32; 4]>,
         turns: u8,
-    ) -> Result<Vec<u8>, String>;
+    ) -> Result<CopiedPage, String>;
+    fn graphic(
+        &self,
+        doc: u32,
+        request: &crate::graphic::GraphicRequest,
+    ) -> Result<Graphic, String>;
     fn geometry(&self, doc: u32, page: u32, crop: Option<[f32; 4]>)
         -> Result<CropGeometry, String>;
     fn crop_box(&self, doc: u32, page: u32, rect: [f32; 4]) -> Result<[f32; 4], String>;
@@ -1429,6 +1460,11 @@ pub(crate) fn dispatch(job: Job, engine: &dyn Engine) {
             turns,
             reply,
         } => reply(engine.page_copy(doc, page, crop, turns)),
+        Job::Graphic {
+            doc,
+            request,
+            reply,
+        } => reply(engine.graphic(doc, &request)),
         Job::Geometry {
             doc,
             page,
@@ -1508,6 +1544,7 @@ fn drain(rx: Receiver<Job>, error: &str) {
             Job::Content { reply, .. } => reply(Err(error.to_string())),
             Job::Pictures { reply, .. } => reply(Err(error.to_string())),
             Job::PageCopy { reply, .. } => reply(Err(error.to_string())),
+            Job::Graphic { reply, .. } => reply(Err(error.to_string())),
             Job::Geometry { reply, .. } => reply(Err(error.to_string())),
             Job::CropBox { reply, .. } => reply(Err(error.to_string())),
             Job::RedactPlans { reply, .. } => reply(Err(error.to_string())),
@@ -1698,9 +1735,19 @@ impl Engine for InProcess {
         page: u32,
         crop: Option<[f32; 4]>,
         turns: u8,
-    ) -> Result<Vec<u8>, String> {
+    ) -> Result<CopiedPage, String> {
         open_slot(&self.docs.borrow(), doc)?.with_text_view(&self.views.view(doc), |view| {
             run_page_copy(view, page, crop, turns)
+        })
+    }
+
+    fn graphic(
+        &self,
+        doc: u32,
+        request: &crate::graphic::GraphicRequest,
+    ) -> Result<Graphic, String> {
+        open_slot(&self.docs.borrow(), doc)?.with_text_view(&self.views.view(doc), |view| {
+            crate::graphic::export(view, request)
         })
     }
 
@@ -2113,6 +2160,15 @@ pub fn run_pictures(document: &OpenDocument, page: u32) -> Result<f32, String> {
     ))
 }
 
+/// *Copy page for PowerPoint*'s answer: the metafile, and how many texts a
+/// clip or a cover hides and the copy therefore leaves out (`pagecopy.rs`), so the window
+/// can say that the copy lacks something the page shows.
+pub type CopiedPage = (Vec<u8>, u32);
+
+/// *Copy a graphic*'s answer: the file's bytes (none for a description), and
+/// what the region holds (`graphic.rs`).
+pub type Graphic = (Vec<u8>, crate::graphic::GraphicFound);
+
 /// One page as a Windows metafile with its words as text (`pagecopy.rs`).
 #[cfg(windows)]
 pub(crate) fn run_page_copy(
@@ -2120,7 +2176,7 @@ pub(crate) fn run_page_copy(
     page: u32,
     crop: Option<[f32; 4]>,
     turns: u8,
-) -> Result<Vec<u8>, String> {
+) -> Result<CopiedPage, String> {
     crate::pagecopy::emf(document, page, crop, turns)
 }
 
@@ -2131,7 +2187,7 @@ pub(crate) fn run_page_copy(
     _: u32,
     _: Option<[f32; 4]>,
     _: u8,
-) -> Result<Vec<u8>, String> {
+) -> Result<CopiedPage, String> {
     // windows-only: page-copy
     Err(said!("a page is copied for PowerPoint on Windows only"))
 }

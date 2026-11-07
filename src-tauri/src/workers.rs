@@ -1904,7 +1904,7 @@ impl Engine for Workers {
         page: u32,
         crop: Option<[f32; 4]>,
         turns: u8,
-    ) -> Result<Vec<u8>, String> {
+    ) -> Result<crate::render::CopiedPage, String> {
         let request = self
             .views
             .request(doc, Request::PageCopy { page, crop, turns });
@@ -1914,13 +1914,38 @@ impl Engine for Workers {
                 return Err(response.error);
             }
             match response.reply {
-                Some(Reply::PageCopy) if response.bytes <= worker.tile.len() => {
-                    Ok(worker.tile.as_slice()[..response.bytes].to_vec())
+                Some(Reply::PageCopy(left_out)) if response.bytes <= worker.tile.len() => {
+                    Ok((worker.tile.as_slice()[..response.bytes].to_vec(), left_out))
                 }
-                Some(Reply::PageCopy) => Err(said!(
+                Some(Reply::PageCopy(_)) => Err(said!(
                     "the worker claimed more bytes than its mapping holds"
                 )),
                 Some(other) => Err(mismatched("page copy", &other)),
+                None => Err("worker replied without a payload".to_string()),
+            }
+        })
+    }
+
+    /// The file is in the tile mapping, [`Workers::page_copy`]'s way.
+    fn graphic(
+        &self,
+        doc: u32,
+        request: &crate::graphic::GraphicRequest,
+    ) -> Result<crate::render::Graphic, String> {
+        let request = self.views.request(doc, Request::Graphic(*request));
+        self.with_worker(doc, |worker| {
+            let response = worker.call(&request)?;
+            if !response.ok {
+                return Err(response.error);
+            }
+            match response.reply {
+                Some(Reply::Graphic(found)) if response.bytes <= worker.tile.len() => {
+                    Ok((worker.tile.as_slice()[..response.bytes].to_vec(), found))
+                }
+                Some(Reply::Graphic(_)) => Err(said!(
+                    "the worker claimed more bytes than its mapping holds"
+                )),
+                Some(other) => Err(mismatched("graphic", &other)),
                 None => Err("worker replied without a payload".to_string()),
             }
         })

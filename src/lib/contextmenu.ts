@@ -169,6 +169,8 @@ export const SELECTION_MENU: Entry[] = [
   // The page as a picture, beside the copy of its words: a right-click is
   // where a reader looking at a figure is already pointing.
   "edit.copyRegionAsPicture",
+  // A logo or figure alone, beside it: the same pointing, without the page.
+  "edit.copyGraphic",
   // The whole page for a slide, on Windows only; left out elsewhere, where
   // it is never enabled.
   "edit.copyPageForPowerPoint",

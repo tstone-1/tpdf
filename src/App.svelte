@@ -53,8 +53,6 @@
       pictures: "Pictures",
       pressPaste: "Press Ctrl+V on the page to paste the picture on the clipboard.",
       regionNotCopied: (why: string) => `The region was not copied: ${why}`,
-      pageCopied: (page: number) =>
-        `Copied page ${page} for PowerPoint. Paste it there and choose Ungroup to edit its shapes and text.`,
       saveRegion: "Save a region as a picture",
       pngPicture: "PNG picture",
       noAttachments: "This document carries no attachments.",
@@ -230,8 +228,6 @@
       pictures: "Bilder",
       pressPaste: "Drücke Strg+V auf der Seite, um das Bild aus der Zwischenablage einzufügen.",
       regionNotCopied: (why: string) => `Der Bereich wurde nicht kopiert: ${why}`,
-      pageCopied: (page: number) =>
-        `Seite ${page} für PowerPoint kopiert. Füge sie dort ein und wähle „Gruppierung aufheben“, um Formen und Text zu bearbeiten.`,
       saveRegion: "Bereich als Bild speichern",
       pngPicture: "PNG-Bild",
       noAttachments: "Dieses Dokument hat keine Anhänge.",
@@ -376,8 +372,6 @@
       formEditing: "Sie können die Felder des Dokuments ziehen, an einer Ecke in der Größe ändern, umbenennen und entfernen. Beenden können Sie das im Menü „Bearbeiten“.",
       choiceNotKept: " Die Auswahl konnte nicht gespeichert werden und gilt nur, bis Sie tpdf schließen.",
       pressPaste: "Drücken Sie Strg+V auf der Seite, um das Bild aus der Zwischenablage einzufügen.",
-      pageCopied: (page: number) =>
-        `Seite ${page} für PowerPoint kopiert. Fügen Sie sie dort ein und wählen Sie „Gruppierung aufheben“, um Formen und Text zu bearbeiten.`,
       redactionsBeforeTextEdit: "Wenden Sie ausstehende Schwärzungen an oder entfernen Sie sie, bevor Sie Text bearbeiten.",
       updatesOff: "Die automatische Suche nach Updates ist ausgeschaltet. „Nach Updates suchen“ können Sie weiterhin verwenden. Eine bereits gestartete Suche kann noch zu Ende laufen.",
       restoreNotKept: "Die Auswahl konnte nicht gespeichert werden und gilt, bis Sie tpdf schließen.",
@@ -517,6 +511,7 @@
   import { regionName, regionRequest, regionSaid } from "./lib/regionshot";
   import { pick as pickAttachmentIn, saved as attachmentSaved, type Embedded } from "./lib/attachments";
   import { fetchTilePng, tileSpec, type TileRequest } from "./lib/tiles";
+  import { formatFor, graphicChoices, graphicName, graphicRequest, graphicSaid, saveGraphicTitle, wrongEnding } from "./lib/graphicexport";
   import { afterProtect, suggestedName as protectedName } from "./lib/protect";
   import { afterCompress, suggestedName as smallerName } from "./lib/compress";
   import { CompressDialog } from "./lib/compressdialog";
@@ -591,8 +586,9 @@
   import { runOpenCheckIfRequested } from "./lib/harness";
   import { Serial } from "./lib/serial";
   import { DegradedLabel } from "./lib/degraded";
+  import { pageCopyNotice } from "./lib/pagecopynotice";
   import {
-    finishUpdate, stepEndsProcess, stepFor, Updates, updateLabel, updateNotice,
+    finishUpdate, pluginUpdater, stepEndsProcess, stepFor, Updates, updateLabel, updateNotice,
     type FinishStep, type UpdateState,
   } from "./lib/update";
   import { Viewer, type ViewerOptions, type ViewerStatus } from "./lib/viewer";
@@ -2151,6 +2147,8 @@
     copyRegion: () => void copyRegion(),
     copyPageForPowerPoint: () => void copyPageForPowerPoint(),
     saveRegion: () => void saveRegion(),
+    copyGraphic: () => void copyGraphic(),
+    saveGraphic: () => void saveGraphic(),
     saveAttachment: () => void saveAttachment(),
     attachmentsAsked: () => attachmentQuestion?.files ?? null,
     pickAttachment: (raw) => void pickAttachment(raw),
@@ -2516,6 +2514,69 @@
   }
 
   /**
+   * *Copy a graphic*: arms a drag, and the pictures and drawings wholly inside
+   * it go to the clipboard alone, on a transparent background, at 600 dpi
+   * (`graphicexport.ts`, `graphic.rs`). The clipboard is written where
+   * *Copy a region as a picture* writes it: by the backend on macOS and
+   * Linux, by the web view on Windows, its write started with the PNG as a
+   * promise while the region is described.
+   */
+  async function copyGraphic(): Promise<void> {
+    const target = viewer;
+    if (!target || openDoc < 0) return;
+    const region = await target.armRegion();
+    if (!region) return;
+    const { doc, request } = graphicRequest(region.source, region.quad, region.screenScale, "png");
+    try {
+      if (isMac() || isLinux()) {
+        tell(graphicSaid(await call("graphic_copy", { doc, request })));
+        return;
+      }
+      const png = call("graphic_png", { doc, request }).then((bytes) => new Blob([bytes], { type: "image/png" }));
+      const written = navigator.clipboard.write([new ClipboardItem({ "image/png": png })]);
+      const [found] = await Promise.all([call("graphic_find", { doc, request }), written]);
+      tell(graphicSaid(found));
+    } catch (e) {
+      say(spokenError(e));
+    }
+  }
+
+  /**
+   * *Save a graphic...*: arms a drag, reads what lies wholly inside it, and
+   * offers the formats it can be saved as, SVG first when it can be one
+   * (`graphicChoices`). The chosen name's ending picks the format; the
+   * backend writes the worker's bytes.
+   */
+  async function saveGraphic(): Promise<void> {
+    const target = viewer, name = openPathName;
+    if (!target || openDoc < 0 || !name) return;
+    const region = await target.armRegion();
+    if (!region) return;
+    const { doc, request } = graphicRequest(region.source, region.quad, region.screenScale, "describe");
+    try {
+      const found = await call("graphic_find", { doc, request });
+      const choices = graphicChoices(found);
+      const suggested = graphicName(basename(name), region.pageNumber, choices[0]!);
+      const panel = () => saveDialog({
+        title: saveGraphicTitle(),
+        defaultPath: suggested,
+        filters: choices.map((choice) => ({ name: choice.name, extensions: choice.extensions })),
+      });
+      const chosen = __TPDF_CHECKS__ && signSaves ? await signSaves.ask(suggested, panel) : await panel();
+      if (!chosen) return;
+      const format = formatFor(chosen, choices);
+      if (!format) {
+        say(wrongEnding(basename(chosen), choices));
+        return;
+      }
+      const saved = await call("graphic_save", { doc, request: { ...request, format }, path: chosen });
+      tell(graphicSaid(saved, basename(chosen)));
+    } catch (e) {
+      say(spokenError(e));
+    }
+  }
+
+  /**
    * *Copy page for PowerPoint*: the page in view, drawn by its worker as a
    * metafile whose words stay text, put on the clipboard by the backend
    * (`page_copy_powerpoint`, `pagecopy.rs`). Windows only.
@@ -2525,8 +2586,8 @@
     if (!shown || openDoc < 0) return;
     const { number, doc, page, turns, crop } = shown;
     try {
-      await call("page_copy_powerpoint", { doc, page, turns, crop });
-      tell(TEXT().pageCopied(number));
+      const leftOut = await call("page_copy_powerpoint", { doc, page, turns, crop });
+      tell(pageCopyNotice(number, leftOut));
     } catch (e) {
       say(spokenError(e));
     }
@@ -4724,17 +4785,7 @@
     notice = text;
   }
   const updates = new Updates(
-    {
-      check: async () => {
-        const { check } = await import("@tauri-apps/plugin-updater");
-        const found = await check();
-        if (!found) return null;
-        return {
-          version: found.version,
-          downloadAndInstall: (onEvent) => found.downloadAndInstall(onEvent),
-        };
-      },
-    },
+    pluginUpdater(() => import("@tauri-apps/plugin-updater")),
     (s) => {
       updateState = s;
       // "Install update and restart" is withheld until there is one and
@@ -4750,6 +4801,11 @@
     // Linux packages are not in `latest.json`, so there is nothing to check
     // against there; see `Updates`' `inApp`.
     !isLinux(),
+    // Each finished check goes to `tpdf.log`, which `update_check.py` and
+    // `update_check_mac.py` print when the offer is missing.
+    (check, ms, launch) => {
+      call("note_update_check", { check, ms, launch }).catch(() => {});
+    },
   );
 
   // Which of the command-line tool's two commands has something to do. The

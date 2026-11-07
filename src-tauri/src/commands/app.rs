@@ -66,6 +66,65 @@ pub fn app_version() -> &'static str {
     env!("CARGO_PKG_VERSION")
 }
 
+/// How an update check ended, as the window reports it to the log.
+///
+/// A closed set rather than a line of text, so the webview chooses which of
+/// three lines is written, not what the line says. The two strings it does
+/// supply are bounded by [`update_check_line`].
+#[derive(Debug, serde::Deserialize)]
+#[serde(tag = "kind", rename_all = "lowercase")]
+pub enum UpdateCheck {
+    Current,
+    Available { version: String },
+    Failed { message: String },
+}
+
+/// The most characters of the version or the error that reach the log.
+const UPDATE_TEXT_LIMIT: usize = 300;
+
+/// One printable line from text the webview supplied: control characters,
+/// line breaks among them, become spaces, so one call is one line of the log,
+/// and the text is cut at [`UPDATE_TEXT_LIMIT`] characters.
+fn one_line(text: &str) -> String {
+    let mut out: String = text
+        .chars()
+        .take(UPDATE_TEXT_LIMIT)
+        .map(|c| if c.is_control() { ' ' } else { c })
+        .collect();
+    if text.chars().count() > UPDATE_TEXT_LIMIT {
+        out.push_str("...");
+    }
+    out
+}
+
+/// The log line for one finished update check.
+///
+/// The record exists because a missing offer could not be explained: three
+/// releases (26.10.16, 26.11.1, 26.11.4) had an installed copy offer nothing
+/// minutes after publication while `latest.json` already named the new
+/// version, and the second run passed each time. Whether the check found the
+/// old file, failed, or ran out of time was written nowhere, so `BUILD.md`
+/// step 12 could only say to run it again. The duration tells a stall from a
+/// refusal.
+pub fn update_check_line(check: &UpdateCheck, ms: u32, launch: bool) -> String {
+    let asked = if launch { "launch" } else { "asked" };
+    let result = match check {
+        UpdateCheck::Current => "current".to_owned(),
+        UpdateCheck::Available { version } => format!("available {}", one_line(version)),
+        UpdateCheck::Failed { message } => format!("failed: {}", one_line(message)),
+    };
+    format!("[update] {asked} check after {ms} ms: {result}")
+}
+
+/// Writes how an update check ended to the diagnostics log (`diag.rs`).
+///
+/// Reads and returns nothing. The only file it reaches is the log, through the
+/// same bounded, rotated sink every other diagnostic uses.
+#[tauri::command]
+pub fn note_update_check(check: UpdateCheck, ms: u32, launch: bool) {
+    crate::diag::note(&update_check_line(&check, ms, launch));
+}
+
 /// Hands over documents that arrived from outside, and starts listening.
 ///
 /// Called once by the frontend during boot. Everything queued before that ---
@@ -150,4 +209,54 @@ pub async fn default_pdf_app(app: tauri::AppHandle) -> Result<String, String> {
     tauri::async_runtime::spawn_blocking(move || crate::defaultapp::apply(&identifier))
         .await
         .map_err(|e| said!("the default application change did not run: {e}"))?
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{update_check_line, UpdateCheck, UPDATE_TEXT_LIMIT};
+
+    #[test]
+    fn each_outcome_names_how_the_check_was_started_and_how_long_it_took() {
+        assert_eq!(
+            update_check_line(&UpdateCheck::Current, 812, true),
+            "[update] launch check after 812 ms: current"
+        );
+        let found = UpdateCheck::Available {
+            version: "26.11.5".into(),
+        };
+        assert_eq!(
+            update_check_line(&found, 90, false),
+            "[update] asked check after 90 ms: available 26.11.5"
+        );
+        let failed = UpdateCheck::Failed {
+            message: "operation timed out".into(),
+        };
+        assert_eq!(
+            update_check_line(&failed, 30_004, true),
+            "[update] launch check after 30004 ms: failed: operation timed out"
+        );
+    }
+
+    #[test]
+    fn text_from_the_webview_stays_on_one_bounded_line() {
+        let failed = UpdateCheck::Failed {
+            message: format!("a\r\n[update] forged\u{7}{}", "x".repeat(1000)),
+        };
+        let line = update_check_line(&failed, 1, true);
+        assert!(!line.chars().any(char::is_control), "{line:?}");
+        assert!(line.contains("a  [update] forged "));
+        assert!(line.ends_with("..."));
+        let prefix = "[update] launch check after 1 ms: failed: ".chars().count();
+        assert_eq!(line.chars().count(), prefix + UPDATE_TEXT_LIMIT + 3);
+    }
+
+    #[test]
+    fn the_window_sends_the_shape_this_reads() {
+        let read: UpdateCheck =
+            serde_json::from_str(r#"{"kind":"available","version":"26.12.0"}"#).unwrap();
+        assert!(matches!(read, UpdateCheck::Available { version } if version == "26.12.0"));
+        let read: UpdateCheck = serde_json::from_str(r#"{"kind":"current"}"#).unwrap();
+        assert!(matches!(read, UpdateCheck::Current));
+        assert!(serde_json::from_str::<UpdateCheck>(r#"{"kind":"line","text":"x"}"#).is_err());
+    }
 }

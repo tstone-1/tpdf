@@ -47,6 +47,7 @@ import type { ExplorerState } from "./explorerstate";
 import type { Comments } from "./comments";
 import type { Comparison, PageCodes } from "./comparison";
 import type { CropGeometry } from "./crop";
+import type { GraphicFound, GraphicRequest } from "./graphicexport";
 import type { Fill } from "./redactfill";
 import type { Applied, Copied, EditState, Merged, Split } from "./edits";
 import type { HiddenText } from "./hiddentext";
@@ -79,6 +80,7 @@ import type { Choices, Placement, SignOutcome, SignRecord } from "./signing";
 import type { AppearanceOptions, SignaturePreview } from "./signappearance";
 import type { PageText } from "./text";
 import type { PreparedImport } from "./pendingimport";
+import type { CheckRecord } from "./update";
 import type { DocHandle } from "./views";
 
 /**
@@ -444,10 +446,21 @@ export interface Commands {
   region_save: { args: { tile: string; path: string }; reply: void };
   /** A region rendered by a worker and put on the clipboard as a PNG; macOS only. */
   region_copy: { args: { tile: string }; reply: void };
-  /** One page drawn by a worker as a metafile with its words as text, put on the clipboard; Windows only. */
+  /** What the region holds: pictures and drawings wholly inside it (`graphic.rs`). Exports nothing. */
+  graphic_find: { args: { doc: number; request: GraphicRequest }; reply: GraphicFound };
+  /** The region's graphic written at `path` in `request.format`; the reply says what was written. */
+  graphic_save: { args: { doc: number; request: GraphicRequest; path: string }; reply: GraphicFound };
+  /** The region's graphic as PNG bytes, for the web view's clipboard on Windows. */
+  graphic_png: { args: { doc: number; request: GraphicRequest }; reply: ArrayBuffer };
+  /** The region's graphic put on the clipboard as a PNG; macOS and Linux. */
+  graphic_copy: { args: { doc: number; request: GraphicRequest }; reply: GraphicFound };
+  /**
+   * One page drawn by a worker as a metafile with its words as text, put on the clipboard; Windows only.
+   * The reply is how many texts a clip or a cover hid, which the copy left out (`pagecopy.rs`).
+   */
   page_copy_powerpoint: {
     args: { doc: DocHandle; page: number; crop: [number, number, number, number] | null; turns: number };
-    reply: void;
+    reply: number;
   };
   /** An embedded file decoded in a worker and saved; the reply is its size in bytes. */
   attachment_save: { args: { doc: DocHandle; source: string; index: number; path: string }; reply: number };
@@ -636,6 +649,11 @@ export interface Commands {
   /** The reply is the name of the event a double-click delivers a path on. */
   launch_open_event: { args: NoArgs; reply: string };
   app_version: { args: NoArgs; reply: string };
+  /**
+   * How an update check ended, for the diagnostics log (`commands/app.rs`).
+   * A closed set of outcomes; Rust bounds the two strings it carries.
+   */
+  note_update_check: { args: { check: CheckRecord; ms: number; launch: boolean }; reply: void };
   /**
    * Links `/usr/local/bin/tpdf` to the bundled command-line tool, or removes
    * that link (`clitool.rs`). No path: the webview can ask for this one change.

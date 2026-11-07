@@ -98,6 +98,9 @@ TERMINAL = [
 # said sixteen while eighteen commands wrote.
 ELSEWHERE = {
     "region::write_png": "src-tauri/src/region.rs",
+    # Added 2026-11-07: *Save a graphic* writes SVG, PNG or a stored JPEG
+    # through the same file's general writer.
+    "region::write_picture": "src-tauri/src/region.rs",
     "attachments::save": "src-tauri/src/attachments.rs",
 }
 
@@ -106,6 +109,8 @@ NUMBERS = {
     7: "seven", 8: "eight", 9: "nine", 10: "ten", 11: "eleven", 12: "twelve",
     13: "thirteen", 14: "fourteen", 15: "fifteen", 16: "sixteen",
     17: "seventeen", 18: "eighteen", 19: "nineteen", 20: "twenty",
+    **{20 + n: f"twenty-{w}" for n, w in enumerate(["one", "two", "three", "four", "five", "six", "seven", "eight", "nine"], 1)},
+    30: "thirty",
 }
 
 
@@ -305,7 +310,9 @@ def main() -> int:
     )
 
     # The count in the boundary row, which is the number that went stale twice.
-    row = re.search(r"\*\*Webview\*\* \(Svelte\).*?\b(\w+) of which write files", model)
+    # `[\w-]` and not `\w`: from twenty-one on the number has a hyphen, and `\w+`
+    # would read its last word alone (2026-11-07).
+    row = re.search(r"\*\*Webview\*\* \(Svelte\).*?(?<![\w-])([\w-]+) of which write files", model)
     if not row:
         print("[FAIL]   the §3 boundary row no longer states a count of writing commands")
         return 1

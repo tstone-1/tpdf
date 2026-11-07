@@ -468,22 +468,26 @@ pub async fn region_copy(
     service: tauri::State<'_, crate::render::RenderService>,
     tile: String,
 ) -> Result<(), String> {
-    use objc2_app_kit::{NSPasteboard, NSPasteboardTypePNG};
     let png = region_png(&service, &tile)
         .await
         .map_err(|why| said!("The region was not copied: {why}"))?;
+    clipboard_png(&png).map_err(|why| said!("The region was not copied: {why}"))
+}
+
+/// Puts a PNG on the general pasteboard as `public.png`.
+#[cfg(target_os = "macos")]
+fn clipboard_png(png: &[u8]) -> Result<(), String> {
+    use objc2_app_kit::{NSPasteboard, NSPasteboardTypePNG};
     objc2::rc::autoreleasepool(|_| {
         let board = NSPasteboard::generalPasteboard();
         board.clearContents();
-        let data = objc2_foundation::NSData::with_bytes(&png);
+        let data = objc2_foundation::NSData::with_bytes(png);
         // SAFETY: an AppKit constant, initialised before any code of ours runs.
         let png_type = unsafe { NSPasteboardTypePNG };
         if board.setData_forType(Some(&data), png_type) {
             Ok(())
         } else {
-            Err(said!(
-                "The region was not copied: the clipboard refused it."
-            ))
+            Err(said!("the clipboard refused it."))
         }
     })
 }
@@ -508,6 +512,14 @@ pub async fn region_copy(
     let png = region_png(&service, &tile)
         .await
         .map_err(|why| said!("The region was not copied: {why}"))?;
+    clipboard_png(&app, png)
+        .await
+        .map_err(|why| said!("The region was not copied: {why}"))
+}
+
+/// Puts a PNG on GTK's clipboard, on the main thread.
+#[cfg(target_os = "linux")]
+async fn clipboard_png(app: &tauri::AppHandle, png: Vec<u8>) -> Result<(), String> {
     let (sent, answer) = std::sync::mpsc::channel::<Result<(), String>>();
     app.run_on_main_thread(move || {
         use gtk::gdk_pixbuf::prelude::*;
@@ -524,12 +536,11 @@ pub async fn region_copy(
         })();
         let _ = sent.send(copied);
     })
-    .map_err(|e| said!("The region was not copied: {why}", why = e))?;
+    .map_err(|e| e.to_string())?;
     tauri::async_runtime::spawn_blocking(move || answer.recv())
         .await
-        .map_err(|e| said!("The region was not copied: {why}", why = e))?
-        .map_err(|_| said!("The region was not copied: the main thread did not answer."))?
-        .map_err(|why| said!("The region was not copied: {why}"))
+        .map_err(|e| e.to_string())?
+        .map_err(|_| said!("the main thread did not answer."))?
 }
 
 /// The Windows answer: the web view copies the region itself, with
@@ -543,10 +554,125 @@ pub async fn region_copy(tile: String) -> Result<(), String> {
     ))
 }
 
+/// What the region in `request` holds (*Copy a graphic*, *Save a graphic*,
+/// `graphic.rs`): how many pictures and drawings, whether one stored picture,
+/// whether an SVG can be made, and the PNG's size. Nothing is exported.
+#[tauri::command]
+pub async fn graphic_find(
+    service: tauri::State<'_, crate::render::RenderService>,
+    doc: u32,
+    request: crate::graphic::GraphicRequest,
+) -> Result<crate::graphic::GraphicFound, String> {
+    let request = crate::graphic::GraphicRequest {
+        format: crate::graphic::GraphicFormat::Describe,
+        ..request
+    };
+    Ok(graphic(&service, doc, request).await?.1)
+}
+
+/// Saves the graphic in `request`'s region at `path`, in the format the
+/// request names, and answers what was saved. The webview names the region,
+/// the format and the file; the bytes are the worker's.
+#[tauri::command]
+pub async fn graphic_save(
+    service: tauri::State<'_, crate::render::RenderService>,
+    doc: u32,
+    request: crate::graphic::GraphicRequest,
+    path: String,
+) -> Result<crate::graphic::GraphicFound, String> {
+    use crate::graphic::GraphicFormat;
+    use crate::region::Kind;
+    if request.format == GraphicFormat::Describe {
+        return Err(said!("The graphic was not saved: no format was chosen."));
+    }
+    let (bytes, found) = graphic(&service, doc, request)
+        .await
+        .map_err(|why| said!("The graphic was not saved: {why}"))?;
+    let kind = match found.extension.as_str() {
+        "jpg" => Kind::Jpeg,
+        "svg" => Kind::Svg,
+        _ => Kind::Png,
+    };
+    tauri::async_runtime::spawn_blocking(move || {
+        crate::region::write_picture(std::path::Path::new(&path), &bytes, kind)
+    })
+    .await
+    .map_err(|e| said!("The graphic was not saved: {why}", why = e))??;
+    Ok(found)
+}
+
+/// The graphic in `request`'s region as a PNG, for the web view to put on the
+/// clipboard on Windows, as *Copy a region as a picture* does there. The
+/// reply is the PNG's bytes, raw.
+#[tauri::command]
+pub async fn graphic_png(
+    service: tauri::State<'_, crate::render::RenderService>,
+    doc: u32,
+    request: crate::graphic::GraphicRequest,
+) -> Result<tauri::ipc::Response, String> {
+    let request = crate::graphic::GraphicRequest {
+        format: crate::graphic::GraphicFormat::Png,
+        ..request
+    };
+    let (png, _) = graphic(&service, doc, request)
+        .await
+        .map_err(|why| said!("The graphic was not copied: {why}"))?;
+    Ok(tauri::ipc::Response::new(png))
+}
+
+/// Copies the graphic in `request`'s region to the clipboard as a PNG, on
+/// macOS and Linux, for [`region_copy`]'s reason, and answers what it held.
+#[cfg(any(target_os = "macos", target_os = "linux"))]
+#[tauri::command]
+pub async fn graphic_copy(
+    #[cfg_attr(target_os = "macos", allow(unused_variables))] app: tauri::AppHandle,
+    service: tauri::State<'_, crate::render::RenderService>,
+    doc: u32,
+    request: crate::graphic::GraphicRequest,
+) -> Result<crate::graphic::GraphicFound, String> {
+    let request = crate::graphic::GraphicRequest {
+        format: crate::graphic::GraphicFormat::Png,
+        ..request
+    };
+    let (png, found) = graphic(&service, doc, request)
+        .await
+        .map_err(|why| said!("The graphic was not copied: {why}"))?;
+    #[cfg(target_os = "macos")]
+    let copied = clipboard_png(&png);
+    #[cfg(target_os = "linux")]
+    let copied = clipboard_png(&app, png).await;
+    copied.map_err(|why| said!("The graphic was not copied: {why}"))?;
+    Ok(found)
+}
+
+/// The Windows answer: the web view copies the graphic, from [`graphic_png`].
+#[cfg(windows)]
+#[tauri::command]
+pub async fn graphic_copy(
+    doc: u32,
+    request: crate::graphic::GraphicRequest,
+) -> Result<crate::graphic::GraphicFound, String> {
+    let _ = (doc, request);
+    Err(said!(
+        "The graphic is copied by the web view on this platform."
+    ))
+}
+
+async fn graphic(
+    service: &crate::render::RenderService,
+    doc: u32,
+    request: crate::graphic::GraphicRequest,
+) -> Result<crate::render::Graphic, String> {
+    let (reply, rx) = super::reply_channel();
+    service.graphic(doc, request, reply);
+    super::await_reply::<_, String>("graphic", rx).await
+}
+
 /// *Copy page for PowerPoint*: one page drawn in a worker as a Windows
 /// metafile with its words as text (`pagecopy.rs`), put on the clipboard as
 /// `CF_ENHMETAFILE`. PowerPoint pastes it as a picture that *Ungroup* turns
-/// into shapes and text boxes.
+/// into shapes and text boxes. The reply is how many texts a clip or a cover hid and the
+/// copy left out, which the window says when it is not 0.
 #[cfg(windows)]
 #[tauri::command]
 pub async fn page_copy_powerpoint(
@@ -556,10 +682,10 @@ pub async fn page_copy_powerpoint(
     page: u32,
     crop: Option<[f32; 4]>,
     turns: u8,
-) -> Result<(), String> {
+) -> Result<u32, String> {
     let (reply, rx) = super::reply_channel();
     service.page_copy(doc, page, crop, turns, reply);
-    let emf = super::await_reply::<_, String>("page copy", rx)
+    let (emf, left_out) = super::await_reply::<_, String>("page copy", rx)
         .await
         .map_err(|why| said!("The page was not copied: {why}"))?;
     let owner = window
@@ -569,7 +695,8 @@ pub async fn page_copy_powerpoint(
     tauri::async_runtime::spawn_blocking(move || crate::pagecopy::clipboard(owner, &emf))
         .await
         .map_err(|e| said!("The page was not copied: {why}", why = e))?
-        .map_err(|why| said!("The page was not copied: {why}"))
+        .map_err(|why| said!("The page was not copied: {why}"))?;
+    Ok(left_out)
 }
 
 /// The other platforms have no metafile to put on a clipboard.
@@ -580,7 +707,7 @@ pub async fn page_copy_powerpoint(
     page: u32,
     crop: Option<[f32; 4]>,
     turns: u8,
-) -> Result<(), String> {
+) -> Result<u32, String> {
     let _ = (doc, page, crop, turns);
     // windows-only: page-copy
     Err(said!("A page is copied for PowerPoint on Windows only."))

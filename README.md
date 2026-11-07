@@ -266,6 +266,13 @@ project conventions.
   screen and never under 144 pixels an inch. It is the page as the file draws it, under the
   crop and turn you see: marks you have not saved yet are not in it.
   <!-- built: edit.copyRegionAsPicture file.saveRegionAsPicture -->
+- **Copy a graphic** and **Save a graphic...**: drag around a logo, a figure or a photo, and
+  the pictures and drawings lying wholly inside the drag come out on their own, without the
+  page behind them. The copy is a PNG at 600 dpi on a transparent background, for pasting
+  into a picture editor. The saved file is an SVG that stays sharp at any size, a PNG, or,
+  for a JPEG photo, the JPEG the document stores. A drawing with text or a gradient in it is
+  saved as PNG only.
+  <!-- built: edit.copyGraphic file.saveGraphic -->
 - **Copy page for PowerPoint** (Windows): the page in view goes to the clipboard as a picture
   that PowerPoint's *Ungroup* turns into shapes and text boxes, so its boxes, lines and words
   can be edited on a slide. Text the page draws with a font tpdf cannot read as characters

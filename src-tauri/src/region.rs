@@ -11,32 +11,76 @@ use std::path::Path;
 /// The eight bytes every PNG file starts with (PNG specification, 5.2).
 const SIGNATURE: [u8; 8] = [0x89, b'P', b'N', b'G', b'\r', b'\n', 0x1a, b'\n'];
 
-/// Writes `png` to `path`: to a file beside it first, then renamed over it, so
-/// a write that fails leaves whatever was at `path` as it was.
+/// What a picture file is, for [`write_picture`]: the endings its name may
+/// have and the bytes it must start with.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Kind {
+    Png,
+    Jpeg,
+    Svg,
+}
+
+impl Kind {
+    fn endings(self) -> &'static [&'static str] {
+        match self {
+            Self::Png => &["png"],
+            Self::Jpeg => &["jpg", "jpeg"],
+            Self::Svg => &["svg"],
+        }
+    }
+
+    fn starts(self) -> &'static [u8] {
+        match self {
+            Self::Png => &SIGNATURE,
+            // Start of image, then the first marker's 0xFF (ITU T.81, B.1.1.3).
+            Self::Jpeg => &[0xff, 0xd8, 0xff],
+            Self::Svg => b"<?xml",
+        }
+    }
+}
+
+/// Writes `png` to `path`: [`write_picture`] for a PNG.
 ///
-/// Refuses a name that does not end in `.png`, which the save panel's filter
-/// gives everywhere but a Linux panel the reader typed a bare name into: a
-/// PNG under another name is a file that opens in the wrong program, and
-/// adding the ending here would write to a file the panel never asked about.
-/// Refuses bytes that are not a PNG, which a worker's encoder never sends.
+/// # Errors
+///
+/// As [`write_picture`].
+pub fn write_png(path: &Path, png: &[u8]) -> Result<(), String> {
+    write_picture(path, png, Kind::Png)
+}
+
+/// Writes `bytes` to `path`: to a file beside it first, then renamed over it,
+/// so a write that fails leaves whatever was at `path` as it was.
+///
+/// Refuses a name that does not end as `kind` does (`.png`; `.jpg` or
+/// `.jpeg`; `.svg`), which the save panel's filter gives everywhere but a
+/// Linux panel the reader typed a bare name into: a picture under another
+/// name is a file that opens in the wrong program, and adding the ending here
+/// would write to a file the panel never asked about. Refuses bytes that do
+/// not start as `kind`'s do, which a worker never sends.
 ///
 /// # Errors
 ///
 /// The name, the bytes, or the write, in words a reader is shown.
-pub fn write_png(path: &Path, png: &[u8]) -> Result<(), String> {
-    let named_png = path
+pub fn write_picture(path: &Path, bytes: &[u8], kind: Kind) -> Result<(), String> {
+    let endings = kind.endings();
+    let named = path
         .extension()
-        .is_some_and(|ext| ext.eq_ignore_ascii_case("png"));
-    if !named_png {
+        .is_some_and(|ext| endings.iter().any(|end| ext.eq_ignore_ascii_case(end)));
+    if !named {
         return Err(said!(
-            "The picture was not saved: {path} does not end in .png.",
-            path = path.display()
+            "The picture was not saved: {path} does not end in .{ending}.",
+            path = path.display(),
+            ending = endings[0]
         ));
     }
-    if !png.starts_with(&SIGNATURE) {
-        return Err(said!(
-            "The picture was not saved: the render did not come back as a PNG."
-        ));
+    if !bytes.starts_with(kind.starts()) {
+        return Err(match kind {
+            Kind::Png => said!("The picture was not saved: the render did not come back as a PNG."),
+            Kind::Jpeg => said!("The picture was not saved: the stored picture is not a JPEG."),
+            Kind::Svg => {
+                said!("The picture was not saved: the drawing did not come back as an SVG.")
+            }
+        });
     }
     let name = path.file_name().ok_or_else(|| {
         said!(
@@ -51,7 +95,7 @@ pub fn write_png(path: &Path, png: &[u8]) -> Result<(), String> {
         )
     };
     let (staged, mut file) = crate::save::claim_beside(path, name).map_err(failed)?;
-    let written = file.write_all(png).and_then(|()| file.sync_all());
+    let written = file.write_all(bytes).and_then(|()| file.sync_all());
     drop(file);
     let written = written.and_then(|()| std::fs::rename(&staged, path));
     written.map_err(|why| {
@@ -120,6 +164,20 @@ mod tests {
         let refused = write_png(&path, &png(b"x")).expect_err("rename over a directory");
         assert!(refused.contains("was not saved to"), "{refused}");
         assert_eq!(dir.names(), ["taken.png"]);
+    }
+
+    #[test]
+    fn a_jpeg_and_an_svg_are_held_to_their_own_endings_and_bytes() {
+        let dir = TempDir::new("region-kinds");
+        let jpeg = [0xff, 0xd8, 0xff, 0xe0, 1, 2];
+        write_picture(&dir.join("logo.JPEG"), &jpeg, Kind::Jpeg).expect("jpeg");
+        write_picture(&dir.join("logo.svg"), b"<?xml version", Kind::Svg).expect("svg");
+        let named = write_picture(&dir.join("logo.png"), &jpeg, Kind::Jpeg).expect_err("png name");
+        assert!(named.contains("does not end in .jpg"), "{named}");
+        let bytes =
+            write_picture(&dir.join("x.svg"), &png(b"x"), Kind::Svg).expect_err("png bytes");
+        assert!(bytes.contains("did not come back as an SVG"), "{bytes}");
+        assert_eq!(dir.names(), ["logo.JPEG", "logo.svg"]);
     }
 
     /// The name a write to `path` would stage at, asked of the code that names

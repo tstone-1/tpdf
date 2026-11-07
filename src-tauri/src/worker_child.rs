@@ -631,6 +631,7 @@ fn handle(
             Err(e) => Response::err(e),
         },
         Request::PageCopy { page, crop, turns } => page_copy(document, tile, *page, *crop, *turns),
+        Request::Graphic(request) => graphic(document, tile, request),
         Request::Geometry { page, crop } => match render::geometry_of(document, *page, *crop) {
             Ok(size) => Response::reply(Reply::Geometry(size)),
             Err(e) => Response::err(e),
@@ -933,14 +934,33 @@ fn page_copy(
     turns: u8,
 ) -> Response {
     match render::run_page_copy(document, page, crop, turns) {
-        Ok(bytes) if bytes.len() <= tile.len() => {
+        Ok((bytes, left_out)) if bytes.len() <= tile.len() => {
             tile.as_mut_slice()[..bytes.len()].copy_from_slice(&bytes);
             Response {
                 bytes: bytes.len(),
-                ..Response::reply(Reply::PageCopy)
+                ..Response::reply(Reply::PageCopy(left_out))
             }
         }
         Ok(_) => Response::err("the page is too detailed to copy as a picture"),
+        Err(why) => Response::err(why),
+    }
+}
+
+/// The pictures and drawings in a region, into the tile mapping (`graphic.rs`).
+fn graphic(
+    document: &OpenDocument,
+    tile: &mut Shm,
+    request: &crate::graphic::GraphicRequest,
+) -> Response {
+    match crate::graphic::export(document, request) {
+        Ok((bytes, found)) if bytes.len() <= tile.len() => {
+            tile.as_mut_slice()[..bytes.len()].copy_from_slice(&bytes);
+            Response {
+                bytes: bytes.len(),
+                ..Response::reply(Reply::Graphic(found))
+            }
+        }
+        Ok(_) => Response::err("the graphic is too detailed to export"),
         Err(why) => Response::err(why),
     }
 }

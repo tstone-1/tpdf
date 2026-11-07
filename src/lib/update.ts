@@ -95,6 +95,9 @@ export type UpdateState =
   | { kind: "ready"; version: string }
   | { kind: "failed"; message: string };
 
+/** How a check that reached the network ended, as `note_update_check` takes it. */
+export type CheckRecord = Extract<UpdateState, { kind: "current" | "available" | "failed" }>;
+
 /** The progress events the plugin emits while downloading. */
 export type DownloadEvent =
   | { event: "Started"; data: { contentLength?: number } }
@@ -111,6 +114,62 @@ export interface UpdateHandle {
 export interface UpdaterApi {
   /** Resolves to the update, or null when the running version is newest. */
   check(): Promise<UpdateHandle | null>;
+}
+
+/**
+ * How long a check may take before it counts as failed, in milliseconds.
+ *
+ * `tauri-plugin-updater` 2.14.1 sets no timeout of its own (`timeout: None` in
+ * `UpdaterBuilder::new`), so a request that stalls never settles. The state
+ * then stays `checking` for the rest of the session, and because {@link
+ * Updates.check} returns early while busy, the reader's own *Check for updates*
+ * does nothing either: one stalled launch check took away both. With a bound,
+ * a stall becomes `failed` with the plugin's message, and asking again works.
+ */
+export const CHECK_TIMEOUT_MS = 30_000;
+
+/**
+ * How long a download may take, in milliseconds.
+ *
+ * It has to be given, not left out: the plugin copies the check's timeout onto
+ * the update it returns and uses it for the download unless the download names
+ * its own (`commands.rs`, `download_and_install`). Left out, a 30-second bound
+ * meant for a small JSON file would end every download of the installer on a
+ * slow line. An hour still ends a stalled download, which the plugin's default
+ * of no bound did not.
+ */
+export const DOWNLOAD_TIMEOUT_MS = 60 * 60_000;
+
+/** The two calls of `@tauri-apps/plugin-updater` {@link pluginUpdater} makes. */
+export interface UpdaterPlugin {
+  check(options?: { timeout?: number }): Promise<{
+    version: string;
+    downloadAndInstall(
+      onEvent: (e: DownloadEvent) => void,
+      options?: { timeout?: number },
+    ): Promise<void>;
+  } | null>;
+}
+
+/**
+ * The plugin, reached through {@link UpdaterApi}, with both timeouts applied.
+ *
+ * Here rather than in `App.svelte`, which no test imports, so that the two
+ * bounds are held by a test and not only by the line that passes them.
+ */
+export function pluginUpdater(load: () => Promise<UpdaterPlugin>): UpdaterApi {
+  return {
+    check: async () => {
+      const { check } = await load();
+      const found = await check({ timeout: CHECK_TIMEOUT_MS });
+      if (!found) return null;
+      return {
+        version: found.version,
+        downloadAndInstall: (onEvent) =>
+          found.downloadAndInstall(onEvent, { timeout: DOWNLOAD_TIMEOUT_MS }),
+      };
+    },
+  };
 }
 
 /**
@@ -157,6 +216,7 @@ export class Updates {
     onChange: (s: UpdateState) => void = () => {},
     private storage: () => Pick<Storage, "getItem" | "setItem"> = () => window.localStorage,
     private inApp = true,
+    private record: (outcome: CheckRecord, ms: number, launch: boolean) => void = () => {},
   ) {
     this.#onChange = onChange;
     try {
@@ -179,7 +239,7 @@ export class Updates {
   async checkOnLaunch(): Promise<UpdateState> {
     if (this.#launchChecked) return this.#state;
     this.#launchChecked = true;
-    return this.#automatic && this.inApp ? this.check() : this.#state;
+    return this.#automatic && this.inApp ? this.#check(true) : this.#state;
   }
 
   get state(): UpdateState {
@@ -205,6 +265,10 @@ export class Updates {
    * typing "check for updates" can genuinely race, and neither is a mistake.
    */
   async check(): Promise<UpdateState> {
+    return this.#check(false);
+  }
+
+  async #check(launch: boolean): Promise<UpdateState> {
     if (this.#busy) return this.#state;
     if (!this.inApp) {
       this.#set({ kind: "failed", message: MANUAL_UPDATES });
@@ -212,6 +276,7 @@ export class Updates {
     }
     this.#busy = true;
     this.#set({ kind: "checking" });
+    const started = Date.now();
     try {
       const found = await this.api.check();
       this.#handle = found;
@@ -225,6 +290,16 @@ export class Updates {
       this.#set({ kind: "failed", message: String(e) });
     } finally {
       this.#busy = false;
+    }
+    const settled = this.#state;
+    if (settled.kind === "current" || settled.kind === "available" || settled.kind === "failed") {
+      // Written for every check that reached the network, so that a missing
+      // offer can be told apart afterwards: the old file served, an error, or a
+      // stall that ran into `CHECK_TIMEOUT_MS`. A failed write is not the
+      // reader's problem and must not change the answer they get.
+      try {
+        this.record(settled, Date.now() - started, launch);
+      } catch { /* the log is a diagnostic, not part of the check */ }
     }
     return this.#state;
   }

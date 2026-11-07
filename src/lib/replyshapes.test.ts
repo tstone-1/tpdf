@@ -58,6 +58,7 @@
 import { describe, expect, it } from "vitest";
 
 import type { SignatureImage } from "./signature";
+import type { GraphicFound } from "./graphicexport";
 import Image_ from "../../src-tauri/testdata/replies/Image.json";
 import type { TextRuns } from "./textedit";
 import PageRuns_ from "../../src-tauri/testdata/replies/PageRuns.json";
@@ -103,6 +104,7 @@ import type { SignaturePreview } from "./signappearance";
 import Applied_ from "../../src-tauri/testdata/replies/Applied.json";
 import Comments_ from "../../src-tauri/testdata/replies/Comments.json";
 import Copied_ from "../../src-tauri/testdata/replies/Copied.json";
+import GraphicFound_ from "../../src-tauri/testdata/replies/GraphicFound.json";
 import CropGeometry_ from "../../src-tauri/testdata/replies/CropGeometry.json";
 import DocumentInfo_ from "../../src-tauri/testdata/replies/DocumentInfo.json";
 import EditState_ from "../../src-tauri/testdata/replies/EditState.json";
@@ -189,6 +191,14 @@ const SCHEMA = {
   Copied: {
     changed: ["boolean"],
   } satisfies Shape<Copied>,
+  GraphicFound: {
+    objects: ["number"],
+    original: ["string", "null"],
+    no_svg: ["string", "null"],
+    width: ["number"],
+    height: ["number"],
+    extension: ["string"],
+  } satisfies Shape<GraphicFound>,
   Opening: {
     path: ["string"],
     page: ["string", "null"],
@@ -415,6 +425,7 @@ const SAMPLES: Record<keyof typeof SCHEMA, Record<string, unknown>> = {
   Applied: Applied_ satisfies Widen<Applied>,
   Comments: Comments_ satisfies Widen<Comments>,
   Copied: Copied_ satisfies Widen<Copied>,
+  GraphicFound: GraphicFound_ satisfies Widen<GraphicFound>,
   Opening: Opening_ satisfies Widen<Opening>,
   Forward: Forward_ satisfies Widen<Forward>,
   Made: Made_ satisfies Widen<Made>,
@@ -480,6 +491,8 @@ const UNNAMED_LEAVES = new Set([
   "String",
   "&'static str",
   "usize",
+  // A count: how many texts *Copy page for PowerPoint* left out.
+  "u32",
   "f64",
   "[f32; 4]",
   "[f64; 4]",

@@ -50,6 +50,7 @@ pub(crate) mod fixtures;
 pub mod formedit;
 pub mod formfields;
 pub mod forms;
+pub mod graphic;
 pub mod hidden;
 pub mod imagepages;
 pub mod images;
@@ -1063,6 +1064,10 @@ pub fn run() {
             picture_decode,
             region_save,
             region_copy,
+            graphic_find,
+            graphic_save,
+            graphic_png,
+            graphic_copy,
             page_copy_powerpoint,
             attachment_save,
             signature_store,
@@ -1111,6 +1116,7 @@ pub fn run() {
             document_mapping,
             launch_open_event,
             app_version,
+            note_update_check,
             command_line_tool,
             command_line_tool_state,
             default_pdf_app,

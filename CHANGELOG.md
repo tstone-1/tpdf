@@ -17,6 +17,40 @@ as *downloadable*, while the release sat as a draft that GitHub showed to nobody
 are given now because they are different facts, and only the second one means a reader can
 have the binary.)
 
+## [26.11.5] - Unreleased
+
+### Fixed
+
+- **Copy page for PowerPoint no longer keeps a covered word under its cover.** In 26.11.4 a
+  word under a white box or an annotation, such as a redaction mark, stayed in the copy as
+  letter outlines beneath the cover. After *Ungroup* the cover is a shape of its own, so
+  moving it showed the word. A covered word is now left out of the copy, as a clipped word
+  already was, and fully transparent text is treated as invisible text. A word that is only
+  partly covered loses its visible letters too, and the notice says so.
+- **A stalled update check no longer blocks *Check for updates* for the rest of the session.**
+  The updater's request had no time limit, so a launch check that stalled stayed in progress,
+  and asking again did nothing while it was. A check now fails after 30 seconds with the
+  reason, and asking again starts a new one. A download now ends after an hour.
+
+### Added
+
+- **Copy a graphic and Save a graphic... take a logo or figure out of a page on its own.**
+  Drag around it, and the pictures and drawings lying wholly inside the drag are exported
+  without the page behind them. *Copy a graphic* puts them on the clipboard at 600 dpi on a
+  transparent background, ready to paste into a picture editor. *Save a graphic...* saves
+  them as SVG, which stays sharp at any size, as PNG, or, for a single JPEG photo, as the
+  JPEG the document stores. A drawing that holds text or a gradient is saved as PNG only.
+  Both commands are in the palette, the File and Edit menus, and the page's context menu
+  (*Copy a graphic*).
+- **Copy page for PowerPoint says when the copy leaves text out.** A word the page cuts off
+  at the edge of an area, or covers with something drawn after it, is left out of the copy,
+  because after *Ungroup* PowerPoint could show all of it. The notice after copying now says
+  how many pieces of text are missing, so a label lost from a diagram is not a surprise on
+  the slide.
+- **Each update check is written to `tpdf.log`**: whether it was the launch check or one you
+  asked for, how long it took, and whether it found an update, found none or failed, with the
+  reason.
+
 ## [26.11.4] - 2026-11-06
 
 ### Fixed

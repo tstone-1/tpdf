@@ -79,7 +79,15 @@ def main() -> int:
             print(f"       {name}")
         return 2
     # Empty when nothing tracked has changed, and then HEAD is the tree.
-    sent = git("stash", "create") or git("rev-parse", "HEAD")
+    try:
+        sent = git("stash", "create") or git("rev-parse", "HEAD")
+    except subprocess.CalledProcessError as error:
+        # A file added with `git add -N` passes the check above and is refused
+        # here as "not uptodate" (`docs/TRAPS.md`, *A file added with `git add
+        # -N` cannot be stashed*); until 2026-11-07 this ended in a traceback.
+        print(f"[FAIL] git stash create: {(error.stderr or '').strip()}")
+        print("[FAIL] a file added with `git add -N` cannot be stashed; stage it with `git add`")
+        return 2
     git("update-ref", REF, sent)
     print(f"[INFO] sending {sent[:10]} to {args.distro}:{CLONE}")
 

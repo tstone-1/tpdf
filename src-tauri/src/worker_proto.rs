@@ -144,6 +144,11 @@ pub enum Request {
         #[serde(default)]
         turns: u8,
     },
+    /// The pictures and drawings wholly inside a region of a page, on their
+    /// own (*Copy a graphic*, `graphic.rs`): described, or exported as PNG,
+    /// as the picture stored, or as SVG. The bytes go into the tile mapping,
+    /// [`Request::PageCopy`]'s way, and the answer is [`Reply::Graphic`].
+    Graphic(crate::graphic::GraphicRequest),
     /// One page's displayed size under a crop box, or under the file's own.
     ///
     /// The frontend lays out from this, and it cannot compute it: the crop is in
@@ -621,8 +626,12 @@ pub enum Reply {
     Content(Option<[f64; 4]>),
     /// The share of a page that pictures cover, from 0 to 1.
     Pictures(f32),
-    /// A page's metafile is in the tile mapping, [`Response::bytes`] long.
-    PageCopy,
+    /// A page's metafile is in the tile mapping, [`Response::bytes`] long;
+    /// the number is how many texts a clip or a cover hid, which the copy left out.
+    PageCopy(u32),
+    /// What a region holds, and the file ending of what is in the tile
+    /// mapping, [`Response::bytes`] long.
+    Graphic(crate::graphic::GraphicFound),
     /// A page's size and origin under the crop the reader has.
     Geometry(crate::render::CropGeometry),
     /// The rectangle a proposed crop would actually produce.
@@ -1023,6 +1032,7 @@ mod tests {
             ("Content", "content"),
             ("Pictures", "pictures"),
             ("PageCopy", "page_copy"),
+            ("Graphic", "graphic"),
             ("Geometry", "geometry"),
             ("CropBox", "crop_box"),
             ("RedactPlans", "redaction_plans"),
@@ -1422,7 +1432,15 @@ mod tests {
             // the tag can tell them apart.
             Reply::Content(Some([1.0, 2.0, 3.0, 4.0])),
             Reply::Pictures(0.5),
-            Reply::PageCopy,
+            Reply::PageCopy(2),
+            Reply::Graphic(crate::graphic::GraphicFound {
+                objects: 1,
+                original: Some("jpg".to_owned()),
+                no_svg: None,
+                width: 157,
+                height: 51,
+                extension: "png".to_owned(),
+            }),
             Reply::CropBox([1.0, 2.0, 3.0, 4.0]),
             Reply::Geometry(crate::render::CropGeometry {
                 width_pt: 595.0,
@@ -1516,7 +1534,8 @@ mod tests {
                 | Reply::Search(_)
                 | Reply::Content(_)
                 | Reply::Pictures(_)
-                | Reply::PageCopy
+                | Reply::PageCopy(_)
+                | Reply::Graphic(_)
                 | Reply::CropBox(_)
                 | Reply::RedactPlans(_)
                 | Reply::Geometry(_)

@@ -2326,15 +2326,15 @@ ROWS += [
     Mutation(
         "region: a name that is not a PNG is written",
         "src/region.rs",
-        "        .is_some_and(|ext| ext.eq_ignore_ascii_case(\"png\"));",
-        "        .is_some_and(|ext| ext.eq_ignore_ascii_case(\"png\"))\n        || true;",
+        "        .is_some_and(|ext| endings.iter().any(|end| ext.eq_ignore_ascii_case(end)));",
+        "        .is_some_and(|ext| endings.iter().any(|end| ext.eq_ignore_ascii_case(end)))\n        || true;",
         "refuses_a_name_that_is_not_a_png_and_writes_nothing",
     ),
     Mutation(
         "region: bytes that are not a PNG are written",
         "src/region.rs",
-        "    if !png.starts_with(&SIGNATURE) {",
-        "    if png.is_empty() {",
+        "    if !bytes.starts_with(kind.starts()) {",
+        "    if bytes.is_empty() {",
         "refuses_bytes_that_are_not_a_png_and_keeps_the_old_file",
     ),
     Mutation(

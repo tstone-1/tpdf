@@ -107,6 +107,8 @@ mod edit;
 mod form_add;
 #[path = "cli/forms.rs"]
 mod forms;
+#[path = "cli/graphic.rs"]
+mod graphic;
 #[path = "cli/hidden.rs"]
 mod hidden;
 #[path = "cli/images.rs"]
@@ -185,6 +187,10 @@ fn main() {
         (
             "a page copied for PowerPoint keeps its words as text",
             pagecopy::writes_words_as_text,
+        ),
+        (
+            "a graphic in a region is exported alone, as PNG, as stored and as SVG",
+            graphic::exports_what_the_region_holds,
         ),
         (
             "an attachment is decoded in a worker and saved as the bytes put in",

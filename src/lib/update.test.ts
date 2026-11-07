@@ -22,6 +22,9 @@ import app from "../App.svelte?raw";
 
 import { functionIn, missingFrom, withoutComments } from "./sourcetext";
 import {
+  CHECK_TIMEOUT_MS,
+  DOWNLOAD_TIMEOUT_MS,
+  pluginUpdater,
   finishPrompt,
   finishUpdate,
   installEndsProcess,
@@ -144,6 +147,80 @@ describe("automatic update preference", () => {
     expect(missingFrom(functionIn(app, "async function checkAndSay(): Promise<void> {"), [
       "notice = updateNotice(await updates.check(), appVersion);",
     ])).toEqual([]);
+  });
+});
+
+describe("pluginUpdater", () => {
+  it("bounds the check, and gives the download its own longer bound", async () => {
+    // Mutation: drop either options object -> red. Without the first a stalled
+    // check holds `busy` for the session; without the second the plugin reuses
+    // the 30-second check bound for the whole installer download.
+    const download = vi.fn(async () => {});
+    const check = vi.fn(async () => ({ version: "26.12.0", downloadAndInstall: download }));
+    const found = await pluginUpdater(async () => ({ check })).check();
+    expect(check).toHaveBeenCalledWith({ timeout: CHECK_TIMEOUT_MS });
+    expect(found?.version).toBe("26.12.0");
+    const onEvent = () => {};
+    await found?.downloadAndInstall(onEvent);
+    expect(download).toHaveBeenCalledWith(onEvent, { timeout: DOWNLOAD_TIMEOUT_MS });
+    expect(DOWNLOAD_TIMEOUT_MS).toBeGreaterThan(CHECK_TIMEOUT_MS);
+  });
+
+  it("answers null when the plugin finds nothing newer", async () => {
+    expect(await pluginUpdater(async () => ({ check: async () => null })).check()).toBeNull();
+  });
+
+  it("lets a later check run once a timed-out one has failed", async () => {
+    // The plugin rejects when its bound passes; the state machine must then be
+    // free for the reader's own check, which a stall never allowed.
+    const check = vi.fn<UpdaterApi["check"]>()
+      .mockRejectedValueOnce(new Error("operation timed out"))
+      .mockResolvedValueOnce(handle("26.12.0"));
+    const u = new Updates({ check }, undefined, () => ({ getItem: () => null, setItem: () => {} }));
+    expect((await u.checkOnLaunch()).kind).toBe("failed");
+    expect(await u.check()).toEqual({ kind: "available", version: "26.12.0" });
+  });
+
+  it("records each check that reached the network, and how it was started", async () => {
+    // Mutation: drop the record call, or pass `true` for every check -> red.
+    const record = vi.fn();
+    const check = vi.fn<UpdaterApi["check"]>()
+      .mockResolvedValueOnce(null)
+      .mockResolvedValueOnce(handle("26.12.0"))
+      .mockRejectedValueOnce(new Error("operation timed out"));
+    const u = new Updates({ check }, undefined, () => ({ getItem: () => null, setItem: () => {} }),
+      true, record);
+    await u.checkOnLaunch();
+    await u.check();
+    await u.check();
+    expect(record.mock.calls.map(([outcome, , launch]) => [outcome, launch])).toEqual([
+      [{ kind: "current" }, true],
+      [{ kind: "available", version: "26.12.0" }, false],
+      [{ kind: "failed", message: "Error: operation timed out" }, false],
+    ]);
+    for (const [, ms] of record.mock.calls) expect(ms).toBeGreaterThanOrEqual(0);
+  });
+
+  it("records nothing where no request is made, and a failed record changes no answer", async () => {
+    const record = vi.fn();
+    const linux = new Updates(api(null), undefined, undefined, false, record);
+    await linux.check();
+    expect(record).not.toHaveBeenCalled();
+    const u = new Updates(api(handle("26.12.0")), undefined, undefined, true, () => {
+      throw new Error("log gone");
+    });
+    expect(await u.check()).toEqual({ kind: "available", version: "26.12.0" });
+  });
+
+  it("sends each record to the log command", () => {
+    const code = withoutComments(app);
+    expect(code).toContain('call("note_update_check", { check, ms, launch }).catch(() => {});');
+  });
+
+  it("is what App.svelte hands the state machine", () => {
+    const code = withoutComments(app);
+    expect(code).toContain('new Updates(\n    pluginUpdater(() => import("@tauri-apps/plugin-updater")),');
+    expect(code.match(/plugin-updater/g)).toHaveLength(1);
   });
 });
 

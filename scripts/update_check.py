@@ -69,6 +69,7 @@ from installed_check import (APP_KEY, NAME, PDF_CLASS, UNINSTALL_KEY, WM_CLOSE, 
                              bounded, descendants, installed_engine, processes, registry, tool,
                              uninstall, window_titles)
 from live_output import stream_results
+from update_log import explain
 
 LATEST = "https://github.com/tstone-1/tpdf/releases/latest/download/latest.json"
 
@@ -191,6 +192,7 @@ def update(checks: Checks, folder: Path, pdf: Path, scratch: Path, old: str, new
         checks.note(f"BUTTON {offer}" in seen, f"the window offers '{offer}'",
                     f"{len(seen)} buttons read" if seen else "no button could be read")
         if f"BUTTON {offer}" not in seen:
+            print(f"[INFO] the application's own update checks: {explain(scratch / 'tpdf.log')}")
             return
         if not press:
             checks.note(False, "the button is pressed", "not pressed")

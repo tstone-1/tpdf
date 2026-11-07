@@ -766,6 +766,17 @@ fn samples() -> BTreeMap<&'static str, String> {
     );
 
     put("Copied", &save::Copied { changed: true });
+    put(
+        "GraphicFound",
+        &crate::graphic::GraphicFound {
+            objects: 1,
+            original: Some("jpg".to_owned()),
+            no_svg: Some("it holds text, which the SVG cannot draw yet; save it as PNG".to_owned()),
+            width: 157,
+            height: 51,
+            extension: "jpg".to_owned(),
+        },
+    );
 
     put(
         "Forward",

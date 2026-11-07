@@ -62,6 +62,8 @@ import time
 import urllib.request
 from pathlib import Path
 
+from update_log import explain
+
 LATEST = "https://github.com/tstone-1/tpdf/releases/latest/download/latest.json"
 NAME = re.compile(r"^tpdf_(\d+\.\d+\.\d+)_aarch64\.dmg$")
 REAL_SESSION = Path.home() / "Library/Application Support/com.timostein.tpdf/session.json"
@@ -174,6 +176,7 @@ def update(checks: Checks, app: Path, document: Path, scratch: Path, old: str, n
         offer = wait_for(pid, "Install update", "enabled", wait)
         checks.note(offer == "enabled", "the menu offers Install update", offer)
         if offer != "enabled":
+            print(f"[INFO] the application's own update checks: {explain(scratch / 'tpdf.log')}")
             return
         began = time.time()
         if press:

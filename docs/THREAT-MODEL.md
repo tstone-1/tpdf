@@ -72,7 +72,7 @@ Five principals, each trusting only what is below it in the table; the command-l
 
 | Principal | Authority it holds | Authority it does not |
 |---|---|---|
-| **Webview** (Svelte) | Draws, receives tiles, issues commands — twenty of which write files on its behalf (§T6.1), drives the updater's optional launch check and can ask for the process to be ended and started again once an update is applied (§T9), can ask for a document web link to be opened (§T8), reads signature images explicitly selected through its file input (§T6.17), can ask for a second PDF to be opened for reading so its pages can be inserted (§T6.20), can ask for the command-line tool's link in `/usr/local/bin` to be made or removed (§T6.23) and whether it is there, which changes nothing (§T6.38), and can ask for tpdf to be made the default application for PDFs (§T6.27) | No general filesystem access, no network reach of its own and no PDF parsing. It can name an address only in two ways: a document web link the reader confirms (§T8), and the timestamp authority `sign_document`, `sign_resume` and `add_validation_data` are handed --- any `http` or `https` host without credentials, loopback and private addresses included on purpose (§T10) |
+| **Webview** (Svelte) | Draws, receives tiles, issues commands — twenty-one of which write files on its behalf (§T6.1), drives the updater's optional launch check and can ask for the process to be ended and started again once an update is applied (§T9), can ask for a document web link to be opened (§T8), reads signature images explicitly selected through its file input (§T6.17), can ask for a second PDF to be opened for reading so its pages can be inserted (§T6.20), can ask for the command-line tool's link in `/usr/local/bin` to be made or removed (§T6.23) and whether it is there, which changes nothing (§T6.38), and can ask for tpdf to be made the default application for PDFs (§T6.27) | No general filesystem access, no network reach of its own and no PDF parsing. It can name an address only in two ways: a document web link the reader confirms (§T8), and the timestamp authority `sign_document`, `sign_resume` and `add_validation_data` are handed --- any `http` or `https` host without credentials, loopback and private addresses included on purpose (§T10) |
 | **Coordinator** (Rust, the Tauri process) | Opens files the user chose, owns the window, spawns and kills workers, owns every shared mapping; asks the OS key store to sign one digest when the reader signs a document (§T6.21); asks the timestamp authority the reader chose for a token over that signature, when they chose one, and the certificate authorities for revocation data, when they also asked for long-term data (§T10) | Parses no PDF syntax on the *viewing* path — with one exception, printing, described below; holds no private key, and parses no part of a document it signs |
 | **Command-line tool** (`tpdf-cli`, the same crate) | A coordinator without a window, run by the reader's own account: opens the files named on its command line, spawns and kills the same workers, asks the OS key store to sign one digest, writes signed, filled or redacted copies, page-operation outputs or a document's text, and reads a document's password from an environment variable it is told the name of (§T6.23) | The coordinator's limits exactly --- parses no part of a document, holds no private key --- and no webview, no updater, and no network but the timestamp authority `sign --timestamp` names and the certificate authorities `--long-term` asks (§T10) |
 | **Worker** (Rust + PDFium) | Parses and renders whatever bytes it is handed | No path to the document and cannot create a file, on all three platforms; no filesystem and no network on **macOS** — on Windows, no writes, and reads and sockets are the disclosed ceiling; on **Linux**, reads beneath the font folders only and no socket by the `socket` call, io_uring or an x32 number, with what the kernel's Landlock version leaves open in §6a |
@@ -89,10 +89,10 @@ mounts a viewer. Resource limits remain per worker, not an aggregate limit acros
 The dialog permissions open panels and write nothing; the message
 permission provides the image-only redaction confirmation. But it can issue `save_copy`,
 `save_document`, `extract_pages`, `split_document`, `merge_documents`, `print_document`, `print_prepare`,
-`redact_copy`, `redact_document`, `redact_raster_copy`, `ocr_copy`, `protect_copy`, `images_to_pdf`, `compress_copy`, `add_text_copy`, `sign_document`, `sign_resume`, `add_validation_data`, `region_save` and `attachment_save`, and all twenty write a file at the
+`redact_copy`, `redact_document`, `redact_raster_copy`, `ocr_copy`, `protect_copy`, `images_to_pdf`, `compress_copy`, `add_text_copy`, `sign_document`, `sign_resume`, `add_validation_data`, `region_save`, `attachment_save` and `graphic_save`, and all twenty-one write a file at the
 process's authority with a path the caller chose.
-<!-- writers: save_copy save_document extract_pages split_document merge_documents print_document print_prepare redact_copy redact_document redact_raster_copy ocr_copy protect_copy images_to_pdf compress_copy add_text_copy sign_document sign_resume add_validation_data region_save attachment_save --> So the accurate statement is that the webview cannot touch the
-filesystem *itself* and can ask for twenty specific writes; the flat version reads as the
+<!-- writers: save_copy save_document extract_pages split_document merge_documents print_document print_prepare redact_copy redact_document redact_raster_copy ocr_copy protect_copy images_to_pdf compress_copy add_text_copy sign_document sign_resume add_validation_data region_save attachment_save graphic_save --> So the accurate statement is that the webview cannot touch the
+filesystem *itself* and can ask for twenty-one specific writes; the flat version reads as the
 stronger claim, and a reader who stops at this table gets the wrong answer. §T6.1 has the worked-out version and says why neither path checks its argument
 against the document actually open.
 
@@ -885,7 +885,7 @@ summary going stale, and re-pointing it every time would erase its own evidence.
 **nine** as of 2026-09-07 with `redact_raster_copy`, **ten** as of 2026-09-26 with
 `sign_document` (§T6.21), and **eleven** as of 2026-09-28 with `sign_resume`, which writes the
 signature `sign_document` made and held when its timestamp did not come, to the path that call
-named (§T10), and **twelve** as of 2026-10-03 with `ocr_copy` (§T6.28), and **thirteen** the same day with `protect_copy` (§T6.30), and **fourteen** with `images_to_pdf` (§T6.31), and **fifteen** with `compress_copy` (§T6.32), and **sixteen** as of 2026-10-10 with `add_validation_data`, which writes a signed document with validation data and an archive timestamp appended, to a new path (§T10), and **eighteen** as of 2026-10-16 with `region_save` and `attachment_save`, a PNG of part of a page and a file the document carries (§T6.42, §T6.43), and **nineteen** as of 2026-10-18 with `add_text_copy`, a copy with page numbers or a watermark (§T6.48). Those two write outside `save.rs`, which the gate's scan did not read until the same day, so the count first stayed at sixteen with every gate green. It reached eight on 2026-08-30 without anybody adding three of them here or
+named (§T10), and **twelve** as of 2026-10-03 with `ocr_copy` (§T6.28), and **thirteen** the same day with `protect_copy` (§T6.30), and **fourteen** with `images_to_pdf` (§T6.31), and **fifteen** with `compress_copy` (§T6.32), and **sixteen** as of 2026-10-10 with `add_validation_data`, which writes a signed document with validation data and an archive timestamp appended, to a new path (§T10), and **eighteen** as of 2026-10-16 with `region_save` and `attachment_save`, a PNG of part of a page and a file the document carries (§T6.42, §T6.43), and **nineteen** as of 2026-10-18 with `add_text_copy`, a copy with page numbers or a watermark (§T6.48), and **twenty-one** as of 2026-11-07 with `graphic_save`, a drawing or picture of a page saved on its own as SVG, PNG or the stored JPEG (§T6.50). Those two write outside `save.rs`, which the gate's scan did not read until the same day, so the count first stayed at sixteen with every gate green. It reached eight on 2026-08-30 without anybody adding three of them here or
 there: `split_document`, `redact_copy` and `redact_document` were each disclosed in their own
 entries and absent from the one place that answers *how many*. That is this paragraph's own
 subject arriving a third time, which is the argument for the mechanical check §3 now names —
@@ -3630,16 +3630,54 @@ are text records (`pagecopy.rs`).
   under a later box or annotation (an unapplied redaction mark is one), cut by a clip or at
   alpha 0 became a readable text box. A word is now written back only when nothing drawn
   after it covers a quarter of its height, its clip is an upright rectangle around it and its
-  colours are opaque (`take_words`); a covered or transparent word stays as PDFium's outlines
-  under its cover, and a clipped word is left out. `tests/cli/pagecopy.rs` holds each case and
-  a word cut by its clip draws no record at all; measured in PowerPoint through paste,
-  *Ungroup*, save and reopen.
+  colours are opaque (`take_words`). Since 26.11.5 a covered or clipped word is left out
+  entirely, and a word at alpha 0 is treated as invisible text. In 26.11.4 a covered word
+  stayed as PDFium's outlines under its cover, which this section accepted as residual; on
+  2026-11-07 the slide was listed shape by shape after *Ungroup*, and the cover was a shape of
+  its own with the word's 13 glyphs beneath it, so moving the cover showed the word. The cost
+  is that a word partly covered or partly clipped loses the letters the page showed: the
+  command answers how many texts it left out, and the window says so
+  (`pagecopynotice.ts`). `tests/cli/pagecopy.rs` holds each hidden word beside the same page
+  without it and requires the two copies to have the same number of records.
 - **Not covered.** Clipped images and paths are drawn as PDFium draws them, and *Ungroup*
-  shows them whole. A covered word's outlines remain under the cover on the slide, as its
-  glyphs remain under it in the PDF. GDI's own parsing of the metafile, in the app process at
+  shows them whole; the same goes for an image or a path under a cover. A word that is only
+  translucent stays as outlines, because the page shows it. GDI's own parsing of the metafile, in the app process at
   `SetEnhMetaFileBits` and in PowerPoint at the paste. Metafile records are GDI's own
   structures written by GDI in the worker; the document chooses their parameters, not their
   layout.
+
+#### T6.50 — A graphic exported on its own, added 2026-11-07
+
+*Copy a graphic* and *Save a graphic...* hand out the pictures and drawings lying wholly
+inside a dragged region, without the page behind them (`graphic.rs`, `graphicexport.ts`).
+
+- **The work is done in the document's worker.** `Request::Graphic` names a page, a crop, a
+  turn, a scale, a rectangle in pixels and a format, nothing the worker could act on. The
+  worker opens a second PDFium document over the mapping it already holds, takes the objects
+  outside the region off that copy's page (never destroying them, as `pagecopy.rs` does not)
+  and draws what is left with `FPDF_RenderPageBitmapWithMatrix` into a bitmap of at most
+  3,500,000 pixels (`MAX_PIXELS`), which it encodes as PNG itself.
+- **An SVG holds numbers and the worker's own PNGs, and no text from the document.** Each path
+  is written from PDFium's segment points, matrix, colours and stroke settings, all numbers
+  formatted by `num`; a picture inside the drawing is PDFium's decoding of it, encoded as PNG
+  in the worker and embedded as base64. No name, string or stream from the file reaches the
+  SVG, so a hostile document cannot put markup or script into it. A region holding text or
+  a gradient is refused as SVG rather than drawn as something else.
+- **A stored JPEG is handed out as the document's bytes.** When the region is one picture with
+  one `DCTDecode` filter and no transparent pixel, *Save a graphic...* offers it as stored, and
+  `FPDFImageObj_GetImageDataRaw` returns the stream undecoded, at most the 16 MiB tile
+  mapping. tpdf does not parse those bytes beyond requiring them to start with a JPEG's
+  `FF D8 FF`: a hostile JPEG reaches whatever program the reader opens the file with, as an
+  attachment does (§T6.43).
+- **`graphic_save` writes one file to a path the webview names**, through `region::write_picture`:
+  the name must end as the format does (`.svg`; `.png`; `.jpg` or `.jpeg`), the bytes must
+  start as that format does, and the file is written beside the name first and renamed over
+  it. The bytes are the worker's, never the webview's. `graphic_copy` puts the PNG on the
+  clipboard from the app process on macOS and Linux; on Windows `graphic_png` hands the PNG to
+  the web view, which writes the clipboard, as *Copy a region as a picture* does there.
+- **Not covered.** An SVG is bounded only by the tile mapping, so a drawing of many paths
+  gives a file of up to 16 MiB. A graphic written over an existing file replaces it after the
+  save panel has asked, as §T6.42 says for a region.
 
 ### T9 — The updater
 
@@ -3658,6 +3696,18 @@ The deb and the AppImage are not in `latest.json` and carry no update signature,
 installed Linux copy never checks: `Updates` is built with `inApp` false there, so neither
 the launch check nor *Check for updates* reaches the network (`update.ts`). A Linux user
 updates by installing the new package, so this section's threats do not arise there.
+
+**Since 26.11.5 a check is bounded, and each one leaves a line in the log.** The plugin sets
+no timeout of its own, so a stalled request kept the state machine busy for the session and
+refused the reader's own check; `pluginUpdater` (`update.ts`) now gives the check 30 seconds
+and the download an hour. The window then reports how the check ended through
+`note_update_check` (`commands/app.rs`), which appends one `[update]` line to `tpdf.log`
+through `diag::note` (residual risk 13). The webview picks one of three outcomes and
+supplies at most two strings, a version and an error, each cut at 300 characters with every
+control character replaced, so a call is one line and cannot forge a second. The command
+reads nothing, returns nothing and reaches no file but the bounded, rotated log, which is why
+it is not in §T6.1's list of commands that write files; `check_writers.py` agrees, as it
+reaches none of `save.rs`'s writers.
 
 **Web links, from 2026-09-07, are a second thing that causes traffic, and they are not a
 second network authority — the distinction is worth stating rather than blurring.** tpdf

@@ -13,11 +13,13 @@
 //! else --- a symbol font with no character map, a run of `U+FFFD` --- stays on
 //! the page and is drawn as PDFium draws it, as outlines: the copy may then
 //! hold a shape where a word would be editable, but never a wrong word.
-//! Invisible text (an OCR layer over a scan) is taken off and not written, so
-//! the picture shows what the page shows. For the same reason a word stays on
-//! the page, as outlines, when anything drawn after it covers it or it is not
-//! opaque: written back it would land above all of that. A word a clip cuts is
-//! left out altogether, because *Ungroup* drops the clip from outlines too.
+//! Invisible text (an OCR layer over a scan, or text at alpha 0) is taken off
+//! and not written, so the picture shows what the page shows. A word that
+//! anything drawn after it covers, or that a clip cuts, is left out
+//! altogether: written back it would land above its cover, and drawn as
+//! outlines in place it is no safer, because *Ungroup* drops the clip and makes
+//! the cover a shape that can be moved off it. A translucent word stays on the
+//! page as outlines. The window is told how many texts were left out.
 //!
 //! The copy is a second PDFium document over the same bytes
 //! (`DocumentGraph::reopen`), because removing an object changes the page for
@@ -297,7 +299,7 @@ mod platform {
         page: u32,
         crop: Option<[f32; 4]>,
         turns: u8,
-    ) -> Result<Vec<u8>, String> {
+    ) -> Result<crate::render::CopiedPage, String> {
         // SAFETY: both are the engine's exported functions of these types
         // (`fpdfview.h`).
         let (render, print_mode) = unsafe {
@@ -314,7 +316,7 @@ mod platform {
         let copy = document.graph().reopen(bindings)?;
         let pages = copy.page_count() as usize;
         let raw = copy.page_cropped(page, crop, &|index| document.graph().sheet(index, pages))?;
-        let words = take_words(bindings, &raw);
+        let (words, left_out) = take_words(bindings, &raw);
         let turns = turns % 4;
         let (mut width, mut height) = (f64::from(raw.width_pt()), f64::from(raw.height_pt()));
         if turns % 2 == 1 {
@@ -372,7 +374,7 @@ mod platform {
             let mut bytes = vec![0u8; length];
             GetEnhMetaFileBits(picture, length as u32, bytes.as_mut_ptr());
             DeleteEnhMetaFile(picture);
-            Ok(bytes)
+            Ok((bytes, left_out))
         }
     }
 
@@ -404,23 +406,33 @@ mod platform {
     /// The words are written after PDFium has drawn everything else, so they
     /// land above it. A word is moved only where that changes nothing the
     /// page shows: nothing drawn after it covers it, no clip cuts it, and it
-    /// is fully opaque. Otherwise it stays on the page and PDFium draws it as
-    /// outlines in its place, as it does a word it cannot read. Writing it
+    /// is fully opaque. A word that is covered or clipped is left out; one
+    /// that is only translucent, or that PDFium cannot read, stays on the
+    /// page and PDFium draws it as outlines in its place. Writing it
     /// on top would put text the page hides --- under a white box, a
     /// redaction mark or outside a clip --- into the picture as readable
     /// words (`docs/TRAPS.md`, *Text written on top of a metafile shows what
     /// the page covered*).
-    fn take_words(bindings: Bindings, page: &RawPage<'_>) -> Vec<Words> {
+    ///
+    /// Also answers how many text objects a clip or a cover hid and were left
+    /// out, so the window can say the copy lacks them. Invisible text, and
+    /// text at alpha 0, is not counted: the page shows none of it, so the copy
+    /// lacks nothing by leaving it out. A text hidden entirely is counted
+    /// too: neither an upright clip rectangle nor the quarter-height cover
+    /// rule tells "all hidden" from "partly", so the copy can lose letters the
+    /// page showed, and the window says so.
+    fn take_words(bindings: Bindings, page: &RawPage<'_>) -> (Vec<Words>, u32) {
         let handle = page.handle();
         let mut found = Vec::new();
         let mut taken = Vec::new();
+        let mut left_out = 0u32;
         // SAFETY: the text page is closed before any object is removed, every
         // object handle is valid while the page is, and every annotation
         // handle is closed in the loop that opened it.
         unsafe {
             let text_page = bindings.FPDFText_LoadPage(handle);
             if text_page.is_null() {
-                return found;
+                return (found, left_out);
             }
             let mut seen = Vec::new();
             for index in 0..bindings.FPDFPage_CountObjects(handle).max(0) {
@@ -434,7 +446,10 @@ mod platform {
                     continue;
                 }
                 let mode = bindings.FPDFTextObj_GetTextRenderMode(object);
-                if mode == RENDER_INVISIBLE || mode == RENDER_CLIP {
+                // Text at alpha 0 draws nothing, as invisible text does; left
+                // to PDFium it became a picture of nothing on the slide.
+                if mode == RENDER_INVISIBLE || mode == RENDER_CLIP || unseen(bindings, object, mode)
+                {
                     taken.push(object);
                     seen.push(Seen::Nothing);
                     continue;
@@ -453,6 +468,7 @@ mod platform {
                 if !shows {
                     taken.push(object);
                     seen.push(Seen::Nothing);
+                    left_out += 1;
                     continue;
                 }
                 let words = bounds.and_then(|_| read(bindings, object, text_page, mode));
@@ -475,6 +491,18 @@ mod platform {
                         found.push(words);
                         taken.push(object);
                     }
+                    // Covered, readable or not: left out, and counted. Drawn
+                    // as outlines in place it looked hidden on the slide, but
+                    // *Ungroup* makes the cover a shape of its own, and moving
+                    // it showed the word (measured 2026-11-07).
+                    Seen::Text {
+                        object,
+                        bounds: Some(at),
+                        ..
+                    } if covers.iter().any(|&cover| hides(at, cover)) => {
+                        taken.push(object);
+                        left_out += 1;
+                    }
                     Seen::Text { bounds, .. } => covers.push(bounds.unwrap_or(EVERYWHERE)),
                     Seen::Cover(at) => covers.push(at),
                     Seen::Nothing => {}
@@ -487,7 +515,7 @@ mod platform {
                 bindings.FPDFPage_RemoveObject(handle, object);
             }
         }
-        found
+        (found, left_out)
     }
 
     /// An object's bounds in page space, when PDFium reports finite ones.
@@ -498,6 +526,25 @@ mod platform {
         }
         let at = [l, b, r, t].map(f64::from);
         (at.iter().all(|v| v.is_finite()) && at[0] <= at[2] && at[1] <= at[3]).then_some(at)
+    }
+
+    /// Whether a text object draws nothing because every colour it is drawn
+    /// with has alpha 0. A colour PDFium cannot report is not taken as unseen.
+    unsafe fn unseen(bindings: Bindings, object: FPDF_PAGEOBJECT, mode: i32) -> bool {
+        let (mut r, mut g, mut b, mut alpha) = (0u32, 0u32, 0u32, 0u32);
+        let stroked = matches!(
+            mode,
+            RENDER_STROKE | RENDER_FILL_STROKE | RENDER_STROKE_CLIP | RENDER_FILL_STROKE_CLIP
+        );
+        let filled = !matches!(mode, RENDER_STROKE | RENDER_STROKE_CLIP);
+        let fill_unseen = !filled
+            || (bindings.FPDFPageObj_GetFillColor(object, &mut r, &mut g, &mut b, &mut alpha) != 0
+                && alpha == 0);
+        let stroke_unseen = !stroked
+            || (bindings.FPDFPageObj_GetStrokeColor(object, &mut r, &mut g, &mut b, &mut alpha)
+                != 0
+                && alpha == 0);
+        fill_unseen && stroke_unseen
     }
 
     /// The paths of an object's clip, each as its points; `None` when PDFium

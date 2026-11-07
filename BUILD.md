@@ -1862,6 +1862,18 @@ starts at 0 and increments within the month.
    `release.yml`: a plain local build omits `tpdf_shell.dll`. The 26.10.26
    installation check caught that omission while its other 24 checks passed.
 
+   **Copy page for PowerPoint, on Windows, with the installed build** (from 26.11.5): open
+   the `hidden.pdf` that `cargo test --test cli` leaves in `%TEMP%\tpdf-cli-it-<pid>-pagecopy\`,
+   run *Copy page for PowerPoint* with page 1 in view, and then
+
+   ```
+   python scripts/powerpoint_check.py --text "Visible note" --text "Inside page clip" --text "Struck words" --shapes 7
+   ```
+
+   It pastes into PowerPoint, ungroups, saves, reopens, and counts the shapes, because the
+   exported picture alone missed a covered word left as outlines (36 shapes in 26.11.4). The
+   notice after copying must also say that 4 pieces of text are left out.
+
    **The command-line tool, from the bundle and not from `target/`** (from 26.9.21): run
    `tpdf.app/Contents/MacOS/tpdf-cli --version` and `... verify testdata/incr-signed.pdf`, and on
    macOS `codesign -dv --verbose=4` on it (Developer ID, `runtime`), with the development engine
@@ -2560,6 +2572,14 @@ starts at 0 and increments within the month.
     same** (26.11.4, 2026-11-06): its first run, about ten minutes after publishing, failed
     only *the menu offers Install update* (disabled), while a `curl` of `latest.json` on that
     Mac already read 26.11.4, and the second run passed 12/12.
+
+    **From the release after 26.11.5, a missing offer prints its cause.** 26.11.5 writes one
+    `[update]` line per check to `tpdf.log` (`note_update_check`), and both scripts print
+    the old copy's lines when the offer check fails: `current` means that copy was served
+    the previous `latest.json`, `failed:` gives the error, and about 30000 ms is a request
+    that stalled into the 30-second bound that 26.11.5 also added. Releases up to 26.11.4
+    write no line, so the check that installs 26.11.4 as the old copy still says only
+    that there is none. Keep that line in the release record when it appears.
 
     **First run, 2026-10-10, Windows 11, from 26.10.13 to the published 26.10.14:** 16 of 17
     checks passed and the control failed its seven. The one failure is a defect in every

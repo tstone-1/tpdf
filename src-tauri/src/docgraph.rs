@@ -182,10 +182,9 @@ impl DocumentGraph {
     }
 
     /// A second PDFium document over the same bytes and password, sharing no
-    /// page with the first: what `pagecopy` changes and then drops, so a page
-    /// the viewer holds cached is never touched (`docs/TRAPS.md`, *Two handles
-    /// to one cached page are aliases*).
-    #[cfg(windows)]
+    /// page with the first: what `pagecopy` and `graphic` change and then
+    /// drop, so a page the viewer holds cached is never touched (`docs/TRAPS.md`,
+    /// *Two handles to one cached page are aliases*).
     pub(crate) fn reopen(
         &self,
         bindings: crate::progressive::Bindings,

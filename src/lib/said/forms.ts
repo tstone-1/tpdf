@@ -289,12 +289,14 @@ export default {
   "the picture was not read: {e}": "Das Bild wurde nicht gelesen: {e}",
   "The picture was not saved: {why}": "Das Bild wurde nicht gespeichert: {why}",
   "The region was not copied: {why}": "Der Bereich wurde nicht kopiert: {why}",
-  "The region was not copied: the clipboard refused it.":
-    "Der Bereich wurde nicht kopiert: Die Zwischenablage hat ihn abgelehnt.",
   "the picture could not be read": "Das Bild konnte nicht gelesen werden",
-  "The region was not copied: the main thread did not answer.":
-    "Der Bereich wurde nicht kopiert: Der Haupt-Thread hat nicht geantwortet.",
+  "the main thread did not answer.": "Der Haupt-Thread hat nicht geantwortet.",
   "The region is copied by the web view on this platform.": "Auf diesem System kopiert die Webansicht den Bereich.",
+  "The graphic was not saved: {why}": "Die Grafik wurde nicht gespeichert: {why}",
+  "The graphic was not saved: no format was chosen.":
+    "Die Grafik wurde nicht gespeichert: Es wurde kein Format gewählt.",
+  "The graphic was not copied: {why}": "Die Grafik wurde nicht kopiert: {why}",
+  "The graphic is copied by the web view on this platform.": "Auf diesem System kopiert die Webansicht die Grafik.",
   "The attachment was not saved: {e}": "Der Anhang wurde nicht gespeichert: {e}",
   "its render was abandoned.": "Seine Darstellung wurde abgebrochen.",
 
@@ -302,7 +304,7 @@ export default {
   "The page was not copied: {why}": "Die Seite wurde nicht kopiert: {why}",
   "Windows could not read the picture.": "Windows konnte das Bild nicht lesen.",
   "another program is holding the clipboard.": "Ein anderes Programm hält die Zwischenablage.",
-  "the clipboard refused it.": "Die Zwischenablage hat sie abgelehnt.",
+  "the clipboard refused it.": "Die Zwischenablage hat das abgelehnt.",
   "A page is copied for PowerPoint on Windows only.": "Eine Seite wird nur unter Windows für PowerPoint kopiert.",
   "a page is copied for PowerPoint on Windows only": "Eine Seite wird nur unter Windows für PowerPoint kopiert",
   "the PDF engine is not loaded in this process": "Die PDF-Engine ist in diesem Prozess nicht geladen",
@@ -366,8 +368,27 @@ export default {
   "the pixels came twice": "Die Pixel kamen zweimal",
   "the pixel count does not match the size": "Die Zahl der Pixel passt nicht zur Größe",
 
+  // graphic.rs: Copy a graphic, Save a graphic
+  "no picture or drawing lies wholly inside the region; drag around all of it":
+    "Kein Bild und keine Zeichnung liegt ganz im Bereich; zieh ganz darum herum",
+  "it holds text, which the SVG cannot draw yet; save it as PNG":
+    "Sie enthält Text, den das SVG noch nicht zeichnen kann; speichere sie als PNG",
+  "it holds a gradient, which the SVG cannot draw yet; save it as PNG":
+    "Sie enthält einen Farbverlauf, den das SVG noch nicht zeichnen kann; speichere sie als PNG",
+  "the region holds more than one picture, or a drawing":
+    "Der Bereich enthält mehr als ein Bild oder eine Zeichnung",
+  "the picture has no size": "Das Bild hat keine Größe",
+  "the picture came back in a form tpdf does not read": "Das Bild kam in einer Form zurück, die tpdf nicht liest",
+  "the picture's data could not be read": "Die Daten des Bildes konnten nicht gelesen werden",
+  "a {width} x {height} picture could not be made": "Ein Bild von {width} × {height} konnte nicht erstellt werden",
+
   // region.rs
-  "The picture was not saved: {path} does not end in .png.": "Das Bild wurde nicht gespeichert: {path} endet nicht auf .png.",
+  "The picture was not saved: {path} does not end in .{ending}.":
+    "Das Bild wurde nicht gespeichert: {path} endet nicht auf .{ending}.",
+  "The picture was not saved: the stored picture is not a JPEG.":
+    "Das Bild wurde nicht gespeichert: Das gespeicherte Bild ist kein JPEG.",
+  "The picture was not saved: the drawing did not come back as an SVG.":
+    "Das Bild wurde nicht gespeichert: Die Zeichnung kam nicht als SVG zurück.",
   "The picture was not saved: the render did not come back as a PNG.":
     "Das Bild wurde nicht gespeichert: Die Darstellung kam nicht als PNG zurück.",
   "The picture was not saved: {path} names no file.": "Das Bild wurde nicht gespeichert: {path} nennt keine Datei.",
@@ -376,6 +397,12 @@ export default {
 
 /** The entries above that say "du", addressing the reader with "Sie" instead. */
 export const sie = {
+  "no picture or drawing lies wholly inside the region; drag around all of it":
+    "Kein Bild und keine Zeichnung liegt ganz im Bereich; ziehen Sie ganz darum herum",
+  "it holds text, which the SVG cannot draw yet; save it as PNG":
+    "Sie enthält Text, den das SVG noch nicht zeichnen kann; speichern Sie sie als PNG",
+  "it holds a gradient, which the SVG cannot draw yet; save it as PNG":
+    "Sie enthält einen Farbverlauf, den das SVG noch nicht zeichnen kann; speichern Sie sie als PNG",
   "Choose one available radio button":
     "Wählen Sie ein vorhandenes Optionsfeld",
   "Choose available options without duplicates":

@@ -369,6 +369,8 @@ export async function appCommandChecks(
     copyRegion: () => { fired.push("copyRegion"); },
     copyPageForPowerPoint: () => { fired.push("copyPageForPowerPoint"); },
     saveRegion: () => { fired.push("saveRegion"); },
+    copyGraphic: () => { fired.push("copyGraphic"); },
+    saveGraphic: () => { fired.push("saveGraphic"); },
     fillForm: () => {},
     viewer: () => viewer,
     pageCount: () => doc.page_count,
@@ -1412,6 +1414,7 @@ export async function appCommandChecks(
     { id: "edit.addPicture", ...shell("picture"), read: () => fired.join(",") },
     { id: "edit.pastePicture", ...shell("pastePicture"), read: () => fired.join(",") },
     { id: "edit.copyRegionAsPicture", ...shell("copyRegion"), read: () => fired.join(",") },
+    { id: "edit.copyGraphic", ...shell("copyGraphic"), read: () => fired.join(",") },
     {
       // A recorder, so nothing reaches the clipboard. Windows only, where the
       // command is enabled; the metafile itself is `tests/cli/pagecopy.rs`.
@@ -1421,6 +1424,7 @@ export async function appCommandChecks(
       unless: () => (isMac() || isLinux() ? "a page is copied for PowerPoint on Windows only" : null),
     },
     { id: "file.saveRegionAsPicture", ...shell("saveRegion"), read: () => fired.join(",") },
+    { id: "file.saveGraphic", ...shell("saveGraphic"), read: () => fired.join(",") },
     {
       // The third drag tool, aimed separately for the reason the two above it
       // are: three commands now arm the same primitive with three different
