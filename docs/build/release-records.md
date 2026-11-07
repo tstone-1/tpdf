@@ -2,6 +2,45 @@
 
 What was run for each release, what passed, and what was not run. The record of a new release goes at the top. Moved here verbatim from `BUILD.md` on 2026-10-23, which indexes this file.
 
+**26.11.5 verification and publication, 2026-11-07:** prepared on the Windows development machine.
+Step 1 moved seven crates in both lockfiles (`inout`, `serde_spanned`, `smallvec`, `toml`,
+`toml_datetime`, `toml_edit`, `uuid`). The gates first passed 33 of 34: `views` found the click
+selection read `viewer` after an `await` and kept two untracked top-level `let`s. The viewer now
+holds the selected graphic itself, `pickGraphic` checks `stillIn`, and `graphicClicks` is listed
+in `PER_WINDOW`; then all 34 passed, and `check_linux.py` passed. `window_checks.py` 17 of 17 on
+Windows 11 on the release checks build, and 17 of 17 on the second Mac, on the tree before that
+fix, which changed the frontend only. Step 7 in the mutation worktree: `mutate_python.py` 38/38,
+`mutate_frontend.py --near v26.11.4` 41/41, `mutate_rust.py --near v26.11.4` 6/6. The click's
+hit test in `graphic.rs` has no table row; three mutations of it were run by hand and each
+turned `graphic` red. `viewer_check.py` 387 of 387 on `text-heavy.pdf` and 286 of 286 on
+`vector-heavy.pdf`. The local installer carried `tpdf_shell.dll`, `tpdf-cli.exe` and
+`pdfium\pdfium.dll`; with the development engine hidden its `tpdf-cli` answered 26.11.5 and
+verified `incr-signed.pdf`, and with the bundled engine also removed it refused. The PowerPoint
+check ran on the `target\release` binary, not on an installed build: `powerpoint_check.py` read
+7 shapes and the three visible texts before and after saving and reopening. CI passed all three
+jobs on `e703cb71` (run 42389555724) and `Audit` passed (run 42389555709). No rehearsal:
+`release.yml` changed only in its notes. Release run 42418200290 skipped its gates on CI's pass
+and made a draft of 8 files. On the draft's files: the installer read as `Valid`, timestamped by
+Certum, and passed `installed_check.py` 26/26 on the Windows build machine; the `.dmg`'s app was
+accepted as Notarized Developer ID and stapled, and its `tpdf-cli` (Developer ID, `runtime`)
+answered 26.11.5 and verified the signed fixture. `SECURITY.md` gained the graphic export in
+*In scope*, with the stored JPEG disclosed. `publish_release.py v26.11.5 --publish` published
+it; without authentication `releases/latest` is v26.11.5 with 8 assets, the `.dmg`,
+`-setup.exe`, `.deb`, AppImage, updater bundle and `latest.json` answer 200, and `latest.json`
+offers 26.11.5. An installed 26.11.4 updated itself: `update_check_mac.py` on the Mac mini over
+ssh 12/12 on its first run, and `update_check.py` 18/18 on the build machine on its second. Its
+first run, minutes after publishing, failed only *the window offers 'Update to 26.11.5'* (26
+buttons read) and printed *no log*, as 26.11.4 writes no `[update]` line; the `--control
+no-press` run straight after it found the offer. That is the third time this first-run miss has
+appeared (26.11.1, 26.11.4 on the Mac, now this), and the release after 26.11.5 is the first
+whose old copy prints the cause. Each `--control no-press` failed its seven checks and nothing
+else. The cask went to 26.11.5 with the published `.dmg`'s SHA-256; `brew audit --cask --online`
+was clean and `brew livecheck` reads 26.11.5. The winget pull request (445804) moved from
+26.11.4 to 26.11.5 on manifest version 1.28.0, still the newest; `winget validate` passed and the
+installer's SHA-256 equals the published `-setup.exe`'s. **Not run:** `print-probe` and
+`redact-reach-probe` (no printing or redaction code changed), `menu_check.py` and
+`save_check.py` on the `.dmg`, `clean_windows_check.py`, and step 7's pass after the release.
+
 **26.11.4 verification and publication, 2026-11-06:** prepared on the Windows development machine, the first
 release on PDFium `8127-tpdf.1` (its own record is in `pdfium-records.md`). Step 1 took Vite
 8.3.6 and six crates, `zip` 9.4.1 among them, in both lockfiles; `lopdf` 0.47 stays held.

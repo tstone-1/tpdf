@@ -54,6 +54,12 @@ you do not need to have diagnosed it.
   document chooses the drawing's parameters, not the record format, which is GDI's own. A
   document that steers that step into a defect in the app process, or into PowerPoint
   through the paste, is in scope (`docs/THREAT-MODEL.md`, T6.49).
+- *Copy a graphic* and *Save a graphic...*: the worker writes the SVG from numbers and its own
+  PNGs, so document text, markup or script reaching an exported SVG is in scope, as is a
+  click that makes the worker take an object other than the one it named. One case is
+  disclosed rather than a finding: a stored JPEG is saved as the document's own bytes, checked
+  only for a JPEG's first three bytes, so a hostile JPEG reaches the program that opens the
+  file (`docs/THREAT-MODEL.md`, T6.50).
 - Recovering content from a document tpdf reported as successfully redacted.
 - A redaction reported as **clean** that is not. A result of *not verified* is a correct
   answer, by design, and is not a vulnerability. One case is disclosed rather than a
