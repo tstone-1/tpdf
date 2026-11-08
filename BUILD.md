@@ -1085,6 +1085,11 @@ starts at 0 and increments within the month.
    after the tag reaches the release only through a `PATCH` of the draft, which is the
    path step 11 warns about: on 26.10.20 the paragraph was missing until step 11's reading
    found it, and the draft was corrected by a `PATCH` that had to carry `tag_name`.
+   **Then re-read the `README.md` entry of every command this release's changelog entries
+   change, against the code.** The `wiring` gate proves each command has an entry, not that
+   the entry still describes it. 26.11.5 left two wrong: Copy page for PowerPoint still said
+   a covered word stays a drawing under its cover, and Copy a graphic promised 600 dpi that
+   `MAX_PIXELS` lowers above about 63 cm². Both came out of a third-party audit, not this list.
 5. <a id="release-step-5"></a>`scripts/gates.py` — all gates pass.
 
    **Once, on the final tree.** If only version files, lockfiles and prose change after that

@@ -36,8 +36,8 @@ have the binary.)
 
 - **Copy a graphic and Save a graphic... take a logo or figure out of a page on its own.**
   Drag around it, and the pictures and drawings lying wholly inside the drag are exported
-  without the page behind them. *Copy a graphic* puts them on the clipboard at 600 dpi on a
-  transparent background, ready to paste into a picture editor. *Save a graphic...* saves
+  without the page behind them. *Copy a graphic* puts them on the clipboard on a transparent
+  background, at 600 dpi up to about 63 cm² and at 3.5 million pixels above that, ready to paste into a picture editor. *Save a graphic...* saves
   them as SVG, which stays sharp at any size, as PNG, or, for a single JPEG photo, as the
   JPEG the document stores. A drawing that holds text or a gradient is saved as PNG only.
   Both commands are in the palette, the File and Edit menus, and the page's context menu.
