@@ -2,6 +2,54 @@
 
 What was run for each release, what passed, and what was not run. The record of a new release goes at the top. Moved here verbatim from `BUILD.md` on 2026-10-23, which indexes this file.
 
+**26.11.6 verification and publication, 2026-11-10:** prepared on the Windows development machine,
+after a full read of the code whose fixes are the release. Step 1 took Vite 8.3.7 and the
+crates `cargo update` moves in both lockfiles, a second `dom_query` (0.29 beside 0.28) and its
+HTML parser crates among them; the notices file was regenerated with no forbidden licence, and
+`check_pdfium_age.py` found the pin at the head of 8127. The held-back crates are the ones
+step 1 lists, and `signature` 2.2 with them, of the same generation as `rsa` 0.9. All 35 gates
+passed on the release tree; on the tree before the version bump `check_linux.py` passed and the
+`clippy` gate passed on the second Mac. `window_checks.py` 17 of 17 on Windows 11 on a
+`--no-bundle` checks build of the release tree, and 17 of 17 on the second Mac on the commit
+before the bump. On that Mac the open check first hung on every tree, three older commits
+included: a browser window covered the screen (`docs/TRAPS.md` has the entry), and
+`run_on_mac.py` now hides the other apps for the run. `viewer_check.py` 286 of 286 on
+`vector-heavy.pdf`; it failed to start from a relative path to the binary and now takes one.
+Step 7 on the working tree: `mutate_python.py` 38/38, `mutate_frontend.py --near` the commit
+before the fixes 142/142, `mutate_rust.py --near` the same commit 273/273 with 9 skipped as
+Linux only. The first Rust run stopped at its control on
+`a_target_held_open_briefly_is_still_replaced`, a timing test that had failed four times that
+day under load; it now holds the file until the commit has answered. The local installer
+carried `tpdf_shell.dll`, `tpdf-cli.exe` and `pdfium\pdfium.dll`; unpacked outside the tree its
+`tpdf-cli` answered 26.11.6 and verified `incr-signed.pdf`, and with the bundled engine removed
+it exited 3. `print-probe` passed 15 of 15. `redact-reach-probe` over 196 documents: 16,970
+regions, 15,772 taken whole (92.9%); the gate read back 15,557 on 437 pages, 6,385 shown
+unreadable (41.04%), and 1 still read as text with every span inside the region's columns, the
+region 26.11.4's record names. CI passed all three jobs on `4a92faf8` (run 42853314098) and
+`Audit` passed (run 42853314100). No rehearsal: `release.yml` changed only in its notes. Release
+run 42862396888 skipped its gates on CI's pass and made a draft of 8 files. On the draft's
+files: the installer read as `Valid`, timestamped by Certum, and passed `installed_check.py`
+26/26 on the Windows build machine; the `.dmg` was stapled, its app accepted as Notarized
+Developer ID, and its `tpdf-cli` (Developer ID, `runtime`) answered 26.11.6 and verified the
+signed fixture. `SECURITY.md` needed no change: the release reads no new format.
+`publish_release.py v26.11.6 --publish` published it; without authentication `releases/latest`
+is v26.11.6 with 8 assets, the `.dmg`, `-setup.exe`, `.deb`, AppImage, updater bundle and
+`latest.json` answer 200, and `latest.json` offers 26.11.6. An installed 26.11.5 updated itself:
+`update_check.py` 18/18 on the build machine on its first run, and `update_check_mac.py` 12/12
+on the second Mac on its second. Its first run there, a minute after publishing, failed only
+*the menu offers Install update*, and 26.11.5 printed the cause this time: `[update] launch
+check after 276 ms: current`, 57 seconds after publication. The updater's address was still
+answered with the previous `latest.json`, so this first-run miss is the published file's delay
+and not the application's. The cask went to 26.11.6 with the published `.dmg`'s SHA-256; `brew
+audit --cask --online` was clean and `brew livecheck` reads 26.11.6. The winget pull request
+(445804) moved from 26.11.5 to 26.11.6 on manifest version 1.28.0, still the newest; `winget
+validate` passed and the installer's SHA-256 equals the published `-setup.exe`'s. **Not run:**
+`powerpoint_check.py` (no page-copy code changed), `menu_check.py` and `save_check.py` on the
+`.dmg`, `clean_windows_check.py`, `run_on_windows.py`, and the mutations of the Explorer
+preview's three rows, which the Rust table does not carry. **Not seen in a window:** the hold
+on edits while a Windows update downloads, which `update_check.py` passes through without
+editing, a print driver's own Save dialog, and the Explorer preview pane.
+
 **26.11.5 verification and publication, 2026-11-07:** prepared on the Windows development machine.
 Step 1 moved seven crates in both lockfiles (`inout`, `serde_spanned`, `smallvec`, `toml`,
 `toml_datetime`, `toml_edit`, `uuid`). The gates first passed 33 of 34: `views` found the click

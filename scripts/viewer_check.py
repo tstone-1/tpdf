@@ -243,6 +243,10 @@ def main() -> int:
     parser.add_argument("--signed", metavar="PDF",
                         help="a document whose signer this computer does not trust")
     args = parser.parse_args()
+    # As `window_checks.py` hands it over. A relative path with forward slashes,
+    # which is how a shell on Windows completes it, is refused by CreateProcess
+    # with "The system cannot find the file specified" before anything starts.
+    args.binary = os.path.abspath(args.binary)
 
     if not require_visible_session():
         return 1
