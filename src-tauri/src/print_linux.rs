@@ -231,13 +231,14 @@ fn submit(
     // SAFETY: `printer` and `settings` are live for the call.
     unsafe { hand_over_pages(printer, settings) }?;
     let title = CString::new(title.replace('\0', "")).unwrap_or_default();
+    // Before the job is made, so that a refusal here has no job to release.
+    let file = CString::new(path.as_os_str().as_encoded_bytes())
+        .map_err(|_| "the print job's path has a NUL in it".to_string())?;
     // SAFETY: every argument is live; the job takes its own references.
     let job = unsafe { gtk_print_job_new(title.as_ptr(), printer, settings, setup) };
     if job.is_null() {
         return Err(said!("GTK would not make a print job"));
     }
-    let file = CString::new(path.as_os_str().as_encoded_bytes())
-        .map_err(|_| "the print job's path has a NUL in it".to_string())?;
     let mut error: *mut GError = std::ptr::null_mut();
     // SAFETY: `job` is live and `error` is a valid out-pointer.
     if unsafe { gtk_print_job_set_source_file(job, file.as_ptr(), &mut error) } == 0 {

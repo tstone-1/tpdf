@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { SLOP, TabDrag, dropSide, type DropLayout } from "./tabdrag";
+import { SLOP, TabDrag, dropSide, followPress, type DropLayout } from "./tabdrag";
 
 const area = { left: 200, top: 80, width: 1000, height: 600 };
 const one: DropLayout = { area, split: false, share: 0.5, from: "left", tabs: 3 };
@@ -82,5 +82,71 @@ describe("a tab pressed", () => {
     drag.press(5, 320, 20);
     expect(drag.carried).toBeNull();
     expect(drag.move(321, 20, one)).toBeNull();
+  });
+});
+
+describe("following a pressed tab on the window", () => {
+  /** An event target that counts its listeners. */
+  function counted() {
+    const target = new EventTarget();
+    let listening = 0;
+    const add = target.addEventListener.bind(target), remove = target.removeEventListener.bind(target);
+    target.addEventListener = (...args: Parameters<EventTarget["addEventListener"]>) => { listening++; add(...args); };
+    target.removeEventListener = (...args: Parameters<EventTarget["removeEventListener"]>) => {
+      listening--;
+      remove(...args);
+    };
+    return { target, listening: () => listening };
+  }
+  const pointer = (type: string, x = 0, y = 0) => Object.assign(new Event(type), { clientX: x, clientY: y });
+  const key = (name: string) => Object.assign(new Event("keydown", { cancelable: true }), { key: name });
+
+  function follow(carrying = false) {
+    const win = counted();
+    const said: string[] = [];
+    followPress(win.target, {
+      move: (x, y) => said.push(`move ${x},${y}`),
+      end: (drop) => said.push(drop ? "drop" : "cancel"),
+      carrying: () => carrying,
+    });
+    return { ...win, said };
+  }
+
+  it("reports moves and the release, then stops listening", () => {
+    // Mutation: drop the removal in `end` -> red (a second press would hear
+    // this one's release too).
+    const { target, said, listening } = follow();
+    expect(listening()).toBe(5);
+    target.dispatchEvent(pointer("pointermove", 10, 20));
+    target.dispatchEvent(pointer("pointerup"));
+    target.dispatchEvent(pointer("pointerup"));
+    target.dispatchEvent(pointer("pointermove", 30, 40));
+    expect(said).toEqual(["move 10,20", "drop"]);
+    expect(listening()).toBe(0);
+  });
+
+  it("ends without a drop on a cancel and on a lost focus", () => {
+    // Mutation: `end(true)` for either -> red.
+    for (const type of ["pointercancel", "blur"]) {
+      const { target, said } = follow();
+      target.dispatchEvent(pointer(type));
+      expect(said).toEqual(["cancel"]);
+    }
+  });
+
+  it("takes Escape only while a tab is carried, and stops it there", () => {
+    // Mutation: drop the `carrying()` test, or the `preventDefault` -> red.
+    const before = follow(false);
+    const early = key("Escape");
+    before.target.dispatchEvent(early);
+    expect(before.said).toEqual([]);
+    expect(early.defaultPrevented).toBe(false);
+
+    const during = follow(true);
+    const escape = key("Escape");
+    during.target.dispatchEvent(key("Enter"));
+    during.target.dispatchEvent(escape);
+    expect(during.said).toEqual(["cancel"]);
+    expect(escape.defaultPrevented).toBe(true);
   });
 });

@@ -10,7 +10,8 @@ ROWS: list[Mutation] = []
 
 # --- long-term validation data when signing (increment C2) ------------------
 #
-# `longterm.rs`, `sign_dss.rs`, `commands/sign.rs` and `cli/sign.rs`,
+# `longterm.rs`, `sign_dss.rs`, `commands/sign.rs`, `sign_finish.rs` and
+# `cli/sign.rs`,
 # 2026-09-28. Each removes one check the gathering, the `/DSS` revision or the
 # refusal policy rests on, and names the test built so only that check fails
 # it: the fake PKI in `integrity/test_tsa.rs` serves one fault at a time.
@@ -212,7 +213,7 @@ ROWS += [
     ),
     Mutation(
         "sign: write the held signature without the data it waited for",
-        "src/commands/sign.rs",
+        "src/sign_finish.rs",
         "        (false, _) => bytes,",
         "        (false | true, _) => bytes,",
         "long_term_data_that_came_is_written_and_read_back_good",
@@ -291,16 +292,16 @@ ROWS += [
     ),
     Mutation(
         "timestamp: seal one from an authority nobody vouches for",
-        "src/commands/sign.rs",
-        "if let (Some(cms), false) = (&stamped, long_term || asking.any_authority) {",
+        "src/sign_finish.rs",
+        "if let (Some(cms), false) = (&stamped, asking.any_authority) {",
         "if let (Some(cms), false) = (&stamped, true) {",
         "a_timestamp_from_an_authority_nobody_vouches_for_is_not_sealed",
     ),
     Mutation(
         "timestamp: refuse one the command line said to keep",
-        "src/commands/sign.rs",
-        "if let (Some(cms), false) = (&stamped, long_term || asking.any_authority) {",
-        "if let (Some(cms), false) = (&stamped, long_term) {",
+        "src/sign_finish.rs",
+        "if let (Some(cms), false) = (&stamped, asking.any_authority) {",
+        "if let (Some(cms), false) = (&stamped, false) {",
         "a_timestamp_from_an_authority_nobody_vouches_for_is_not_sealed",
     ),
     Mutation(
@@ -714,7 +715,7 @@ ROWS += [
         # The rule is the window's too since the two share one tail, and lives
         # beside it.
         "sign: read back only the signer's revocation after long-term signing",
-        "src/commands/sign.rs",
+        "src/sign_finish.rs",
         "        if let Err(why) = crate::longterm::check(Some(ours)) {",
         "        if let Err(why) = crate::longterm::check(Some(ours)).or_else(|why| {\n"
         "            let signer_good = ours\n"
@@ -727,7 +728,7 @@ ROWS += [
     ),
     Mutation(
         "sign: take a timestamp that did not read back as written",
-        "src/commands/sign.rs",
+        "src/sign_finish.rs",
         "    if timestamp && !stamped {",
         "    if false {",
         "a_copy_that_does_not_read_back_as_written_is_refused_in_the_window_too",
@@ -744,7 +745,7 @@ ROWS += [
     Mutation(
         # The order both paths share: written before the long-term data came.
         "sign: write the signed copy before its long-term data is checked",
-        "src/commands/sign.rs",
+        "src/sign_finish.rs",
         "    let timestamped = cms.is_some();",
         "    let timestamped = cms.is_some();\n    let _ = write(&bytes);",
         "the_window_and_the_command_line_take_the_same_steps_in_the_same_order",
@@ -926,7 +927,7 @@ ROWS += [
     ),
     Mutation(
         "sign: gather in the window without asking whether the authority is trusted",
-        "src/commands/sign.rs",
+        "src/sign_finish.rs",
         "                asking.vouch,",
         "                &|_: &[u8], _: u64| crate::longterm::Vouched {\n"
         "                    trust: crate::trust::Trust {\n"

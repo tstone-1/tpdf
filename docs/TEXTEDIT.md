@@ -48,6 +48,10 @@ it, and a move that would land on text staying where it is gets refused:
 - **Along the line.** A replacement that grows past the room before the next run pushes the
   rest of the line along (`textedit/push_tests.rs`), and stops at the next column
   (`BUILD.md`, *Columns on tagged pages, the gutter, and the space before a pushed word*).
+  The push stops at an annotation as it does at a drawing, since an annotation is not in the
+  content and would stay where it is: a highlight, a note, a link with an appearance. A link
+  with no appearance and no QuadPoints over a pushed run moves with it. A page whose
+  annotation list cannot be read refuses any push (`textedit/push_tests.rs`).
   The line ends at the page's edge, at a clip, or at the bounds its table states, whichever
   is nearest, and only the page's edge and a column are where it may wrap. A clip that ends
   the line within half a point of the page's edge is the page's edge (`layout::PAGE_CLIP`):
@@ -847,6 +851,10 @@ text on this line: the table states its bounds, and the text would leave them.* 
 along the line, and *The table states its bounds, and this text would leave them.* for a
 further line, another size, or a line a wrap would move.
 
+A change without a layout to a run that an earlier edit on the same line pushes is refused
+with *cannot be moved*: written without a layout, it would stay at its old place under the
+pushed text.
+
 Nothing grows a row: a wrapped line needs room inside the bounds below it, and a table whose
 last row sits on the bottom of its bounds has none. `tagging/table_tests.rs` holds the
 synthetic fixtures (`textedit_bounded_*`); `python3 scripts/mutate_rust.py --only 'bounded
@@ -1159,8 +1167,11 @@ non-blank text on its line, editable or read-only, stays read-only
 
 The writer lays the replacement out as it would any other, then again with its
 start moved back by half the change in width (`layout::prepare`, the `back`
-argument of `lay_out`). Both widths are measured the same way, without the
-trailing space neither draws, so an unchanged text does not move. The moved
+argument of `lay_out`). Both widths are measured as drawn (`layout::as_drawn`):
+the line's own advance, kerns and tracking included, less the trailing space
+neither draws, or its ink where that reaches further. The source is measured
+from its own advance, not laid out afresh, so a kerned or tracked line set
+again unchanged does not move. The moved
 line is held to the page, the clip and the other text like any other line.
 Refused: an edit with no layout, which would be written at the run's origin; a
 wrapped or multi-line replacement; a replacement with no room to stay centred.

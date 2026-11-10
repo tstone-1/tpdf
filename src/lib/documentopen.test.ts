@@ -70,6 +70,27 @@ describe("the other views of a document that was saved", () => {
     repoint(twins, "new", 2);
     expect(twins).toEqual([{ ...twin(), doc: "new", edits: 2 }, { ...twin(), doc: "new", edits: 2 }]);
   });
+
+  it("move a comparison about the document to its new view, out of date", () => {
+    // The rule is `ComparisonState.reopened` (`comparison.test.ts`); this is
+    // the call in the open, read as text. Mutation: drop it -> red.
+    expect(missingFrom(functionIn(app, "async function openDocument("), [
+      "if (replacing && comparisons.reopened(reopenedViews(replacing.view, view, twins))) refreshComparison();",
+    ])).toEqual([]);
+  });
+});
+
+describe("the tabs from last time a launch could not open", () => {
+  it("are kept and said before the recorder is released", () => {
+    // The rules are `unopenedAtLaunch` and `TabRecorder.keepUnopened`
+    // (`tabrestore.test.ts`); these are their calls in the launch.
+    expect(missingFrom(app, [
+      "const unopened = unopenedAtLaunch(plan, refused, isOpenTab);",
+      "tabRecorder.keepUnopened(unopened, plan.order);",
+      ".then(async (refused) => { await restoreSides(plan.sides); unopenedTabs(refused); })",
+      ".finally(() => { tabRecorder.release(); refreshTabs(); refreshMenu(); });",
+    ])).toEqual([]);
+  });
 });
 
 describe("a search confined to a selection, when the file is opened again", () => {

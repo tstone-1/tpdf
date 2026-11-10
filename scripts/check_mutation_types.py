@@ -153,6 +153,7 @@ GROUP_OF = {".rs": "rust", ".ts": "js", ".svelte": "js"}
 #: has nothing to check at all.
 UNVERIFIABLE = {
     ".md": "prose: nothing type-checks it",
+    ".html": "a landing page: read as text by a vitest suite, never compiled",
     ".yml": "a workflow: its checker is check_workflow_parity.py, not a compiler",
     ".toml": "configuration: parsed by cargo, not type-checked",
     ".json": "configuration: parsed at run time",

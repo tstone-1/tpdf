@@ -121,6 +121,67 @@ pub fn stepped(page: u32, step: Step) -> Option<u32> {
     }
 }
 
+/// How long the preview pane waits after a key or a turn of the wheel before
+/// it asks for the page, in milliseconds. A run of steps inside it is one
+/// render of the page they add up to, so holding Page Down starts one
+/// `tpdf-cli` when it is let go rather than one per repeat.
+pub const STEP_SETTLE_MS: u32 = 150;
+
+/// One render in flight per preview pane, and the newest request behind it.
+///
+/// **Each render is a `tpdf-cli` and a worker**, each holding the whole
+/// document under a 1 GiB job for up to [`PREVIEW_TIME`]; a result that came
+/// back after the reader moved on is dropped, but the process that made it
+/// ran to the end regardless. So a request made while one is out waits here
+/// instead of starting another, and a newer request replaces a waiting one:
+/// the page the reader stopped on is rendered next, and the ones they passed
+/// on the way are never started. Generic, so the order can be tested without
+/// a window or a process.
+#[derive(Debug)]
+pub struct Renders<R> {
+    in_flight: bool,
+    waiting: Option<R>,
+}
+
+impl<R> Default for Renders<R> {
+    fn default() -> Self {
+        Self {
+            in_flight: false,
+            waiting: None,
+        }
+    }
+}
+
+impl<R> Renders<R> {
+    /// A request. Returned when it should start now; kept, in place of any
+    /// request already waiting, when a render is out.
+    pub fn ask(&mut self, request: R) -> Option<R> {
+        if self.in_flight {
+            self.waiting = Some(request);
+            None
+        } else {
+            self.in_flight = true;
+            Some(request)
+        }
+    }
+
+    /// The render out has ended. Returns the request to start in its place,
+    /// if one is waiting.
+    pub fn finished(&mut self) -> Option<R> {
+        let next = self.waiting.take();
+        self.in_flight = next.is_some();
+        next
+    }
+
+    /// Forgets everything, for a pane whose window is gone: a render still
+    /// out reports to that window, so its end would never arrive here, and a
+    /// pane that waited for it would never render again.
+    pub fn reset(&mut self) {
+        self.in_flight = false;
+        self.waiting = None;
+    }
+}
+
 /// What `tpdf-cli`'s exit code says, by the contract in its `cli.rs`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Ended {
@@ -229,6 +290,36 @@ mod tests {
         assert_eq!(stepped(5, Step::First), Some(1));
         assert_eq!(stepped(1, Step::First), None);
         assert_eq!(stepped(u32::MAX, Step::Next), None);
+    }
+
+    /// Ten requests while one is out start one more, and it is the last.
+    ///
+    /// The first starts at once (the control); the nine behind it each
+    /// replace the one waiting, so the end of the first render starts page 10
+    /// and nothing else, and the end of that one starts nothing.
+    #[test]
+    fn requests_made_while_a_render_is_out_start_only_the_newest() {
+        let mut renders = Renders::default();
+        assert_eq!(renders.ask(1), Some(1), "nothing is out, so it starts");
+        for page in 2..=10 {
+            assert_eq!(renders.ask(page), None, "page {page} waits");
+        }
+        assert_eq!(renders.finished(), Some(10), "the newest is next");
+        assert_eq!(renders.ask(11), None, "page 10 is out now");
+        assert_eq!(renders.finished(), Some(11));
+        assert_eq!(renders.finished(), None, "nothing waits");
+        assert_eq!(renders.ask(12), Some(12), "and the pane is free again");
+    }
+
+    /// A pane whose window went starts the next request at once.
+    #[test]
+    fn a_reset_pane_does_not_wait_for_a_render_that_cannot_report() {
+        let mut renders = Renders::default();
+        assert_eq!(renders.ask(1), Some(1));
+        assert_eq!(renders.ask(2), None);
+        renders.reset();
+        assert_eq!(renders.ask(3), Some(3), "not held behind the lost render");
+        assert_eq!(renders.finished(), None, "and page 2 was forgotten");
     }
 
     #[test]

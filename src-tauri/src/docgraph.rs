@@ -1,23 +1,20 @@
 //! The document's object graph: everything PDFium cannot answer, read at most once.
 //!
-//! ## Why this is a module rather than five fields on the handle
+//! ## Why this is a module rather than fields on the handle
 //!
 //! `progressive.rs` exists to own `FPDF_DOCUMENT`, `FPDF_PAGE` and `FPDF_BITMAP`
 //! so that rendering can be cancelled, and its header says so in as many words:
-//! *"the RAII types below are that ownership, and nothing more."* By August 2026
-//! that sentence was false. The `use` block under it imported `annots`,
-//! `docinfo`, `encoding`, `links` and `pagetree`; `RawDocument` carried five
-//! `OnceCell` caches, the document's bytes and its password, and called
-//! `save::append_update`. An outside review measured its fan-in at 14, the
-//! highest in the crate, and named the closed loop: `save -> progressive`, so
-//! the renderer's handle type depended on the writer.
+//! *"the RAII types below are that ownership, and nothing more."* The caches
+//! here, the document's bytes and its password once lived on `RawDocument`,
+//! which made the renderer's handle type import `annots`, `docinfo`,
+//! `encoding`, `links` and `pagetree` and depend on the writer through
+//! `save::append_update`.
 //!
-//! Nothing about *what* those five do was wrong --- each is documented, measured
-//! and lazy for a stated reason, and they are moved here unchanged. What was
-//! wrong is where they lived. This is the half of that finding that is a move;
-//! the other half, making a worker-side `Document` own both this and the PDFium
-//! handle so that 38 signatures stop naming `RawDocument`, is a separate piece
-//! and is deliberately not started here.
+//! Each cache is documented, measured and lazy for a stated reason; what was
+//! wrong was where they lived. They are here, in a type of their own, and
+//! [`crate::document::OpenDocument`] holds this beside the PDFium handle as a
+//! sibling rather than inside it, so `progressive.rs` names nothing from this
+//! module.
 //!
 //! ## The coupling that is real, and is now visible
 //!

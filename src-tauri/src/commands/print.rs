@@ -491,14 +491,14 @@ fn apply(
         Ok(printers) => printers,
         Err(e) => return (held, Err(e)),
     };
-    let wanted = settings
-        .printer
-        .clone()
-        .or_else(|| held.as_ref().map(|p| p.name().to_owned()))
-        .or_else(default_name)
-        .or_else(|| printers.first().cloned());
-    let Some(wanted) = wanted else {
-        return (held, Err(said!("no printer is installed")));
+    let wanted = match wanted_printer(
+        settings.printer.as_deref(),
+        held.as_ref().map(crate::printers_win::Printer::name),
+        default_name,
+        &printers,
+    ) {
+        Ok(wanted) => wanted,
+        Err(e) => return (held, Err(e)),
     };
     let mut printer = match held {
         Some(printer) if printer.name() == wanted => printer,
@@ -534,6 +534,40 @@ fn apply(
         })
     });
     (Some(printer), setup)
+}
+
+/// The printer a setup opens: the one the webview names, else the one held,
+/// else the system's default, else the first installed. `default` is asked
+/// only when the two before it name none.
+///
+/// **A name from the webview is held to `installed`** before it reaches
+/// `OpenPrinterW`: the webview is not trusted to name only a printer this
+/// computer lists, and a name the list does not hold can be a server path
+/// (`\\host\printer`) that the spooler would go out over the network to open.
+///
+/// # Errors
+///
+/// A name `installed` does not hold, or no printer at all.
+#[cfg(any(windows, test))]
+fn wanted_printer(
+    asked: Option<&str>,
+    held: Option<&str>,
+    default: impl FnOnce() -> Option<String>,
+    installed: &[String],
+) -> Result<String, String> {
+    if let Some(asked) = asked {
+        return if installed.iter().any(|name| name == asked) {
+            Ok(asked.to_owned())
+        } else {
+            Err(said!(
+                "the printer {asked:?} is not installed on this computer"
+            ))
+        };
+    }
+    held.map(str::to_owned)
+        .or_else(default)
+        .or_else(|| installed.first().cloned())
+        .ok_or_else(|| said!("no printer is installed"))
 }
 
 /// The pages the settings name, or every page of a job of `count`.
@@ -1043,13 +1077,49 @@ fn present_job(
 
 #[cfg(test)]
 mod tests {
-    use super::{preview_scale, Built, Previews, PREVIEW_MAX_WIDTH};
+    use super::{preview_scale, wanted_printer, Built, Previews, PREVIEW_MAX_WIDTH};
     use crate::render::PageSize;
 
     const A4: PageSize = PageSize {
         width_pt: 595.0,
         height_pt: 842.0,
     };
+
+    /// A printer the webview names is opened only when this computer lists
+    /// it; with none named, the held one, the default and the first follow in
+    /// that order.
+    #[test]
+    fn a_printer_the_webview_names_is_held_to_the_installed_list() {
+        let installed = vec!["Office".to_string(), r"\\print\Floor 2".to_string()];
+        let never = || -> Option<String> { panic!("the default is not asked") };
+        // The control: a listed name, a shared one among them, is opened.
+        assert_eq!(
+            wanted_printer(Some("Office"), Some("Held"), never, &installed),
+            Ok("Office".to_string())
+        );
+        assert_eq!(
+            wanted_printer(Some(r"\\print\Floor 2"), None, never, &installed),
+            Ok(r"\\print\Floor 2".to_string())
+        );
+        for unlisted in [r"\\attacker.example\x", "office", "Office ", ""] {
+            let why = wanted_printer(Some(unlisted), Some("Office"), never, &installed)
+                .expect_err(unlisted);
+            assert!(why.contains("is not installed on this computer"), "{why}");
+        }
+        assert_eq!(
+            wanted_printer(None, Some("Held"), never, &installed),
+            Ok("Held".to_string())
+        );
+        assert_eq!(
+            wanted_printer(None, None, || Some("Default".into()), &installed),
+            Ok("Default".to_string())
+        );
+        assert_eq!(
+            wanted_printer(None, None, || None, &installed),
+            Ok("Office".to_string())
+        );
+        assert!(wanted_printer(None, None, || None, &[]).is_err());
+    }
 
     /// The picture is the width asked for, with the page's own proportions.
     #[test]

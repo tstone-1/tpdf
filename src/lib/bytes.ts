@@ -2,15 +2,24 @@
 import { catalog, UI_LOCALE, type UiLocale } from "./i18n";
 
 const TEXT = catalog({
-  "en-US": { unknown: "unknown", bytes: (count: string) => `${count} bytes`, number: "en-US" },
-  "de-DE": { unknown: "unbekannt", bytes: (count: string) => `${count} Bytes`, number: "de-DE" },
+  "en-US": {
+    unknown: "unknown",
+    bytes: (count: string, one: boolean) => `${count} ${one ? "byte" : "bytes"}`,
+    number: "en-US",
+  },
+  "de-DE": {
+    unknown: "unbekannt",
+    bytes: (count: string, one: boolean) => `${count} ${one ? "Byte" : "Bytes"}`,
+    number: "de-DE",
+  },
 });
 
 /** A byte count, with a rounded size beside it once it is worth having. */
 export function formatBytes(bytes: number, locale: UiLocale = UI_LOCALE): string {
   const text = TEXT(locale);
   if (!Number.isFinite(bytes) || bytes < 0) return text.unknown;
-  const exact = text.bytes(Math.round(bytes).toLocaleString(text.number));
+  const whole = Math.round(bytes);
+  const exact = text.bytes(whole.toLocaleString(text.number), whole === 1);
   if (bytes < 1024) return exact;
   const units = ["KB", "MB", "GB", "TB"];
   let value = bytes / 1024;

@@ -70,27 +70,47 @@ pub const ELLIPSIS: char = '\u{2026}';
 ///
 /// Constructing one is the only way to get past the allowlist, so a value of
 /// this type is the claim that the scheme was checked --- the same shape as
-/// `Target::Refused` being a type rather than a string.
+/// `Target::Refused` being a type rather than a string. The fields are private
+/// so that the claim holds: [`Web::parse`] is the only constructor, and the
+/// three halves are read through accessors.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Web {
     /// What the operating system's opener is given, serialized by `url`.
     ///
     /// Never shown to a reader and never sent to the frontend: it is the whole
     /// address, where the two display fields are deliberately partial.
-    pub url: String,
+    url: String,
     /// The authority, ASCII, with a port when the URL names a non-default one.
     ///
     /// This is the field a reader is meant to look at, so it is complete and
     /// never truncated: a host cut in the middle is a host that can be made to
     /// end in whatever the attacker likes.
-    pub host: String,
+    host: String,
     /// Path, query and fragment, cut to [`MAX_REST_CHARS`].
     ///
     /// Display only, and secondary in the dialog. Empty for a bare host.
-    pub rest: String,
+    rest: String,
 }
 
 impl Web {
+    /// The whole address, for the opener. See the field.
+    #[must_use]
+    pub fn url(&self) -> &str {
+        &self.url
+    }
+
+    /// The authority a reader is shown. See the field.
+    #[must_use]
+    pub fn host(&self) -> &str {
+        &self.host
+    }
+
+    /// The path a reader is shown, cut. See the field.
+    #[must_use]
+    pub fn rest(&self) -> &str {
+        &self.rest
+    }
+
     /// Reads a `/URI` string, or refuses it.
     ///
     /// `None` means the link keeps the refusal it had before web links were

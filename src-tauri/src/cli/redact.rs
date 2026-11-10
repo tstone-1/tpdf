@@ -6,7 +6,7 @@
 //! **Nothing here removes, verifies or words a verdict.** The regions go onto
 //! an [`crate::edits::Edits`] through [`crate::edits::Edits::redact`], the call
 //! the window's *Mark all matches for redaction* makes, and from there
-//! `commands::redact::ask_redactions` and `commands::redact::redact_copy_asked`
+//! `redaction_steps::ask_redactions` and `redaction_steps::redact_copy_asked`
 //! do what they do for the window's *Redact and save as*: plans from a worker,
 //! the rewrite, the byte scan of the written file for what was taken, the OCR
 //! gate, the black fill, and `verified` only when every reason list is empty.
@@ -40,7 +40,7 @@ use super::regions::{self, MAX_MATCHES_TO_MARK};
 use super::report::{self, RedactedPage, SearchKind, SCHEMA};
 use super::text::{page_list, password, selected, variable};
 use super::{json, opened, say, words, Env, Exit, Failure, Registered, Subcommand};
-use crate::commands::redact::{ask_redactions, redact_copy_asked, Stopped};
+use crate::redaction_steps::{ask_redactions, redact_copy_asked, Stopped};
 use crate::render::{Backend, RenderService};
 use crate::search::{Carry, Match, Options, Prepared};
 use crate::text::PageText;

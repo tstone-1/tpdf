@@ -4,8 +4,8 @@
 SINCE 2026-10-04 `TEST_FILES` is every suite on disk that `UNMUTATED` does not
 name, so the omission this was written for can no longer be made by forgetting
 an edit. What is left for it: a mutation naming a test in an excluded suite, a
-suite vitest collects nothing from, and the tables being empty. The account
-below is of the list as it was.
+suite vitest collects nothing from, a suite that runs with no mutation aimed at
+it, and the tables being empty. The account below is of the list as it was.
 
 WHY THIS EXISTS. `mutate_frontend.py` runs `vitest` over `TEST_FILES`, a
 hand-kept list, and every mutation names a test that must go red. A suite absent
@@ -33,7 +33,17 @@ WHAT IS CHECKED, both directions:
 
   2. Every test file vitest collects is either in `TEST_FILES` or in `UNMUTATED`
      with a reason. A suite that is neither is invisible: nothing runs it and
-     nothing says so.
+     nothing says so. Since `TEST_FILES` is derived from the same glob as
+     vitest's `include`, the set difference alone can only fire when the two
+     globs part; the half that can fail on an ordinary day is 3.
+
+  3. Every suite in `TEST_FILES` has at least one mutation whose `expect`
+     matches a test in it. Being listed only means the suite RUNS under
+     mutation; a listed suite no row names is run on every mutation and can
+     never be the one that goes red, so it is in neither table in the sense
+     that matters. The remedy is a row aimed at its module, or an `UNMUTATED`
+     entry saying why none is. The count this gate prints is this measurement,
+     not the length of `TEST_FILES`.
 
 WHAT IS REFUSED rather than reported, because each of these reads exactly like a
 clean run: a collection that came back empty, an empty `MUTATIONS` or
@@ -235,6 +245,13 @@ def main() -> int:
                 f"{mutation.expect!r} -- it cannot go red, so it would report SURVIVED"
             )
 
+    aimed = aimed_at(mutations, {f: collected.get(f, []) for f in listed})
+    for name in sorted(set(listed) - aimed):
+        problems.append(
+            f"{name} is in TEST_FILES and no mutation's expect names a test in it -- "
+            "add a row aimed at its module, or move it to UNMUTATED with the reason"
+        )
+
     for line in warnings:
         print(f"[WARN] {line}")
     for line in problems:
@@ -242,12 +259,30 @@ def main() -> int:
     if problems:
         return 1
 
+    # No separate emptiness control for `aimed`: a matcher that matched nothing
+    # leaves every listed suite unaimed, and the check above names each one.
     print(
-        f"[OK]   {len(mutations)} mutations name tests in {len(listed)} of the "
+        f"[OK]   {len(mutations)} mutations name tests in {len(aimed)} of the "
         f"{len(collected)} suites vitest sees; the other {len(excluded)} are "
         "excluded with a reason"
     )
     return 0
+
+
+def aimed_at(mutations: list, suites: dict[str, list[str]]) -> set[str]:
+    """The suites at least one mutation's `expect` names a test in.
+
+    The harness's rule, a substring of a resolved test name. A row whose
+    `expect` matches tests in two suites counts for both, because the harness
+    runs every file whenever the narrow run finds nothing red, so either can be
+    the one that goes red.
+    """
+    expects = {m.expect for m in mutations}
+    return {
+        suite
+        for suite, names in suites.items()
+        if any(expect in name for name in names for expect in expects)
+    }
 
 
 if __name__ == "__main__":

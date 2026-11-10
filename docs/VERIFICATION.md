@@ -6782,7 +6782,7 @@ authority was asked, no window was opened, and nothing was run on Windows.
 
 ```bash
 cargo test --locked --manifest-path src-tauri/Cargo.toml --lib -- \
-    longterm:: sign_dss:: commands::validation:: cli::tests::long_term
+    longterm:: sign_dss:: validation_data:: cli::tests::long_term
 cargo test --locked --manifest-path src-tauri/Cargo.toml --test cli -- \
     --filter "long-term adds"
 npx vitest run src/lib/validationdata.test.ts src/lib/appcommands.test.ts \

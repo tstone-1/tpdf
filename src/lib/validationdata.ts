@@ -4,7 +4,7 @@
  *
  * The backend is `longterm/existing.rs` (what is asked about, and every
  * refusal), `sign_dss.rs` and `sign_prepare.rs` (the worker's two revisions)
- * and `commands/validation.rs` (the write and the read-back). This module is
+ * and `validation_data.rs` (the write and the read-back). This module is
  * the frontend's half, and it is here rather than in `App.svelte` because that
  * file is the layer no gate reaches (`AGENTS.md`): the order of the questions
  * and what the reader is told before anything is asked of anybody live here
@@ -125,7 +125,7 @@ const TEXT = catalog({
 
 /**
  * The refusal for a document with edits nobody has saved. Mirrors
- * `commands::validation::refuse_unsaved`, which stays English until the
+ * `validation_data::refuse_unsaved`, which stays English until the
  * worker's messages are translated.
  */
 export const UNSAVED = TEXT().unsaved;

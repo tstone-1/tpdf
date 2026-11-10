@@ -559,13 +559,13 @@ const NOBODY_LISTENING = "http://127.0.0.1:9/";
  *
  * **The sentences are Rust's, and nothing here reads them from it**: each is
  * matched by a fragment, as the print refusals are. `longterm::existing`'s
- * `Refusal::sentence` has the first and the last, `commands::validation` the
+ * `Refusal::sentence` has the first and the last, `validation_data` the
  * second and the *nothing was written* every `Stopped::Refused` ends in, and
  * `tsa::authority` the third.
  *
  * **Not reached: the data gathered and the copy written.** That needs a signer
  * the operating system trusts, and no check adds a root to a key store. What a
- * worker builds and reads back is `commands::validation`'s own tests, over
+ * worker builds and reads back is `validation_data`'s own tests, over
  * authorities of their own.
  *
  * Whether anything was written is not something a page can see.

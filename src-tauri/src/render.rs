@@ -231,8 +231,9 @@ pub const UNSANDBOXED_MARK: &str = "unsandboxed: documents parsed in this proces
 /// Where documents are parsed and rendered.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Backend {
-    /// In this process, on the render thread. The control, and the only thing
-    /// available where no sandbox is implemented.
+    /// In this process, on the render thread. The control, reached only by
+    /// asking for it with `TPDF_BACKEND=in-process`: every platform that
+    /// compiles has a worker, and `worker.rs` refuses any other at build time.
     InProcess,
     /// In a sandboxed child process, one per document.
     Worker,
@@ -300,10 +301,11 @@ impl Backend {
 /// Records that this process parses documents uncontained.
 ///
 /// Called from [`Backend::from_env`] rather than from
-/// [`Backend::default_here`], so it covers **both** ways of arriving at the
-/// uncontained backend --- the platform having no boundary, and an operator
-/// asking for it by name. It used to sit in the second of those, which left the
-/// asked-for route silent.
+/// [`Backend::default_here`], so it covers every way of arriving at the
+/// uncontained backend. There were two, the platform having no boundary and an
+/// operator asking for it by name; since every platform that compiles has a
+/// worker, the name is the only one left. It used to sit in `default_here`,
+/// which left the asked-for route silent.
 ///
 /// Deliberately not called from `parse`, which is the unit the tests drive:
 /// marks and the log sink are process-global, so announcing there would make
@@ -320,8 +322,8 @@ fn announce_uncontained() {
     SAID.call_once(|| {
         mark(UNSANDBOXED_MARK);
         diag::note(
-            "[WARN] documents are parsed in the app process, uncontained --- either \
-             this platform has no sandbox or TPDF_BACKEND asked for it. See BUILD.md.",
+            "[WARN] documents are parsed in the app process, uncontained, because \
+             TPDF_BACKEND=in-process asked for it. See BUILD.md.",
         );
     });
 }
@@ -1531,38 +1533,58 @@ fn serve(rx: Receiver<Job>, engine: &dyn Engine) {
 /// Fails every job with the same message, for a backend that never started.
 fn drain(rx: Receiver<Job>, error: &str) {
     for job in rx {
-        match job {
-            // Not locked: a backend that never started has not looked at the
-            // document, so it cannot be saying anything about its encryption.
-            Job::Open { reply, .. } => reply(Err(progressive::Refusal {
-                reason: error.to_string(),
-                locked: false,
-            })),
-            Job::Tile { reply, .. } => reply(Err(error.to_string())),
-            Job::Text { reply, .. } => reply(Err(error.to_string())),
-            Job::Search { reply, .. } => reply(Err(error.to_string())),
-            Job::Content { reply, .. } => reply(Err(error.to_string())),
-            Job::Pictures { reply, .. } => reply(Err(error.to_string())),
-            Job::PageCopy { reply, .. } => reply(Err(error.to_string())),
-            Job::Graphic { reply, .. } => reply(Err(error.to_string())),
-            Job::Geometry { reply, .. } => reply(Err(error.to_string())),
-            Job::CropBox { reply, .. } => reply(Err(error.to_string())),
-            Job::RedactPlans { reply, .. } => reply(Err(error.to_string())),
-            Job::Outline { reply, .. } => reply(Err(error.to_string())),
-            Job::Form { reply, .. } => reply(Err(error.to_string())),
-            Job::TextRuns { reply, .. } => reply(Err(error.to_string())),
-            Job::Comments { reply, .. } => reply(Err(error.to_string())),
-            Job::Links { reply, .. } => reply(Err(error.to_string())),
-            Job::Mapping { reply, .. } => reply(Err(error.to_string())),
-            Job::Properties { reply, .. } => reply(Err(error.to_string())),
-            Job::Shrink { reply, .. } => reply(Err(error.to_string())),
-            Job::Append { reply, .. } => reply(Err(error.to_string())),
-            Job::PrepareSignature { reply, .. } => reply(Err(error.to_string())),
-            Job::SignaturePreview { reply, .. } => reply(Err(error.to_string())),
-            Job::Password { reply, .. } => reply(Err(error.to_string())),
-            Job::Close { reply, .. } => reply(Err(error.to_string())),
-            Job::ReleaseAll { reply } => reply(Err(error.to_string())),
+        job.fail(error);
+    }
+}
+
+impl Job {
+    /// Answers the job with `error`, whatever it asked for.
+    ///
+    /// The variants are one list rather than an arm each, because every reply
+    /// but `Open`'s takes the same `Err(String)` and only its type differs, which
+    /// a `|` pattern cannot join. The `match` the macro writes is still
+    /// exhaustive, so a new job that is not named here does not compile.
+    pub(crate) fn fail(self, error: &str) {
+        macro_rules! answer {
+            ($($variant:ident),+ $(,)?) => {
+                match self {
+                    // Not locked: a backend that never started has not looked
+                    // at the document, so it cannot be saying anything about
+                    // its encryption.
+                    Job::Open { reply, .. } => reply(Err(progressive::Refusal {
+                        reason: error.to_string(),
+                        locked: false,
+                    })),
+                    $(Job::$variant { reply, .. } => reply(Err(error.to_string())),)+
+                }
+            };
         }
+        answer!(
+            Tile,
+            Text,
+            Search,
+            Content,
+            Pictures,
+            PageCopy,
+            Graphic,
+            Geometry,
+            CropBox,
+            RedactPlans,
+            Outline,
+            Form,
+            TextRuns,
+            Comments,
+            Links,
+            Mapping,
+            Properties,
+            Shrink,
+            Append,
+            PrepareSignature,
+            SignaturePreview,
+            Password,
+            Close,
+            ReleaseAll,
+        );
     }
 }
 
@@ -3069,6 +3091,60 @@ mod tests {
         whole_word: false,
         regex: false,
     };
+
+    /// A backend that never started answers every job with its reason, and an
+    /// open as not locked.
+    ///
+    /// Three jobs: `Open`, whose refusal is the one reply of another type, and
+    /// the last two the list names. Each reply reports through a channel,
+    /// read with a bound, so a job left unanswered is a failure and not a hang.
+    #[test]
+    fn a_backend_that_never_started_answers_every_job_with_its_reason() {
+        use std::sync::mpsc::channel;
+        use std::time::Duration;
+
+        let (jobs, rx) = channel::<super::Job>();
+        let (said, heard) = channel::<String>();
+        let (to, from) = (said.clone(), said.clone());
+        jobs.send(super::Job::Open {
+            path: "never.pdf".into(),
+            file: None,
+            lazy_geometry: false,
+            password: None,
+            reply: Box::new(move |r| {
+                let refusal = r.map(|_| ()).expect_err("an open is refused");
+                let _ = to.send(format!("open {} {}", refusal.reason, refusal.locked));
+            }),
+        })
+        .expect("queued");
+        jobs.send(super::Job::Close {
+            doc: 0,
+            reply: Box::new(move |r| {
+                let _ = from.send(format!("close {}", r.expect_err("a close is refused")));
+            }),
+        })
+        .expect("queued");
+        jobs.send(super::Job::ReleaseAll {
+            reply: Box::new(move |r| {
+                let _ = said.send(format!("all {}", r.expect_err("refused")));
+            }),
+        })
+        .expect("queued");
+        drop(jobs);
+        super::drain(rx, "no engine");
+
+        let answers: Vec<String> = (0..3)
+            .map(|_| {
+                heard
+                    .recv_timeout(Duration::from_secs(5))
+                    .expect("a job was not answered")
+            })
+            .collect();
+        assert_eq!(
+            answers,
+            ["open no engine false", "close no engine", "all no engine"]
+        );
+    }
 
     /// A run answers every page it was given, in the order it was given them.
     #[test]

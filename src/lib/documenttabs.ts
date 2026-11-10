@@ -350,22 +350,50 @@ export function partnersOf<T extends { view: unknown; edits: unknown; path: stri
 /** A save may reopen its document; transitions wait outside their own queue. */
 export class DocumentTasks {
   private pending: Promise<void> = Promise.resolve();
-  busy = false;
+  private running = false;
+  private holds = 0;
 
   constructor(private changed: (busy: boolean) => void = () => {}) {}
 
+  /** Whether a task runs or a {@link hold} is raised: what refuses edits. */
+  get busy(): boolean {
+    return this.running || this.holds > 0;
+  }
+
   run(body: () => Promise<void>): Promise<void> {
     if (this.busy) return this.pending;
-    this.busy = true;
+    this.running = true;
     this.changed(true);
     this.pending = Promise.resolve().then(body).finally(() => {
-      this.busy = false;
-      this.changed(false);
+      this.running = false;
+      if (!this.busy) this.changed(false);
     });
     return this.pending;
   }
 
+  /**
+   * Makes the documents busy without a task, until the returned function is
+   * called; a second call of it does nothing.
+   *
+   * For a step that ends the process (`update.ts`, `finishUpdate`), which is no
+   * task of this queue: {@link idle} does not wait for a hold, so that the
+   * window's close can still end the process while an installer downloads, as
+   * it could before the hold existed.
+   */
+  hold(): () => void {
+    const was = this.busy;
+    this.holds += 1;
+    if (!was) this.changed(true);
+    let held = true;
+    return () => {
+      if (!held) return;
+      held = false;
+      this.holds -= 1;
+      if (!this.busy) this.changed(false);
+    };
+  }
+
   async idle(): Promise<void> {
-    while (this.busy) await this.pending.catch(() => {});
+    while (this.running) await this.pending.catch(() => {});
   }
 }

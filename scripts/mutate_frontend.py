@@ -62,10 +62,12 @@ MUTATIONS = list(ROWS)
 #: `scripts/check_mutation_test_files.py` made each omission a gate failure
 #: and not a refused run; deriving the list removes the step that was
 #: forgotten. The whole frontend suite runs in about two seconds, so the cost
-#: the short list saved is the ten suites below, each excluded *with a reason*.
+#: the short list saved is the suites below, each excluded *with a reason*.
 #:
-#: A new suite is therefore run from the day it exists. One that should not be
-#: is added here, with why. The objection recorded against a glob, that a
+#: A new suite is therefore run from the day it exists. Running is not being
+#: aimed at: the same gate refuses a suite in `TEST_FILES` that no row's
+#: `expect` names, so a new suite needs a row aimed at its module or an entry
+#: here, with why. The objection recorded against a glob, that a
 #: wider name set can surface a duplicate test name and refuse a run, applies
 #: to a suite added to the tree and not to this change, which runs the same
 #: files the hand-written list named.
@@ -75,7 +77,7 @@ UNMUTATED = {
     # can go red --- this file is the one place where a defect in `rowline.ts`
     # would be caught by an assertion no mutation has ever broken.
     "src/lib/rowline.test.ts": "no mutation aims at src/lib/rowline.ts's own suite",
-    # The ten below are the same shape as each other: the module has tests and
+    # The entries down to `tiles` are the same shape: the module has tests and
     # no mutation is aimed at it, so running its suite would cost time in every
     # mutation run and prove nothing. Writing one is what moves the entry --- and
     # the moment a mutation names a test in one of these files, the gate refuses
@@ -87,7 +89,7 @@ UNMUTATED = {
     "src/lib/paths.test.ts": "no mutation aims at src/lib/paths.ts",
     "src/lib/serial.test.ts": "no mutation aims at src/lib/serial.ts",
     "src/lib/tiles.test.ts": "no mutation aims at src/lib/tiles.ts",
-    # A different shape from the ten above, and the reason is worth stating
+    # A different shape from those above, and the reason is worth stating
     # rather than borrowing theirs. This suite has no production module at all:
     # it asserts that every panel keeping a focus mirror has a sibling test that
     # dispatches an arrow key --- the enforcement `docs/TRAPS.md` chose when it
@@ -97,7 +99,7 @@ UNMUTATED = {
     # panel's suite, widening its discriminator until the palette matched, and
     # narrowing it until nothing did.
     "src/lib/rovinglists.test.ts": "asserts the shape of the test tree, which no source mutation changes",
-    # `rovinglists.test.ts`'s shape rather than the ten above it: no mutation
+    # `rovinglists.test.ts`'s shape rather than the module-shaped ones above: no mutation
     # aims at `ipc.ts`, and none could redden this suite anyway, because what it
     # reads is the *source text* of `generate_handler!` in `lib.rs` against the
     # keys of `ipc.ts`'s command map. A mutation of a `.ts` module's behaviour

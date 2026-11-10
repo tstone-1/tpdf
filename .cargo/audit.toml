@@ -36,12 +36,26 @@ ignore = [
     # decoded under a 1 MiB bound. docs/DETAIL.md *Stack* has the bounds and the
     # replacement (`skrifa`) the advisory names.
     "RUSTSEC-2026-0192",
-    # proc-macro-error: unmaintained. Under glib-macros -> glib -> gtk -> muda
-    # -> tauri, the Linux GTK stack: `cargo tree -i proc-macro-error --target
-    # aarch64-apple-darwin` and `--target x86_64-pc-windows-msvc` print nothing.
+    # proc-macro-error: unmaintained; the advisory reports no defect. Linux
+    # only, and only at build time: it is a dependency of `glib-macros`, a
+    # proc-macro crate that runs in the compiler while glib is built, under
+    # glib -> gtk, which tpdf names itself for the Linux print dialog
+    # (`print_linux.rs`) and which muda, tao and wry also pull in. No code of
+    # it is linked into the `.deb` or the AppImage. `cargo tree -i
+    # proc-macro-error` prints nothing for aarch64-apple-darwin or
+    # x86_64-pc-windows-msvc. Remove it when the GTK stack leaves glib 0.18.
     "RUSTSEC-2024-0370",
-    # glib 0.18: unsound `VariantStrIter`. The same Linux-only GTK path, absent
-    # from both shipped targets by the same command.
+    # glib 0.18: `VariantStrIter` is unsound. Linux only, on the same path, and
+    # it is linked into the Linux packages. The unsound iterator is built only by
+    # `Variant::array_iter_str`, and nothing in the Linux tree calls that: a
+    # search of `src-tauri/src` and of the sources, at their locked versions,
+    # of every crate `cargo tree -i glib --target x86_64-unknown-linux-gnu`
+    # lists (gtk, gdk, gio, webkit2gtk, wry, tao, muda, tauri and its plugins)
+    # finds `array_iter_str` and `VariantStrIter` only in glib's own definition
+    # and tests. The day a dependency or tpdf calls it, this entry is wrong.
+    # Patched in glib 0.20, but gtk 0.18 requires glib 0.18, so the fix arrives
+    # only with a GTK binding that wry, tao and `print_linux.rs` move to;
+    # remove the entry then.
     "RUSTSEC-2024-0429",
     # zvariant, zbus_names, zvariant_derive: unmaintained as standalone crates,
     # merged into zbus 6.0.0 (2026-10-16). The advisories report no defect.

@@ -40,7 +40,7 @@ impl Remembered {
 }
 
 fn hex(bytes: &[u8]) -> String {
-    bytes.iter().map(|b| format!("{b:02x}")).collect()
+    crate::encoding::hex_lower(bytes)
 }
 
 fn unhex(text: &str) -> Vec<u8> {

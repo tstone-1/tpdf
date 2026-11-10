@@ -15,8 +15,8 @@ use super::args::{lexically_same, unknown, value};
 use super::report::{self, SCHEMA};
 use super::verify::signature_report;
 use super::{json, say, Env, Exit, Failure, Registered, Subcommand};
-use crate::commands::validation::{asking_the_world, finish, name_of, refuse_too_large, Stopped};
 use crate::save;
+use crate::validation_data::{asking_the_world, finish, name_of, refuse_too_large, Stopped};
 
 /// `long-term`, registered.
 pub const COMMAND: Registered = Registered {

@@ -598,6 +598,59 @@ pub(crate) struct Workers {
     /// How long one request may occupy a worker. See [`DEFAULT_DEADLINE`].
     deadline: Duration,
     queue: SharedQueue,
+    /// Where [`Workers::broadcast_withdraw`] hands its writes. See [`Withdrawer`].
+    withdrawals: Withdrawer<(WorkerSender, u64)>,
+}
+
+/// How many withdrawals may wait for [`Withdrawer`]'s thread before more are
+/// dropped. A fast scroll withdraws about one tile per frame, each to one
+/// worker when the in-flight table knows which; this is several seconds of
+/// that against a thread that is stuck.
+const WITHDRAWALS_QUEUED: usize = 256;
+
+/// One thread that writes what callers post, so no caller waits on the write.
+///
+/// **For withdrawals, and the caller is the point.** A withdrawal is a line
+/// down a worker's stdin, and a worker that is opening a slow document, or is
+/// inside a render, is not reading it: once the pipe is full the write blocks,
+/// and the thread that wrote it was the `tile://` handler cancelling a tile.
+/// Posting is `try_send` on a bounded channel, so it returns at once whatever
+/// the worker is doing, and a post that finds the channel full is dropped.
+///
+/// Dropping is safe because a withdrawal is advice: a tile whose withdrawal
+/// never arrives is rendered and its reply discarded on this side by the
+/// request's own token (`Workers::render`), which costs a render and nothing
+/// else. Waiting would cost the caller.
+///
+/// Generic over what is written, so the never-blocks property can be tested
+/// against a sink that blocks on purpose, without a worker.
+struct Withdrawer<T> {
+    tx: std::sync::mpsc::SyncSender<T>,
+}
+
+impl<T: Send + 'static> Withdrawer<T> {
+    /// Starts the thread. It ends when the `Withdrawer` is dropped.
+    fn start(capacity: usize, mut write: impl FnMut(T) + Send + 'static) -> Self {
+        let (tx, rx) = std::sync::mpsc::sync_channel::<T>(capacity);
+        // A thread that could not start leaves a sender whose every post
+        // fails, which is the drop branch: withdrawals stop and tiles still
+        // render. Not worth refusing to open documents over.
+        let _ = std::thread::Builder::new()
+            .name("tpdf-withdrawer".into())
+            .spawn(move || {
+                for item in rx {
+                    write(item);
+                }
+            });
+        Self { tx }
+    }
+
+    /// Hands `item` to the thread, or drops it. Never waits.
+    ///
+    /// `false` when it was dropped, for a test to count; callers ignore it.
+    fn post(&self, item: T) -> bool {
+        self.tx.try_send(item).is_ok()
+    }
 }
 
 impl Workers {
@@ -620,6 +673,11 @@ impl Workers {
             calls: Mutex::new(Vec::new()),
             deadline,
             queue,
+            withdrawals: Withdrawer::start(WITHDRAWALS_QUEUED, |(sender, rid)| {
+                // A dead worker is not this thread's problem: whichever thread
+                // is holding it will report that, with an epitaph.
+                let _ = WorkerSender::withdraw(&sender, rid);
+            }),
         }
     }
 
@@ -1090,13 +1148,16 @@ impl Workers {
     /// children that are inside a render, which is the one moment a write to
     /// them can block.
     ///
-    /// The senders are cloned under the lock and written to outside it. A
-    /// `WorkerSender` is a pipe to a child that is *inside a render*, which is
-    /// the case this call exists for --- so the write can block on a full pipe,
-    /// and holding the document table across it would stall every other
-    /// document's checkouts and check-ins on a withdrawal. Cloning is an `Arc`
-    /// bump per worker, and the module note above claims every critical section
-    /// here is bookkeeping; this is what keeps that true.
+    /// The senders are cloned under the lock and written to outside it, and
+    /// not on this thread at all. A `WorkerSender` is a pipe to a child that is
+    /// *inside a render*, or still opening its document, which is the case this
+    /// call exists for --- so the write can block on a full pipe. Holding the
+    /// document table across it would stall every other document's checkouts
+    /// and check-ins; doing it here would stall the caller, which is the
+    /// `tile://` handler. So each write is posted to [`Withdrawer`]'s thread and
+    /// this returns. Cloning is an `Arc` bump per worker, and the module note
+    /// above claims every critical section here is bookkeeping; this is what
+    /// keeps that true.
     pub(crate) fn broadcast_withdraw(&self, rid: u64) {
         // Read before the document table is locked, and never both at once: the
         // two mutexes are taken in this order nowhere else, so taking them
@@ -1113,9 +1174,7 @@ impl Workers {
             withdraw_to(taken_by, all)
         };
         for sender in senders {
-            // A dead worker is not this call's problem: whichever thread is
-            // holding it will report that, with an epitaph.
-            let _ = sender.withdraw(rid);
+            self.withdrawals.post((sender, rid));
         }
     }
 
@@ -1432,7 +1491,7 @@ impl Workers {
             }
 
             let length = payload_length(&response, request, worker.tile.len())?;
-            let bytes = worker.tile.as_slice()[..length].to_vec();
+            let bytes = worker.tile.copy_front(length)?;
             mark("first tile rendered");
 
             Ok(TileOutcome::Rendered(Tile {
@@ -1665,6 +1724,50 @@ fn payload_length(
     Ok(stated)
 }
 
+/// The most pages an open reply may claim.
+///
+/// `page_count` sizes the app process's per-page bookkeeping
+/// (`docmodel::Working::baseline` keeps an entry per page), so an unbounded
+/// claim from a taken-over worker is an allocation of the worker's choosing in
+/// the process holding every tab. 2^20, one above the 1,048,575 pages PDFium
+/// caps a page tree at (`kPageMaxNum` in its `cpdf_document.cpp`, read from the
+/// source and not measured here), so a document PDFium opens is not refused.
+pub(crate) const MAX_PAGES: usize = 1 << 20;
+
+/// Holds an open reply to what the worker was asked and to what a document can be.
+///
+/// The count is a claim, like a tile's length (see [`payload_length`]), and two
+/// things about it can be checked without trusting it: that it is below
+/// [`MAX_PAGES`], and that the list of sizes agrees with it. Without lazy
+/// geometry the worker sizes every page, so the two must be equal; with it, the
+/// list is the first page's alone, or nothing for a document of none. A reply
+/// that says it is lazy when it was not asked to be is refused as well, since
+/// the viewer would then ask the worker for sizes it never meant to compute.
+fn check_open_reply(
+    lazy: bool,
+    pages: &[crate::render::PageSize],
+    page_count: usize,
+    asked_lazy: bool,
+) -> Result<(), String> {
+    if page_count > MAX_PAGES {
+        return Err(said!(
+            "the worker claims {page_count} pages, more than any document can have"
+        ));
+    }
+    let agrees = if lazy {
+        asked_lazy && pages.len() == page_count.min(1)
+    } else {
+        pages.len() == page_count
+    };
+    if !agrees {
+        return Err(said!(
+            "the worker described {listed} of {page_count} pages, which is not what it was asked",
+            listed = pages.len()
+        ));
+    }
+    Ok(())
+}
+
 /// Reads a worker's refusal back into the type the engine boundary speaks.
 ///
 /// A [`Response`] carries the distinction as a flag and the engine carries it as
@@ -1772,6 +1875,7 @@ impl Engine for Workers {
             }
         }
 
+        let asked_lazy = lazy_geometry;
         let (response, killed) = self.watched(&mut worker, |worker| {
             worker.call(&Request::Open { lazy_geometry })
         });
@@ -1804,6 +1908,7 @@ impl Engine for Workers {
             } => (pages, page_count, lazy_geometry),
             other => return Err(mismatched("open", &other).into()),
         };
+        check_open_reply(lazy_geometry, &pages, page_count, asked_lazy)?;
         let open_ms = t0.elapsed().as_secs_f64() * 1000.0;
         mark("document parsed");
 
@@ -1915,7 +2020,7 @@ impl Engine for Workers {
             }
             match response.reply {
                 Some(Reply::PageCopy(left_out)) if response.bytes <= worker.tile.len() => {
-                    Ok((worker.tile.as_slice()[..response.bytes].to_vec(), left_out))
+                    Ok((worker.tile.copy_front(response.bytes)?, left_out))
                 }
                 Some(Reply::PageCopy(_)) => Err(said!(
                     "the worker claimed more bytes than its mapping holds"
@@ -1940,7 +2045,7 @@ impl Engine for Workers {
             }
             match response.reply {
                 Some(Reply::Graphic(found)) if response.bytes <= worker.tile.len() => {
-                    Ok((worker.tile.as_slice()[..response.bytes].to_vec(), found))
+                    Ok((worker.tile.copy_front(response.bytes)?, found))
                 }
                 Some(Reply::Graphic(_)) => Err(said!(
                     "the worker claimed more bytes than its mapping holds"
@@ -2338,8 +2443,8 @@ mod tests {
     }
 
     use super::{
-        overdue, payload_length, shrunk, CallWatch, Held, InFlight, Workers, DEFAULT_IDLE,
-        OUTLIVED_MARK,
+        check_open_reply, overdue, payload_length, shrunk, CallWatch, Held, InFlight, Workers,
+        DEFAULT_IDLE, MAX_PAGES, OUTLIVED_MARK,
     };
     // The two prewarm-timeout tests are `#[cfg(unix)]` -- they stand a real
     // `/bin/sleep` in for the spare, because "it was ended" is the half a fake
@@ -3140,6 +3245,96 @@ mod tests {
                 "{stated} bytes was accepted for a 64x32 raw tile"
             );
         }
+    }
+
+    /// A withdrawal posted while the writer is stuck returns at once, and the
+    /// ones that fit are still written once it is not.
+    ///
+    /// The sink blocks until the test lets it go, which is a worker that is
+    /// not reading its pipe. Posting runs on a thread of its own with a bounded
+    /// wait, so a `post` that waited would fail this test rather than hang it.
+    /// The counts are the controls: posts past the channel's room are dropped
+    /// and said to be, and every accepted one reaches the sink in order.
+    #[test]
+    fn a_withdrawal_never_waits_on_a_worker_that_is_not_reading() {
+        use std::sync::mpsc::{channel, sync_channel};
+
+        let (release, stuck) = channel::<()>();
+        let (wrote, written) = channel::<u64>();
+        let withdrawer = super::Withdrawer::start(4, move |rid: u64| {
+            // The first write blocks until released, as a full pipe does.
+            if rid == 0 {
+                let _ = stuck.recv();
+            }
+            let _ = wrote.send(rid);
+        });
+
+        let (done, finished) = sync_channel::<Vec<bool>>(1);
+        std::thread::spawn(move || {
+            let accepted: Vec<bool> = (0..100).map(|rid| withdrawer.post(rid)).collect();
+            let _ = done.send(accepted);
+            // Dropping it ends the thread only once what it holds is written:
+            // a channel's buffered items outlive its sender.
+        });
+        let accepted = finished
+            .recv_timeout(Duration::from_secs(5))
+            .expect("posting a withdrawal waited on a writer that is stuck");
+
+        let kept = accepted.iter().filter(|ok| **ok).count();
+        // The writer holds one item and the channel four more; the first is
+        // taken before the posts finish only if the thread is fast, so five
+        // or four may be accepted, and every other is dropped.
+        assert!((4..=5).contains(&kept), "{kept} of 100 were accepted");
+        assert!(accepted[0], "the first post is accepted");
+        assert!(!accepted[99], "a post past the room is dropped");
+
+        release.send(()).expect("let the writer go");
+        let order: Vec<u64> = (0..kept)
+            .map(|_| {
+                written
+                    .recv_timeout(Duration::from_secs(5))
+                    .expect("an accepted withdrawal was never written")
+            })
+            .collect();
+        let expected: Vec<u64> = (0..100u64).filter(|rid| accepted[*rid as usize]).collect();
+        assert_eq!(order, expected, "written in the order posted");
+    }
+
+    fn sizes(count: usize) -> Vec<crate::render::PageSize> {
+        vec![
+            crate::render::PageSize {
+                width_pt: 612.0,
+                height_pt: 792.0,
+            };
+            count
+        ]
+    }
+
+    /// A page count past what any document has is refused before anything is
+    /// sized by it, and the list must agree with the count it came with.
+    ///
+    /// Controls first: an eager reply listing every page, a lazy one listing
+    /// the first, and a lazy reply for an empty document, each accepted. Then
+    /// a count one past [`MAX_PAGES`] with a lazy list that agrees with it, so
+    /// only the ceiling can refuse it, and the two disagreements.
+    #[test]
+    fn an_open_reply_claiming_more_pages_than_any_document_has_is_refused() {
+        assert_eq!(check_open_reply(false, &sizes(3), 3, false), Ok(()));
+        assert_eq!(check_open_reply(true, &sizes(1), 775, true), Ok(()));
+        assert_eq!(check_open_reply(true, &sizes(0), 0, true), Ok(()));
+        assert_eq!(check_open_reply(true, &sizes(1), MAX_PAGES, true), Ok(()));
+
+        let err = check_open_reply(true, &sizes(1), MAX_PAGES + 1, true)
+            .expect_err("a count past the ceiling");
+        assert!(err.contains("more than any document"), "{err}");
+        assert!(check_open_reply(true, &sizes(1), u32::MAX as usize, true).is_err());
+
+        // Eager, so every page is listed: a short list is refused.
+        assert!(check_open_reply(false, &sizes(2), 3, false).is_err());
+        // Lazy, so one page is listed: two is not what was asked for.
+        assert!(check_open_reply(true, &sizes(2), 3, true).is_err());
+        // Lazy when eager geometry was asked for.
+        assert!(check_open_reply(true, &sizes(1), 3, false).is_err());
     }
 
     #[test]

@@ -450,10 +450,11 @@ pub async fn split_document(
 /// property arriving from the other direction: extract reads some of one file,
 /// merge reads all of several, and neither is an edit.
 ///
-/// `others` are paths the reader chose in a file dialog. They are opened here,
-/// in the coordinator, which is where every other `lopdf` parse on a save path
-/// runs --- see `docs/THREAT-MODEL.md` residual risk 18, which this widens by
-/// one file per merge rather than by a new kind of access.
+/// `others` are paths the reader chose in a file dialog. They are read here,
+/// in the coordinator, as bytes and nothing more, and parsed where the open
+/// document is: by the rewriter `outside_of` chooses, a sandboxed worker
+/// wherever there can be one (`save::write_merged`,
+/// `worker_proto::Request::Merge`, and `docs/THREAT-MODEL.md` residual risk 18).
 ///
 /// On the blocking pool for [`save_copy`]'s reason, and rather more so: this one
 /// parses every file it was given.

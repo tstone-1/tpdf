@@ -6,9 +6,12 @@
 //! `.synctex.gz` file a TeX engine writes beside the PDF when asked
 //! (`-synctex=1`). It is input from outside, like the PDF, so this parser is
 //! our own, in Rust, and bounded: at most 64 MiB read from disk and 512 MiB
-//! once decompressed, no line longer than 64 KiB, and boxes nested at most
-//! 100,000 deep. It reads text and builds no structure the file can make
-//! large; nothing in it is run.
+//! once decompressed, no line longer than 64 KiB, boxes nested at most
+//! 100,000 deep, and at most 65,536 inputs naming 16 MiB of paths between
+//! them; past any of these the file is refused, not read in part. At most
+//! 10,000 rectangles are kept for a line, and the rest are not marked. It
+//! reads text, and nothing it keeps grows past those bounds with the file;
+//! nothing in it is run.
 //!
 //! ## What the file says
 //!
@@ -55,6 +58,12 @@ const MAX_LINE: u64 = 64 * 1024;
 const MAX_DEPTH: usize = 100_000;
 /// The most rectangles kept for one line.
 const MAX_BOXES: usize = 10_000;
+/// The most `Input:` lines kept. Each is one file the engine opened, and a
+/// document that reads more than this many is not one a reader edits by hand.
+const MAX_INPUTS: usize = 65_536;
+/// The most bytes of input paths kept, all of them together: [`MAX_INPUTS`]
+/// lines each up to [`MAX_LINE`] long would otherwise be 4 GiB.
+const MAX_INPUT_TEXT: usize = 16 * 1024 * 1024;
 /// Scaled points in a PostScript point: 65536 per TeX point, 72.27 TeX points
 /// to the inch, 72 PostScript points to the inch.
 const SP_PER_BP: f64 = 65_781.76;
@@ -173,20 +182,45 @@ fn lines(reader: &mut dyn BufRead, mut each: impl FnMut(&str) -> bool) -> Result
     }
 }
 
-/// Every `Input:tag:path` line, in order.
+/// Every `Input:tag:path` line, in order, at most [`MAX_INPUTS`] of them and
+/// [`MAX_INPUT_TEXT`] of paths between them.
+///
+/// # Errors
+///
+/// The file past either bound, or past [`lines`]' own. A list cut short is
+/// refused rather than used: the input left out could be the source.
 fn inputs(reader: &mut dyn BufRead) -> Result<Vec<(u32, String)>, String> {
     let mut found = Vec::new();
+    let mut text = 0usize;
+    let mut over = None;
     lines(reader, |line| {
         if let Some(rest) = line.strip_prefix("Input:") {
             if let Some((tag, path)) = rest.split_once(':') {
                 if let Ok(tag) = tag.parse::<u32>() {
+                    text += path.len();
+                    if found.len() >= MAX_INPUTS {
+                        over = Some(said!(
+                            "the SyncTeX file names more than {MAX_INPUTS} inputs"
+                        ));
+                        return false;
+                    }
+                    if text > MAX_INPUT_TEXT {
+                        over = Some(said!(
+                            "the SyncTeX file names inputs whose paths come to more than {most} MB",
+                            most = MAX_INPUT_TEXT / 1_048_576
+                        ));
+                        return false;
+                    }
                     found.push((tag, path.to_string()));
                 }
             }
         }
         true
     })?;
-    Ok(found)
+    match over {
+        Some(why) => Err(why),
+        None => Ok(found),
+    }
 }
 
 /// `path` with `.` left out and `..` taken back, without asking the disk.
@@ -319,16 +353,23 @@ impl Scale {
     /// A box's rectangle, or `None` for one with no area.
     fn rect(&self, record: &Record) -> Option<Rect> {
         let (w, h, d) = record.size?;
-        if w == 0 || h + d <= 0 {
+        // The file states both, so their sum can pass `i64`: no area then.
+        let tall = h.checked_add(d)?;
+        if w == 0 || tall <= 0 {
             return None;
         }
         let left = self.x(record.x).min(self.x(record.x) + self.length(w));
-        Some(Rect {
+        let rect = Rect {
             x: left,
             top: self.y(record.y) - self.length(h),
             width: self.length(w).abs(),
-            height: self.length(h + d),
-        })
+            height: self.length(tall),
+        };
+        // A finite scale large enough still overflows the products.
+        [rect.x, rect.top, rect.width, rect.height]
+            .iter()
+            .all(|v| v.is_finite())
+            .then_some(rect)
     }
 }
 
@@ -380,6 +421,7 @@ fn scan(
     let mut after = Bucket::default();
     let mut before = Bucket::default();
     let mut deep = false;
+    let mut unscaled = None;
     lines(reader, |line| {
         let Some(kind) = line.chars().next() else {
             return true;
@@ -434,6 +476,19 @@ fn scan(
                     line.strip_prefix(prefix)
                         .and_then(|n| n.trim().parse::<f64>().ok())
                 };
+                // `inf` and `NaN` parse as numbers, and would put every
+                // rectangle at no place on the page.
+                let header = ["Unit:", "Magnification:", "X Offset:", "Y Offset:"]
+                    .into_iter()
+                    .find_map(|prefix| number(prefix).map(|n| (prefix, n)));
+                if let Some((prefix, n)) = header.filter(|(_, n)| !n.is_finite()) {
+                    unscaled = Some(said!(
+                        "the SyncTeX file's {name} is {n}, which is not a number tpdf can place a \
+                         box by",
+                        name = prefix.trim_end_matches(':')
+                    ));
+                    return false;
+                }
                 if let Some(unit) = number("Unit:") {
                     scale.unit = unit;
                 } else if let Some(magnification) = number("Magnification:") {
@@ -447,6 +502,9 @@ fn scan(
         }
         true
     })?;
+    if let Some(why) = unscaled {
+        return Err(why);
+    }
     if deep {
         return Err(said!(
             "the SyncTeX file nests boxes more than {MAX_DEPTH} deep"
@@ -695,6 +753,57 @@ mod tests {
         let long = format!("Input:1:{}\n", "a".repeat(MAX_LINE as usize));
         let refused = inputs(&mut Cursor::new(long.into_bytes())).unwrap_err();
         assert!(refused.contains("longer than 64 KB"), "{refused}");
+    }
+
+    /// The inputs kept are bounded in number and in the bytes of their paths,
+    /// and a list past either is refused rather than cut: the input left out
+    /// could be the source. Exactly at each bound is the control.
+    #[test]
+    fn inputs_past_the_bounds_are_refused_and_not_cut_short() {
+        use super::{MAX_INPUTS, MAX_INPUT_TEXT};
+        let named = |count: usize, path: &str| -> String {
+            (0..count)
+                .map(|tag| format!("Input:{tag}:{path}\n"))
+                .collect()
+        };
+        let read = |text: String| inputs(&mut Cursor::new(text.into_bytes()));
+        assert_eq!(
+            read(named(MAX_INPUTS, "a")).expect("read").len(),
+            MAX_INPUTS
+        );
+        let why = read(named(MAX_INPUTS + 1, "a")).unwrap_err();
+        assert!(why.contains("more than 65536 inputs"), "{why}");
+
+        let long = "p".repeat(60 * 1024);
+        let fit = MAX_INPUT_TEXT / long.len();
+        assert_eq!(read(named(fit, &long)).expect("read").len(), fit);
+        let why = read(named(fit + 1, &long)).unwrap_err();
+        assert!(why.contains("more than 16 MB"), "{why}");
+    }
+
+    /// A header number that is not finite is refused, and a box whose height
+    /// and depth pass `i64` together has no area; a finite header is the
+    /// control.
+    #[test]
+    fn a_scale_that_is_not_a_number_and_a_size_that_overflows_place_no_box() {
+        let page = "{1\n(1,1:0,0:10,5,1\n)\n}1\n";
+        assert!(
+            scanned(&format!("Unit:2\n{page}"), 1).is_some(),
+            "the control"
+        );
+        for header in ["Unit:inf", "Unit:NaN", "Magnification:-inf", "X Offset:inf"] {
+            let text = format!("{header}\n{page}");
+            let why =
+                scan(&mut Cursor::new(text.into_bytes()), &BTreeSet::from([1]), 1).unwrap_err();
+            assert!(
+                why.contains("not a number tpdf can place a box by"),
+                "{why}"
+            );
+        }
+        let over = format!("{{1\n(1,1:0,0:10,{h},{h}\n)\n}}1\n", h = i64::MAX);
+        assert_eq!(scanned(&over, 1), None);
+        // A finite scale whose products are not finite places nothing either.
+        assert_eq!(scanned(&format!("Unit:1e308\n{page}"), 1), None);
     }
 
     #[test]

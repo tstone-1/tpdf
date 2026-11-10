@@ -1314,6 +1314,11 @@ fn set_note(doc: &mut Document, note: &crate::edits::PlannedNoteEdit) -> Result<
         return Err(said!("that comment is not an annotation").into());
     }
     dictionary.set("Contents", text_string(&note.body));
+    // `/RC` is the same body as rich text, and a viewer that has it shows it
+    // in place of `/Contents`: left behind, the reader's old words are what
+    // the next reader sees. tpdf writes no rich text, so the plain body is the
+    // whole of the note now.
+    dictionary.remove(b"RC");
     dictionary.set("M", text_string(&note.made));
     Ok(())
 }

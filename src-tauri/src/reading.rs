@@ -680,9 +680,9 @@ pub fn read(text: &PageText) -> Reading {
     let gap = cut_width(&view, axes);
     let fragments = fragments_of(&view, axes, gap);
     if let Some(tagged) = usable_runs(&view) {
-        let lines = ownership(&view, tagged)
+        let lines = within(&view, &fragments, &ownership(&view, tagged))
             .into_iter()
-            .flat_map(|owned| lines_of(&view, within(&view, &fragments, &owned), axes))
+            .flat_map(|parts| lines_of(&view, parts, axes))
             .collect();
         return Reading {
             route: Route::Tagged,
@@ -920,39 +920,53 @@ fn ownership(view: &View, runs: &[TaggedRun]) -> Vec<Vec<usize>> {
     owned
 }
 
-/// `within`.
-fn within(view: &View, fragments: &[Fragment], owned: &[usize]) -> Vec<Fragment> {
-    let mine: std::collections::HashSet<usize> = owned.iter().copied().collect();
-    let mut out = Vec::new();
+/// `within`: every run's fragments in one pass over the page's characters,
+/// one list per entry of `owned`, in its order.
+fn within(view: &View, fragments: &[Fragment], owned: &[Vec<usize>]) -> Vec<Vec<Fragment>> {
+    let mut owner: Vec<Option<usize>> = vec![None; view.len()];
+    for (at, indices) in owned.iter().enumerate() {
+        for index in indices {
+            if let Some(slot) = owner.get_mut(*index) {
+                *slot = Some(at);
+            }
+        }
+    }
+    let mut out: Vec<Vec<Fragment>> = vec![Vec::new(); owned.len()];
     for fragment in fragments {
-        let mut indices = Vec::new();
-        let mut bounds: Option<Quad> = None;
+        // This fragment's piece for each run it touches; each goes to its own
+        // run's list, so the order among runs does not matter.
+        let mut pieces: std::collections::BTreeMap<usize, (Vec<usize>, Option<Quad>)> =
+            std::collections::BTreeMap::new();
         for range in &fragment.ranges {
             for index in range.from..range.to {
-                if !mine.contains(&index) {
+                let Some(at) = owner.get(index).copied().flatten() else {
                     continue;
-                }
+                };
+                let (indices, bounds) = pieces.entry(at).or_default();
                 indices.push(index);
-                let at = char_quad(view, index);
-                if !placed(at) {
+                let quad = char_quad(view, index);
+                if !placed(quad) {
                     continue;
                 }
                 match bounds.as_mut() {
-                    Some(b) => absorb(b, at),
-                    None => bounds = Some(at),
+                    Some(b) => absorb(b, quad),
+                    None => *bounds = Some(quad),
                 }
             }
         }
-        if indices.is_empty() {
-            continue;
+        for (at, (indices, bounds)) in pieces {
+            if let Some(list) = out.get_mut(at) {
+                list.push(Fragment {
+                    ranges: ranges_of(indices),
+                    bounds: bounds.unwrap_or_else(empty_box),
+                    turns: fragment.turns,
+                });
+            }
         }
-        out.push(Fragment {
-            ranges: ranges_of(indices),
-            bounds: bounds.unwrap_or_else(empty_box),
-            turns: fragment.turns,
-        });
     }
-    out.sort_by_key(|f| f.ranges.first().map_or(0, |r| r.from));
+    for list in &mut out {
+        list.sort_by_key(|f| f.ranges.first().map_or(0, |r| r.from));
+    }
     out
 }
 

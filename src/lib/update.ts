@@ -204,6 +204,8 @@ export class Updates {
   #onChange: (s: UpdateState) => void;
   #automatic = false;
   #launchChecked = false;
+  /** The check in flight, so that a second caller is given its answer. */
+  #checking: Promise<UpdateState> | null = null;
 
   /**
    * @param inApp Whether this platform updates in place. Linux does not: its
@@ -217,6 +219,7 @@ export class Updates {
     private storage: () => Pick<Storage, "getItem" | "setItem"> = () => window.localStorage,
     private inApp = true,
     private record: (outcome: CheckRecord, ms: number, launch: boolean) => void = () => {},
+    private now: () => number = Date.now,
   ) {
     this.#onChange = onChange;
     try {
@@ -260,23 +263,34 @@ export class Updates {
    * Asks whether there is a newer version.
    *
    * Returns the state it settled on, so a caller can act without re-reading.
-   * A check while something is already running is a no-op that returns the
-   * current state rather than an error --- the launch check and a reader
-   * typing "check for updates" can genuinely race, and neither is a mistake.
+   * A check while something is already running starts no second request and
+   * is not an error --- the launch check and a reader typing "check for
+   * updates" can genuinely race, and neither is a mistake. While a check is in
+   * flight the second caller is given that check's answer, not the `checking`
+   * it would read now: the reader's command puts the returned state in the
+   * status line, and a `checking` written there is replaced by nothing. While a
+   * download runs, the state is returned as it is.
    */
-  async check(): Promise<UpdateState> {
+  check(): Promise<UpdateState> {
     return this.#check(false);
   }
 
-  async #check(launch: boolean): Promise<UpdateState> {
-    if (this.#busy) return this.#state;
+  #check(launch: boolean): Promise<UpdateState> {
+    if (this.#checking) return this.#checking;
+    if (this.#busy) return Promise.resolve(this.#state);
     if (!this.inApp) {
       this.#set({ kind: "failed", message: MANUAL_UPDATES });
-      return this.#state;
+      return Promise.resolve(this.#state);
     }
+    const running = this.#ask(launch).finally(() => { this.#checking = null; });
+    this.#checking = running;
+    return running;
+  }
+
+  async #ask(launch: boolean): Promise<UpdateState> {
     this.#busy = true;
     this.#set({ kind: "checking" });
-    const started = Date.now();
+    const started = this.now();
     try {
       const found = await this.api.check();
       this.#handle = found;
@@ -298,7 +312,7 @@ export class Updates {
       // stall that ran into `CHECK_TIMEOUT_MS`. A failed write is not the
       // reader's problem and must not change the answer they get.
       try {
-        this.record(settled, Date.now() - started, launch);
+        this.record(settled, this.now() - started, launch);
       } catch { /* the log is a diagnostic, not part of the check */ }
     }
     return this.#state;
@@ -503,6 +517,16 @@ export interface FinishEffects {
   act(): Promise<void>;
   /** Reports a failure. */
   say(message: string): void;
+  /**
+   * Stops the reader editing any document, and returns what lets them again.
+   *
+   * Raised once the unsaved documents have been read, and held until the step
+   * has either ended the process or come back. What was read is only true while
+   * nothing can change it: a Windows install is the whole download, up to
+   * {@link DOWNLOAD_TIMEOUT_MS}, and a note added while it runs is unsaved work
+   * the question never saw, which the installer's exit then throws away.
+   */
+  hold(): () => void;
 }
 
 /**
@@ -526,6 +550,12 @@ export interface FinishEffects {
  * and the button still offered, so a reader who saves and comes back finds the
  * same thing waiting.
  *
+ * The question is only as good as the answer to {@link FinishEffects.unsaved}
+ * stays, so from that answer until the step comes back the reader cannot edit
+ * ({@link FinishEffects.hold}). On Windows the install is the step and the
+ * process ends inside it; on macOS the restart is, and the hold covers the
+ * question and `relaunch()` alike.
+ *
  * @param ends Whether this step ends the process; see {@link installEndsProcess}.
  *             When it does not, there is nothing to discard and nothing to ask.
  */
@@ -537,10 +567,23 @@ export async function finishUpdate(
 ): Promise<FinishOutcome> {
   const wanted = step === "install" ? "available" : "ready";
   if (state.kind !== wanted) return "withheld";
-  if (ends) {
-    const prompt = finishPrompt(step, await effects.unsaved());
+  if (!ends) return attempt(effects);
+  const unsaved = await effects.unsaved();
+  // Raised in the same turn the answer arrives in, so no input can land between
+  // the reading and the hold; released whatever happens, because a step that
+  // comes back at all has not ended the process.
+  const release = effects.hold();
+  try {
+    const prompt = finishPrompt(step, unsaved);
     if (prompt && !await effects.confirm(prompt)) return "cancelled";
+    return await attempt(effects);
+  } finally {
+    release();
   }
+}
+
+/** Runs the step itself, telling the reader when it fails. */
+async function attempt(effects: FinishEffects): Promise<FinishOutcome> {
   try {
     await effects.act();
   } catch (e) {

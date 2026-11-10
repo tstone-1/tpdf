@@ -316,10 +316,12 @@ pub(crate) fn glyphs_from(
             if index == 0 {
                 off_line = off;
             }
-            if !pen.is_finite() || (off - off_line).abs() > BASELINE_SLACK {
+            // Finite after the narrowing, not before it: a pen past `f32::MAX`
+            // is finite as an `f64` and infinite as the `f32` it is kept as.
+            let pen = pen as f32;
+            if !pen.is_finite() || !off.is_finite() || (off - off_line).abs() > BASELINE_SLACK {
                 return None;
             }
-            let pen = pen as f32;
             if glyphs
                 .last()
                 .is_some_and(|before| pen < before.pen - PEN_SLACK)
@@ -1039,6 +1041,21 @@ mod tests {
         );
         let flat = [0.0, 0.0, 0.0, 1.0, 20.0, 100.0];
         assert!(glyphs_from(&row, flat, 10.0, None).is_none(), "no baseline");
+        // A pen a finite `f64` places past what an `f32` holds.
+        assert!(
+            glyphs_from(&along(&[20.0, 1e300]), PLAIN, 10.0, None).is_none(),
+            "a pen out of range"
+        );
+        // Every glyph equally far off a baseline no `f64` reaches: the distance
+        // between two infinities is no distance, so the slack cannot catch it.
+        let mut away = row.clone();
+        for one in &mut away {
+            one.origin.1 = f64::MAX;
+        }
+        assert!(
+            glyphs_from(&away, PLAIN, 10.0, None).is_none(),
+            "an offset out of range"
+        );
         assert!(
             glyphs_from(&[], PLAIN, 10.0, None).is_none(),
             "no characters"

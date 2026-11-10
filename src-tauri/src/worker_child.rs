@@ -39,7 +39,7 @@
 
 use crate::document::OpenDocument;
 use std::io::{BufRead, BufReader, Write};
-use std::sync::mpsc::{channel, Sender};
+use std::sync::mpsc::{channel, Receiver, Sender};
 
 use crate::progressive::{self, CancelToken};
 use crate::queue::{Claim, SharedQueue};
@@ -162,9 +162,12 @@ fn serve(args: &[String]) -> Result<(), String> {
         Ok(pdfium) => pdfium,
         Err(e) => {
             let _ = establish_boundary();
-            return refuse(&said!(
-                "tpdf could not load its PDF engine. Reinstalling should fix it. ({e})"
-            ));
+            let (requests, queue) = start_reader();
+            return refuse(
+                &said!("tpdf could not load its PDF engine. Reinstalling should fix it. ({e})"),
+                &requests,
+                &queue,
+            );
         }
     };
     let bindings = progressive::bindings_of(pdfium);
@@ -206,6 +209,16 @@ fn serve(args: &[String]) -> Result<(), String> {
         }
     };
 
+    // The reader before the document, so stdin is drained from here on. A
+    // document that takes PDFium seconds to open is exactly when the parent
+    // withdraws tiles, and a pipe nobody reads fills and stalls whoever writes
+    // the next line into it. Started after the boundary, which on Linux
+    // refuses a second thread, and after the handover, which on Windows
+    // arrives on this same stdin and must not be read by two threads. The
+    // reader never touches the document, so starting it before the document
+    // exists changes nothing it can reach.
+    let (requests, queue) = start_reader();
+
     // AFTER the sandbox: this is the hostile input.
     //
     // SAFETY: the mapping is forgotten immediately below, so the bytes outlive
@@ -217,10 +230,12 @@ fn serve(args: &[String]) -> Result<(), String> {
         Ok(document) => document,
         // **Asked about, not refused.** A locked document is the one refusal a
         // reader can answer, so it becomes a conversation rather than an
-        // epitaph. `unlock` serves the same stdin every later request arrives
-        // on and returns the opened document, so the loop below is reached with
-        // nothing about it different.
-        Err(refusal) if refusal.locked => unlock(bindings, bytes, &refusal.reason)?,
+        // epitaph. `unlock` serves the same requests every later one arrives
+        // with and returns the opened document, so the loop below is reached
+        // with nothing about it different.
+        Err(refusal) if refusal.locked => {
+            unlock(bindings, bytes, &refusal.reason, &requests, &queue)?
+        }
         // **Answered, not died on.** `open_failure` writes the four reasons a
         // document does not open in a reader's words --- it needs a password, it
         // uses a scheme we cannot read, it is not a PDF, it could not be read ---
@@ -233,19 +248,11 @@ fn serve(args: &[String]) -> Result<(), String> {
         // Reported 2026-08-21 against 26.8.6 on Windows and reproduced here on
         // macOS in one command, with two different causes --- so it was never a
         // platform defect, only a platform where the message is invisible.
-        Err(refusal) => return refuse(&refusal.reason),
+        Err(refusal) => return refuse(&refusal.reason, &requests, &queue),
     };
 
-    // The same state machine the in-process renderer uses, for the same reason:
-    // a claim moves a request from queued to in flight under one lock, so a
-    // withdrawal arriving at any instant either finds it queued and marks it, or
-    // finds it running and cancels it. Tested in `queue.rs`.
-    let queue = SharedQueue::default();
-    let (tx, rx) = channel::<Request>();
-    spawn_reader(tx, queue.clone());
-
     let mut out = std::io::stdout();
-    for request in rx {
+    for request in requests {
         let response = handle(
             bindings,
             &document,
@@ -412,12 +419,10 @@ fn establish_boundary() -> Result<(), String> {
 /// So a wrong password costs a reply, not a process. `docs/PLAN.md` §5 has the
 /// run.
 ///
-/// **Reads stdin the way [`wait_for_document`] does, and for its reason.** Both
-/// this and [`spawn_reader`] go through `std::io::stdin()`, whose buffer is
-/// shared; a private `BufReader` here would swallow whatever arrived promptly
-/// behind the password into a buffer that is then dropped, and the first request
-/// of the reader's session would vanish. `refuse` may wrap stdin because it never
-/// hands the stream on to anybody.
+/// **Reads what [`spawn_reader`] forwards**, which is every later request's
+/// route too: withdrawals never reach here (the reader applies them and a
+/// withdrawal has no reply), and a tile answered `locked` is taken off the
+/// reader's queue, since nothing will ever claim it.
 ///
 /// The wording of a second failure is chosen here rather than by
 /// [`progressive::open_failure`], which cannot know: PDFium answers
@@ -433,37 +438,17 @@ fn unlock(
     bindings: progressive::Bindings,
     bytes: &'static [u8],
     first: &str,
+    requests: &Receiver<Request>,
+    queue: &SharedQueue,
 ) -> Result<OpenDocument, String> {
-    use std::io::BufRead;
-
     let mut out = std::io::stdout();
     let mut reason = first.to_string();
     loop {
-        let mut line = String::new();
-        let read = std::io::stdin()
-            .lock()
-            .read_line(&mut line)
-            .map_err(|e| format!("reading a password: {e}"))?;
-        if read == 0 {
+        let Ok(request) = requests.recv() else {
             return Err("the parent closed the pipe while the document was locked".into());
-        }
-        if line.trim().is_empty() {
-            continue;
-        }
-        let request = match serde_json::from_str::<Request>(line.trim()) {
-            Ok(request) => request,
-            Err(e) => {
-                reply(&mut out, &Response::err(format!("unreadable request: {e}")))?;
-                continue;
-            }
         };
-        // Skipped rather than answered, exactly as on the ordinary path: a
-        // withdrawal has no reply, and answering one would leave the parent a
-        // reply ahead of itself for the rest of this worker's life.
-        if matches!(request, Request::Withdraw { .. }) {
-            continue;
-        }
         let Request::Unlock { password } = request else {
+            forget_tile(queue, &request);
             reply(&mut out, &Response::locked(&reason))?;
             continue;
         };
@@ -493,30 +478,43 @@ fn unlock(
 /// `if !response.ok { return Err(response.error) }` branch, and until now that
 /// branch was unreachable for the one failure a reader actually meets.
 ///
-/// A withdrawal is skipped rather than answered, the same as on the ordinary
-/// path: it is not a request that has a reply, and answering it would leave the
-/// parent one reply ahead of itself for the rest of the worker's life.
+/// A withdrawal never arrives here, the same as on the ordinary path: the
+/// reader applies it, and it is not a request that has a reply.
 ///
 /// Returns `Ok`, because a document PDFium refuses is a fact about the document
 /// and not a failure of this process. Exiting 0 is what keeps the two apart in
 /// the epitaph if anything ever does read it.
-fn refuse(reason: &str) -> Result<(), String> {
+fn refuse(reason: &str, requests: &Receiver<Request>, queue: &SharedQueue) -> Result<(), String> {
     let mut out = std::io::stdout();
-    let stdin = BufReader::new(std::io::stdin());
-    for line in stdin.lines() {
-        let Ok(line) = line else { break };
-        if line.trim().is_empty() {
-            continue;
-        }
-        if matches!(
-            serde_json::from_str::<Request>(&line),
-            Ok(Request::Withdraw { .. })
-        ) {
-            continue;
-        }
+    for request in requests {
+        forget_tile(queue, &request);
         reply(&mut out, &Response::err(reason))?;
     }
     Ok(())
+}
+
+/// Takes a tile that is answered without being rendered off the reader's queue.
+///
+/// The reader registers a tile on arrival so a withdrawal can find it; one
+/// answered `locked` or refused is never claimed, and without this its id
+/// would stay outstanding for the life of the process.
+fn forget_tile(queue: &SharedQueue, request: &Request) {
+    if let Some(rid) = request.tile_rid() {
+        queue.with(|queue| queue.forget(rid));
+    }
+}
+
+/// Starts [`spawn_reader`], returning what it forwards and the queue it keeps.
+///
+/// The queue is the same state machine the in-process renderer uses, for the
+/// same reason: a claim moves a request from queued to in flight under one
+/// lock, so a withdrawal arriving at any instant either finds it queued and
+/// marks it, or finds it running and cancels it. Tested in `queue.rs`.
+fn start_reader() -> (Receiver<Request>, SharedQueue) {
+    let queue = SharedQueue::default();
+    let (tx, rx) = channel::<Request>();
+    spawn_reader(tx, queue.clone());
+    (rx, queue)
 }
 
 /// Reads requests from stdin until it closes.
@@ -1388,19 +1386,27 @@ mod tests {
     #[cfg(target_os = "linux")]
     #[test]
     fn a_contained_worker_reads_fonts_and_nothing_else() {
+        use std::os::fd::AsRawFd;
+
         let fonts = crate::sandbox_linux::FONT_DIRS
             .into_iter()
             .find(|dir| std::path::Path::new(dir).is_dir());
-        let uncontained = probe(fonts);
+        // A file the child holds open, as a worker holds its tile and output:
+        // its mode and times are what the attribute probes try to change.
+        let held_path =
+            std::env::temp_dir().join(format!("tpdf-boundary-held-{}", std::process::id()));
+        let held_file = std::fs::File::create(&held_path).expect("a file to hold");
+        let held = held_file.as_raw_fd();
+        let uncontained = probe(fonts, held);
         // Everything forbidden works outside the boundary; the font bit is
         // clear because reading one works too. A kernel with io_uring turned
         // off (`kernel.io_uring_disabled`) refuses a ring to everybody, and
         // there that probe proves nothing, so it is said rather than assumed.
         // The x32 bit exists only on x86-64.
         let mut expected = if cfg!(target_arch = "x86_64") {
-            0b1101_1111
+            0b11_1101_1111
         } else {
-            0b0101_1111
+            0b11_0101_1111
         };
         if uncontained & RING == 0 {
             eprintln!("[SKIP] io_uring is off on this kernel, so its probe sees nothing here");
@@ -1421,7 +1427,7 @@ mod tests {
         if pid == 0 {
             let code: i32 = match super::establish_boundary() {
                 Err(_) => -1,
-                Ok(()) => probe(fonts),
+                Ok(()) => probe(fonts, held),
             };
             // SAFETY: four bytes from a local, then the child ends without
             // running the parent's destructors.
@@ -1444,6 +1450,8 @@ mod tests {
             libc::WIFEXITED(status) && read == 4,
             "the child did not answer: status {status:#x}, {read} bytes"
         );
+        drop(held_file);
+        let _ = std::fs::remove_file(&held_path);
         assert_ne!(code, -1, "the boundary could not be established");
         // Nothing forbidden worked, and the font folder, if there is one, read.
         assert_eq!(
@@ -1459,17 +1467,27 @@ mod tests {
     /// The probes, as bits: 1 read /etc/passwd, 2 created a file, 4 opened an
     /// internet socket, 8 opened a Unix socket, 16 started a program; with
     /// `fonts`, 32 when that folder could NOT be listed; [`RING`] made an
-    /// io_uring ring, which can make a socket without the `socket` call; and on
+    /// io_uring ring, which can make a socket without the `socket` call; on
     /// x86-64, 128 when `socket` called by its x32 number was NOT refused by
-    /// the filter.
+    /// the filter; 256 changed the mode of `held`, an open descriptor, and 512
+    /// changed its timestamps, neither of which Landlock rules.
     ///
     /// The x32 bit is read from the error rather than from success, because a
     /// kernel without x32 refuses the call itself with `ENOSYS` whatever the
     /// filter does: the filter's answer is `EPERM`, and anything else means the
     /// call got past it. So the bit is set uncontained on every x86-64 kernel.
     #[cfg(target_os = "linux")]
-    fn probe(fonts: Option<&str>) -> i32 {
+    fn probe(fonts: Option<&str>, held: i32) -> i32 {
         let mut bits = 0;
+        // SAFETY: a live descriptor of a file this test created; the mode is
+        // the one it already has, so a success changes nothing that matters.
+        if unsafe { libc::fchmod(held, 0o600) } == 0 {
+            bits |= 256;
+        }
+        // SAFETY: as above; null times means "now".
+        if unsafe { libc::futimens(held, std::ptr::null()) } == 0 {
+            bits |= 512;
+        }
         // SAFETY: `io_uring_setup(1, params)` with zeroed parameters of the
         // kernel's size (120 bytes); a ring it returns is closed.
         let ring = unsafe {

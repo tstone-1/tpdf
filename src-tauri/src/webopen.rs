@@ -38,6 +38,7 @@ use std::collections::HashMap;
 
 use parking_lot::Mutex;
 
+use crate::outline::Target;
 use crate::weburl::Web;
 
 /// Which of a document's two scans a token was numbered by.
@@ -84,7 +85,23 @@ impl Registry {
     /// rather than a duplicate of the worker's: an entry that does not parse
     /// becomes a hole, which makes that one link unopenable rather than opened
     /// unchecked --- and leaves every other token pointing where it did.
-    pub fn adopt(&self, document: u32, source: Source, urls: &mut Vec<String>) {
+    ///
+    /// **The halves a reader is shown come from that parse too.** Every
+    /// [`Target::Web`] in `shown` has its `host` and `rest` written over with
+    /// the parsed address's own, and one whose token names a hole or nothing
+    /// becomes [`Target::Refused`]. The worker built those two strings, and the
+    /// confirmation dialog puts `host` in front of the reader as where the link
+    /// goes: a worker that could choose it independently of the address could
+    /// show `your-bank.example` over `https://evil.example/`. A parameter
+    /// rather than a second call, for the reason [`forget`](Self::forget)'s
+    /// `sources` gives.
+    pub fn adopt<'a>(
+        &self,
+        document: u32,
+        source: Source,
+        urls: &mut Vec<String>,
+        shown: impl IntoIterator<Item = &'a mut Target>,
+    ) {
         // `map` and not `filter_map`: the token is an index, so an entry that
         // does not parse has to leave a **hole**. Dropping it would shorten the
         // list and silently re-point every target after it at somebody else's
@@ -94,6 +111,23 @@ impl Registry {
             .iter()
             .map(|raw| Web::parse(raw))
             .collect();
+        for target in shown {
+            let Target::Web { token, .. } = *target else {
+                continue;
+            };
+            *target = match parsed.get(token as usize) {
+                Some(Some(web)) => Target::Web {
+                    token,
+                    host: web.host().to_string(),
+                    rest: web.rest().to_string(),
+                },
+                // The spelling `links.rs` and `outline.rs` give a `/URI` they
+                // refuse, so the frontend words it as it does theirs.
+                _ => Target::Refused {
+                    action: "uri".to_string(),
+                },
+            };
+        }
         self.by_document.lock().insert((document, source), parsed);
     }
 
@@ -179,11 +213,68 @@ mod tests {
         raw.iter().map(|s| (*s).to_string()).collect()
     }
 
+    /// [`Registry::adopt`] with no targets to correct, for the tests about the
+    /// address list alone.
+    fn adopt(registry: &Registry, document: u32, source: Source, list: &mut Vec<String>) {
+        registry.adopt(document, source, list, Vec::new());
+    }
+
+    fn web(token: u32, host: &str, rest: &str) -> Target {
+        Target::Web {
+            token,
+            host: host.to_string(),
+            rest: rest.to_string(),
+        }
+    }
+
+    /// The host a reader is shown is the address's, whatever the worker said.
+    ///
+    /// Three targets: one whose display halves are a lie about its address, one
+    /// whose token names an entry that does not parse, and one whose token is
+    /// past the list. A fourth, already truthful, is the control that
+    /// correcting does not disturb a target that was right, and a page target
+    /// is left as it was.
+    #[test]
+    fn a_reply_whose_shown_host_is_not_its_addresss_host_is_shown_the_real_one() {
+        let registry = Registry::default();
+        let mut list = urls(&[
+            "https://evil.example/login",
+            "javascript:alert(1)",
+            "https://fine.example/",
+        ]);
+        let mut targets = [
+            web(0, "your-bank.example", "/secure"),
+            web(1, "harmless.example", "/"),
+            web(7, "nowhere.example", "/"),
+            web(2, "fine.example", "/"),
+            Target::Page {
+                page: 3,
+                top_pt: None,
+            },
+        ];
+        registry.adopt(1, Source::Links, &mut list, targets.iter_mut());
+
+        assert_eq!(targets[0], web(0, "evil.example", "/login"));
+        let refused = Target::Refused {
+            action: "uri".to_string(),
+        };
+        assert_eq!(targets[1], refused, "a token naming a hole opens nothing");
+        assert_eq!(targets[2], refused, "a token past the list opens nothing");
+        assert_eq!(targets[3], web(2, "fine.example", "/"), "the control");
+        assert_eq!(
+            targets[4],
+            Target::Page {
+                page: 3,
+                top_pt: None
+            }
+        );
+    }
+
     #[test]
     fn adopting_empties_the_list_the_frontend_would_receive() {
         let registry = Registry::default();
         let mut list = urls(&["https://example.com/a", "https://example.com/b"]);
-        registry.adopt(7, Source::Links, &mut list);
+        adopt(&registry, 7, Source::Links, &mut list);
         assert!(
             list.is_empty(),
             "the addresses must not continue to the frontend: {list:?}"
@@ -195,9 +286,11 @@ mod tests {
     fn a_token_names_the_address_at_its_index() {
         let registry = Registry::default();
         let mut list = urls(&["https://first.example/", "https://second.example/"]);
-        registry.adopt(1, Source::Links, &mut list);
+        adopt(&registry, 1, Source::Links, &mut list);
         assert_eq!(
-            registry.address(1, Source::Links, 1).map(|w| w.host),
+            registry
+                .address(1, Source::Links, 1)
+                .map(|w| w.host().to_string()),
             Some("second.example".to_string())
         );
     }
@@ -205,12 +298,14 @@ mod tests {
     #[test]
     fn the_two_sources_do_not_share_a_numbering() {
         let registry = Registry::default();
-        registry.adopt(
+        adopt(
+            &registry,
             1,
             Source::Links,
             &mut urls(&["https://from-links.example/"]),
         );
-        registry.adopt(
+        adopt(
+            &registry,
             1,
             Source::Outline,
             &mut urls(&["https://from-outline.example/"]),
@@ -218,11 +313,15 @@ mod tests {
         // Token 0 in both, and they must not be the same address --- which is
         // the case that would break if the two lists shared a key.
         assert_eq!(
-            registry.address(1, Source::Links, 0).map(|w| w.host),
+            registry
+                .address(1, Source::Links, 0)
+                .map(|w| w.host().to_string()),
             Some("from-links.example".to_string())
         );
         assert_eq!(
-            registry.address(1, Source::Outline, 0).map(|w| w.host),
+            registry
+                .address(1, Source::Outline, 0)
+                .map(|w| w.host().to_string()),
             Some("from-outline.example".to_string())
         );
     }
@@ -230,10 +329,22 @@ mod tests {
     #[test]
     fn two_documents_do_not_share_a_numbering_either() {
         let registry = Registry::default();
-        registry.adopt(1, Source::Links, &mut urls(&["https://one.example/"]));
-        registry.adopt(2, Source::Links, &mut urls(&["https://two.example/"]));
+        adopt(
+            &registry,
+            1,
+            Source::Links,
+            &mut urls(&["https://one.example/"]),
+        );
+        adopt(
+            &registry,
+            2,
+            Source::Links,
+            &mut urls(&["https://two.example/"]),
+        );
         assert_eq!(
-            registry.address(2, Source::Links, 0).map(|w| w.host),
+            registry
+                .address(2, Source::Links, 0)
+                .map(|w| w.host().to_string()),
             Some("two.example".to_string())
         );
     }
@@ -241,7 +352,12 @@ mod tests {
     #[test]
     fn a_token_past_the_end_names_nothing() {
         let registry = Registry::default();
-        registry.adopt(1, Source::Links, &mut urls(&["https://example.com/"]));
+        adopt(
+            &registry,
+            1,
+            Source::Links,
+            &mut urls(&["https://example.com/"]),
+        );
         assert_eq!(registry.address(1, Source::Links, 1), None);
         assert_eq!(registry.address(1, Source::Links, u32::MAX), None);
     }
@@ -256,9 +372,24 @@ mod tests {
     #[test]
     fn forgetting_a_document_makes_its_tokens_name_nothing() {
         let registry = Registry::default();
-        registry.adopt(3, Source::Links, &mut urls(&["https://example.com/"]));
-        registry.adopt(3, Source::Outline, &mut urls(&["https://example.com/"]));
-        registry.adopt(4, Source::Links, &mut urls(&["https://other.example/"]));
+        adopt(
+            &registry,
+            3,
+            Source::Links,
+            &mut urls(&["https://example.com/"]),
+        );
+        adopt(
+            &registry,
+            3,
+            Source::Outline,
+            &mut urls(&["https://example.com/"]),
+        );
+        adopt(
+            &registry,
+            4,
+            Source::Links,
+            &mut urls(&["https://other.example/"]),
+        );
 
         registry.forget(3, &[]);
 
@@ -269,7 +400,9 @@ mod tests {
         // The control: forgetting one document must not forget another, which
         // is the mistake a single `retain` over the map would make.
         assert_eq!(
-            registry.address(4, Source::Links, 0).map(|w| w.host),
+            registry
+                .address(4, Source::Links, 0)
+                .map(|w| w.host().to_string()),
             Some("other.example".to_string())
         );
     }
@@ -285,10 +418,30 @@ mod tests {
     #[test]
     fn a_document_takes_the_files_it_imported_from_with_it() {
         let registry = Registry::default();
-        registry.adopt(10, Source::Links, &mut urls(&["https://opened.example/"]));
-        registry.adopt(11, Source::Links, &mut urls(&["https://first.example/"]));
-        registry.adopt(12, Source::Links, &mut urls(&["https://second.example/"]));
-        registry.adopt(13, Source::Links, &mut urls(&["https://other.example/"]));
+        adopt(
+            &registry,
+            10,
+            Source::Links,
+            &mut urls(&["https://opened.example/"]),
+        );
+        adopt(
+            &registry,
+            11,
+            Source::Links,
+            &mut urls(&["https://first.example/"]),
+        );
+        adopt(
+            &registry,
+            12,
+            Source::Links,
+            &mut urls(&["https://second.example/"]),
+        );
+        adopt(
+            &registry,
+            13,
+            Source::Links,
+            &mut urls(&["https://other.example/"]),
+        );
 
         registry.forget(10, &[11, 12]);
 
@@ -307,7 +460,9 @@ mod tests {
         // untouched, which is what says this removed named keys rather than
         // clearing the map.
         assert_eq!(
-            registry.address(13, Source::Links, 0).map(|w| w.host),
+            registry
+                .address(13, Source::Links, 0)
+                .map(|w| w.host().to_string()),
             Some("other.example".to_string())
         );
     }
@@ -315,9 +470,24 @@ mod tests {
     #[test]
     fn forgetting_everything_leaves_no_document_answering() {
         let registry = Registry::default();
-        registry.adopt(1, Source::Links, &mut urls(&["https://one.example/"]));
-        registry.adopt(1, Source::Outline, &mut urls(&["https://one.example/"]));
-        registry.adopt(2, Source::Links, &mut urls(&["https://two.example/"]));
+        adopt(
+            &registry,
+            1,
+            Source::Links,
+            &mut urls(&["https://one.example/"]),
+        );
+        adopt(
+            &registry,
+            1,
+            Source::Outline,
+            &mut urls(&["https://one.example/"]),
+        );
+        adopt(
+            &registry,
+            2,
+            Source::Links,
+            &mut urls(&["https://two.example/"]),
+        );
 
         assert_eq!(registry.forget_all(), 3, "three scans were being held");
 
@@ -330,15 +500,23 @@ mod tests {
     #[test]
     fn re_scanning_a_document_replaces_its_list_rather_than_appending() {
         let registry = Registry::default();
-        registry.adopt(
+        adopt(
+            &registry,
             5,
             Source::Links,
             &mut urls(&["https://old.example/", "https://old2.example/"]),
         );
-        registry.adopt(5, Source::Links, &mut urls(&["https://new.example/"]));
+        adopt(
+            &registry,
+            5,
+            Source::Links,
+            &mut urls(&["https://new.example/"]),
+        );
         assert_eq!(registry.held(5, Source::Links), 1);
         assert_eq!(
-            registry.address(5, Source::Links, 0).map(|w| w.host),
+            registry
+                .address(5, Source::Links, 0)
+                .map(|w| w.host().to_string()),
             Some("new.example".to_string())
         );
         // And the old list's second token is gone rather than surviving under
@@ -358,7 +536,7 @@ mod tests {
             "javascript:alert(1)",
             "https://third.example/",
         ]);
-        registry.adopt(1, Source::Links, &mut list);
+        adopt(&registry, 1, Source::Links, &mut list);
 
         assert_eq!(registry.held(1, Source::Links), 3, "the hole is kept");
         assert_eq!(
@@ -367,7 +545,9 @@ mod tests {
             "and opens nothing"
         );
         assert_eq!(
-            registry.address(1, Source::Links, 2).map(|w| w.host),
+            registry
+                .address(1, Source::Links, 2)
+                .map(|w| w.host().to_string()),
             Some("third.example".to_string()),
             "the token after the hole still names its own address"
         );

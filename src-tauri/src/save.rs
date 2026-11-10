@@ -2502,7 +2502,15 @@ pub fn append_in_place(
         .write(true)
         .open(source)
         .map_err(|e| said!("could not open {source:?} to save it: {e}"))?;
-    append_through(&mut file, appended, source, password, reread)
+    // **A second handle, read-only in its own right, for the read-back.** What
+    // the read-back is given reaches the worker as a descriptor, and a
+    // descriptor carries the access it was opened with: the write handle would
+    // hand a sandboxed parser of the reader's document the right to write that
+    // document, whatever the mapping says. Opened by name, so it is held to the
+    // write handle's identity in [`append_through`] before anything is written.
+    let reading = std::fs::File::open(source)
+        .map_err(|e| said!("could not open {source:?} to read it back: {e}"))?;
+    append_through(&mut file, reading, appended, source, password, reread)
 }
 
 /// [`append_in_place`] with the handle supplied.
@@ -2515,8 +2523,14 @@ pub fn append_in_place(
 /// something else rename a different file over the pathname, and then ask this
 /// function what it does. `docs/TRAPS.md`, *A guard written inline with an FFI
 /// call is reachable by nothing --- the fix is a seam, not a harness*.
+///
+/// `reading` is the read-only handle the read-back is given. It must be the
+/// same file as `file`, and is refused before anything is written when it is
+/// not: a read-back of some other file would certify bytes this save never
+/// wrote.
 fn append_through(
     file: &mut std::fs::File,
+    mut reading: std::fs::File,
     appended: &Appended,
     source: &Path,
     password: Option<&str>,
@@ -2530,6 +2544,12 @@ fn append_through(
              land there --- nothing was written. Use Save a copy."
         )
     })?;
+    if FileId::of(&reading) != Some(writing_to) {
+        return Err(said!(
+            "{source:?} stopped being the file it was while it was being opened to save --- \
+             nothing was written. Use Save a copy."
+        ));
+    }
 
     let meta = file.metadata().map_err(|e| {
         said!(
@@ -2588,8 +2608,9 @@ fn append_through(
     // see [`Reread`], which is where that guarantee is written down. The handle
     // is what is handed over, not `source`: a read by name would parse whichever
     // file has that name now, so a replacement would be checked in place of the
-    // file we wrote.
-    match reread.pages(file, expected, password) {
+    // file we wrote. The read-only handle, which is the same file --- held to
+    // that above --- and grants nothing a reader of it does not need.
+    match reread.pages(&mut reading, expected, password) {
         Ok(pages) if pages == appended.pages => {}
         Ok(pages) => {
             return Err(cut_back(
@@ -4176,7 +4197,7 @@ fn rewrite(plan: &Plan, checked: Checked, job: Job) -> Result<Vec<u8>, Refusal> 
     // other direction. The model refuses that combination outright --- see
     // `Refusal::ReplyAnswersIt` --- so this ordering is what keeps the diagnosis
     // right for a plan that reached here anyway.
-    let discarded = discard_notes(&mut doc, &plan.discards)?;
+    discard_notes(&mut doc, &plan.discards)?;
 
     // **Below the last refusal and above `materialise`, and both halves of that
     // are load-bearing.** A page tpdf made is not in the tree, and the only step
@@ -4284,82 +4305,37 @@ fn rewrite(plan: &Plan, checked: Checked, job: Job) -> Result<Vec<u8>, Refusal> 
         apply_redactions(&mut doc, &pages, &plan.redactions)?;
     }
 
-    // **Only what this rewrite orphaned, and only when it orphaned something.**
-    // `drop_pages` unlinks a page object and every reference to it, and
-    // `reorder_pages` flattens the tree and leaves the intermediate `/Pages`
-    // nodes behind --- so after either, objects the reader asked to be rid of
-    // sit in `doc.objects` reachable from nothing, and `lopdf` writes every
-    // object it holds. Measured on `links.pdf` before this call existed:
-    // extracting page 1 of 8 produced a one-page file carrying **all eight**
-    // content streams, 4,139 decodable bytes each, and a deletion left the
-    // dropped page's text in the same way. That is `docs/THREAT-MODEL.md`
-    // residual risk 16, which named the deletion and not the extract.
+    // **Whenever the plan changed the graph, and never for a plain copy.** Every
+    // change a rewrite makes above this point can leave what it replaced or unlinked sitting in
+    // `doc.objects` reachable from nothing, and `lopdf` writes every object it
+    // holds. Measured on `links.pdf` before any sweep existed: extracting page 1
+    // of 8 produced a one-page file carrying **all eight** content streams,
+    // 4,139 decodable bytes each, and a deletion left the dropped page's text in
+    // the same way. That is `docs/THREAT-MODEL.md` residual risk 16.
     //
-    // Left alone when nothing was dropped or moved, and that is the position
+    // The same shape arrived through a moved page tree, a deleted comment's
+    // appearance stream, a redaction's annotation, outline entry, picture and
+    // replaced content streams, a text edit, a changed or removed field --- and
+    // a form answer, whose new appearance replaces `/AP` and leaves the earlier
+    // answer drawn in a stream nothing names. So it is asked of the plan as a
+    // whole: [`Plan::may_leave_orphans`] names every field, and a new one does
+    // not compile there until it is placed.
+    //
+    // Left alone for a plan that changes nothing above this point, and that is the position
     // rather than an omission: a plain copy is a serialisation and not a
     // sanitation (§T6.1), so a copy of somebody else's document carries their
     // orphans forward untouched. What this guarantees is narrower and is the
     // thing a reader can actually believe --- **tpdf does not leave behind what
-    // it was told to remove**. Whole-graph sanitation is `docs/PLAN.md` §6 and
-    // is a different promise about a different command.
+    // it replaced or was told to remove**. Whole-graph sanitation is
+    // `docs/PLAN.md` §6 and is a different promise about a different command.
+    //
+    // Not the fill, which carries the regions and removes nothing: it is pointed
+    // at the bytes the verification read, and only adds to them.
     //
     // Costs what the print path's identical call costs: spike 0.4 measured the
     // sweep at 3.6 ms over 2,445 objects and 70.3 ms over 25,583, against 4.6 ms
     // and 66.6 ms for the plain save it is added to.
-    //
-    // A redaction that took an annotation joins them, and for the same reason
-    // measured for pages: `forget` unlinks the annotation and every reference to
-    // it, which leaves its appearance stream --- a drawing of the very words that
-    // went --- reachable from nothing and written out regardless.
-    //
-    // So does one that took an outline entry, which is the same shape a third
-    // time: an entry's destination may be an indirect array and its `/A` an
-    // indirect action dictionary, and both name the page the redacted heading
-    // was on. `forget` removes the entry and every reference to it; what it
-    // cannot remove is what the entry was the only reference *to*.
-    //
-    // And so does one that took a **picture**, which is the same shape a fourth
-    // time and is the one this condition was missing: `remove_images` deletes
-    // the `Do` and drops the resource entry, which leaves the image stream
-    // reachable from nothing --- and an unswept file still holds every byte of
-    // it. `redact-apply-probe` found that by grepping the written bytes for the
-    // picture's own pixels rather than asking what the page draws, which are
-    // different claims and only the second is a redaction.
-    // And so does a **deleted comment**, which is the same shape a fifth time and
-    // is the one this condition was missing when the deletion landed.
-    // `pagetree::forget` removes the annotation's dictionary and every reference
-    // to it, which leaves its appearance stream --- a drawing of the words the
-    // reader deleted --- reachable from nothing and written out regardless. That
-    // is the picture's trap exactly, in the one subsystem where the leftover is
-    // text somebody asked to be rid of.
-    if !dropped.is_empty()
-        || moved
-        || discarded > 0
-        || !plan.text_edits.is_empty()
-        // And a change to a field of the file, the same shape a sixth time. A
-        // removed field is taken off its page and out of the form, which
-        // leaves the field, its answer and its appearance reachable from
-        // nothing; a resized one leaves the appearance it was drawn with. The
-        // test that removes a field and then looks for it in the file found
-        // this on the day the removal landed.
-        || !plan.field_edits.is_empty()
-        // And **any redaction at all**, which is the annotation, the outline
-        // entry and the picture above, and one case more. Until 2026-10-05
-        // this asked four counts of what a redaction took --- annotations,
-        // outline entries, fields, pictures --- each added on the day its
-        // carrier was found written out, and `shows`, `paths` and `cuts` were
-        // never among them. Taking text or a drawing off a page whose
-        // `/Contents` is several streams gives the page one new stream and
-        // leaves the old ones named by nothing, with every removed glyph in
-        // them, so a plain text redaction of such a page wrote them all out.
-        // Asked of the plan rather than of one more count, so the next thing a
-        // redaction learns to remove cannot be the next one missing here: a
-        // file a redaction wrote holds what its trailer reaches and no more.
-        //
-        // Not the fill, which carries the regions and removes nothing: it is
-        // pointed at the bytes the verification read, and only adds to them.
-        || (!matches!(job, Job::RedactionFill { .. }) && !plan.redactions.is_empty())
-    {
+    if !matches!(job, Job::RedactionFill { .. }) && plan.may_leave_orphans() {
         sweep::collect(&mut doc)?;
     }
     // **After that sweep, and only when a page went.** A document that keeps
@@ -4657,6 +4633,19 @@ fn apply_redactions(
             lost.extend(redact::widget_fields(doc, &taken));
             answers.extend(redact::widget_answers(doc, &taken));
             pagetree::forget(doc, &taken).map_err(Refusal::from)?;
+        }
+        // An annotation written as a dictionary inside `/Annots` has no object
+        // for `forget` to name, and PDFium draws it like any other: over the
+        // region, its `/Contents` and appearance are the same carrier. Taken
+        // out of the array, under `covered_annots`' rule.
+        done.annots += redact::take_inline_annots(doc, page, &redaction.areas);
+
+        // **The page's thumbnail, which is a picture of the page before this
+        // redaction.** `/Thumb` is an image a viewer may show in place of
+        // rendering the page, so it shows the words that went; nothing here
+        // can redraw it, and a viewer without it renders the page instead.
+        if let Ok(dictionary) = doc.get_object_mut(page).and_then(Object::as_dict_mut) {
+            dictionary.remove(b"Thumb");
         }
     }
 

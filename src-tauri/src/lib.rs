@@ -128,8 +128,10 @@ pub mod reading;
 pub mod recentdocs;
 pub mod redact;
 pub mod redaction_fill;
+pub mod redaction_steps;
 pub mod region;
 pub mod render;
+pub mod render_reply;
 /// One serialised sample of every named reply payload, which
 /// `src/lib/replyshapes.test.ts` checks the TypeScript mirror against.
 #[cfg(test)]
@@ -152,6 +154,7 @@ pub mod search;
 pub mod session;
 pub mod sign_cms;
 pub mod sign_dss;
+pub mod sign_finish;
 pub mod sign_prepare;
 pub mod signature;
 pub mod signature_import;
@@ -171,6 +174,7 @@ pub mod trust;
 pub mod tsa;
 pub mod unused;
 pub mod userpath;
+pub mod validation_data;
 pub mod verify;
 
 /// Helpers shared by this crate's own tests. Not compiled into any binary.
@@ -222,7 +226,7 @@ use commands::{
 /// path in-process on the regions the tool marked and compares the verdicts.
 /// Nothing else outside the crate has a reason to call them.
 pub mod redaction {
-    pub use crate::commands::redact::{ask_redactions, redact_copy_asked, Asked, Stopped};
+    pub use crate::redaction_steps::{ask_redactions, redact_copy_asked, Asked, Stopped};
 }
 
 /// The window's *Recognise text*, without the window.
@@ -1271,7 +1275,7 @@ mod tests {
     /// and a source-level assertion proves a shape rather than an ordering.
     ///
     /// It implements [`save::Verifier`] and nothing else, which is what
-    /// narrowing [`crate::commands::redact::scan_written_file`] from `Outside` bought.
+    /// narrowing [`crate::redaction_steps::scan_written_file`] from `Outside` bought.
     struct FakeScanner {
         answer: Result<crate::verify::Report, String>,
         asked: std::sync::Mutex<Vec<Ask>>,
@@ -1360,7 +1364,7 @@ mod tests {
         };
         let needles = vec!["secret".to_string()];
         let report =
-            crate::commands::redact::scan_written_file(&scanner, &at, &needles, Some("key"))
+            crate::redaction_steps::scan_written_file(&scanner, &at, &needles, Some("key"))
                 .expect("the verifier answered");
 
         // The answer is the verifier's, unaltered. A coordinator that parsed
@@ -1407,7 +1411,7 @@ mod tests {
         let missing = std::env::temp_dir().join("tpdf-scan-written-file-absent.bin");
         let _ = std::fs::remove_file(&missing);
 
-        let why = crate::commands::redact::scan_written_file(&scanner, &missing, &[], None)
+        let why = crate::redaction_steps::scan_written_file(&scanner, &missing, &[], None)
             .expect_err("a file that is not there cannot be scanned");
         assert!(why.contains("read back"), "{why}");
         assert!(
@@ -1524,7 +1528,7 @@ mod tests {
     use crate::commands::app::app_version;
     use crate::commands::print::print_job;
     use crate::commands::session::with_session;
-    use crate::commands::{await_reply, reply_channel};
+    use crate::render_reply::{await_reply, reply_channel};
 
     /// A plan made against a file, as a print of an unedited document carries one.
     ///

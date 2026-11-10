@@ -465,6 +465,7 @@
     gather,
     placeOf,
     refusal,
+    reopenedViews,
     STARTING as COMPARE_STARTING,
   } from "./lib/comparison";
   import { CommandLineTool } from "./lib/clitoolstate";
@@ -579,7 +580,8 @@
   } from "./lib/savedfields";
   import type { Form } from "./lib/forms";
   import {
-    TabRecorder, afterReopen, launchPlan, openBehind, sidesToRestore, tabsToReopen, type TabHost,
+    TabRecorder, afterLaunch, afterReopen, launchPlan, openBehind, sidesToRestore, tabsToReopen, unopenedAtLaunch,
+    type TabHost,
   } from "./lib/tabrestore";
   import { runMarkCheckIfRequested } from "./lib/harness";
   import { runSessionCheckIfRequested } from "./lib/harness";
@@ -599,9 +601,10 @@
     type OpenFound,
   } from "./lib/documentopen";
   import { Panes, otherSide, type Side, type Slot } from "./lib/panes";
-  import { TabDrag, type Carried } from "./lib/tabdrag";
+  import { followPress, TabDrag, type Carried } from "./lib/tabdrag";
   import { NO_VIEW, ViewIds, viewOf, type ViewId } from "./lib/views";
   import { ScrollLock } from "./lib/syncscroll";
+  import { SyncFollow } from "./lib/syncfollow";
   import { describeFit, percentOf } from "./lib/zoom";
   import { applyPlace, hasPlace, type Opening } from "./lib/launchplace";
   import { forwardSaid, parseForward } from "./lib/forward";
@@ -635,12 +638,8 @@
   /** Whether the two sides scroll together. The offset is `syncscroll.ts`'s. */
   let syncScroll = $state(false);
   const scrollLock = new ScrollLock<ViewId>();
-  /** The viewers of the two locked documents, by handle. See `lockSides`. */
-  const lockedViewers = new Map<ViewId, Viewer>();
-  /** Set while one document is being moved to keep up with the other. */
-  let following = false;
-  /** Until when a wheel turned with Alt held scrolls its own side alone. */
-  let aloneUntil = 0;
+  /** The two locked viewers and what one frame does to the other (`syncfollow.ts`). */
+  const syncFollow = new SyncFollow<ViewId, Viewer>(scrollLock);
 
   function dividerDown(event: PointerEvent): void {
     if (event.button !== 0) return;
@@ -680,34 +679,21 @@
   function tabPress(event: PointerEvent, id: ViewId): void {
     if (event.button !== 0 || opening || documentBusy || tabDrag.pressed) return;
     tabDrag.press(id, event.clientX, event.clientY);
-    const move = (moved: PointerEvent) => {
-      tabCarried = tabDrag.move(moved.clientX, moved.clientY, dropLayout(id));
-    };
-    const end = (drop: boolean) => {
-      for (const [name, listener] of listeners) window.removeEventListener(name, listener, true);
-      const carried = drop ? tabDrag.release() : null;
-      tabDrag.cancel();
-      if (tabCarried) {
-        // The release is followed by a click when it is over the tab pressed.
-        tabDragEnded = true;
-        setTimeout(() => { tabDragEnded = false; });
-      }
-      tabCarried = null;
-      if (carried?.side) void dropTab(carried.id, carried.side);
-    };
-    const listeners: [string, (event: Event) => void][] = [
-      ["pointermove", (moved) => move(moved as PointerEvent)],
-      ["pointerup", () => end(true)],
-      ["pointercancel", () => end(false)],
-      ["blur", () => end(false)],
-      ["keydown", (key) => {
-        if ((key as KeyboardEvent).key !== "Escape" || !tabCarried) return;
-        key.preventDefault();
-        key.stopPropagation();
-        end(false);
-      }],
-    ];
-    for (const [name, listener] of listeners) window.addEventListener(name, listener, true);
+    followPress(window, {
+      move: (x, y) => { tabCarried = tabDrag.move(x, y, dropLayout(id)); },
+      carrying: () => tabCarried !== null,
+      end: (drop) => {
+        const carried = drop ? tabDrag.release() : null;
+        tabDrag.cancel();
+        if (tabCarried) {
+          // The release is followed by a click when it is over the tab pressed.
+          tabDragEnded = true;
+          setTimeout(() => { tabDragEnded = false; });
+        }
+        tabCarried = null;
+        if (carried?.side) void dropTab(carried.id, carried.side);
+      },
+    });
   }
 
   /**
@@ -1190,53 +1176,27 @@
    * reader has scrolling together on and both are mounted; holds nothing
    * otherwise. False when nothing is locked.
    *
-   * The two viewers are kept beside the lock. {@link keepInStep} runs in every
-   * frame of either document, and asking the stage for the other one's viewer
-   * there would lend the variables out and back once a frame for an answer
-   * that changes only when a document is mounted or torn down.
+   * The two viewers are kept beside the lock (`SyncFollow.hold`).
    */
   function lockSides(): boolean {
-    const read = (id: ViewId) => asDocument(id, () =>
-      viewer ? { id, at: viewer.reading, zoom: viewer.currentZoom, viewer } : null);
+    const read = (id: ViewId) => asDocument(id, () => (viewer ? { id, viewer } : null));
     const first = syncScroll && panes.split ? read(panes.front("left")) : null;
     const second = first ? read(panes.front("right")) : null;
-    lockedViewers.clear();
     if (!first || !second) {
-      scrollLock.release();
+      syncFollow.release();
       return false;
     }
-    scrollLock.lock(first, second);
-    lockedViewers.set(first.id, first.viewer);
-    lockedViewers.set(second.id, second.viewer);
+    syncFollow.hold(first, second);
     return true;
   }
 
   /**
    * Moves the other document to where this one's frame says it belongs.
-   * Called from every frame of a mounted document, as that document, and it
-   * runs inside that frame: the other viewer draws before this returns, so the
-   * two sides are never a frame apart.
+   * Called from every frame of a mounted document, as that document.
    */
   function keepInStep(): void {
     if (!syncScroll || !viewer) return;
-    const leader = viewer;
-    const partnerId = scrollLock.partnerOf(openView);
-    const partner = lockedViewers.get(partnerId);
-    if (!partner) return;
-    const factor = scrollLock.zoomed(openView, leader.currentZoom,
-      { following, fitted: leader.fitMode !== "none" });
-    const moved = scrollLock.moved(openView, leader.reading,
-      { following, alone: performance.now() < aloneUntil, partnerAt: partner.reading });
-    if (factor === null && moved === null) return;
-    following = true;
-    try {
-      // The zoom first: it shifts the partner's own place, and the place asked
-      // for after it is then the one it ends in.
-      if (factor !== null) partner.setZoomFixed(partner.currentZoom * factor);
-      const to = moved ?? scrollLock.aim(openView, leader.reading);
-      if (to) partner.followTo(to.page, to.fraction);
-      scrollLock.seen(partnerId, partner.reading, partner.currentZoom);
-    } finally { following = false; }
+    syncFollow.step(openView, viewer, viewer.fitMode !== "none");
   }
 
   function switchSides(): void {
@@ -1268,7 +1228,9 @@
   async function closeTabs(ids: ViewId[]): Promise<void> {
     if (!ids.length) return;
     const go = await documentTasks.idle().then(() => opens.run(async () => {
-      await settleDocument();
+      // A draft that cannot be committed is said, as `closeTab` says it, and
+      // nothing closes: its words are not in the document yet.
+      try { await settleDocument(); } catch (e) { say(String(e)); return false; }
       const closing = new Set(ids);
       const unsaved = oneEach(tabs.all.filter((tab) => closing.has(tab.view)))
         .filter((tab) => tab.edits.state.dirty && twinsOf(tabs.all, tab).every((twin) => closing.has(twin.view)))
@@ -1916,7 +1878,7 @@
     panes.unmounted(openView);
     // A lock on a document that is going is a lock on nothing. Whoever mounts
     // what replaces it locks again, at the new pair's places.
-    if (scrollLock.locks(openView)) { scrollLock.release(); lockedViewers.clear(); }
+    if (scrollLock.locks(openView)) syncFollow.release();
     stage.clear();
   }
 
@@ -2526,6 +2488,9 @@
     const target = viewer, model = edits, view = openView;
     if (!target) return;
     const asked = ++graphicClicks;
+    // Taken with the click: an edit or a turn of the view before the answer
+    // makes it stale, and the viewer refuses it (`graphicTicket`).
+    const ticket = target.graphicTicket();
     const { doc, request } = clickRequest(click.source, click.x, click.y, click.screenScale);
     try {
       const found = await call("graphic_find", { doc, request });
@@ -2538,7 +2503,7 @@
         doc,
         request: { ...request, object: found.object },
         pageNumber: click.pageNumber,
-      });
+      }, ticket);
     } catch {
       // See above: nothing was asked for.
     }
@@ -5916,6 +5881,10 @@
               { title: TEXT().closeTpdf, kind: "warning", okLabel: TEXT().discardChanges, cancelLabel: TEXT().keepOpen },
             )) return;
             await getCurrentWindow().destroy();
+          } catch (e) {
+            // As `closeTab`: a draft that cannot be committed is said, and the
+            // window stays, since its words are not in the document yet.
+            say(String(e));
           } finally { opening = false; }
         });
       });
@@ -6021,13 +5990,25 @@
       // After the first page, not before it: the tabs behind are not what the
       // reader is waiting for, and each one is an open the first page would
       // otherwise queue behind.
+      // A tab that would not open is said, and kept in the list written, so the
+      // next launch tries it again (`unopenedAtLaunch`, `keepUnopened`).
+      const unopenedTabs = (refused: readonly string[]): boolean => {
+        const unopened = unopenedAtLaunch(plan, refused, isOpenTab);
+        tabRecorder.keepUnopened(unopened, plan.order);
+        const said = afterLaunch(unopened, basename);
+        if (said) say(said);
+        return unopened.length > 0;
+      };
       if (plan.behind.length) {
         void firstPaint()
           .then(() => openBehind(plan.behind, plan.order, tabHost(false)))
           // Before the recorder is released: a quit between the two would
           // otherwise record the tabs that came back as one side.
-          .then(() => restoreSides(plan.sides))
+          .then(async (refused) => { await restoreSides(plan.sides); unopenedTabs(refused); })
           .finally(() => { tabRecorder.release(); refreshTabs(); refreshMenu(); });
+      } else if (unopenedTabs([])) {
+        // The open that failed may already have written the shorter list.
+        refreshTabs();
       }
 
       // Both of these observe the boot rather than replacing it, for the same
@@ -6204,6 +6185,9 @@
         await relaunch();
       },
       say: (message) => say(message),
+      // The busy state every edit already obeys: `applyEdit` refuses, and the
+      // edit commands grey.
+      hold: () => documentTasks.hold(),
     });
     refreshMenu();
   }
@@ -7190,6 +7174,9 @@
       panes.mounted(view, slot);
       showModel(viewer, sidebar, opening, resume, retained ? kept : null);
       readAfterFirstPaint(view, doc.id, viewer);
+      // A save or a reload read the file again under a new view: the
+      // comparison follows it and is out of date on both sides.
+      if (replacing && comparisons.reopened(reopenedViews(replacing.view, view, twins))) refreshComparison();
       // A document compared before it was last unmounted shows it again.
       showComparisonHere();
     } catch (e) {
@@ -7499,7 +7486,7 @@
             style:order={paneLayout.order[slot]}
             style:flex-grow={paneLayout.split ? (paneLayout.order[slot] === 0 ? paneShare : 1 - paneShare) : 1}
             role="presentation"
-            onwheelcapture={(event) => { if (event.altKey) aloneUntil = performance.now() + 250; }}
+            onwheelcapture={(event) => { if (event.altKey) syncFollow.aloneFor(); }}
             onpointerdowncapture={() => { focusSide(panes.sideIn(slot as Slot)); }}
             onfocusin={() => { focusSide(panes.sideIn(slot as Slot)); }}>
             {#if paneLayout.split}

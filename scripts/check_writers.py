@@ -192,7 +192,7 @@ def free_functions(source: str) -> dict[str, str]:
     return bodies
 
 
-def commands_that_write(source: str) -> set[str]:
+def commands_that_write(source: str, followed: str = "") -> set[str]:
     """Every `#[tauri::command]` function that reaches a terminal writer.
 
     *Reaches*, not *contains*: comments are stripped first, and a call to a free
@@ -200,9 +200,15 @@ def commands_that_write(source: str) -> set[str]:
     2026-09-01 --- see the module docstring for what each one was hiding. The
     second level since 2026-10-20, when `print_document` came to reach its
     writer through `build_job` and then `print_job`, and dropped out of the set.
+
+    `followed` is the source of the modules outside `commands/` whose free
+    functions a command calls into (`FOLLOWED`). Their functions are followed
+    like the commands' own helpers, and a helper of the same name in the
+    command files takes precedence, so adding them can only add a path.
     """
     source = without_comments(source)
-    helpers = free_functions(source)
+    helpers = free_functions(without_comments(followed))
+    helpers.update(free_functions(source))
 
     def writes(body: str, depth: int) -> bool:
         if any(f"save::{terminal}" in body for terminal in TERMINAL):
@@ -243,9 +249,22 @@ def command_files() -> list[Path]:
     return files
 
 
+#: The modules outside `commands/` that hold the steps a command and the
+#: command-line tool share. A command that calls one of their functions reaches
+#: what that function reaches: `redact_copy` writes through
+#: `redaction_steps::redact_copy_asked`. Holding no command, they add helpers
+#: and never a command to the count.
+FOLLOWED = [
+    ROOT / "src-tauri" / "src" / "redaction_steps.rs",
+    ROOT / "src-tauri" / "src" / "sign_finish.rs",
+    ROOT / "src-tauri" / "src" / "validation_data.rs",
+]
+
+
 def main() -> int:
     command_sources = command_files()
     lib = "\n".join(f.read_text(encoding="utf-8") for f in command_sources)
+    followed = "\n".join(f.read_text(encoding="utf-8") for f in FOLLOWED)
     # `save.rs` and every submodule under `src/save/`, concatenated. It was one
     # file until 2026-09-01, and reading only that one would have quietly stopped
     # covering a terminal writer the moment a split moved it -- the control below
@@ -280,7 +299,7 @@ def main() -> int:
         print("[FAIL]   docs/THREAT-MODEL.md has no <!-- writers: ... --> marker")
         return 1
     listed = set(marker.group(1).split())
-    writes = commands_that_write(lib)
+    writes = commands_that_write(lib, followed)
 
     # Two controls, and the second is the one the file list needs. A regex that
     # stopped matching gives an empty set, and an empty set agrees with an empty

@@ -20,6 +20,7 @@ import {
   SAME_AS_FAR_AS_READ,
   placeOf,
   refusal,
+  reopenedViews,
   rowLabel,
   sentences,
   step,
@@ -275,5 +276,43 @@ describe("ComparisonState", () => {
     expect(state.end(9)).toEqual({ left: 7, right: 9 });
     expect(state.compared).toBeNull();
     expect(state.count).toBe(0);
+  });
+
+  it("follows a document read again to its new view, and goes out of date", () => {
+    // A reload of the left gives its tab view 17. Before, the comparison
+    // still named 7: the right went on painting a current comparison and the
+    // reloaded left was no side of it. Mutation: drop `held.stale = true` or
+    // the move of the left -> red.
+    const state = two();
+    expect(state.reopened([[7, 17]])).toBe(true);
+    expect(state.sideOf(17)).toBe("left");
+    expect(state.sideOf(7)).toBeNull();
+    expect(state.stale).toBe(true);
+    expect(state.paintFor(9)).toBeNull();
+    expect(state.count).toBe(2);
+    // The other document's own view keeps its side.
+    expect(state.sideOf(9)).toBe("right");
+  });
+
+  it("goes out of date when a second view of a document read again is a side", () => {
+    // The tab the reload ran in gets a new view; its other views keep theirs,
+    // and are named to themselves. Mutation: compare only the first pair -> red.
+    const state = two();
+    expect(state.reopened([[3, 30], [9, 9]])).toBe(true);
+    expect(state.views).toEqual({ left: 7, right: 9 });
+    expect(state.stale).toBe(true);
+  });
+
+  it("is left alone by a document it is not about", () => {
+    // Control for both tests above.
+    const state = two();
+    expect(state.reopened([[8, 18]])).toBe(false);
+    expect(state.stale).toBe(false);
+    expect(state.views).toEqual({ left: 7, right: 9 });
+    expect(new ComparisonState<number>().reopened([[7, 17]])).toBe(false);
+  });
+
+  it("names the replaced view to the new one and each other view to itself", () => {
+    expect(reopenedViews(7, 17, [{ view: 3 }, { view: 4 }])).toEqual([[7, 17], [3, 3], [4, 4]]);
   });
 });

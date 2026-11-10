@@ -2,7 +2,8 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import type { Place, Session, Sides } from "./session";
 import {
-  TabRecorder, afterReopen, launchPlan, openBehind, sidesToRestore, tabsToReopen, type TabHost,
+  TabRecorder, afterLaunch, afterReopen, launchPlan, openBehind, sidesToRestore, tabsToReopen, unopenedAtLaunch,
+  withUnopened, type TabHost,
 } from "./tabrestore";
 
 const place = (path: string): Place => ({
@@ -323,5 +324,71 @@ describe("recording the open tabs", () => {
     tabs.release();
     await tabs.settled();
     expect(sent).toEqual([[["/b.pdf", "/a.pdf"], "/b.pdf"], [["/b.pdf"], "/b.pdf"]]);
+  });
+});
+
+describe("tabs from last time that a launch could not open", () => {
+  it("are kept in the list written after the restore, at their places", async () => {
+    // A tab behind a password, or on a drive not mounted yet, did not open.
+    // Before, the release wrote the tabs that had opened as the whole list,
+    // and the next launch did not try the other again. Mutation: write `paths`
+    // in `note` instead of `withUnopened(...)` -> red.
+    const sent: string[][] = [];
+    const tabs = new TabRecorder(async (paths) => { sent.push(paths); });
+    tabs.hold();
+    tabs.note(["/b.pdf", "/c.pdf"], "/b.pdf");
+    tabs.keepUnopened(["/a.pdf"], ["/a.pdf", "/b.pdf", "/c.pdf"]);
+    tabs.release();
+    await tabs.settled();
+    expect(sent).toEqual([["/a.pdf", "/b.pdf", "/c.pdf"]]);
+    // Still kept when the reader closes a tab later in the run.
+    tabs.note(["/c.pdf"], "/c.pdf");
+    await tabs.settled();
+    expect(sent[1]).toEqual(["/a.pdf", "/c.pdf"]);
+  });
+
+  it("is an ordinary tab once it has opened, and goes when it is closed", async () => {
+    // Mutation: drop the filter that forgets an unopened tab once it is open -> red.
+    const sent: string[][] = [];
+    const tabs = new TabRecorder(async (paths) => { sent.push(paths); });
+    tabs.keepUnopened(["/a.pdf"], ["/a.pdf", "/b.pdf"]);
+    tabs.note(["/b.pdf", "/a.pdf"], "/a.pdf");
+    tabs.note(["/b.pdf"], "/b.pdf");
+    await tabs.settled();
+    expect(sent).toEqual([["/b.pdf", "/a.pdf"], ["/b.pdf"]]);
+  });
+
+  it("goes back after the tab before it, or first when none is open", () => {
+    const order = ["/a.pdf", "/b.pdf", "/c.pdf", "/d.pdf"];
+    expect(withUnopened(["/a.pdf", "/d.pdf"], ["/b.pdf", "/c.pdf"], order))
+      .toEqual(["/a.pdf", "/b.pdf", "/c.pdf", "/d.pdf"]);
+    expect(withUnopened(["/c.pdf"], ["/a.pdf"], order)).toEqual(["/a.pdf", "/c.pdf"]);
+    expect(withUnopened([], ["/b.pdf", "/a.pdf"], order)).toEqual(["/a.pdf", "/b.pdf"]);
+    // Control: nothing unopened is the list as it is.
+    expect(withUnopened(["/c.pdf", "/a.pdf"], [], order)).toEqual(["/c.pdf", "/a.pdf"]);
+  });
+
+  it("are the refused tabs and a first tab that did not open, from the recorded list only", () => {
+    const plan = launchPlan(session(), []);
+    const open = new Set(["/a.pdf"]);
+    // `/b.pdf` was to be shown first and is not open; `/c.pdf` was refused.
+    // Mutation: leave `plan.show` out -> red.
+    expect(unopenedAtLaunch(plan, ["/c.pdf"], (path) => open.has(path))).toEqual(["/b.pdf", "/c.pdf"]);
+    // Control: everything opened.
+    expect(unopenedAtLaunch(plan, [], () => true)).toEqual([]);
+    // A file handed over reports its own failure, and the last document resumed
+    // alone was never a list of tabs. Mutation: drop `plan.order.includes(path)` -> red.
+    const handed = launchPlan(session({ restore_tabs: false }), ["/new.pdf"]);
+    expect(unopenedAtLaunch(handed, [], () => false)).toEqual([]);
+    const alone = launchPlan(session({ restore_tabs: false }), []);
+    expect(unopenedAtLaunch(alone, [], () => false)).toEqual([]);
+  });
+
+  it("are said, by name for one and counted for several", () => {
+    const name = (path: string) => path.slice(1);
+    expect(afterLaunch([], name)).toBeNull();
+    expect(afterLaunch(["/a.pdf"], name)).toContain("a.pdf");
+    expect(afterLaunch(["/a.pdf"], name)).toContain("tried again");
+    expect(afterLaunch(["/a.pdf", "/b.pdf", "/c.pdf"], name)).toContain("a.pdf and 2 more");
   });
 });

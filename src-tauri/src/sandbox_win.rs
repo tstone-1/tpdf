@@ -60,10 +60,14 @@ use windows_sys::Win32::Storage::FileSystem::{
 };
 use windows_sys::Win32::System::Console::{GetStdHandle, STD_ERROR_HANDLE};
 use windows_sys::Win32::System::JobObjects::{
-    AssignProcessToJobObject, CreateJobObjectW, IsProcessInJob, JobObjectExtendedLimitInformation,
-    SetInformationJobObject, TerminateJobObject, JOBOBJECT_EXTENDED_LIMIT_INFORMATION,
+    AssignProcessToJobObject, CreateJobObjectW, IsProcessInJob, JobObjectBasicUIRestrictions,
+    JobObjectExtendedLimitInformation, SetInformationJobObject, TerminateJobObject,
+    JOBOBJECT_BASIC_UI_RESTRICTIONS, JOBOBJECT_EXTENDED_LIMIT_INFORMATION,
     JOB_OBJECT_LIMIT_ACTIVE_PROCESS, JOB_OBJECT_LIMIT_DIE_ON_UNHANDLED_EXCEPTION,
     JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE, JOB_OBJECT_LIMIT_PROCESS_MEMORY,
+    JOB_OBJECT_UILIMIT_DESKTOP, JOB_OBJECT_UILIMIT_DISPLAYSETTINGS, JOB_OBJECT_UILIMIT_EXITWINDOWS,
+    JOB_OBJECT_UILIMIT_GLOBALATOMS, JOB_OBJECT_UILIMIT_HANDLES, JOB_OBJECT_UILIMIT_READCLIPBOARD,
+    JOB_OBJECT_UILIMIT_SYSTEMPARAMETERS, JOB_OBJECT_UILIMIT_WRITECLIPBOARD,
 };
 use windows_sys::Win32::System::Pipes::CreatePipe;
 use windows_sys::Win32::System::SystemServices::SE_GROUP_INTEGRITY;
@@ -116,8 +120,33 @@ pub struct Job(HANDLE);
 unsafe impl Send for Job {}
 unsafe impl Sync for Job {}
 
+/// What a worker in a job may not do through the window manager.
+///
+/// **A low integrity level does not keep a process off the clipboard.**
+/// `win-sandbox-probe` measured it on 2026-11-10: at `lowil`, the rung this
+/// worker runs at, a child read the text the parent had put on the clipboard
+/// and replaced it with its own, and the parent read the replacement back. A
+/// worker taken over by a document could then read whatever the reader last
+/// copied, a password included, or swap a copied address for another. The job
+/// refuses both, with the rest of the set: handles of other processes' windows,
+/// global atoms, system parameters, display settings, desktops and logging off.
+/// The `uilimits` rung of the same probe renders identically under it and is
+/// refused both reading and setting the clipboard's text. **It can still empty
+/// the clipboard**: `EmptyClipboard` succeeds inside the job and only the
+/// `SetClipboardData` after it is refused, so what is left is that a worker
+/// can wipe what the reader copied, not read or replace it. A worker opens no
+/// window and uses none of these, so nothing it does needs them.
+const UI_LIMITS: u32 = JOB_OBJECT_UILIMIT_DESKTOP
+    | JOB_OBJECT_UILIMIT_DISPLAYSETTINGS
+    | JOB_OBJECT_UILIMIT_EXITWINDOWS
+    | JOB_OBJECT_UILIMIT_GLOBALATOMS
+    | JOB_OBJECT_UILIMIT_HANDLES
+    | JOB_OBJECT_UILIMIT_READCLIPBOARD
+    | JOB_OBJECT_UILIMIT_SYSTEMPARAMETERS
+    | JOB_OBJECT_UILIMIT_WRITECLIPBOARD;
+
 impl Job {
-    /// Creates a job with the worker limits applied.
+    /// Creates a job with the worker limits applied, and the [`UI_LIMITS`].
     ///
     /// `ActiveProcessLimit` is 1 rather than "generous": a render worker has no
     /// reason to start a process, so anything that tries is either a bug or the
@@ -161,6 +190,25 @@ impl Job {
         };
         if ok == 0 {
             return Err(format!("SetInformationJobObject failed: {}", last_error()));
+        }
+
+        let ui = JOBOBJECT_BASIC_UI_RESTRICTIONS {
+            UIRestrictionsClass: UI_LIMITS,
+        };
+        // SAFETY: as above.
+        let ok = unsafe {
+            SetInformationJobObject(
+                job.0,
+                JobObjectBasicUIRestrictions,
+                std::ptr::from_ref(&ui).cast(),
+                size_of_u32::<JOBOBJECT_BASIC_UI_RESTRICTIONS>(),
+            )
+        };
+        if ok == 0 {
+            return Err(format!(
+                "the job's UI restrictions were refused: {}",
+                last_error()
+            ));
         }
         Ok(job)
     }
@@ -1303,6 +1351,56 @@ mod tests {
     #[test]
     fn a_job_accepts_the_worker_limits() {
         Job::create(WORKER_MEMORY_CAP).expect("a job with the worker limits");
+    }
+
+    /// A worker's job keeps it off the clipboard, read back from the job.
+    ///
+    /// The kernel's own answer rather than the constant: a set that never
+    /// reached the job (a wrong class, a dropped call) reads as zero here. The
+    /// control is a job made without them, which must read zero, so a query
+    /// that answers the same for every job cannot pass. What a process inside
+    /// the job is then refused is measured by `win-sandbox-probe`'s `uilimits`
+    /// rung, which needs a desktop and so is no unit test.
+    #[test]
+    fn a_workers_job_refuses_it_the_clipboard() {
+        use windows_sys::Win32::System::JobObjects::QueryInformationJobObject;
+
+        fn restrictions(job: HANDLE) -> u32 {
+            let mut ui = JOBOBJECT_BASIC_UI_RESTRICTIONS {
+                UIRestrictionsClass: u32::MAX,
+            };
+            // SAFETY: a live job; the struct outlives the call and is its size.
+            let ok = unsafe {
+                QueryInformationJobObject(
+                    job,
+                    JobObjectBasicUIRestrictions,
+                    std::ptr::from_mut(&mut ui).cast(),
+                    size_of_u32::<JOBOBJECT_BASIC_UI_RESTRICTIONS>(),
+                    std::ptr::null_mut(),
+                )
+            };
+            assert_ne!(ok, 0, "the job could not be asked: {}", last_error());
+            ui.UIRestrictionsClass
+        }
+
+        // SAFETY: both arguments optional; closed below.
+        let plain = unsafe { CreateJobObjectW(std::ptr::null(), std::ptr::null()) };
+        assert!(!plain.is_null());
+        let unrestricted = restrictions(plain);
+        // SAFETY: made above, closed once.
+        unsafe { CloseHandle(plain) };
+        assert_eq!(unrestricted, 0, "a job made without them has none");
+
+        let job = Job::create(WORKER_MEMORY_CAP).expect("a job");
+        let set = restrictions(job.0);
+        for (flag, name) in [
+            (JOB_OBJECT_UILIMIT_READCLIPBOARD, "reading the clipboard"),
+            (JOB_OBJECT_UILIMIT_WRITECLIPBOARD, "writing the clipboard"),
+            (JOB_OBJECT_UILIMIT_HANDLES, "other processes' windows"),
+        ] {
+            assert_ne!(set & flag, 0, "the job allows {name}: {set:#x}");
+        }
+        assert_eq!(set, UI_LIMITS);
     }
 
     /// A zero cap is refused, and this check was written asserting the opposite.

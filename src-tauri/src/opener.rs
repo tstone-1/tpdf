@@ -35,7 +35,7 @@ use crate::weburl::Web;
 /// The error is ours in every arm: a failure here is the operating system
 /// declining, and nothing it returns carries text from the document.
 pub fn open(web: &Web) -> Result<(), String> {
-    open_url(&web.url)
+    open_url(web.url())
 }
 
 #[cfg(target_os = "macos")]

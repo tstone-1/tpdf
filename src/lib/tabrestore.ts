@@ -174,11 +174,61 @@ export function afterReopen(refused: readonly string[], name: (path: string) => 
   return refused.length === 1 ? TEXT().one(first) : TEXT().many(first, refused.length - 1);
 }
 
+/**
+ * The tabs from last time that a launch restoring them did not open: the
+ * ones behind that `openBehind` refused, and the one to be shown first when
+ * it is not open either. Only tabs of the recorded list, in `plan.order`:
+ * a file handed over by the launcher reports its own failure, and the last
+ * document resumed alone was never a list of tabs.
+ */
+export function unopenedAtLaunch(
+  plan: LaunchPlan,
+  refused: readonly string[],
+  isOpen: (path: string) => boolean,
+): string[] {
+  const tried = [...(plan.resuming ? plan.show : []), ...refused];
+  return [...new Set(tried.filter((path) => plan.order.includes(path) && !isOpen(path)))];
+}
+
+/** What to tell a reader whose tabs from last time did not all open at launch, or nothing. */
+export function afterLaunch(unopened: readonly string[], name: (path: string) => string): string | null {
+  if (!unopened.length) return null;
+  const first = name(unopened[0] as string);
+  return unopened.length === 1 ? TEXT().keptOne(first) : TEXT().keptMany(first, unopened.length - 1);
+}
+
+/**
+ * The tab list to write: the open tabs, with `unopened` put back where they
+ * stood in `order`, the list last time closed with.
+ *
+ * Each goes after the nearest tab before it in `order` that is in the list,
+ * or first when there is none, so the list the next launch reads keeps last
+ * time's order. One that is open now is already in `paths`.
+ */
+export function withUnopened(
+  paths: readonly string[],
+  unopened: readonly string[],
+  order: readonly string[],
+): string[] {
+  const out = [...paths];
+  for (const path of order) {
+    if (!unopened.includes(path) || out.includes(path)) continue;
+    const before = order.slice(0, order.indexOf(path)).reverse().find((other) => out.includes(other));
+    out.splice(before === undefined ? 0 : out.indexOf(before) + 1, 0, path);
+  }
+  return out;
+}
+
 const TEXT = catalog({
   "en-US": {
     one: (first: string) => `Could not reopen ${first}. It may have been moved, renamed or deleted.`,
     many: (first: string, more: number) =>
       `Could not reopen ${first} and ${more} more. They may have been moved, renamed or deleted.`,
+    keptOne: (first: string) =>
+      `Could not reopen ${first}. It stays with the tabs from last time and is tried again at the next start.`,
+    keptMany: (first: string, more: number) =>
+      `Could not reopen ${first} and ${more} more. They stay with the tabs from last time and are tried again ` +
+      "at the next start.",
   },
   "de-DE": {
     one: (first: string) =>
@@ -186,6 +236,12 @@ const TEXT = catalog({
     many: (first: string, more: number) =>
       `${first} und ${more} ${more === 1 ? "weiteres Dokument" : "weitere Dokumente"} konnten nicht wieder geöffnet werden. ` +
       "Sie wurden vielleicht verschoben, umbenannt oder gelöscht.",
+    keptOne: (first: string) =>
+      `${first} konnte nicht wieder geöffnet werden. Das Dokument bleibt bei den Tabs vom letzten Mal und wird ` +
+      "beim nächsten Start erneut versucht.",
+    keptMany: (first: string, more: number) =>
+      `${first} und ${more} ${more === 1 ? "weiteres Dokument" : "weitere Dokumente"} konnten nicht wieder geöffnet werden. ` +
+      "Die Dokumente bleiben bei den Tabs vom letzten Mal und werden beim nächsten Start erneut versucht.",
   },
 });
 
@@ -202,6 +258,9 @@ export class TabRecorder {
   private waiting: [string[], string | null, Sides | null] | null = null;
   private held = false;
   private queue: Promise<unknown> = Promise.resolve();
+  /** Tabs from last time that did not open, and that order; see {@link keepUnopened}. */
+  private unopened: string[] = [];
+  private order: string[] = [];
 
   constructor(
     private readonly send: (
@@ -220,10 +279,12 @@ export class TabRecorder {
       this.waiting = [[...paths], active, sides && { ...sides, right: [...sides.right] }];
       return;
     }
-    const key = JSON.stringify([paths, active, sides]);
+    // One that has since opened is a tab like any other, and goes when it is closed.
+    this.unopened = this.unopened.filter((path) => !paths.includes(path));
+    const list = withUnopened(paths, this.unopened, this.order);
+    const key = JSON.stringify([list, active, sides]);
     if (key === this.last) return;
     this.last = key;
-    const list = [...paths];
     const kept = sides && { ...sides, right: [...sides.right] };
     const write = () => this.send(list, active, kept);
     // A failed write must not stop the ones after it, so the tail never rejects.
@@ -246,6 +307,20 @@ export class TabRecorder {
    */
   hold(): void {
     this.held = true;
+  }
+
+  /**
+   * Keeps `unopened`, tabs from last time that this launch could not open, in
+   * every list written from now on, at their places in `order`.
+   *
+   * A tab on a volume not mounted yet, or behind a password a launch does not
+   * ask for, would otherwise be written out of the list by the first record
+   * after the restore, and the next launch would not try it. Kept for the run;
+   * one that opens later is an ordinary tab from then on.
+   */
+  keepUnopened(unopened: readonly string[], order: readonly string[]): void {
+    this.unopened = [...unopened];
+    this.order = [...order];
   }
 
   /** Writes whatever was noted while held, and writes as it goes from now on. */

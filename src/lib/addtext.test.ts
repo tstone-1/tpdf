@@ -6,7 +6,7 @@
 import { describe, expect, it } from "vitest";
 
 import backend from "../../src-tauri/src/addedtext.rs?raw";
-import { afterAdding, defaults, judge, POSITIONS, suggestedName, type Typed } from "./addtext";
+import { afterAdding, decimal, defaults, judge, POSITIONS, suggestedName, type Typed } from "./addtext";
 
 const typed = (over: Partial<Typed> = {}): Typed => ({
   text: "Page {page} of {pages}", position: "bottom-center", size: "10", extra: "1", pages: "", ...over,
@@ -69,6 +69,23 @@ describe("judge", () => {
     for (const size of ["1,000.5", "1,5,0", ",5", "5,"]) {
       expect(judge("numbers", typed({ size }), 1), size).toContain("from 4 to 300");
     }
+  });
+
+  it("refuses an empty field, an exponent and a hex number", () => {
+    // `Number("")` is 0, so an emptied first-number field numbered the pages
+    // from 0, and `Number` reads `1e1` and `0x10` as numbers nobody typed.
+    // Mutation: back to `Number(trimmed)` for anything without a comma -> red.
+    for (const extra of ["", "   ", "1e1", "0x10", "Infinity", "+3", "-1", "3."]) {
+      expect(judge("numbers", typed({ extra }), 1), extra).toContain("whole number");
+    }
+    for (const size of ["", "1e1", "0x10", "12.5e0"]) {
+      expect(judge("numbers", typed({ size }), 1), size).toContain("from 4 to 300");
+    }
+    // Control: a point and a comma are both decimals, and a plain number is one.
+    expect(decimal(" 12.5 ")).toBe(12.5);
+    expect(decimal("12,5")).toBe(12.5);
+    expect(judge("numbers", typed({ extra: "0" }), 1)).toMatchObject({ first_number: 0 });
+    expect(judge("numbers", typed({ extra: "7" }), 1)).toMatchObject({ first_number: 7 });
   });
 
   it("writes German text, which Latin-1 has", () => {

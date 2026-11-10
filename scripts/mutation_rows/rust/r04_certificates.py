@@ -551,8 +551,10 @@ ROWS += [
         # only a comparison against another tool's answer can see it.
         "docinfo: print a serial least-significant byte first",
         "src/certificate.rs",
-        "    for byte in bytes.iter().take(MAX_VALUE_CHARS / 2) {",
-        "    for byte in bytes.iter().rev().take(MAX_VALUE_CHARS / 2) {",
+        "    crate::encoding::hex_upper(&bytes[..bytes.len().min(MAX_VALUE_CHARS / 2)])",
+        "    crate::encoding::hex_upper(\n"
+        "        &bytes.iter().rev().take(MAX_VALUE_CHARS / 2).copied().collect::<Vec<u8>>(),\n"
+        "    )",
         "every_field_of_a_certificate_whose_bytes_the_test_chose",
     ),
     Mutation(
@@ -715,7 +717,7 @@ ROWS += [
         # new one, which is the underline defect's shape once more.
         "displace: move a mark's rectangle and leave its strokes behind",
         "src/docmodel.rs",
-        """        let strokes = self
+        """        let strokes: Vec<Stroke> = self
             .strokes_of(mark)
             .iter()
             .map(|stroke| Stroke {
@@ -729,7 +731,7 @@ ROWS += [
                     .collect(),
             })
             .collect();""",
-        "        let strokes = self.strokes_of(mark).to_vec();",
+        "        let strokes: Vec<Stroke> = self.strokes_of(mark).to_vec();",
         "moving_a_mark_carries_its_rectangle_and_its_strokes_together",
     ),
     Mutation(
@@ -766,13 +768,11 @@ ROWS += [
         # back nowhere -- the whole reason a move is a command.
         "displace: change where a mark is without journalling it",
         "src/docmodel.rs",
-        "            .collect();\n"
         "        let ink = self.issue_ink(Ink { strokes, quads });\n"
         "        self.apply(Command::Reink { mark, ink })\n"
         "    }\n"
         "\n"
         "    /// Resizes a signature",
-        "            .collect();\n"
         "        if let Some(body) = self.marks.get_mut(&mark) {\n"
         "            body.quads = quads;\n"
         "            body.strokes = strokes;\n"
@@ -1685,8 +1685,8 @@ ROWS += [
         # then unlinks the stream and the rewrite writes it out anyway, which is
         # the defect `redact-apply-probe` found by grepping pixels.
         "image: leave the unlinked picture for the writer to emit",
-        "src/save.rs",
-        "        || (!matches!(job, Job::RedactionFill { .. }) \u0026\u0026 !plan.redactions.is_empty())\n",
+        "src/edits.rs",
+        "            || !redactions.is_empty()\n",
         "",
         "a_rewrite_that_removed_a_picture_sweeps_it_out_of_the_file",
     ),
@@ -1696,8 +1696,8 @@ ROWS += [
         # without the sweep every removed glyph is written out beside a page
         # that no longer draws it.
         "redact: leave the streams a page of several was taken off in the file",
-        "src/save.rs",
-        "        || (!matches!(job, Job::RedactionFill { .. }) \u0026\u0026 !plan.redactions.is_empty())\n",
+        "src/edits.rs",
+        "            || !redactions.is_empty()\n",
         "",
         "a_text_redaction_on_a_page_of_several_streams_leaves_none_of_them",
     ),

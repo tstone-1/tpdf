@@ -17,6 +17,91 @@ as *downloadable*, while the release sat as a draft that GitHub showed to nobody
 are given now because they are different facts, and only the second one means a reader can
 have the binary.)
 
+## [26.11.6] - Unreleased
+
+### Security
+
+- **A redaction is no longer reported as verified over bytes the check did not read.** The
+  verdict is now *not verified*, with the reason stated, for a file that names a stream's
+  filter indirectly, draws text through a composite (Type0) font, carries embedded files, or
+  carries an application's private data (`/PieceInfo`). Before, the first was scanned as raw
+  compressed bytes and the others were not looked at, and the result could still read
+  *verified*.
+- **A redaction removes an annotation written inline over the region, and the page's
+  thumbnail.** Both could keep a copy of what was redacted.
+- **A long-term signing no longer seals a timestamp from an authority this computer does not
+  trust.** The authority is now asked about before the seal, with or without long-term data;
+  before, *Sign without long-term data* could write the signature with that timestamp in it.
+- **A compromised worker can do less to the app.** It can no longer crash the app by
+  truncating a shared buffer, claim an impossible page count, change the host the link dialog
+  shows, or send a text recognition reply of unbounded length. On Linux a worker can no longer
+  change a file's mode, owner, extended attributes or times. On Windows a worker can no longer
+  read or replace the clipboard; it can still empty it.
+- **Saving a changed form answer or an edited comment no longer leaves the earlier answer or
+  the old rich-text body in the file.**
+- **Inserting pages from a form no longer brings the other pages' answers along.**
+- **An attachment that is a program or holds macros is recognised by more file endings**, and
+  saving one that holds macros warns.
+- **The print preview opens only a printer this computer lists**, and forward search refuses
+  a SyncTeX file naming more than 65,536 inputs or 16 MiB of input paths, or with a scale
+  that is not a number.
+
+### Fixed
+
+- **On Windows, edits made while an update downloads are no longer lost.** The edit commands
+  are unavailable from the question about unsaved work until the installer has started or
+  the step has come back.
+- **Removing unused resources no longer drops what a form draws** when the form shares the
+  page's resources object.
+- **A centred line that is kerned or tracked, or ends in a space, stays centred when it is
+  edited.** Before, it moved off centre by half the kerning.
+- **Text that a growing edit pushes along its line no longer slides out from under a
+  highlight, note or link.** The push stops there, and a plain link over the pushed words
+  moves with them. A page whose annotation list cannot be read refuses the push.
+- **`tpdf replace-text` without a font, on a run that another edit on the same line pushes,
+  is refused** instead of being written at its old place.
+- **Renaming a form field refuses the name of a field under a group with no name**, which
+  would have given two fields one full name.
+- **Selecting a graphic and then turning the view no longer leaves its outline where the
+  graphic was.**
+- **A comparison is marked out of date when either document is reloaded or saved.**
+- **Tabs from last time that cannot be opened at launch are named in a message and kept for
+  the next launch**, instead of disappearing. Two tabs changed within a moment of each other
+  now both keep their place.
+- **On Windows, choosing a file name in a print driver's Save dialog for over a minute no
+  longer brings the message that the print queue may be stuck.**
+- **Cancelling a render no longer waits on a busy worker**, and the Explorer preview runs
+  one render at a time and waits for key repeats to settle.
+- **An in-place save reads the file back through a read-only handle that must be the file it
+  wrote.**
+- **Checking for updates while a check is running no longer starts a second one**, and the
+  second caller is given the first one's answer.
+- **Closing a tab or the window whose unsaved drafts cannot be committed says why**, instead
+  of failing silently.
+- **`tpdf sign --long-term` with an untrusted timestamp authority names a flag combination
+  the command accepts.** It advised `--allow-untrusted-timestamp`, which is refused beside
+  `--long-term`.
+- A number field in *Add Text* refuses an exponent or a hex number, and sizes read "1 byte",
+  not "1 bytes".
+
+### Internal
+
+- The `mutations` gate measures which suites a mutation is aimed at and refuses a suite that
+  runs with none; rows were added for the ten suites that had none.
+- Every `TPDF_*` environment variable is listed in `docs/build/running.md`, held to the code
+  by a new `environment` gate.
+- The two Linux-only cargo-audit exceptions state why they are acceptable on the shipped
+  Linux target.
+- `prepare` in the text editor's layout is split into validation, a first-fit search and the
+  finish, with no change in behaviour; the scroll-lock follower and the tab-press listener
+  moved out of `App.svelte` into tested modules.
+- `scripts/run_on_mac.py` hides the other Mac's visible apps for the run and shows them again
+  after it, so a window left covering the screen no longer stops the window checks.
+- The command-line tool no longer imports from the window's command layer: the shared ends
+  of signing, validation data and redaction are modules of their own (`sign_finish.rs`,
+  `validation_data.rs`, `redaction_steps.rs`, `render_reply.rs`). Six hand-written
+  bytes-to-hex loops are one helper in `encoding.rs`.
+
 ## [26.11.5] - 2026-11-07
 
 ### Fixed

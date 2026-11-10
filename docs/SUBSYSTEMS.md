@@ -41,7 +41,7 @@ process reads the file as bytes, re-derives the digest, has the OS sign it throu
 and a fresh worker reads it back (`save::Verifier::signatures`). The worker never holds a key
 and the app process never parses the document. `signing.ts` carries the sequence and every
 sentence, except the verdict on the read-back, which is Rust's and the same for the window and
-the command-line tool (`commands::sign::finish` and `read_back`); `App.svelte` supplies the chooser, the save panel and the message area. The
+the command-line tool (`sign_finish::finish` and `read_back`); `App.svelte` supplies the chooser, the save panel and the message area. The
 signed-save warning is not shown: signing appends one revision and writes no byte of the
 earlier ones, which `sign-probe` shows pyHanko agreeing with. Unsaved edits, encrypted
 documents and DocMDP `/P 1` are refused. `docs/PLAN.md` §9 has the decisions and the
@@ -61,8 +61,8 @@ archive timestamp go onto a locked signature (`a_locked_signature_takes_its_long
 pyHanko classes that append `LTA_UPDATES`, permitted at level 1). **A lock is not written into
 a certified document**: two signatures would each state what may change, and no reader was
 measured on the pair. The worker's reply says whether the revision locks (`Unsigned::locked`),
-`sign_cms::Made` and `commands::sign::Stage::Sealed` carry it past a timestamp or long-term
-data that did not come, and `commands::sign::read_back` answers `ReadBack::Lock` for a copy
+`sign_cms::Made` and `sign_finish::Stage::Sealed` carry it past a timestamp or long-term
+data that did not come, and `sign_finish::read_back` answers `ReadBack::Lock` for a copy
 whose new signature does not read back at level 1. The window asks whether anyone else still
 needs to sign, with no answer selected, and locks for *No* (`signlock.ts`, since 2026-10-15;
 a checkbox ticked by default before); `tpdf sign` locks only with `--lock`, since a script's output must
@@ -112,7 +112,7 @@ sealed bytes as `Pending`'s `Sealed` stage; `tpdf sign --long-term` exits 3. `do
 **Long-term validation data for a document that is already signed (2026-10-10)** is the same
 second half, started from a file somebody else signed: *Add long-term validation data…*
 (`file.addValidationData`, `validationdata.ts`, `add_validation_data`) and `tpdf long-term`
-(`cli/long_term.rs`), which share `commands::validation::finish`. A worker reads the file and
+(`cli/long_term.rs`), which share `validation_data::finish`. A worker reads the file and
 hands over each signed field's `/Contents` beside its scan (`sign_dss::survey`,
 `Request::SurveySignatures`, `save::Verifier::survey`); `longterm::existing::add` plans from
 those --- every signature's signer chain and every timestamp's authority chain, through

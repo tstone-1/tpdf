@@ -22,8 +22,9 @@
 //!
 //! - a page's content does not decode completely, or is over the text
 //!   editor's size bound, whose strict decoder this borrows;
-//! - anything other than the group's own pages reaches the dictionary --- a
-//!   form that shares its page's resources is the common shape;
+//! - anything other than the group's own pages reaches the dictionary, or the
+//!   `/Resources` object it is reached through --- a form that shares its
+//!   page's resources is the common shape, and it names the second;
 //! - a form, a Type 3 font, a tiling pattern or an annotation's appearance on
 //!   one of the pages carries no `/Resources` of its own, which by the
 //!   specification means it draws through the page's.
@@ -64,12 +65,23 @@ struct Found {
     home: Home,
     /// The object a reference to the home is allowed to sit in.
     holder: ObjectId,
+    /// For a home reached through an indirect `/Resources`: that object, and
+    /// the page or page-tree node that names it.
+    ///
+    /// **The second door into the same names.** Anything else naming that
+    /// `/Resources` object draws through it --- a form whose `/Resources` is
+    /// the page's own object is the common shape --- and never names the
+    /// dictionary the group is keyed on, so the referrer check on the home
+    /// alone cannot see it.
+    via: Option<(ObjectId, ObjectId)>,
 }
 
 /// What the pages sharing one dictionary draw, or `None` when it must be kept whole.
 struct Group {
     drawn: Option<HashSet<Vec<u8>>>,
     holders: HashSet<ObjectId>,
+    /// The indirect `/Resources` objects the dictionary is reached through.
+    via: HashSet<ObjectId>,
 }
 
 /// Removes every `/XObject` and `/Font` entry no remaining page mentions.
@@ -82,6 +94,8 @@ struct Group {
 /// An object nesting deeper than [`sweep::MAX_NESTING`].
 pub fn prune(doc: &mut Document) -> Result<usize, String> {
     let mut groups: HashMap<(&[u8], Home), Group> = HashMap::new();
+    // Each indirect `/Resources` object, and the pages and nodes that name it.
+    let mut namers: HashMap<ObjectId, HashSet<ObjectId>> = HashMap::new();
     for page in doc.get_pages().into_values() {
         let drawn = drawn_by(doc, page);
         for key in CATEGORIES {
@@ -91,8 +105,13 @@ pub fn prune(doc: &mut Document) -> Result<usize, String> {
             let group = groups.entry((key, found.home)).or_insert_with(|| Group {
                 drawn: Some(HashSet::new()),
                 holders: HashSet::new(),
+                via: HashSet::new(),
             });
             group.holders.insert(found.holder);
+            if let Some((resources, namer)) = found.via {
+                group.via.insert(resources);
+                namers.entry(resources).or_default().insert(namer);
+            }
             match (&drawn, group.drawn.as_mut()) {
                 (Some(names), Some(all)) => all.extend(names.iter().cloned()),
                 _ => group.drawn = None,
@@ -113,6 +132,12 @@ pub fn prune(doc: &mut Document) -> Result<usize, String> {
         let mut named = Vec::new();
         sweep::references(object, &mut named)?;
         for target in named {
+            if namers
+                .get(&target)
+                .is_some_and(|allowed| !allowed.contains(id))
+            {
+                strangers.insert(target);
+            }
             if !watched.contains(&target) {
                 continue;
             }
@@ -127,7 +152,11 @@ pub fn prune(doc: &mut Document) -> Result<usize, String> {
     }
     let mut trailer = Vec::new();
     sweep::references(&Object::Dictionary(doc.trailer.clone()), &mut trailer)?;
-    strangers.extend(trailer.into_iter().filter(|id| watched.contains(id)));
+    strangers.extend(
+        trailer
+            .into_iter()
+            .filter(|id| watched.contains(id) || namers.contains_key(id)),
+    );
 
     let mut removed = 0;
     for ((key, home), group) in groups {
@@ -138,6 +167,13 @@ pub fn prune(doc: &mut Document) -> Result<usize, String> {
             if strangers.contains(&id) {
                 continue;
             }
+        }
+        if group
+            .via
+            .iter()
+            .any(|resources| strangers.contains(resources))
+        {
+            continue;
         }
         let Some(entries) = dictionary_at(doc, home, key) else {
             continue;
@@ -171,14 +207,19 @@ fn home_of(doc: &Document, page: ObjectId, key: &[u8]) -> Option<Found> {
                 Object::Reference(id) => Some(Found {
                     home: Home::Own(*id),
                     holder,
+                    via: (!inline).then_some((holder, at)),
                 }),
                 Object::Dictionary(_) if inline => Some(Found {
                     home: Home::InHolder(holder),
                     holder,
+                    via: None,
                 }),
+                // The `/Resources` object is the home itself here, and the
+                // check on the home already holds it to the pages that name it.
                 Object::Dictionary(_) => Some(Found {
                     home: Home::InResources(holder),
                     holder: at,
+                    via: None,
                 }),
                 _ => None,
             };
@@ -478,6 +519,50 @@ mod tests {
             .set("Fm", form);
         assert_eq!(prune(&mut doc).expect("prune"), 0);
         assert!(doc.get_object(images[2]).is_ok());
+    }
+
+    #[test]
+    fn a_form_that_shares_the_pages_resources_object_keeps_what_it_draws() {
+        // The page's `/Resources` is an object, and its `/XObject` another; a
+        // form names the first, so it never names the dictionary the group is
+        // keyed on --- and draws `Im3` through it, which no page's content says.
+        let (mut doc, images, pages) = shared(true);
+        let resources = doc
+            .get_object(pages[0])
+            .and_then(Object::as_dict)
+            .and_then(|page| page.get(b"Resources"))
+            .and_then(Object::as_reference)
+            .expect("the shared resources object");
+        let form = doc.add_object(Stream::new(
+            dictionary! { "Type" => "XObject", "Subtype" => "Form", "Resources" => resources },
+            b"/Im3 Do".to_vec(),
+        ));
+        let names = doc
+            .get_object(resources)
+            .and_then(Object::as_dict)
+            .and_then(|resources| resources.get(b"XObject"))
+            .and_then(Object::as_reference)
+            .expect("the shared dictionary");
+        doc.get_object_mut(names)
+            .and_then(Object::as_dict_mut)
+            .expect("names")
+            .set("Fm", form);
+        let content = doc
+            .get_object(pages[0])
+            .and_then(Object::as_dict)
+            .and_then(|page| page.get(b"Contents"))
+            .and_then(Object::as_reference)
+            .expect("content");
+        doc.get_object_mut(content)
+            .and_then(Object::as_stream_mut)
+            .expect("stream")
+            .set_plain_content(b"/Im1 Do /Fm Do".to_vec());
+        prune(&mut doc).expect("prune");
+        sweep::collect(&mut doc).expect("sweep");
+        assert!(
+            doc.get_object(images[2]).is_ok(),
+            "the picture only the form draws is still in the file"
+        );
     }
 
     #[test]

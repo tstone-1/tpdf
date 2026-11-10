@@ -1138,7 +1138,7 @@ fn write_text_appearance(
                 size * 1.2
             ));
         }
-        let hex: String = line.chars().map(|ch| format!("{:02x}", ch as u8)).collect();
+        let hex = crate::encoding::hex_lower(&line.chars().map(|ch| ch as u8).collect::<Vec<u8>>());
         // Two points in from the edge the text is aligned to, as `text_layout`
         // allowed for; a centred line has the same room either side.
         let advance = crate::textbox::advance(line, size);

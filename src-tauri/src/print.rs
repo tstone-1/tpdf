@@ -438,7 +438,8 @@ pub const STALL: std::time::Duration = std::time::Duration::from_secs(60);
 struct Watch {
     /// When the spooler last showed progress, or tpdf's own work last ended.
     last: std::time::Instant,
-    /// How many [`Beat::ours`] are running; the clock stands still meanwhile.
+    /// How many [`Beat::ours`] and [`Beat::asking`] are running; the clock
+    /// stands still meanwhile.
     ours: u32,
     /// Sheets handed to the printer.
     sheets: u32,
@@ -471,6 +472,25 @@ impl Beat<'_> {
     /// page of `vector-multi.pdf` through `Windows.Data.Pdf`, and a clock that
     /// counted it told the reader their print queue was stuck.
     pub fn ours<R>(&self, work: impl FnOnce() -> R) -> R {
+        self.paused(work)
+    }
+
+    /// Runs `work`, a call into the print system that can be waiting on the
+    /// reader rather than on the queue, with the clock stopped: opening the
+    /// document on a driver that prints to a file asks for the file's name
+    /// inside that call (`StartDocW` with no output named), and a reader who
+    /// takes a minute over a Save dialog has not found a stuck queue. The
+    /// clock starts again when the call returns, before the first sheet.
+    ///
+    /// What this gives up: a queue stuck inside that one call is not reported.
+    /// The reader can tell a dialog that is open from one that is not, and
+    /// every sheet after it is watched as before.
+    pub fn asking<R>(&self, work: impl FnOnce() -> R) -> R {
+        self.paused(work)
+    }
+
+    /// The clock stopped for `work`, and started again from when it ended.
+    fn paused<R>(&self, work: impl FnOnce() -> R) -> R {
         self.with(|watch| watch.ours += 1);
         let out = work();
         self.with(|watch| {
@@ -493,7 +513,7 @@ impl Beat<'_> {
 
 /// Runs `work`, and calls `stalled` once, on another thread, with the sheets
 /// sent so far, if `bound` passes with no sheet sent while it runs, not
-/// counting the time inside [`Beat::ours`]. `sent` hears the count after each
+/// counting the time inside [`Beat::ours`] and [`Beat::asking`]. `sent` hears the count after each
 /// sheet, on `work`'s thread.
 ///
 /// `work` is not interrupted: a GDI call blocked in the spooler cannot be, and
@@ -2516,6 +2536,33 @@ mod tests {
             heard.recv_timeout(Duration::from_millis(400)).is_err(),
             "finished work is not reported when the bound passes later"
         );
+
+        // A call the driver answers by asking the reader, a Save dialog,
+        // longer than the bound is not the queue stalling either; the control
+        // is the same wait outside it, which is reported.
+        let waited = |asked: bool| {
+            let (told, heard) = mpsc::channel();
+            watched(
+                Duration::from_millis(400),
+                |_| (),
+                |beat| {
+                    let wait = || std::thread::sleep(Duration::from_millis(600));
+                    if asked {
+                        beat.asking(wait);
+                    } else {
+                        wait();
+                    }
+                    std::thread::sleep(Duration::from_millis(200));
+                },
+                move |sheets| told.send(sheets).expect("send"),
+            );
+            heard.recv_timeout(Duration::from_millis(600))
+        };
+        assert!(
+            waited(true).is_err(),
+            "a reader in the driver's dialog is not reported"
+        );
+        assert_eq!(waited(false), Ok(0), "the same wait in the queue is");
 
         assert!(stalled_message(0).starts_with("No page has reached the printer for a minute."));
         assert!(stalled_message(1).starts_with("1 page reached the printer, and none since"));

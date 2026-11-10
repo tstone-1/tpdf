@@ -128,11 +128,7 @@ impl AddedFont {
                 let (_, metrics) = self.parts[font].as_ref().ok_or_else(|| {
                     said!("a line's character is in no subset made for the write")
                 })?;
-                let hex = metrics
-                    .encode(&run)?
-                    .iter()
-                    .map(|byte| format!("{byte:02X}"))
-                    .collect();
+                let hex = crate::encoding::hex_upper(&metrics.encode(&run)?);
                 Ok(Piece { font, hex })
             })
             .collect()

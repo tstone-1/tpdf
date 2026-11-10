@@ -1683,6 +1683,8 @@ export class Viewer {
   private cropDrawing: { slot: number; from: Point; to: Point } | null = null;
   /** The graphic a click selected, outlined until the next press elsewhere. */
   private graphic: { slot: number; box: GraphicBox; held: SelectedGraphic } | null = null;
+  /** How many times the graphic selection has ended; see {@link graphicTicket}. */
+  private graphicEnds = 0;
   /** Where the press that may become a click went down, and whether on text. */
   private press: { x: number; y: number; text: boolean } | null = null;
 
@@ -3399,6 +3401,9 @@ export class Viewer {
    * viewer check asserts all three.
    */
   private applyTurns(next: number): void {
+    // The outline is drawn from a box in the page's points as the view was
+    // turned when it was found; under another turn it outlines nothing there.
+    this.endGraphic();
     this.turns = next;
     this.text.setTurns(next);
     for (const other of this.otherText.values()) other.setTurns(next);
@@ -3500,7 +3505,7 @@ export class Viewer {
     const after = new PageMap(views);
     this.pages = after;
     // A selected graphic is held by slot, and a slot is not a name for a page.
-    this.graphic = null;
+    this.endGraphic();
     // The marks have not changed and every one of them may have moved: the
     // index is by slot, and a deletion renumbers every slot after the gap.
     this.markIndex = null;
@@ -6990,10 +6995,30 @@ export class Viewer {
     }
   };
 
-  /** Outlines the graphic a click found, `box` on the page in `slot`, and holds what names it. */
-  showGraphic(slot: number, box: GraphicBox, held: SelectedGraphic): void {
+  /**
+   * What a click asking for the graphic under it keeps while the worker
+   * answers, and hands back to {@link showGraphic} with the answer.
+   *
+   * It counts the ends of a selection: an edit, a change of pages, a turn of
+   * the view. An answer asked for before one of them names an object by an
+   * index the edit may have renumbered, or a box the turn has moved, so it is
+   * not shown. The click counter the caller keeps cannot see these, because
+   * none of them is a click.
+   */
+  graphicTicket(): number {
+    return this.graphicEnds;
+  }
+
+  /**
+   * Outlines the graphic a click found, `box` on the page in `slot`, and holds
+   * what names it. Shows nothing, and answers false, when the selection was
+   * ended after `ticket` was taken.
+   */
+  showGraphic(slot: number, box: GraphicBox, held: SelectedGraphic, ticket: number): boolean {
+    if (ticket !== this.graphicEnds) return false;
     this.graphic = { slot, box, held };
     this.wake();
+    return true;
   }
 
   /** What names the selected graphic, or `null` when none is selected. */
@@ -7001,11 +7026,17 @@ export class Viewer {
     return this.graphic?.held ?? null;
   }
 
-  /** Ends the graphic selection. */
+  /** Ends the graphic selection, and any answer still on its way. */
   clearGraphic(): void {
-    if (!this.graphic) return;
+    const shown = this.graphic !== null;
+    this.endGraphic();
+    if (shown) this.wake();
+  }
+
+  /** Ends the selection and makes every ticket taken before now stale. */
+  private endGraphic(): void {
+    this.graphicEnds += 1;
     this.graphic = null;
-    this.wake();
   }
 
   /**

@@ -169,7 +169,7 @@ no PDFium in it, so it needs nothing generated.
 applicable on macOS**; the Windows figure was 19/19 before they existed and has not been
 re-run. They put a worker on the save's *verification* side, which nothing exercised until
 then: `save::InWorker` was reachable only from the command bodies (in `lib.rs` at the time,
-now `commands/mod.rs`), so every test and every other probe passed `save::Here` and the
+now `render_reply.rs`), so every test and every other probe passed `save::Here` and the
 shipped verifier was proved by compiling.
 
 What they assert is a differential — the worker and the coordinator asked the identical

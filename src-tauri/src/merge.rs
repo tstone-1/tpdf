@@ -38,6 +38,12 @@
 //! whose `/Parent` has already been removed, which is what bounds it: the only
 //! way out of an orphaned page is downward.
 //!
+//! **A form widget has a `/Parent` too**, and it is the same door one level
+//! down: it leads to the field, whose `/Kids` name the field's widgets on every
+//! other page, and up to a root field that holds the whole form. So a widget on
+//! an imported page is cut off its field the way the page is cut off its tree,
+//! with what it inherited written onto it (`detached_widgets`).
+//!
 //! ⚠ **That bound was free while every page came across, and it is a rule the
 //! moment some of them do not.** A `/Dest` or a `/Link` from a page you asked
 //! for to a page you did not reaches that page *with its `/Parent` still on
@@ -201,6 +207,18 @@ pub fn import(
     for &page in &taking {
         detached.insert(page, pagetree::detached_page(from, page)?);
     }
+    // The form widgets on those pages, cut off their fields the same way. A
+    // widget's `/Parent` is its field, and a field's `/Kids` names every other
+    // widget of it, on whatever page --- so following it imports the other
+    // pages' answers and appearance streams as objects no page draws. See
+    // `detached_widgets`. Walked as substitutes like the pages, and written
+    // without the `/Parent` that `detached` entries get.
+    let widgets = detached_widgets(from, &mut detached);
+    let walked: BTreeMap<ObjectId, Dictionary> = detached
+        .iter()
+        .chain(widgets.iter())
+        .map(|(id, dictionary)| (*id, dictionary.clone()))
+        .collect();
 
     // Every page of `from` that is staying behind. The walk stops at these; see
     // the note above about a wall.
@@ -220,7 +238,7 @@ pub fn import(
     // Sorted, so that a document with two objects that both refuse produces the
     // same message twice running. A `HashSet`'s order is not a fact about the
     // input, and a failure that moves is one nobody can reproduce.
-    let mut needed: Vec<ObjectId> = needed(from, &detached, &left)?.into_iter().collect();
+    let mut needed: Vec<ObjectId> = needed(from, &walked, &left)?.into_iter().collect();
     needed.sort_unstable();
 
     for id in needed {
@@ -232,14 +250,17 @@ pub fn import(
                 dictionary.set("Parent", Object::Reference(root));
                 Object::Dictionary(dictionary)
             }
-            None => match from.objects.get(&id) {
-                Some(object) => shifted(object, by, 0)?,
-                // A dangling reference, which `sweep::reachable` also steps
-                // over: it names no object, so it carries no content. Left
-                // dangling rather than repaired --- shifting it would be a
-                // guess, and dropping the reference that names it would mean
-                // editing an object the reader did not ask to change.
-                None => continue,
+            None => match widgets.get(&id) {
+                Some(dictionary) => Object::Dictionary(shifted_dictionary(dictionary, by, 0)?),
+                None => match from.objects.get(&id) {
+                    Some(object) => shifted(object, by, 0)?,
+                    // A dangling reference, which `sweep::reachable` also steps
+                    // over: it names no object, so it carries no content. Left
+                    // dangling rather than repaired --- shifting it would be a
+                    // guess, and dropping the reference that names it would mean
+                    // editing an object the reader did not ask to change.
+                    None => continue,
+                },
             },
         };
         into.objects.insert(shifted_id(id, by)?, object);
@@ -265,6 +286,129 @@ fn highest(doc: &Document) -> u32 {
         .max()
         .unwrap_or(0)
         .max(doc.max_id)
+}
+
+/// The field attributes a widget may be reading off the fields above it.
+///
+/// What a viewer needs to draw and answer the widget as the field it was:
+/// the type, the flags, the answer and its default, the text appearance and
+/// its rich-text forms, the choices, the length limit and the tooltip. The
+/// field's `/AA` is left out on purpose, because a field's actions may name
+/// other fields, which is the reach this exists to cut.
+const FIELD_INHERITED: [&[u8]; 11] = [
+    b"FT", b"Ff", b"V", b"DV", b"DA", b"Q", b"DS", b"RV", b"Opt", b"MaxLen", b"TU",
+];
+
+/// How many fields above a widget are read for what it inherits.
+///
+/// A field tree is a handful of levels in any real form. The bound is there
+/// because the chain is the file's to choose, cycles included.
+const MAX_FIELD_DEPTH: usize = 32;
+
+/// The widgets on the detached pages, each as a field of its own.
+///
+/// **A widget's `/Parent` is the door that reaches every page's answers.** The
+/// field above it lists all its widgets in `/Kids`, and a hierarchical form's
+/// root lists every field, so a walk that follows `/Parent` out of a widget on
+/// one page imports every other page's widgets, their appearance streams and
+/// the fields' `/V`, `/DV` and `/RV` --- objects no page of the result draws,
+/// which a later sweep cannot remove because the imported widget still reaches
+/// them. Inserting one page of a filled form would carry the answers of the
+/// pages left behind.
+///
+/// So the widget comes across without `/Parent`, carrying what it inherited
+/// from the fields above it ([`FIELD_INHERITED`], nearest first, and the
+/// nearest `/T` when it has none), which is [`pagetree::detached_page`]'s rule
+/// one level down. Nothing is lost by it: the incoming document's `/AcroForm` is
+/// not imported (see the module note), so the field tree above an imported
+/// widget was never part of any form of the result.
+///
+/// A widget written inline in `/Annots` is rewritten in place inside its
+/// page's detached dictionary, and an `/Annots` held as its own object is
+/// written onto the page so that the rewritten entries have somewhere to live.
+/// Indirect widgets are answered by id, to be walked and written instead of the
+/// document's own.
+fn detached_widgets(
+    from: &Document,
+    pages: &mut BTreeMap<ObjectId, Dictionary>,
+) -> BTreeMap<ObjectId, Dictionary> {
+    let mut widgets: BTreeMap<ObjectId, Dictionary> = BTreeMap::new();
+    for page in pages.values_mut() {
+        let annots = match page.get(b"Annots") {
+            Ok(Object::Array(items)) => items.clone(),
+            Ok(Object::Reference(id)) => match from.get_object(*id) {
+                Ok(Object::Array(items)) => items.clone(),
+                _ => continue,
+            },
+            _ => continue,
+        };
+        let mut rewritten = Vec::with_capacity(annots.len());
+        let mut changed = false;
+        for entry in annots {
+            match &entry {
+                Object::Reference(id) => {
+                    if let Ok(Object::Dictionary(annot)) = from.get_object(*id) {
+                        if let Some(widget) = detached_widget(from, annot) {
+                            widgets.insert(*id, widget);
+                        }
+                    }
+                    rewritten.push(entry);
+                }
+                Object::Dictionary(annot) => match detached_widget(from, annot) {
+                    Some(widget) => {
+                        rewritten.push(Object::Dictionary(widget));
+                        changed = true;
+                    }
+                    None => rewritten.push(entry),
+                },
+                _ => rewritten.push(entry),
+            }
+        }
+        if changed {
+            page.set("Annots", rewritten);
+        }
+    }
+    widgets
+}
+
+/// One widget without its field, or `None` when it is not a widget of one.
+fn detached_widget(from: &Document, annot: &Dictionary) -> Option<Dictionary> {
+    let is_widget = annot
+        .get(b"Subtype")
+        .and_then(Object::as_name)
+        .is_ok_and(|name| name == b"Widget");
+    if !is_widget || !annot.has(b"Parent") {
+        return None;
+    }
+    let mut out = annot.clone();
+    out.remove(b"Parent");
+    let mut seen: HashSet<ObjectId> = HashSet::new();
+    let mut above = annot.get(b"Parent").and_then(Object::as_reference).ok();
+    let mut named = annot.has(b"T");
+    for _ in 0..MAX_FIELD_DEPTH {
+        let Some(id) = above else { break };
+        if !seen.insert(id) {
+            break;
+        }
+        let Ok(field) = from.get_object(id).and_then(Object::as_dict) else {
+            break;
+        };
+        for key in FIELD_INHERITED {
+            if !out.has(key) {
+                if let Ok(value) = field.get(key) {
+                    out.set(key.to_vec(), value.clone());
+                }
+            }
+        }
+        if !named {
+            if let Ok(name) = field.get(b"T") {
+                out.set("T", name.clone());
+                named = true;
+            }
+        }
+        above = field.get(b"Parent").and_then(Object::as_reference).ok();
+    }
+    Some(out)
 }
 
 /// Every object of `from` that the detached pages reach.
@@ -1050,6 +1194,160 @@ mod tests {
         // And it is genuinely there, or the assertion above holds for a page
         // that was never imported at all.
         assert_eq!(text_of(&into, ids[0]), b"two".to_vec());
+    }
+
+    /// A two-page filled form under one root field: `person.a` answered
+    /// `ALPHA` on page 1 and `person.b` answered `BRAVO` on page 2, each with an
+    /// appearance stream drawing its answer.
+    ///
+    /// `inline` writes page 1's widget directly into its `/Annots` rather than
+    /// as an object of its own, which is the second place a widget can be.
+    fn form_across_pages(inline: bool) -> Document {
+        let mut doc = Document::with_version("1.7");
+        let pages_id = doc.new_object_id();
+        let root_field = doc.new_object_id();
+        let mut pages = Vec::new();
+        let mut fields = Vec::new();
+        for (name, answer) in [("a", "ALPHA"), ("b", "BRAVO")] {
+            let content = doc.add_object(Stream::new(dictionary! {}, b"page".to_vec()));
+            let page = doc.add_object(dictionary! {
+                "Type" => "Page",
+                "Parent" => pages_id,
+                "Contents" => content,
+                "MediaBox" => vec![0.into(), 0.into(), 595.into(), 842.into()],
+            });
+            let field = doc.new_object_id();
+            let look = doc.add_object(Stream::new(
+                dictionary! { "Subtype" => "Form", "BBox" => vec![0.into(), 0.into(), 100.into(), 20.into()] },
+                format!("BT ({answer}) Tj ET").into_bytes(),
+            ));
+            let widget = dictionary! {
+                "Type" => "Annot",
+                "Subtype" => "Widget",
+                "Rect" => vec![0.into(), 0.into(), 100.into(), 20.into()],
+                "Parent" => field,
+                "P" => page,
+                "AP" => dictionary! { "N" => look },
+            };
+            let entry: Object = if inline && name == "a" {
+                Object::Dictionary(widget)
+            } else {
+                doc.add_object(widget).into()
+            };
+            let kids: Vec<Object> = match &entry {
+                Object::Reference(id) => vec![(*id).into()],
+                _ => Vec::new(),
+            };
+            doc.objects.insert(
+                field,
+                Object::Dictionary(dictionary! {
+                    "T" => Object::string_literal(name),
+                    "FT" => "Tx",
+                    "V" => Object::string_literal(answer),
+                    "Parent" => root_field,
+                    "Kids" => kids,
+                }),
+            );
+            doc.get_object_mut(page)
+                .and_then(Object::as_dict_mut)
+                .expect("the page")
+                .set("Annots", vec![entry]);
+            pages.push(page);
+            fields.push(field);
+        }
+        doc.objects.insert(
+            root_field,
+            Object::Dictionary(dictionary! {
+                "T" => Object::string_literal("person"),
+                "DA" => Object::string_literal("/Helv 0 Tf 0 g"),
+                "Kids" => fields.iter().map(|&id| id.into()).collect::<Vec<Object>>(),
+            }),
+        );
+        doc.objects.insert(
+            pages_id,
+            Object::Dictionary(dictionary! {
+                "Type" => "Pages",
+                "Kids" => pages.iter().map(|&id| id.into()).collect::<Vec<Object>>(),
+                "Count" => 2,
+            }),
+        );
+        let catalog = doc.add_object(dictionary! {
+            "Type" => "Catalog",
+            "Pages" => pages_id,
+            "AcroForm" => dictionary! { "Fields" => vec![root_field.into()] },
+        });
+        doc.trailer.set("Root", catalog);
+        doc
+    }
+
+    /// Whether `needle` occurs anywhere in `doc` as written, every object
+    /// included. Nothing here is compressed, so the bytes are the content.
+    fn holds(doc: &mut Document, needle: &[u8]) -> bool {
+        let mut bytes = Vec::new();
+        doc.save_to(&mut bytes).expect("serialise");
+        bytes.windows(needle.len()).any(|window| window == needle)
+    }
+
+    /// The widget on the imported page, wherever its `/Annots` keeps it.
+    fn widget_on(doc: &Document, page: lopdf::ObjectId) -> lopdf::Dictionary {
+        let annots = doc
+            .get_object(page)
+            .and_then(Object::as_dict)
+            .expect("the imported page")
+            .get(b"Annots")
+            .and_then(Object::as_array)
+            .expect("its annotations")
+            .clone();
+        match &annots[0] {
+            Object::Reference(id) => doc.get_dictionary(*id).expect("the widget").clone(),
+            Object::Dictionary(widget) => widget.clone(),
+            other => panic!("not an annotation: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn importing_one_page_of_a_form_does_not_bring_the_other_pages_answers() {
+        for inline in [false, true] {
+            let mut into = flat("first");
+            let from = form_across_pages(inline);
+            let ids = import(&mut into, &from, &[0]).expect("the import");
+            assert!(
+                !holds(&mut into, b"BRAVO"),
+                "page 2's answer is in no object of the result (inline: {inline})"
+            );
+            // The control: the page that was asked for keeps its own answer,
+            // drawn and stated, so the assertion above is not satisfied by a
+            // walk that dropped the form altogether.
+            assert!(holds(&mut into, b"ALPHA"), "inline: {inline}");
+            let widget = widget_on(&into, ids[0]);
+            assert!(!widget.has(b"Parent"), "cut off its field");
+            assert_eq!(
+                widget.get(b"FT").and_then(Object::as_name).expect("type"),
+                b"Tx",
+                "and still a text field"
+            );
+            assert_eq!(
+                widget.get(b"V").and_then(Object::as_str).expect("answer"),
+                b"ALPHA"
+            );
+            assert_eq!(
+                widget.get(b"T").and_then(Object::as_str).expect("name"),
+                b"a",
+                "named by the field it came from"
+            );
+            assert!(widget.has(b"DA"), "inherited from the root field");
+        }
+    }
+
+    #[test]
+    fn importing_the_other_page_of_a_form_brings_its_answer() {
+        // The mirror, so that the test above cannot pass by an import that
+        // carries no form answer at all.
+        let mut into = flat("first");
+        let from = form_across_pages(false);
+        import(&mut into, &from, &[1]).expect("the import");
+        assert!(holds(&mut into, b"BRAVO"));
+        assert!(!holds(&mut into, b"ALPHA"));
     }
 
     #[test]

@@ -198,6 +198,24 @@ pub struct Limits {
     pub titles_clipped: usize,
 }
 
+/// Every entry's target, at every depth, for `webopen::Registry::adopt` to
+/// correct before the outline reaches the frontend.
+///
+/// Over the items rather than the [`Outline`], so the caller can lend the
+/// outline's `urls` beside it. Recursive, and bounded by [`MAX_DEPTH`] like
+/// the walk that built it.
+pub fn targets_mut(items: &mut [OutlineItem]) -> Vec<&mut Target> {
+    fn walk<'a>(items: &'a mut [OutlineItem], out: &mut Vec<&'a mut Target>) {
+        for item in items {
+            out.push(&mut item.target);
+            walk(&mut item.children, out);
+        }
+    }
+    let mut out = Vec::new();
+    walk(items, &mut out);
+    out
+}
+
 impl Limits {
     /// Whether anything was cut. The UI shows a warning on exactly this.
     pub fn any(&self) -> bool {
@@ -436,11 +454,11 @@ impl Walk<'_> {
             return refused("uri");
         };
         let token = self.urls.len() as u32;
-        self.urls.push(web.url);
+        self.urls.push(web.url().to_string());
         Target::Web {
             token,
-            host: web.host,
-            rest: web.rest,
+            host: web.host().to_string(),
+            rest: web.rest().to_string(),
         }
     }
 
@@ -786,6 +804,32 @@ fn read_title(bytes: &[u8], limit: usize) -> (String, bool) {
 mod tests {
     use super::*;
 
+    /// Every target at every depth is handed over, in reading order.
+    ///
+    /// A web link two levels down is the case a walk over the top level alone
+    /// would leave showing the worker's own halves.
+    #[test]
+    fn every_target_of_a_nested_outline_is_reached() {
+        let leaf = |page: u32, children: Vec<OutlineItem>| OutlineItem {
+            title: String::new(),
+            open: true,
+            target: Target::Page { page, top_pt: None },
+            children,
+        };
+        let mut items = vec![
+            leaf(0, vec![leaf(1, vec![leaf(2, Vec::new())])]),
+            leaf(3, Vec::new()),
+        ];
+        let pages: Vec<u32> = targets_mut(&mut items)
+            .into_iter()
+            .map(|target| match target {
+                Target::Page { page, .. } => *page,
+                other => panic!("{other:?}"),
+            })
+            .collect();
+        assert_eq!(pages, [0, 1, 2, 3]);
+    }
+
     /// UTF-16LE bytes for a string, with the terminating NUL PDFium appends.
     fn utf16le(value: &str) -> Vec<u8> {
         let mut bytes: Vec<u8> = value
@@ -1004,8 +1048,8 @@ mod tests {
             .expect("the premise of this case is a URL that IS opened");
         let target = Target::Web {
             token: 0,
-            host: web.host.clone(),
-            rest: web.rest.clone(),
+            host: web.host().to_string(),
+            rest: web.rest().to_string(),
         };
         let Target::Web { host, rest, .. } = &target else {
             panic!("built a Web above");

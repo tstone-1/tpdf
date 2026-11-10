@@ -433,12 +433,7 @@ pub(crate) fn certificate_date(time: &x509_cert::time::Time) -> String {
 
 /// Uppercase hex, which is how every other tool prints a serial.
 pub(crate) fn hex_of(bytes: &[u8]) -> String {
-    use std::fmt::Write as _;
-    let mut out = String::with_capacity(bytes.len() * 2);
-    for byte in bytes.iter().take(MAX_VALUE_CHARS / 2) {
-        let _ = write!(out, "{byte:02X}");
-    }
-    out
+    crate::encoding::hex_upper(&bytes[..bytes.len().min(MAX_VALUE_CHARS / 2)])
 }
 
 /// Bounds one string, on the same rule the `/Info` values use.

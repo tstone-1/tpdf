@@ -254,11 +254,14 @@ FILTERS = [
     "longterm::",
     "sign_dss::",
     "commands::sign::",
+    # The tail a signing shares with the command line, and the tests of its
+    # order and its read-back rule, are `sign_finish::tests`.
+    "sign_finish::",
     # Added 2026-10-10 with validation data for a document already signed, in
     # the same edit as its mutations: the shared tail's tests are in
-    # `commands::validation::tests`. `longterm::` already reaches
+    # `validation_data::tests`. `longterm::` already reaches
     # `longterm::existing::tests`.
-    "commands::validation::",
+    "validation_data::",
     # Added 2026-09-30 with installed-font matching, in the same edit as its
     # mutations: the app process's lookup and round trip are `sysfont::tests`.
     "sysfont::",

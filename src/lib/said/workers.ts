@@ -170,6 +170,15 @@ export default {
     "der Drucker wird hier im Druckdialog des Systems gewählt",
   "the printer could not be asked: {e}": "der Drucker konnte nicht abgefragt werden: {e}",
   "no printer is installed": "es ist kein Drucker installiert",
+  "the printer {asked:?} is not installed on this computer": "der Drucker {asked} ist auf diesem Computer nicht installiert",
+  "the worker claims {page_count} pages, more than any document can have":
+    "der Hintergrundprozess meldet {page_count} Seiten, mehr als ein Dokument haben kann",
+  "the worker described {listed} of {page_count} pages, which is not what it was asked":
+    "der Hintergrundprozess hat {listed} von {page_count} Seiten beschrieben, und danach war nicht gefragt",
+  "the worker described a sample of {width} by {height} pixels, which no sample is":
+    "der Hintergrundprozess hat eine Probe von {width} mal {height} Pixeln beschrieben, und so groß ist keine Probe",
+  "the worker's sample {which} holds {held} bytes, and {width} by {height} RGB pixels are not that many":
+    "die Probe {which} des Hintergrundprozesses hat {held} Bytes, und {width} mal {height} RGB-Pixel sind nicht so viele",
   "no page is chosen to print": "es ist keine Seite zum Drucken gewählt",
   "the print job could not be read: {why}": "der Druckauftrag konnte nicht gelesen werden: {why}",
   "the worker returned incomplete page sizes for the print job":

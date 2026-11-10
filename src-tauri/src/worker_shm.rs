@@ -268,6 +268,8 @@ impl Shm {
     }
 
     /// Reads the mapping.
+    ///
+    /// Not for a mapping a worker also holds: see [`Shm::copy_front`].
     #[must_use]
     pub fn as_slice(&self) -> &[u8] {
         // SAFETY: the mapping is valid for `len` bytes for as long as `self`.
@@ -277,11 +279,69 @@ impl Shm {
     /// Writes the mapping.
     ///
     /// Only valid on a mapping created writable --- a document mapping is not,
-    /// and writing to one faults.
+    /// and writing to one faults. Not for a mapping a worker also holds: see
+    /// [`Shm::fill_front`].
     #[must_use]
     pub fn as_mut_slice(&mut self) -> &mut [u8] {
         // SAFETY: as above, and `&mut self` excludes concurrent readers here.
         unsafe { std::slice::from_raw_parts_mut(self.ptr.cast::<u8>(), self.len) }
+    }
+
+    /// Copies the first `length` bytes out, through the file and not the mapping.
+    ///
+    /// **The parent's read of anything a worker wrote goes through here.** A
+    /// worker is handed a *writable* descriptor to its tile file, and a
+    /// `MAP_SHARED` mapping does not pin the file's length: one `ftruncate` from
+    /// a taken-over worker leaves every page of the parent's mapping unbacked,
+    /// and copying out of the slice then raises `SIGBUS` in the app, which ends
+    /// every open tab with its unsaved edits. A positional read of the same file
+    /// sees the same bytes (the mapping and the file share one page cache) and
+    /// answers a short file with an error instead. That holds whether or not a
+    /// platform's sandbox lets the worker truncate an inherited descriptor, so
+    /// nothing here rests on that being measured.
+    ///
+    /// # Errors
+    ///
+    /// `length` past the mapping, or the file holding fewer than `length` bytes.
+    pub fn copy_front(&self, length: usize) -> Result<Vec<u8>, String> {
+        use std::os::unix::fs::FileExt;
+
+        if length > self.len {
+            return Err(format!(
+                "{length} bytes were asked of a {}-byte mapping",
+                self.len
+            ));
+        }
+        let mut out = vec![0u8; length];
+        self.file
+            .read_exact_at(&mut out, 0)
+            .map_err(|e| format!("the shared file no longer holds {length} bytes: {e}"))?;
+        Ok(out)
+    }
+
+    /// Writes `bytes` at the front, through the file and not the mapping.
+    ///
+    /// The other direction of [`Shm::copy_front`], for a mapping the parent
+    /// fills and a running worker reads (the OCR worker's pixels). Writing into
+    /// the slice of a file the worker has cut short faults the parent exactly as
+    /// reading does; a positional write instead puts the length back.
+    ///
+    /// # Errors
+    ///
+    /// `bytes` longer than the mapping, or the write failing.
+    pub fn fill_front(&mut self, bytes: &[u8]) -> Result<(), String> {
+        use std::os::unix::fs::FileExt;
+
+        if bytes.len() > self.len {
+            return Err(format!(
+                "{} bytes do not fit a {}-byte mapping",
+                bytes.len(),
+                self.len
+            ));
+        }
+        self.file
+            .write_all_at(bytes, 0)
+            .map_err(|e| format!("could not write the shared file: {e}"))
     }
 
     /// Reborrows the mapping for the process lifetime.
@@ -320,11 +380,14 @@ impl Drop for Shm {
 impl Shm {
     /// Creates a pagefile-backed mapping of `len` bytes.
     ///
-    /// The handle is inheritable, because handing it to a child is the only
-    /// reason to make one. Inheritable is *permission*, not delivery: a child
-    /// receives it only if it is also named in the spawn's handle list, which is
-    /// what keeps a hostile worker from receiving every other inheritable handle
-    /// this process happens to hold.
+    /// **The handle is born not inheritable**, and stays so except for the
+    /// length of one contained spawn: `sandbox_win::spawn_contained` marks it
+    /// for that `CreateProcess` and takes the mark back afterwards. A mark set
+    /// here would last the mapping's lifetime, and an inheritable handle is
+    /// authority any spawn in this process hands over --- `std::process::Command`
+    /// inherits every inheritable handle, so the `explorer.exe` that "Show in
+    /// folder" starts would receive a copy of every open document. The handle
+    /// list narrows *our* spawns only.
     ///
     /// # Errors
     ///
@@ -340,14 +403,14 @@ impl Shm {
             // gives describes neither.
             return Err("shm create refused: zero length".into());
         }
-        let mut attributes = inheritable_attributes();
         let (high, low) = split_u64(len as u64);
-        // SAFETY: `attributes` outlives the call; a null name means an unnamed
-        // section; `INVALID_HANDLE_VALUE` selects pagefile backing.
+        // SAFETY: null attributes mean the default descriptor and a handle that
+        // is not inherited; a null name means an unnamed section;
+        // `INVALID_HANDLE_VALUE` selects pagefile backing.
         let mapping = unsafe {
             CreateFileMappingW(
                 INVALID_HANDLE_VALUE,
-                &raw mut attributes,
+                std::ptr::null(),
                 PAGE_READWRITE,
                 high,
                 low,
@@ -475,8 +538,8 @@ impl Shm {
 
         let mut reader: HANDLE = std::ptr::null_mut();
         // SAFETY: `self.mapping` is live and owned here; the pseudo-handle to
-        // this process and the out pointer outlive the call. Inheritable, for
-        // the reason `create` gives.
+        // this process and the out pointer outlive the call. Not inheritable,
+        // for the reason `create` gives.
         let ok = unsafe {
             DuplicateHandle(
                 GetCurrentProcess(),
@@ -484,7 +547,7 @@ impl Shm {
                 GetCurrentProcess(),
                 &raw mut reader,
                 FILE_MAP_READ,
-                1,
+                0,
                 0,
             )
         };
@@ -602,6 +665,37 @@ impl Shm {
         unsafe { std::slice::from_raw_parts_mut(self.ptr.cast::<u8>(), self.len) }
     }
 
+    /// Copies the first `length` bytes out.
+    ///
+    /// The unix twin reads through the file because a worker can shorten it.
+    /// A pagefile section cannot be shortened by anyone, and a mapped view
+    /// stays backed for as long as it is mapped, so the slice is the read here.
+    ///
+    /// # Errors
+    ///
+    /// `length` past the mapping.
+    pub fn copy_front(&self, length: usize) -> Result<Vec<u8>, String> {
+        self.as_slice()
+            .get(..length)
+            .map(<[u8]>::to_vec)
+            .ok_or_else(|| format!("{length} bytes were asked of a {}-byte mapping", self.len))
+    }
+
+    /// Writes `bytes` at the front. See [`Shm::copy_front`] for why this is the
+    /// slice here and the file on unix.
+    ///
+    /// # Errors
+    ///
+    /// `bytes` longer than the mapping.
+    pub fn fill_front(&mut self, bytes: &[u8]) -> Result<(), String> {
+        let len = self.len;
+        self.as_mut_slice()
+            .get_mut(..bytes.len())
+            .ok_or_else(|| format!("{} bytes do not fit a {len}-byte mapping", bytes.len()))?
+            .copy_from_slice(bytes);
+        Ok(())
+    }
+
     /// Reborrows the mapping for the process lifetime.
     ///
     /// # Safety
@@ -621,22 +715,6 @@ impl Shm {
 /// writer. What a reader sees after another program rewrites an open document
 /// depends on it, which is why `rewrite-probe` reads it rather than `cfg!`.
 pub const DOCUMENTS_ARE_COPIED: bool = cfg!(windows);
-
-/// Security attributes whose only content is "this handle may be inherited".
-#[cfg(windows)]
-fn inheritable_attributes() -> windows_sys::Win32::Security::SECURITY_ATTRIBUTES {
-    windows_sys::Win32::Security::SECURITY_ATTRIBUTES {
-        nLength: u32::try_from(std::mem::size_of::<
-            windows_sys::Win32::Security::SECURITY_ATTRIBUTES,
-        >())
-        .unwrap_or(0),
-        // Null means the default descriptor, which is what a handle passed to a
-        // child of the same user wants. A section this process created is not
-        // reachable by name, so there is nothing for a descriptor to guard.
-        lpSecurityDescriptor: std::ptr::null_mut(),
-        bInheritHandle: 1,
-    }
-}
 
 /// Copies a handle from this process into another one's table.
 ///
@@ -846,6 +924,77 @@ mod tests {
         assert!(shm.as_slice().iter().all(|b| *b == 7));
     }
 
+    /// A worker that cuts its tile file short costs the parent an error, not a
+    /// fault.
+    ///
+    /// The truncation is the one a taken-over worker can make: `ftruncate` on
+    /// its own copy of the descriptor, here a `dup` of the parent's, which is
+    /// what the worker inherits. Read through the slice afterwards and the
+    /// parent dies of `SIGBUS`, so a regression ends this test binary rather
+    /// than failing one assertion; the control first proves the bytes the
+    /// worker wrote through its mapping are what the read returns.
+    #[cfg(unix)]
+    #[test]
+    fn a_tile_file_truncated_by_its_worker_is_an_error_and_not_a_fault() {
+        let mut shm = Shm::create(8192).expect("create a mapping");
+        shm.as_mut_slice().fill(0xAB);
+        assert_eq!(
+            shm.copy_front(8192)
+                .expect("the control: an intact file reads"),
+            vec![0xAB; 8192],
+            "a read through the file sees what was written through the mapping"
+        );
+
+        // SAFETY: duplicating a live descriptor this mapping owns; the copy is
+        // closed below and nothing else holds it.
+        let theirs = unsafe { libc::dup(shm.raw_fd()) };
+        assert!(theirs >= 0, "dup the worker's copy");
+        // SAFETY: a live descriptor of a regular file this test owns.
+        assert_eq!(unsafe { libc::ftruncate(theirs, 0) }, 0, "truncate");
+        // SAFETY: closed once.
+        unsafe { libc::close(theirs) };
+
+        let err = shm
+            .copy_front(8192)
+            .expect_err("a file shorter than the reply's length must be refused");
+        assert!(err.contains("no longer holds 8192 bytes"), "{err}");
+    }
+
+    /// The parent's write into the OCR pixel file survives the same cut.
+    ///
+    /// Writing into the slice of a truncated file faults the writer as reading
+    /// does; a positional write puts the length back and the worker's mapping
+    /// is whole again.
+    #[cfg(unix)]
+    #[test]
+    fn a_pixel_file_truncated_by_its_worker_takes_the_next_write_without_a_fault() {
+        let mut shm = Shm::create(8192).expect("create a mapping");
+        // SAFETY: as in the test above.
+        let theirs = unsafe { libc::dup(shm.raw_fd()) };
+        assert!(theirs >= 0, "dup the worker's copy");
+        // SAFETY: as above.
+        assert_eq!(unsafe { libc::ftruncate(theirs, 0) }, 0, "truncate");
+        // SAFETY: closed once.
+        unsafe { libc::close(theirs) };
+
+        shm.fill_front(&[7u8; 4096]).expect("a positional write");
+        assert_eq!(shm.backing_len(), Some(4096), "the write restored a length");
+        assert_eq!(shm.copy_front(4096).expect("read back"), vec![7u8; 4096]);
+    }
+
+    /// A length past the mapping is refused on either platform, read or write.
+    #[test]
+    fn copying_past_the_mapping_is_refused() {
+        let mut shm = Shm::create(4096).expect("create a mapping");
+        assert!(shm.copy_front(4096).is_ok(), "control: the whole mapping");
+        assert!(shm.copy_front(4097).is_err(), "one byte past it");
+        assert!(
+            shm.fill_front(&[0u8; 4096]).is_ok(),
+            "control: a full write"
+        );
+        assert!(shm.fill_front(&[0u8; 4097]).is_err(), "one byte past it");
+    }
+
     /// Off unix `Shm::create` refuses by design, so there is no mapping to
     /// assert anything about --- the refusal itself is covered below.
     #[cfg(unix)]
@@ -1014,6 +1163,56 @@ mod tests {
         assert!(
             !attempt(doc.raw_handle()),
             "the document section's handle must not grant write access"
+        );
+
+        drop(doc);
+        let _ = std::fs::remove_file(&path);
+    }
+
+    /// No section handle is inheritable outside a spawn.
+    ///
+    /// Both kinds a worker is handed: the tile (`create`) and a document,
+    /// whose only handle is the one `read_only` duplicates. An inheritable one
+    /// is handed to every child any code in this process starts with
+    /// `bInheritHandles`, and `std::process::Command` always passes it. The
+    /// control marks the tile and reads the flag back, so a probe that could
+    /// not see the flag would fail there rather than pass here.
+    #[cfg(windows)]
+    #[test]
+    fn a_section_handle_is_not_inheritable_outside_a_spawn() {
+        use windows_sys::Win32::Foundation::{GetHandleInformation, HANDLE_FLAG_INHERIT};
+
+        let flag = |handle: usize| {
+            let mut flags: u32 = 0;
+            // SAFETY: a live section handle owned by a `Shm` in this scope.
+            let ok = unsafe { GetHandleInformation(handle as _, &raw mut flags) };
+            assert_ne!(ok, 0, "GetHandleInformation");
+            flags & HANDLE_FLAG_INHERIT
+        };
+
+        let path = std::env::temp_dir().join(format!("tpdf-shm-inherit-{}", std::process::id()));
+        std::fs::write(&path, vec![1u8; 4096]).expect("write fixture");
+        let doc = Shm::map_file(&path).expect("map_file");
+        let tile = Shm::create(4096).expect("create");
+
+        assert_eq!(
+            flag(tile.raw_handle()),
+            0,
+            "a tile section is born inheritable"
+        );
+        assert_eq!(
+            flag(doc.raw_handle()),
+            0,
+            "a document section is inheritable"
+        );
+
+        // SAFETY: the tile's live handle, marked and then read.
+        unsafe { crate::sandbox_win::make_inheritable(tile.raw_handle() as _) }
+            .expect("mark the tile");
+        assert_eq!(
+            flag(tile.raw_handle()),
+            HANDLE_FLAG_INHERIT,
+            "control: a marked handle reads as marked"
         );
 
         drop(doc);

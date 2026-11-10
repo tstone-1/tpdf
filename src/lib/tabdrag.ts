@@ -66,6 +66,49 @@ export interface Carried<Id extends number = number> {
   side: Side | null;
 }
 
+/** What {@link followPress} reports of a pressed pointer. */
+export interface PressEvents {
+  /** The pointer moved to (`x`, `y`). */
+  move(x: number, y: number): void;
+  /** The press is over: let go (`drop`), or cancelled by the system, a lost focus or Escape. */
+  end(drop: boolean): void;
+  /** Whether the press has become a drag, which is when Escape is the drag's to take. */
+  carrying(): boolean;
+}
+
+/**
+ * Follows a pressed pointer on `target`, the window, until the press ends,
+ * and then stops listening before {@link PressEvents.end} is told.
+ *
+ * On the window and in the capture phase, so the drag goes on over the pages,
+ * where the tab's own row does not reach, and no element under the pointer
+ * can swallow the release. A press ends once: the release, a cancel, the
+ * window losing focus, or Escape while a tab is carried; Escape before then
+ * is left to whatever else it means, and while carrying it goes no further.
+ */
+export function followPress(
+  target: Pick<EventTarget, "addEventListener" | "removeEventListener">,
+  events: PressEvents,
+): void {
+  const end = (drop: boolean) => {
+    for (const [name, listener] of listeners) target.removeEventListener(name, listener, true);
+    events.end(drop);
+  };
+  const listeners: [string, (event: Event) => void][] = [
+    ["pointermove", (moved) => events.move((moved as PointerEvent).clientX, (moved as PointerEvent).clientY)],
+    ["pointerup", () => end(true)],
+    ["pointercancel", () => end(false)],
+    ["blur", () => end(false)],
+    ["keydown", (key) => {
+      if ((key as KeyboardEvent).key !== "Escape" || !events.carrying()) return;
+      key.preventDefault();
+      key.stopPropagation();
+      end(false);
+    }],
+  ];
+  for (const [name, listener] of listeners) target.addEventListener(name, listener, true);
+}
+
 export class TabDrag<Id extends number = number> {
   #press: { id: Id; x: number; y: number } | null = null;
   #carried: Carried<Id> | null = null;

@@ -490,6 +490,39 @@ fn fields_beside(doc: &Document, field: ObjectId) -> Vec<(ObjectId, String)> {
         .collect()
 }
 
+/// Whether an ancestor of `field` has a name, so that its full name has more
+/// than one part. Followed up `/Parent` as far as `fields::one_part_names`
+/// walks down; a chain longer than that, or one that loops, answers `false`,
+/// which holds the field to every name of one part in the form: the stricter
+/// of the two checks.
+fn named_above(doc: &Document, field: ObjectId) -> bool {
+    let mut at = field;
+    let mut seen = BTreeSet::from([field]);
+    for _ in 0..32 {
+        let Some(parent) = doc
+            .get_dictionary(at)
+            .ok()
+            .and_then(|dict| dict.get(b"Parent").and_then(Object::as_reference).ok())
+        else {
+            return false;
+        };
+        if !seen.insert(parent) {
+            return false;
+        }
+        let named = doc
+            .get_dictionary(parent)
+            .ok()
+            .and_then(|dict| dict.get(b"T").ok())
+            .and_then(|t| t.as_str().ok())
+            .is_some_and(|t| !crate::annots::decode_text_string(t).is_empty());
+        if named {
+            return true;
+        }
+        at = parent;
+    }
+    false
+}
+
 /// Removes one widget: off its page, and out of the field tree, taking the
 /// field with it when this was its last widget.
 fn remove(doc: &mut Document, widget: &Widget) -> Result<(), String> {
@@ -725,8 +758,8 @@ fn set_options(doc: &mut Document, widget: &Widget, to: &[String]) -> Result<Val
 /// # Errors
 ///
 /// A widget the document does not have or that is named twice; a signature
-/// field, which is not edited; a name a field may not have or that a field
-/// beside it has; a rectangle that is too small, off its page or on a turned
+/// field, which is not edited; a name a field may not have or that would give
+/// it another field's full name; a rectangle that is too small, off its page or on a turned
 /// page; a resize of a text field whose appearance tpdf cannot redraw, or
 /// whose answer no longer fits; a property the field's kind does not have, a
 /// limit shorter than the answer the field holds, or two sets of properties
@@ -836,13 +869,36 @@ pub fn apply(doc: &mut Document, edits: &[FieldEdit]) -> Result<(), String> {
             going == all
         })
         .collect();
-    // A name is taken when a field beside this one will have it once every
-    // change here is made: its own name if it keeps it, its new one if not,
-    // and none if it is removed. So two fields can swap names in one call.
+    // A name is taken when another field will have the same full name once
+    // every change here is made: its own name if it keeps it, its new one if
+    // not, and none if it is removed. So two fields can swap names in one call.
+    //
+    // The fields that can share a full name with this one are its siblings,
+    // and --- when no ancestor of it has a name, so its full name is its `/T`
+    // alone --- every field of one part anywhere in the form: a group with no
+    // `/T` adds nothing to its kids' names, so a `Name` under one is called
+    // `Name` and nothing else. Two fields of one full name are one field to
+    // every reader.
+    let mut one_part: Option<Vec<(Option<ObjectId>, String)>> = None;
     for (field, name) in &names {
-        let taken = fields_beside(doc, *field).into_iter().any(|(other, has)| {
-            !removed_fields.contains(&other) && names.get(&other).unwrap_or(&has) == name
-        });
+        let will_have = |other: ObjectId, has: &String| {
+            other != *field
+                && !removed_fields.contains(&other)
+                && names.get(&other).unwrap_or(has) == name
+        };
+        let mut taken = fields_beside(doc, *field)
+            .iter()
+            .any(|(other, has)| will_have(*other, has));
+        if !taken && !named_above(doc, *field) {
+            if one_part.is_none() {
+                one_part = Some(crate::fields::one_part_fields(doc)?);
+            }
+            taken = one_part.iter().flatten().any(|(other, has)| match other {
+                Some(other) => will_have(*other, has),
+                // Written out in place, so nothing here renames it.
+                None => has == name,
+            });
+        }
         if taken {
             return Err(said!("`{name}`: another field has this name"));
         }

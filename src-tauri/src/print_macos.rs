@@ -78,7 +78,9 @@ pub fn read_with_text(bytes: &[u8]) -> Option<Reading> {
 fn read_inner(bytes: &[u8], with_text: bool) -> Option<Reading> {
     let document = parse(bytes)?;
     let count = unsafe { document.pageCount() };
-    let mut pages = Vec::with_capacity(count);
+    // Grown page by page, not sized from the parser's count of the file: as
+    // `print_win::read` says.
+    let mut pages = Vec::new();
     for index in 0..count {
         let Some(page) = (unsafe { document.pageAtIndex(index) }) else {
             // A page the document counted and cannot produce. Reporting a short

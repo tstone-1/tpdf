@@ -190,6 +190,7 @@ hop through the index.
 - On macOS 27 the OCR worker's Vision refuses every image, and the probes that read a whole page still pass
 - A pre-spawned spare announced its parent's exit as an error on the terminal every worker shares
 - A probe's unsandboxed control rung ran first and filled the cache its sandboxed rung was meant to find empty
+- A low integrity level does not keep a Windows process off the clipboard
 
 ## The document model: saving, structure, signatures
 - An edit reaches the file, and the writer imports the file once per position the page occupies
@@ -617,6 +618,9 @@ hop through the index.
 - A turned page's ink ran the wrong way for the check, because a page's shape is not its ink's
 - A mutation that replaced `cfg!(windows)` with `true` changed nothing on Windows
 - The vitest copy of the window check's lists runs as Windows, so a command withheld on macOS reached `main` unlisted
+- A coverage figure that is the length of the list it was handed measures nothing
+- A test plan built with `plan_of(&[0, 1])` turns the second page, and a turn sweeps the file by itself
+- A test font whose glyphs fill their boxes hides the difference between ink and advance
 
 ## Harnesses: running checks and reading what they print
 - A mutation harness needs the same control as the thing it is testing
@@ -766,6 +770,8 @@ hop through the index.
 - A mutant that failed to compile once was a busy machine, and `--resume` kept the verdict
 - A window check that copies to the clipboard fails when the window loses focus, and passes run alone
 - `-o --force` failed once with Access is denied in the full suite, and passed three times alone
+- `check_linux.py` cannot run from a `git worktree`, and two runs of it share one ref and one clone
+- A browser window left covering the second Mac's screen made the open check hang on every tree
 
 ## Windows and portability
 - The gates had never run on the platform where they fail
@@ -5903,7 +5909,7 @@ wrong.
 Measured on 2026-08-24 against the released 26.8.8, installed from CI:
 
 ```
-C:\Users\mail\AppData\Local\tpdf\pdfium       7211520 bytes
+%LOCALAPPDATA%\tpdf\pdfium       7211520 bytes
 ```
 
 One file, no extension, byte-identical to `vendor/pdfium/bin/pdfium.dll`. Windows honours the
@@ -17643,7 +17649,7 @@ round-trip test asserts that rather than assuming it.
 
 ### A `tauri dev` watcher recompiles the crate you are gating, and rustc's own OOM reads as a failed test
 
-`npm run tauri dev` prints `Info Watching C:\Users\mail\tpdf\src-tauri for
+`npm run tauri dev` prints `Info Watching <checkout>\src-tauri for
 changes...` and means it. Leave one running while editing Rust sources — which
 is exactly what a long refactor is — and **every save starts a second rustc on
 the same 585-unit crate**, alongside whatever `scripts/gates.py` is doing.
@@ -19939,7 +19945,7 @@ Three live instances on 2026-08-28, found by writing the check rather than by re
 - **`save.rs`** — `mark_sites` rendered with **two summaries and two `# Errors` sections**,
   the second describing a function that writes. The paragraphs belonged to `write_marks`,
   sixty lines below, which had its own shorter doc.
-- **`lib.rs`** (the fused run is `await_reply`'s, now `commands/mod.rs`) — introduced *in
+- **`lib.rs`** (the fused run is `await_reply`'s, now `render_reply.rs`) — introduced *in
   the session that wrote the check*, while fixing the other two, and caught only by running
   it. That is the argument for the check existing: a careful
   reader cannot see this, because a fused run and a long comment are the same characters.
@@ -27415,3 +27421,84 @@ twenty is one word. The same holds for any check that reads a number spelled out
 twenty-one to ninety-nine are hyphenated. The pattern is now `(?<![\w-])([\w-]+)`, and the
 gate's `NUMBERS` table runs to thirty, since past its end the gate compares the digits with
 the word and fails on its own table.
+
+### A low integrity level does not keep a Windows process off the clipboard
+
+The Windows worker runs at low integrity inside a job object, and the threat model counted
+that as keeping it away from the reader's desktop. Measured 2026-11-10 with
+`win-sandbox-probe` at the `lowil` rung, today's production rung until then: the contained
+child read the parent's clipboard text, replaced it, and the parent read the replacement
+back. Integrity levels stop writes to higher-integrity objects and window messages upward;
+the clipboard is neither.
+
+What stops it is the job: `JobObjectBasicUIRestrictions` with the `JOB_OBJECT_UILIMIT`
+flags (`sandbox_win::UI_LIMITS`). Under them reading and setting are refused with error 5
+and a page renders pixel-identical. `EmptyClipboard` still succeeds inside the job, so a
+worker can clear what the reader copied; that is a stated residual, not a closed one. The
+probe saves and restores the clipboard's text only, so a picture on the clipboard is lost by
+running it.
+
+### A coverage figure that is the length of the list it was handed measures nothing
+
+`check_mutation_test_files.py` printed "2173 mutations name tests in 149 of the 159 suites",
+and 149 was `len(TEST_FILES)`, a list derived from the same glob as vitest's `include`. Ten of
+the 149 had no mutation aimed at them: they ran on every mutation and could never be the
+suite that went red. The "in neither table" check beside it was a set difference of two lists
+built from one glob, so it could only fire if the globs parted.
+
+Print the population the check computed, not the one it was given, and give that computation
+its own failing case. The gate now works out which suites some row's `expect` names and
+refuses a listed suite that none does; the day it was added it named the ten, and the day
+two new suites arrived without rows it named those.
+
+### A test plan built with `plan_of(&[0, 1])` turns the second page, and a turn sweeps the file by itself
+
+In `save/tests.rs` the argument of `plan_of` is the turns, one per page, not page indexes. A
+test of "this change leaves no orphan in the file" written with `plan_of(&[0, 1])` therefore
+turns page two by a quarter, and a turned page is reason enough for the sweep. The test passed
+with the operand it was written for deleted from the sweep's condition, because the turn
+kept the sweep running (2026-11-10, the removed-field test). Such a test uses
+`plan_of(&[0, 0])`, so the change under test is the only reason to sweep.
+
+### A test font whose glyphs fill their boxes hides the difference between ink and advance
+
+The synthetic font of the text editor's tests draws every glyph as a full box, so the ink a
+scan reports runs to the end of every advance, a trailing space included. A mutation that
+measured a centred line by its ink where it should use its advance survived for that reason:
+in this font the two are the same number (2026-11-10). A test that must tell them apart
+reshapes a glyph so its ink overhangs or falls short (`ink_tests::with_components`), and a
+mutation row for a width measure reproduces the old expression exactly.
+
+### `check_linux.py` cannot run from a `git worktree`, and two runs of it share one ref and one clone
+
+The script hands the tree to WSL through a ref, `refs/tpdf-check/linux`, and a clone under the
+WSL home. From a linked worktree it fails: WSL git cannot follow the worktree's `.git` file,
+which holds a Windows path ("fatal: not a git repository"). It has moved the shared ref to a
+stash-create commit of that worktree before it fails, so the next run from the main checkout
+starts from a ref somebody else set. Two runs at once race on the ref and on the clone for
+the same reason.
+
+Run it from the main checkout, one run at a time. Work in a second worktree is checked for
+Linux by applying its diff to a WSL clone of its own and running the gate there
+(`python3 scripts/gates.py --gate clippy`), or after it is merged.
+
+### A browser window left covering the second Mac's screen made the open check hang on every tree
+
+`run_on_mac.py` refuses a locked session. It does not look at what is on the screen, and on
+2026-11-10 a Safari window 1920 x 960 on a 1920 x 1080 display had been in front for two days.
+`open_check.py` then failed in three shapes over six runs: every direct launch reaching
+*document open complete* and printing no summary, the overlapping-opens phase alone doing so
+until the 900 s limit, and once several phases with no milestone at all. Sixteen other checks
+passed in the first run, which made it read as a defect in the launch path that had just been
+changed.
+
+What separated the two was the baseline, and it took three commits to believe it: the tree
+under test, the commit it was based on and a release that had passed 17 of 17 on the same Mac
+all failed alike. A failure that an old, known-good commit reproduces is the machine's. The
+signature in the log is the double-click phase passing while every direct launch hangs:
+Launch Services brings the app to the front, and a binary started from a `launchd` job opens
+its window behind whatever is there, where WebKit stops the page's timers.
+
+With Safari and UTM hidden (`set visible of process ... to false` through System Events, and
+`true` again afterwards) the same tree passed 17 of 17, `open` in 30 s. Before reading a hang
+there as the code's, list the visible processes and their window sizes over ssh.

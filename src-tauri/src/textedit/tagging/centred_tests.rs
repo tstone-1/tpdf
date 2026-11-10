@@ -94,6 +94,107 @@ fn textedit_a_centred_line_is_edited_about_its_centre() {
     }
 }
 
+// The source line is measured as it is drawn, kerns and tracking included, and
+// so is the replacement: its own text, set again with the source's own
+// positioning, stays exactly where it was. Measured afresh from glyph widths,
+// the source was the kerns narrower than the replacement that kept them, and
+// the unchanged line moved back by half of that.
+#[test]
+fn textedit_a_kerned_centred_line_keeps_its_centre() {
+    for line in [
+        // Plain: the control, which never moved.
+        &b"(FIRST) Tj"[..],
+        // Kerned: 2.4 pt wider than its glyphs at 12 pt.
+        b"[(FI) -200 (RST)] TJ",
+        // Tracked: every glyph 0.6 pt apart.
+        b"[(F) -50 (I) -50 (R) -50 (S) -50 (T)] TJ",
+    ] {
+        let content = [
+            &b"/Standard << /MCID 0 >> BDC BT /F1 12 Tf 80 180 Td "[..],
+            line,
+            b" ET EMC /Standard << /MCID 1 >> BDC BT /F1 12 Tf 80 140 Td (SECOND) Tj ET EMC",
+        ]
+        .concat();
+        let (mut doc, ids) = fixture(&content);
+        align(&mut doc, ids[3], "Center");
+        let label = String::from_utf8_lossy(line).into_owned();
+        let before = runs(&doc)
+            .into_iter()
+            .find(|run| run.text == "FIRST")
+            .unwrap_or_else(|| panic!("{label}: not offered"));
+        let same = change(&doc, "FIRST", "FIRST", true);
+        textedit::write(&mut doc, &[same]).unwrap_or_else(|error| panic!("{label}: {error}"));
+        let after = runs(&doc)
+            .into_iter()
+            .find(|run| run.text == "FIRST")
+            .unwrap();
+        assert!(
+            (after.matrix[4] - before.matrix[4]).abs() < 0.0001,
+            "{label}: {} against {}",
+            after.matrix[4],
+            before.matrix[4]
+        );
+        assert!(
+            (after.advance - before.advance).abs() < 0.0001,
+            "{label}: the kerns were not kept"
+        );
+        // A longer text is centred on the middle of the line as it was drawn.
+        let (mut doc, ids) = fixture(&content);
+        align(&mut doc, ids[3], "Center");
+        let longer = change(&doc, "FIRST", "FIRSTFIRST", true);
+        textedit::write(&mut doc, &[longer]).unwrap_or_else(|error| panic!("{label}: {error}"));
+        let (start, width) = (before.matrix[4], before.advance * before.matrix[0]);
+        let (moved, wide) = span(&doc, "FIRSTFIRST");
+        assert!(
+            (moved + wide / 2. - (start + width / 2.)).abs() < 0.01,
+            "{label}: {moved} {wide} against {start} {width}"
+        );
+    }
+    // A line ending in a space: the space draws nothing, in the source and in
+    // the replacement alike, and its own text set again does not move; a
+    // longer text is centred on the line's words.
+    let spaced = b"/Standard << /MCID 0 >> BDC BT /F1 12 Tf 80 180 Td (FIRST ) Tj ET EMC /Standard << /MCID 1 >> BDC BT /F1 12 Tf 80 140 Td (SECOND) Tj ET EMC";
+    let (mut doc, ids) = fixture(spaced);
+    align(&mut doc, ids[3], "Center");
+    let before = span(&doc, "FIRST ");
+    let same = change(&doc, "FIRST ", "FIRST ", true);
+    textedit::write(&mut doc, &[same]).unwrap_or_else(|error| panic!("{error}"));
+    let after = span(&doc, "FIRST ");
+    assert!(
+        (after.0 - before.0).abs() < 0.0001,
+        "{after:?} against {before:?}"
+    );
+    // FIRST is 80..116, so its middle is 98, and FIRSTFIRST is 72 pt wide;
+    // counted with its space, the line's middle was 101.6.
+    let (mut doc, ids) = fixture(spaced);
+    align(&mut doc, ids[3], "Center");
+    let longer = change(&doc, "FIRST ", "FIRSTFIRST", true);
+    textedit::write(&mut doc, &[longer]).unwrap_or_else(|error| panic!("{error}"));
+    let (moved, _) = span(&doc, "FIRSTFIRST");
+    assert!((moved - 62.).abs() < 0.01, "{moved}");
+    // A kerned line whose last glyph reaches past its advance: `D` is
+    // reshaped to reach 0.6 pt past its own. The kerns move that glyph 2.4 pt
+    // along, so the line's ink ends at 39, not where the kerned advance does.
+    // DFIRS shares neither end with it, so it is laid out afresh, 36 pt wide
+    // with no overhang, and is centred on 80..119: it starts at 81.5.
+    let (mut doc, ids) = fixture(b"/Standard << /MCID 0 >> BDC BT /F1 12 Tf 80 180 Td [(FI) -200 (RSD)] TJ ET EMC /Standard << /MCID 1 >> BDC BT /F1 12 Tf 80 140 Td (SECOND) Tj ET EMC");
+    let (_, _, _, program) = crate::textedit::fonts::tests::fixture();
+    let stream = doc
+        .get_object_mut(program)
+        .unwrap()
+        .as_stream_mut()
+        .unwrap();
+    stream.content = crate::textedit::fonts::ink_tests::with_components(
+        stream.content.clone(),
+        [('B', 0, 0, 16384), ('D', 250, 0, 16384)],
+    );
+    align(&mut doc, ids[3], "Center");
+    let afresh = change(&doc, "FIRSD", "DFIRS", true);
+    textedit::write(&mut doc, &[afresh]).unwrap_or_else(|error| panic!("{error}"));
+    let (moved, _) = span(&doc, "DFIRS");
+    assert!((moved - 81.5).abs() < 0.01, "{moved}");
+}
+
 #[test]
 fn textedit_a_centred_line_is_offered_only_when_it_is_the_whole_line() {
     let offered = |doc: &Document| {

@@ -347,6 +347,102 @@ fn a_rename_gives_the_field_its_name_and_two_fields_can_swap() {
     assert_eq!(one(&f.doc, "Agree").widget, n.widget);
 }
 
+/// The fixture with a group of no name at the top of the form, holding a text
+/// field `Inner` on the first page: a field whose full name is `Inner` and
+/// which is no sibling of the top-level fields.
+fn with_unnamed_group() -> Fixture {
+    with_group(None)
+}
+
+/// The fixture with a group at the top of the form, named `name` or not,
+/// holding a text field `Inner` on the first page.
+fn with_group(name: Option<&str>) -> Fixture {
+    let mut f = fixture();
+    let doc = &mut f.doc;
+    let group = doc.new_object_id();
+    let inner = doc.add_object(dictionary! {
+        "Type" => "Annot", "Subtype" => "Widget", "F" => 4, "P" => f.pages[0],
+        "FT" => "Tx", "T" => Object::string_literal("Inner"), "Parent" => group,
+        "Rect" => vec![150.into(), 30.into(), 250.into(), 50.into()],
+    });
+    let mut dict = dictionary! { "Kids" => vec![Object::Reference(inner)] };
+    if let Some(name) = name {
+        dict.set("T", Object::string_literal(name));
+    }
+    doc.objects.insert(group, dict.into());
+    let list = |doc: &mut Document, owner: ObjectId, key: &[u8]| -> ObjectId {
+        match doc.get_dictionary(owner).unwrap().get(key).unwrap() {
+            Object::Reference(id) => *id,
+            other => panic!("the fixture keeps its lists apart: {other:?}"),
+        }
+    };
+    let annots = list(doc, f.pages[0], b"Annots");
+    doc.get_object_mut(annots)
+        .unwrap()
+        .as_array_mut()
+        .unwrap()
+        .push(Object::Reference(inner));
+    let root = doc.trailer.get(b"Root").unwrap().as_reference().unwrap();
+    let form = list(doc, root, b"AcroForm");
+    let fields = list(doc, form, b"Fields");
+    doc.get_object_mut(fields)
+        .unwrap()
+        .as_array_mut()
+        .unwrap()
+        .push(Object::Reference(group));
+    f
+}
+
+/// A top-level field cannot take the name of a field under a group with no
+/// name: both would be fully named `Inner`, and two fields of one full name
+/// are one field to every reader. The swap the rule promises still works.
+#[test]
+fn a_rename_cannot_take_the_name_of_a_field_under_an_unnamed_group() {
+    let mut f = with_unnamed_group();
+    // The control: the group's field is read under its one-part name.
+    let inner = one(&f.doc, "Inner");
+    let notes = one(&f.doc, "Notes");
+    let before = bytes(&f.doc);
+    let refused = apply(&mut f.doc, &[named(&notes, "Inner")]).unwrap_err();
+    assert!(refused.contains("another field has this name"), "{refused}");
+    assert_eq!(bytes(&f.doc), before, "nothing was written");
+    // Swapped in one call, each takes the name the other gives up.
+    apply(
+        &mut f.doc,
+        &[named(&notes, "Inner"), named(&inner, "Notes")],
+    )
+    .expect("swapped");
+    assert_eq!(one(&f.doc, "Inner").widget, notes.widget);
+    assert_eq!(one(&f.doc, "Notes").widget, inner.widget);
+    // And a name freed by a removal in the same call can be taken.
+    let (moved, agree) = (one(&f.doc, "Notes"), one(&f.doc, "Agree"));
+    apply(&mut f.doc, &[gone(&moved), named(&agree, "Notes")]).expect("taken over");
+    assert_eq!(one(&f.doc, "Notes").widget, agree.widget);
+}
+
+/// The mirror: the field under the unnamed group cannot take the name of a
+/// top-level field, which is no sibling of it either.
+#[test]
+fn a_field_under_an_unnamed_group_cannot_take_a_top_level_name() {
+    let mut f = with_unnamed_group();
+    let inner = one(&f.doc, "Inner");
+    let before = bytes(&f.doc);
+    let refused = apply(&mut f.doc, &[named(&inner, "Notes")]).unwrap_err();
+    assert!(refused.contains("another field has this name"), "{refused}");
+    assert_eq!(bytes(&f.doc), before, "nothing was written");
+    // The control: a name nobody has is taken.
+    apply(&mut f.doc, &[named(&inner, "Elsewhere")]).expect("renamed");
+    assert_eq!(one(&f.doc, "Elsewhere").widget, inner.widget);
+
+    // A field under a named group is fully named `Box.Inner`, and can repeat
+    // a top-level name without sharing a full name with it.
+    let mut f = with_group(Some("Box"));
+    let boxed = one(&f.doc, "Box.Inner");
+    apply(&mut f.doc, &[named(&boxed, "Notes")]).expect("renamed");
+    assert_eq!(one(&f.doc, "Box.Notes").widget, boxed.widget);
+    assert_eq!(widgets(&f.doc, "Notes").len(), 1);
+}
+
 #[test]
 fn a_rename_to_a_name_outside_ascii_reads_back_as_that_name() {
     // The control: a name inside ASCII reads the same in either encoding, so

@@ -129,16 +129,21 @@ enum Rung {
     Bare,
     Job,
     LowIl,
+    /// `lowil` with the job's UI restrictions, which is what the production
+    /// worker runs under since `lowil` was measured reading and writing the
+    /// reader's clipboard.
+    UiLimits,
     NoPrivs,
     SidOnly,
     Restricted,
 }
 
 impl Rung {
-    const ALL: [Rung; 6] = [
+    const ALL: [Rung; 7] = [
         Rung::Bare,
         Rung::Job,
         Rung::LowIl,
+        Rung::UiLimits,
         Rung::NoPrivs,
         Rung::SidOnly,
         Rung::Restricted,
@@ -149,6 +154,7 @@ impl Rung {
             Rung::Bare => "bare",
             Rung::Job => "job",
             Rung::LowIl => "lowil",
+            Rung::UiLimits => "uilimits",
             Rung::NoPrivs => "noprivs",
             Rung::SidOnly => "sidonly",
             Rung::Restricted => "restricted",
@@ -160,6 +166,7 @@ impl Rung {
             Rung::Bare => "control: no containment, what Windows does today",
             Rung::Job => "job object: memory cap, one process, kill-on-close",
             Rung::LowIl => "job + low integrity level",
+            Rung::UiLimits => "job + low integrity level + UI restrictions",
             Rung::NoPrivs => "diagnostic: privileges dropped, no restricting SID",
             Rung::SidOnly => "diagnostic: restricting SID, privileges kept",
             Rung::Restricted => "job + restricted token (privileges dropped and SID)",
@@ -252,9 +259,27 @@ fn parent(args: &[String]) -> Result<i32, String> {
     );
     println!();
 
+    // Each rung overwrites the clipboard with its markers, so the reader's
+    // text is kept and put back, whatever the rungs did.
+    let kept = clipboard_text();
     let mut outcomes = Vec::new();
+    let mut failed = None;
     for rung in Rung::ALL {
-        outcomes.push(run_rung(rung, &lib_dir, &doc_path)?);
+        match run_rung(rung, &lib_dir, &doc_path) {
+            Ok(outcome) => outcomes.push(outcome),
+            Err(why) => {
+                failed = Some(why);
+                break;
+            }
+        }
+    }
+    if let Ok(Some(text)) = &kept {
+        if let Err(why) = set_clipboard_text(text) {
+            println!("[WARN] the clipboard's text could not be put back: {why}");
+        }
+    }
+    if let Some(why) = failed {
+        return Err(why);
     }
 
     report(&outcomes, &reference)
@@ -311,10 +336,15 @@ fn run_rung(rung: Rung, lib_dir: &Path, doc_path: &Path) -> Result<Outcome, Stri
     ]);
 
     let job = if rung.wants_job() {
-        Some(Job::create()?)
+        Some(Job::create(rung == Rung::UiLimits)?)
     } else {
         None
     };
+
+    // The text the child is asked to read, put there with this process's
+    // authority; a failure is recorded rather than fatal, since only the two
+    // clipboard rows depend on it.
+    let marked = set_clipboard_text(&parent_marker(rung));
 
     let spawned = spawn_child(&command, rung, job.as_ref());
     // Dropped before reading: the child holds its own copies, and the parent's
@@ -328,7 +358,25 @@ fn run_rung(rung: Rung, lib_dir: &Path, doc_path: &Path) -> Result<Outcome, Stri
         Err(message) => (u32::MAX, Some(message)),
     };
 
-    let (report, pixels) = read_output(&out_path);
+    let (mut report, pixels) = read_output(&out_path);
+    // What the child's write left, read from outside it once it is gone.
+    let seen = match (&marked, clipboard_text()) {
+        (Err(why), _) => format!("not tested: the parent could not set it ({why})"),
+        (Ok(()), Ok(Some(text))) if text == child_marker(rung, std::process::id()) => {
+            "allowed".to_string()
+        }
+        (Ok(()), Ok(Some(text))) if text == parent_marker(rung) => "denied".to_string(),
+        (Ok(()), Ok(Some(_))) => "other text: another program wrote".to_string(),
+        (Ok(()), Ok(None)) => "emptied".to_string(),
+        (Ok(()), Err(why)) => format!("unreadable here ({why})"),
+    };
+    if let Some(authority) = report
+        .as_mut()
+        .and_then(|r| r.get_mut("authority"))
+        .and_then(|a| a.as_object_mut())
+    {
+        authority.insert("clipboard_write_seen".into(), seen.into());
+    }
     Ok(Outcome {
         rung,
         report,
@@ -596,7 +644,194 @@ fn probe_authority(doc_path: &str, parent_pid: u32) -> serde_json::Value {
         "open_parent": open_parent,
         "commit_past_cap": commit_past_cap(),
         "second_process": second_process(),
+        "clipboard_read": clipboard_read_probe(),
+        "clipboard_write": clipboard_write_probe(),
     })
+}
+
+/// The text the parent leaves on the clipboard before a rung, and the text
+/// that rung's child tries to leave there instead. Per rung, so that a
+/// verdict cannot be a previous rung's text read back.
+fn parent_marker(rung: Rung) -> String {
+    format!("tpdf-probe-parent-{}-{}", rung.name(), std::process::id())
+}
+
+fn child_marker(rung: Rung, parent_pid: u32) -> String {
+    format!("tpdf-probe-child-{}-{parent_pid}", rung.name())
+}
+
+/// `CF_UNICODETEXT`.
+const UNICODE_TEXT: u32 = 13;
+
+/// Opens the clipboard for `owner`, trying a few times: another program can
+/// hold it for a moment, and a busy clipboard is not a denial.
+fn open_clipboard(owner: *mut c_void) -> Result<(), u32> {
+    use windows_sys::Win32::System::DataExchange::OpenClipboard;
+    let mut last = 0;
+    for _ in 0..25 {
+        // SAFETY: a window this process made, or null.
+        if unsafe { OpenClipboard(owner) } != 0 {
+            return Ok(());
+        }
+        // SAFETY: read straight after the call that set it.
+        last = unsafe { GetLastError() };
+        std::thread::sleep(std::time::Duration::from_millis(20));
+    }
+    Err(last)
+}
+
+/// The clipboard's text, or the error that stopped reading it. `Ok(None)` is
+/// a clipboard with no text on it.
+fn clipboard_text() -> Result<Option<String>, String> {
+    use windows_sys::Win32::System::DataExchange::{CloseClipboard, GetClipboardData};
+    use windows_sys::Win32::System::Memory::{GlobalLock, GlobalSize, GlobalUnlock};
+    open_clipboard(std::ptr::null_mut()).map_err(|e| format!("open: error {e}"))?;
+    // SAFETY: the clipboard is open on this thread; the handle it gives is the
+    // system's, locked for the copy and unlocked before it is closed.
+    let text = unsafe {
+        let handle = GetClipboardData(UNICODE_TEXT);
+        if handle.is_null() {
+            let error = GetLastError();
+            CloseClipboard();
+            // 1168, `ERROR_NOT_FOUND`: open, and no text on it.
+            return if error == 0 || error == 1168 {
+                Ok(None)
+            } else {
+                Err(format!("get: error {error}"))
+            };
+        }
+        let at = GlobalLock(handle) as *const u16;
+        if at.is_null() {
+            let error = GetLastError();
+            CloseClipboard();
+            return Err(format!("lock: error {error}"));
+        }
+        let units = GlobalSize(handle) / 2;
+        let all = std::slice::from_raw_parts(at, units);
+        let end = all.iter().position(|unit| *unit == 0).unwrap_or(units);
+        let text = String::from_utf16_lossy(&all[..end]);
+        GlobalUnlock(handle);
+        text
+    };
+    // SAFETY: opened above, on this thread.
+    unsafe { CloseClipboard() };
+    Ok(Some(text))
+}
+
+/// Puts `text` on the clipboard, owned by a message-only window made for the
+/// purpose: with no owner, `EmptyClipboard` leaves the clipboard ownerless
+/// and `SetClipboardData` then fails (`pagecopy.rs`).
+fn set_clipboard_text(text: &str) -> Result<(), String> {
+    use windows_sys::Win32::Foundation::GlobalFree;
+    use windows_sys::Win32::System::DataExchange::{
+        CloseClipboard, EmptyClipboard, SetClipboardData,
+    };
+    use windows_sys::Win32::System::Memory::{
+        GlobalAlloc, GlobalLock, GlobalUnlock, GMEM_MOVEABLE,
+    };
+    use windows_sys::Win32::UI::WindowsAndMessaging::{CreateWindowExW, DestroyWindow};
+
+    let class: Vec<u16> = OsStr::new("STATIC").encode_wide().chain([0]).collect();
+    // `HWND_MESSAGE`: a window that is never shown and receives no broadcast.
+    let message_only = -3isize as *mut c_void;
+    // SAFETY: a system class, no extra data, destroyed below.
+    let owner = unsafe {
+        CreateWindowExW(
+            0,
+            class.as_ptr(),
+            std::ptr::null(),
+            0,
+            0,
+            0,
+            0,
+            0,
+            message_only,
+            std::ptr::null_mut(),
+            std::ptr::null_mut(),
+            std::ptr::null(),
+        )
+    };
+    if owner.is_null() {
+        // SAFETY: read straight after the call that set it.
+        return Err(format!("window: error {}", unsafe { GetLastError() }));
+    }
+    let units: Vec<u16> = text.encode_utf16().chain([0]).collect();
+    let result = (|| {
+        open_clipboard(owner).map_err(|e| format!("open: error {e}"))?;
+        // SAFETY: the clipboard is open on this thread and owned by `owner`.
+        // The memory is the system's once `SetClipboardData` accepts it and
+        // freed here otherwise.
+        unsafe {
+            if EmptyClipboard() == 0 {
+                let error = GetLastError();
+                CloseClipboard();
+                return Err(format!("empty: error {error}"));
+            }
+            let memory = GlobalAlloc(GMEM_MOVEABLE, units.len() * 2);
+            if memory.is_null() {
+                CloseClipboard();
+                return Err("no memory".to_string());
+            }
+            let at = GlobalLock(memory) as *mut u16;
+            std::ptr::copy_nonoverlapping(units.as_ptr(), at, units.len());
+            GlobalUnlock(memory);
+            let set = SetClipboardData(UNICODE_TEXT, memory);
+            let error = GetLastError();
+            CloseClipboard();
+            if set.is_null() {
+                GlobalFree(memory);
+                // `EmptyClipboard` succeeded to get here, which is worth
+                // saying: emptying is a write the reader can notice.
+                return Err(format!("emptied it, then set: error {error}"));
+            }
+        }
+        Ok(())
+    })();
+    // SAFETY: the window made above.
+    unsafe { DestroyWindow(owner) };
+    result
+}
+
+/// Whether this process can read what the parent put on the clipboard.
+///
+/// Read against the marker rather than for any text at all: a clipboard that
+/// answers with something else (another program's copy landing between the
+/// two) is said as that, not as access.
+fn clipboard_read_probe() -> String {
+    let Some(rung) = std::env::args().nth(2).and_then(|name| Rung::parse(&name)) else {
+        return "not tested: no rung".into();
+    };
+    let expected = parent_marker_for_child(rung);
+    match clipboard_text() {
+        Ok(Some(text)) if text == expected => "allowed".into(),
+        Ok(Some(_)) => "read other text".into(),
+        Ok(None) => "no text".into(),
+        Err(why) => format!("denied ({why})"),
+    }
+}
+
+/// The parent's marker as the child computes it: the parent's pid is the
+/// child's fifth argument.
+fn parent_marker_for_child(rung: Rung) -> String {
+    let parent_pid = std::env::args().nth(6).unwrap_or_default();
+    format!("tpdf-probe-parent-{}-{parent_pid}", rung.name())
+}
+
+/// Whether this process could put text on the clipboard, as it says. The
+/// parent reads the clipboard back after the child is gone and records what
+/// it found as `clipboard_write_seen`, which is the verdict that counts.
+fn clipboard_write_probe() -> String {
+    let Some(rung) = std::env::args().nth(2).and_then(|name| Rung::parse(&name)) else {
+        return "not tested: no rung".into();
+    };
+    let parent_pid: u32 = std::env::args()
+        .nth(6)
+        .and_then(|pid| pid.parse().ok())
+        .unwrap_or(0);
+    match set_clipboard_text(&child_marker(rung, parent_pid)) {
+        Ok(()) => "allowed".into(),
+        Err(why) => format!("denied ({why})"),
+    }
 }
 
 /// Whether this process can commit more memory than the job object allows.
@@ -694,7 +929,9 @@ fn second_process() -> String {
 struct Job(HANDLE);
 
 impl Job {
-    fn create() -> Result<Self, String> {
+    /// `ui_limits` adds every `JOB_OBJECT_UILIMIT_*` restriction, the set the
+    /// production `Job::create` applies.
+    fn create(ui_limits: bool) -> Result<Self, String> {
         // SAFETY: both arguments are optional and null is the documented default.
         let handle = unsafe { CreateJobObjectW(std::ptr::null(), std::ptr::null()) };
         if handle.is_null() {
@@ -724,6 +961,38 @@ impl Job {
         };
         if ok == 0 {
             return Err(format!("SetInformationJobObject failed: {}", last_error()));
+        }
+        if ui_limits {
+            use windows_sys::Win32::System::JobObjects::{
+                JobObjectBasicUIRestrictions, JOBOBJECT_BASIC_UI_RESTRICTIONS,
+                JOB_OBJECT_UILIMIT_DESKTOP, JOB_OBJECT_UILIMIT_DISPLAYSETTINGS,
+                JOB_OBJECT_UILIMIT_EXITWINDOWS, JOB_OBJECT_UILIMIT_GLOBALATOMS,
+                JOB_OBJECT_UILIMIT_HANDLES, JOB_OBJECT_UILIMIT_READCLIPBOARD,
+                JOB_OBJECT_UILIMIT_SYSTEMPARAMETERS, JOB_OBJECT_UILIMIT_WRITECLIPBOARD,
+            };
+            let ui = JOBOBJECT_BASIC_UI_RESTRICTIONS {
+                UIRestrictionsClass: JOB_OBJECT_UILIMIT_DESKTOP
+                    | JOB_OBJECT_UILIMIT_DISPLAYSETTINGS
+                    | JOB_OBJECT_UILIMIT_EXITWINDOWS
+                    | JOB_OBJECT_UILIMIT_GLOBALATOMS
+                    | JOB_OBJECT_UILIMIT_HANDLES
+                    | JOB_OBJECT_UILIMIT_READCLIPBOARD
+                    | JOB_OBJECT_UILIMIT_SYSTEMPARAMETERS
+                    | JOB_OBJECT_UILIMIT_WRITECLIPBOARD,
+            };
+            // SAFETY: as above.
+            let ok = unsafe {
+                SetInformationJobObject(
+                    job.0,
+                    JobObjectBasicUIRestrictions,
+                    std::ptr::from_ref(&ui).cast(),
+                    u32::try_from(std::mem::size_of::<JOBOBJECT_BASIC_UI_RESTRICTIONS>())
+                        .unwrap_or(0),
+                )
+            };
+            if ok == 0 {
+                return Err(format!("UI restrictions refused: {}", last_error()));
+            }
         }
         Ok(job)
     }
@@ -763,7 +1032,7 @@ fn spawn_child(command: &str, rung: Rung, job: Option<&Job>) -> Result<u32, Stri
 
     let token = match rung {
         Rung::Bare | Rung::Job => None,
-        Rung::LowIl => Some(low_integrity_token()?),
+        Rung::LowIl | Rung::UiLimits => Some(low_integrity_token()?),
         // The two diagnostics differ from `restricted` in exactly one ingredient
         // each, which is the only way to attribute a spawn failure to one of them.
         Rung::NoPrivs => Some(restricted_token(DISABLE_MAX_PRIVILEGE, false)?),

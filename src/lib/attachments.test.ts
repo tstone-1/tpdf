@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { attachmentRows, describe as describeFile, isProgram, kindOf, pick, preview, saved } from "./attachments";
+import { attachmentRows, describe as describeFile, holdsMacros, isProgram, kindOf, pick, preview, saved } from "./attachments";
 
 const files = [
   { name: "orders.csv", description: "the order lines", size: 1200 },
@@ -24,6 +24,38 @@ describe("what an attachment's name claims", () => {
     expect(saved({ name: "setup.exe", description: "", size: null }, 2048, "setup.exe"))
       .toContain("open it only if you trust the document");
     expect(saved(files[1]!, 12, "invoice.xml")).toBe("Saved invoice.xml to invoice.xml, 12 bytes.");
+  });
+
+  it.each([
+    // Script hosts, installers, settings, consoles and shortcuts Windows runs
+    // or follows on a double-click. Mutation: drop any one from PROGRAMS -> red.
+    "hta", "wsf", "wsh", "pif", "vbe", "jse", "cpl", "reg", "msc", "url", "scf", "msix", "msixbundle",
+    "appx", "appxbundle", "msp", "psm1", "exe", "lnk",
+  ])("warns about a saved .%s as a program", (end) => {
+    const name = `Invoice.${end.toUpperCase()}`;
+    expect(isProgram(name)).toBe(true);
+    expect(kindOf(name)).toBe("a program or script");
+    expect(saved({ name, description: "", size: null }, 1, name)).toContain("program or script");
+  });
+
+  it.each(["docm", "dotm", "xlsm", "xltm", "xlam", "pptm", "potm", "ppsm", "ppam", "sldm"])(
+    "names a .%s by its program and warns that it can hold macros",
+    (end) => {
+      // Mutation: drop any one from MACROS, or the macro warning -> red.
+      const name = `budget.${end}`;
+      expect(holdsMacros(name)).toBe(true);
+      expect(isProgram(name)).toBe(false);
+      expect(kindOf(name)).toMatch(/^an? (Word document|Excel workbook|PowerPoint presentation)$/);
+      expect(saved({ name, description: "", size: null }, 1, name)).toContain("can hold macros");
+    },
+  );
+
+  it("warns about neither for an Office file without macros", () => {
+    // Control for the two tables above.
+    for (const name of ["a.docx", "a.xlsx", "a.pptx", "a.pdf"]) {
+      expect(holdsMacros(name)).toBe(false);
+      expect(saved({ name, description: "", size: null }, 1, name)).toBe(`Saved ${name} to ${name}, 1 byte.`);
+    }
   });
 
   it("describes a file with its stated size, and leaves out a size it does not state", () => {

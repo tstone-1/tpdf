@@ -46,6 +46,18 @@ THREE THINGS THE OTHER MAC HAS TO BE, each of them paid for on 2026-10-10:
     identity, the bundled `libpdfium.dylib` is signed with the same one and the
     app after it.
 
+A FOURTH, WHICH THE SCRIPT NOW ARRANGES ITSELF. The screen has to be free as
+well as unlocked. A window started from a `launchd` job opens behind whatever is
+in front, and WebKit stops the timers of a page it cannot show: with a browser
+window left across the display, every direct launch opened its document and
+then printed no summary, on every tree, an old known-good release included
+(`docs/TRAPS.md`, *A browser window left covering the second Mac's screen made
+the open check hang on every tree*). So every visible app is hidden through
+System Events before the job starts and shown again when it ends, on the
+timeout and the refusal paths too. Hidden, not quit: the apps keep their
+windows and whatever they were doing. If System Events refuses, the run says so
+and goes on as it did before.
+
 `--wrap` is a command put in front of the build and the signing, ending in
 `--`, for a host where an SSH login has neither the pinned Node nor an unlocked
 keychain and a script of its own supplies both.
@@ -130,6 +142,34 @@ if [ -n "$identity" ]; then
 fi
 job="com.tpdf.windowchecks.$$"
 rm -f "$run/done" "$run/checks.log"
+# Every other app is hidden for the run and shown again after it; the header
+# says why. Hidden, never quit: a hidden app keeps its windows and its work.
+cat >"$run/hide.applescript" <<'HIDE'
+tell application "System Events"
+  set found to name of every process whose visible is true
+  repeat with one in found
+    set visible of process (one as text) to false
+  end repeat
+  set AppleScript's text item delimiters to linefeed
+  return found as text
+end tell
+HIDE
+cat >"$run/show.applescript" <<'SHOW'
+on run argv
+  tell application "System Events" to set visible of process (item 1 of argv) to true
+end run
+SHOW
+hidden=$(osascript "$run/hide.applescript" 2>"$run/hide.log")
+if [ -n "$hidden" ]; then
+  echo "[OK] hidden for the run, and shown again after it: $(print -r -- "$hidden" | tr '\n' ',' | sed 's/,$//; s/,/, /g')"
+elif [ -s "$run/hide.log" ]; then
+  echo "[WARN] the other apps could not be hidden, so a window covering the screen will stop the checks: $(head -1 "$run/hide.log")"
+fi
+show_again() {{
+  [ -n "$hidden" ] || return 0
+  print -r -- "$hidden" | while IFS= read -r one; do osascript "$run/show.applescript" "$one" >/dev/null 2>&1; done
+  hidden=""
+}}
 cat >"$run/job.sh" <<JOB
 #!/bin/zsh
 export PATH="$PATH"
@@ -146,15 +186,17 @@ cat >"$run/job.plist" <<PLIST
 <key>ProgramArguments</key><array><string>$run/job.sh</string></array>
 <key>RunAtLoad</key><true/></dict></plist>
 PLIST
-launchctl bootstrap "gui/$(id -u)" "$run/job.plist" || stop "launchd did not take the job; is anybody logged in on this Mac?"
+launchctl bootstrap "gui/$(id -u)" "$run/job.plist" || {{ show_again; stop "launchd did not take the job; is anybody logged in on this Mac?"; }}
 waited=0
 while [ ! -f "$run/done" ] && [ "$waited" -lt {limit} ]; do sleep 5; waited=$((waited + 5)); done
 launchctl bootout "gui/$(id -u)/$job" 2>/dev/null
 if [ ! -f "$run/done" ]; then
   pkill -f "$app/Contents/MacOS/tpdf" 2>/dev/null
+  show_again
   tail -8 "$run/checks.log" 2>/dev/null
   stop "the window checks did not end within {limit} s"
 fi
+show_again
 {show}
 code=$(sed -n 's/^EXIT //p' "$run/checks.log" | tail -1)
 echo "{marker} ${{code:-2}}"

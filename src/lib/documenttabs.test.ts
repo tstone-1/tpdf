@@ -7,7 +7,7 @@ import {
 } from "./documenttabs";
 import { pageId } from "./pages";
 import app from "../App.svelte?raw";
-import { functionIn, missingFrom } from "./sourcetext";
+import { functionIn, missingFrom, withoutComments as withoutCommentsOf } from "./sourcetext";
 import { pickPartner } from "./panes";
 import { PLAIN_SEARCH } from "./search";
 import { handleWindowKey, registerAppCommands, type AppActions } from "./appcommands";
@@ -233,6 +233,59 @@ describe("document tasks", () => {
     expect(states).toEqual([true, false]);
     await tasks.run(async () => { second = true; });
     expect(second).toBe(true);
+  });
+
+  it("refuses tasks while held, without making a transition wait for the hold", async () => {
+    // Mutation: leave `holds` out of `busy` -> red (the edit runs); make
+    // `idle` wait while `busy` -> red (the await below never settles).
+    const states: boolean[] = [];
+    const tasks = new DocumentTasks((busy) => states.push(busy));
+    const release = tasks.hold();
+    expect(tasks.busy).toBe(true);
+    let edited = false;
+    await tasks.run(async () => { edited = true; });
+    expect(edited).toBe(false);
+    await tasks.idle();
+    release();
+    release();
+    expect(tasks.busy).toBe(false);
+    expect(states).toEqual([true, false]);
+    // Control: released, the same task runs.
+    await tasks.run(async () => { edited = true; });
+    expect(edited).toBe(true);
+  });
+
+  it("stays busy until both a task and a hold raised during it have ended", async () => {
+    // Mutation: `this.changed(false)` without the `!this.busy` test in `run`'s
+    // finally -> red, the edit commands would light up under a held update.
+    const states: boolean[] = [];
+    const tasks = new DocumentTasks((busy) => states.push(busy));
+    let finish!: () => void;
+    const task = tasks.run(() => new Promise<void>((r) => { finish = r; }));
+    const release = tasks.hold();
+    await Promise.resolve();
+    finish();
+    await task;
+    expect(tasks.busy).toBe(true);
+    expect(states).toEqual([true]);
+    release();
+    expect(states).toEqual([true, false]);
+  });
+});
+
+describe("a close whose drafts cannot be committed", () => {
+  it("says why and closes nothing, in closeTabs and in the window's close", () => {
+    // `settleDrafts` rejects with the sentence to show. Uncaught, closing
+    // several tabs or the window did nothing and said nothing, where `closeTab`
+    // says it. Read as text: `App.svelte` is imported by no test.
+    // Mutation: drop either catch -> red.
+    expect(missingFrom(functionIn(app, "async function closeTabs(ids: ViewId[]): Promise<void> {"), [
+      "try { await settleDocument(); } catch (e) { say(String(e)); return false; }",
+    ])).toEqual([]);
+    const close = withoutCommentsOf(app).slice(withoutCommentsOf(app).indexOf("onCloseRequested("));
+    expect(close.slice(0, close.indexOf("void updates.checkOnLaunch();"))).toMatch(
+      /await settleDocument\(\);[\s\S]*\} catch \(e\) \{\s*say\(String\(e\)\);\s*\} finally \{ opening = false; \}/,
+    );
   });
 });
 

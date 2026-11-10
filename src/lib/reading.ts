@@ -755,9 +755,9 @@ export function readingBlocks(text: PageText): ReadingBlock[] {
   const fragments = fragmentsOf(text, axes, gap);
   const tagged = usableRuns(text);
   if (tagged) {
-    return ownership(text, tagged).map((owned, at) => ({
+    return within(text, fragments, ownership(text, tagged)).map((parts, at) => ({
       tag: tagged[at]?.tag ?? null,
-      lines: linesOf(text, within(text, fragments, owned), axes),
+      lines: linesOf(text, parts, axes),
     }));
   }
   if (text.char_turns?.length) {
@@ -1015,7 +1015,8 @@ function isVisible(code: number): boolean {
  * callback used the positional index and never the run. A wrong edit that
  * compiles to a no-op is indistinguishable from a test that cannot fail --- so
  * the coupling is carried in the value instead, where there is no order to keep
- * in step, and the `Set` per run is the price.
+ * in step, and {@link within} reading the owner of each character back out of
+ * those lists is the price.
  */
 function ownership(text: PageText, runs: readonly TaggedRun[]): number[][] {
   const owner = new Int32Array(text.codes.length).fill(-1);
@@ -1044,7 +1045,8 @@ function ownership(text: PageText, runs: readonly TaggedRun[]): number[][] {
 }
 
 /**
- * The fragments of one run, clipped to the characters {@link ownership} gave it.
+ * The fragments of each run, clipped to the characters {@link ownership} gave
+ * it: one list per entry of `owned`, in the same order.
  *
  * A fragment is a geometric run of characters and a run is a set of indices, and
  * nothing makes them nest: a fragment can straddle a boundary between two
@@ -1053,40 +1055,61 @@ function ownership(text: PageText, runs: readonly TaggedRun[]): number[][] {
  * falls in. The box is rebuilt from the characters that survive, because the
  * original covers text that is now in a different block and a line's band would
  * be measured from it.
+ *
+ * **One pass over the page's characters for every run together.** Each
+ * character is dealt to the run that owns it, and a fragment's pieces go to
+ * their runs in fragment order --- which is the order a pass per run would
+ * have found them in, so each run's list is the same. A pass per run read
+ * every character once for each run, quadratic on a page of many tagged marks.
+ * `src-tauri/src/reading.rs` makes the same pass.
  */
 function within(
   text: PageText,
   fragments: readonly Fragment[],
-  owned: readonly number[],
-): Fragment[] {
-  const mine = new Set(owned);
-  const out: Fragment[] = [];
+  owned: readonly (readonly number[])[],
+): Fragment[][] {
+  // Which list of `owned` holds each character: the partition read back from
+  // the value, so the position here is the position in `owned` itself.
+  const owner = new Int32Array(text.codes.length).fill(-1);
+  owned.forEach((indices, at) => {
+    for (const index of indices) if (index >= 0 && index < owner.length) owner[index] = at;
+  });
+  const out: Fragment[][] = owned.map(() => []);
   for (const fragment of fragments) {
-    const indices: number[] = [];
-    let box: Quad | null = null;
+    // This fragment's piece for each run it touches, in the order first met.
+    const pieces = new Map<number, { indices: number[]; box: Quad | null }>();
     for (const range of fragment.ranges) {
       for (let index = range.from; index < range.to; index++) {
-        if (!mine.has(index)) continue;
-        indices.push(index);
-        const at = charQuad(text, index);
-        if (!placed(at)) continue;
-        if (box) absorb(box, at);
-        else box = { ...at };
+        const at = owner[index] ?? -1;
+        if (at < 0) continue;
+        let piece = pieces.get(at);
+        if (!piece) {
+          piece = { indices: [], box: null };
+          pieces.set(at, piece);
+        }
+        piece.indices.push(index);
+        const quad = charQuad(text, index);
+        if (!placed(quad)) continue;
+        if (piece.box) absorb(piece.box, quad);
+        else piece.box = { ...quad };
       }
     }
-    if (indices.length === 0) continue;
-    // Every character of this piece unplaced: it carries text and no geometry,
-    // so it keeps its place in the run and takes a degenerate box, exactly as
-    // `fragmentsOf` does for the same case.
-    const part: Fragment = { ranges: rangesOf(indices), box: box ?? emptyBox() };
-    if (fragment.turns !== undefined) part.turns = fragment.turns;
-    out.push(part);
+    for (const [at, { indices, box }] of pieces) {
+      // Every character of this piece unplaced: it carries text and no geometry,
+      // so it keeps its place in the run and takes a degenerate box, exactly as
+      // `fragmentsOf` does for the same case.
+      const part: Fragment = { ranges: rangesOf(indices), box: box ?? emptyBox() };
+      if (fragment.turns !== undefined) part.turns = fragment.turns;
+      out[at]?.push(part);
+    }
   }
   // Ordered along the run's own index range, so that a block whose fragments
   // came out of the page-wide banding in a different order reads in the order
   // its characters were written. `linesOf` re-orders by position within the
   // block, which is what decides its lines; this only makes that input stable.
-  out.sort((a, b) => (a.ranges[0]?.from ?? 0) - (b.ranges[0]?.from ?? 0));
+  for (const parts of out) {
+    parts.sort((a, b) => (a.ranges[0]?.from ?? 0) - (b.ranges[0]?.from ?? 0));
+  }
   return out;
 }
 

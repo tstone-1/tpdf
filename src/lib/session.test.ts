@@ -194,6 +194,56 @@ describe("SessionWriter", () => {
     expect(sent.map((p) => p.page)).toEqual([1, 2]);
   });
 
+  it("keeps a waiting place for each of two documents read in one interval", async () => {
+    // Reading side by side notes both documents. With one waiting slot, the
+    // second document's note replaced the first's and the first document's
+    // last position was never written. Mutation: key `pending` by one
+    // constant instead of `place.path` -> red.
+    const { sent, send } = recorder();
+    const writer = new SessionWriter(send, 1000);
+    const a = (page: number) => place({ path: "/tmp/a.pdf", page });
+    const b = (page: number) => place({ path: "/tmp/b.pdf", page });
+
+    writer.note(a(1));
+    writer.note(a(2));
+    writer.note(b(7));
+    writer.note(a(3));
+    await vi.advanceTimersByTimeAsync(1000);
+    // The leading write, then both waiting places, the last noted last so the
+    // store's most recent document is the one read last.
+    expect(sent.map((p) => [p.path, p.page])).toEqual([
+      ["/tmp/a.pdf", 1], ["/tmp/b.pdf", 7], ["/tmp/a.pdf", 3],
+    ]);
+    // Control: one document in one interval is still one trailing write.
+    writer.note(a(4));
+    writer.note(a(5));
+    await vi.advanceTimersByTimeAsync(2000);
+    expect(sent.map((p) => p.page).slice(3)).toEqual([5]);
+  });
+
+  it("flushes the waiting place of every document", async () => {
+    const { sent, send } = recorder();
+    const writer = new SessionWriter(send, 1000);
+    writer.note(place({ path: "/tmp/a.pdf", page: 1 }));
+    writer.note(place({ path: "/tmp/a.pdf", page: 2 }));
+    writer.note(place({ path: "/tmp/b.pdf", page: 9 }));
+    writer.flush();
+    await settle();
+    expect(sent.map((p) => [p.path, p.page])).toEqual([["/tmp/a.pdf", 1], ["/tmp/a.pdf", 2], ["/tmp/b.pdf", 9]]);
+  });
+
+  it("drops a waiting place once the reader is back where it was written", async () => {
+    // Page 1 written, page 2 waiting, back to page 1: the reader is on page 1.
+    // Mutation: drop `this.pending.delete(place.path)` in the early return -> red.
+    const { sent, send } = recorder();
+    const writer = new SessionWriter(send, 1000);
+    writer.note(place({ page: 1 }));
+    writer.note(place({ page: 2 }));
+    writer.note(place({ page: 1 }));
+    await vi.advanceTimersByTimeAsync(1000);
+    expect(sent.map((p) => p.page)).toEqual([1]);
+  });
+
   it("flushes nothing when the last place is already written", async () => {
     const { sent, send } = recorder();
     const writer = new SessionWriter(send, 1000);

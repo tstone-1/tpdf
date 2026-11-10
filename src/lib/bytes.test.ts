@@ -14,4 +14,12 @@ describe("a byte count as the window prints it", () => {
     expect(formatBytes(894_000, "de-DE")).toBe("873 KB (894.000 Bytes)");
     expect(formatBytes(Number.NaN, "de-DE")).toBe("unbekannt");
   });
+
+  it("says one byte in the singular, and no other count", () => {
+    // Mutation: `whole === 1` -> `true` or `false` -> red.
+    expect(formatBytes(1)).toBe("1 byte");
+    expect(formatBytes(1, "de-DE")).toBe("1 Byte");
+    expect(formatBytes(0)).toBe("0 bytes");
+    expect(formatBytes(2)).toBe("2 bytes");
+  });
 });

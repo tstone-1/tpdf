@@ -16,13 +16,14 @@ glance at a crate's README. That check is real and it is also *structurally
 incomplete*, which is the interesting part and the reason this script exists in
 this shape:
 
-    cargo metadata sees 531 cargo packages and is blind to the fourteen C++
-    libraries compiled into libpdfium.
+    cargo metadata sees every cargo package and is blind to the C++ libraries
+    compiled into libpdfium.
 
-Those fourteen -- FreeType, ICU, libjpeg-turbo, libpng, libtiff, Little CMS,
-OpenJPEG, zlib, Abseil, AGG, fast_float, simdutf, llvm-libc, and PDFium itself
--- are inside the binary blob that does the actual PDF parsing, and no cargo
-command can name them. A sweep that is complete over cargo and silent about
+Those libraries -- FreeType, ICU, libjpeg-turbo, libpng and OpenJPEG among
+them, and PDFium itself -- are inside the binary blob that does the actual PDF
+parsing, and no cargo command can name them. Which ones the pinned build holds
+is answered by `ls vendor/pdfium/licenses/`, one licence file each, and the
+counts this script prints on every run (`pdfium components=`). A sweep that is complete over cargo and silent about
 everything else passes exactly like one that covered the whole product. So this
 script reads `vendor/pdfium/licenses/` too, and a new file appearing there is a
 finding rather than something nobody notices.
@@ -644,7 +645,7 @@ def main() -> int:
     if not PDFIUM.is_dir():
         print(
             "[FAIL] vendor/pdfium is absent -- run scripts/fetch_pdfium.py first.\n"
-            "       Generating notices without it would silently omit the fourteen "
+            "       Generating notices without it would silently omit the "
             "libraries inside libpdfium, which is the population this script exists "
             "to cover.",
             file=sys.stderr,

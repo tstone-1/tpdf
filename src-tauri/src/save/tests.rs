@@ -3956,6 +3956,56 @@ fn a_comment_out_of_the_file_is_overridden_by_its_object() {
     );
 }
 
+#[test]
+fn an_edited_comment_keeps_no_rich_text_copy_of_its_old_body() {
+    let (original, annot, plan) = a_comment_with_a_key_and_its_edit("RC");
+    let rc_of = |bytes: &[u8]| {
+        lopdf::Document::load_mem(bytes)
+            .expect("load")
+            .get_dictionary(annot)
+            .expect("the comment")
+            .has(b"RC")
+    };
+    // The control: the fixture's comment has one to lose.
+    assert!(rc_of(&original));
+    let appended = append_update(original.clone(), &plan, None).expect("the append");
+    let mut whole = original.clone();
+    whole.extend_from_slice(&appended.update);
+    assert!(
+        !rc_of(&whole),
+        "the appended comment has no stale rich text"
+    );
+    let rewritten = rewrite_update(&original, &plan, Job::Save, None).expect("the rewrite");
+    assert!(!rc_of(&rewritten), "and neither has the rewritten one");
+}
+
+/// A rich-text body held as a stream of its own is named by nothing once the
+/// edit drops `/RC`, and a rewrite that changed only a comment still sweeps it
+/// out: the old words are in that stream.
+#[test]
+fn an_edited_comments_old_rich_text_stream_leaves_the_file() {
+    let (original, annot, plan) = a_comment_with_a_key_and_its_edit("RC");
+    let mut doc = Document::load_mem(&original).expect("load");
+    let rich = doc.add_object(lopdf::Stream::new(
+        dictionary! {},
+        b"<body><p>rich-before</p></body>".to_vec(),
+    ));
+    doc.get_object_mut(annot)
+        .and_then(Object::as_dict_mut)
+        .expect("the comment")
+        .set("RC", rich);
+    let mut original = Vec::new();
+    doc.save_to(&mut original).expect("serialise");
+    let holds = |bytes: &[u8]| bytes.windows(11).any(|w| w == b"rich-before");
+    // The control: the fixture carries the words to lose.
+    assert!(holds(&original));
+    let rewritten = rewrite_update(&original, &plan, Job::Save, None).expect("the rewrite");
+    assert!(
+        !holds(&rewritten),
+        "the old rich-text stream is still in the file"
+    );
+}
+
 /// A one-page document whose comment has no `/Type` --- it is optional on an
 /// annotation --- and carries a key called `key`; and a plan that edits it.
 fn a_comment_with_a_key_and_its_edit(key: &str) -> (Vec<u8>, lopdf::ObjectId, Plan) {
@@ -5845,6 +5895,7 @@ fn an_append_writes_through_its_handle_and_says_so_when_the_name_moves() {
         .write(true)
         .open(&at)
         .expect("open the file this save is about");
+    let reading = std::fs::File::open(&at).expect("and its read-only twin");
 
     // Something else moves our file aside and puts its own there.
     let aside = scratch.join("moved-aside.pdf");
@@ -5859,7 +5910,8 @@ fn an_append_writes_through_its_handle_and_says_so_when_the_name_moves() {
     let intruder = b"this is not a PDF at all\n".repeat(64);
     std::fs::write(&at, &intruder).expect("put a different file there");
 
-    let refused = append_through(&mut file, &appended, &at, None, &Here).expect_err("must report");
+    let refused =
+        append_through(&mut file, reading, &appended, &at, None, &Here).expect_err("must report");
     drop(file);
     assert!(
         refused.contains("renamed or removed it"),
@@ -5979,6 +6031,92 @@ fn the_coordinator_does_not_parse_the_file_it_wrote() {
         1,
         "asked exactly once, so the write path has one verification and not two"
     );
+}
+
+/// A [`Reread`] that tries to write through the handle it is given, and says
+/// whether the write went through.
+///
+/// What a worker receives is this handle's descriptor, so whatever this can do
+/// with it a compromised parser can do too.
+struct TriesToWrite {
+    wrote: std::cell::Cell<Option<bool>>,
+    pages: usize,
+}
+
+impl Reread for TriesToWrite {
+    fn pages(
+        &self,
+        file: &mut std::fs::File,
+        _len: usize,
+        _password: Option<&str>,
+    ) -> Result<usize, String> {
+        use std::io::{Seek, Write};
+        let wrote = file
+            .seek(std::io::SeekFrom::End(0))
+            .and_then(|_| file.write_all(b"%tampered\n"))
+            .and_then(|()| file.flush())
+            .is_ok();
+        self.wrote.set(Some(wrote));
+        Ok(self.pages)
+    }
+}
+
+#[test]
+fn the_read_back_worker_cannot_write_the_file_it_checks() {
+    let scratch = Scratch::new("append-read-only");
+    let Some((at, plan)) = appendable(&scratch, "comments.pdf") else {
+        crate::fixtures::missing("[SKIP] comments.pdf: fixture not generated");
+        return;
+    };
+    let appended = append_bytes(&at, &plan, None).expect("build the update");
+    let was = std::fs::metadata(&at).expect("measure").len();
+    let reader = TriesToWrite {
+        wrote: std::cell::Cell::new(None),
+        pages: appended.pages,
+    };
+
+    append_in_place(&appended, &at, None, &reader).expect("the save itself succeeds");
+
+    assert_eq!(
+        reader.wrote.get(),
+        Some(false),
+        "the read-back was asked, and its handle refused the write"
+    );
+    assert_eq!(
+        std::fs::metadata(&at).expect("measure").len(),
+        was + appended.len() as u64,
+        "the file is the update and nothing the read-back added"
+    );
+}
+
+#[test]
+fn a_read_back_handle_on_another_file_is_refused_before_anything_is_written() {
+    // The identity check `append_through` makes of the second handle, and the
+    // reason it is opened beside the first rather than trusted: a read-only
+    // handle to some other file would answer for bytes this save never wrote.
+    let scratch = Scratch::new("append-other-reader");
+    let Some((at, plan)) = appendable(&scratch, "comments.pdf") else {
+        crate::fixtures::missing("[SKIP] comments.pdf: fixture not generated");
+        return;
+    };
+    let appended = append_bytes(&at, &plan, None).expect("build the update");
+    let before = std::fs::read(&at).expect("read before");
+    let other = scratch.join("other.pdf");
+    std::fs::write(&other, &before).expect("an identical copy, which is still another file");
+
+    let mut file = std::fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .open(&at)
+        .expect("open");
+    let reading = std::fs::File::open(&other).expect("open the other file");
+    let fake = Fake::saying(Ok(appended.pages));
+    let refused = append_through(&mut file, reading, &appended, &at, None, &fake)
+        .expect_err("another file's handle is refused");
+    drop(file);
+    assert!(refused.contains("nothing was written"), "{refused}");
+    assert!(fake.asked.borrow().is_empty(), "and nothing was read back");
+    assert_eq!(std::fs::read(&at).expect("read after"), before);
 }
 
 /// A [`Rewriter`] that writes what it is told to and records what it was asked.
@@ -8436,6 +8574,60 @@ fn a_copy_that_is_not_a_redaction_keeps_its_metadata() {
         doc.get_object(metadata).is_ok(),
         "and so does the XMP packet"
     );
+}
+
+#[test]
+fn a_redacted_page_does_not_keep_its_thumbnail() {
+    let (mut doc, page, _, _) = described_document();
+    let thumb = doc.add_object(lopdf::Stream::new(
+        lopdf::dictionary! { "Width" => 1, "Height" => 1, "ColorSpace" => "DeviceGray",
+        "BitsPerComponent" => 8 },
+        vec![0],
+    ));
+    // And an annotation written inline over the region, which `forget` has no
+    // id for.
+    let inline = lopdf::dictionary! {
+        "Type" => "Annot", "Subtype" => "Text",
+        "Rect" => vec![10.into(), 10.into(), 30.into(), 30.into()],
+        "Contents" => Object::string_literal("secret"),
+    };
+    let page_dict = doc
+        .get_object_mut(page)
+        .and_then(Object::as_dict_mut)
+        .expect("the page");
+    page_dict.set("Thumb", thumb);
+    page_dict.set("Annots", vec![Object::Dictionary(inline)]);
+    let mut redaction = redaction_of(page);
+    redaction[0].areas = vec![[0.0, 0.0, 100.0, 100.0]];
+    let done = apply_redactions(&mut doc, &[page], &redaction).expect("applicable");
+    let page_dict = doc.get_dictionary(page).expect("the page");
+    assert!(
+        !page_dict.has(b"Thumb"),
+        "the picture of the page before is gone"
+    );
+    assert_eq!(done.annots, 1, "the inline annotation was counted");
+    assert!(
+        page_dict
+            .get(b"Annots")
+            .and_then(Object::as_array)
+            .expect("the array")
+            .is_empty(),
+        "and taken out of the array"
+    );
+}
+
+#[test]
+fn a_copy_that_is_not_a_redaction_keeps_the_thumbnail() {
+    // The control: a thumbnail is the file's own on every write that removes
+    // nothing.
+    let (mut doc, page, _, _) = described_document();
+    let thumb = doc.add_object(lopdf::Stream::new(lopdf::dictionary! {}, vec![0]));
+    doc.get_object_mut(page)
+        .and_then(Object::as_dict_mut)
+        .expect("the page")
+        .set("Thumb", thumb);
+    apply_redactions(&mut doc, &[page], &[]).expect("applicable");
+    assert!(doc.get_dictionary(page).expect("the page").has(b"Thumb"));
 }
 
 /// A document describing itself nowhere is not an error, and reports none.
@@ -11332,6 +11524,54 @@ fn form_answers_force_a_rewrite_and_reach_the_saved_file() {
     );
 }
 
+/// Whether any stream of `bytes`, decoded, spells `word` or its hex.
+fn a_stream_draws(bytes: &[u8], word: &str) -> bool {
+    let hex: String = word.bytes().map(|byte| format!("{byte:02x}")).collect();
+    let doc = lopdf::Document::load_mem(bytes).expect("load");
+    doc.objects.values().any(|object| {
+        let Ok(stream) = object.as_stream() else {
+            return false;
+        };
+        let content = stream
+            .decompressed_content()
+            .unwrap_or_else(|_| stream.content.clone());
+        let lower = String::from_utf8_lossy(&content).to_ascii_lowercase();
+        content
+            .windows(word.len())
+            .any(|window| window == word.as_bytes())
+            || lower.contains(&hex)
+    })
+}
+
+#[test]
+fn an_answer_that_replaces_another_leaves_no_stream_drawing_the_first() {
+    let (mut document, field, _) = crate::forms::tests::fixture();
+    let mut original = Vec::new();
+    document.save_to(&mut original).unwrap();
+    let answer = |text: &str| {
+        let mut plan = plan_of(&[0, 0]);
+        plan.forms = vec![crate::forms::Change {
+            object: field,
+            value: crate::forms::Value::Text(text.into()),
+        }];
+        plan
+    };
+    let first = rewrite_update(&original, &answer("ALPHA"), Job::Save, None).unwrap();
+    // The precondition, without which the assertion below is satisfied by a
+    // writer that draws no appearance at all.
+    assert!(a_stream_draws(&first, "ALPHA"), "the first answer is drawn");
+
+    let second = rewrite_update(&first, &answer("BETA"), Job::Save, None).unwrap();
+    assert!(
+        a_stream_draws(&second, "BETA"),
+        "the second answer is drawn"
+    );
+    assert!(
+        !a_stream_draws(&second, "ALPHA"),
+        "and no stream in the file still draws the answer it replaced"
+    );
+}
+
 #[test]
 fn a_form_answer_for_an_unknown_field_is_refused() {
     let (mut document, field, _) = crate::forms::tests::fixture();
@@ -11911,7 +12151,9 @@ fn a_planned_change_to_the_files_own_fields_is_written_and_a_removed_field_leave
     };
     assert!(holds(&original, "REMOVE-ME-FIELD") && holds(&original, "KEEP-AND-MOVE"));
 
-    let mut plan = plan_of(&[0, 1]);
+    // Both pages unturned: a turn is a change of its own and sweeps the file
+    // whatever the fields do, so it would answer for them here.
+    let mut plan = plan_of(&[0, 0]);
     plan.field_edits = vec![
         FieldEdit {
             value: None,
@@ -11950,7 +12192,7 @@ fn a_planned_change_to_the_files_own_fields_is_written_and_a_removed_field_leave
 
     // The control: the same plan with no change leaves all three.
     let untouched =
-        rewrite_update(&original, &plan_of(&[0, 1]), Job::Save, None).expect("rewritten");
+        rewrite_update(&original, &plan_of(&[0, 0]), Job::Save, None).expect("rewritten");
     assert_eq!(
         crate::forms::scan(&Document::load_mem(&untouched).expect("loads"))
             .expect("a form")
@@ -11962,7 +12204,7 @@ fn a_planned_change_to_the_files_own_fields_is_written_and_a_removed_field_leave
     // written first, so the limit is judged against it and the field is
     // drawn with it at the side it is now aligned to.
     let other = before.iter().find(|w| w.name == "Other").expect("it");
-    let mut set = plan_of(&[0, 1]);
+    let mut set = plan_of(&[0, 0]);
     set.forms = vec![crate::forms::Change {
         object: other.object,
         value: crate::forms::Value::Text("Ada".into()),

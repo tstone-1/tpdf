@@ -33,13 +33,16 @@
 //! reader of the same rule, able to disagree with the first about which page is
 //! where. What crosses the boundary is one answer.
 //!
-//! **A plan can now be out of document order**, as of the increment that wired
-//! [`Command::Move`]. `save.rs` and `print.rs` rebuild the page tree for one
-//! rather than refusing it, and both check first: rebuilding it costs every page
-//! its ancestry, so a document nobody rearranged must not go through that path.
+//! **A plan can be out of document order**, since [`Command::Move`]. `save.rs`
+//! and `print.rs` rebuild the page tree for one rather than refusing it, and
+//! both check first: rebuilding it costs every page its ancestry, so a document
+//! nobody rearranged must not go through that path.
 //!
-//! What is still **not** here: nothing creates a page --- `docmodel`'s note has
-//! the id-allocator property that would need proving first.
+//! **A plan can hold pages no file of the reader's has yet**: a blank page the
+//! model made, or a page of a second file, each a [`PageSource`] other than the
+//! baseline. The file a page comes from is one of [`Plan::sources`], and the
+//! writer is what creates the page; `docmodel`'s note says where each kind's
+//! content comes from.
 
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex, OnceLock};
@@ -3348,6 +3351,62 @@ impl Plan {
             return false;
         }
         self.marks.is_empty() && self.redactions.is_empty() && self.pages_are_the_file()
+    }
+
+    /// Whether a rewrite from this plan changes the document's graph before
+    /// its sweep, and so may leave an object it replaced or unlinked behind.
+    ///
+    /// **The question a rewrite's sweep asks, and it is answered by every field
+    /// rather than by a list of them.** Each such change can leave something
+    /// reachable from nothing --- a form answer's earlier appearance stream, a
+    /// deleted comment's drawing, a redacted page's old content streams --- and
+    /// `lopdf` writes every object it holds. A list of the changes known to do
+    /// that misses the next one; the destructuring below names every field with
+    /// no `..`, so a field added to [`Plan`] does not compile here until it is
+    /// placed.
+    ///
+    /// Not [`Plan::is_identity`], which answers a narrower question for the
+    /// print path and leaves out comment edits and deletions.
+    #[must_use]
+    pub fn may_leave_orphans(&self) -> bool {
+        let Plan {
+            text_edits,
+            forms,
+            text_layers,
+            added_text,
+            // Applied after the sweep, so nothing either leaves could be
+            // collected by it; sweeping for them would only take the source's
+            // own orphans, which a copy carries forward (§T6.1). The estimate
+            // of a smaller copy is made without a sweep for the same reason,
+            // and the copy has to come to what it said.
+            protection: _,
+            compress: _,
+            new_fields,
+            field_edits,
+            tab_order,
+            // Facts about the source, not changes to it.
+            baseline: _,
+            opened_as: _,
+            // Read through `pages_are_the_file`, which an imported page fails.
+            pages: _,
+            sources: _,
+            marks,
+            redactions,
+            notes,
+            discards,
+        } = self;
+        !text_edits.is_empty()
+            || !forms.is_empty()
+            || !text_layers.is_empty()
+            || !added_text.is_empty()
+            || !new_fields.is_empty()
+            || !field_edits.is_empty()
+            || *tab_order
+            || !marks.is_empty()
+            || !redactions.is_empty()
+            || !notes.is_empty()
+            || !discards.is_empty()
+            || !self.pages_are_the_file()
     }
 
     /// Whether the only thing this adds to the file is marks.

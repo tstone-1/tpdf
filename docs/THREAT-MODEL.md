@@ -1724,7 +1724,11 @@ and is held by **one** condition guarding all three — so one mutation of it re
 controls, which is why only one of them names it. What a region takes of a picture or a
 vector drawing, and what it leaves and reports, is §T6.29. A CID-encoded document cannot be
 scanned at the byte level at all, which `verify::scan` reports as a blind spot rather than as
-a pass. None of that makes the answer *wrong* — it makes the answer *not verified*, which is
+a pass. Since 2026-11-10 it withholds the verdict the same way, each with its own reason, for
+a stream whose `/Filter` is an indirect reference (which it would otherwise scan as raw
+compressed bytes), for embedded files (`/EmbeddedFiles`, `/EF`, `/AF`) and for an
+application's private data (`/PieceInfo`), none of which it reads. A redaction also removes an
+annotation written inline in `/Annots` over the region, and the page's `/Thumb`. None of that makes the answer *wrong* — it makes the answer *not verified*, which is
 what the reader is told.
 
 #### T6.12 — Redacting the reader's own file, added 2026-08-27
@@ -2554,7 +2558,7 @@ whose workers are the tool re-executed with `worker::WORKER_ARGV`, as `Env::work
 the viewer's search (`search.rs`) over each page's codes in this process, which reads numbers
 and code points a worker returned and parses nothing; marks what it found on an
 `edits::Edits`, the window's model, through `Edits::redact`; and hands the result to
-`commands::redact::ask_redactions` and `redact_copy_asked`, the body of the window's command
+`redaction_steps::ask_redactions` and `redact_copy_asked`, the body of the window's command
 (§T6.11) --- plans from a worker, the rewrite by `save::write_copy` in a writing worker, the byte
 scan in a scanning worker, the OCR gate in its own worker under `OCR_SANDBOX_PROFILE` (§5.1),
 and the black fill. `cli::main` answers the OCR worker's marker as well as the parser's, as the
@@ -3502,11 +3506,14 @@ tpdf, as it is for the window's Print.
 `--forward-search file.tex:LINE` reads the `.synctex.gz` beside the PDF (`synctex.rs`). The
 file is outside input like the PDF, so:
 
-- **Its parser is ours, in Rust, in the app process**, and reads text only: no structure it
-  builds grows with the file beyond a stack of open boxes, held to 100,000, and at most 10,000
-  rectangles for the line asked for. It reads at most 64 MiB from disk and 512 MiB once
-  decompressed (`flate2`, already in the tree for `lopdf`), and no line longer than 64 KiB.
-  Every bound is refused with a sentence, and a test reaches the line and depth limits.
+- **Its parser is ours, in Rust, in the app process**, and reads text only. What it keeps is
+  bounded, not grown with the file: a stack of open boxes held to 100,000, at most 65,536
+  `Input:` lines naming 16 MiB of paths between them, and at most 10,000 rectangles for a
+  line. It reads at most 64 MiB from disk and 512 MiB once decompressed (`flate2`, already in
+  the tree for `lopdf`), and no line longer than 64 KiB. A file past any of these is refused
+  with a sentence, not read in part. A header scale or offset that is not finite is refused,
+  and a box whose height and depth overflow, or whose scaled place is not finite, is not
+  marked. Tests reach the line, depth and input limits.
 - **Nothing in it is run or opened.** The input paths it names are compared with the source
   the command line gave, by path or by file name, and never opened; the only file read is the
   SyncTeX file beside the PDF that was asked for.
@@ -4055,10 +4062,11 @@ shopping for another from the same CA over the same path.
 **Only for an authority this computer trusts, since 26.9.22.** Before anything is fetched, the
 timestamp authority's certificate must chain to a root the OS store trusts for timestamping,
 now and offline (`longterm::vouched`: `trust::of_blob_for` with `Purpose::Timestamping`, the
-reader's own rule). Otherwise the signing is refused --- *the timestamp authority X is not
-trusted by this computer, so tpdf will not fetch revocation data for it* --- with nothing
-written and nothing asked, and the window holds the signature as for any other long-term
-refusal (*Try again*, *Sign without long-term data*). The signer's certificate needs no such
+reader's own rule). Otherwise nothing is sealed: since 2026-11-10 the token is refused before
+the signature is sealed, with or without long-term data, so the window holds the made
+signature as for a timestamp that did not come (*Try again*, *Sign without a timestamp*). It
+never holds a sealed signature carrying that token, which *Sign without long-term data* would
+write. Long-term data asks again before anything is fetched (`longterm::extend`). The signer's certificate needs no such
 gate: it comes from the reader's own keychain or certificate store, not from the network. The
 gate is where certificates from the network are first handed to the OS in the coordinator:
 the token's set, re-encoded, at most 16 of them each under 64 KiB, as the worker hands a
@@ -4114,7 +4122,7 @@ other long-term failure.
 somebody has already signed what a long-term signing does for the signature it just made:
 gather revocation data for every signature's and timestamp's certificates, have a worker
 append it as a `/DSS` revision, and end with an archive timestamp over the whole
-(`longterm/existing.rs`, `commands/validation.rs`, `cli/long_term.rs`; `docs/PLAN.md` §9,
+(`longterm/existing.rs`, `validation_data.rs`, `commands/validation.rs`, `cli/long_term.rs`; `docs/PLAN.md` §9,
 *Validation data for a document that is already signed*). **The network authorities are the
 same two in kind** --- the certificate authorities the certificates name, and one timestamp
 authority the reader chose --- under the same limits, the same parsers and the same client.
@@ -4756,6 +4764,22 @@ recur here, as `win_sandbox_probe` predicted. `backend-probe` passes 38–40/42 
 corpora with byte-identical name sets. And the module check in §3 is external to the process,
 which is what makes it evidence rather than a milestone.
 
+**The job also sets every `JOB_OBJECT_UILIMIT` restriction, added 2026-11-10**
+(`sandbox_win::UI_LIMITS`). A low integrity level alone does not keep a process off the
+clipboard: measured with `win-sandbox-probe`, a contained child at `lowil` read the reader's
+clipboard text and replaced it, and the parent read the replacement back. Under the UI limits
+(the probe's `uilimits` rung) reading and setting are both refused with error 5 and the page
+renders pixel-identical; `ocr-worker-probe` still passes 11 of 11. `EmptyClipboard` still
+succeeds, which is residual 39.
+
+**What a compromised worker's replies can do to the app is bounded in four more places as of
+2026-11-10.** Tile and pixel payloads are read and written with positional file I/O
+(`Shm::copy_front`, `Shm::fill_front`), so a worker that truncates its shared file gets an
+error and not a fault in the app. An open reply's page count is held to PDFium's page-tree
+ceiling (`workers::MAX_PAGES`). The web-link dialog shows the host parsed in the app, not the
+one the worker sent beside it. A text recognition reply is capped at `MAX_REPLY_BYTES`. And a
+Windows section handle is not inheritable outside the one `CreateProcess` that passes it.
+
 ## 6a. Linux — Landlock and seccomp, added 2026-10-14
 
 Linux shipped in 26.10.19, released 2026-10-14; it was on the roadmap when this was written. This section exists because the
@@ -4772,6 +4796,12 @@ after `exec`, so there is a "before" in which to open PDFium (`worker_child.rs`)
 | Landlock, file system | every file right the kernel knows, including executing a file; grants only reading beneath PDFium's font folders (`FONT_DIRS`) | **required**: no Landlock, or a ruleset the kernel did not enforce, is a refusal |
 | Landlock, network (ABI 4+) and scopes (ABI 6+) | TCP bind and connect; abstract Unix sockets made outside the sandbox (X11, D-Bus); signals outside it | taken where the kernel has them |
 | seccomp | `socket`, `socketpair`, the three io_uring calls, `ptrace`, `process_vm_readv`, `process_vm_writev`, with `EPERM`; on x86-64 every call made by its x32 number; a call from another architecture ends the process | **required** |
+
+Landlock, through ABI 6, does not mediate a file's mode, owner, extended attributes or
+timestamps, so it is narrower than the macOS profile's `file-write*`. seccomp refuses those
+calls with `EPERM`, by path and by descriptor, including `fchmodat2`, `setxattrat` and
+`removexattrat` by number (added 2026-11-10). The forked-child test probes `fchmod` and
+`futimens` on a held descriptor; removing either from the filter turned it red on kernel 6.18.
 
 A process with more than one thread is refused at the boundary, because Landlock confines
 only the thread that asks.
@@ -5151,7 +5181,7 @@ because the arm it ran was the one written for "any other platform".
     `verify::MAX_OBJECT_REASONS` bounds the per-object lists at a thousand and adds one line
     counting the rest; without it a file with a few hundred thousand undecodable objects
     produces a report that will not fit, and the reader is told the verification *failed*
-    rather than that the file is unaccountable. And `commands::redact::scan_written_file` takes
+    rather than that the file is unaccountable. And `redaction_steps::scan_written_file` takes
     `&dyn save::Verifier` rather than the `&dyn save::Outside` its callers hold, so the
     read-back cannot reach a writer — a trait upcast, which costs nothing and is what lets
     the test double be a verifier and no more.
@@ -5642,7 +5672,7 @@ because the arm it ran was the one written for "any other platform".
     (§T10). That price was paid there --- trust is now asked in the coordinator on network
     bytes (residual 25), and a real authority whose root a Windows machine has not yet fetched
     is refused for long-term data until it has. **Closed for a plain timestamped signing on
-    2026-10-31**, at the same price: `commands::sign::finish` asks the same question before
+    2026-10-31**, at the same price: `sign_finish::finish` asks the same question before
     sealing, the window stops as it does for an authority that did not answer, and the command
     line exits 3 unless `--allow-untrusted-timestamp` says to keep it. A private authority needs
     its root in the system's store or that option. On Windows a real authority whose root had not
@@ -5728,6 +5758,13 @@ because the arm it ran was the one written for "any other platform".
     by the integration being off until the reader turns it on, by the worker's sandbox (§6),
     and by the job object's time and memory limits around each request. Not closed: it is what
     a thumbnail is.
+39. **A Windows worker can empty the clipboard** (§6), added 2026-11-10. The job's UI limits
+    refuse reading it and replacing it; `EmptyClipboard` still succeeds inside the job, so a
+    compromised worker can make the reader lose what they copied. It learns nothing by it.
+40. **A byte search still misses base-14 text written in another spelling**, added 2026-11-10:
+    a hex string, a kerned `TJ` array or octal escapes. `verify::scan` withholds the verdict
+    for a composite font, an indirect filter, embedded files and `/PieceInfo`, and not for
+    these. The decoded-stream and extraction checks of §T6.11 are what cover them.
 
 ## 8. How to re-verify any of this
 

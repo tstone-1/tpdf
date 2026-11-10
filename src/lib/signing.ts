@@ -566,7 +566,7 @@ export function afterSigning(signed: Signed): string {
     ? said.notCheckedAgain(name, signed.field, WHY.budget)
     : said.signedAs(signed.field, name);
   // The lock, as read back and only beside an intact verdict: a signature not
-  // checked again was not held to its lock either (`commands::sign::read_back`).
+  // checked again was not held to its lock either (`sign_finish::read_back`).
   if (ours.lock === 1 && !unchecked) text += LOCKED;
   // The timestamp is said of a signature read back intact: for one not
   // checked again there is no reading of it to report. (Its revocation rows

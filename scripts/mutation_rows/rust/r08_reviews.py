@@ -1025,7 +1025,7 @@ ROWS += [
     ),
     Mutation(
         "sign: look for the new signature as if nothing followed it",
-        "src/commands/sign.rs",
+        "src/sign_finish.rs",
         "    let ours = sign_cms::ours(&signatures, &field, (bytes.len() - sealed) as u64);",
         "    let ours = sign_cms::ours(&signatures, &field, 0);",
         "long_term_data_that_came_is_written_and_read_back_good",
@@ -1039,14 +1039,14 @@ ROWS += [
     ),
     Mutation(
         "sign: call a signature the read-back had no budget for a failed copy",
-        "src/commands/sign.rs",
+        "src/sign_finish.rs",
         "            } else {\n                ReadBack::Unchecked\n",
         "            } else {\n                ReadBack::Signature\n",
         "a_new_signature_the_read_back_had_no_budget_for_is_not_a_failed_copy",
     ),
     Mutation(
         "sign: call any unchecked new signature one not checked again",
-        "src/commands/sign.rs",
+        "src/sign_finish.rs",
         "        Some(found) if found.verdict == Verdict::Unchecked && found.why == Some(Why::Budget) => {\n",
         "        Some(found) if found.verdict == Verdict::Unchecked => {\n",
         "a_copy_that_does_not_read_back_as_written_is_refused_in_the_window_too",
@@ -1229,8 +1229,8 @@ ROWS += [
     Mutation(
         "field names: collect what is under a field that has a name",
         "src/fields.rs",
-        "        names.insert(name);\n        Flow::Leaf",
-        "        names.insert(name);\n        Flow::Descend",
+        "        names.push((node.id, name));\n        Flow::Leaf",
+        "        names.push((node.id, name));\n        Flow::Descend",
         "the_names_of_one_part_are_read_through_groups_with_no_name",
     ),
     Mutation(
@@ -1332,7 +1332,7 @@ ROWS += [
 # --- long-term validation data for a document that is already signed ---------
 #
 # `longterm/existing.rs`, `sign_dss::survey`, `docinfo::signature_values`,
-# `commands/validation.rs`, `cli/long_term.rs`, 2026-10-10. What can go wrong
+# `validation_data.rs`, `cli/long_term.rs`, 2026-10-10. What can go wrong
 # here is a refusal that is skipped --- data fetched for a signer nobody
 # vouched for, a copy written with one signature left out of the check --- so
 # nearly every entry removes one refusal and names the test that holds it.
@@ -1696,35 +1696,35 @@ ROWS += [
     ),
     Mutation(
         "validation: report a copy nobody read back",
-        "src/commands/validation.rs",
+        "src/validation_data.rs",
         "    existing::read_back(&added.before, &signatures, appended).map_err(Stopped::ReadBack)?;",
         "    let _ = appended;",
         "a_copy_that_does_not_read_back_as_built_is_named_and_is_tpdfs_failure",
     ),
     Mutation(
         "validation: go on after a copy that could not be written",
-        "src/commands/validation.rs",
+        "src/validation_data.rs",
         "    write(&added.bytes).map_err(Stopped::Unwritten)?;",
         "    let _ = write(&added.bytes);",
         "a_copy_that_could_not_be_written_is_not_tpdfs_failure",
     ),
     Mutation(
         "validation: read the written file as if nothing had been appended",
-        "src/commands/validation.rs",
+        "src/validation_data.rs",
         "    let appended = (added.bytes.len() - original.len()) as u64;",
         "    let appended = 0u64;",
         "the_copy_is_written_read_back_and_said_in_one_sentence",
     ),
     Mutation(
         "validation: call a copy that did not read back the document's refusal",
-        "src/commands/validation.rs",
+        "src/validation_data.rs",
         "            Stopped::Unread(_) | Stopped::ReadBack(_) => true,",
         "            Stopped::Unread(_) | Stopped::ReadBack(_) => false,",
         "a_copy_that_does_not_read_back_as_built_is_named_and_is_tpdfs_failure",
     ),
     Mutation(
         "validation: say nothing was written about a copy that was",
-        "src/commands/validation.rs",
+        "src/validation_data.rs",
         "            Stopped::Refused(why) => {\n"
         '                said!("{why} --- nothing was written", why = why.sentence())\n'
         "            }\n"
@@ -1742,14 +1742,14 @@ ROWS += [
     ),
     Mutation(
         "validation: add to a document with unsaved edits",
-        "src/commands/validation.rs",
+        "src/validation_data.rs",
         '    if dirty {\n        return Err(said!(\n            "Save your changes first: validation data',
         '    if false && dirty {\n        return Err(said!(\n            "Save your changes first: validation data',
         "unsaved_edits_and_a_document_too_large_are_refused",
     ),
     Mutation(
         "validation: add to a document of any size",
-        "src/commands/validation.rs",
+        "src/validation_data.rs",
         "    if len > save::APPEND_MAX_BYTES {\n"
         "        return Err(said!(\n"
         '            "This document is {mb} MB, and tpdf adds validation data',
@@ -2046,7 +2046,7 @@ ROWS += [
     ),
     Mutation(
         "validation: take the original's own name for the copy",
-        "src/commands/validation.rs",
+        "src/validation_data.rs",
         "    if save::same_file(source, out) {\n"
         "        return Err(said!(\n"
         '            "The document with the data added',

@@ -1398,8 +1398,8 @@ ROWS += [
         # that can notice is a test asserting WHO was asked.
         "save: verify the append in the coordinator instead of the worker",
         "src/save.rs",
-        "    match reread.pages(file, expected, password) {",
-        "    match Here.pages(file, expected, password) {",
+        "    match reread.pages(&mut reading, expected, password) {",
+        "    match Here.pages(&mut reading, expected, password) {",
         "the_coordinator_does_not_parse_the_file_it_wrote",
     ),
     Mutation(

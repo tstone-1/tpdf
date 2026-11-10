@@ -139,7 +139,7 @@ RUST = ROOT / "src-tauri" / "src"
 #: four.
 PROSE: dict[tuple[str, str], str] = {
     (
-        "commands/mod.rs",
+        "render_reply.rs",
         "`docs/THREAT-MODEL.md` §T6.9 carries what holding it costs.",
     ): "closes the paragraph about holding the password, and points at the section",
     (

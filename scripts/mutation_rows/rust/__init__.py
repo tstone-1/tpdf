@@ -17,6 +17,7 @@ from . import (
     r07_long_term,
     r08_reviews,
     r09_added_text,
+    r10_boundaries,
 )
 
 #: Every part, in the order its rows run.
@@ -30,6 +31,7 @@ PARTS = (
     r07_long_term,
     r08_reviews,
     r09_added_text,
+    r10_boundaries,
 )
 
 ROWS = [row for part in PARTS for row in part.ROWS]

@@ -169,9 +169,17 @@ export async function loadSession(): Promise<Session> {
   }
 }
 
-/** Collapses a stream of positions into at most one write per interval. */
+/**
+ * Collapses a stream of positions into at most one write per interval.
+ *
+ * The place waiting for the trailing write is kept per document, by path. Two
+ * documents are noted in one interval whenever the reader reads side by side
+ * or switches tabs, and with one slot the second note replaced the first, so
+ * the first document's last position in that interval was never written.
+ */
 export class SessionWriter {
-  private pending: Place | null = null;
+  /** By path, in the order last noted, so the most recent is written last. */
+  private pending = new Map<string, Place>();
   private written: Place | null = null;
   private timer = 0;
   private queue: Promise<unknown> = Promise.resolve();
@@ -198,23 +206,37 @@ export class SessionWriter {
   note(place: Place): void {
     if (this.stopped) return;
     if (this.written && samePlace(this.written, place)) {
-      // Nothing a reader would notice changed. Any trailing write already
-      // scheduled is left alone: it may be carrying an *older* pending place
-      // that still needs to land.
+      // Nothing a reader would notice changed, and the reader is back where
+      // this document was last written: a place still waiting for it is older
+      // than that. Another document's waiting place is left to land.
+      this.pending.delete(place.path);
       return;
     }
 
     if (this.timer !== 0) {
-      this.pending = place;
+      // Deleted first so that the order is the order of the last notes.
+      this.pending.delete(place.path);
+      this.pending.set(place.path, place);
       return;
     }
 
     this.write(place);
+    this.schedule();
+  }
+
+  /** Starts the interval, at whose end the waiting places are written. */
+  private schedule(): void {
     this.timer = setTimeout(() => {
       this.timer = 0;
-      const trailing = this.pending;
-      this.pending = null;
-      if (trailing) this.note(trailing);
+      const trailing = [...this.pending.values()];
+      this.pending.clear();
+      let wrote = false;
+      for (const place of trailing) {
+        if (this.written && samePlace(this.written, place)) continue;
+        this.write(place);
+        wrote = true;
+      }
+      if (wrote) this.schedule();
     }, this.interval) as unknown as number;
   }
 
@@ -226,10 +248,10 @@ export class SessionWriter {
    * IPC call and the process may not outlive it.
    */
   flush(): void {
-    const outstanding = this.pending;
-    this.pending = null;
-    if (outstanding && !(this.written && samePlace(this.written, outstanding))) {
-      this.write(outstanding);
+    const outstanding = [...this.pending.values()];
+    this.pending.clear();
+    for (const place of outstanding) {
+      if (!(this.written && samePlace(this.written, place))) this.write(place);
     }
   }
 
@@ -266,7 +288,7 @@ export class SessionWriter {
   /** Stops accepting notes, and drops any scheduled write. */
   stop(): void {
     this.stopped = true;
-    this.pending = null;
+    this.pending.clear();
     if (this.timer !== 0) {
       clearTimeout(this.timer);
       this.timer = 0;

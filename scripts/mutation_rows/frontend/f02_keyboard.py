@@ -666,8 +666,8 @@ ROWS += [
         # up in one block, in the wrong order, and every count still agrees.
         "structure: put a straddling fragment in whichever run it starts in",
         "src/lib/reading.ts",
-        "      for (let index = range.from; index < range.to; index++) {\n        if (!mine.has(index)) continue;",
-        "      if (!mine.has(range.from)) continue;\n      for (let index = range.from; index < range.to; index++) {",
+        "      for (let index = range.from; index < range.to; index++) {\n        const at = owner[index] ?? -1;",
+        "      for (let index = range.from; index < range.to; index++) {\n        const at = owner[range.from] ?? -1;",
         "clips a fragment that straddles two runs",
     ),
     Mutation(
@@ -683,8 +683,8 @@ ROWS += [
         # the ownership and the label read the same array --- sorting only the
         # first would be a third thing, and not the one the name claims.
         # `check_mutation_types.py` found it.
-        "  if (tagged) {\n    return ownership(text, tagged).map((owned, at) => ({\n      tag: tagged[at]?.tag ?? null,",
-        "  if (tagged) {\n    const ordered = [...tagged].sort((a, b) => a.start - b.start);\n    return ownership(text, ordered).map((owned, at) => ({\n      tag: ordered[at]?.tag ?? null,",
+        "  if (tagged) {\n    return within(text, fragments, ownership(text, tagged)).map((parts, at) => ({\n      tag: tagged[at]?.tag ?? null,",
+        "  if (tagged) {\n    const ordered = [...tagged].sort((a, b) => a.start - b.start);\n    return within(text, fragments, ownership(text, ordered)).map((parts, at) => ({\n      tag: ordered[at]?.tag ?? null,",
         "follows the tags even where they disagree with the geometry entirely",
     ),
     Mutation(

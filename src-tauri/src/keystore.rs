@@ -63,10 +63,7 @@ impl Identity {
 #[must_use]
 pub fn id_of(certificate: &[u8]) -> String {
     use sha2::Digest as _;
-    sha2::Sha256::digest(certificate)
-        .iter()
-        .map(|b| format!("{b:02x}"))
-        .collect()
+    crate::encoding::hex_lower(&sha2::Sha256::digest(certificate))
 }
 
 /// SHA-1 of a certificate, lowercase hex: the thumbprint Windows shows for it
@@ -75,10 +72,7 @@ pub fn id_of(certificate: &[u8]) -> String {
 #[must_use]
 pub fn thumbprint_of(certificate: &[u8]) -> String {
     use sha1::Digest as _;
-    sha1::Sha1::digest(certificate)
-        .iter()
-        .map(|b| format!("{b:02x}"))
-        .collect()
+    crate::encoding::hex_lower(&sha1::Sha1::digest(certificate))
 }
 
 impl Key for Identity {

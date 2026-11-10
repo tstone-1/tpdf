@@ -73,12 +73,42 @@ fn data_url(rgba: &[u8], width: u32, height: u32) -> Result<String, String> {
     ))
 }
 
+/// A sample's stated size held to its pixels, before either reaches the
+/// encoder: the worker says both, and the encoder trusts the size it is
+/// given. Each side at most [`crate::compress::SAMPLE_SIDE`], which is what
+/// the worker cuts a sample to, and each picture exactly that many RGB
+/// pixels, the product checked rather than wrapped.
+fn sized(sample: &Sample) -> Result<(), String> {
+    let side = 1..=crate::compress::SAMPLE_SIDE;
+    let (width, height) = (sample.width, sample.height);
+    if !side.contains(&width) || !side.contains(&height) {
+        return Err(said!(
+            "the worker described a sample of {width} by {height} pixels, which no sample is"
+        ));
+    }
+    let bytes = (width as usize)
+        .checked_mul(height as usize)
+        .and_then(|pixels| pixels.checked_mul(3));
+    for (which, pixels) in [("before", &sample.before), ("after", &sample.after)] {
+        if bytes != Some(pixels.len()) {
+            return Err(said!(
+                "the worker's sample {which} holds {held} bytes, and {width} by {height} RGB \
+                 pixels are not that many",
+                held = pixels.len()
+            ));
+        }
+    }
+    Ok(())
+}
+
 /// A sample as two pictures the webview can show.
 ///
 /// # Errors
 ///
-/// A picture that will not encode.
+/// A size the pixels do not have ([`sized`]), or a picture that will not
+/// encode.
 pub(crate) fn view(sample: &Sample) -> Result<SampleView, String> {
+    sized(sample)?;
     Ok(SampleView {
         width: sample.width,
         height: sample.height,
@@ -163,6 +193,38 @@ mod tests {
             ..balanced
         }))
         .is_err());
+    }
+
+    /// A worker's sample whose stated size is not its pixels, or no sample's
+    /// size at all, is refused before the encoder sees it; the largest sample
+    /// a worker cuts is the control.
+    #[test]
+    fn a_sample_whose_size_is_not_its_pixels_is_refused() {
+        let side = crate::compress::SAMPLE_SIDE;
+        let of = |width: u32, height: u32, before: usize, after: usize| Sample {
+            width,
+            height,
+            before: vec![7; before],
+            after: vec![9; after],
+            ..Sample::default()
+        };
+        let full = (side * side * 3) as usize;
+        assert!(
+            view(&of(side, side, full, full)).is_ok(),
+            "the largest sample"
+        );
+        assert!(view(&of(2, 1, 6, 6)).is_ok());
+        for (sample, says) in [
+            (of(2, 1, 5, 6), "holds 5 bytes"),
+            (of(2, 1, 6, 9), "sample after holds 9 bytes"),
+            (of(0, 1, 0, 0), "0 by 1"),
+            (of(side + 1, 1, 963, 963), "which no sample is"),
+            // A product that wraps a 32-bit size, stated with no pixels.
+            (of(u32::MAX, u32::MAX, 3, 3), "which no sample is"),
+        ] {
+            let why = view(&sample).expect_err(says);
+            assert!(why.contains(says), "{why}");
+        }
     }
 
     #[test]

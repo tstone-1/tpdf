@@ -113,6 +113,15 @@ describe("graphicName and graphicSaid", () => {
     expect(graphicName(".pdf", 3, graphicChoices(TEXTUAL)[0]!)).toBe("graphic page 3 graphic.png");
   });
 
+  it("takes the ending off whatever its case, and only the ending", () => {
+    // Windows and scanners write `.PDF`. Mutation: drop the `i` flag -> red.
+    const svg = graphicChoices(DRAWING)[0]!;
+    expect(graphicName("SCAN0001.PDF", 2, svg)).toBe("SCAN0001 page 2 graphic.svg");
+    expect(graphicName("Report.Pdf", 2, svg)).toBe("Report page 2 graphic.svg");
+    // Control: a name that only contains the letters keeps them.
+    expect(graphicName("pdf-notes.pdfx", 2, svg)).toBe("pdf-notes.pdfx page 2 graphic.svg");
+  });
+
   it("says what was made, by what was made", () => {
     expect(graphicSaid(DRAWING)).toBe("Copied the graphic, 2015 by 363 pixels on a transparent background.");
     expect(graphicSaid({ ...DRAWING, extension: "svg" }, "logo.svg")).toMatch(/logo\.svg, a drawing that stays sharp/);

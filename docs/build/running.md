@@ -8,8 +8,8 @@ Documents are parsed in a sandboxed worker process, one per document. `TPDF_BACK
 overrides that:
 
 ```
-TPDF_BACKEND=worker      # the default on macOS
-TPDF_BACKEND=in-process  # the control, and the only thing that runs off macOS
+TPDF_BACKEND=worker      # the default on macOS, Windows and Linux
+TPDF_BACKEND=in-process  # the control: uncontained, and announced on stderr
 TPDF_POOL=6              # workers one document may have
 TPDF_IDLE_MS=30000       # how long one may idle before it is killed
 ```
@@ -1481,7 +1481,7 @@ directory of its own, the accepting cases first.
 
 **What it does not reach is the copy written.** That needs a signer the operating system
 trusts, and no check adds a root to a key store; what a worker builds and reads back is
-`commands::validation`'s tests. Nor does it reach `App.svelte`'s own call: the arguments here
+`validation_data`'s tests. Nor does it reach `App.svelte`'s own call: the arguments here
 are typed against the same `ipc.ts` entry and sent by this harness.
 
 Measured 2026-10-10 on macOS arm64, a checks build on a second Mac through
@@ -2705,7 +2705,7 @@ cargo test --locked --manifest-path src-tauri/Cargo.toml --test cli -- --filter 
 cargo test --locked --manifest-path src-tauri/Cargo.toml --test cli -- --filter 'long-term adds'
 # The unit tests, which hold every refusal and the check before writing:
 cargo test --locked --manifest-path src-tauri/Cargo.toml --lib -- \
-    longterm::existing sign_dss:: commands::validation::
+    longterm::existing sign_dss:: validation_data::
 # Documents for other readers (qpdf, pyHanko); docs/VERIFICATION.md has the pyHanko script
 # and the readings of 2026-10-10:
 TPDF_LONG_TERM_OUT=/tmp/tpdf-long-term-added cargo test --locked \
@@ -3062,7 +3062,7 @@ and after):
 
 ```
 redact_copy_asked ignores its also reader -> 1 red: shared-form.pdf's search of the written file
-  (commands/redact.rs)                       finds nothing beside the application's reason
+  (redaction_steps.rs)                       finds nothing beside the application's reason
 a spare reports its parent's exit          -> 4 red: "nothing is printed on stderr", every line
   as an error (worker_child.rs)               ("[worker] the parent closed the handover socket")
 cli::main without the OCR worker dispatch  -> 8 red: the four stderr checks ("`--ocr-worker` is
@@ -3334,3 +3334,105 @@ own code can sit in front of it. **Five artifacts across three targets carry it,
 magnitudes** — 45555555555555555, 3333333333333333332, 1844674400000000000, 40000000000000000
 and 6744073709551615 bytes, each reproduced rather than read off a filename. The numbers differ
 and the defect does not, so a sixth adds nothing: check the message, then delete it.
+
+### Environment variables the code reads
+
+Every `TPDF_*` variable the application, the command-line tool and their tests read, and the
+ones the probes, checks and scripts read beside them. *Read in* is one file that reads it.
+*For* says who sets it: `run` changes how the application or the tool runs for whoever
+starts it; `harness` is set by a check, a bench or a probe, usually through the script that
+drives it; `test` is read only by a test, and nothing a reader launches looks at it.
+
+`scripts/check_env_table.py` (the `environment` gate) holds this table to the code. Every name
+in `src-tauri/src`, `src` and `src-tauri/shellext/src` must have a row, and every row's name
+must occur in the file it names, which must be under one of those or under `scripts`,
+`src-tauri/examples`, `src-tauri/tests`, `src-tauri/shellext/examples` or `api`. A name a test
+or check makes up for `--password-env` has no row unless it is in the first three folders: the
+tool reads whichever variable it is told to. Heredoc delimiters in `run_on_windows.py` and a
+registry key fragment in `explorer_check.py` look like variables and are not.
+
+| Variable | Read in | What it does | For |
+|----------|---------|--------------|-----|
+| `TPDF_BACKEND` | `src-tauri/src/render.rs` | `worker`, the default, or `in-process`; anything else is refused before the window exists, exit 2 | run |
+| `TPDF_CALL_MS` | `src-tauri/src/workers.rs` | Milliseconds a worker request may run before it is overdue; 0 means zero; unreadable falls back to the default | run |
+| `TPDF_IDLE_MS` | `src-tauri/src/workers.rs` | Milliseconds a worker may idle before it is retired; 0 means at the first sweep | run |
+| `TPDF_LOG_FILE` | `src-tauri/src/lib.rs` | The diagnostic log's path, in place of the platform's log folder | run |
+| `TPDF_POOL` | `src-tauri/src/workers.rs` | Workers one document may have; unreadable or 0 falls back to the default | run |
+| `TPDF_SESSION_FILE` | `src-tauri/src/commands/session.rs` | The remembered-places file's path; every automated run sets it so a check never touches the reader's | run |
+| `TPDF_AUTOBENCH` | `src-tauri/src/commands/spike.rs` | A document to run the transfer benchmark on; the app measures, prints and exits | harness |
+| `TPDF_CORPUS_MANIFEST` | `src-tauri/src/commands/spike.rs` | The `-corpus.json` beside a fixture, handed to the viewer check (`viewer_check.py`) | harness |
+| `TPDF_EAGER_GEOMETRY` | `src-tauri/src/commands/document.rs` | Walks every page at open instead of lazily: the variant the startup measurement was compared against (`startup_bench.py`) | harness |
+| `TPDF_EAGER_OPEN` | `src-tauri/src/commands/document.rs` | With `TPDF_STARTUP`, starts the open before the webview asks for it | harness |
+| `TPDF_EMPTY_MENU` | `src-tauri/src/lib.rs` | Replaces Tauri's default application menu with an empty one, to measure what building it costs | harness |
+| `TPDF_GEOMETRY_MANIFEST` | `src-tauri/src/commands/spike.rs` | The `-geometry.json` beside a fixture, handed to the viewer check | harness |
+| `TPDF_MARKCHECK` | `src-tauri/src/commands/spike.rs` | What the mark check does this launch (`mark_check.py`) | harness |
+| `TPDF_OPENCHECK` | `src-tauri/src/commands/spike.rs` | What the file-association check asserts (`open_check.py`) | harness |
+| `TPDF_OPENCHECK_TIMEOUT` | `src-tauri/src/lib.rs` | Watchdog seconds for that check, 120 by default | harness |
+| `TPDF_PRINT_OUTPUT` | `src-tauri/src/printer.rs` | Windows: a file the printer driver writes instead of its port, for checks with Microsoft Print to PDF | harness |
+| `TPDF_PROBE_DIGESTS` | `src-tauri/src/probes/text_edit_growth.rs` | `text-edit-probe --growth` adds the SHA-256 of the page content each accepted trial wrote | harness |
+| `TPDF_RAISE` | `src-tauri/src/lib.rs` | Focuses the window at launch, so a check behind another window is not suspended | harness |
+| `TPDF_READING_MANIFEST` | `src-tauri/src/commands/spike.rs` | A file of reading-order expectations, handed to the viewer check | harness |
+| `TPDF_RECENTDOCS_PROBE` | `src-tauri/src/recentdocs.rs` | macOS: prints AppKit's recent-document list before and after each open files it | harness |
+| `TPDF_SCROLLBENCH` | `src-tauri/src/commands/spike.rs` | A document to run the scroll benchmark on (`scroll_bench.py`, whose `--set X=Y` sets `TPDF_X`) | harness |
+| `TPDF_SCROLL_CACHE` | `src-tauri/src/commands/spike.rs` | Scroll benchmark: tiles cached, 32 by default | harness |
+| `TPDF_SCROLL_CANCEL` | `src-tauri/src/commands/spike.rs` | Scroll benchmark: withdrawal off or on, a list, `1` by default | harness |
+| `TPDF_SCROLL_FRAMES` | `src-tauri/src/commands/spike.rs` | Scroll benchmark: frames measured per round, 300 by default | harness |
+| `TPDF_SCROLL_INFLIGHT` | `src-tauri/src/commands/spike.rs` | Scroll benchmark: renders in flight, 4 by default | harness |
+| `TPDF_SCROLL_LAYOUTS` | `src-tauri/src/commands/spike.rs` | Scroll benchmark: layouts compared, `tiles,viewport` by default | harness |
+| `TPDF_SCROLL_PANES` | `src-tauri/src/commands/spike.rs` | Scroll benchmark: panes, a list, `1` by default | harness |
+| `TPDF_SCROLL_PREFETCH` | `src-tauri/src/commands/spike.rs` | Scroll benchmark: screens prefetched, 1.0 by default | harness |
+| `TPDF_SCROLL_PX` | `src-tauri/src/commands/spike.rs` | Scroll benchmark: CSS pixels per frame, 30 by default | harness |
+| `TPDF_SCROLL_ROUNDS` | `src-tauri/src/commands/spike.rs` | Scroll benchmark: rounds, 5 by default | harness |
+| `TPDF_SCROLL_TILE` | `src-tauri/src/commands/spike.rs` | Scroll benchmark: tile side in pixels, 1024 by default | harness |
+| `TPDF_SCROLL_TIMEOUT` | `src-tauri/src/lib.rs` | Watchdog seconds for the scroll benchmark, 900 by default | harness |
+| `TPDF_SCROLL_WARMUP` | `src-tauri/src/commands/spike.rs` | Scroll benchmark: warm-up frames, 180 by default | harness |
+| `TPDF_SCROLL_ZOOMS` | `src-tauri/src/commands/spike.rs` | Scroll benchmark: zooms compared, `1,4` by default | harness |
+| `TPDF_SESSIONCHECK` | `src-tauri/src/commands/spike.rs` | Which half of the two-launch session check this launch is (`session_check.py`) | harness |
+| `TPDF_SESSIONCHECK_TIMEOUT` | `src-tauri/src/lib.rs` | Watchdog seconds for that check, 120 by default | harness |
+| `TPDF_SHELL_MODE` | `src-tauri/src/lib.rs` | `manual` or `blank`: the setup hook creates the window, and `blank` loads a page with no framework (spike 0.7); anything else is the shipped shape | harness |
+| `TPDF_STARTUP` | `src-tauri/src/commands/spike.rs` | A document to time a cold open of; the app exits after (`startup_bench.py`) | harness |
+| `TPDF_THEME` | `src-tauri/src/lib.rs` | `dark` or `light` pins the window's appearance (`screenshots.py --dark`); anything else is ignored | harness |
+| `TPDF_VIEWERCHECK` | `src-tauri/src/commands/spike.rs` | The document the viewer check runs against (`viewer_check.py`) | harness |
+| `TPDF_VIEWERCHECK_SCRATCH` | `src-tauri/src/commands/spike.rs` | A writable path a viewer-check phase may save to | harness |
+| `TPDF_VIEWERCHECK_TIMEOUT` | `src-tauri/src/lib.rs` | Watchdog seconds for the viewer check, 300 by default | harness |
+| `TPDF_WINDOW_SIZE` | `src-tauri/src/lib.rs` | `WIDTHxHEIGHT`, the window's size (`screenshots.py --size`); anything else is ignored | harness |
+| `TPDF_FILL_PROBE` | `src-tauri/tests/cli/forms.rs` | A directory `cargo test --test cli` leaves the filled forms in, for `fill_pdf_check.py` and `form_pdfkit_check.swift` | harness |
+| `TPDF_IMAGE_LOG_DIR` | `src-tauri/tests/cli/image_observer.c` | macOS: the directory the injected dyld observer writes one file per process into | harness |
+| `TPDF_PAGECOPY_CLIPBOARD` | `src-tauri/tests/cli/pagecopy.rs` | With `TPDF_PAGECOPY_FROM`, puts the copied page on the clipboard as the application does (`powerpoint_check.py`) | harness |
+| `TPDF_PAGECOPY_FROM` | `src-tauri/tests/cli/pagecopy.rs` | A document whose page 1 the test copies for a check by hand in PowerPoint | harness |
+| `TPDF_PAGECOPY_TO` | `src-tauri/tests/cli/pagecopy.rs` | Where that copy is written | harness |
+| `TPDF_PDFIUM_DIR` | `src-tauri/examples/tile_bench.rs` | The PDFium library's folder for the examples that load it themselves | harness |
+| `TPDF_PKI_OUT` | `src-tauri/tests/cli.rs` | A fresh directory the private-PKI cases write into, for `check_private_pki.py` | harness |
+| `TPDF_PRINT_OUT` | `src-tauri/examples/print_probe.rs` | Linux: the folder cups-pdf writes the probe's printed job into, `~/PDF` by default | harness |
+| `TPDF_PROBE_GEOMETRIC` | `src-tauri/examples/text_edit_probe.rs` | Reads text blocks off the geometry on tagged pages too, in the probe and its worker | harness |
+| `TPDF_PROBE_KEEP_IMPORTED` | `src-tauri/examples/worker_probe.rs` | Keeps the imported document for a parser that is not this crate's | harness |
+| `TPDF_PROBE_SHOTS` | `src-tauri/shellext/examples/explorer_probe.rs` | A folder the Explorer probe writes what it read off the screen into, as BMP (`explorer_check.py`) | harness |
+| `TPDF_PYHANKO_PYTHON` | `src-tauri/examples/sign_probe.rs` | An interpreter that already has pyHanko, in place of `uv`; CI sets it | harness |
+| `TPDF_REDACT_PROBE` | `src-tauri/tests/cli/redact.rs` | A directory `cargo test --test cli` leaves the redaction outputs and expectations in, for `redact_pdf_check.py` | harness |
+| `TPDF_SIGN_SCRIPT` | `scripts/sign-windows.cmd` | The signing script's path; Tauri's sign command cannot find it beside itself under makensis | harness |
+| `TPDF_TEST_CLI` | `api/python/test_api.py` | The `tpdf-cli` the Python client's tests run, in place of the debug build | harness |
+| `TPDF_WINDOWS_CLONE` | `scripts/run_on_windows.py` | The tpdf clone on the Windows host, when `--clone` is not given | harness |
+| `TPDF_WINDOWS_HOST` | `scripts/run_on_windows.py` | The SSH host, when `--host` is not given | harness |
+| `TPDF_CHOICE_FIXTURE` | `src-tauri/src/forms.rs` | Where a forms test writes the unedited choice form, the negative control of `choice_pdf_check.py` | test |
+| `TPDF_CHOICE_PROBE` | `src-tauri/src/forms.rs` | Where it writes the saved choice form | test |
+| `TPDF_CHOICE_UNIQUE_PROBE` | `src-tauri/src/forms.rs` | Where it writes the same form with unique exports, for `choice_pdfkit_check.swift` | test |
+| `TPDF_CLI_SAMPLES` | `src-tauri/src/cli/tests.rs` | `write` regenerates the committed `--json` samples in `src-tauri/testdata/cli/` | test |
+| `TPDF_CLI_TEST_A_VARIABLE_NOBODY_SETS` | `src-tauri/src/cli/tests.rs` | A name asserted unset, for a test of an unset `--password-env` | test |
+| `TPDF_CREATION_BOUNDARY_LOW` | `src-tauri/src/sandbox_win.rs` | Windows: the child half of the parent-death test runs at low integrity | test |
+| `TPDF_CREATION_BOUNDARY_PID` | `src-tauri/src/sandbox_win.rs` | Windows: turns a test into the child half of the parent-death test | test |
+| `TPDF_DEFAULT_APP` | `src-tauri/src/defaultapp.rs` | macOS, an ignored test: the application to make the default for PDFs | test |
+| `TPDF_DEFAULT_ENCODING_PROBE` | `src-tauri/src/textedit/fonts/tests.rs` | Where a font test writes its rows as JSON | test |
+| `TPDF_DIAG_STDERR_HELPER` | `src-tauri/src/diag.rs` | Turns the stderr test into its own child half | test |
+| `TPDF_EMBEDDED_PROBE` | `src-tauri/src/textedit/fonts/tests.rs` | Where a font test saves its document, for a reader of its own | test |
+| `TPDF_FORM_FIXTURE` | `src-tauri/src/forms.rs` | Where a forms test writes the unedited form | test |
+| `TPDF_FORM_PROBE` | `src-tauri/src/forms.rs` | Where it writes the saved form, for `form_pdfkit_check.swift` | test |
+| `TPDF_LONG_TERM_OUT` | `src-tauri/src/longterm/tests.rs` | Where ignored tests write long-term signed documents for pyHanko, qpdf and OpenSSL | test |
+| `TPDF_MADE_FORM` | `src-tauri/src/save/tests.rs` | Where a save test leaves the form it made and its answers, for `made_form_check.py` | test |
+| `TPDF_NO_SUCH_VARIABLE_4711` | `src-tauri/src/lib.rs` | A name asserted unset, for the tests of the fallback to a default | test |
+| `TPDF_REPLIES` | `src-tauri/src/replies.rs` | `write` regenerates the committed reply samples | test |
+| `TPDF_REQUIRE_FIXTURES` | `src-tauri/src/fixtures.rs` | A missing test fixture fails instead of skipping; `scripts/gates.py` sets it off CI | test |
+| `TPDF_REVEAL` | `src-tauri/src/commands/document.rs` | Linux, an ignored test: the file shown in the desktop's file manager | test |
+| `TPDF_REVOCATION_OUT` | `src-tauri/src/revocation/tests.rs` | Where an ignored test writes documents with minted revocation data, for pyHanko | test |
+| `TPDF_REVOCATION_REAL` | `src-tauri/src/revocation/tests.rs` | A directory of revocation data fetched by hand from real authorities, for an ignored test to judge | test |
+| `TPDF_SIGNATURE_PROBE` | `src-tauri/src/save/tests.rs` | Where a save test writes its signature pictures, for `signature_pdf_check.py` | test |
+| `TPDF_TOKEN_DIR` | `src-tauri/src/integrity/token/tests.rs` | Where an ignored test writes minted timestamp tokens for `openssl ts -verify` | test |

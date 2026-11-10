@@ -808,6 +808,7 @@ Each probe, bench and window check has a section in
 - The exit code of a spike run
 - The four Phase 0 spikes nothing above invokes
 - Fuzzing, and how to read what it leaves behind
+- Environment variables the code reads
 
 ---
 

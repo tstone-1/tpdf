@@ -425,10 +425,46 @@ pub(crate) fn resolve_dict<'a>(
     resolve(document, object).as_dict().map_err(|_| ())
 }
 
+/// `bytes` as two upper-case hex digits each, with nothing between them: a
+/// certificate serial, a PDF hex string's digits.
+pub(crate) fn hex_upper(bytes: &[u8]) -> String {
+    hex_in(bytes, b"0123456789ABCDEF")
+}
+
+/// `bytes` as two lower-case hex digits each, with nothing between them: a
+/// digest as a name.
+pub(crate) fn hex_lower(bytes: &[u8]) -> String {
+    hex_in(bytes, b"0123456789abcdef")
+}
+
+/// The two spellings above, from one loop.
+fn hex_in(bytes: &[u8], digits: &[u8; 16]) -> String {
+    let mut out = String::with_capacity(bytes.len() * 2);
+    for byte in bytes {
+        out.push(char::from(digits[usize::from(byte >> 4)]));
+        out.push(char::from(digits[usize::from(byte & 0x0f)]));
+    }
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use lopdf::{dictionary, Stream};
+
+    /// Both spellings of every nibble, against `format!`'s, which the call
+    /// sites used before.
+    #[test]
+    fn hex_spells_each_byte_as_two_digits_in_the_case_asked_for() {
+        assert_eq!(hex_upper(&[0x00, 0x0f, 0xa5, 0xff]), "000FA5FF");
+        assert_eq!(hex_lower(&[0x00, 0x0f, 0xa5, 0xff]), "000fa5ff");
+        assert_eq!(hex_upper(&[]), "");
+        let every: Vec<u8> = (0..=255).collect();
+        let upper: String = every.iter().map(|b| format!("{b:02X}")).collect();
+        let lower: String = every.iter().map(|b| format!("{b:02x}")).collect();
+        assert_eq!(hex_upper(&every), upper);
+        assert_eq!(hex_lower(&every), lower);
+    }
 
     /// Builds a one-page document whose single font is the dictionary given.
     ///

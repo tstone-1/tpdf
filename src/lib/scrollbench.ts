@@ -28,6 +28,7 @@
  * rounds --- a second pass over cached tiles is a different, easier question.
  */
 
+import { pad } from "./benchtable";
 import { call, type DocumentInfo, type PageSize } from "./ipc";
 import { Scroller, type Layout } from "./scroller";
 
@@ -140,10 +141,6 @@ function quantile(values: number[], q: number): number {
 function mean(values: number[]): number {
   if (values.length === 0) return NaN;
   return values.reduce((sum, value) => sum + value, 0) / values.length;
-}
-
-function pad(text: string, width: number, right = false): string {
-  return right ? text.padStart(width) : text.padEnd(width);
 }
 
 /**

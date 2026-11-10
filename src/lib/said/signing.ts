@@ -2,7 +2,8 @@
  * (and its `appearance.rs`), `sign_cms.rs`, `sign_dss.rs`, `pkcs11.rs`,
  * `pkcs12.rs`, `pin_prompt.rs`, `longterm.rs` (and `existing.rs`), `tsa.rs`,
  * `keystore.rs`, `certfiles.rs`, `signature_store.rs`, `docinfo.rs`,
- * `words.rs`, `commands/sign.rs` and `commands/validation.rs`.
+ * `words.rs`, `sign_finish.rs`, `validation_data.rs`, `commands/sign.rs` and
+ * `commands/validation.rs`.
  *
  * Several sentences take a phrase another sentence made, and German declines
  * it where English does not; the helpers below put a nominative phrase into
@@ -578,7 +579,7 @@ export default {
       `zurückgelesen: ${EACH[a.each!] ?? a.each} intakt, jedes abgefragte Zertifikat gilt nach den eigenen Daten ` +
       "des Dokuments als nicht widerrufen, und der Archivzeitstempel deckt die ganze Datei ab.",
 
-  // commands/sign.rs
+  // commands/sign.rs, sign_finish.rs
   "the page chosen for the signature is not a page of the file on disk --- save the document and sign again":
     "die für die Signatur gewählte Seite ist keine Seite der Datei auf dem Datenträger - speichere das Dokument und signiere erneut",
   "the page chosen for the signature is no longer in the document":
@@ -608,7 +609,7 @@ export default {
     "tpdf konnte nicht festhalten, wie diese Datei beim Öffnen aussah, und kann deshalb nicht sicherstellen, dass es genau diese Datei signiert - öffne sie erneut und signiere noch einmal",
   "the signing did not run: {e}": "das Signieren ist nicht gelaufen: {e}",
 
-  // commands/validation.rs
+  // commands/validation.rs, validation_data.rs
   "{name} was written, but reading it back did not find what was added: {why}. Do not rely on that copy.":
     "{name} wurde geschrieben, aber beim Zurücklesen fand sich nicht, was hinzugefügt wurde: {why}. Verlass dich nicht auf diese Kopie.",
   "the copy was written and could not be reopened: {e}":

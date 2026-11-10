@@ -1,8 +1,8 @@
 /** Saving, redaction and its verification, the page tree and merging:
  * `save.rs`, `save/`, `save_outside.rs`, `save_order.rs`, `redact.rs`,
  * `redact/glyph_cut.rs`, `raster_redact.rs`, `redaction_fill.rs`, `verify.rs`,
- * `pagetree.rs`, `merge.rs`, `sweep.rs`, `docgraph.rs`, `commands/redact.rs`
- * and `commands/save.rs`. */
+ * `pagetree.rs`, `merge.rs`, `sweep.rs`, `docgraph.rs`, `redaction_steps.rs`,
+ * `commands/redact.rs` and `commands/save.rs`. */
 
 import type { Wording } from "./de";
 
@@ -262,6 +262,14 @@ export default {
     "Objekt {object} verwendet {filter}, das hier nichts erkennt",
   "object {object} could not be decoded, so its contents are unknown: {why}":
     "Objekt {object} konnte nicht dekodiert werden, daher ist sein Inhalt unbekannt: {why}",
+  "object {object} names its filter in a form this build does not read, so its contents were not decoded":
+    "Objekt {object} nennt seinen Filter in einer Form, die diese Version nicht liest, daher wurde sein Inhalt nicht dekodiert",
+  "the file draws text through a composite (Type0) font, which stores glyph numbers rather than characters, so a copy of the words drawn through it cannot be found by reading its bytes":
+    "Die Datei zeichnet Text mit einer zusammengesetzten Schrift (Type0), die Glyphennummern statt Zeichen speichert, daher lässt sich eine Kopie der damit gezeichneten Wörter nicht durch Lesen der Bytes finden",
+  "the file carries embedded files, which are documents of their own that nothing here reads, so a copy of the words inside one would not be found":
+    "Die Datei enthält eingebettete Dateien, eigene Dokumente, die hier nichts liest, daher würde eine Kopie der Wörter in einer davon nicht gefunden",
+  "the file carries an application's private data (/PieceInfo), which nothing here reads, so a copy of the words inside it would not be found":
+    "Die Datei enthält private Daten einer Anwendung (/PieceInfo), die hier nichts liest, daher würde eine Kopie der Wörter darin nicht gefunden",
   "{count} further images were not read, and are not listed individually":
     "{count} weitere Bilder wurden nicht gelesen und werden nicht einzeln aufgeführt",
   "{count} further objects could not be accounted for, and are not listed individually":
@@ -362,6 +370,10 @@ export default {
     "{why} - es wurde nichts geschrieben, die Datei auf dem Datenträger ist also unverändert. Dein Dokument wurde geschlossen, und deine Änderungen sind verloren.",
   "could not open {source:?} to save it: {e}":
     "{source} konnte zum Speichern nicht geöffnet werden: {e}",
+  "could not open {source:?} to read it back: {e}":
+    "{source} konnte zum Zurücklesen nicht geöffnet werden: {e}",
+  "{source:?} stopped being the file it was while it was being opened to save --- nothing was written. Use Save a copy.":
+    "{source} war nicht mehr dieselbe Datei, während sie zum Speichern geöffnet wurde - es wurde nichts geschrieben. Nutze „Kopie speichern“.",
   "tpdf could not tell which file {source:?} is, so it cannot promise a save would land there --- nothing was written. Use Save a copy.":
     "tpdf konnte nicht feststellen, welche Datei {source} ist, und kann daher nicht zusichern, dass ein Speichern dort ankommt - es wurde nichts geschrieben. Nutze „Kopie speichern“.",
   "{why} --- nothing was written, so the file on disk is untouched":
@@ -553,7 +565,7 @@ export default {
   "there is nothing to save --- this document has no unsaved changes":
     "Es gibt nichts zu speichern - dieses Dokument hat keine ungespeicherten Änderungen",
 
-  // commands/redact.rs
+  // redaction_steps.rs, commands/redact.rs
   "The fill did not run: {e}": "Die Füllung wurde nicht ausgeführt: {e}",
   "Content removal finished, but the fill could not be saved: {why}":
     "Der Inhalt wurde entfernt, aber die Füllung konnte nicht gespeichert werden: {why}",
@@ -670,6 +682,8 @@ export const sie = {
     "{why} - es wurde nichts geschrieben, die Datei auf dem Datenträger ist also unverändert. Ihr Dokument wurde geschlossen, und Ihre Änderungen sind verloren.",
   "tpdf could not tell which file {source:?} is, so it cannot promise a save would land there --- nothing was written. Use Save a copy.":
     "tpdf konnte nicht feststellen, welche Datei {source} ist, und kann daher nicht zusichern, dass ein Speichern dort ankommt - es wurde nichts geschrieben. Nutzen Sie „Kopie speichern“.",
+  "{source:?} stopped being the file it was while it was being opened to save --- nothing was written. Use Save a copy.":
+    "{source} war nicht mehr dieselbe Datei, während sie zum Speichern geöffnet wurde - es wurde nichts geschrieben. Nutzen Sie „Kopie speichern“.",
   "save this document before merging it --- it holds pages inserted from another document, and a merge cannot carry those yet":
     "Speichern Sie dieses Dokument, bevor Sie es zusammenführen - es enthält aus einem anderen Dokument eingefügte Seiten, und ein Zusammenführen kann die noch nicht mitnehmen",
   "{label} is encrypted, and merging rewrites it --- which would silently remove that. Leave it out, or save an unencrypted copy of it first.":

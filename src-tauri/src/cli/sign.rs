@@ -10,10 +10,10 @@ use super::identities::{listing, resolve, store_identities, usable_of};
 use super::report::{self, SCHEMA};
 use super::verify::signature_report;
 use super::{json, opened, say, words, Env, Exit, Failure, Registered, Subcommand};
-use crate::commands::sign::{asking_the_world, finish, Asking, Finished, ReadBack, Stage, Stopped};
 use crate::docinfo;
 use crate::save;
 use crate::sign_cms;
+use crate::sign_finish::{asking_the_world, finish, Asking, Finished, ReadBack, Stage, Stopped};
 use crate::sign_prepare::{Options, Visible};
 
 /// `sign`, registered.
@@ -427,7 +427,7 @@ pub(crate) fn long_term_failure(why: &crate::longterm::Refusal) -> Failure {
 
 /// The rest of a signing after the OS has signed --- the timestamp, the seal,
 /// the long-term data, the write and a fresh worker's read-back --- which is
-/// the window's own (`commands::sign::finish`), with the tool's endings: a
+/// the window's own (`sign_finish::finish`), with the tool's endings: a
 /// request that fails is exit 3 with nothing written, since the authority
 /// refused or could not be reached, which is neither tpdf's failure nor a
 /// reason to write a signature the reader did not ask for. There is nobody
@@ -466,11 +466,16 @@ pub(crate) fn concluded(
                 .as_ref()
                 .and_then(url::Url::host_str)
                 .unwrap_or_default();
-            let otherwise = if matches!(why, crate::tsa::Refusal::Untrusted(_)) {
+            // `--allow-untrusted-timestamp` is refused beside `--long-term`,
+            // so a long-term signing is not told to add it alone.
+            let otherwise = if !matches!(why, crate::tsa::Refusal::Untrusted(_)) {
+                "sign again without --timestamp to sign without one"
+            } else if sign.long_term {
+                "sign again without --long-term and with --allow-untrusted-timestamp to keep \
+                 it, or without --timestamp to sign without one"
+            } else {
                 "sign again with --allow-untrusted-timestamp to keep it, or without --timestamp \
                  to sign without one"
-            } else {
-                "sign again without --timestamp to sign without one"
             };
             Failure::new(
                 Exit::Refused,

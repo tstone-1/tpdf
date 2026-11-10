@@ -817,7 +817,7 @@ fn the_exit_codes_are_the_documented_numbers() {
 #[test]
 fn a_signature_not_checked_again_ends_sign_with_1_and_says_which_check_happened() {
     use super::sign::exit_after;
-    use crate::commands::sign::ReadBack;
+    use crate::sign_finish::ReadBack;
     assert_eq!(exit_after(&ReadBack::Holds), Exit::Ok);
     assert_eq!(exit_after(&ReadBack::Unchecked), Exit::Strict);
     for failed in [
@@ -1357,7 +1357,7 @@ fn lock_is_a_flag_of_sign_that_its_help_explains() {
         assert!(summary.contains(said), "`{said}` is not in: {summary}");
     }
 
-    let said = crate::commands::sign::ReadBack::Lock.sentence("signed.pdf", "Signature1");
+    let said = crate::sign_finish::ReadBack::Lock.sentence("signed.pdf", "Signature1");
     assert_eq!(
         said.as_deref().unwrap_or_default(),
         "signed.pdf was written, but reading it back did not find the new signature \
@@ -3883,8 +3883,8 @@ fn long_term_refuses_an_existing_output_and_a_missing_input_before_any_worker() 
 #[test]
 fn a_long_term_run_that_stopped_is_4_only_when_the_failure_is_tpdfs() {
     use super::long_term::stopped_failure;
-    use crate::commands::validation::Stopped;
     use crate::longterm::existing::Refusal;
+    use crate::validation_data::Stopped;
     for (stopped, exit) in [
         (Stopped::Refused(Refusal::Unsigned), Exit::Refused),
         (Stopped::Refused(Refusal::Budget), Exit::Refused),

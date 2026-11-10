@@ -75,22 +75,17 @@
 //! [`Command::Unannotate`] names a mark that a stale frontend may have watched
 //! disappear, and the answer is a refusal that says which of the two it is.
 //!
-//! ## What is deliberately not here yet
+//! ## Where a page comes from
 //!
-//! **Nothing creates a page.** Insert, split, merge and duplicate all bring
-//! pages in from somewhere. That now needs the allocator above rather than a new
-//! one --- but a page id is also a *position* in the order and a source in the
-//! baseline, so what a created page has to answer that a created mark does not
-//! is where its content comes from.
-//!
-//! ⚠ **That paragraph predates two commands that do create pages**:
-//! [`Command::Insert`] makes a blank one, and [`Command::Import`] (2026-09-19)
-//! places pages of a second file. The answer to *where its content comes from*
-//! is [`PageSource`]. An imported page names a [`SourceId`], and the file
-//! behind it --- its path, the digest of its bytes when the reader chose it,
-//! its page count --- is a [`SourceFile`] in [`Doc`]'s table, because undo
-//! replays the journal and nothing a replay does can re-read a file. That
-//! record is the one place this module names a path; it still opens nothing.
+//! A page id is also a *position* in the order and a source, so a page the
+//! model creates has to answer what a created mark does not: where its content
+//! comes from. [`PageSource`] is that answer. [`Command::Insert`] makes a blank
+//! page of a given size, and [`Command::Import`] places pages of a second file.
+//! An imported page names a [`SourceId`], and the file behind it --- its path,
+//! the digest of its bytes when the reader chose it, its page count --- is a
+//! [`SourceFile`] in [`Doc`]'s table, because undo replays the journal and
+//! nothing a replay does can re-read a file. That record is the one place this
+//! module names a path; it still opens nothing.
 //!
 //! Save, save-mode classification, crash recovery and external-modification
 //! handling are §5's other halves and none of them are here. This module holds
@@ -99,9 +94,9 @@
 //!
 //! ## What it depends on
 //!
-//! Four modules of the crate, all declared below, because a `use` block that
-//! names only `std` while the body reaches into the crate is the half-truth
-//! `save_outside.rs`'s header describes. None of the four opens a file here:
+//! Six modules of the crate, because a `use` block that names only `std` while
+//! the body reaches into the crate is the half-truth `save_outside.rs`'s header
+//! describes. None of them opens a file here:
 //!
 //! * [`textedit`] for the text replacements the journal holds, their bounds
 //!   ([`textedit::MAX_TEXT`], [`textedit::MAX_CHANGES`]) and the edits the
@@ -109,9 +104,11 @@
 //! * [`forms`] for a field's answer and the change the writer applies.
 //! * [`signature`] for a placed signature's picture and its size bound.
 //! * [`fingerprint`] for the identity of a file an imported page comes from.
+//! * [`crate::formfields`] for where a new form field is placed.
+//! * [`crate::formedit`] for the properties a change to a field sets.
 //!
 //! Each is a feature's wire type carried through the model rather than a
-//! behaviour the model calls, and that is the line to hold: a fifth edge that
+//! behaviour the model calls, and that is the line to hold: an edge that
 //! parses, renders or reads is the one that would end "it can be driven
 //! directly".
 
@@ -1725,7 +1722,7 @@ pub enum Refusal {
     /// What is missing is the removal itself, and it is two whole steps rather
     /// than a proof:
     ///
-    /// * *The ask*: `commands::redact::ask_redactions` sends every region to
+    /// * *The ask*: `redaction_steps::ask_redactions` sends every region to
     ///   `service.redaction_plans(doc, page, ..)`, which is the worker holding
     ///   the **opened** document. A page of another file is not in that document
     ///   at all, so there is no page to compute ordinals against, and
@@ -3713,10 +3710,13 @@ impl Doc {
     ///
     /// # Errors
     ///
-    /// The id names no mark, or one already removed.
+    /// The id names no mark, or one already removed; [`Refusal::EmptyMark`]
+    /// when a moved coordinate is not finite, which a finite offset can still
+    /// produce by overflowing `f32`. Refused before an [`Ink`] version is spent,
+    /// as [`reshape`](Self::reshape)'s check is.
     pub fn displace(&mut self, mark: MarkId, dx: f32, dy: f32) -> Result<(), Refusal> {
         self.now.live_mark(mark)?;
-        let quads = self
+        let quads: Vec<Quad> = self
             .quads_of(mark)
             .iter()
             .map(|q| Quad {
@@ -3726,7 +3726,7 @@ impl Doc {
                 bottom: q.bottom + dy,
             })
             .collect();
-        let strokes = self
+        let strokes: Vec<Stroke> = self
             .strokes_of(mark)
             .iter()
             .map(|stroke| Stroke {
@@ -3740,6 +3740,18 @@ impl Doc {
                     .collect(),
             })
             .collect();
+        let finite = quads
+            .iter()
+            .flat_map(|q| [q.left, q.top, q.right, q.bottom])
+            .chain(
+                strokes
+                    .iter()
+                    .flat_map(|stroke| stroke.points.iter().flat_map(|p| [p.x, p.y])),
+            )
+            .all(f32::is_finite);
+        if !finite {
+            return Err(Refusal::EmptyMark);
+        }
         let ink = self.issue_ink(Ink { strokes, quads });
         self.apply(Command::Reink { mark, ink })
     }
@@ -5368,6 +5380,31 @@ mod tests {
         let held = doc.ink_bodies();
         assert_eq!(doc.displace(id, 5.0, 5.0), Err(Refusal::MarkRemoved(id)));
         assert_eq!(doc.ink_bodies(), held);
+    }
+
+    #[test]
+    fn a_move_that_would_leave_a_coordinate_not_finite_is_refused() {
+        // A finite offset can overflow: the quad and the points are `f32`, and
+        // a mark carried past `f32::MAX` would be written as an infinite
+        // rectangle. Refused before a version is spent, as a refused move of a
+        // removed mark is.
+        let mut doc = Doc::open(1);
+        let page = doc.working().order()[0];
+        let id = doc.annotate(mark_on(page), String::new()).expect("marked");
+        // The control: a large move that stays finite is a move.
+        assert_eq!(doc.displace(id, 1.0e32, 0.0), Ok(()));
+        let held = doc.ink_bodies();
+        // Finite, and past `f32::MAX` once added to where the mark now is.
+        assert_eq!(doc.displace(id, f32::MAX, 0.0), Err(Refusal::EmptyMark));
+        assert_eq!(doc.displace(id, f32::NAN, 0.0), Err(Refusal::EmptyMark));
+        assert_eq!(doc.ink_bodies(), held);
+        let drawn = doc
+            .annotate(drawing_on(page), String::new())
+            .expect("drawn");
+        assert_eq!(
+            doc.displace(drawn, 0.0, f32::INFINITY),
+            Err(Refusal::EmptyMark)
+        );
     }
 
     #[test]

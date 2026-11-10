@@ -47,9 +47,13 @@
 //! ## Exit codes
 //!
 //! [`Exit`] is the list of record, and `README.md` repeats it for readers:
-//! 0 done; 1 `verify --strict` found something that is not intact and trusted,
-//! or `redact` wrote a copy it could not prove clean, or `hidden` found text a page
-//! does not show; 2 the command line is malformed; 3 tpdf refused (the identity, the document,
+//! 0 done; 1 the command ran and its answer is not the plain one: `verify
+//! --strict` found a document with no signature or one that is not intact and
+//! trusted, `redact` wrote a copy it could not prove clean, `sign` wrote a copy
+//! whose new signature was not checked again, `hidden` found text a page does
+//! not show, `search` found nothing, `compare` found the words differ or left
+//! some uncompared, or `comments` could not read every annotation in full; 2
+//! the command line is malformed; 3 tpdf refused (the identity, the document,
 //! the output) or the OS did; 4 tpdf itself failed. Errors go to stderr, one
 //! sentence each; with `--json`, stdout carries exactly one JSON document
 //! whenever the exit code is 0 or 1, and for `verify` also when it is 3 or 4,
@@ -109,7 +113,13 @@ pub enum Exit {
     /// `hidden`: text was found that a page does not show. `sign`: the copy
     /// was written and its new signature, intact when it was made, was not
     /// checked again in the file because the document's signatures together
-    /// are past the hashing budget.
+    /// are past the hashing budget. `search`: every document was read and
+    /// nothing matched. `compare`: the words differ, or words beside a page
+    /// with no text on the other side were not compared. `comments`: some
+    /// annotations could not be read in full.
+    ///
+    /// The module's *Exit codes* and [`usage`] say the same list; a test holds
+    /// the three to the same commands.
     Strict = 1,
     /// The command line is malformed.
     Usage = 2,
@@ -646,8 +656,11 @@ pub fn usage(program: &str) -> String {
     text.push_str(
         "\nExit codes: 0 done; 1 verify --strict found a signature that is not intact\n\
          and trusted, or a document with none, or redact wrote a copy it could not\n\
-         prove clean, or search found nothing; 2 the command line is malformed; 3 refused (identity,\n\
-         document, answers, output, or the OS); 4 tpdf failed.",
+         prove clean, or sign wrote a copy whose new signature was not checked again,\n\
+         or hidden found text a page does not show, or search found nothing, or\n\
+         compare found the words differ or left some uncompared, or comments could\n\
+         not read every annotation in full; 2 the command line is malformed;\n\
+         3 refused (identity, document, answers, output, or the OS); 4 tpdf failed.",
     );
     text
 }
@@ -812,3 +825,100 @@ mod form_tests;
 
 #[cfg(test)]
 mod redact_tests;
+
+/// The three statements of what exit code 1 means, held to the code and to
+/// each other.
+#[cfg(test)]
+mod exit_tests {
+    use std::collections::BTreeSet;
+    use std::path::PathBuf;
+
+    /// The commands that end with [`super::Exit::Strict`], by the file that
+    /// says so: `comments` is answered in `edit.rs`.
+    const STRICT: &[(&str, &str)] = &[
+        ("compare.rs", "compare"),
+        ("edit.rs", "comments"),
+        ("hidden.rs", "hidden"),
+        ("redact.rs", "redact"),
+        ("search.rs", "search"),
+        ("sign.rs", "sign"),
+        ("verify.rs", "verify"),
+    ];
+
+    /// The text from the first `start` to the first `end` after it.
+    fn between<'a>(text: &'a str, start: &str, end: &str) -> &'a str {
+        let from = text
+            .find(start)
+            .unwrap_or_else(|| panic!("{start:?} is not there"));
+        let rest = &text[from..];
+        let to = rest
+            .find(end)
+            .unwrap_or_else(|| panic!("{end:?} does not follow {start:?}"));
+        &rest[..to]
+    }
+
+    /// Every source file under `cli/` that returns `Exit::Strict` is one
+    /// [`STRICT`] names, and the other way round, so a command that starts
+    /// ending with 1 is a red test until the three lists name it.
+    #[test]
+    fn the_commands_that_exit_1_are_the_ones_the_code_says() {
+        let dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("src")
+            .join("cli");
+        let mut found = BTreeSet::new();
+        for entry in std::fs::read_dir(&dir).expect("the cli folder") {
+            let path = entry.expect("an entry").path();
+            let name = path
+                .file_name()
+                .and_then(|n| n.to_str())
+                .unwrap_or_default()
+                .to_string();
+            if name.ends_with("tests.rs") || path.extension().is_none_or(|e| e != "rs") {
+                continue;
+            }
+            let text = std::fs::read_to_string(&path).expect("a source file");
+            if text.contains("Exit::Strict") {
+                found.insert(name);
+            }
+        }
+        // The control: the folder was read, and the largest command is in it.
+        assert!(found.contains("sign.rs"), "{found:?}");
+        let named: BTreeSet<String> = STRICT.iter().map(|(file, _)| (*file).to_string()).collect();
+        assert_eq!(found, named);
+    }
+
+    /// The module's *Exit codes*, `Exit::Strict`'s own note and the usage
+    /// text each name every command of [`STRICT`] under exit code 1. Each is
+    /// the first occurrence in this file, which is above this module.
+    #[test]
+    fn the_three_lists_of_exit_code_1_name_the_same_commands() {
+        let source = include_str!("cli.rs");
+        let module = between(source, "//! ## Exit codes", "the command line is malformed");
+        let note = between(
+            source,
+            "    /// `verify --strict`: a document",
+            "    Strict = 1,",
+        );
+        let usage = super::usage("tpdf");
+        let usage = between(&usage, "Exit codes:", "the command line is malformed");
+        for (where_, text) in [("module", module), ("Exit::Strict", note), ("usage", usage)] {
+            for (_, command) in STRICT {
+                assert!(
+                    names(text, command),
+                    "{where_} does not name {command}: {text}"
+                );
+            }
+        }
+        // The control for the word rule: `sign` inside `signature` is not `sign`.
+        assert!(!names("a signature", "sign") && names("or sign wrote", "sign"));
+    }
+
+    /// Whether `text` has `word` as a word of its own, not inside a longer one.
+    fn names(text: &str, word: &str) -> bool {
+        text.match_indices(word).any(|(at, _)| {
+            let before = text[..at].chars().next_back();
+            let after = text[at + word.len()..].chars().next();
+            !before.is_some_and(char::is_alphanumeric) && !after.is_some_and(char::is_alphanumeric)
+        })
+    }
+}

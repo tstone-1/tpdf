@@ -280,8 +280,8 @@ ROWS += [
     Mutation(
         "keystore: name an identity by an uppercase hash",
         "src/keystore.rs",
-        '    sha2::Sha256::digest(certificate)\n        .iter()\n        .map(|b| format!("{b:02x}"))',
-        '    sha2::Sha256::digest(certificate)\n        .iter()\n        .map(|b| format!("{b:02X}"))',
+        '    crate::encoding::hex_lower(&sha2::Sha256::digest(certificate))',
+        '    crate::encoding::hex_upper(&sha2::Sha256::digest(certificate))',
         "an_identity_is_named_by_the_sha256_of_its_certificate",
     ),
     Mutation(
@@ -989,10 +989,10 @@ ROWS += [
     Mutation('lock read: the more lenient of the two places', 'src/docinfo.rs', '        (a, b) => a.min(b),', '        (a, b) => a.max(b),', 'a_lock_is_the_stricter_of_what_the_field_and_the_signature_say'),
     Mutation('lock read: any level makes a document locked', 'src/docinfo.rs', 'locked |= lock_of(document, field, sig) == 1;', 'locked |= lock_of(document, field, sig) >= 1;', 'a_signed_field_that_locks_at_level_one_makes_the_document_locked'),
     Mutation('lock read: the scan reports no lock', 'src/docinfo.rs', '    out.lock = lock_of(document, field, sig);', '    out.lock = 0;', 'a_signed_field_that_locks_at_level_one_makes_the_document_locked'),
-    Mutation('lock read-back: another level passes', 'src/commands/sign.rs', '    let unlocked = lock && ours.lock != 1;', '    let unlocked = lock && ours.lock == 0;', 'a_lock_that_does_not_read_back_is_not_a_signing_that_holds'),
-    Mutation('lock read-back: never held to the lock', 'src/commands/sign.rs', '    let unlocked = lock && ours.lock != 1;', '    let unlocked = false;', 'a_lock_that_does_not_read_back_is_not_a_signing_that_holds'),
+    Mutation('lock read-back: another level passes', 'src/sign_finish.rs', '    let unlocked = lock && ours.lock != 1;', '    let unlocked = lock && ours.lock == 0;', 'a_lock_that_does_not_read_back_is_not_a_signing_that_holds'),
+    Mutation('lock read-back: never held to the lock', 'src/sign_finish.rs', '    let unlocked = lock && ours.lock != 1;', '    let unlocked = false;', 'a_lock_that_does_not_read_back_is_not_a_signing_that_holds'),
     # The lock needs no hashing, so a read-back out of budget still says it.
-    Mutation('lock read-back: a budget answer hides a missing lock', 'src/commands/sign.rs', '            return if unlocked {', '            return if false {', 'a_copy_that_does_not_read_back_as_written_is_refused_in_the_window_too'),
+    Mutation('lock read-back: a budget answer hides a missing lock', 'src/sign_finish.rs', '            return if unlocked {', '            return if false {', 'a_copy_that_does_not_read_back_as_written_is_refused_in_the_window_too'),
     # A form past the walk is no answer, and a lock behind an inherited type is a lock.
     Mutation('lock read: a walk cut short reads as not locked', 'src/docinfo.rs', '    if cut.dropped > 0 || cut.too_deep > 0 {\n        return Err(said!(\n            "this form has more fields, or groups nested deeper, than tpdf reads, so it \\\n             cannot tell whether a signature locked', '    if false {\n        return Err(said!(\n            "this form has more fields, or groups nested deeper, than tpdf reads, so it \\\n             cannot tell whether a signature locked', 'a_lock_behind_an_inherited_type_or_past_the_walk_is_not_missed'),
     Mutation('lock read: the type read on the node alone', 'src/docinfo.rs', '        let typed = inherited(document, field, b"FT")', '        let typed = field.get(b"FT").ok()', 'a_lock_behind_an_inherited_type_or_past_the_walk_is_not_missed'),
@@ -1010,7 +1010,7 @@ ROWS += [
     Mutation('sign anchor: the offset is dropped', 'src/cli/sign.rs', '        offset: offset.unwrap_or([0.0, 0.0]),', '        offset: [0.0, 0.0],', 'an_anchor_says_where_a_visible_signature_goes_instead_of_a_rectangle'),
     Mutation('sign anchor: the match number is dropped', 'src/cli/sign.rs', '        text,\n        nth,\n', '        text,\n        nth: None,\n', 'an_anchor_says_where_a_visible_signature_goes_instead_of_a_rectangle'),
     Mutation('sign anchor: accept match 0', 'src/cli/sign.rs', 'fn match_number(text: &str) -> Result<u32, String> {\n    match text.trim().parse::<u32>() {\n        Ok(n) if n >= 1 => Ok(n),', 'fn match_number(text: &str) -> Result<u32, String> {\n    match text.trim().parse::<u32>() {\n        Ok(n) => Ok(n),', 'an_anchor_says_where_a_visible_signature_goes_instead_of_a_rectangle'),
-    Mutation('identity: the thumbprint is printed in capitals in the report', 'src/keystore.rs', '    sha1::Sha1::digest(certificate)\n        .iter()\n        .map(|b| format!("{b:02x}"))', '    sha1::Sha1::digest(certificate)\n        .iter()\n        .map(|b| format!("{b:02X}"))', 'a_certificate_is_named_by_the_thumbprint_windows_shows_for_it'),
+    Mutation('identity: the thumbprint is printed in capitals in the report', 'src/keystore.rs', '    crate::encoding::hex_lower(&sha1::Sha1::digest(certificate))', '    crate::encoding::hex_upper(&sha1::Sha1::digest(certificate))', 'a_certificate_is_named_by_the_thumbprint_windows_shows_for_it'),
     Mutation('user path: --add and --remove pass together', 'src/cli/path.rs', '        if what != Path::Show && what != asked {', '        if false {', 'path_shows_adds_or_removes_and_never_both'),
     Mutation('user path: --remove is read as --add', 'src/cli/path.rs', '            "--remove" => Path::Remove,', '            "--remove" => Path::Add,', 'path_shows_adds_or_removes_and_never_both'),
     Mutation('user path: a folder already there is added again', 'src/userpath.rs', "    if value.split(';').any(|entry| key(entry) == key(dir)) {\n        return None;\n    }\n    let kept", '    let kept', 'a_folder_is_added_last_and_once'),

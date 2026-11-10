@@ -10,6 +10,12 @@
 //! that comes back after the reader moved on is dropped. A document that runs
 //! out its time leaves the pane saying so, and `prevhost.exe` answering.
 //!
+//! **One render is out at a time**, with the newest request waiting behind it
+//! ([`plan::Renders`]), and keys and the wheel are settled by the same timer
+//! that settles a resize. A dropped result is still a `tpdf-cli` and a worker
+//! that ran to the end, so a pane that started one per key repeat ran a
+//! process per page the reader passed.
+//!
 //! The handler does not know how many pages a document has. Asking for a page
 //! past the end is refused by `tpdf-cli`, and the pane keeps the page it shows.
 //!
@@ -121,9 +127,20 @@ struct Pane {
     /// the size already asked for starts nothing.
     asked: Option<(Fit, u32)>,
     mailbox: Arc<Mutex<Option<Outcome>>>,
+    /// The render out and the newest one waiting behind it. See
+    /// [`plan::Renders`] for why there is never a second.
+    renders: plan::Renders<Job>,
     /// Set when the window procedure took its reference to the pane, so that
     /// a `CreateWindowExW` that failed before then can give it back.
     taken: bool,
+}
+
+/// One render, as asked for.
+struct Job {
+    generation: u64,
+    fit: Fit,
+    page: u32,
+    document: Arc<[u8]>,
 }
 
 // `Agile = false`: `#[implement]` otherwise adds `IAgileObject` and the
@@ -181,6 +198,7 @@ fn destroy(pane: &Rc<RefCell<Pane>>) {
         p.asked = None;
         p.shown = None;
         p.document = None;
+        p.renders.reset();
         std::mem::take(&mut p.window)
     };
     if window != 0 {
@@ -225,8 +243,9 @@ pub(crate) fn unregister_class() {
     }
 }
 
-/// Starts a render of `page` fitted to the window, unless that exact one was
-/// the last asked for.
+/// Asks for a render of `page` fitted to the window, unless that exact one was
+/// the last asked for. It starts now if no render is out, and otherwise waits
+/// in place of any request already waiting ([`plan::Renders`]).
 fn request(pane: &Rc<RefCell<Pane>>, page: u32) {
     let mut p = pane.borrow_mut();
     if p.window == 0 {
@@ -250,11 +269,42 @@ fn request(pane: &Rc<RefCell<Pane>>, page: u32) {
     p.asked = Some((fit, page));
     p.wanted = page;
     p.generation += 1;
-    let generation = p.generation;
+    let job = Job {
+        generation: p.generation,
+        fit,
+        page,
+        document,
+    };
+    let start = p.renders.ask(job);
     let window = p.window;
     let mailbox = Arc::clone(&p.mailbox);
     drop(p);
+    if let Some(job) = start {
+        spawn(job, window, mailbox);
+    }
+}
 
+/// Starts the render that was waiting, if one was, now that the one out ended.
+fn next(pane: &Rc<RefCell<Pane>>) {
+    let mut p = pane.borrow_mut();
+    let start = p.renders.finished();
+    let window = p.window;
+    let mailbox = Arc::clone(&p.mailbox);
+    drop(p);
+    if let (Some(job), true) = (start, window != 0) {
+        spawn(job, window, mailbox);
+    }
+}
+
+/// Runs one render on a thread of its own, which posts [`WM_RENDERED`] to
+/// `window` when its result is in the mailbox.
+fn spawn(job: Job, window: isize, mailbox: Arc<Mutex<Option<Outcome>>>) {
+    let Job {
+        generation,
+        fit,
+        page,
+        document,
+    } = job;
     // Taken here, before the thread exists, so the DLL cannot be unloaded
     // between the two.
     let counted = Counted::new();
@@ -358,10 +408,18 @@ fn fail(p: &mut Pane) {
     }
 }
 
-fn step(pane: &Rc<RefCell<Pane>>, step: Step) {
-    let from = pane.borrow().wanted;
-    if let Some(page) = plan::stepped(from, step) {
-        request(pane, page);
+/// Moves the page wanted, and asks for it once the steps settle.
+///
+/// The request is the timer's, as a resize's is: each step restarts it, so a
+/// run of key repeats or wheel notches is one render of where they ended.
+fn step(pane: &Rc<RefCell<Pane>>, window: HWND, step: Step) {
+    let mut p = pane.borrow_mut();
+    if let Some(page) = plan::stepped(p.wanted, step) {
+        p.wanted = page;
+        drop(p);
+        // SAFETY: a timer on the pane's own window; setting it again restarts
+        // it, which is the debounce.
+        unsafe { SetTimer(Some(window), RESIZED, plan::STEP_SETTLE_MS, None) };
     }
 }
 
@@ -458,11 +516,14 @@ fn handle(pane: &Rc<RefCell<Pane>>, window: HWND, message: u32, wparam: WPARAM) 
             Some(LRESULT(0))
         }
         WM_RENDERED => {
+            // One per render that ended, whatever it brought, so the waiting
+            // request starts whether or not this result is still wanted.
             arrived(pane);
+            next(pane);
             Some(LRESULT(0))
         }
         WM_KEYDOWN => key_step(wparam.0 as u16).map(|wanted| {
-            step(pane, wanted);
+            step(pane, window, wanted);
             LRESULT(0)
         }),
         WM_MOUSEWHEEL => {
@@ -470,6 +531,7 @@ fn handle(pane: &Rc<RefCell<Pane>>, window: HWND, message: u32, wparam: WPARAM) 
             let delta = (wparam.0 >> 16) as u16 as i16;
             step(
                 pane,
+                window,
                 if delta > 0 {
                     Step::Previous
                 } else {

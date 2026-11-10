@@ -412,6 +412,10 @@ rather than the account.** `docs/RATIONALE.md` has the full version of every one
 - `subsystems` — the section titles of `docs/SUBSYSTEMS.md` against their index in `AGENTS.md`,
   as sets both ways and in order. Six sections had been added to the file without a line in
   the index, which nothing reported.
+- `environment`: the table of `TPDF_*` variables in `docs/build/running.md` against the code,
+  both ways: every name in `src-tauri/src`, `src` and `src-tauri/shellext/src` has a row, and
+  every row names a tracked file that still contains it. Before it, most of the names were in
+  no document.
 - `traps` — `docs/TRAPS.md`'s table of contents against its own `### ` entries, diffed as
   sets both ways, because a tally can be right while the index is three entries short. Since
   2026-08-31 it also holds a bullet to its title, since 2026-09-06 the thirteen group names
@@ -436,6 +440,8 @@ rather than the account.** `docs/RATIONALE.md` has the full version of every one
   working tree; 0.4 s cached, ~16 s after a Rust edit, 22 s for all 2,389 from an empty cache.
 - `mutations` — every suite `vitest list --json` collects is either mutated or excluded with a
   reason, so a harness omission is caught in twelve seconds rather than after a control pass.
+  It also fails on a suite in `TEST_FILES` that no row's `expect` names: a listed suite runs
+  on every mutation and, with no row aimed at it, can never be the one that goes red.
 - `corpora` — every `testdata/*.pdf` is a window corpus with a stated purpose or an exclusion
   with a stated reason; the list used to live in whatever shell loop somebody typed.
 - `sinks` — `docs/THREAT-MODEL.md` T8: no markup-parsing sink anywhere in the frontend, plus

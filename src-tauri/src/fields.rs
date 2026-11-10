@@ -318,6 +318,24 @@ pub fn qualified_name(prefix: &str, partial: &str) -> String {
 /// A tree past those bounds. The names found are then not all of them, and a
 /// caller that picked one anyway could pick one the form has.
 pub fn one_part_names(doc: &Document) -> Result<HashSet<String>, String> {
+    Ok(one_part_fields(doc)?
+        .into_iter()
+        .map(|(_, name)| name)
+        .collect())
+}
+
+/// [`one_part_names`] with the field each name belongs to, in document order:
+/// its object id, or `None` for a field written out in place. A name two
+/// fields share is listed twice.
+///
+/// For a caller that changes names rather than adding one: a rename vacates
+/// the name it replaces, and a set of names cannot say whether another field
+/// still holds it.
+///
+/// # Errors
+///
+/// As [`one_part_names`].
+pub fn one_part_fields(doc: &Document) -> Result<Vec<(Option<ObjectId>, String)>, String> {
     let bounds = Bounds {
         nodes: 4096,
         depth: Some(32),
@@ -325,7 +343,7 @@ pub fn one_part_names(doc: &Document) -> Result<HashSet<String>, String> {
         names: false,
         order: Order::Document,
     };
-    let mut names = HashSet::new();
+    let mut names = Vec::new();
     let cut = walk(doc, &bounds, |node| {
         let name = node
             .dict
@@ -334,7 +352,7 @@ pub fn one_part_names(doc: &Document) -> Result<HashSet<String>, String> {
         if name.is_empty() {
             return Flow::Descend;
         }
-        names.insert(name);
+        names.push((node.id, name));
         Flow::Leaf
     });
     if cut.dropped > 0 || cut.too_deep > 0 {

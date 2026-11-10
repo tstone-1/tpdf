@@ -813,8 +813,8 @@ ROWS += [
         # byte is still there, which is the picture's trap in the one place the
         # leftover is text somebody asked to be rid of.
         "save: leave a deleted comment's bytes in the file",
-        "src/save.rs",
-        "        || discarded > 0\n",
+        "src/edits.rs",
+        "            || !discards.is_empty()\n",
         "",
         "a_deleted_comment_leaves_the_page_and_leaves_no_bytes_behind",
     ),
@@ -1095,7 +1095,7 @@ ROWS += [
         # asked, over bytes this process could not have produced that answer
         # from.
         "verify: scan the written file in the coordinator instead of the verifier",
-        "src/commands/redact.rs",
+        "src/redaction_steps.rs",
         "    scanning.scan(&mut file, len, needles, password)",
         "    let _ = scanning;\n"
         "    let mut bytes = Vec::new();\n"
@@ -1110,7 +1110,7 @@ ROWS += [
         # would be certified clean. This is the exact shape `docs/PLAN.md` 6
         # forbids, and it is one `?` away at all times.
         "verify: certify a file that could not be opened at all",
-        "src/commands/redact.rs",
+        "src/redaction_steps.rs",
         '    let mut file = std::fs::File::open(at)\n        .map_err(|why| said!("the redacted file could not be read back: {why}"))?;',
         '    let Ok(mut file) = std::fs::File::open(at) else {\n        return Ok(verify::Report::default());\n    };',
         "a_read_back_of_a_file_that_is_not_there_is_an_error",
@@ -1385,8 +1385,8 @@ ROWS += [
         # opens the first link's address.
         "links: number every web target zero rather than by position",
         "src/links.rs",
-        "    let token = urls.len() as u32;\n    urls.push(web.url);",
-        "    let token = 0;\n    urls.push(web.url);",
+        "    let token = urls.len() as u32;\n    urls.push(web.url().to_string());",
+        "    let token = 0;\n    urls.push(web.url().to_string());",
         "each_web_target_indexes_its_own_address",
     ),
 ]

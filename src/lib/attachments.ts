@@ -38,6 +38,9 @@ const TEXT = catalog({
     severalNames: (count: number, typed: string) => `${count} attachments have "${typed}" in their names; type a number`,
     saves: (described: string) => `Saves ${described}`,
     programWarning: " Its name says it is a program or script: open it only if you trust the document it came from.",
+    macroWarning:
+      " Its name says it is an Office file that can hold macros, which run code: allow them only if you trust the " +
+      "document it came from.",
     saved: (name: string, where: string, size: string) => `Saved ${name} to ${where}, ${size}.`,
     row: (number: number) => `Attachment ${number}`,
   },
@@ -68,6 +71,9 @@ const TEXT = catalog({
     saves: (described: string) => `Speichert ${described}`,
     programWarning:
       " Laut Name ist die Datei ein Programm oder Skript: Öffne sie nur, wenn du dem Dokument vertraust, aus dem sie stammt.",
+    macroWarning:
+      " Laut Name ist die Datei eine Office-Datei, die Makros enthalten kann, und Makros führen Code aus: Lass sie nur zu, " +
+      "wenn du dem Dokument vertraust, aus dem sie stammt.",
     saved: (name: string, where: string, size: string) => `${name} in ${where} gespeichert, ${size}.`,
     row: (number: number) => `Anhang ${number}`,
   },
@@ -75,6 +81,9 @@ const TEXT = catalog({
     severalNames: (count: number, typed: string) =>
       `${count} Anhänge haben „${typed}“ im Namen; geben Sie eine Nummer ein`,
     programWarning: " Laut Name ist die Datei ein Programm oder Skript: Öffnen Sie sie nur, wenn Sie dem Dokument vertrauen, aus dem sie stammt.",
+    macroWarning:
+      " Laut Name ist die Datei eine Office-Datei, die Makros enthalten kann, und Makros führen Code aus: Lassen Sie sie nur " +
+      "zu, wenn Sie dem Dokument vertrauen, aus dem sie stammt.",
   },
 });
 
@@ -93,9 +102,10 @@ export interface Embedded {
 /** Kinds by the ending a name claims, lower case and without the dot. */
 const KINDS: Record<string, Kind> = {
   pdf: "pdf",
-  doc: "word", docx: "word",
-  xls: "excel", xlsx: "excel", xlsm: "excel",
-  ppt: "powerPoint", pptx: "powerPoint",
+  doc: "word", docx: "word", docm: "word", dotm: "word",
+  xls: "excel", xlsx: "excel", xlsm: "excel", xltm: "excel", xlam: "excel",
+  ppt: "powerPoint", pptx: "powerPoint", pptm: "powerPoint", potm: "powerPoint", ppsm: "powerPoint",
+  ppam: "powerPoint", sldm: "powerPoint",
   odt: "openText", ods: "openSpreadsheet", odp: "openPresentation",
   csv: "csv", txt: "text", xml: "xml", json: "json",
   htm: "webPage", html: "webPage",
@@ -105,11 +115,22 @@ const KINDS: Record<string, Kind> = {
   eml: "email", msg: "email",
 };
 
-/** Endings a system runs when the file is opened: the kind a reader is warned about. */
+/**
+ * Endings a system runs when the file is opened: the kind a reader is warned
+ * about. Windows runs the script hosts' endings (`hta`, `wsf`, `vbe`, `jse`),
+ * installs packages and settings (`msix`, `appx`, `msp`, `reg`), opens control
+ * panel items and consoles (`cpl`, `msc`), and follows shortcuts, which can
+ * name a program (`lnk`, `pif`, `url`, `scf`) --- each with a double-click.
+ */
 const PROGRAMS = new Set([
-  "exe", "msi", "bat", "cmd", "com", "scr", "ps1", "vbs", "js", "jar",
-  "sh", "command", "app", "dmg", "pkg", "deb", "rpm", "appimage", "lnk",
+  "exe", "msi", "msp", "bat", "cmd", "com", "scr", "ps1", "psm1", "vbs", "vbe", "js", "jse", "jar",
+  "hta", "wsf", "wsh", "cpl", "msc", "reg", "msix", "msixbundle", "appx", "appxbundle",
+  "lnk", "pif", "url", "scf",
+  "sh", "command", "app", "dmg", "pkg", "deb", "rpm", "appimage",
 ]);
+
+/** Office endings whose files can hold macros, which run code when a reader enables them. */
+const MACROS = new Set(["docm", "dotm", "xlsm", "xltm", "xlam", "pptm", "potm", "ppsm", "ppam", "sldm"]);
 
 /** The ending a name claims, lower case, or "" for none. */
 function ending(name: string): string {
@@ -169,9 +190,14 @@ export function preview(raw: string, files: readonly Embedded[]): string {
   return "index" in picked ? TEXT().saves(describe(files[picked.index]!)) : "";
 }
 
+/** Whether the name claims an Office file that can hold macros. */
+export function holdsMacros(name: string): boolean {
+  return MACROS.has(ending(name));
+}
+
 /** What the window says once a file is saved. */
 export function saved(file: Embedded, bytes: number, where: string): string {
-  const warning = isProgram(file.name) ? TEXT().programWarning : "";
+  const warning = isProgram(file.name) ? TEXT().programWarning : holdsMacros(file.name) ? TEXT().macroWarning : "";
   return `${TEXT().saved(file.name, where, formatBytes(bytes))}${warning}`;
 }
 

@@ -36,6 +36,16 @@
 //! deferred image sitting anywhere else in the file is still exactly what this
 //! bullet says it is: bytes nobody read, reported rather than waved through.
 //!
+//! **The byte scan reads characters, and a composite font does not store
+//! them.** Under a `/Type0` font a content stream carries glyph numbers, so a
+//! word drawn through one is never in the file as its own bytes and the scan
+//! finds nothing whether the word is there or not. A file holding such a font is
+//! therefore blind, once, for the file: the scan cannot account for a copy of
+//! the words anywhere it draws. The command-line tool adds a text-extraction
+//! search of the pages it was asked about, which reads them in their own
+//! encoding; it does not reach an appearance stream or a form no page draws,
+//! so it narrows this reason and does not withdraw it.
+//!
 //! A caller that wants a single word gets [`Verdict`], which says *not verified*
 //! for either list. What the split buys is that the reason names the next step
 //! rather than ending the conversation.
@@ -881,6 +891,34 @@ pub fn scan(bytes: &[u8], needles: &[String], password: Option<&str>) -> Report 
             // decodes anything, and only for needles that actually match, so a
             // clean file pays nothing for it.
             let mut carriers: BTreeMap<String, Carriers> = BTreeMap::new();
+            // Said once for the file, however many such fonts it has: the
+            // reason is about the instrument, and it is the same reason for
+            // every one of them.
+            if doc.objects.values().any(names_a_composite_font) {
+                report.blind.push(said!(
+                    "the file draws text through a composite (Type0) font, which stores glyph \
+                     numbers rather than characters, so a copy of the words drawn through it \
+                     cannot be found by reading its bytes"
+                ));
+            }
+            // Carriers the scan reads only as bytes, whose contents are another
+            // format: an embedded file is a document of its own --- a zipped
+            // office file, an image, another PDF with its own filters --- and
+            // a producer's private data is whatever that producer wrote. A
+            // redaction neither removes nor reads them, so each is a reason.
+            let held = carriers_held(&doc);
+            if held.embedded {
+                report.blind.push(said!(
+                    "the file carries embedded files, which are documents of their own that \
+                     nothing here reads, so a copy of the words inside one would not be found"
+                ));
+            }
+            if held.private {
+                report.blind.push(said!(
+                    "the file carries an application's private data (/PieceInfo), which nothing \
+                     here reads, so a copy of the words inside it would not be found"
+                ));
+            }
             for (id, object) in &doc.objects {
                 let strings = flatten_strings(object);
                 for needle in needles {
@@ -892,7 +930,29 @@ pub fn scan(bytes: &[u8], needles: &[String], password: Option<&str>) -> Report 
                 let Object::Stream(stream) = object else {
                     continue;
                 };
-                let filters = stream.filters().unwrap_or_default();
+                // **A `/Filter` that cannot be read is not an empty one.**
+                // `lopdf` accepts only a name or an array of names, and answers
+                // `Err` for an indirect reference or an array holding one ---
+                // which PDFium resolves, and draws. Read as "no filter", that
+                // stream would be scanned as its compressed bytes, find nothing
+                // and certify a copy of the words the reader can see. And the
+                // decoder fails the same way, handing back the raw bytes rather
+                // than an error, so the `Err` arm below would never fire either.
+                let filters = match stream.filters() {
+                    Ok(filters) => filters,
+                    Err(_) if !stream.dict.has(b"Filter") => Vec::new(),
+                    Err(_) => {
+                        blind_objects += 1;
+                        if blind_objects <= MAX_OBJECT_REASONS {
+                            report.blind.push(said!(
+                                "object {object} names its filter in a form this build does not \
+                                 read, so its contents were not decoded",
+                                object = id.0
+                            ));
+                        }
+                        continue;
+                    }
+                };
                 match classify(&filters) {
                     Carrier::Image { filter } => {
                         deferred_objects += 1;
@@ -992,7 +1052,82 @@ pub fn scan(bytes: &[u8], needles: &[String], password: Option<&str>) -> Report 
     report
 }
 
-/// How many times `needle` occurs in `haystack`.
+/// Whether `object` is, or holds, a font dictionary of subtype `/Type0`.
+///
+/// Inside the object as well as at its top, because a font may be written
+/// directly into a `/Resources` dictionary and PDFium draws it there too. A
+/// worklist rather than recursion, for [`push_refs`]'s reason: the nesting is
+/// the file's to choose. The work is linear in the object's size, which
+/// [`flatten_strings`] already pays for every object.
+fn names_a_composite_font(object: &Object) -> bool {
+    let mut inner: Vec<&Object> = vec![object];
+    while let Some(value) = inner.pop() {
+        let dict = match value {
+            Object::Dictionary(dict) => dict,
+            Object::Stream(stream) => &stream.dict,
+            Object::Array(items) => {
+                inner.extend(items.iter());
+                continue;
+            }
+            _ => continue,
+        };
+        if dict
+            .get(b"Subtype")
+            .and_then(Object::as_name)
+            .is_ok_and(|name| name == b"Type0")
+        {
+            return true;
+        }
+        inner.extend(dict.iter().map(|(_, value)| value));
+    }
+    false
+}
+
+/// Which carriers of another format a document holds anywhere.
+#[derive(Default)]
+struct Held {
+    /// `/EmbeddedFiles`, a file specification's `/EF`, or an `/AF` list.
+    embedded: bool,
+    /// `/PieceInfo` on a page, a form or the catalog.
+    private: bool,
+}
+
+/// Looks through every object for the keys that hold such carriers.
+///
+/// By key rather than by place, because each may sit in more than one: an
+/// embedded file is reached from the name tree, from an attachment
+/// annotation's file specification and from an associated-files list, and
+/// `/PieceInfo` from a page, a form or the catalog.
+fn carriers_held(doc: &Document) -> Held {
+    let mut held = Held::default();
+    for object in doc.objects.values() {
+        let mut inner: Vec<&Object> = vec![object];
+        while let Some(value) = inner.pop() {
+            let dict = match value {
+                Object::Dictionary(dict) => dict,
+                Object::Stream(stream) => &stream.dict,
+                Object::Array(items) => {
+                    inner.extend(items.iter());
+                    continue;
+                }
+                _ => continue,
+            };
+            for (key, value) in dict {
+                match key.as_slice() {
+                    b"EmbeddedFiles" | b"EF" | b"AF" => held.embedded = true,
+                    b"PieceInfo" => held.private = true,
+                    _ => {}
+                }
+                inner.push(value);
+            }
+            if held.embedded && held.private {
+                return held;
+            }
+        }
+    }
+    held
+}
+
 /// How many revisions a file ends: `%%EOF` markers that follow a `startxref`
 /// and its offset, with white space between the three.
 ///
@@ -1039,6 +1174,7 @@ fn trailing(bytes: &[u8], is: fn(&u8) -> bool) -> usize {
     bytes.iter().rev().take_while(|byte| is(byte)).count()
 }
 
+/// How many times `needle` occurs in `haystack`.
 fn count(haystack: &[u8], needle: &[u8]) -> usize {
     if needle.is_empty() || haystack.len() < needle.len() {
         return 0;
@@ -2368,6 +2504,241 @@ mod tests {
             super::flatten_strings(&object),
             b"\xFE\xFF\x00a\x00b\nab\n",
             "the stored bytes, then what they say"
+        );
+    }
+
+    /// One page drawing `page_text`, and a Form XObject holding `hidden`
+    /// deflated, with its `/Filter` written directly or as a reference.
+    fn filtered(page_text: &str, hidden: &str, indirect_filter: bool) -> Vec<u8> {
+        use lopdf::{dictionary, Document, Object, Stream};
+
+        let mut doc = Document::with_version("1.7");
+        let pages_id = doc.new_object_id();
+        let mut form = Stream::new(
+            dictionary! {
+                "Type" => "XObject",
+                "Subtype" => "Form",
+                "BBox" => vec![0.into(), 0.into(), 612.into(), 792.into()],
+            },
+            // Padded, because `compress` keeps a stream that deflating would
+            // not shrink as it is, and the fixture needs it deflated.
+            format!(
+                "BT /F1 12 Tf 72 600 Td ({hidden}) Tj ET\n{}",
+                "q Q\n".repeat(200)
+            )
+            .into_bytes(),
+        );
+        form.compress().expect("deflate the form");
+        assert!(
+            !form
+                .content
+                .windows(hidden.len())
+                .any(|w| w == hidden.as_bytes()),
+            "the fixture must hide the words from a reading of the raw bytes"
+        );
+        if indirect_filter {
+            let name = doc.add_object(Object::Name(b"FlateDecode".to_vec()));
+            form.dict.set("Filter", Object::Reference(name));
+        }
+        let form = doc.add_object(form);
+        let content = doc.add_object(Stream::new(
+            dictionary! {},
+            format!("BT /F1 12 Tf 72 700 Td ({page_text}) Tj ET /X1 Do").into_bytes(),
+        ));
+        let page = doc.add_object(dictionary! {
+            "Type" => "Page",
+            "Parent" => pages_id,
+            "MediaBox" => vec![0.into(), 0.into(), 612.into(), 792.into()],
+            "Contents" => content,
+            "Resources" => dictionary! { "XObject" => dictionary! { "X1" => form } },
+        });
+        doc.objects.insert(
+            pages_id,
+            Object::Dictionary(dictionary! {
+                "Type" => "Pages", "Kids" => vec![page.into()], "Count" => 1,
+            }),
+        );
+        let catalog = doc.add_object(dictionary! { "Type" => "Catalog", "Pages" => pages_id });
+        doc.trailer.set("Root", catalog);
+        let mut bytes = Vec::new();
+        doc.save_to(&mut bytes).expect("serialise the fixture");
+        bytes
+    }
+
+    #[test]
+    fn a_stream_whose_filter_is_an_indirect_reference_withholds_the_verdict() {
+        let needles = vec!["4711-0815".to_string()];
+        let report = super::scan(&filtered("kept", "4711-0815", true), &needles, None);
+        let Verdict::NotVerified(why) = report.verdict() else {
+            panic!("a stream nothing decoded must not certify the file: {report:?}");
+        };
+        assert!(
+            why.iter()
+                .any(|one| one.contains("names its filter in a form this build does not read")),
+            "and the reason names the filter: {why:?}"
+        );
+    }
+
+    #[test]
+    fn a_stream_whose_filter_is_written_directly_is_decoded_and_scanned() {
+        // The control: the same words in the same deflated form, found once the
+        // filter is one `lopdf` reads. Without it the test above passes for a
+        // scan that withholds every verdict.
+        let needles = vec!["4711-0815".to_string()];
+        let report = super::scan(&filtered("kept", "4711-0815", false), &needles, None);
+        assert!(report.found.contains("4711-0815"), "{report:?}");
+        let clean = super::scan(&filtered("kept", "nothing here", false), &needles, None);
+        assert_eq!(clean.verdict(), Verdict::Verified, "{clean:?}");
+    }
+
+    /// One page drawing `text` through a font of `subtype`, as glyph numbers
+    /// when the font is composite.
+    fn drawn_through(subtype: &str) -> Vec<u8> {
+        use lopdf::{dictionary, Document, Object, Stream};
+
+        let mut doc = Document::with_version("1.7");
+        let pages_id = doc.new_object_id();
+        let font = if subtype == "Type0" {
+            dictionary! {
+                "Type" => "Font",
+                "Subtype" => "Type0",
+                "BaseFont" => "Synthetic",
+                "Encoding" => "Identity-H",
+            }
+        } else {
+            dictionary! { "Type" => "Font", "Subtype" => "Type1", "BaseFont" => "Helvetica" }
+        };
+        let content = doc.add_object(Stream::new(
+            dictionary! {},
+            b"BT /F1 12 Tf 72 700 Td <00170014001400120010> Tj ET".to_vec(),
+        ));
+        let page = doc.add_object(dictionary! {
+            "Type" => "Page",
+            "Parent" => pages_id,
+            "MediaBox" => vec![0.into(), 0.into(), 612.into(), 792.into()],
+            "Contents" => content,
+            // Written directly into the resources, which is the harder of the
+            // two places for the scan to look.
+            "Resources" => dictionary! { "Font" => dictionary! { "F1" => font } },
+        });
+        doc.objects.insert(
+            pages_id,
+            Object::Dictionary(dictionary! {
+                "Type" => "Pages", "Kids" => vec![page.into()], "Count" => 1,
+            }),
+        );
+        let catalog = doc.add_object(dictionary! { "Type" => "Catalog", "Pages" => pages_id });
+        doc.trailer.set("Root", catalog);
+        let mut bytes = Vec::new();
+        doc.save_to(&mut bytes).expect("serialise the fixture");
+        bytes
+    }
+
+    #[test]
+    fn a_file_with_a_composite_font_is_not_certified_by_the_byte_scan() {
+        let needles = vec!["4711-0815".to_string()];
+        let report = super::scan(&drawn_through("Type0"), &needles, None);
+        let Verdict::NotVerified(why) = report.verdict() else {
+            panic!("glyph numbers the scan cannot read must not certify the file");
+        };
+        assert!(
+            why.iter().any(|one| one.contains("composite (Type0) font")),
+            "{why:?}"
+        );
+        // The control: the same page through a simple font is certified, so the
+        // reason above is the font's and not the page's.
+        let simple = super::scan(&drawn_through("Type1"), &needles, None);
+        assert_eq!(simple.verdict(), Verdict::Verified, "{simple:?}");
+    }
+
+    /// [`drawn_through`]'s simple-font page, with `key` set on the catalog.
+    fn with_catalog_key(key: &str, value: lopdf::Object) -> Vec<u8> {
+        let mut doc = lopdf::Document::load_mem(&drawn_through("Type1")).expect("load");
+        doc.catalog_mut().expect("catalog").set(key, value);
+        let mut bytes = Vec::new();
+        doc.save_to(&mut bytes).expect("serialise");
+        bytes
+    }
+
+    #[test]
+    fn an_embedded_file_withholds_the_verdict() {
+        use lopdf::{dictionary, Object};
+        let needles = vec!["4711-0815".to_string()];
+        let names = dictionary! {
+            "EmbeddedFiles" => dictionary! { "Names" => vec![
+                Object::string_literal("a.docx"),
+                dictionary! { "Type" => "Filespec", "F" => Object::string_literal("a.docx") }.into(),
+            ] },
+        };
+        let report = super::scan(&with_catalog_key("Names", names.into()), &needles, None);
+        let Verdict::NotVerified(why) = report.verdict() else {
+            panic!("an embedded file nothing read must not certify the file");
+        };
+        assert!(
+            why.iter().any(|one| one.contains("embedded files")),
+            "{why:?}"
+        );
+        let listed = super::scan(
+            &with_catalog_key(
+                "AF",
+                vec![dictionary! { "Type" => "Filespec" }.into()].into(),
+            ),
+            &needles,
+            None,
+        );
+        assert!(
+            matches!(listed.verdict(), Verdict::NotVerified(_)),
+            "an /AF list too"
+        );
+    }
+
+    #[test]
+    fn an_applications_private_data_withholds_the_verdict() {
+        use lopdf::dictionary;
+        let needles = vec!["4711-0815".to_string()];
+        let report = super::scan(
+            &with_catalog_key(
+                "PieceInfo",
+                dictionary! { "Vendor" => dictionary! {} }.into(),
+            ),
+            &needles,
+            None,
+        );
+        let Verdict::NotVerified(why) = report.verdict() else {
+            panic!("private data nothing read must not certify the file");
+        };
+        assert!(why.iter().any(|one| one.contains("/PieceInfo")), "{why:?}");
+        // The control: the same file with an unrelated key is certified, so the
+        // reason is the key's.
+        let plain = super::scan(
+            &with_catalog_key("Lang", lopdf::Object::string_literal("en")),
+            &needles,
+            None,
+        );
+        assert_eq!(plain.verdict(), Verdict::Verified, "{plain:?}");
+    }
+
+    #[test]
+    fn a_needle_drawn_through_identity_h_is_not_certified_by_the_scan() {
+        // The generated CID fixture, where PDFium extracts the word and no byte
+        // of the file spells it: the document a byte scan once called clean.
+        let path = std::path::Path::new("../testdata/text-cid.pdf");
+        if !path.exists() {
+            crate::fixtures::missing(
+                "[SKIP] a_needle_drawn_through_identity_h_is_not_certified_by_the_scan: \
+                 generate testdata/ (BUILD.md)",
+            );
+            return;
+        }
+        let bytes = std::fs::read(path).expect("read the fixture");
+        let report = super::scan(&bytes, &["4711-0815".to_string()], None);
+        assert!(
+            !report.found.contains("4711-0815"),
+            "the precondition: the scan cannot see the word in this file"
+        );
+        assert!(
+            matches!(report.verdict(), Verdict::NotVerified(_)),
+            "so it must not call the file clean: {report:?}"
         );
     }
 }

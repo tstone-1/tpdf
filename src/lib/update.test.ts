@@ -183,22 +183,32 @@ describe("pluginUpdater", () => {
 
   it("records each check that reached the network, and how it was started", async () => {
     // Mutation: drop the record call, or pass `true` for every check -> red.
+    // The duration is what tells a stall from a refusal in the log, so it is
+    // asserted as a value off an injected clock: each request takes the time
+    // its fake says. Mutation: record 0, or read the clock once -> red.
     const record = vi.fn();
-    const check = vi.fn<UpdaterApi["check"]>()
-      .mockResolvedValueOnce(null)
-      .mockResolvedValueOnce(handle("26.12.0"))
-      .mockRejectedValueOnce(new Error("operation timed out"));
+    let clock = 1_000;
+    const took = [40, 7, 30_000];
+    const answers: (() => Promise<UpdateHandle | null>)[] = [
+      async () => null,
+      async () => handle("26.12.0"),
+      async () => { throw new Error("operation timed out"); },
+    ];
+    let n = 0;
+    const check = vi.fn<UpdaterApi["check"]>(async () => {
+      clock += took[n] ?? 0;
+      return answers[n++]!();
+    });
     const u = new Updates({ check }, undefined, () => ({ getItem: () => null, setItem: () => {} }),
-      true, record);
+      true, record, () => clock);
     await u.checkOnLaunch();
     await u.check();
     await u.check();
-    expect(record.mock.calls.map(([outcome, , launch]) => [outcome, launch])).toEqual([
-      [{ kind: "current" }, true],
-      [{ kind: "available", version: "26.12.0" }, false],
-      [{ kind: "failed", message: "Error: operation timed out" }, false],
+    expect(record.mock.calls).toEqual([
+      [{ kind: "current" }, 40, true],
+      [{ kind: "available", version: "26.12.0" }, 7, false],
+      [{ kind: "failed", message: "Error: operation timed out" }, 30_000, false],
     ]);
-    for (const [, ms] of record.mock.calls) expect(ms).toBeGreaterThanOrEqual(0);
   });
 
   it("records nothing where no request is made, and a failed record changes no answer", async () => {
@@ -275,11 +285,50 @@ describe("Updates.check", () => {
     };
     const u = new Updates(slow);
     const first = u.check();
-    await u.check();
+    const second = u.check();
     expect(calls).toBe(1);
     release(null);
     await first;
+    await second;
     expect(calls).toBe(1);
+  });
+
+  it("gives a check asked for during another that one's settled answer", async () => {
+    // "Check for updates" pressed while the launch check runs puts what it is
+    // given in the status line. Given `checking`, the line said checking for
+    // ever, because nothing writes it again when the launch check settles.
+    // Mutation: `if (this.#checking) return this.#checking;` -> `return
+    // Promise.resolve(this.#state)` -> red.
+    let release!: (v: UpdateHandle | null) => void;
+    const u = new Updates(
+      { check: () => new Promise((r) => (release = r)) },
+      undefined,
+      () => ({ getItem: () => null, setItem: () => {} }),
+    );
+    const launch = u.checkOnLaunch();
+    const asked = u.check();
+    release(handle("26.12.0"));
+    expect(await asked).toEqual({ kind: "available", version: "26.12.0" });
+    expect(await launch).toEqual({ kind: "available", version: "26.12.0" });
+    // Control: once it has settled, a check is a new request again.
+    const again = u.check();
+    release(null);
+    expect(await again).toEqual({ kind: "current" });
+  });
+
+  it("answers with the state while a download runs, and starts no check", async () => {
+    let finish!: () => void;
+    const calls = vi.fn(async () => ({
+      version: "26.12.0",
+      downloadAndInstall: () => new Promise<void>((r) => (finish = r)),
+    }));
+    const u = new Updates({ check: calls });
+    await u.check();
+    const installing = u.install();
+    expect(await u.check()).toEqual({ kind: "downloading", version: "26.12.0", percent: null });
+    expect(calls).toHaveBeenCalledTimes(1);
+    finish();
+    expect(await installing).toEqual({ kind: "ready", version: "26.12.0" });
   });
 
   it("clears the previous handle when a later check fails", async () => {
@@ -552,6 +601,10 @@ describe("finishing an update", () => {
           if (options.fail) throw new Error(options.fail);
         },
         say: (message: string) => log.push(`say:${message}`),
+        hold: () => {
+          log.push("hold");
+          return () => log.push("release");
+        },
       } satisfies FinishEffects,
     };
   }
@@ -560,14 +613,52 @@ describe("finishing an update", () => {
     // The ordinary press, and the one the whole feature exists for.
     const { log, effects: e } = effects();
     return expect(finishUpdate("restart", ready, true, e)).resolves.toBe("acted")
-      .then(() => expect(log).toEqual(["unsaved", "act"]));
+      .then(() => expect(log).toEqual(["unsaved", "hold", "act", "release"]));
   });
 
   it("asks before discarding unsaved work, and acts when the reader agrees", async () => {
     const { log, prompts, effects: e } = effects({ unsaved: ["notes.pdf"], agree: true });
     expect(await finishUpdate("restart", ready, true, e)).toBe("acted");
-    expect(log).toEqual(["unsaved", "confirm", "act"]);
+    expect(log).toEqual(["unsaved", "hold", "confirm", "act", "release"]);
     expect(prompts[0]?.message).toContain("notes.pdf");
+  });
+
+  it("an_install_that_ends_the_process_holds_edits_until_it_acts", async () => {
+    // The Windows install is the whole download, and the process ends inside
+    // it. Nothing is unsaved at the press, so nothing is asked; a note added
+    // during the download would be lost to an exit nobody asked about. So
+    // editing is held from the reading of `unsaved` and through `act`, and let
+    // go only when `act` comes back, which on Windows means it failed.
+    // Mutation: drop `effects.hold()` (or release before `attempt`) -> red.
+    const order: string[] = [];
+    let held = false;
+    let heldDuringAct: boolean | null = null;
+    const e: FinishEffects = {
+      unsaved: async () => { order.push(`unsaved:${held}`); return []; },
+      confirm: async () => { order.push("confirm"); return true; },
+      act: async () => {
+        heldDuringAct = held;
+        await Promise.resolve();
+        throw new Error("installer would not start");
+      },
+      say: (message) => order.push(`say:${message}:${held}`),
+      hold: () => {
+        held = true;
+        return () => { held = false; };
+      },
+    };
+    expect(await finishUpdate("install", available, true, e)).toBe("failed");
+    expect(order).toEqual(["unsaved:false", "say:Error: installer would not start:true"]);
+    expect(heldDuringAct).toBe(true);
+    expect(held).toBe(false);
+  });
+
+  it("lets the reader edit again when they keep the document open", async () => {
+    // The release on the way out of a "no", without which a cancelled update
+    // would leave every document read-only for the rest of the session.
+    const { log, effects: e } = effects({ unsaved: ["a.pdf"], agree: false });
+    expect(await finishUpdate("install", available, true, e)).toBe("cancelled");
+    expect(log).toEqual(["unsaved", "hold", "confirm", "release"]);
   });
 
   it("leaves the update ready when the reader says no", async () => {
@@ -579,7 +670,7 @@ describe("finishing an update", () => {
     // design rather than an accident.
     const { log, effects: e } = effects({ unsaved: ["notes.pdf"], agree: false });
     expect(await finishUpdate("restart", ready, true, e)).toBe("cancelled");
-    expect(log).toEqual(["unsaved", "confirm"]);
+    expect(log).toEqual(["unsaved", "hold", "confirm", "release"]);
     expect(ready.kind).toBe("ready");
     // And the step is still offered afterwards: the same call with the same
     // state reaches `act` once the reader agrees.
@@ -597,7 +688,7 @@ describe("finishing an update", () => {
     const { log, prompts, effects: e } = effects({ unsaved: ["a.pdf", "b.pdf"], agree: false });
     return expect(finishUpdate("install", available, true, e)).resolves.toBe("cancelled")
       .then(() => {
-        expect(log).toEqual(["unsaved", "confirm"]);
+        expect(log).toEqual(["unsaved", "hold", "confirm", "release"]);
         expect(prompts[0]?.message).toContain("closes tpdf");
       });
   });
@@ -628,6 +719,7 @@ describe("finishing an update", () => {
     // running, so there is nothing to discard --- and a modal here would be the
     // question with one answer that the prompt tests above refuse to ask.
     // Mutation: ignore `ends` -> red, because `unsaved` would be consulted.
+    // Nor is editing held: the process goes on, and the restart asks later.
     const { log, effects: e } = effects({ unsaved: ["notes.pdf"], agree: false });
     expect(await finishUpdate("install", available, false, e)).toBe("acted");
     expect(log).toEqual(["act"]);
@@ -648,6 +740,16 @@ describe("finishing an update", () => {
     expect(missingFrom(functionIn(app, "async function finishUpdateStep(step: FinishStep): Promise<void> {"), [
       "const ends = stepEndsProcess(step, isMac());",
     ])).toEqual([]);
+  });
+
+  it("holds edits through the busy state the edit commands obey", () => {
+    // The hold is only as good as what it is wired to. `documentTasks` is the
+    // gate `applyEdit` and the edit commands read (`documentBusy`).
+    // Mutation: wire `hold: () => () => {}` -> red.
+    expect(missingFrom(functionIn(app, "async function finishUpdateStep(step: FinishStep): Promise<void> {"), [
+      "hold: () => documentTasks.hold(),",
+    ])).toEqual([]);
+    expect(withoutComments(app)).toContain("if (copyTaskBusy || (documentBusy && !committingPopup)) return Promise.resolve(null);");
   });
 
   it("waits for the reading position to land before ending the process", () => {
@@ -672,7 +774,7 @@ describe("finishing an update", () => {
     // because only one of the two is a fault.
     const { log, effects: e } = effects({ fail: "no such binary" });
     expect(await finishUpdate("restart", ready, true, e)).toBe("failed");
-    expect(log).toEqual(["unsaved", "act", "say:Error: no such binary"]);
+    expect(log).toEqual(["unsaved", "hold", "act", "say:Error: no such binary", "release"]);
   });
 });
 

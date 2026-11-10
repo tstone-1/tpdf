@@ -98,6 +98,10 @@ next time an entry is added, and a set diff needs no number at all.
 sections in `AGENTS.md`'s *Stack*, added 2026-10-05 when that list was six
 sections short with nothing red.
 
+`environment` is the same comparison between the `TPDF_*` names the code
+contains and the table of them in `docs/build/running.md`: every name in the
+shipped sources has a row, and every row names a file that still contains it.
+
 `types` is `anchors` asked the other way round, and the distinction is the whole
 of why it exists: `anchors` proves a mutation's `before` is still in the tree,
 and that says nothing about whether its `after` still compiles. A replacement
@@ -200,6 +204,12 @@ def gates() -> "list[tuple[str, list[str], str]]":
             "names a section that is not there, or a file there is linked from nowhere",
         ),
         (
+            "environment",
+            [sys.executable, str(ROOT / "scripts" / "check_env_table.py")],
+            "a TPDF_* variable the code names has no row in docs/build/running.md's table, "
+            "or a row names a variable the file it points at does not",
+        ),
+        (
             # Cheap, and it guards the instrument every other dated claim in the
             # repository is read through. Seventy stamps were written a day and
             # two days ahead on 2026-08-28 before anything noticed.
@@ -269,7 +279,8 @@ def gates() -> "list[tuple[str, list[str], str]]":
             # by the mutation harness itself, twenty minutes into a run.
             "mutations",
             [sys.executable, str(ROOT / "scripts" / "check_mutation_test_files.py")],
-            "a front-end mutation names a test the harness does not run, or a suite is in neither table",
+            "a front-end mutation names a test the harness does not run, a suite is in neither "
+            "table, or a suite the harness runs has no mutation aimed at it",
         ),
         (
             "corpora",

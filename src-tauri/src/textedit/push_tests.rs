@@ -6,6 +6,7 @@
 //! each test is written out rather than measured. The page is 300 x 240.
 use super::layout_tests::{in_default_box, reader_line_starts, shows, synthetic};
 use super::*;
+use lopdf::dictionary;
 
 // Two runs on one line, the first at x 40 and 36 pt wide, the second starting
 // where the caller puts it. The room after the first run is therefore `at - 40`.
@@ -774,6 +775,207 @@ fn the_next_line_is_not_pushed_along_with_this_one() {
         third.matrix[4]
     );
     assert_eq!(find(&pushed, "SECOND").matrix[4], 100.);
+}
+
+// A run replaced without a layout is written over its own bytes, at its own
+// origin, and nothing in that writer can open it with a displacement. So when an
+// edit before it on its line grows and pushes the line along, that run is text
+// the push cannot move, and the batch is refused: written, it kept its place
+// under the grown text while the run after it moved on, which left the new
+// words drawn over it and a hole where it had been.
+#[test]
+fn a_pushed_run_edited_without_a_layout_is_refused_or_moved() {
+    // FIRST at 40..76, THIRD at 100..136 and SECOND at 200..243.2. Eleven
+    // characters for the first run are 79.2 pt against 57 of room, so the two
+    // after it are pushed by 22.2.
+    let doc = synthetic(
+        "BT /F1 12 Tf 40 180 Td (FIRST) Tj ET BT /F1 12 Tf 100 180 Td (THIRD) Tj ET \
+         BT /F1 12 Tf 200 180 Td (SECOND) Tj ET",
+    );
+    assert_eq!(scan(&doc, 0).unwrap().runs.len(), 3);
+    let grows = in_default_box(&doc, 0, "FIRSTFIRSTF");
+    let bare = Change {
+        replacement: "DRIHT".into(),
+        layout: None,
+        ..in_default_box(&doc, 1, "DRIHT")
+    };
+    let mut copy = doc.clone();
+    let before = copy.objects.clone();
+    let error = write(&mut copy, &[grows.clone(), bare.clone()])
+        .expect_err("a run the push cannot move was left under the grown text");
+    assert!(error.contains("cannot be moved"), "{error}");
+    assert_eq!(
+        copy.objects, before,
+        "the refused batch changed the document"
+    );
+    // The same run replaced without a layout is accepted where nothing pushes
+    // it: seven characters fit the room before the kept word space.
+    let mut quiet = doc.clone();
+    write(&mut quiet, &[in_default_box(&doc, 0, "FIRSTFI"), bare])
+        .unwrap_or_else(|error| panic!("{error}"));
+    assert_eq!(find(&quiet, "DRIHT").matrix[4], 100.);
+    // And given a layout, the same pair moves it with the rest of the line.
+    let mut laid = doc.clone();
+    write(&mut laid, &[grows, in_default_box(&doc, 1, "DRIHT")])
+        .unwrap_or_else(|error| panic!("{error}"));
+    let moved = find(&laid, "DRIHT").matrix[4];
+    assert!((moved - 122.2).abs() < 0.0001, "{moved}");
+    let last = find(&laid, "SECOND").matrix[4];
+    assert!((last - 222.2).abs() < 0.0001, "{last}");
+}
+
+// `pair(100.)` with one annotation on its page, in the page's list by
+// reference unless `direct`. `rect` is in the displayed page, which is the
+// user space turned upside down.
+fn annotated(annotation: Dictionary, rect: [f64; 4], direct: bool) -> (Document, ObjectId) {
+    let mut doc = pair(100.);
+    let page = crate::pagetree::ordered_pages(&doc)[0];
+    let height = f64::from(crate::pagetree::displayed_page(&doc, page).height);
+    let mut annotation = annotation;
+    annotation.set(
+        "Rect",
+        [rect[0], height - rect[3], rect[2], height - rect[1]]
+            .map(|v| Object::Real(v as f32))
+            .to_vec(),
+    );
+    let (entry, id) = if direct {
+        (Object::Dictionary(annotation), (0, 0))
+    } else {
+        let id = doc.add_object(annotation);
+        (Object::Reference(id), id)
+    };
+    doc.get_dictionary_mut(page)
+        .unwrap()
+        .set("Annots", vec![entry]);
+    (doc, id)
+}
+
+// The second run's hit rectangle, widened as a producer's box around a word is.
+fn around_second(doc: &Document, grow: f64) -> [f64; 4] {
+    let rect = scan(doc, 0).unwrap().runs[1].display_rect.map(f64::from);
+    [
+        rect[0] - grow,
+        rect[1] - grow,
+        rect[2] + grow,
+        rect[3] + grow,
+    ]
+}
+
+// An annotation is a mark on the page over the text it was made for: a
+// highlight, a note, a link's hot area. The push moves text and leaves every
+// such rectangle where it is, so it may not move text out from under one, nor
+// into one ahead of it; it stops there, as it stops at a drawing.
+#[test]
+fn a_push_stops_at_text_under_an_annotation() {
+    let plain = pair(100.);
+    let rect = around_second(&plain, 1.5);
+    let highlight = dictionary! { "Type" => "Annot", "Subtype" => "Highlight" };
+    let (doc, _) = annotated(highlight.clone(), rect, false);
+    // Eleven characters push the second run 22.2 pt, past the 1.5 its
+    // highlight leaves it.
+    let error = refusal(&doc, 0, "FIRSTFIRSTF");
+    assert!(
+        error.contains("a picture or a drawing follows it"),
+        "{error}"
+    );
+    // Control: an edit that pushes nothing is not the annotation's concern.
+    let mut fits = doc.clone();
+    write(&mut fits, &[in_default_box(&doc, 0, "FIRSTFI")]).unwrap();
+    // Control: without the highlight the same edit pushes.
+    let mut pushed = plain.clone();
+    write(&mut pushed, &[in_default_box(&plain, 0, "FIRSTFIRSTF")]).unwrap();
+    // A link that is more than a rectangle -- one with an appearance of its
+    // own, or one written into the list rather than referred to -- is a mark
+    // the writer does not move either.
+    let mut drawn = dictionary! { "Type" => "Annot", "Subtype" => "Link" };
+    drawn.set("AP", Dictionary::new());
+    for (link, direct) in [
+        (drawn, false),
+        (dictionary! { "Type" => "Annot", "Subtype" => "Link" }, true),
+    ] {
+        let (doc, _) = annotated(link, rect, direct);
+        let error = refusal(&doc, 0, "FIRSTFIRSTF");
+        assert!(
+            error.contains("a picture or a drawing follows it"),
+            "{error}"
+        );
+    }
+    // A note ahead of the run, over nothing, stops it at its near edge: the
+    // run ends at 136 and the note starts at 150, 14 pt on.
+    let note = dictionary! { "Type" => "Annot", "Subtype" => "Text" };
+    let (doc, _) = annotated(note, [150., rect[1], 160., rect[3]], false);
+    // Nine characters push 7.8 pt, eleven 22.2.
+    let mut short = doc.clone();
+    write(&mut short, &[in_default_box(&doc, 0, "FIRSTFIRS")]).unwrap();
+    assert!((find(&short, "FIRST").matrix[4] - 107.8).abs() < 0.0001);
+    let error = refusal(&doc, 0, "FIRSTFIRSTF");
+    assert!(
+        error.contains("a picture or a drawing follows it"),
+        "{error}"
+    );
+    // A list the scan could not read may hold one over the line: nothing is
+    // pushed, and what fits without a push is still accepted.
+    let mut unreadable = plain.clone();
+    let page = crate::pagetree::ordered_pages(&unreadable)[0];
+    unreadable
+        .get_dictionary_mut(page)
+        .unwrap()
+        .set("Annots", 7);
+    let error = refusal(&unreadable, 0, "FIRSTFIRSTF");
+    assert!(error.contains("cannot be moved"), "{error}");
+    let mut fits = unreadable.clone();
+    write(&mut fits, &[in_default_box(&unreadable, 0, "FIRSTFI")]).unwrap();
+}
+
+// A link that is a rectangle and nothing else, over one run the push moves,
+// goes with it, as a wrap moves one with its line: its rectangle moves as far
+// as the run, so it stays over the same words.
+#[test]
+fn a_link_over_a_pushed_run_moves_with_it() {
+    let plain = pair(100.);
+    let link = dictionary! { "Type" => "Annot", "Subtype" => "Link" };
+    let (doc, id) = annotated(link, around_second(&plain, 1.5), false);
+    let source = rect_of(&doc, id);
+    let mut pushed = doc.clone();
+    write(&mut pushed, &[in_default_box(&doc, 0, "FIRSTFIRSTF")])
+        .unwrap_or_else(|error| panic!("{error}"));
+    assert!((find(&pushed, "FIRST").matrix[4] - 122.2).abs() < 0.0001);
+    let moved = rect_of(&pushed, id);
+    for (index, by) in [(0, 22.2), (1, 0.), (2, 22.2), (3, 0.)] {
+        assert!(
+            (moved[index] - source[index] - by).abs() < 0.001,
+            "{moved:?} against {source:?}"
+        );
+    }
+    // Control: an edit that pushes nothing leaves the link where it was.
+    let mut fits = doc.clone();
+    write(&mut fits, &[in_default_box(&doc, 0, "FIRSTFI")]).unwrap();
+    assert_eq!(rect_of(&fits, id), source);
+    // Reaching further past the run than a producer's box does, it is not
+    // that run's, and stays where it is and stops the push.
+    let (wide, _) = annotated(
+        dictionary! { "Type" => "Annot", "Subtype" => "Link" },
+        around_second(&plain, 4.),
+        false,
+    );
+    let error = refusal(&wide, 0, "FIRSTFIRSTF");
+    assert!(
+        error.contains("a picture or a drawing follows it"),
+        "{error}"
+    );
+}
+
+// An annotation's `/Rect`, as numbers.
+fn rect_of(doc: &Document, id: ObjectId) -> Vec<f64> {
+    doc.get_dictionary(id)
+        .unwrap()
+        .get(b"Rect")
+        .unwrap()
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|value| f64::from(value.as_float().unwrap()))
+        .collect()
 }
 
 // The mirror: what stops a pushed run is what is on *its* line. Text the editor

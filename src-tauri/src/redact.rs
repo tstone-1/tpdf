@@ -33,12 +33,16 @@
 //! answer this whole subsystem exists to prevent. A refusal is a redaction that
 //! did not happen; a mis-addressed removal is one that says it happened.
 //!
-//! ## What it deliberately cannot do, reported rather than skipped
+//! ## What it takes, and what it reports instead of taking
 //!
-//! Only text is removed. An image, a vector path or an object PDFium calls
-//! unsupported that overlaps the region is **reported as unhandled** and no
-//! amount of removing text changes that: §6's deny-by-default rule says an
-//! object this does not understand is a verification failure, not a shrug. A
+//! Text is taken whole or cut ([`remove_shows`], `glyph_cut`); a picture
+//! ([`remove_images`]) and a vector path ([`remove_paths`], [`take_paths`],
+//! which cuts a path at a region's edge) go too, on the page and inside its
+//! Form XObjects. What stays is **reported as unhandled**: a shading, an object
+//! PDFium calls unsupported, a path whose clip or position cannot be placed,
+//! and a picture or form the document draws more than once, which taking here
+//! would leave everywhere else ([`leave_shared`]). §6's deny-by-default rule
+//! says an object this does not take is a verification failure, not a shrug. A
 //! caller that applied [`Plan::shows`] and ignored [`Plan::unhandled`] would
 //! produce a file with the words gone and the picture of the words still in it.
 //! [`Plan::is_complete`] is the one question worth asking before acting.
@@ -52,16 +56,17 @@
 //! `text-marked.pdf` while every pixel-based check passed. `docs/PLAN.md` §6
 //! calls that a *carrier* and lists a table of them.
 //!
-//! [`clear_shadow_text`] clears the ones that live in the content stream this
-//! module is already rewriting: the property list of every span a removal fell
-//! inside. That is one of the carrier table's rows and one of that row's two
-//! homes --- the same keys hang off a **structure element** in
-//! `/StructTreeRoot`, reached by `/MCID` rather than by nesting, and this does
-//! not touch them. Nor does it touch an annotation's `/Contents`, a form
-//! field's value, `/Info`, or anything else outside the page's content. Those
-//! are document-level objects and a different piece of work; `text-marked.pdf`
-//! holds two of them on purpose, so `redact-probe` can go on measuring that they
-//! are still there.
+//! [`clear_shadow_text`] clears the ones in the content stream this module is
+//! already rewriting: the property list of every span a removal fell inside.
+//! [`clear_struct_shadow_text`] clears the same keys where they hang off a
+//! **structure element** in `/StructTreeRoot`, reached by `/MCID` through the
+//! parent tree. The carriers outside the page's content are decided here and
+//! taken by the writer: an annotation over a region ([`covered_annots`],
+//! [`take_inline_annots`]), a form field whose answer was under one
+//! ([`covered_fields`]), an outline entry naming what went
+//! ([`covered_outline`]); `save::apply_redactions` also takes `/Info`, the XMP
+//! packet and the page's thumbnail. What none of it reaches is reported by
+//! `verify::scan` rather than passed.
 
 use std::collections::HashSet;
 
@@ -84,12 +89,13 @@ use crate::{
 /// `redact-apply-probe` name `redact::Rect` and `redact::PageObject`.
 pub use crate::objects::{contains, overlaps, FormObject, FormOther, FormText, PageObject, Rect};
 
-/// Ceiling on a decoded content stream.
+/// Ceiling on a decoded content stream: [`crate::encoding::MAX_DECODE`], by name.
 ///
 /// `AGENTS.md` requires every `lopdf` decode to be bounded, and a content stream
-/// is attacker-chosen like everything else in the file. The same value spike 0.3
-/// used.
-pub const MAX_CONTENT_BYTES: usize = 64 * 1024 * 1024;
+/// is attacker-chosen like everything else in the file. The name stays because
+/// the content writers import it from here; the value is the one bound every
+/// scan uses, so a second literal cannot drift from it.
+pub const MAX_CONTENT_BYTES: usize = crate::encoding::MAX_DECODE;
 
 /// What removing a region from one page would take, and what it would miss.
 #[derive(Debug, Clone, Default, PartialEq)]
@@ -1537,13 +1543,74 @@ pub fn covered_annots(doc: &Document, page: ObjectId, areas: &[Rect]) -> Vec<Obj
     taken
 }
 
+/// Removes from `page`'s `/Annots` every annotation written inline that is over
+/// a region, and says how many went.
+///
+/// **The carrier [`covered_annots`] cannot name.** An annotation dictionary
+/// written directly in the array has no object id, so nothing that works by id
+/// can take it --- and PDFium draws it as it draws any other, with its
+/// `/Contents` and its appearance. The rule is [`covered_annots`]' own: taken
+/// when its `/Rect` overlaps a region or cannot be read. Whatever it names by
+/// reference, an appearance stream above all, is left reachable from nothing
+/// and goes with the sweep every redaction runs.
+///
+/// The array is edited where it lives: in the page dictionary, or in the
+/// object an indirect `/Annots` names.
+pub fn take_inline_annots(doc: &mut Document, page: ObjectId, areas: &[Rect]) -> usize {
+    let held = match doc
+        .get_dictionary(page)
+        .and_then(|page| page.get(b"Annots"))
+    {
+        Ok(Object::Reference(id)) => Some(*id),
+        Ok(Object::Array(_)) => None,
+        _ => return 0,
+    };
+    let entries = match held {
+        Some(id) => doc.get_object(id).and_then(Object::as_array),
+        None => doc
+            .get_dictionary(page)
+            .and_then(|page| page.get(b"Annots"))
+            .and_then(Object::as_array),
+    };
+    let Ok(entries) = entries else {
+        return 0;
+    };
+    let kept: Vec<Object> = entries
+        .iter()
+        .filter(|entry| match entry {
+            Object::Dictionary(annot) => {
+                matches!(rect_of(doc, annot), Some(rect) if !areas.iter().any(|area| overlaps(rect, *area)))
+            }
+            _ => true,
+        })
+        .cloned()
+        .collect();
+    let taken = entries.len() - kept.len();
+    if taken == 0 {
+        return 0;
+    }
+    match held {
+        Some(id) => {
+            if let Ok(Object::Array(array)) = doc.get_object_mut(id) {
+                *array = kept;
+            }
+        }
+        None => {
+            if let Ok(dictionary) = doc.get_object_mut(page).and_then(Object::as_dict_mut) {
+                dictionary.set("Annots", kept);
+            }
+        }
+    }
+    taken
+}
+
 /// The object ids on a page's `/Annots`, in whichever spelling it uses.
 ///
 /// `/Annots 12 0 R` and `/Annots [5 0 R]` are both common and `save.rs` already
 /// keeps them apart for the incremental writer's sake. Here the two are the same
 /// question --- which annotations does this page have --- and an entry that is
-/// not a reference is skipped, because an inline annotation dictionary has no id
-/// to name and nothing to remove.
+/// not a reference is skipped: an inline annotation dictionary has no id to
+/// name, and [`take_inline_annots`] is what takes one.
 fn annots_of(doc: &Document, page: ObjectId) -> Vec<ObjectId> {
     let Ok(dictionary) = doc.get_dictionary(page) else {
         return Vec::new();
@@ -5034,9 +5101,10 @@ mod tests {
     use super::{
         aggregate, covered, covered_annots, cut_crossing, leave_shared, leave_unplaced,
         makes_text_object, overlaps, painted_path_count, painted_paths, parent_tree_entry,
-        path_clips, path_drawings, remove_form_shows, remove_images, remove_paths, remove_shows,
-        shared_draws, take_paths, FormObject, FormOther, FormText, PageObject, Plan, RegionPlan,
-        SharedDraws, Unhandled, CLIP_PATH, MAX_CONTENT_BYTES, UNPLACED_PATH,
+        path_clips, path_drawings, rect_of, remove_form_shows, remove_images, remove_paths,
+        remove_shows, shared_draws, take_inline_annots, take_paths, FormObject, FormOther,
+        FormText, PageObject, Plan, RegionPlan, SharedDraws, Unhandled, CLIP_PATH,
+        MAX_CONTENT_BYTES, UNPLACED_PATH,
     };
     use lopdf::content::Content;
     use lopdf::{dictionary, Dictionary, Document, Object, Stream};
@@ -7150,6 +7218,53 @@ mod tests {
         assert_eq!(removed.carriers, 0);
         assert!(shown(&doc, page).is_empty());
     }
+    /// An annotation written inline in `/Annots`, in the array itself and in an
+    /// array held as its own object: the one over the region goes, the one away
+    /// from it stays, and so does a referenced one the other rule decides.
+    #[test]
+    fn an_annotation_written_inline_in_annots_over_a_region_is_taken() {
+        for held in [false, true] {
+            let (mut doc, page, ids) =
+                one_page_annots("BT (x) Tj ET", vec![note([400.0, 400.0, 500.0, 420.0])]);
+            let entries = vec![
+                Object::Dictionary(note([100.0, 100.0, 200.0, 120.0])),
+                Object::Dictionary(note([400.0, 400.0, 500.0, 420.0])),
+                Object::Reference(ids[0]),
+            ];
+            let annots: Object = if held {
+                doc.add_object(entries).into()
+            } else {
+                entries.into()
+            };
+            doc.get_object_mut(page)
+                .and_then(Object::as_dict_mut)
+                .expect("the page")
+                .set("Annots", annots);
+            let areas = [[90.0, 90.0, 210.0, 130.0]];
+            assert_eq!(take_inline_annots(&mut doc, page, &areas), 1, "held {held}");
+            let left = doc
+                .get_dictionary(page)
+                .and_then(|page| page.get(b"Annots"))
+                .and_then(|object| doc.dereference(object).map(|(_, object)| object))
+                .and_then(Object::as_array)
+                .expect("the annotations")
+                .clone();
+            assert_eq!(
+                left.len(),
+                2,
+                "the inline one away from it and the referenced one"
+            );
+            assert!(
+                left.iter().all(|entry| match entry {
+                    Object::Dictionary(annot) =>
+                        rect_of(&doc, annot).is_some_and(|rect| !overlaps(rect, areas[0])),
+                    _ => true,
+                }),
+                "and the one over the region is not among them"
+            );
+        }
+    }
+
     /// The carrier: an annotation over the region goes with the words.
     #[test]
     fn an_annotation_over_the_region_is_taken() {

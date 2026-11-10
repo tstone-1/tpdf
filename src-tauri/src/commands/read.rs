@@ -125,7 +125,12 @@ pub async fn document_outline(
     let (reply, rx) = reply_channel();
     service.outline(doc, reply);
     let mut answer: outline::Outline = await_reply("document_outline", rx).await?;
-    web.adopt(doc, Source::Outline, &mut answer.urls);
+    web.adopt(
+        doc,
+        Source::Outline,
+        &mut answer.urls,
+        outline::targets_mut(&mut answer.items),
+    );
     Ok(answer)
 }
 
@@ -171,8 +176,15 @@ pub async fn document_links(
     let mut answer: links::Links = await_reply("document_links", rx).await?;
     // Before the answer is returned, and that ordering is the whole guarantee:
     // `adopt` **drains** the addresses, so what serializes to the webview is an
-    // empty list rather than every URL in the document. See `webopen.rs`.
-    web.adopt(doc, Source::Links, &mut answer.urls);
+    // empty list rather than every URL in the document, and each web target's
+    // display halves are the parsed address's rather than the worker's. See
+    // `webopen.rs`.
+    web.adopt(
+        doc,
+        Source::Links,
+        &mut answer.urls,
+        answer.items.iter_mut().map(|link| &mut link.target),
+    );
     Ok(answer)
 }
 

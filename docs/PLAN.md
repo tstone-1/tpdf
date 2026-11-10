@@ -2926,7 +2926,7 @@ report; the difference is the writer, and it is the whole difference, because th
 original left afterwards.
 
 **The Ask step is one function serving both**, which is why this increment is small.
-`commands/redact.rs`'s `ask_redactions` is the loop that turns each page's regions into ordinals against
+`redaction_steps.rs`'s `ask_redactions` is the loop that turns each page's regions into ordinals against
 PDFium's own object list; a second copy would go on agreeing about the ordinals and
 eventually disagree about which objects the reader was warned about, which is the drift this
 repository records under two copies of a distinction.
@@ -16774,7 +16774,7 @@ reference and `src-tauri/testdata/cli/{redact,redact-dry-run,regions}.json` are 
 
 | Command | What it does | Where the work happens |
 |---|---|---|
-| `redact <in> -o <out> (--text S \| --pattern RE \| --regions F)... [--case-sensitive] [--pages SPEC] [--dry-run] [--invalidate-signatures] [--password-env VAR] [--force] [--json]` | Removes every match and rectangle into a new file, verifies it, and reports *verified* or *not verified* with every reason. | a `RenderService` on the worker backend: `open`, `properties`, `form`, `text` per page; the search here (`search::Prepared` over the worker's codes); the regions here (`regions.rs`); then `commands::redact::ask_redactions` and `redact_copy_asked` --- the window's plans, rewrite, byte scan, OCR gate and fill, unchanged |
+| `redact <in> -o <out> (--text S \| --pattern RE \| --regions F)... [--case-sensitive] [--pages SPEC] [--dry-run] [--invalidate-signatures] [--password-env VAR] [--force] [--json]` | Removes every match and rectangle into a new file, verifies it, and reports *verified* or *not verified* with every reason. | a `RenderService` on the worker backend: `open`, `properties`, `form`, `text` per page; the search here (`search::Prepared` over the worker's codes); the regions here (`regions.rs`); then `redaction_steps::ask_redactions` and `redact_copy_asked` --- the window's plans, rewrite, byte scan, OCR gate and fill, unchanged |
 
 Decisions the lead took on 2026-09-27, recorded as given:
 
@@ -16795,7 +16795,7 @@ Decisions the lead took on 2026-09-27, recorded as given:
 Decisions taken in building it, each with its reason:
 
 - **The window's command body became a function the tool calls, not a second copy.**
-  `redact_copy`'s write-verify-gate-fill moved into `commands::redact::redact_copy_asked`, which
+  `redact_copy`'s write-verify-gate-fill moved into `redaction_steps::redact_copy_asked`, which
   takes a `RenderService` and the PDFium directory instead of an app handle; the Tauri command is
   now `ask_redactions` and that, joined. `finish_redaction_fill` and `gate_written_file` take the
   directory and a service clone for the same reason. `Asked` is public and gained `pages`, one
@@ -17826,7 +17826,7 @@ closes the *not done* of *Archive timestamps*.
 | Fetching and checking | app process, `longterm::gather` | Unchanged: OCSP first, the list when no responder answered, every answer judged at the present. |
 | The two revisions | worker, `sign_dss::extend`, `sign_prepare::prepare_document_timestamp` | Unchanged, over a snapshot of the bytes read. The archive timestamp's token is sealed only if its authority is trusted for timestamping. |
 | The check before writing | app process, `existing::covered` | The worker's reading of the result against its reading of the original, signature by signature: there by name and by where its range ends, intact, its appendix read, no page rewritten and no object removed after it that was not before, its certificate, its token authority's and every certificate above either `good` (`longterm::leaves_good`, `chains_good`, the two halves of `longterm::check`). |
-| The write and the read-back | `commands::validation::finish`, `save::write_signed` | A new file; a fresh worker reads it, and `existing::read_back` holds it to `covered` again and to an intact archive timestamp over the whole file. |
+| The write and the read-back | `validation_data::finish`, `save::write_signed` | A new file; a fresh worker reads it, and `existing::read_back` holds it to `covered` again and to an intact archive timestamp over the whole file. |
 | The window | `validationdata.ts`, `App.svelte` | Unsaved edits and a document with no signature are told before any dialog; one dialog names the timestamp authority and says who is asked; the save panel; the backend's sentence. |
 
 Decisions taken in building it, each with its reason:
@@ -17895,7 +17895,7 @@ signature, data that cannot be had, a revoked certificate, an untrusted archive 
 survey not complete, a certification, the hashing budget before fetching and before writing,
 a worker that died, and a result in which an earlier signature reads differently in each of
 the ways `covered` looks for. `sign_dss::tests` has the survey and the walk's three bounds,
-`commands::validation::tests` the shared tail from a signed file to the sentence, `cli::tests`
+`validation_data::tests` the shared tail from a signed file to the sentence, `cli::tests`
 the tool's line and exit codes, and `validationdata.test.ts` the window's order and its
 dialog. `tests/cli.rs` runs it **through real sandboxed workers**: a document signed by the
 tool, then `long-term` on it, the built tool and the in-process reader agreeing on the

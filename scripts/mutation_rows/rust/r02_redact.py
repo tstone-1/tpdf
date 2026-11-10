@@ -530,8 +530,8 @@ ROWS += [
     Mutation(
         "glyphs: accept a pen that is off the baseline",
         "src/objects.rs",
-        "            if !pen.is_finite() || (off - off_line).abs() > BASELINE_SLACK {",
-        "            if !pen.is_finite() {",
+        "            if !pen.is_finite() || !off.is_finite() || (off - off_line).abs() > BASELINE_SLACK {",
+        "            if !pen.is_finite() || !off.is_finite() {",
         "an_object_that_is_not_a_row_of_glyphs_running_forwards_has_no_glyphs",
     ),
     Mutation(
@@ -1494,9 +1494,9 @@ ROWS += [
         # eight content streams --- `docs/THREAT-MODEL.md` residual risk 16, which
         # named the deletion and missed the extract.
         "save: leave a dropped page's content in the file",
-        "src/save.rs",
-        "    if !dropped.is_empty()\n        || moved\n        || discarded > 0",
-        "    if false\n        \u0026\u0026 moved\n        || discarded > 0",
+        "src/edits.rs",
+        "            || !self.pages_are_the_file()\n",
+        "",
         "extracting_a_page_leaves_the_other_pages_out_of_the_file",
     ),
     Mutation(
@@ -1505,8 +1505,8 @@ ROWS += [
         # fail, and without a control for it the condition above is decoration.
         "save: sanitize a plain copy as well as a save that removed something",
         "src/save.rs",
-        "    if !dropped.is_empty()\n        || moved\n        || discarded > 0",
-        "    if dropped.is_empty()\n        || !moved\n        || true\n        || discarded > 0",
+        "    if !matches!(job, Job::RedactionFill { .. }) && plan.may_leave_orphans() {",
+        "    if !matches!(job, Job::RedactionFill { .. }) {",
         "a_copy_that_drops_nothing_keeps_the_orphans_it_was_given",
     ),
     Mutation(

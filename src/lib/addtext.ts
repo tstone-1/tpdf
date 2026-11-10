@@ -145,10 +145,17 @@ export interface Typed {
  * A typed decimal, with a comma taken as the decimal point: a German reader
  * types "10,5". Only digits, one comma, digits; "1,000.5" and "1,5,0" stay
  * unreadable rather than being guessed at.
+ *
+ * Unreadable is `NaN`, and so is everything but digits with at most one
+ * decimal point or comma. Not `Number()` on what was typed, which reads ""
+ * and "  " as 0, so an emptied first-number field numbered the pages from
+ * 0, and reads `1e2` and `0x10` as numbers nobody typed (`parseZoomPercent`
+ * in `zoom.ts` refuses the same forms).
  */
 export function decimal(raw: string): number {
   const trimmed = raw.trim();
-  return Number(/^\d+,\d+$/.test(trimmed) ? trimmed.replace(",", ".") : trimmed);
+  if (!/^\d+([.,]\d+)?$/.test(trimmed)) return Number.NaN;
+  return Number(trimmed.replace(",", "."));
 }
 
 /**

@@ -713,9 +713,8 @@ struct Inspection {
     /// deliberate: growing a box puts the *reader's own* text where they are
     /// watching it, while pushing the line along puts somebody else's text
     /// somewhere they never asked for it to go, so the push is held to what the
-    /// editor can see and the box is not. The list is not complete -- an
-    /// annotation's rectangle is not in it, because the editor never reads the
-    /// page's /Annots -- which is why it can only ever refuse a push.
+    /// editor can see and the box is not. The push holds it to `annotations`
+    /// as well, which are not painted by the content and so are not in here.
     graphics: Vec<[f32; 4]>,
     /// Which of `graphics` are painted paths the writer can move whole, by
     /// index: the operators from the first construction operator to the
@@ -763,10 +762,12 @@ struct Inspection {
     /// batch so that `write` can refuse two edits that move one show.
     lowered: BTreeMap<usize, Vec<lopdf::content::Operation>>,
     /// Every annotation's rectangle except a popup's, in the original
-    /// displayed page. Only a wrap reads it: moving a paragraph's lines down
-    /// would leave a highlight or a link over the text that used to be there.
+    /// displayed page. A wrap and a push read it: moving a paragraph's lines
+    /// down, or a line's text along, would leave a highlight or a link over the
+    /// text that used to be there (`layout::wrap_room`, `layout::free_width`).
     /// `None` when the page's list could not be read, which refuses a wrap and
-    /// nothing else: no other edit ever read annotations.
+    /// a push and nothing else: an edit that moves no text past its own box
+    /// never reads annotations.
     annotations: Option<Vec<Annotation>>,
     /// The links the batch's wraps move with their text, each with its new
     /// `/Rect` in default user space (`layout::Prepared::links`).
@@ -784,15 +785,15 @@ struct Inspection {
     centred: BTreeSet<u32>,
 }
 
-/// One annotation as a wrap sees it: where it is on the displayed page, and,
-/// for the one kind a wrap may move with the text under it, which object it is
-/// and its rectangle in default user space.
+/// One annotation as a wrap or a push sees it: where it is on the displayed
+/// page, and, for the one kind either may move with the text under it, which
+/// object it is and its rectangle in default user space.
 ///
 /// That kind is a `/Link` held by reference, with no appearance stream and no
 /// `/QuadPoints`: a rectangle and nothing drawn, so moving the rectangle moves
 /// all of it. Every link on the pages that measured this has that shape
 /// (`BUILD.md`, *Links over lines a wrap moves*). Anything else stays where it
-/// is and refuses a wrap that moves text from under it.
+/// is and refuses a wrap that moves text from under it, and stops a push.
 pub(super) struct Annotation {
     pub rect: [f32; 4],
     pub link: Option<(ObjectId, [f64; 4])>,
@@ -1381,6 +1382,16 @@ fn prepare_batch(doc: &Document, changes: &[Change]) -> Result<BTreeMap<u32, Ins
         if change.layout.is_none() && prepared[&change.page].centred.contains(&change.operator) {
             return Err(centred::needs_layout());
         }
+        // An edit earlier on this line pushed this run along: it has to be
+        // written that much further on. Only `layout::prepare` places a run
+        // anywhere but its source's origin, and the byte patch below writes
+        // over the source's own operand where it was, under the grown text,
+        // while the run after it moves on. `drag` gives a run this batch
+        // replaces no displacement of its own, so nothing else would move it.
+        // Refused as `drag` refuses text the push may not move.
+        if change.layout.is_none() && shifts.contains_key(&(change.page, change.operator)) {
+            return Err(layout::cannot_move());
+        }
         if change.layout.is_some() {
             let page = prepared
                 .get_mut(&change.page)
@@ -1472,7 +1483,10 @@ fn prepare_batch(doc: &Document, changes: &[Change]) -> Result<BTreeMap<u32, Ins
                     let new = [0, 1, 2, 3].map(|i| source[i] + now[i] - was[i]);
                     // Not checked for a second wrap's entry: a link moves only
                     // with a line this wrap lowers, so two wraps moving one
-                    // link have already been refused on that line above.
+                    // link have already been refused on that line above. A
+                    // push's entry is replaced by a later push's, which is
+                    // right: each is the distance from the source, and the
+                    // later edit on the line carries the running total.
                     page.links.insert(*link, new);
                 }
             }

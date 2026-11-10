@@ -115,8 +115,6 @@ PER_WINDOW: dict[str, str] = {
     "sidebarShown": "the reader's choice for the window, kept in the session",
     # Scrolling the two sides together is about the pair.
     "syncScroll": "whether the two sides scroll together",
-    "following": "set while one side is moved to keep up with the other",
-    "aloneUntil": "the Alt wheel's grace, by the clock",
     # The tab row.
     "tabCarried": "the tab being dragged",
     "tabDragEnded": "the click that follows a drag's release",

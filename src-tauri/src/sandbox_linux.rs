@@ -1,10 +1,12 @@
 //! The worker's boundary on Linux: what `sandbox_init` is on macOS and the
 //! low-integrity token in a job object is on Windows (`sandbox_win.rs`).
 //!
-//! It grants what macOS's [`crate::worker::SANDBOX_PROFILE`] grants and nothing
-//! more. That profile allows everything, then denies the network, every file
-//! write and every file read except metadata and the system's font folders.
-//! Here:
+//! It is built to the shape of macOS's [`crate::worker::SANDBOX_PROFILE`]. That
+//! profile allows everything, then denies the network, every file write and
+//! every file read except metadata and the system's font folders. Landlock
+//! alone is narrower than that: it rules a file's bytes and the folders it sits
+//! in, not its mode, owner, extended attributes or timestamps, all of which are
+//! `file-write*` on macOS. seccomp refuses those calls instead. Here:
 //!
 //! - **Landlock** handles every file-system right the kernel knows and grants
 //!   only reading beneath the folders PDFium's Linux font list scans
@@ -20,7 +22,9 @@
 //!   kernel 5.19 and up) without the `socket` call that seccomp sees. So no
 //!   socket of any family can be made: a worker's channels to the app are
 //!   inherited. It also refuses `ptrace` and reading or writing another
-//!   process's memory, and on x86-64 every call by its x32 number, which would
+//!   process's memory; every call that changes a file's mode, owner, extended
+//!   attributes or timestamps, by path or by descriptor, which Landlock does
+//!   not mediate; and on x86-64 every call by its x32 number, which would
 //!   otherwise name `socket` by a number the list does not hold.
 //!
 //! **What is required, and what is taken where the kernel has it.** The file
@@ -137,7 +141,17 @@ fn landlock(extra: &[&std::path::Path]) -> Result<(), String> {
 /// is worked by the kernel. Refusing `io_uring_setup` is enough on its own,
 /// since a worker inherits no ring; the other two are refused so that nothing
 /// rests on that.
-const DENIED: [libc::c_long; 8] = [
+///
+/// **And every call that changes a file's attributes rather than its bytes**:
+/// mode, owner, extended attributes, timestamps. Landlock through version 6
+/// mediates none of them, so without these a worker can make a private key
+/// world-readable, a home folder group-writable, or set an attribute another
+/// program trusts, on any path it can name and on the descriptors it holds.
+/// macOS's profile refuses them by path under `file-write*` (`file-write-mode`,
+/// `file-write-owner`, `file-write-xattr`, `file-write-times`). The calls an
+/// architecture's table lacks (the path-only originals, which aarch64 never
+/// had) are named where they exist. A worker calls none of them: PDFium reads.
+const DENIED: &[libc::c_long] = &[
     libc::SYS_socket,
     libc::SYS_socketpair,
     libc::SYS_ptrace,
@@ -146,7 +160,46 @@ const DENIED: [libc::c_long; 8] = [
     libc::SYS_io_uring_setup,
     libc::SYS_io_uring_enter,
     libc::SYS_io_uring_register,
+    // Mode.
+    libc::SYS_fchmod,
+    libc::SYS_fchmodat,
+    SYS_FCHMODAT2,
+    #[cfg(target_arch = "x86_64")]
+    libc::SYS_chmod,
+    // Owner.
+    libc::SYS_fchown,
+    libc::SYS_fchownat,
+    #[cfg(target_arch = "x86_64")]
+    libc::SYS_chown,
+    #[cfg(target_arch = "x86_64")]
+    libc::SYS_lchown,
+    // Extended attributes, set and removed.
+    libc::SYS_setxattr,
+    libc::SYS_lsetxattr,
+    libc::SYS_fsetxattr,
+    libc::SYS_removexattr,
+    libc::SYS_lremovexattr,
+    libc::SYS_fremovexattr,
+    SYS_SETXATTRAT,
+    SYS_REMOVEXATTRAT,
+    // Timestamps.
+    libc::SYS_utimensat,
+    #[cfg(target_arch = "x86_64")]
+    libc::SYS_utime,
+    #[cfg(target_arch = "x86_64")]
+    libc::SYS_utimes,
+    #[cfg(target_arch = "x86_64")]
+    libc::SYS_futimesat,
 ];
+
+/// `fchmodat2` (kernel 6.6), `setxattrat` and `removexattrat` (6.13), by
+/// number, because `libc` 0.2.191 names the first on x86-64 only and the other
+/// two nowhere. Calls from 424 on share one number on every architecture
+/// (`include/uapi/asm-generic/unistd.h`), so one constant serves both. On an
+/// older kernel the number is unassigned and refusing it changes nothing.
+const SYS_FCHMODAT2: libc::c_long = 452;
+const SYS_SETXATTRAT: libc::c_long = 463;
+const SYS_REMOVEXATTRAT: libc::c_long = 466;
 
 /// The bit an x86-64 kernel built with x32 support reads as "the x32 number of
 /// this call". `socket` is 41 and also `41 | X32_BIT`, under the same
@@ -303,7 +356,11 @@ mod tests {
         let program = program().expect("a filter for this architecture");
         let arch = program[1].k;
         for call in DENIED {
-            assert_eq!(verdict(&program, arch, call as u32), REFUSED, "call {call}");
+            assert_eq!(
+                verdict(&program, arch, *call as u32),
+                REFUSED,
+                "call {call}"
+            );
         }
         for call in [libc::SYS_read, libc::SYS_openat, libc::SYS_mmap] {
             assert_eq!(
@@ -316,6 +373,61 @@ mod tests {
             verdict(&program, arch ^ 1, libc::SYS_read as u32),
             libc::SECCOMP_RET_KILL_PROCESS
         );
+    }
+
+    /// The calls that change a file's attributes are refused, named one by one.
+    ///
+    /// Named here rather than read from [`DENIED`], because the test above
+    /// walks that list and so cannot see a call taken out of it. One per
+    /// family on every architecture, by descriptor and by path, and the three
+    /// numbered by hand.
+    #[test]
+    fn the_filter_refuses_changing_a_files_mode_owner_attributes_and_times() {
+        let program = program().expect("a filter for this architecture");
+        let arch = program[1].k;
+        let calls: &[libc::c_long] = &[
+            libc::SYS_fchmod,
+            libc::SYS_fchmodat,
+            SYS_FCHMODAT2,
+            libc::SYS_fchown,
+            libc::SYS_fchownat,
+            libc::SYS_setxattr,
+            libc::SYS_lsetxattr,
+            libc::SYS_fsetxattr,
+            libc::SYS_removexattr,
+            libc::SYS_lremovexattr,
+            libc::SYS_fremovexattr,
+            SYS_SETXATTRAT,
+            SYS_REMOVEXATTRAT,
+            libc::SYS_utimensat,
+            #[cfg(target_arch = "x86_64")]
+            libc::SYS_chmod,
+            #[cfg(target_arch = "x86_64")]
+            libc::SYS_chown,
+            #[cfg(target_arch = "x86_64")]
+            libc::SYS_lchown,
+            #[cfg(target_arch = "x86_64")]
+            libc::SYS_utime,
+            #[cfg(target_arch = "x86_64")]
+            libc::SYS_utimes,
+            #[cfg(target_arch = "x86_64")]
+            libc::SYS_futimesat,
+        ];
+        for call in calls {
+            assert_eq!(
+                verdict(&program, arch, *call as u32),
+                REFUSED,
+                "call {call}"
+            );
+        }
+        // Reading attributes stays allowed, as `stat` does.
+        for call in [libc::SYS_fstat, libc::SYS_getxattr, libc::SYS_fgetxattr] {
+            assert_eq!(
+                verdict(&program, arch, call as u32),
+                libc::SECCOMP_RET_ALLOW,
+                "call {call}"
+            );
+        }
     }
 
     /// On x86-64 only; elsewhere there is no x32 and nothing to check. The

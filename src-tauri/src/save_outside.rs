@@ -603,7 +603,7 @@ impl Session {
             }
             let expected = usize::from(request.width) * usize::from(request.height) * 4;
             let length = raw_tile_length(response.bytes, expected, worker.tile.len())?;
-            Ok(worker.tile.as_slice()[..length].to_vec())
+            worker.tile.copy_front(length).map_err(Declined::Failed)
         })
     }
 
@@ -1027,7 +1027,7 @@ impl Rewriter for InWorker {
             let image = crate::signature::Image {
                 width,
                 height,
-                rgba: worker.tile.as_slice()[..length].to_vec(),
+                rgba: worker.tile.copy_front(length)?,
             };
             // Held to the model's own limits before anything else sees it.
             if !image.valid_picture() {

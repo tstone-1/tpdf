@@ -20,16 +20,13 @@
  *    screen, and the user's 300 ms ends at the glass.
  */
 
+import { pad } from "./benchtable";
 import { calibrateProcessClock } from "./clock";
 import { call } from "./ipc";
 import { fetchRequiredTile } from "./tiles";
 
 /** Largest tile dimension to ask for, per the spike 0.1 tile-size finding. */
 const MAX_TILE = 4096;
-
-function pad(text: string, width: number, right = false): string {
-  return right ? text.padStart(width) : text.padEnd(width);
-}
 
 /**
  * Resolves once the compositor has presented the frame containing whatever was

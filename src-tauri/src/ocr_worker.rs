@@ -48,6 +48,7 @@ use std::sync::mpsc::{Receiver, RecvTimeoutError};
 use std::time::Duration;
 
 use crate::ocr::{EngineId, Options, Pixels, RecogniseError, RecognisedItem};
+use crate::worker_proto::{ReplyError, MAX_REPLY_BYTES};
 use crate::worker_shm::Shm;
 
 /// The marker argument that turns this executable into an OCR worker.
@@ -254,20 +255,36 @@ type OcrStdin = std::fs::File;
 /// Generic over the reader because the two platforms hand over different types
 /// for the same pipe: a `ChildStdout` where there is a `Child`, a `File` where
 /// the handle came from `CreatePipe`.
-fn reply_thread<R: Read + Send + 'static>(stdout: R) -> Receiver<std::io::Result<String>> {
-    let (tx, replies) = std::sync::mpsc::channel();
+///
+/// **Bounded twice, because the child is the process reading a stranger's
+/// pixels.** A line is read under `limit` ([`MAX_REPLY_BYTES`] in use, as the
+/// parser worker's are), so a taken-over child writing without a newline costs
+/// an error rather than a `String` that grows until the deadline. And the
+/// channel holds one reply, which is all one request has: a child answering
+/// faster than it is asked fills it and then waits on its own pipe, rather than
+/// queueing replies in this process.
+fn reply_thread<R: Read + Send + 'static>(
+    stdout: R,
+    limit: u64,
+) -> Receiver<std::io::Result<String>> {
+    let (tx, replies) = std::sync::mpsc::sync_channel(1);
     std::thread::spawn(move || {
         let mut reader = BufReader::new(stdout);
         loop {
-            let mut line = String::new();
-            match reader.read_line(&mut line) {
-                Ok(0) => break,
-                Ok(_) => {
+            match crate::worker_proto::read_reply_line(&mut reader, limit) {
+                Ok(line) => {
                     if tx.send(Ok(line)).is_err() {
                         break;
                     }
                 }
-                Err(e) => {
+                Err(ReplyError::Closed) => break,
+                Err(ReplyError::TooLong(limit)) => {
+                    let _ = tx.send(Err(std::io::Error::other(format!(
+                        "a reply longer than {limit} bytes"
+                    ))));
+                    break;
+                }
+                Err(ReplyError::Io(e)) => {
                     let _ = tx.send(Err(e));
                     break;
                 }
@@ -372,7 +389,7 @@ impl OcrWorker {
         drop(child_stdout);
 
         child.resume()?;
-        let replies = reply_thread(stdout);
+        let replies = reply_thread(stdout, MAX_REPLY_BYTES);
         Ok(Self {
             child,
             stdin,
@@ -425,7 +442,7 @@ impl OcrWorker {
         crate::worker_handover::relay_stderr(&mut child);
         let stdin = child.stdin.take().ok_or("the OCR worker has no stdin")?;
         let stdout = child.stdout.take().ok_or("the OCR worker has no stdout")?;
-        let replies = reply_thread(stdout);
+        let replies = reply_thread(stdout, MAX_REPLY_BYTES);
         Ok(Self {
             child,
             stdin,
@@ -521,7 +538,12 @@ impl OcrWorker {
             return Err(RecogniseError::Crashed(why.clone()));
         }
         room_for(&pixels, self.pixels.len())?;
-        self.pixels.as_mut_slice()[..pixels.rgba.len()].copy_from_slice(pixels.rgba);
+        // Through the file on unix, because the child holds a descriptor it can
+        // shorten the file with, and a write into the slice of a shortened file
+        // faults this process (`Shm::fill_front`).
+        if let Err(why) = self.pixels.fill_front(pixels.rgba) {
+            return Err(self.give_up(why));
+        }
 
         let ask = Ask {
             width: pixels.width,
@@ -951,6 +973,41 @@ pub fn frame_len(width: u32, height: u32) -> Option<usize> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A reply with no newline in its first `limit` bytes is an error on the
+    /// channel, not a line the reader goes on growing.
+    ///
+    /// The stream is finite (four times the limit, then end of file) so the
+    /// unbounded read this replaced fails the test by handing over one long
+    /// `Ok` line rather than by exhausting memory. The control is a short
+    /// reply ahead of it, which must arrive whole; the wait is bounded, because
+    /// a reader that never answers is the other way this can go wrong.
+    #[test]
+    fn an_ocr_reply_longer_than_the_limit_ends_the_worker() {
+        const LIMIT: u64 = 1024;
+        let mut stream = b"{\"short\":1}\n".to_vec();
+        stream.extend(std::iter::repeat_n(b'x', 4 * LIMIT as usize));
+        let replies = reply_thread(std::io::Cursor::new(stream), LIMIT);
+        let within = Duration::from_secs(10);
+
+        let first = replies
+            .recv_timeout(within)
+            .expect("the control reply arrives");
+        assert_eq!(first.expect("a short reply reads"), "{\"short\":1}\n");
+
+        let second = replies
+            .recv_timeout(within)
+            .expect("the long reply is answered");
+        let err = second.expect_err("a reply past the limit must be refused");
+        assert!(err.to_string().contains("longer than 1024 bytes"), "{err}");
+        assert!(
+            matches!(
+                replies.recv_timeout(within),
+                Err(RecvTimeoutError::Disconnected)
+            ),
+            "the reader stops after a reply past the limit"
+        );
+    }
 
     #[test]
     fn a_known_engine_name_resolves_to_the_static_one() {

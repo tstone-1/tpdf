@@ -1748,8 +1748,8 @@ fn a_worker_that_dies_while_extending_is_tpdfs_failure() {
 fn the_command_lines_read_back_asks_what_the_check_before_writing_asks() {
     let read_back_holds = |found: &[crate::docinfo::Signature], field: &str, stamped, data| {
         let ours = found.iter().find(|s| s.signed && s.field == field);
-        crate::commands::sign::read_back(ours, stamped, data, false)
-            == crate::commands::sign::ReadBack::Holds
+        crate::sign_finish::read_back(ours, stamped, data, false)
+            == crate::sign_finish::ReadBack::Holds
     };
     let pki = Pki::start(good());
     let signed = sealed(&pki);

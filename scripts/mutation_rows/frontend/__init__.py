@@ -14,6 +14,9 @@ from . import (
     f04_inserting,
     f05_latest,
     f06_compare_addtext,
+    f07_unaimed_suites,
+    f08_syncfollow_benchtable,
+    f09_holds_and_restores,
 )
 
 #: Every part, in the order its rows run.
@@ -24,6 +27,9 @@ PARTS = (
     f04_inserting,
     f05_latest,
     f06_compare_addtext,
+    f07_unaimed_suites,
+    f08_syncfollow_benchtable,
+    f09_holds_and_restores,
 )
 
 ROWS = [row for part in PARTS for row in part.ROWS]

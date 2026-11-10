@@ -1,10 +1,15 @@
 //! The spike and check surface: what an automated run asks the app to tell it.
 //!
-//! None of it is reachable from the shipped UI, and all of it is gated on an
-//! environment variable that only a harness sets --- see [`crate::spike_env`],
-//! which is where that gate and the "webview alive" mark are written. The
-//! commands are here rather than in `lib.rs` for the same reason the others
-//! are: they are a group with one state, and that state is the environment.
+//! Every command that hands the webview a path, a mode or a manifest answers
+//! only when an environment variable that only a harness sets is present ---
+//! see [`crate::spike_env`], which is where that gate and the "webview alive"
+//! mark are written. Six commands are not gated, and none of them reads or
+//! changes a document or a file: [`process_elapsed_ms`] and the three
+//! `startup_*` commands read or add to the process's startup timeline,
+//! [`spike_print`] writes a line on stdout, and [`spike_exit`] ends the
+//! process with the code asked for. The commands are here rather than in
+//! `lib.rs` for the same reason the others are: they are a group with one
+//! state, and that state is the environment.
 
 use crate::{env_list, env_or, spike_env, startup};
 

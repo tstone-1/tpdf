@@ -76,8 +76,10 @@ pub(super) struct Prepared {
     /// paragraph, and its hit rectangle where it ends up, so that the editor
     /// can outline the text where the reader now sees it.
     pub placed: Vec<(u32, [f32; 4])>,
-    /// The links a wrap moves with the text under them, each with how far on
-    /// the displayed page (`wrap_room`). Empty unless this edit wraps.
+    /// The links a wrap moves with the text under them (`wrap_room`), or a
+    /// push moves with the run under them (`Free::links`), each with how far
+    /// on the displayed page from where its source put it. Empty unless this
+    /// edit wraps or pushes.
     pub links: Vec<(ObjectId, [f64; 2])>,
 }
 
@@ -170,7 +172,8 @@ pub(super) enum Room {
     /// not move -- read-only text, a preserved form's text, a form field.
     Fixed,
     /// A painted rectangle, a painted path or an image, which only the push
-    /// reads (see `Inspection::graphics`).
+    /// reads (see `Inspection::graphics`), and an annotation, which the push
+    /// stops at as it does at those (`free_width`).
     Drawn,
     /// The edge of the page as the reader sees it.
     Page,
@@ -198,6 +201,13 @@ impl Room {
             Room::Column => said!("There is no room for more text on this line: it reaches the next column. Shorten the text or reduce the font size."),
         }
     }
+}
+
+/// The refusal for an edit whose push would have to move text the writer does
+/// not move: read-only text riding the cursor (`drag`), or a run the same batch
+/// replaces without a layout (`write`).
+pub(super) fn cannot_move() -> String {
+    Room::Fixed.refusal()
 }
 
 /// One entry of the page's hit list: a rectangle, and what is at it.
@@ -572,6 +582,11 @@ struct Free {
     /// Ink inside it is not a collision: that is where the source's own glyphs
     /// already are.
     own: [f64; 4],
+    /// The links over a run the push moves, which move with it: a link that is
+    /// a rectangle and nothing else, held by that run's hit rectangle to
+    /// [`LINK_SLACK`], as a wrap moves one with its line. Every other
+    /// annotation stays where it is and stops the push.
+    links: Vec<ObjectId>,
 }
 
 /// Whether the writer may rewrite this run's shows at all, which is what makes
@@ -733,6 +748,7 @@ fn free_width(
             .collect(),
         line,
         own,
+        links: Vec::new(),
     };
     if !grow {
         return boxed(
@@ -821,6 +837,9 @@ fn free_width(
     // Stream order alone does not say which side of the run a show is drawn on.
     let own_far = axis.at(axis.edge(own, true));
     let mut pushed = Vec::new();
+    // Each pushed run's hit rectangle where its source put it, which is where
+    // an annotation made for it still is.
+    let mut sources = Vec::new();
     let (mut line, mut carry) = (BTreeSet::new(), BTreeSet::new());
     for other in &page.runs.runs {
         if !pushable(page, run, other.operator) {
@@ -843,6 +862,7 @@ fn free_width(
             theirs.clip.map(|clip| display(clip).map(f64::from)),
             theirs.table.map(|table| display(table).map(f64::from)),
         ));
+        sources.push(other.display_rect.map(f64::from));
         line.extend(shows_of(page, other.operator));
         carry.extend(shows_of(page, other.operator));
     }
@@ -872,6 +892,37 @@ fn free_width(
             }),
     );
     fixed.extend(gutter.map(|rect| (rect, Room::Column)));
+    // An annotation is a mark made over the text under it, a highlight, a note
+    // or a link's hot area, and the push leaves its rectangle where it is: it
+    // stops the push as a drawing does, so no text leaves one or moves under
+    // one. A link that is a rectangle and nothing else, over one pushed run,
+    // goes with that run instead, as a wrap moves one with its line
+    // (`wrap_room`). A list the scan could not read may hold one over the line,
+    // so nothing is pushed at all; the box keeps the room it has without.
+    let Some(annotations) = page.annotations.as_deref() else {
+        return nothing(Room::Fixed);
+    };
+    let mut links = Vec::new();
+    for annotation in annotations {
+        let rect = annotation.rect.map(f64::from);
+        let under = annotation.link.filter(|_| {
+            sources.iter().any(|source| {
+                wrap::holds(
+                    [
+                        source[0] - LINK_SLACK,
+                        source[1] - LINK_SLACK,
+                        source[2] + LINK_SLACK,
+                        source[3] + LINK_SLACK,
+                    ],
+                    rect,
+                )
+            })
+        });
+        match under {
+            Some((link, _)) => links.push(link),
+            None => fixed.push((rect, Room::Drawn)),
+        }
+    }
     let (shift, pushed_stop) = reach(&axis, sheet, &pushed, &fixed);
     // A line that already reaches its column's measure has no push left, but a
     // wrap flows its runs to the lines below rather than pushing them, and
@@ -920,17 +971,21 @@ fn free_width(
     // the page or the clip: `hard`, the same rule `free` is, over the same list
     // less the runs that leave. Drawings are no more in the box's way here than
     // they are anywhere else (see `obstacles`).
-    boxed(
-        // `free` past `from` is `room` having skipped a run that starts inside
-        // the box: text reaching it would land on that run, which only the push
-        // moves, so the box that stands without pushing ends at `from`.
-        (from + shift).max(free.min(from)),
-        pushed_stop,
-        line,
-        carry,
-        from,
-        hard.max(free),
-    )
+    Free {
+        links,
+        ..boxed(
+            // `free` past `from` is `room` having skipped a run that starts
+            // inside the box: text reaching it would land on that run, which
+            // only the push moves, so the box that stands without pushing ends
+            // at `from`.
+            (from + shift).max(free.min(from)),
+            pushed_stop,
+            line,
+            carry,
+            from,
+            hard.max(free),
+        )
+    }
 }
 
 /// Which of the shows after an edit have to be given a displacement of their
@@ -2130,6 +2185,34 @@ impl Shape {
     }
 }
 
+/// How far a one-line text reaches from its origin as `lay_out` measures a line
+/// it lays out afresh, when it is drawn `advance` wide: kerns and tracking
+/// included, the spaces it ends with left out, since they draw nothing, and the
+/// ink where that reaches further, an overhang before the origin counted as the
+/// general layout insets it.
+///
+/// The ink is the text's own without those spaces, moved along by what the
+/// kerns add or take before its last glyph: the ink a scan or `source_items`
+/// reports runs to the end of every advance, a trailing space's included, so it
+/// cannot say where the words end. Where the text cannot be measured afresh,
+/// the advance is all there is.
+fn as_drawn(
+    metrics: &fonts::Metrics,
+    text: &str,
+    advance: f64,
+    (size, spacing, word_spacing): (f64, f64, f64),
+    gap: f64,
+) -> f64 {
+    let fresh = |text: &str| metrics.gapped_layout(text, size, spacing, word_spacing, gap);
+    match (fresh(text), fresh(text.trim_end_matches(' '))) {
+        (Ok((whole, _)), Ok((words, ink))) => {
+            let advance = advance - (whole - words);
+            advance.max(ink[1] + (advance - words) + (-ink[0]).max(0.))
+        }
+        _ => advance,
+    }
+}
+
 fn centred_one_line() -> String {
     said!("A centred line cannot be wrapped yet. Keep the text on one line.")
 }
@@ -2140,12 +2223,71 @@ fn restricted_original() -> String {
     said!("This text's font does not permit editing. Choose automatic fallback or a Noto font.")
 }
 
-pub(super) fn prepare(
-    doc: &Document,
-    page: &Inspection,
-    change: &Change,
+/// An edit with a layout, checked and settled before anything is laid out: the
+/// run and its context, the box in the run's own text space, the font the
+/// replacement is set in, the room the line has (`free_width`) and what to say
+/// when the text does not fit it. [`validate`] makes one; [`Edit::lay_out`] is
+/// the one writer every plan runs.
+struct Edit<'a> {
+    page: &'a Inspection,
+    change: &'a Change,
+    run: &'a Run,
+    settings: &'a super::Layout,
+    context: &'a Context,
+    resources: &'a Dictionary,
+    xscale: f64,
+    /// The box the reader has, in the run's own text space.
+    width: f64,
+    height: f64,
+    /// The size the replacement is set at, in the run's own text space.
+    size: f64,
+    /// The `Tf` in force at the run, which the writer puts back after it.
+    font_at: usize,
+    gap: f64,
+    /// The source line as drawn (`as_drawn`), for a centred line.
+    original_width: f64,
+    fallback: Option<fonts::fallback::Font>,
+    metrics: fonts::Metrics,
+    name: Vec<u8>,
+    label: String,
+    spacing: f64,
+    word_spacing: f64,
+    wants: Option<String>,
+    installed: Option<super::Installed>,
+    geometry: crate::pagetree::DisplayedPage,
+    /// Where an earlier edit on this line has already put this run, in the
+    /// run's own text-space units.
+    inherited: f64,
+    free: Free,
+    ceiling: f64,
+    too_wide: String,
+    too_wide_ink: String,
+}
+
+/// A rectangle in page space, on the displayed page.
+fn on_display(geometry: &crate::pagetree::DisplayedPage, bounds: [f64; 4]) -> [f32; 4] {
+    let (ox, oy) = (f64::from(geometry.origin.0), f64::from(geometry.origin.1));
+    crate::text::to_device(
+        geometry.turns,
+        geometry.width,
+        geometry.height,
+        [
+            bounds[0] - ox,
+            bounds[1] - oy,
+            bounds[2] - ox,
+            bounds[3] - oy,
+        ],
+    )
+}
+
+/// Everything `prepare` checks before laying an edit out, in the order it
+/// checks it, and what it settles: the box, the font, the room on the line.
+fn validate<'a>(
+    doc: &'a Document,
+    page: &'a Inspection,
+    change: &'a Change,
     placement: &Placement,
-) -> Result<Prepared, String> {
+) -> Result<Edit<'a>, String> {
     let run = page
         .runs
         .runs
@@ -2230,19 +2372,20 @@ pub(super) fn prepare(
     // in: automatic layout sets the replacement in Noto, and the reader who
     // asked for the original font is told which to choose instead.
     let restricted = original_metrics.is_restricted();
-    // The source line's width as `lay_out` measures a replacement's, for a
-    // centred line: what the two differ by is what the line grew.
+    // The source line's width as drawn, for a centred line: what it and the
+    // replacement differ by is what the line grew. Its own advance, kerns and
+    // tracking included (`as_drawn`). Laid out afresh from glyph widths
+    // instead, a kerned or tracked source came out narrower than the same
+    // text set again with its own kerns, and an unchanged centred line moved
+    // back by half the difference.
     let (source_spacing, source_word_spacing) = page.text_spacing[&run.operator];
-    let original_width = original_metrics
-        .gapped_layout(
-            run.text.trim_end_matches(' '),
-            run.size,
-            source_spacing,
-            source_word_spacing,
-            gap,
-        )
-        .ok()
-        .map(|(advance, ink)| advance.max(ink[1] + (-ink[0]).max(0.)));
+    let original_width = as_drawn(
+        &original_metrics,
+        &run.text,
+        run.advance,
+        (run.size, source_spacing, source_word_spacing),
+        gap,
+    );
     // The second choice in automatic mode, before Noto: an installed copy of
     // the document's own font, found by the app process by exact PostScript
     // name and accepted only by `installed::accept`. None is tried for a font
@@ -2344,20 +2487,7 @@ pub(super) fn prepare(
         )
     };
     let geometry = crate::pagetree::displayed_page(doc, page.id);
-    let (ox, oy) = (f64::from(geometry.origin.0), f64::from(geometry.origin.1));
-    let display = |bounds: [f64; 4]| {
-        crate::text::to_device(
-            geometry.turns,
-            geometry.width,
-            geometry.height,
-            [
-                bounds[0] - ox,
-                bounds[1] - oy,
-                bounds[2] - ox,
-                bounds[3] - oy,
-            ],
-        )
-    };
+    let display = |bounds: [f64; 4]| on_display(&geometry, bounds);
     // Where an earlier edit on this line has already put this run, in the run's
     // own text-space units: everything below is written that much further along.
     let inherited = placement.inherited / xscale;
@@ -2392,21 +2522,6 @@ pub(super) fn prepare(
             said!("Text ink exceeds the box. Increase its width or choose another font."),
         )
     };
-    let source_at = |limit: f64| {
-        if fallback.is_none() && !change.replacement.is_empty() {
-            source_items(
-                page,
-                run,
-                &change.replacement,
-                &metrics,
-                gap,
-                (size, spacing, word_spacing),
-                limit,
-            )
-        } else {
-            None
-        }
-    };
     // The box that arrived, not the ceiling: `room` already holds a grown box
     // inside the displayed page, so checking the grown one here would be a
     // second guard for one property that could never fire on its own.
@@ -2422,19 +2537,94 @@ pub(super) fn prepare(
     {
         return Err(said!("The editing box extends beyond the page"));
     }
-    // One writer: the replacement either at the source's own positioning
-    // (`kept`) or laid out afresh, in the lines `shape` describes. `prepare`
-    // runs it over the plans below, taking the first that succeeds, and a wrap
-    // runs it once more with its own shape.
-    let lay_out = |kept: Option<&(Vec<Object>, f64, [f64; 2], bool)>,
-                   shape: &Shape,
-                   moving: bool,
-                   hits: &[([f64; 4], bool)],
-                   // How far before the run's origin the text starts: a centred
-                   // line gives half of what it grew by to each side.
-                   back: f64|
-     -> Result<Laid, String> {
-        let inherited = inherited - back;
+    Ok(Edit {
+        page,
+        change,
+        run,
+        settings,
+        context,
+        resources,
+        xscale,
+        width,
+        height,
+        size,
+        font_at,
+        gap,
+        original_width,
+        fallback,
+        metrics,
+        name,
+        label,
+        spacing,
+        word_spacing,
+        wants,
+        installed,
+        geometry,
+        inherited,
+        free,
+        ceiling,
+        too_wide,
+        too_wide_ink,
+    })
+}
+
+/// A source item list kept by `source_items`: the items, their advance and
+/// ink, and whether that ink is inside the source's own.
+type Kept = (Vec<Object>, f64, [f64; 2], bool);
+
+impl Edit<'_> {
+    fn display(&self, bounds: [f64; 4]) -> [f32; 4] {
+        on_display(&self.geometry, bounds)
+    }
+
+    /// The replacement at the source's own positioning, in a box `limit`
+    /// wide, when the run's own font sets it (`source_items`).
+    fn source_at(&self, limit: f64) -> Option<Kept> {
+        let (page, run, change) = (self.page, self.run, self.change);
+        let (metrics, gap) = (&self.metrics, self.gap);
+        let (size, spacing, word_spacing) = (self.size, self.spacing, self.word_spacing);
+        if self.fallback.is_none() && !change.replacement.is_empty() {
+            source_items(
+                page,
+                run,
+                &change.replacement,
+                metrics,
+                gap,
+                (size, spacing, word_spacing),
+                limit,
+            )
+        } else {
+            None
+        }
+    }
+
+    /// One writer: the replacement either at the source's own positioning
+    /// (`kept`) or laid out afresh, in the lines `shape` describes. `prepare`
+    /// runs it over the plans ([`first_fit`]), taking the first that succeeds,
+    /// and a wrap runs it once more with its own shape. `back` is how far before
+    /// the run's origin the text starts: a centred line gives half of what it
+    /// grew by to each side.
+    fn lay_out(
+        &self,
+        kept: Option<&Kept>,
+        shape: &Shape,
+        moving: bool,
+        hits: &[([f64; 4], bool)],
+        back: f64,
+    ) -> Result<Laid, String> {
+        let (run, change, context) = (self.run, self.change, self.context);
+        let (metrics, name, free, geometry) =
+            (&self.metrics, &self.name, &self.free, &self.geometry);
+        let (size, spacing, word_spacing, gap, height) = (
+            self.size,
+            self.spacing,
+            self.word_spacing,
+            self.gap,
+            self.height,
+        );
+        let (too_wide, too_wide_ink) = (&self.too_wide, &self.too_wide_ink);
+        let display = |bounds: [f64; 4]| self.display(bounds);
+        let inherited = self.inherited - back;
         // The widest the text itself turned out to be, measured from the
         // run's origin. The box reported back is this rather than the whole
         // ceiling, so a grown box is the size of what the reader typed and
@@ -2455,7 +2645,7 @@ pub(super) fn prepare(
                 &change.replacement,
                 (shape.first, shape.rest),
                 shape.wrap,
-                &too_wide,
+                too_wide,
                 // Where a line may break, the ink as well as the advance, as
                 // the lines are held to below: a last glyph that reaches a
                 // tenth of a point past its advance refused a wrap whose line
@@ -2612,7 +2802,12 @@ pub(super) fn prepare(
             });
         }
         Ok((operations, lines.len(), used, end, inks))
-    };
+    }
+}
+
+/// The first plan that lays the edit out on its line, and how far before the
+/// run's origin a centred line starts.
+fn first_fit(edit: &Edit<'_>, centred: bool) -> (Result<Laid, String>, f64) {
     // Four writers, each a weaker claim than the one before it, and the last two
     // are the writer exactly as it was before the box could grow.
     //
@@ -2630,10 +2825,10 @@ pub(super) fn prepare(
     // one in XeLaTeX where the general layout has no glyph for a character the
     // source's own items carry. Growth may add room; it may never take a
     // writer away. `--compare` over the corpus is what says so.
-    let centred = page.centred.contains(&run.operator);
-    if centred && (settings.wrap || change.replacement.contains('\n')) {
-        return Err(centred_one_line());
-    }
+    let (change, settings, free) = (edit.change, edit.settings, &edit.free);
+    let (ceiling, width, original_width) = (edit.ceiling, edit.width, edit.original_width);
+    let (metrics, gap) = (&edit.metrics, edit.gap);
+    let (size, spacing, word_spacing) = (edit.size, edit.spacing, edit.word_spacing);
     let mut back = 0.;
     let plans: &[(f64, bool)] = if ceiling > width {
         &[
@@ -2647,11 +2842,11 @@ pub(super) fn prepare(
     };
     let mut outcome = Err(said!("missing text layout"));
     for &(limit, positioned) in plans {
-        let kept = positioned.then(|| source_at(limit)).flatten();
+        let kept = positioned.then(|| edit.source_at(limit)).flatten();
         if positioned && kept.is_none() {
             continue;
         }
-        outcome = lay_out(
+        outcome = edit.lay_out(
             kept.as_ref(),
             &Shape::boxed(limit, settings.wrap),
             limit > free.from,
@@ -2659,13 +2854,26 @@ pub(super) fn prepare(
             0.,
         );
         // A centred line stays centred: the same plan again, started half the
-        // change in width earlier. The source's own width is measured as the
-        // replacement's is, without the trailing space neither draws.
+        // change in width earlier. Both widths are measured as drawn
+        // (`as_drawn`), kerns included and the trailing space neither draws
+        // left out. A plan that keeps the source's own positioning is
+        // measured from what it kept, since its `used` counts a trailing
+        // space and its kerns; the general layout's `used` already is this
+        // measure, having neither.
         if let (true, Ok((_, _, used, ..))) = (centred, &outcome) {
-            let source = original_width.unwrap_or(run.advance);
-            back = (*used - source) / 2.;
+            let replacement = match &kept {
+                Some((_, advance, ..)) => as_drawn(
+                    metrics,
+                    &change.replacement,
+                    *advance,
+                    (size, spacing, word_spacing),
+                    gap,
+                ),
+                None => *used,
+            };
+            back = (replacement - original_width) / 2.;
             if back != 0. {
-                outcome = lay_out(
+                outcome = edit.lay_out(
                     kept.as_ref(),
                     // One line: a centred line that wraps was refused above.
                     &Shape::boxed(limit, false),
@@ -2683,6 +2891,37 @@ pub(super) fn prepare(
             break;
         }
     }
+    (outcome, back)
+}
+
+/// An edit with a layout, ready for `write` to splice in: the operations that
+/// draw the replacement and put the text state back after it, the font it
+/// installs, its box, and everything it moves, pushed along its line or
+/// wrapped down its paragraph.
+///
+/// [`validate`] checks the edit and settles its box, font and room;
+/// [`first_fit`] lays it out on its line; a full or overgrown line may then
+/// wrap onto new lines of its paragraph (`wrap::plan`), and what is left is
+/// the push along the line and the box that goes back to the reader.
+pub(super) fn prepare(
+    doc: &Document,
+    page: &Inspection,
+    change: &Change,
+    placement: &Placement,
+) -> Result<Prepared, String> {
+    let edit = validate(doc, page, change, placement)?;
+    let (run, settings, context, resources) =
+        (edit.run, edit.settings, edit.context, edit.resources);
+    let (xscale, width, height, size) = (edit.xscale, edit.width, edit.height, edit.size);
+    let (inherited, ceiling, free, geometry) =
+        (edit.inherited, edit.ceiling, &edit.free, edit.geometry);
+    let stop = free.stop;
+    let display = |bounds: [f64; 4]| edit.display(bounds);
+    let centred = page.centred.contains(&run.operator);
+    if centred && (settings.wrap || change.replacement.contains('\n')) {
+        return Err(centred_one_line());
+    }
+    let (outcome, back) = first_fit(&edit, centred);
     // The line is full and it is the page that filled it: on a tagged page the
     // text may still wrap onto a new line of its own paragraph (`wrap`). That
     // refusal is only ever given to a box the editor opened, since a box the
@@ -2808,8 +3047,9 @@ pub(super) fn prepare(
                         wrap: true,
                         pitch: Some(plan.pitch),
                     };
-                    let (operations, lines, used, end, inks) =
-                        lay_out(None, &shape, true, &hits, 0.).map_err(|error| {
+                    let (operations, lines, used, end, inks) = edit
+                        .lay_out(None, &shape, true, &hits, 0.)
+                        .map_err(|error| {
                             if error.starts_with("Text would overlap another line") {
                                 wrap::no_room()
                             } else {
@@ -3076,7 +3316,7 @@ pub(super) fn prepare(
     // displacement through the text cursor, and refuse to drag anything the
     // editor does not own.
     let moved = if delta > 0. {
-        drag(page, run, &free, placement, shift)?
+        drag(page, run, free, placement, shift)?
     } else {
         Vec::new()
     };
@@ -3114,6 +3354,8 @@ pub(super) fn prepare(
     // since the rest ride the cursor; a run this batch also replaces is placed
     // by its own edit.
     let mut placed = Vec::new();
+    // The links over the runs pushed, which go as far as the line does.
+    let mut carried = Vec::new();
     if delta > 0. {
         let corner = |x: f64| display(text_bounds(run.matrix, [x, run.size, x, run.size]));
         let (here, origin) = (corner(shift / xscale), corner(0.));
@@ -3127,11 +3369,17 @@ pub(super) fn prepare(
                 ));
             }
         }
+        carried.extend(
+            free.links
+                .iter()
+                .map(|link| (*link, [f64::from(dx), f64::from(dy)])),
+        );
     }
-    let (lowered, (down, vacated, links)) = match wrap {
+    let (lowered, (down, vacated, mut links)) = match wrap {
         Some((_, lowered, moved)) => (lowered, moved),
         None => (Vec::new(), (Vec::new(), Vec::new(), Vec::new())),
     };
+    links.extend(carried);
     placed.extend(down);
     // What the preview has to show: the box, and every run this edit moved,
     // where it ends up. Without the second the crop stops at the reader's own
@@ -3151,7 +3399,7 @@ pub(super) fn prepare(
     }
     // q/Q cannot restore the text matrices. Restore both explicitly, including
     // the pre-existing line origin that a later Td/T* will use.
-    operations.push(page.content.operations[font_at].clone());
+    operations.push(page.content.operations[edit.font_at].clone());
     let (spacing, word_spacing) = page.text_spacing[&run.operator];
     operations.push(numeric("Tc", &[spacing]));
     operations.push(numeric("Tw", &[word_spacing]));
@@ -3177,20 +3425,21 @@ pub(super) fn prepare(
             Object::Real(adjustment),
         ])],
     ));
+    let line = if delta > 0. {
+        free.line.clone()
+    } else {
+        BTreeSet::new()
+    };
     Ok(Prepared {
         operations,
-        fallback,
-        name,
-        label,
-        wants,
-        installed,
+        fallback: edit.fallback,
+        name: edit.name,
+        label: edit.label,
+        wants: edit.wants,
+        installed: edit.installed,
         rect,
         lines: line_count,
-        line: if delta > 0. {
-            free.line.clone()
-        } else {
-            BTreeSet::new()
-        },
+        line,
         moved,
         shift,
         extent,

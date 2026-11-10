@@ -77,7 +77,7 @@ export default {
   "{count} passages are in the file and not visible on the page, on {pages}; {more}": (a) =>
     `${a.count} Textstellen stehen in der Datei und sind auf der Seite nicht sichtbar, auf ${seiten(a.pages!)}; ${a.more}`,
 
-  // commands/app.rs, commands/mod.rs, commands/menubar.rs (`the save did not run` is in save.ts;
+  // commands/app.rs, commands/mod.rs, render_reply.rs, commands/menubar.rs (`the save did not run` is in save.ts;
   // the two page sentences of commands/hidden.rs are in workers.ts, with ocr.rs)
   "the forward search did not finish: {e}": "Die Vorwärtssuche wurde nicht beendet: {e}",
   "the command-line tool change did not run: {e}": "Die Änderung am Kommandozeilenwerkzeug ist nicht gelaufen: {e}",
@@ -265,6 +265,11 @@ export default {
     "Die SyncTeX-Datei nennt {count} verschiedene Eingaben namens {name}; gib den vollständigen Pfad der Quelle an",
   "the SyncTeX file nests boxes more than {MAX_DEPTH} deep":
     "Die SyncTeX-Datei verschachtelt Boxen tiefer als {MAX_DEPTH} Ebenen",
+  "the SyncTeX file names more than {MAX_INPUTS} inputs": "Die SyncTeX-Datei nennt mehr als {MAX_INPUTS} Eingaben",
+  "the SyncTeX file names inputs whose paths come to more than {most} MB":
+    "Die SyncTeX-Datei nennt Eingaben, deren Pfade zusammen mehr als {most} MB ergeben",
+  "the SyncTeX file's {name} is {n}, which is not a number tpdf can place a box by":
+    "{name} der SyncTeX-Datei ist {n}, und das ist keine Zahl, nach der tpdf eine Box platzieren kann",
 
   // fingerprint.rs
   "could not open {path} to fingerprint it: {e}":

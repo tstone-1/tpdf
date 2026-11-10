@@ -147,7 +147,10 @@ pub struct Reading {
 pub fn read(bytes: &[u8]) -> Option<Reading> {
     let document = parse(bytes)?;
     let count = document.PageCount().ok()?;
-    let mut pages = Vec::with_capacity(count as usize);
+    // Grown page by page rather than sized from `count`: the count is the
+    // parser's reading of the file, and a capacity taken from it is an
+    // allocation a document's own number decides before one page is produced.
+    let mut pages = Vec::new();
     for index in 0..count {
         // A page the document counted and cannot produce. Reporting a short list
         // would read as a shorter document rather than a broken one --- the same
@@ -1018,7 +1021,8 @@ impl Painter {
 /// the spooler, rather than half-printed and then abandoned.
 ///
 /// `beat`, when given, hears each sheet handed over, and stops its clock while
-/// tpdf reads the job and rasterises a page. Every caller runs it under
+/// tpdf reads the job and rasterises a page, and while the driver opens the
+/// document, which can be a Save dialog waiting on the reader. Every caller runs it under
 /// `print::watched`, because a stuck queue blocks a call here forever rather
 /// than failing it.
 ///
@@ -1155,9 +1159,17 @@ fn spool_planned(
         ..Default::default()
     };
 
+    // With no output named, a driver that prints to a file asks the reader for
+    // its name inside this call, so the stall clock stands still through it
+    // (`print::Beat::asking`) and starts at the first sheet.
     // SAFETY: a live printer DC and a fully initialised DOCINFOW whose strings
     // outlive the call.
-    if unsafe { StartDocW(dc, &info) } <= 0 {
+    let start = || unsafe { StartDocW(dc, &info) };
+    let started = match beat {
+        Some(beat) => beat.asking(start),
+        None => start(),
+    };
+    if started <= 0 {
         return Err(format!(
             "StartDoc failed: {}",
             std::io::Error::last_os_error()
@@ -1372,6 +1384,23 @@ pub fn print_on(
     }
 }
 
+/// The `hDevMode` and `hDevNames` blocks `PrintDlgW` hands back, freed when
+/// dropped. A guard rather than a call on each path, for the reason
+/// [`OpenDocument`] is one.
+struct DialogMemory([windows::Win32::Foundation::HGLOBAL; 2]);
+
+impl Drop for DialogMemory {
+    fn drop(&mut self) {
+        for block in self.0 {
+            if !block.is_invalid() {
+                // SAFETY: a global block the dialog allocated and handed over,
+                // freed once, here.
+                let _ = unsafe { windows::Win32::Foundation::GlobalFree(Some(block)) };
+            }
+        }
+    }
+}
+
 /// Opens the system print dialog for these bytes and prints what it returns.
 ///
 /// Returns whether a job was sent. `false` is Cancel, and it is distinguished from
@@ -1456,6 +1485,10 @@ pub fn present(
 
     // SAFETY: a fully initialised PRINTDLGW whose `lStructSize` describes it.
     let chosen = unsafe { PrintDlgW(&mut dialog) };
+    // The two settings blocks the dialog allocates when handed none, which the
+    // caller frees on every path, Cancel included. Nothing here reads them:
+    // the DC carries the reader's settings.
+    let _settings = DialogMemory([dialog.hDevMode, dialog.hDevNames]);
     if !chosen.as_bool() {
         // SAFETY: no arguments; reads the thread's last common-dialog error.
         let why = unsafe { CommDlgExtendedError() };

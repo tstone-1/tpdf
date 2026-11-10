@@ -331,6 +331,15 @@ export function step(current: number, count: number, direction: 1 | -1): number 
 }
 
 /**
+ * What {@link ComparisonState.reopened} is told when the tab showing `before`
+ * is opened again as `after`: that pair, and each other view of the document
+ * named to itself, since those keep their names.
+ */
+export function reopenedViews<V>(before: V, after: V, others: readonly { view: V }[]): [V, V][] {
+  return [[before, after], ...others.map((other): [V, V] => [other.view, other.view])];
+}
+
+/**
  * The comparison on screen: which two views it is about, the change the reader
  * is on, and whether either document has changed since.
  *
@@ -398,6 +407,32 @@ export class ComparisonState<V> {
   invalidate(view: V): boolean {
     if (!this.held || this.sideOf(view) === null || this.held.stale) return false;
     this.held.stale = true;
+    return true;
+  }
+
+  /**
+   * Follows a document that was read again from its file, by a reload or a
+   * save, and marks the comparison out of date when it is about it.
+   *
+   * `moved` names each view of the document as it was and as it is now: a
+   * reload gives the tab it is shown in a new view, and its other views keep
+   * theirs. Without this the comparison still named the old view, so the
+   * document read again was no side of it and the other went on showing its
+   * paint and its count as current, about words the file may no longer hold.
+   * Kept rather than ended, as an edit keeps it: the rows still say what
+   * differed, and the out-of-date line says to compare again.
+   *
+   * Answers whether it was about the document.
+   */
+  reopened(moved: readonly (readonly [V, V])[]): boolean {
+    const held = this.held;
+    if (!held) return false;
+    const to = new Map(moved);
+    const onLeft = to.has(held.left), onRight = to.has(held.right);
+    if (!onLeft && !onRight) return false;
+    if (onLeft) held.left = to.get(held.left) as V;
+    if (onRight) held.right = to.get(held.right) as V;
+    held.stale = true;
     return true;
   }
 

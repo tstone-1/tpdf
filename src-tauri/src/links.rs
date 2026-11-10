@@ -852,11 +852,11 @@ fn web_target(action: &Dictionary, document: &Document, urls: &mut Vec<String>) 
     // to that bound rather than repeated here, where a second limit could
     // silently disagree with the first.
     let token = urls.len() as u32;
-    urls.push(web.url);
+    urls.push(web.url().to_string());
     Target::Web {
         token,
-        host: web.host,
-        rest: web.rest,
+        host: web.host().to_string(),
+        rest: web.rest().to_string(),
     }
 }
 

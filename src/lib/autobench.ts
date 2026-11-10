@@ -13,6 +13,7 @@
  * machines drifts several percent over minutes.
  */
 
+import { pad } from "./benchtable";
 import { call } from "./ipc";
 import { fetchRequiredTile, type TileFormat } from "./tiles";
 
@@ -50,10 +51,6 @@ function median(values: number[]): number {
   const mid = sorted.length >> 1;
   const hi = sorted[mid] ?? NaN;
   return sorted.length % 2 ? hi : ((sorted[mid - 1] ?? NaN) + hi) / 2;
-}
-
-function pad(text: string, width: number, right = false): string {
-  return right ? text.padStart(width) : text.padEnd(width);
 }
 
 /**
