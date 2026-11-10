@@ -128,10 +128,27 @@ fn a_target_held_open_briefly_is_still_replaced() {
     release.join().unwrap();
     assert_eq!(std::fs::read(&out).unwrap(), b"new");
 
-    let release = held(3000);
+    // Held until the commit has answered, and not for a time that the retries
+    // are expected to end inside: on a loaded machine the staging and the
+    // retries' sleeps outlasted a three second hold, and the commit then
+    // succeeded. The ceiling is for a commit that never gives up, which this
+    // lets go of so that it lands and the refusal below is missed.
+    std::fs::write(&out, b"old").expect("the old file");
+    let file = std::fs::OpenOptions::new()
+        .read(true)
+        .share_mode(FILE_SHARE_READ)
+        .open(&out)
+        .expect("hold it");
+    let (answered, wait) = std::sync::mpsc::channel::<()>();
+    let release = std::thread::spawn(move || {
+        let _ = wait.recv_timeout(std::time::Duration::from_secs(30));
+        drop(file);
+    });
     let staged = stage_new();
-    let why = commit(&staged, &out).expect_err("held past every retry");
+    let why = commit(&staged, &out);
+    answered.send(()).expect("the holder is waiting");
     release.join().unwrap();
+    let why = why.expect_err("held past every retry");
     assert!(why.contains("in place"), "{why}");
     assert!(!staged.exists(), "the staged file is removed");
     assert_eq!(std::fs::read(&out).unwrap(), b"old");

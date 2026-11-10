@@ -453,4 +453,23 @@ ROWS += [
         "$(Job::$variant { reply, .. } => reply(Err(String::new())),)+",
         "a_backend_that_never_started_answers_every_job_with_its_reason",
     ),
+    # --- save.rs: the rename that puts a staged file in place --------------------
+    # The first takes about a minute: the test lets go of the file after 30 s,
+    # and the rename that then lands is what makes it red.
+    Mutation(
+        "commit: a refused rename tried again for ever",
+        "src/save.rs",
+        "                    && attempt < COMMIT_RETRIES =>",
+        "                    && attempt < u32::MAX =>",
+        "a_target_held_open_briefly_is_still_replaced",
+        only_on="windows",
+    ),
+    Mutation(
+        "commit: a refused rename never tried again",
+        "src/save.rs",
+        "                    && attempt < COMMIT_RETRIES =>",
+        "                    && attempt > COMMIT_RETRIES =>",
+        "a_target_held_open_briefly_is_still_replaced",
+        only_on="windows",
+    ),
 ]

@@ -97,6 +97,9 @@ have the binary.)
   moved out of `App.svelte` into tested modules.
 - `scripts/run_on_mac.py` hides the other Mac's visible apps for the run and shows them again
   after it, so a window left covering the screen no longer stops the window checks.
+- The test of a save over a file another process holds open no longer depends on timing: it
+  failed four times in one day on a loaded machine, and once stopped a mutation run at its
+  control. It holds the file until the commit has answered.
 - The command-line tool no longer imports from the window's command layer: the shared ends
   of signing, validation data and redaction are modules of their own (`sign_finish.rs`,
   `validation_data.rs`, `redaction_steps.rs`, `render_reply.rs`). Six hand-written
