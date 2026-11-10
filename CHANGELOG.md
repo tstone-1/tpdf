@@ -17,7 +17,7 @@ as *downloadable*, while the release sat as a draft that GitHub showed to nobody
 are given now because they are different facts, and only the second one means a reader can
 have the binary.)
 
-## [26.11.6] - Unreleased
+## [26.11.6] - 2026-11-10
 
 ### Security
 
@@ -95,6 +95,8 @@ have the binary.)
 - `prepare` in the text editor's layout is split into validation, a first-fit search and the
   finish, with no change in behaviour; the scroll-lock follower and the tab-press listener
   moved out of `App.svelte` into tested modules.
+- Dependency updates within their ranges: vite 8.3.7, and the crates `cargo update` moves
+  in both lockfiles.
 - `scripts/run_on_mac.py` hides the other Mac's visible apps for the run and shows them again
   after it, so a window left covering the screen no longer stops the window checks.
 - The test of a save over a file another process holds open no longer depends on timing: it

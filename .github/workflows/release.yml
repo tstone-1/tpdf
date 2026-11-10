@@ -567,6 +567,19 @@ jobs:
           workers run under Landlock and seccomp. The Linux packages (deb
           and AppImage) do not update themselves: install the new one.
 
+          **New in 26.11.6.** A hardening release from a full read of the
+          code. A redaction is no longer reported as verified over bytes the
+          check did not read: a file with an indirectly named filter, a
+          composite (Type0) font, embedded files or an application's private
+          data now reads *not verified*, with the reason. A redaction also
+          removes an annotation written inline over the region and the page's
+          thumbnail. A long-term signing no longer seals a timestamp from an
+          authority this computer does not trust. On Windows, edits made
+          while an update downloads are no longer lost, and a worker process
+          can no longer read or replace the clipboard. Tabs from last time
+          that cannot be opened are named and kept, and a centred line that
+          is kerned stays centred when it is edited. Dependency updates.
+
           **New in 26.11.5.** **Copy a graphic** and **Save a graphic...**
           take a logo or figure out of a page on its own: click it, or drag
           around it, and copy it as a PNG on a transparent background or save

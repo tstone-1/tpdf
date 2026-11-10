@@ -384,9 +384,10 @@ project conventions.
   with the one you were on in front; it is off until you choose it, and tpdf then
   remembers it. The other tabs open behind the first one, after its first page is on
   screen. *Reopen the tabs from last time* does the same once, whatever
-  the setting. A tab whose file is gone is left out, and one behind a password is not
-  asked for at launch; *Reopen the tabs from last time* asks. Unsaved edits are not
-  restored.
+  the setting. A tab that cannot be opened, such as one whose file is gone, is named in a
+  message and kept, so the next launch tries it again until you close it; one behind a
+  password is not asked for at launch, and *Reopen the tabs from last time* asks. Unsaved
+  edits are not restored.
   <!-- built: file.reopenLastTabs file.reopenTabsAtLaunch file.reopenLastDocumentAtLaunch -->
 - **The documents you read lately are on the blank window.** With no document open, the
   window lists the eight most recent ones under an *Open a PDF…* button: the file name,
