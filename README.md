@@ -94,7 +94,9 @@ is 276 ms, measured warm on an Apple silicon Mac.
 ![tpdf showing a report, with its pages in the sidebar](docs/img/reading.png)
 
 **Every tool is in the command palette.** Type part of its name and press Enter; nothing
-is buried in a menu.
+is buried in a menu. While it asks for a value, such as the pages to extract, the document
+behind it still scrolls, and Page Up and Page Down turn its pages, so you can look before
+you type.
 
 ![The command palette, filtered to the redaction commands](docs/img/palette.png)
 

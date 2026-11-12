@@ -1221,6 +1221,40 @@ ROWS += [
         "    this.registry.run(command.id, raw);",
         "is a dismissal when the command can no longer run as answered",
     ),
+    Mutation(
+        # Keep the backdrop catching the wheel while a value is typed, so
+        # the reader cannot scroll to the pages they are choosing.
+        "palette: keep the document behind a question out of reach",
+        "src/lib/palette.ts",
+        "    this.asking = command;\n    this.letDocumentThrough(true);",
+        "    this.asking = command;",
+        "takes the wheel while a value is typed, and not while searching",
+    ),
+    Mutation(
+        # Leave the backdrop open to the mouse after the question ends, so
+        # the next search no longer dims or catches a click outside.
+        "palette: leave the document reachable after a question",
+        "src/lib/palette.ts",
+        "    this.asking = null;\n    this.letDocumentThrough(false);",
+        "    this.asking = null;",
+        "stops taking it once the question is answered",
+    ),
+    Mutation(
+        # Swallow Page Down without turning the page.
+        "palette: Page Down in a question turns no page",
+        "src/lib/palette.ts",
+        "      this.turnPage(event.key === \"PageDown\");",
+        "      void event;",
+        "turns pages on Page Up and Page Down from the input",
+    ),
+    Mutation(
+        # Turn pages from the search list too, where the keys are not asked for.
+        "palette: turn pages while searching",
+        "src/lib/palette.ts",
+        "    else if (this.asking && this.turnPage && (event.key",
+        "    else if (this.turnPage && (event.key",
+        "does not turn pages while a command is searched for",
+    ),
 ]
 
 # --- the signature integrity row -------------------------------------------

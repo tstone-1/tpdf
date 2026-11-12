@@ -3116,7 +3116,7 @@ SOFTWARE.
 | cmov | 0.5.4 | Apache-2.0 OR MIT |
 | cms | 0.2.3 | Apache-2.0 OR MIT |
 | concurrent-queue | 2.5.0 | Apache-2.0 OR MIT |
-| const-oid | 0.10.2 | Apache-2.0 OR MIT |
+| const-oid | 0.10.3 | Apache-2.0 OR MIT |
 | const-oid | 0.9.6 | Apache-2.0 OR MIT |
 | constant_time_eq | 0.6.1 | CC0-1.0 OR MIT-0 OR Apache-2.0 |
 | cookie | 0.18.2 | MIT OR Apache-2.0 |
@@ -3266,8 +3266,8 @@ SOFTWARE.
 | itoa | 1.0.19 | MIT OR Apache-2.0 |
 | javascriptcore-rs | 1.1.2 | MIT |
 | javascriptcore-rs-sys | 1.1.1 | MIT |
-| jiff | 0.2.42 | Unlicense OR MIT |
-| jiff-core | 0.1.4 | Unlicense OR MIT |
+| jiff | 0.2.43 | Unlicense OR MIT |
+| jiff-core | 0.1.5 | Unlicense OR MIT |
 | jiff-tzdb | 0.1.9 | Unlicense OR MIT |
 | jiff-tzdb-platform | 0.1.3 | Unlicense OR MIT |
 | json-patch | 4.2.0 | MIT/Apache-2.0 |
@@ -3397,7 +3397,7 @@ SOFTWARE.
 | rustix | 1.1.6 | Apache-2.0 WITH LLVM-exception OR Apache-2.0 OR MIT |
 | rustls | 0.23.46 | Apache-2.0 OR ISC OR MIT |
 | rustls-native-certs | 0.8.5 | Apache-2.0 OR ISC OR MIT |
-| rustls-pki-types | 1.15.1 | MIT OR Apache-2.0 |
+| rustls-pki-types | 1.16.0 | MIT OR Apache-2.0 |
 | rustls-platform-verifier | 0.7.1 | MIT OR Apache-2.0 |
 | rustls-webpki | 0.103.16 | ISC |
 | salsa20 | 0.10.2 | MIT OR Apache-2.0 |
@@ -3576,7 +3576,7 @@ SOFTWARE.
 | zerotrie | 0.2.5 | Unicode-3.0 |
 | zerovec | 0.11.9 | Unicode-3.0 |
 | zerovec-derive | 0.11.7 | Unicode-3.0 |
-| zip | 9.5.0 | MIT |
+| zip | 9.5.1 | MIT |
 | zlib-rs | 0.6.8 | Zlib |
 | zmij | 1.0.23 | MIT |
 | zune-core | 0.5.3 | MIT OR Apache-2.0 OR Zlib |
