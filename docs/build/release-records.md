@@ -2,6 +2,47 @@
 
 What was run for each release, what passed, and what was not run. The record of a new release goes at the top. Moved here verbatim from `BUILD.md` on 2026-10-23, which indexes this file.
 
+**26.11.7 verification and publication, 2026-11-12:** prepared on the Windows development machine.
+The release is the palette letting the document through while it asks for a value, and the
+engine `pdfium-8127-tpdf.2`, whose code is that of `.1` (`docs/build/pdfium-records.md`). Step 1
+took Vite 8.3.8 and eight crates in both lockfiles (`bit-vec`, `const-oid`, `jiff` and its two
+companions, `rustls-pki-types`, `webpki-root-certs`, `zip` 9.5.1); the notices file was
+regenerated, `npm audit` reports the two known low `deepmerge` findings, and the held-back crates
+are the ones step 1 lists. All 35 gates passed on the release tree and `check_linux.py` passed.
+`window_checks.py` 17 of 17 on the second Mac through `run_on_mac.py`, and 16 of 17 on Windows 11
+on a `--no-bundle` checks build: the `open` phase failed once, *the page is still the one asked
+for after the boot* with `--page 12 --zoom page` handed to a running app reading page 13. Three
+runs of that phase alone passed, and nothing this release changed is on that path; the cause is
+not known. `viewer_check.py` 385 of 385 on `text-heavy.pdf` and 284 of 284 on `vector-heavy.pdf`.
+Step 7 in the mutation worktree on the release tree: `mutate_python.py` 38/38,
+`mutate_frontend.py --near v26.11.6` 9/9 with the four new palette rows, and `mutate_rust.py`
+nothing to mutate, no Rust source having changed. `print-probe` passed 15 of 15; its first start
+died in `rustc` with *out of memory* while another program held about 30 GB, and passed once that
+had ended. `redact-reach-probe` over 197 documents: 17,050 regions, 15,852 taken whole (93.0%);
+the gate read back 15,637 on 439 pages, 6,425 shown unreadable (41.09%), and 1 still read as text
+with every span inside the region's columns, as before. The local installer carried
+`tpdf_shell.dll`, `tpdf-cli.exe` and `pdfium\pdfium.dll`; unpacked outside the tree its `tpdf-cli`
+answered 26.11.7 and verified `incr-signed.pdf`, and with the bundled engine removed it exited 3.
+CI passed all three jobs on `b249a891` (run 43204960388) and `Audit` passed (run 43204960441). No
+rehearsal: `release.yml` changed only in its notes. Release run 43212076608 skipped its gates on
+CI's pass and made a draft of 8 files. On the draft's files: the installer read as `Valid`,
+timestamped by Certum, and passed `installed_check.py` 26/26 on the Windows build machine; the
+`.dmg` was stapled, its app accepted as Notarized Developer ID, and its `tpdf-cli` (Developer ID,
+`runtime`) answered 26.11.7 and verified the signed fixture. `SECURITY.md` needed no change: the
+release reads no new format. `publish_release.py v26.11.7 --publish` published it; without
+authentication `releases/latest` is v26.11.7 with 8 assets, all 8 answer 200, and `latest.json`
+offers 26.11.7. An installed 26.11.6 updated itself: `update_check.py` 18/18 on the build machine on
+its second run, and `update_check_mac.py` 12/12 on the second Mac on its first. The first Windows
+run, a minute after publishing, failed only the offer, and 26.11.6 printed `[update] launch check
+after 550 ms: current`: the previous `latest.json` was still being served. The cask went to 26.11.7
+with the published `.dmg`'s SHA-256; `brew audit --cask --online` exited 0 and `brew livecheck`
+reads 26.11.7. The winget pull request (445804) moved from 26.11.6 to 26.11.7 on manifest version
+1.28.0, still the newest; `winget validate` passed and the installer's SHA-256 equals the published
+`-setup.exe`'s. **Not run:** `powerpoint_check.py` (no page-copy code changed), `menu_check.py` and
+`save_check.py` on the `.dmg`, `clean_windows_check.py` and `run_on_windows.py`. **Not seen in a
+window:** the palette change on an installed build; it was tried by hand in a development build,
+and no window phase scrolls behind an open question.
+
 **26.11.6 verification and publication, 2026-11-10:** prepared on the Windows development machine,
 after a full read of the code whose fixes are the release. Step 1 took Vite 8.3.7 and the
 crates `cargo update` moves in both lockfiles, a second `dom_query` (0.29 beside 0.28) and its
