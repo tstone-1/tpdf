@@ -46,6 +46,7 @@ import { closingCheck } from "./closecheck";
 import { fitCheck } from "./fitcheck";
 
 import { pause, Report, settle } from "./checkreport";
+import { listenForOutsideInput, outsideInputNote } from "./outsideinput";
 import { basename } from "./paths";
 import { isLinux, isMac } from "./keys";
 import { SIDEBAR_CLASS } from "./sidebar";
@@ -183,8 +184,12 @@ async function placeChecks(
   report.check(`it follows fit ${fit}, as the launch asked`, fitted, `fit ${host.status()?.fit ?? "none"}`);
   // Still there once the boot is over: a remembered place or a late fit
   // landing after the launch's would move it away.
+  // Real key presses and wheel turns are named in the detail: the window has
+  // the focus, and one Page Down from someone at the machine reads as page 13.
+  const stopListening = listenForOutsideInput(window);
   await pause(QUIET_MS);
-  report.check("the page is still the one asked for after the boot", at() === page, `page ${at()}`);
+  const outside = outsideInputNote(stopListening());
+  report.check("the page is still the one asked for after the boot", at() === page, `page ${at()}${outside}`);
   if (!marked) return;
   // The forward search's boxes: in the model on that page, and painted on
   // the overlay where they are, which is what the reader sees.

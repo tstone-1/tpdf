@@ -4,6 +4,7 @@
     scripts/run_on_windows.py --host HOST --clone 'C:\\Users\\me\\tpdf'
         [--suite cli|lib|all] [--rev REV] [--timeout SECONDS]
         [--pictures FOLDER [--picture-arg ARG]...]
+        [--window-checks [--only TEXT]...]
 
 WHY THIS EXISTS. `check_windows.py` type-checks the Windows tree from a Mac and
 runs nothing, so behaviour that exists only on Windows is first exercised by
@@ -69,6 +70,17 @@ in the desktop session, and the run has to get one:
 `--picture-arg` is passed on, once for each, after `--size 1000x700 --timeout
 240`, so a later `--size` wins; the defaults suit a 1024 x 768 screen and a
 first start that is slower than a Mac's. The exit is `screenshots.py`'s.
+
+THE WINDOW CHECKS INSTEAD. `--window-checks` builds the checks binary the same
+way, generates the fixtures as the test run does, and runs `window_checks.py`
+in the desktop session, with the same session handling as `--pictures`. Every
+window it starts takes the focus, so on the machine somebody is working at, a
+key they press lands in tpdf: on 2026-11-12 one Page Down failed the `open`
+phase with `page 13` (`docs/TRAPS.md`, *A key pressed at a machine running the
+window checks moved the open check's page*). Run there, nobody's screen is
+taken. Every `[FAIL]` line and the summary come back; the whole transcript
+stays in `<clone>-check-run\\window.txt`. `--only` is passed on. The exit is
+`window_checks.py`'s.
 
 NOT A GATE. It needs a second machine that is switched on, so `gates.py` does
 not run it, for the reason it does not run `check_windows.py`.
@@ -193,6 +205,22 @@ if (-not (Test-Path node_modules) -or -not (Test-Path "$run\\lock.txt") -or ((Ge
 """
 
 
+# What CI generates, by the script CI calls. Without it most checks skip, and
+# a suite that skipped everything reads like one that passed; the window checks
+# count a missing fixture as a failure instead.
+FIXTURES = """python -u scripts\\ci_fixtures.py --signed --hostile 2>&1 | Select-Object -Last 1
+if ($LASTEXITCODE) { Stop-Run "the fixtures could not be generated; python -m pip install -r scripts\\fixture-tools.txt installs what that needs" 2 }
+# The fixtures CI cannot generate embed a system font. The clone has them if
+# they were ever made there, and without them the OCR checks skip. Every file
+# and not only the documents: a fixture without its manifest fails a control.
+$borrowed = 0
+Get-ChildItem "$clone\\testdata" -File -ErrorAction SilentlyContinue | ForEach-Object {
+  if (-not (Test-Path "testdata\\$($_.Name)")) { Copy-Item $_.FullName "testdata\\$($_.Name)"; $borrowed++ }
+}
+"[OK] fixtures: CI's generated here, $borrowed more copied from the clone's testdata"
+"""
+
+
 def powershell(clone: str, sha: str, suite: str) -> str:
     tests = "\n".join(
         f'{command} 2>&1 | Tee-Object -Append "$run\\cargo.txt" | '
@@ -200,23 +228,11 @@ def powershell(clone: str, sha: str, suite: str) -> str:
         f"if ($LASTEXITCODE -ne 0) {{ $failed = 1 }}"
         for command in SUITES[suite]
     )
-    return checkout(clone, sha) + f"""npm run build 2>&1 | Out-Null
-if ($LASTEXITCODE) {{ Stop-Run "the frontend did not build" 2 }}
+    return checkout(clone, sha) + """npm run build 2>&1 | Out-Null
+if ($LASTEXITCODE) { Stop-Run "the frontend did not build" 2 }
 python scripts\\fetch_pdfium.py 2>&1 | Select-Object -Last 1
-if ($LASTEXITCODE) {{ Stop-Run "PDFium could not be fetched" 2 }}
-# What CI generates, by the script CI calls. Without it most checks skip, and
-# a suite that skipped everything reads like one that passed.
-python -u scripts\\ci_fixtures.py --signed --hostile 2>&1 | Select-Object -Last 1
-if ($LASTEXITCODE) {{ Stop-Run "the fixtures could not be generated; python -m pip install -r scripts\\fixture-tools.txt installs what that needs" 2 }}
-# The fixtures CI cannot generate embed a system font. The clone has them if
-# they were ever made there, and without them the OCR checks skip. Every file
-# and not only the documents: a fixture without its manifest fails a control.
-$borrowed = 0
-Get-ChildItem "$clone\\testdata" -File -ErrorAction SilentlyContinue | ForEach-Object {{
-  if (-not (Test-Path "testdata\\$($_.Name)")) {{ Copy-Item $_.FullName "testdata\\$($_.Name)"; $borrowed++ }}
-}}
-"[OK] fixtures: CI's generated here, $borrowed more copied from the clone's testdata"
-$env:CARGO_BUILD_JOBS = "2"
+if ($LASTEXITCODE) { Stop-Run "PDFium could not be fetched" 2 }
+""" + FIXTURES + f"""$env:CARGO_BUILD_JOBS = "2"
 Set-Location src-tauri
 Remove-Item "$run\\cargo.txt" -ErrorAction SilentlyContinue
 $failed = 0
@@ -253,16 +269,61 @@ uv run --with reportlab --with pillow scripts\\screenshots.py src-tauri\\target\
 """
 
 
+# How long the window checks may take. The whole run took about ten minutes
+# unattended on 2026-10-16; the rest is room for a first start.
+WINDOW_LIMIT = 2400
+
+
+def window_checks_task(clone: str, only: list[str]) -> str:
+    """The script that runs `window_checks.py` in the desktop session.
+
+    Its whole transcript stays in `window.txt` on the host. What comes back is
+    every `[FAIL]` line and the summary, because one viewer check alone prints
+    hundreds of passing lines; a run with no summary sends its last lines, where
+    the reason it stopped is (an `--only` matching nothing said so only there).
+    """
+    tree = clone.rstrip("\\/") + "-check"
+    run = clone.rstrip("\\/") + "-check-run"
+    passed = " ".join(f"--only '{text.replace(chr(39), chr(39) * 2)}'" for text in only)
+    return f"""$run = '{run}'
+Remove-Item "$run\\window.txt","$run\\window-shown.txt" -ErrorAction SilentlyContinue
+Set-Location '{tree}'
+$env:PYTHONIOENCODING = "utf-8"
+python -u scripts\\window_checks.py src-tauri\\target\\release\\tpdf.exe {passed} *> "$run\\window.txt"
+$code = $LASTEXITCODE
+$after = $false
+$shown = foreach ($line in @(Get-Content "$run\\window.txt")) {{
+  if ($line -eq '=== summary') {{ $after = $true }}
+  if ($after -or $line -match '^\\[FAIL\\]') {{ $line }}
+}}
+# No summary: the run stopped before it, and the reason is at the end.
+if (-not $after) {{ $shown = @(Get-Content "$run\\window.txt" -Tail 12) }}
+$shown | Set-Content "$run\\window-shown.txt"
+"exit $code" | Add-Content "$run\\window-shown.txt"
+'done' | Set-Content "$run\\window.done"
+"""
+
+
 LOCK_TASK = """rundll32.exe user32.dll,LockWorkStation
 'done' | Set-Content "$PSScriptRoot\\lock.done"
 """
 
 
-def powershell_pictures(clone: str, sha: str) -> str:
-    """Builds the checks binary, gets a screen, runs `pictures.ps1` there, locks again."""
+# What runs in the desktop session, as `<job>.ps1` ending in `<job>.done`: the task's
+# name, the lines to show at the end, the transcript to show when it runs out of
+# time, how long it may take, and whether it needs the fixtures CI generates.
+JOBS = {
+    "pictures": ("tpdf-pictures", "pictures.txt", "pictures.txt", PICTURE_LIMIT, False),
+    "window": ("tpdf-window", "window-shown.txt", "window.txt", WINDOW_LIMIT, True),
+}
+
+
+def powershell_desktop(clone: str, sha: str, job: str) -> str:
+    """Builds the checks binary, gets a screen, runs `<job>.ps1` there, locks again."""
+    task, shown, progress, limit, fixtures = JOBS[job]
     return checkout(clone, sha) + f"""python scripts\\fetch_pdfium.py 2>&1 | Select-Object -Last 1
 if ($LASTEXITCODE) {{ Stop-Run "PDFium could not be fetched" 2 }}
-$env:CARGO_BUILD_JOBS = "2"
+""" + (FIXTURES if fixtures else "") + f"""$env:CARGO_BUILD_JOBS = "2"
 npm run tauri build -- --config src-tauri/tauri.checks.conf.json --no-bundle *> "$run\\build.txt"
 if ($LASTEXITCODE) {{ Get-Content "$run\\build.txt" -Tail 12; Stop-Run "the checks build failed" 2 }}
 "[OK] built tpdf.exe " + (Get-Item src-tauri\\target\\release\\tpdf.exe).LastWriteTime
@@ -291,7 +352,7 @@ $found = $null
 foreach ($line in @(quser 2>$null)) {{
   if ($line -match "^\\s*>?$([regex]::Escape($env:USERNAME))\\s+(?:\\S+\\s+)?(\\d+)\\s+(Active|Disc)") {{ $found = $Matches }}
 }}
-if (-not $found) {{ Stop-Run "nobody is logged in as $env:USERNAME, and a window can only be photographed in a desktop session; log in once, by Remote Desktop or at the machine" 2 }}
+if (-not $found) {{ Stop-Run "nobody is logged in as $env:USERNAME, and a window can only be opened in a desktop session; log in once, by Remote Desktop or at the machine" 2 }}
 $session = [int]$found[1]; $state = $found[2]
 $attached = $false
 if ($state -eq "Disc" -or (Get-Locked $session)) {{
@@ -308,11 +369,11 @@ if ($state -eq "Disc" -or (Get-Locked $session)) {{
 $code = 2
 if (Get-Locked $session) {{
   "[FAIL] session $session still shows the lock screen"
-}} elseif (-not (Invoke-InSession "tpdf-pictures" "$run\\pictures.ps1" "$run\\pictures.done" {PICTURE_LIMIT})) {{
-  "[FAIL] the pictures did not finish within {PICTURE_LIMIT} s in session $session"
-  if (Test-Path "$run\\pictures.txt") {{ Get-Content "$run\\pictures.txt" -Tail 12 }}
+}} elseif (-not (Invoke-InSession "{task}" "$run\\{job}.ps1" "$run\\{job}.done" {limit})) {{
+  "[FAIL] the {job} run did not finish within {limit} s in session $session"
+  if (Test-Path "$run\\{progress}") {{ Get-Content "$run\\{progress}" -Tail 12 }}
 }} else {{
-  $lines = @(Get-Content "$run\\pictures.txt")
+  $lines = @(Get-Content "$run\\{shown}")
   $lines | Where-Object {{ $_ -notmatch "^exit " }}
   $last = $lines | Where-Object {{ $_ -match "^exit (\\d+)$" }} | Select-Object -Last 1
   if ($last -match "^exit (\\d+)$") {{ $code = [Math]::Min([int]$Matches[1], 2) }}
@@ -333,9 +394,9 @@ if ($attached) {{
 """
 
 
-def run_pictures(host: str, clone: str, sha: str, bundle: bytes | None, extra: list[str],
-                 timeout: float) -> subprocess.CompletedProcess[str] | str:
-    """`run_under_powershell` for the picture run: three scripts, one command."""
+def run_desktop(host: str, clone: str, sha: str, bundle: bytes | None, job: str, task: str,
+                timeout: float) -> subprocess.CompletedProcess[str] | str:
+    """`run_under_powershell` for a run in the desktop session: three scripts, one command."""
     if "'" in clone or " " in clone:
         raise SystemExit("[FAIL] --clone with a quote or a space in it cannot be passed to schtasks")
     run = clone.rstrip("\\/") + "-check-run"
@@ -349,8 +410,8 @@ def run_pictures(host: str, clone: str, sha: str, bundle: bytes | None, extra: l
         return made
     with tempfile.TemporaryDirectory() as scratch:
         scripts = {
-            "run.ps1": powershell_pictures(clone, sha),
-            "pictures.ps1": pictures_task(clone, extra),
+            "run.ps1": powershell_desktop(clone, sha, job),
+            f"{job}.ps1": task,
             "lock.ps1": LOCK_TASK,
         }
         files = []
@@ -518,7 +579,18 @@ def main() -> int:
                              "its pictures into this folder, instead of the tests")
     parser.add_argument("--picture-arg", action="append", default=[],
                         help="passed to screenshots.py, once for each argument")
+    parser.add_argument("--window-checks", action="store_true",
+                        help="build the checks binary and run window_checks.py there, "
+                             "instead of the tests")
+    parser.add_argument("--only", action="append", default=[],
+                        help="passed to window_checks.py, once for each")
     args = parser.parse_args()
+    if args.pictures and args.window_checks:
+        print("[FAIL] --pictures and --window-checks are two runs; ask for one")
+        return 2
+    if args.only and not args.window_checks:
+        print("[FAIL] --only is for --window-checks")
+        return 2
     if not args.host or not args.clone:
         print("[FAIL] name the machine: --host HOST --clone 'C:\\Users\\me\\tpdf', "
               "or TPDF_WINDOWS_HOST and TPDF_WINDOWS_CLONE")
@@ -527,7 +599,8 @@ def main() -> int:
     sha, what = tree_to_send(args.rev)
     bundle = bundle_of(sha)
     sent = "already on origin/main" if bundle is None else f"{len(bundle):,} bytes of commits sent"
-    doing = "pictures" if args.pictures else f"suite {args.suite}"
+    job = "pictures" if args.pictures else "window" if args.window_checks else None
+    doing = {"pictures": "pictures", "window": "window checks"}.get(job or "", f"suite {args.suite}")
     print(f"[..] {what} ({sha[:9]}, {sent}) on {args.host}: {doing}")
     try:
         asked = ssh(args.host, SHELL_PROBE, 60)
@@ -536,12 +609,17 @@ def main() -> int:
             print(f"[FAIL] {args.host} did not say whether its login shell is bash or PowerShell, "
                   f"so nothing was sent: {(asked.stderr or asked.stdout).strip()[-400:]}")
             return 2
-        if args.pictures and shell != "powershell":
-            print(f"[FAIL] --pictures needs a PowerShell login shell, and {args.host}'s is bash: "
+        if job and shell != "powershell":
+            flag = "--pictures" if job == "pictures" else "--window-checks"
+            print(f"[FAIL] {flag} needs a PowerShell login shell, and {args.host}'s is bash: "
                   "the scheduled task that reaches the desktop is started from PowerShell")
             return 2
-        if args.pictures:
-            read = run_pictures(args.host, args.clone, sha, bundle, args.picture_arg, args.timeout)
+        if job == "pictures":
+            read = run_desktop(args.host, args.clone, sha, bundle, job,
+                               pictures_task(args.clone, args.picture_arg), args.timeout)
+        elif job == "window":
+            read = run_desktop(args.host, args.clone, sha, bundle, job,
+                               window_checks_task(args.clone, args.only), args.timeout)
         else:
             run = run_under_bash if shell == "bash" else run_under_powershell
             read = run(args.host, args.clone, sha, args.suite, bundle, args.timeout)
@@ -567,6 +645,15 @@ def main() -> int:
         count = len(list(args.pictures.glob("*.png")))
         print(f"[{'OK' if code == 0 else 'FAIL'}] {count} pictures in {args.pictures}; "
               f"screenshots.py exited {code} on {args.host}")
+        return code
+    if job == "window":
+        if code == 0:
+            print(f"[OK] window_checks.py passed on {args.host}")
+        elif code == 1:
+            print(f"[FAIL] window_checks.py failed on {args.host}; "
+                  "the whole transcript is in <clone>-check-run\\window.txt there")
+        else:
+            print(f"[FAIL] the run on {args.host} did not finish, so no window was checked")
         return code
     if code == 0:
         print(f"[OK] the {args.suite} suite passes on {args.host}")

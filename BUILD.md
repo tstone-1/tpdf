@@ -1310,6 +1310,22 @@ starts at 0 and increments within the month.
    exit: [WinError 5] Access is denied`. That was the harness: `win_worker_exit.py` asked
    about a worker that was exiting and did not wait for it (`docs/TRAPS.md`, *A process
    that is exiting refuses a query before its handle says it has exited*). It waits now.
+
+   **On the Windows build machine, as one command** (2026-11-12), for the same reason as
+   the second Mac: every window the checks start takes the focus, and a key pressed by
+   somebody working at the machine lands in tpdf. On 2026-11-12 that failed the `open`
+   phase of the 26.11.7 run with `page 13` (`docs/TRAPS.md`, *A key pressed at a machine
+   running the window checks moved the open check's page*).
+
+   ```
+   scripts/run_on_windows.py --host HOST --clone 'C:\path\to\tpdf' --window-checks [--only TEXT]
+   ```
+
+   It sends the tree as `--pictures` does, builds the `--no-bundle` checks binary in the
+   worktree beside the clone, generates the fixtures, and runs `window_checks.py` in the
+   logged-in session through a one-shot scheduled task, attaching and locking the session
+   as `--pictures` does. It needs a PowerShell login shell and an administrator account.
+   The `[FAIL]` lines and the summary come back; the whole transcript stays on the host.
 6. <a id="release-step-6"></a>**Re-check `docs/THREAT-MODEL.md` against the code**, and correct the document before
    trusting anything else in this list — §3's boundary table, §5's sandbox policy and
    §6's macOS column especially. Every present-tense sentence there claims something is

@@ -772,6 +772,7 @@ hop through the index.
 - `-o --force` failed once with Access is denied in the full suite, and passed three times alone
 - `check_linux.py` cannot run from a `git worktree`, and two runs of it share one ref and one clone
 - A browser window left covering the second Mac's screen made the open check hang on every tree
+- A key pressed at a machine running the window checks moved the open check's page
 
 ## Windows and portability
 - The gates had never run on the platform where they fail
@@ -27502,3 +27503,25 @@ its window behind whatever is there, where WebKit stops the page's timers.
 With Safari and UTM hidden (`set visible of process ... to false` through System Events, and
 `true` again afterwards) the same tree passed 17 of 17, `open` in 30 s. Before reading a hang
 there as the code's, list the visible processes and their window sizes over ssh.
+
+### A key pressed at a machine running the window checks moved the open check's page
+
+26.11.7, 2026-11-12, Windows 11: `window_checks.py` passed 16 of 17 phases, and `open` failed
+*the page is still the one asked for after the boot* with `page 13`, where `--page 12` had been
+handed to a running app. Three runs of the phase alone passed. The release shipped with the
+cause unknown.
+
+The cause is the person at the machine. Each window the check starts takes the focus, so a key
+meant for another program lands in tpdf, and the check reads the page after a 2.5 s pause
+(`QUIET_MS` in `src/lib/opencheck.ts`). Measured the same day with the phase repeated: on the
+development machine, where work went on, 2 failures in 14 (pages 13 and 14); on the Windows
+build machine, where nobody typed, 0 in 30. A control pressed one Page Down into the focused
+window during the pause: 5 failures in 5, each `page 13`.
+
+Since then the check names any real key press or wheel turn that arrives during the pause
+(`src/lib/outsideinput.ts`, `isTrusted` only), and the failure reads `page 13; the window
+received an input from outside the check meanwhile (PageDown)`. Proven with the same control,
+3 in 3. The verdict stays a failure, because a real fault can happen in the same run; read the
+detail before chasing the code. Run the window checks on a machine nobody is using:
+`scripts/run_on_windows.py --window-checks` runs them on the Windows build machine, and
+`run_on_mac.py` on the second Mac (`BUILD.md`, step 5).

@@ -12,8 +12,10 @@ are the ones step 1 lists. All 35 gates passed on the release tree and `check_li
 `window_checks.py` 17 of 17 on the second Mac through `run_on_mac.py`, and 16 of 17 on Windows 11
 on a `--no-bundle` checks build: the `open` phase failed once, *the page is still the one asked
 for after the boot* with `--page 12 --zoom page` handed to a running app reading page 13. Three
-runs of that phase alone passed, and nothing this release changed is on that path; the cause is
-not known. `viewer_check.py` 385 of 385 on `text-heavy.pdf` and 284 of 284 on `vector-heavy.pdf`.
+runs of that phase alone passed, and nothing this release changed is on that path. Found the same
+day: a key pressed by someone working at the machine, which the check's window had taken the focus
+from (`docs/TRAPS.md`, *A key pressed at a machine running the window checks moved the open check's
+page*). `viewer_check.py` 385 of 385 on `text-heavy.pdf` and 284 of 284 on `vector-heavy.pdf`.
 Step 7 in the mutation worktree on the release tree: `mutate_python.py` 38/38,
 `mutate_frontend.py --near v26.11.6` 9/9 with the four new palette rows, and `mutate_rust.py`
 nothing to mutate, no Rust source having changed. `print-probe` passed 15 of 15; its first start

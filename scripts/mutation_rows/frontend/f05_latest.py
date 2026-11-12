@@ -1215,3 +1215,22 @@ ROWS += [
         "        if (through < 0) this.scrollTop = Math.max(",
         "keeps the reader on the cropped page, and the next drag on it"),
 ]
+# --- Input from outside a window check, 2026-11-12 ---------------------------------------
+ROWS += [
+    Mutation("outside input: the check's own key events counted as a person's", "src/lib/outsideinput.ts",
+        "    if (event.isTrusted) heard.push((event as KeyboardEvent).key);",
+        "    heard.push((event as KeyboardEvent).key);",
+        "ignores the check's own dispatched events"),
+    Mutation("outside input: a real key press not recorded", "src/lib/outsideinput.ts",
+        "    if (event.isTrusted) heard.push((event as KeyboardEvent).key);",
+        "    void event;",
+        "names a real key press and a real wheel turn"),
+    Mutation("outside input: the wheel listener left on the window", "src/lib/outsideinput.ts",
+        "    target.removeEventListener(\"wheel\", wheel, true);\n",
+        "",
+        "stops listening when asked"),
+    Mutation("outside input: a note added when nothing came", "src/lib/outsideinput.ts",
+        "  if (heard.length === 0) return \"\";\n",
+        "",
+        "adds nothing to the detail when nothing came, and says what came otherwise"),
+]
