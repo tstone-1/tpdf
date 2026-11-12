@@ -55,7 +55,9 @@ function asked(enabled = () => true) {
     },
     { id: "view.fitWidth", title: "Fit width", run: () => void events.push("fit") },
   );
-  const palette = new Palette(registry);
+  const palette = new Palette(registry, {
+    turnPage: (forward) => void events.push(forward ? "page:next" : "page:previous"),
+  });
   const body = (globalThis as unknown as { document: { body: FakeElement } }).document.body;
   const input = body.querySelector("input")!;
   const key = (k: string) => input.dispatch("keydown", { key: k });
@@ -119,6 +121,40 @@ describe("leaving the palette's argument question", () => {
     type("1");
     live = false;
     key("Enter");
+    expect(events).toEqual(["dismissed"]);
+  });
+});
+
+describe("the document behind a question", () => {
+  // Picking "slides 2, 3-5 and 10" is done by scrolling through the deck with
+  // the question open; a backdrop that took the wheel made that impossible.
+  it("takes the wheel while a value is typed, and not while searching", () => {
+    const { palette, key } = asked();
+    expect(palette.isLettingDocumentThrough).toBe(true);
+    key("Escape");
+    expect(palette.isAsking).toBe(false);
+    expect(palette.isLettingDocumentThrough).toBe(false);
+  });
+
+  it("stops taking it once the question is answered", () => {
+    const { palette, key, type } = asked();
+    type("2");
+    key("Enter");
+    palette.open();
+    expect(palette.isLettingDocumentThrough).toBe(false);
+  });
+
+  it("turns pages on Page Up and Page Down from the input", () => {
+    const { events, key } = asked();
+    key("PageDown");
+    key("PageUp");
+    expect(events).toEqual(["page:next", "page:previous"]);
+  });
+
+  it("does not turn pages while a command is searched for", () => {
+    const { events, key } = asked();
+    key("Escape");
+    key("PageDown");
     expect(events).toEqual(["dismissed"]);
   });
 });

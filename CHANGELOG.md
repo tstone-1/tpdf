@@ -17,6 +17,16 @@ as *downloadable*, while the release sat as a draft that GitHub showed to nobody
 are given now because they are different facts, and only the second one means a reader can
 have the binary.)
 
+## [26.11.7] - Unreleased
+
+### Changed
+
+- **The document can be scrolled while the palette asks for a value.** Choosing pages to
+  extract, or where to split, no longer means remembering their numbers first: while the page
+  box is open the wheel and the scroll bar reach the document, Page Up and Page Down turn
+  pages from the box, and the box sits at the bottom of the window without dimming the
+  pages. A click on the document no longer closes the palette while it asks; Escape does.
+
 ## [26.11.6] - 2026-11-10
 
 ### Security

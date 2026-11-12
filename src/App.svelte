@@ -5728,7 +5728,9 @@
 
       // After the spike entry points, which exit the process: none of them mount
       // the shell, and a palette attached to `document.body` would outlive it.
-      palette = new Palette(commands);
+      palette = new Palette(commands, {
+        turnPage: (forward) => (forward ? viewer?.nextPage() : viewer?.previousPage()),
+      });
 
       // On `document.body` rather than inside the viewer, for the reason the
       // context menu is: a modal that lives in a scroll box is clipped by it.

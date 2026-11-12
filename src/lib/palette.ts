@@ -25,12 +25,24 @@ const TEXT = catalog({
   "en-US": {
     runCommand: "Run a command",
     noMatch: "No matching command",
+    browse: "Scroll the document to look. Page Up and Page Down turn pages.",
   },
   "de-DE": {
     runCommand: "Befehl ausführen",
     noMatch: "Kein passender Befehl",
+    browse: "Im Dokument blättern, um nachzusehen. Bild auf und Bild ab wechseln die Seite.",
   },
 });
+
+/** What the palette may do to the document behind it. */
+export interface PaletteOptions {
+  /**
+   * Turns the document one page forward or back. Page Up and Page Down call it
+   * while a value is being typed, since the input has focus and the viewer
+   * would never see the keys.
+   */
+  turnPage?: (forward: boolean) => void;
+}
 
 /** Rows shown at once. More than this and the list scrolls. */
 const MAX_ROWS = 12;
@@ -43,6 +55,8 @@ export class Palette {
   private readonly backdrop: HTMLDivElement;
   private readonly input: HTMLInputElement;
   private readonly list: HTMLDivElement;
+  private readonly panel: HTMLDivElement;
+  private readonly turnPage: ((forward: boolean) => void) | null;
 
   private results: Ranked[] = [];
   private selected = 0;
@@ -58,8 +72,9 @@ export class Palette {
    */
   private asking: Command | null = null;
 
-  constructor(registry: CommandRegistry) {
+  constructor(registry: CommandRegistry, options: PaletteOptions = {}) {
     this.registry = registry;
+    this.turnPage = options.turnPage ?? null;
 
     this.backdrop = document.createElement("div");
     this.backdrop.className = "tpdf-palette";
@@ -68,10 +83,11 @@ export class Palette {
       "background:rgba(0,0,0,0.28);align-items:flex-start;justify-content:center;";
 
     const panel = document.createElement("div");
+    this.panel = panel;
     panel.style.cssText =
       "margin-top:12vh;width:min(560px,90vw);border-radius:10px;overflow:hidden;" +
       "background:Canvas;color:CanvasText;box-shadow:0 12px 48px rgba(0,0,0,0.35);" +
-      "font:13px/1.5 system-ui,-apple-system,sans-serif;";
+      "font:13px/1.5 system-ui,-apple-system,sans-serif;pointer-events:auto;";
 
     this.input = document.createElement("input");
     this.input.type = "text";
@@ -177,7 +193,40 @@ export class Palette {
   private leave(): void {
     const left = this.asking;
     this.asking = null;
+    this.letDocumentThrough(false);
     left?.argument?.dismissed?.();
+  }
+
+  /**
+   * Whether the document behind the palette takes the wheel and the mouse.
+   *
+   * On while a value is typed. The values asked for are mostly page numbers,
+   * and the reader picks them by looking: "slides 2, 3-5 and 10" is decided by
+   * scrolling through the deck, not remembered beforehand. A dimmed backdrop
+   * that swallowed the wheel made the reader close the palette, look, and
+   * start the command again for every page they were unsure of.
+   *
+   * So the backdrop stops being a layer: no dimming, no pointer events, and the
+   * panel moves to the bottom of the window, where it covers the foot of a page
+   * rather than the title of a slide. The cost is that a click outside no
+   * longer closes the palette while it asks --- it reaches the document
+   * instead --- and Escape remains the way out.
+   *
+   * Turned off in {@link leave}, which every route out of argument mode reaches,
+   * a submit included through {@link close}.
+   */
+  private letDocumentThrough(on: boolean): void {
+    const style = this.backdrop.style;
+    style.pointerEvents = on ? "none" : "auto";
+    style.background = on ? "transparent" : "rgba(0,0,0,0.28)";
+    style.alignItems = on ? "flex-end" : "flex-start";
+    this.panel.style.marginTop = on ? "0" : "12vh";
+    this.panel.style.marginBottom = on ? "6vh" : "0";
+  }
+
+  /** Whether the document behind takes the wheel. For the check harness. */
+  get isLettingDocumentThrough(): boolean {
+    return this.backdrop.style.pointerEvents === "none";
   }
 
   /** Whether a value is being typed rather than a command searched for. */
@@ -210,6 +259,7 @@ export class Palette {
     if (!command.argument) return;
     this.leave();
     this.asking = command;
+    this.letDocumentThrough(true);
     this.input.value = "";
     this.input.placeholder = command.argument.placeholder;
     this.paint();
@@ -268,7 +318,11 @@ export class Palette {
     if (event.key === "ArrowDown") this.move(1);
     else if (event.key === "ArrowUp") this.move(-1);
     else if (event.key === "Enter") this.runSelected();
-    else if (event.key === "Escape") {
+    else if (this.asking && this.turnPage && (event.key === "PageDown" || event.key === "PageUp")) {
+      // A one-line input does nothing with these, and the viewer cannot see
+      // them while the input has focus.
+      this.turnPage(event.key === "PageDown");
+    } else if (event.key === "Escape") {
       // One level at a time. Escaping out of a mistyped page number should
       // leave the palette open on the command list, not send the reader back
       // to the document to start again.
@@ -322,6 +376,12 @@ export class Palette {
       wanted.textContent = this.asking.argument.placeholder;
       wanted.style.cssText = "opacity:0.6;";
       asked.append(title, wanted);
+      if (this.turnPage) {
+        const browse = document.createElement("div");
+        browse.textContent = TEXT().browse;
+        browse.style.cssText = "opacity:0.6;font-size:12px;";
+        asked.append(browse);
+      }
       const row = document.createElement("div");
       row.setAttribute("role", "status");
       row.style.cssText = `padding:0.6rem 0.9rem;${problem ? "opacity:0.55;" : ""}`;
