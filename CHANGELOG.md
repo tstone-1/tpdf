@@ -26,6 +26,9 @@ have the binary.)
   box is open the wheel and the scroll bar reach the document, Page Up and Page Down turn
   pages from the box, and the box sits at the bottom of the window without dimming the
   pages. A click on the document no longer closes the palette while it asks; Escape does.
+- The PDF engine is PDFium 8127 at the head of its branch again. The two upstream commits
+  since the last build are in the JavaScript runtime, which tpdf does not compile, so the
+  engine's code is unchanged.
 
 ## [26.11.6] - 2026-11-10
 

@@ -2,6 +2,20 @@
 
 Each engine pin since 8044: what moved, the candidate run that built it, the probes that cleared it, and the release verifications that turned on the engine. Newest first; the record of a new pin goes at the top. Moved here verbatim from `BUILD.md` on 2026-10-23, which indexes this file.
 
+**PDFium 8127-tpdf.2 (2026-11-12).** The push of `ff6bb436` turned `Audit` red: `chromium/8127`
+had gained two commits after the pin, *[M158] Use CJS_Runtime::BlockingScope to handle nested
+blocking calls* (`7aa64b32`) and *[M158] Guard JSPLATFORM dialog call-outs with
+in_active_ffi_callback_* (`b23fee3a`). `pdfium-bump` opened issue #9 and started
+[run 43183468021](https://github.com/tstone-1/tpdf/actions/runs/43183468021), which built all
+three platforms: 63 upstream text tests on macOS and Linux, 62 on Windows, no failures. Both
+commits are in the JavaScript runtime, which this build does not compile, and the binaries were
+compared first, as the 8078-tpdf.2 record advises. **The compiled code did not move.** Against
+`8127-tpdf.1`, every file of the macOS and Linux archives is byte-identical except
+`DEPENDENCIES.json` and `PROVENANCE.json`, and the Windows DLL has the same `.text`, `.data` and
+`.pdata` sections and differs only in `.rdata` and `.rsrc`. So the compatibility probes were not
+re-run, and `THIRD-PARTY-NOTICES.md` does not change. On Windows 11 all 35 gates passed on the
+installed engine, among them 3,408 Rust unit tests and 3,426 frontend tests.
+
 **PDFium 8127-tpdf.1 (2026-11-06).** `Audit` went red with Chrome stable 158 on
 `chromium/8127`, and `pdfium-bump` opened issue #8 and started the candidate, which failed on all
 three platforms in the same step: the supplier's `steps/08-licenses.sh` at `976ce1f` read
