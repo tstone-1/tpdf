@@ -3179,7 +3179,7 @@ SOFTWARE.
 | enumflags2_derive | 0.7.12 | MIT OR Apache-2.0 |
 | equivalent | 1.0.3 | Apache-2.0 OR MIT |
 | erased-serde | 0.4.11 | MIT OR Apache-2.0 |
-| errno | 0.3.14 | MIT OR Apache-2.0 |
+| errno | 0.3.15 | MIT OR Apache-2.0 |
 | event-listener | 5.4.2 | Apache-2.0 OR MIT |
 | event-listener-strategy | 0.5.4 | Apache-2.0 OR MIT |
 | fastrand | 2.5.0 | Apache-2.0 OR MIT |
@@ -3399,7 +3399,7 @@ SOFTWARE.
 | rustls-native-certs | 0.8.5 | Apache-2.0 OR ISC OR MIT |
 | rustls-pki-types | 1.16.0 | MIT OR Apache-2.0 |
 | rustls-platform-verifier | 0.7.1 | MIT OR Apache-2.0 |
-| rustls-webpki | 0.103.16 | ISC |
+| rustls-webpki | 0.103.17 | ISC |
 | salsa20 | 0.10.2 | MIT OR Apache-2.0 |
 | same-file | 1.0.6 | Unlicense/MIT |
 | schemars | 0.8.22 | MIT |

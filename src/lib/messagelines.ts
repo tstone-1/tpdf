@@ -28,6 +28,25 @@ export function resultTone(success: boolean): MessageTone {
   return success ? "success" : "problem";
 }
 
+/**
+ * What the two live regions beside the message bar hold for a message.
+ *
+ * The bar says what kind of message it is by colour, and by nothing a screen
+ * reader hears: until 2026-11-13 it had no role at all, so a failure and a
+ * finished signing were read alike, and only when the reader went looking. A
+ * problem goes to the `alert` region, which interrupts; a result or an
+ * instruction to the `status` region, which waits its turn. Both regions are in
+ * the page from the start and only their text changes, because a live region
+ * inserted together with its text is often not announced at all.
+ *
+ * The other region is emptied, so a problem replaced by a success is not left
+ * behind for a reader who moves through the page.
+ */
+export function announcement(message: string | null, tone: MessageTone): { alert: string; status: string } {
+  if (message === null) return { alert: "", status: "" };
+  return tone === "problem" ? { alert: message, status: "" } : { alert: "", status: message };
+}
+
 /** One line of a message. */
 export interface MessageLine {
   /** `Timestamp`, for a line `Timestamp: …`; `null` for the first line and for a line with no label. */

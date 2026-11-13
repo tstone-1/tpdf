@@ -17,7 +17,7 @@ as *downloadable*, while the release sat as a draft that GitHub showed to nobody
 are given now because they are different facts, and only the second one means a reader can
 have the binary.)
 
-## [26.11.8] - Unreleased
+## [26.11.8] - 2026-11-13
 
 ### Changed
 
@@ -31,6 +31,19 @@ have the binary.)
   appear" was shown in the red of a failure. The message bar now has three colours: red for
   a problem, green for a result, amber for something to do now. The instruction also goes
   away once the rectangle is dragged or Esc cancels; after Esc it used to stay on screen.
+- **A screen reader hears the message bar.** A problem is announced at once, and a result
+  or an instruction when the reader is free. The bar had no role before, so a screen reader
+  read a failure and a finished signing alike, and only when the reader went looking.
+
+### Added
+
+- **The page number printed on a page is shown beside its position.** A report with a
+  cover and roman-numbered front matter prints "1" on its fifth page, and "5" typed into
+  *Extract pages* means the fifth page of the file. Where a document states its page
+  numbers (`/PageLabels`), the page counter reads `5 / 20 (1)`, and the previews of
+  *Extract pages*, *Split document* and *Go to page* add "printed as i–ii, 1–3". The
+  numbers typed stay positions. A document that prints numbers on its pages without
+  stating them shows nothing new.
 
 ## [26.11.7] - 2026-11-12
 

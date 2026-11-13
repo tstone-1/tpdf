@@ -416,8 +416,36 @@ def build_hostile(path: str) -> dict:
     }
 
 
+def build_labels(path: str) -> dict:
+    """Eight pages whose printed numbers are not their positions.
+
+    `/PageLabels` (§12.4.2) in the three shapes a report has: roman front
+    matter, a decimal body restarting at 1, and an appendix with a prefix and
+    letters. The positions a reader types are 1 to 8; what is printed on them is
+    i, ii, 1 to 4, App-A, App-B. One outline entry, because the probe's first
+    check is that the walk found one.
+    """
+    pdf = Pdf()
+    pages, page_objects = build_pages(pdf, 8)
+    outlines = build_outline(pdf, [Node("Body", page=2, top=HEIGHT - 100)], page_objects)
+    root = pdf.add(
+        b"<< /Type /Catalog /Pages %d 0 R /Outlines %d 0 R"
+        b" /PageLabels << /Nums [0 << /S /r >> 2 << /S /D >>"
+        b" 6 << /S /A /P (App-) >>] >> >>" % (pages, outlines)
+    )
+    with open(path, "wb") as handle:
+        handle.write(pdf.serialize(root))
+
+    return {
+        "pages": 8,
+        "roots": 1,
+        "tops": [100],
+        "page_labels": ["i", "ii", "1", "2", "3", "4", "App-A", "App-B"],
+    }
+
+
 def main() -> int:
-    """Writes both fixtures and the manifest."""
+    """Writes the fixtures and the manifest."""
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("outdir", nargs="?", default="testdata")
     args = parser.parse_args()
@@ -429,6 +457,9 @@ def main() -> int:
         ),
         "outline-hostile.pdf": build_hostile(
             os.path.join(args.outdir, "outline-hostile.pdf")
+        ),
+        "outline-labels.pdf": build_labels(
+            os.path.join(args.outdir, "outline-labels.pdf")
         ),
     }
     path = os.path.join(args.outdir, "outline-manifest.json")

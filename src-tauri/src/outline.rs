@@ -96,6 +96,18 @@ const MAX_TITLE_CHARS: usize = 300;
 /// the file.
 const MAX_TITLE_BYTES: usize = 1 << 20;
 
+/// Longest page label kept, in characters.
+///
+/// A label is what the document says is printed on a page --- `iii`, `12`,
+/// `A-4` --- and it is shown beside the page counter, so anything near this
+/// is already not a page number.
+const MAX_LABEL_CHARS: usize = 32;
+
+/// Largest label buffer that will be allocated, in bytes. Past it the label is
+/// declined, for [`MAX_TITLE_BYTES`]' reason: PDFium writes nothing into a
+/// short buffer, so the length it asks for is the file's to choose.
+const MAX_LABEL_BYTES: usize = 4096;
+
 /// Action types from `fpdf_doc.h`.
 mod action {
     use std::os::raw::c_ulong;
@@ -243,6 +255,60 @@ pub struct Outline {
     /// made one number mean two things is the kind of cleverness `AGENTS.md`
     /// has entries about.
     pub urls: Vec<String>,
+    /// The page labels (`/PageLabels`, §12.4.2), one per page of the file in
+    /// file order: what the document says is printed on each page. Empty when
+    /// it states none, and an entry is empty for a page it gives no label.
+    ///
+    /// Here rather than in a request of its own because it is the same kind
+    /// of answer, read from PDFium on the render thread once after first
+    /// paint, and the reader needs it at the same time: the page counter and
+    /// the page-range prompt show a page's label where it differs from its
+    /// position, since the numbers a reader types are positions. Defaulted so a
+    /// reply written before the field existed still parses.
+    #[serde(default)]
+    pub page_labels: Vec<String>,
+}
+
+/// Every page's label, or nothing when the document states none.
+///
+/// `FPDF_GetPageLabel` answers 0 for a page with no label --- and for every
+/// page of a document with no `/PageLabels` --- so an all-empty list is
+/// returned as no list at all, and the frontend has one case for "this
+/// document does not number its pages".
+fn page_labels(bindings: Bindings, document: FPDF_DOCUMENT, page_count: u32) -> Vec<String> {
+    let mut labels = Vec::with_capacity(page_count as usize);
+    for index in 0..page_count {
+        let Ok(index) = c_int::try_from(index) else {
+            break;
+        };
+        // SAFETY: the documented two-call form --- a null buffer asks for the
+        // length in bytes, including the terminating UTF-16 NUL. `document`
+        // is the live handle the walk holds a borrow of.
+        let needed = unsafe { bindings.FPDF_GetPageLabel(document, index, std::ptr::null_mut(), 0) }
+            as usize;
+        if needed <= 2 || needed > MAX_LABEL_BYTES {
+            labels.push(String::new());
+            continue;
+        }
+        let mut buffer = vec![0u8; needed];
+        // SAFETY: `buffer` is `needed` writable bytes, which is what the call
+        // above asked for.
+        let written = unsafe {
+            bindings.FPDF_GetPageLabel(
+                document,
+                index,
+                buffer.as_mut_ptr() as *mut c_void,
+                needed as c_ulong,
+            )
+        } as usize;
+        buffer.truncate(written.min(needed));
+        labels.push(sanitize_title(&decode_title(&buffer), MAX_LABEL_CHARS).0);
+    }
+    if labels.iter().all(String::is_empty) {
+        Vec::new()
+    } else {
+        labels
+    }
 }
 
 /// State threaded through the walk. Separate from [`Outline`] because the
@@ -287,6 +353,7 @@ pub fn read(document: &OpenDocument) -> Outline {
             .FPDFBookmark_GetFirstChild(walk.document, std::ptr::null_mut())
     };
     let items = walk.siblings(first, 0);
+    let page_labels = page_labels(walk.bindings, walk.document, walk.page_count);
 
     Outline {
         items,
@@ -294,6 +361,7 @@ pub fn read(document: &OpenDocument) -> Outline {
         limits: walk.limits,
         walk_ms: started.elapsed().as_secs_f64() * 1000.0,
         urls: walk.urls,
+        page_labels,
     }
 }
 

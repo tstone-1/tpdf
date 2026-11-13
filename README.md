@@ -993,6 +993,9 @@ measured the Windows render constants come out 1.5–1.8x worse.
 - **Extract pages to a second file**, naming a range the way you would say it out loud.
   It reads the document and writes elsewhere, so there is nothing to undo and the open
   file is untouched. It refuses a reversed range rather than quietly correcting it. The
+  numbers are positions in the file; where the document states the numbers printed on its
+  pages, the preview names those too ("printed as i–ii, 1–3"), as do Split document, Go
+  to page and the page counter. The
   pages left out are left out of the file: their content goes, and so do the pictures and
   fonts that only they used, also when the document keeps every page's in one shared list.
   <!-- built: file.extractPages -->

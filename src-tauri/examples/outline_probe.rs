@@ -359,6 +359,7 @@ fn check(
     }
 
     check_limits(&mut report, name, outline, expected);
+    check_labels(&mut report, outline, expected);
 
     let total = report.passed + report.failed;
     println!("\n{}/{total} checks passed", report.passed);
@@ -490,6 +491,33 @@ fn check_entries(
 }
 
 /// Checks that the bounds fired where they should and nowhere else.
+/// The page labels, against the manifest's `page_labels`, on every fixture.
+///
+/// A fixture that states none must answer none: that is the control, since a
+/// reader that invented a label for every page --- its position, say --- would
+/// match a decimal fixture and be wrong on every document without labels.
+fn check_labels(report: &mut Report, outline: &Outline, expected: &serde_json::Value) {
+    let wanted: Vec<&str> = expected
+        .get("page_labels")
+        .and_then(|value| value.as_array())
+        .map(|values| {
+            values
+                .iter()
+                .filter_map(serde_json::Value::as_str)
+                .collect()
+        })
+        .unwrap_or_default();
+    report.check(
+        outline.page_labels == wanted,
+        if wanted.is_empty() {
+            "a document with no page labels reports none"
+        } else {
+            "every page's label is the one the document states"
+        },
+        &format!("{:?}", outline.page_labels),
+    );
+}
+
 fn check_limits(report: &mut Report, name: &str, outline: &Outline, expected: &serde_json::Value) {
     let limits = &outline.limits;
     let hostile = expected.get("required_titles").is_some();

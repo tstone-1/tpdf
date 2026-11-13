@@ -67,7 +67,9 @@ CHECKS: list[tuple[str, str, str, list[str]]] = [
     ("recognise", "tabs_check.py", "testdata/text-base14.pdf", ["--phase", "recognise"]),
     ("session", "session_check.py", TEXT, []),
     # Every route a document arrives by, and `--page` with `--zoom` on two of them.
-    ("open", "open_check.py", TEXT, ["--other", "testdata/outline-simple.pdf"]),
+    # And the page counter's printed numbers, on the fixture that states them.
+    ("open", "open_check.py", TEXT,
+     ["--other", "testdata/outline-simple.pdf", "--labels", "testdata/outline-labels.pdf"]),
 ]
 
 

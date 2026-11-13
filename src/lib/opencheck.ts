@@ -22,7 +22,10 @@
  *   what stops "the document arrived" being satisfied by one that was already
  *   there, which is precisely what the cold routes above produce.
  *
- * Either may name a place as well, `<path>|<page>|<fit>`, for a launch with
+ * - `printed:<path>` --- the page counter shows the printed page numbers the
+ *   document states, beside the positions, once its outline has arrived.
+ *
+ * Either of the first two may name a place as well, `<path>|<page>|<fit>`, for a launch with
  * `--page` and `--zoom`: the document must then come up at that page, counted
  * from 1, and following that fit (`launchplace.ts`).
  */
@@ -2194,6 +2197,28 @@ async function run(host: OpenCheckHost, phase: string, expected: string): Promis
         `${name(host.path())} vs ${name(want)}`,
       );
       await placeChecks(report, host, page, fit, marked);
+      break;
+    }
+
+    case "printed": {
+      // `outline-labels.pdf` prints i, ii, 1-4, App-A, App-B on its eight
+      // pages. The page counter shows the printed number after the position
+      // where they differ (`pagelabels.ts`), and the labels arrive with the
+      // outline after first paint, so this waits for them rather than reading
+      // the counter once.
+      const opened = await settle(() => host.path() === expected, SETTLE_MS);
+      report.check("the labelled document opened", opened, opened ? name(host.path()) : "nothing opened");
+      if (!opened) return;
+      const counter = () =>
+        document.querySelector('.navigation button[title="Go to page"]')?.textContent?.replace(/\s+/g, " ").trim() ?? "";
+      const first = await settle(() => counter() === "1 / 8 (i)", SETTLE_MS);
+      report.check("the counter shows the first page's printed number", first, counter());
+      host.viewer()?.goToPage(2);
+      const third = await settle(() => counter() === "3 / 8 (1)", SETTLE_MS);
+      report.check("and the third page's, which is printed 1", third, counter());
+      host.viewer()?.goToPage(6);
+      const appendix = await settle(() => counter() === "7 / 8 (App-A)", SETTLE_MS);
+      report.check("and the appendix's, with its prefix", appendix, counter());
       break;
     }
 

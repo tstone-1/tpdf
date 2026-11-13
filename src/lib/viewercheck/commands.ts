@@ -374,6 +374,7 @@ export async function appCommandChecks(
     fillForm: () => {},
     viewer: () => viewer,
     pageCount: () => doc.page_count,
+    printedPages: () => "",
     openDocument: () => fired.push("openDocument"),
     closeDocument: () => fired.push("closeDocument"),
     closeAllDocuments: () => fired.push("closeAllDocuments"),

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { joinedLine, messageLines, resultTone } from "./messagelines";
+import { announcement, joinedLine, messageLines, resultTone } from "./messagelines";
 import { afterSigning, type Signed } from "./signing";
 
 const intact = { verdict: "intact" as const, why: null, digest: "SHA-256", method: "RSA" };
@@ -34,6 +34,19 @@ describe("resultTone", () => {
   it("draws a result green only when it succeeded", () => {
     expect(resultTone(true)).toBe("success");
     expect(resultTone(false)).toBe("problem");
+  });
+});
+
+describe("announcement", () => {
+  it("interrupts for a problem and waits for a result or an instruction", () => {
+    expect(announcement("The file is damaged.", "problem")).toEqual({ alert: "The file is damaged.", status: "" });
+    expect(announcement("Saved.", "success")).toEqual({ alert: "", status: "Saved." });
+    expect(announcement("Drag a rectangle.", "attention")).toEqual({ alert: "", status: "Drag a rectangle." });
+  });
+
+  it("empties both regions when the bar is dismissed", () => {
+    expect(announcement(null, "problem")).toEqual({ alert: "", status: "" });
+    expect(announcement(null, "success")).toEqual({ alert: "", status: "" });
   });
 });
 

@@ -129,6 +129,7 @@ function harness(
           } as never)
         : null,
     pageCount: () => 3,
+    printedPages: () => "",
     openDocument: () => fired.push("openDocument"),
     closeDocument: () => fired.push("closeDocument"),
     closeAllDocuments: () => fired.push("closeAllDocuments"),
@@ -1345,6 +1346,38 @@ describe("the page operations", () => {
     expect(command?.argument?.problem("2")).toBeNull();
   });
 
+  describe("printed page numbers in the previews", () => {
+    // The numbers typed are positions; a document that prints others on its
+    // pages has them added to the preview (`pagelabels.ts`). What is asserted
+    // is which pages each command asks about, and that the answer is shown.
+    function labelled() {
+      const asked: number[][][] = [];
+      const { registry } = harness(true, {}, {}, false, false, false, {}, false, false, false, false, false, false,
+        null, null, null, { printedPages: (runs) => { asked.push(runs); return "printed as i"; } });
+      const preview = (id: string, raw: string) =>
+        registry.all().find((c) => c.id === id)?.argument?.preview?.(raw);
+      return { asked, preview };
+    }
+
+    it("for the pages an extraction takes, as runs", () => {
+      const { asked, preview } = labelled();
+      expect(preview("file.extractPages", "1-2")).toBe("Extract 2 pages · printed as i");
+      expect(asked).toEqual([[[0, 1]]]);
+    });
+
+    it("for each file a split writes", () => {
+      const { asked, preview } = labelled();
+      expect(preview("file.splitDocument", "1")).toBe("2 files: 1 + 2 pages · printed as i");
+      expect(asked).toEqual([[[0], [1, 2]]]);
+    });
+
+    it("for the page Go to page goes to", () => {
+      const { asked, preview } = labelled();
+      expect(preview("nav.goToPage", "2")).toContain(" · printed as i");
+      expect(asked).toEqual([[[1]]]);
+    });
+  });
+
   it("preview a split as the files it would write", () => {
     const { registry } = harness();
     const command = registry.all().find((c) => c.id === "file.splitDocument");
@@ -2059,6 +2092,7 @@ describe("the window shortcuts for editing", () => {
           copy: () => fired.push("copy"),
         }) as never,
       pageCount: () => 3,
+      printedPages: () => "",
       openDocument: () => fired.push("openDocument"),
     closeDocument: () => fired.push("closeDocument"),
     closeAllDocuments: () => fired.push("closeAllDocuments"),

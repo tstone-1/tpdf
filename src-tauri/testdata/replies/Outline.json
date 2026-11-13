@@ -41,5 +41,10 @@
   "walk_ms": 0.75,
   "urls": [
     "https://example.org/further"
+  ],
+  "page_labels": [
+    "i",
+    "",
+    "1"
   ]
 }

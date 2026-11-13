@@ -484,7 +484,8 @@
     plainly,
   } from "./lib/recovery";
   import { spoken, spokenError } from "./lib/said";
-  import { DETAIL_START, LABEL_END, messageLines, resultTone, type MessageTone } from "./lib/messagelines";
+  import { printedLabel, printedRuns } from "./lib/pagelabels";
+  import { DETAIL_START, LABEL_END, announcement, messageLines, resultTone, type MessageTone } from "./lib/messagelines";
   import { releaseOrphans } from "./lib/orphans";
   import type { DocumentInfo, PageSize, PrintSettings } from "./lib/ipc";
   import { call } from "./lib/ipc";
@@ -718,6 +719,15 @@
    * so a decision written here is one no check can reach.
    */
   let offers = $state<Offer[]>([]);
+  /**
+   * What the two live regions say about the message bar, so a screen reader
+   * hears a problem as one and a result or an instruction as one
+   * (`messagelines.ts`). The text is the bar's own: the raster offer in place
+   * of the error it explains, as the bar shows it.
+   */
+  const heard = $derived(announcement(
+    error === null ? null : offers.includes("rasterCopy") ? TEXT().rasterOffer : plainly(error),
+    messageTone));
   let opening = $state(false);
   let documentBusy = $state(false);
   const documentTasks = new DocumentTasks((busy) => {
@@ -1745,7 +1755,20 @@
   let redactionFill: Fill = readFill();
   /** Whether {@link fillRedactionWords} is walking, so a second call stands down. */
   let fillingRedactionWords = false;
-  let rawOutline: Outline | null = null;
+  /**
+   * Raw state, not a plain variable, since the page counter reads its page
+   * labels and the outline arrives after first paint; raw, because it is only
+   * ever replaced whole and a deep proxy over a 10,000-entry tree buys nothing.
+   */
+  let rawOutline = $state.raw<Outline | null>(null);
+  /**
+   * The printed number of the page in a zero-based slot, where it is not the
+   * position (`pagelabels.ts`). A label is a page of the file's, so it is
+   * looked up through the page map.
+   */
+  function printedOf(slot: number): string | null {
+    return printedLabel(rawOutline?.page_labels ?? [], edits?.map.sourceOf(slot), slot + 1);
+  }
 
   /** Path of the open document, which is what a remembered place is keyed on. */
   let openPathName = "";
@@ -1932,6 +1955,7 @@
     viewer: () => viewer,
     fillForm: () => formLayer?.focus(),
     pageCount: () => status?.pageCount ?? 0,
+    printedPages: (runs) => printedRuns(runs, printedOf),
     openDocument: () => void pickAndOpen(),
     reloadDocument: () => void reloadDocument(),
     diskChangeMode: () => diskChangeMode,
@@ -7244,11 +7268,17 @@
           onclick={() => void call("print_cancel")}>{TEXT().stop}</button>{/if}{/if}
     </span>
     {#if status}
+      {@const printed = printedOf(status.page - 1)}
       <div class="navigation" aria-label={TEXT().pageNavigation}>
         <button aria-label={TEXT().previousPage} title={toolState['nav.previousPage']?.title} disabled={!toolState['nav.previousPage']?.enabled}
           onclick={() => runToolbarCommand('nav.previousPage')}><span class="icon" use:icon={"previous"}></span></button>
+        <!-- The printed number after the position, so `5 /` still leads. Its
+             space is inside the expression: Svelte drops one written as
+             literal text at the start of the span, and the counter read
+             `1 / 8(i)` (open check, `printed`). -->
         <button title={TEXT().goToPage} onclick={() => runToolbarCommand('nav.goToPage')}>
-          {status.page} / {status.pageCount}</button>
+          {status.page} / {status.pageCount}{#if printed !== null}<span class="printed-page"
+            title={printedRuns([[status.page - 1]], printedOf)}>{` (${printed})`}</span>{/if}</button>
         <button aria-label={TEXT().nextPage} title={toolState['nav.nextPage']?.title} disabled={!toolState['nav.nextPage']?.enabled}
           onclick={() => runToolbarCommand('nav.nextPage')}><span class="icon" use:icon={"next"}></span></button>
       </div>
@@ -7370,6 +7400,9 @@
     {/if}
 
 
+  <!-- Always in the page, and only their text changes: `announcement`. -->
+  <div class="live-message" role="alert">{heard.alert}</div>
+  <div class="live-message" role="status">{heard.status}</div>
   {#if error}
     <div class="problem-bar" class:success={messageTone === "success"}
       class:attention={messageTone === "attention"} data-testid="problem">
@@ -8016,6 +8049,12 @@
      it in a narrow window. The tint and the edge say it is a message;
      the text is the window's own colour and face, because most of what appears
      here is a sentence to read and not a failure to decode. */
+  .printed-page { opacity: 0.7; }
+  /* Heard and not seen: the bar beside them is what the eye reads. */
+  .live-message {
+    position: absolute; width: 1px; height: 1px; margin: -1px; padding: 0; overflow: hidden;
+    clip: rect(0 0 0 0); clip-path: inset(50%); white-space: normal; border: 0;
+  }
   .problem-bar {
     display: flex;
     align-items: center;

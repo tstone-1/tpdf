@@ -64,6 +64,7 @@ WINDOW_CORPORA: list[tuple[str, str]] = [
     ("text-heavy", "the dense case, and search across 775 pages"),
     ("outline-simple", "the only fixture with an ordinary outline"),
     ("outline-hostile", "the only one with a `/Launch` entry to refuse"),
+    ("outline-labels", "the only one whose printed page numbers are not its positions"),
     ("vector-heavy", "one page, no extractable text, and no white paper to invert"),
     (
         "vector-multi",

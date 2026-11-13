@@ -242,6 +242,9 @@ def main() -> int:
     parser.add_argument("bundle")
     parser.add_argument("pdf")
     parser.add_argument("--other", default=None, help="a second document, for precedence")
+    parser.add_argument(
+        "--labels", default=None, help="a document with page labels, for the page counter"
+    )
     parser.add_argument("--timeout", type=float, default=180.0)
     args = parser.parse_args()
 
@@ -338,6 +341,16 @@ def main() -> int:
 
         ok &= running_phase(binary, bundle, pdf, room, args.timeout)
         ok &= running_phase(binary, bundle, pdf, room, args.timeout, place=True)
+
+        if args.labels:
+            labels = str(Path(args.labels).resolve())
+            code, out = run_direct(
+                binary, f"printed:{labels}", room / "printed.json", [labels], args.timeout
+            )
+            ok &= report(out, code, "printed page numbers beside the positions")
+        else:
+            print("--- printed page numbers beside the positions ---")
+            print("[SKIP] needs --labels, a document that states its page numbers")
 
     print()
     print("[OK] file associations verified" if ok else "[FAIL] file associations are not verified")

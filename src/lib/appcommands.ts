@@ -46,6 +46,7 @@ import {
   parsePageRange,
   parseSplitPoints,
 } from "./pageranges";
+import { runsOf, withPrinted } from "./pagelabels";
 import { DISK_CHANGE_MODES, type DiskChangeMode } from "./diskwatch";
 import { PALETTE } from "./markcolors";
 import type { CloseWhich } from "./tabclose";
@@ -586,6 +587,12 @@ export interface AppActions {
   viewer(): Viewer | null;
   /** How many pages the open document has, for the "Go to page" validator. */
   pageCount(): number;
+  /**
+   * `printed as i–iii` for runs of zero-based slots, or `""` when every page
+   * in them is printed with its position (`pagelabels.ts`). For the previews
+   * of the commands that take page numbers, which are positions.
+   */
+  printedPages(runs: number[][]): string;
   /** Ask for a file and open it. */
   openDocument(): void;
   /** Close the active document, checking for unsaved work. */
@@ -3060,7 +3067,9 @@ export function registerAppCommands(
           parsePageRange(raw, actions.pageCount()).problem ?? null,
         preview: (raw: string) => {
           const range = parsePageRange(raw, actions.pageCount());
-          return range.slots ? describeRange(range.slots) : "";
+          return range.slots
+            ? withPrinted(describeRange(range.slots), actions.printedPages(runsOf(range.slots)))
+            : "";
         },
         run: (raw: string) => {
           const range = parsePageRange(raw, actions.pageCount());
@@ -3098,7 +3107,9 @@ export function registerAppCommands(
           parseSplitPoints(raw, actions.pageCount()).problem ?? null,
         preview: (raw: string) => {
           const split = parseSplitPoints(raw, actions.pageCount());
-          return split.groups ? describeSplit(split.groups) : "";
+          return split.groups
+            ? withPrinted(describeSplit(split.groups), actions.printedPages(split.groups))
+            : "";
         },
         run: (raw: string) => {
           const split = parseSplitPoints(raw, actions.pageCount());
@@ -3282,7 +3293,10 @@ export function registerAppCommands(
           return null;
         },
         preview: (raw: string) =>
-          TEXT(locale).goToPagePreview(Number(raw.trim()), actions.pageCount()),
+          withPrinted(
+            TEXT(locale).goToPagePreview(Number(raw.trim()), actions.pageCount()),
+            actions.printedPages([[Number(raw.trim()) - 1]]),
+          ),
         run: (raw: string) =>
           actions.viewer()?.goToPage(Number(raw.trim()) - 1),
       },

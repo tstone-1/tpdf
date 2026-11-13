@@ -28,6 +28,7 @@ function outline(n: number): Outline {
     total: n,
     limits: { cycles: 0, too_deep: 0, over_budget: false, titles_clipped: 0 },
     walk_ms: 0,
+    page_labels: [],
   };
 }
 
@@ -174,6 +175,7 @@ describe("Sidebar keyboard activation", () => {
       total: 1,
       limits: { cycles: 0, too_deep: 0, over_budget: false, titles_clipped: 0 },
       walk_ms: 0,
+      page_labels: [],
     });
 
     const row = bar.elementFor("0") as unknown as
@@ -221,6 +223,7 @@ describe("Sidebar keyboard activation", () => {
       total: kids + 2,
       limits: { cycles: 0, too_deep: 0, over_budget: false, titles_clipped: 0 },
       walk_ms: 0,
+      page_labels: [],
     };
   }
 

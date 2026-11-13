@@ -91,6 +91,12 @@ export interface Outline {
   total: number;
   limits: OutlineLimits;
   walk_ms: number;
+  /**
+   * What the document says is printed on each page, in file order, or empty
+   * when it states nothing. Read with the outline; `pagelabels.ts` decides
+   * where one is shown.
+   */
+  page_labels: string[];
 }
 
 /** One drawable row. */

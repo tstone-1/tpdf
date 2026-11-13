@@ -714,6 +714,9 @@ fn samples() -> BTreeMap<&'static str, String> {
             // Non-empty for `Links::urls`'s reason, and its own list: the two
             // scans number their tokens independently.
             urls: vec!["https://example.org/further".into()],
+            // Non-empty, so the key is in the bytes the mirror is held to; one
+            // entry empty, which is a page the document gives no label.
+            page_labels: vec!["i".into(), "".into(), "1".into()],
         },
     );
 
