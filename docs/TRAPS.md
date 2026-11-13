@@ -338,6 +338,7 @@ hop through the index.
 - A helper that reads the focused document by default is the same read as naming the variable
 - On macOS a web view pastes only on a Paste menu item's action, so ⌘V pasted nothing
 - A WKWebView probe's evaluateJavaScript runs as a user gesture, so it measured a clipboard write the app is refused
+- Svelte drops a space written as the first text of an element, so the counter read 1 / 8(i)
 
 ## Rust and macOS
 - A locked macOS session cannot be unlocked from a script, so it must be prevented
@@ -27525,3 +27526,14 @@ received an input from outside the check meanwhile (PageDown)`. Proven with the 
 detail before chasing the code. Run the window checks on a machine nobody is using:
 `scripts/run_on_windows.py --window-checks` runs them on the Windows build machine, and
 `run_on_mac.py` on the second Mac (`BUILD.md`, step 5).
+
+### Svelte drops a space written as the first text of an element, so the counter read 1 / 8(i)
+
+The page counter shows the printed page number after the position, and the markup was
+`<span class="printed-page"> ({printed})</span>`: a space, then the brackets. The compiled
+component drops whitespace that is the first text inside an element, so the counter read
+`1 / 8(i)`. `npm run check`, the unit tests and every gate passed, because none of them renders
+`App.svelte`. The open check's `printed:` mode, which reads the counter's text in the real
+window, failed on both the Windows build machine and the second Mac on its first run (26.11.8).
+Put the space inside an expression, ``{` (${printed})`}``, which the compiler keeps as data, and
+check the rendered text rather than the source wherever a space carries meaning.
