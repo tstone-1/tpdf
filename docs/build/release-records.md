@@ -2,6 +2,58 @@
 
 What was run for each release, what passed, and what was not run. The record of a new release goes at the top. Moved here verbatim from `BUILD.md` on 2026-10-23, which indexes this file.
 
+**26.11.8 verification and publication, 2026-11-13:** prepared on the Windows development machine.
+The release is the printed page number from `/PageLabels` beside the position in the page counter
+and in the previews of Extract pages, Split document and Go to page; the message bar as two live
+regions, a problem as an alert and a result or instruction as a status; and the signing result in
+rows with instructions drawn amber. Step 1 took `errno` 0.3.15 and `rustls-webpki` 0.103.17 in
+both lockfiles and two npm patch releases; the notices file was regenerated, `npm audit` reports
+the two known low `deepmerge` findings, and `cms` is still 0.3.0-rc.2, so the `rsa` 0.10 set stays
+held. A first gate run was stopped to take those updates and left mutants in 34 Rust files it had
+not finished restoring; they were restored with `git checkout --` after a snapshot of the diff, and
+no harness process was left. All 35 gates then passed on the release tree, after `cargo fmt` and a
+`viewer_sweep.py` corpus entry for the new fixture `outline-labels.pdf`. `outline-probe` reads that
+fixture's eight labels (`i`, `ii`, `1` to `4`, `App-A`, `App-B`) and was shown to fail on a wrong
+expectation. `window_checks.py` 17 of 17 on the second Mac and on the Windows build machine, at the
+release commit before its last four files. Those four add a `printed:` mode to the open check,
+which reads the counter on three pages of `outline-labels.pdf`; its first run failed on both
+machines with `1 / 8(i)`, because Svelte drops a space written at the start of an element, and the
+fixed counter passed the `open` phase on both (1/1 each). The remote clones had no generated
+outline fixtures, so the file was copied into each clone's `testdata` by digest. Step 7 in the
+mutation worktree: `mutate_python.py` 38/38, `mutate_frontend.py --near v26.11.7` 39/39 with the
+new message-line and page-label rows, and `mutate_rust.py --near v26.11.7` 6/6; no Rust row reaches
+the new label reader in `outline.rs`, which `outline-probe` covers. `print-probe` passed 15 of 15.
+`redact-reach-probe` over 197 documents gave the same figures as 26.11.7: 17,050 regions, 15,852
+taken whole (93.0%), 15,637 read back on 439 pages, 6,425 shown unreadable (41.09%), and 1 still
+read as text. The local installer carried `tpdf_shell.dll`, `tpdf-cli.exe` and
+`pdfium\pdfium.dll`; unpacked outside the tree its `tpdf-cli` answered 26.11.8 and verified
+`incr-signed.pdf`, and with the bundled engine removed it exited 3. Launching that unpacked
+`tpdf.exe` to look at the counter handed the document to the running installed tpdf instead
+(single instance). CI passed all three jobs on `cf1aa773` (run 43410720999) and `Audit` passed (run
+43410721016); `check_linux.py` passed on the same commit after the tag. No rehearsal: `release.yml`
+changed only in its notes. Release run 43416292062 uploaded the Windows and Linux files and failed
+the macOS leg at notarization with HTTP 403, *A required agreement is missing or has expired*; the
+account holder accepted Apple's new agreement and `gh run rerun 43416292062 --failed` completed the
+draft at 8 files. On the draft's files: the installer read as `Valid`, timestamped by Certum, and
+passed `installed_check.py` 26/26 on the Windows build machine; the `.dmg` was stapled, its app
+accepted as Notarized Developer ID, and its `tpdf-cli` (Developer ID, `runtime`) answered 26.11.8
+and verified the signed fixture. One sentence of the body was corrected before publishing (*the
+number printed on a page*), with `tag_name` in the PATCH. `SECURITY.md` needed no change: the
+labels are read by PDFium in the worker and cleaned like outline titles. `publish_release.py
+v26.11.8 --publish` published it; without authentication `releases/latest` is v26.11.8 with 8
+assets, all 8 answer 200, and `latest.json` offers 26.11.8. An installed 26.11.7 updated itself:
+`update_check.py` 18/18 on the build machine on its second run, and `update_check_mac.py` 12/12 on
+the second Mac on its first. The first Windows run, a minute after publishing, failed only the
+offer with `[update] launch check after 528 ms: current`, as on 26.11.7. The cask went to 26.11.8
+with the published `.dmg`'s SHA-256; `brew audit --cask --online` exited 0 and `brew livecheck`
+reads 26.11.8. The winget pull request (445804) moved from 26.11.7 to 26.11.8 on manifest version
+1.28.0, still the newest; `winget validate` passed and the installer's SHA-256 equals the published
+`-setup.exe`'s. **Not run:** the full `window_checks.py` on the final commit (only its `open`
+phase), `viewer_check.py` on `text-heavy.pdf` and `vector-heavy.pdf`, `powerpoint_check.py` (no
+page-copy code changed), `menu_check.py` and `save_check.py` on the `.dmg`, and
+`clean_windows_check.py`. **Not heard:** the message bar with a real screen reader; the live
+regions are checked by their roles and text, not by NVDA or VoiceOver.
+
 **26.11.7 verification and publication, 2026-11-12:** prepared on the Windows development machine.
 The release is the palette letting the document through while it asks for a value, and the
 engine `pdfium-8127-tpdf.2`, whose code is that of `.1` (`docs/build/pdfium-records.md`). Step 1

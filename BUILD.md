@@ -2355,6 +2355,14 @@ starts at 0 and increments within the month.
     publishing it is step 11 rather than a clause here: see that step for what describing
     it in this sentence cost.
 
+    **A macOS leg that fails at notarization with HTTP 403, *A required agreement is missing
+    or has expired*, is an Apple account matter, not a build defect.** Apple had published a
+    new agreement that the account holder has to accept on developer.apple.com before the
+    notary service answers again; it happened on 26.11.8, after the Windows and Linux legs had
+    uploaded into the draft. Once it is accepted, `gh run rerun <run id> --failed` builds the
+    macOS leg again and uploads into the same draft, which step 11's count of 8 then confirms.
+    Nothing needs a new tag.
+
     **One `draft` job creates the release, and the build legs upload into it by id.** That
     is new on 2026-08-17, and it replaced a failure worth knowing about: `26.8.3-rc2` and
     `-rc3` each produced **two drafts under one tag** with the artifacts split, one holding no
