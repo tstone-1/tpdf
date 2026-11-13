@@ -1425,8 +1425,8 @@ ROWS += [
     Mutation(
         "tabs: restore a kept tab without one of its fields",
         "src/lib/documenttabs.ts",
-        "  return { covered, query, findShown, searchOptions, searchScope, sidebarTab, error, messageSuccess, offers, notice,\n",
-        "  return { covered, query, findShown, searchOptions, searchScope, sidebarTab, error, messageSuccess, offers,\n",
+        "  return { covered, query, findShown, searchOptions, searchScope, sidebarTab, error, messageTone, offers, notice,\n",
+        "  return { covered, query, findShown, searchOptions, searchScope, sidebarTab, error, messageTone, offers,\n",
         "restores every field that was kept, and nothing from another tab",
     ),
     Mutation(

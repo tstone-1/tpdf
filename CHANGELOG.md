@@ -17,6 +17,21 @@ as *downloadable*, while the release sat as a draft that GitHub showed to nobody
 are given now because they are different facts, and only the second one means a reader can
 have the binary.)
 
+## [26.11.8] - Unreleased
+
+### Changed
+
+- **The message after signing is laid out in rows.** It was one paragraph holding the
+  result, the timestamp, the authority, both revocation answers and the archive timestamp.
+  Now the result is the first line, and each of the others is a row with its label in a
+  column of its own and its explanation in a lighter style after the verdict. `tpdf sign`
+  prints the same parts on lines of their own, and the `summary` of its `--json` report
+  carries them separated by line breaks.
+- **An instruction is drawn amber, not red.** "Drag a rectangle where the signature should
+  appear" was shown in the red of a failure. The message bar now has three colours: red for
+  a problem, green for a result, amber for something to do now. The instruction also goes
+  away once the rectangle is dragged or Esc cancels; after Esc it used to stay on screen.
+
 ## [26.11.7] - 2026-11-12
 
 ### Changed

@@ -78,7 +78,7 @@ describe("the command-line tool's wording", () => {
       wording.after_signing.filter((c) => c.sentence.includes("locks the document")).length,
     ).toBe(2);
     expect(
-      wording.after_signing.filter((c) => c.sentence.includes(" Timestamp: ")).length,
+      wording.after_signing.filter((c) => c.sentence.includes("\nTimestamp: ")).length,
     ).toBeGreaterThan(0);
     // 3 count pairs x 3 reason lists x changed or not, and a clean verdict
     // with one note and with two, changed or not.

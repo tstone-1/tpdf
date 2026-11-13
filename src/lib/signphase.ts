@@ -145,17 +145,20 @@ export function closing(sentence: string, name: string, authority: string): Verd
     {
       name: `the closing sentence names the timestamp from ${authority}`,
       ok:
-        sentence.includes(" Timestamp: ") &&
+        sentence.includes("\nTimestamp: ") &&
         sentence.includes(", attested by ") &&
         sentence.includes(authority) &&
-        sentence.includes(" Timestamp authority: trusted —"),
+        sentence.includes("\nTimestamp authority: trusted —"),
       detail: cut(sentence, 400),
     },
     {
       // The file named, so the two signings that write one do not share a
       // check name, which the harness refuses (first run, 2026-09-28).
       name: `the closing sentence for ${name} claims no revocation data`,
-      ok: !sentence.includes(" Revocation: ") && !sentence.includes(" Archive timestamp: "),
+      // Each part is a line of its own (`signing.ts`), so the labels are
+      // matched at a line start: with the space they were once matched with,
+      // this check could no longer fail.
+      ok: !sentence.includes("\nRevocation: ") && !sentence.includes("\nArchive timestamp: "),
       detail: cut(sentence, 400),
     },
   ];

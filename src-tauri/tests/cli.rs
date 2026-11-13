@@ -1218,7 +1218,7 @@ fn timestamp_when_signing(report: &mut Report) {
         "a sound timestamp: the summary says the time is attested",
         json["summary"]
             .as_str()
-            .is_some_and(|t| t.contains(" Timestamp: ") && t.contains("attested by")),
+            .is_some_and(|t| t.contains("\nTimestamp: ") && t.contains("attested by")),
         &stdout,
     );
     match read_back(&out) {

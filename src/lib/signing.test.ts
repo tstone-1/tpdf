@@ -448,7 +448,7 @@ describe("the words", () => {
       ],
     });
     expect(said).toBe(
-      "Signed as Signature3 and saved to a-signed.pdf. Read back after writing, the signature is intact. " +
+      "Signed as Signature3 and saved to a-signed.pdf. Read back after writing, the signature is intact.\n" +
         "Earlier signatures: Signature1 intact, Signature2 not checked " +
         "(tpdf does not check signatures in this format).",
     );
@@ -511,7 +511,7 @@ describe("the words", () => {
     expect(afterSigning(signed("budget"))).toBe(
       "a-signed.pdf was written. The new signature Signature2 was intact when tpdf checked " +
         "it before writing; reading the file back did not check it again, because the " +
-        "document's signatures together cover more data than tpdf checks at once. Earlier " +
+        "document's signatures together cover more data than tpdf checks at once.\nEarlier " +
         "signature: Signature1 intact.",
     );
     // Only for that reason: any other unchecked signature is the failure it was.
@@ -800,7 +800,7 @@ describe("a timestamp", () => {
     expect(asked).toContain("sign:abc:/docs/report-signed.pdf:http://timestamp.digicert.com");
     expect(said).toBe(
       "Signed as Signature1 and saved to report-signed.pdf. Read back after writing, the " +
-        "signature is intact. Timestamp: 2026-09-28 10:11:12 UTC, attested by DigiCert SHA256 " +
+        "signature is intact.\nTimestamp: 2026-09-28 10:11:12 UTC, attested by DigiCert SHA256 " +
         "RSA4096 Timestamp Responder 2025 1 — the timestamp checks out under the key in its " +
         "certificate and covers this signature (SHA-256, RSA).",
     );
@@ -1051,7 +1051,7 @@ describe("long-term validation data", () => {
     });
     const said = await signDocument(s);
     expect(calls).toEqual([`sign:${url}:true`]);
-    expect(said).toContain(" Revocation: not revoked — an OCSP response in the document");
+    expect(said).toContain("\nRevocation: not revoked — an OCSP response in the document");
 
     const without: string[] = [];
     const { shell: t } = shell({

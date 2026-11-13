@@ -150,13 +150,17 @@ const TEXT = catalog({
       `before writing; reading the file back did not check it again, because ${why}.`,
     signedAs: (field: string, name: string): string =>
       `Signed as ${field} and saved to ${name}. Read back after writing, the signature is intact.`,
-    timestampPart: (value: string): string => ` Timestamp: ${value}`,
-    authorityPart: (value: string): string => ` Timestamp authority: ${value}`,
-    revocationPart: (value: string): string => ` Revocation: ${value}`,
-    authorityRevocationPart: (value: string): string => ` Authority revocation: ${value}`,
-    archivePart: (listed: string): string => ` Archive timestamp: ${listed}.`,
+    // Each part after the first sentence starts a line of its own: the
+    // message bar shows a line `Label: value` as a labelled row
+    // (`messagelines.ts`), and `tpdf sign` prints the same lines. Until
+    // 2026-11-13 they were joined by spaces into one paragraph.
+    timestampPart: (value: string): string => `\nTimestamp: ${value}`,
+    authorityPart: (value: string): string => `\nTimestamp authority: ${value}`,
+    revocationPart: (value: string): string => `\nRevocation: ${value}`,
+    authorityRevocationPart: (value: string): string => `\nAuthority revocation: ${value}`,
+    archivePart: (listed: string): string => `\nArchive timestamp: ${listed}.`,
     earlierPart: (count: number, listed: string): string =>
-      ` Earlier signature${count === 1 ? "" : "s"}: ${listed}.`,
+      `\nEarlier signature${count === 1 ? "" : "s"}: ${listed}.`,
     neither: "The signing answered neither a signature nor a reason.",
     signDocument: "Sign document",
     certificate: "Certificate",
@@ -255,13 +259,13 @@ const TEXT = catalog({
     signedAs: (field: string, name: string): string =>
       `Als ${field} signiert und in ${name} gespeichert. Beim Zurücklesen nach dem Schreiben ist ` +
       "die Signatur intakt.",
-    timestampPart: (value: string): string => ` Zeitstempel: ${value}`,
-    authorityPart: (value: string): string => ` Zeitstempeldienst: ${value}`,
-    revocationPart: (value: string): string => ` Widerruf: ${value}`,
-    authorityRevocationPart: (value: string): string => ` Widerruf des Zeitstempeldienstes: ${value}`,
-    archivePart: (listed: string): string => ` Archivzeitstempel: ${listed}.`,
+    timestampPart: (value: string): string => `\nZeitstempel: ${value}`,
+    authorityPart: (value: string): string => `\nZeitstempeldienst: ${value}`,
+    revocationPart: (value: string): string => `\nWiderruf: ${value}`,
+    authorityRevocationPart: (value: string): string => `\nWiderruf des Zeitstempeldienstes: ${value}`,
+    archivePart: (listed: string): string => `\nArchivzeitstempel: ${listed}.`,
     earlierPart: (count: number, listed: string): string =>
-      ` ${count === 1 ? "Frühere Signatur" : "Frühere Signaturen"}: ${listed}.`,
+      `\n${count === 1 ? "Frühere Signatur" : "Frühere Signaturen"}: ${listed}.`,
     neither: "Das Signieren lieferte weder eine Signatur noch einen Grund.",
     signDocument: "Dokument signieren",
     certificate: "Zertifikat",

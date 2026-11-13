@@ -745,9 +745,9 @@ pub fn after_signing(
     // The timestamp's row is said of a signature read back intact: for one
     // not checked again there is no reading of it to report.
     if let Some((timestamp, authority)) = timestamp.filter(|_| !unchecked) {
-        text.push_str(&format!(" Timestamp: {timestamp}"));
+        text.push_str(&format!("\nTimestamp: {timestamp}"));
         if let Some(authority) = authority {
-            text.push_str(&format!(" Timestamp authority: {authority}"));
+            text.push_str(&format!("\nTimestamp authority: {authority}"));
         }
     }
     // The archive timestamp a long-term signing adds after the signature
@@ -758,7 +758,7 @@ pub fn after_signing(
             .iter()
             .map(|(field, integrity)| format!("{field} {}", verdict_briefly(integrity.as_ref())))
             .collect();
-        text.push_str(&format!(" Archive timestamp: {}.", listed.join(", ")));
+        text.push_str(&format!("\nArchive timestamp: {}.", listed.join(", ")));
     }
     if !earlier.is_empty() {
         let listed: Vec<String> = earlier
@@ -766,7 +766,7 @@ pub fn after_signing(
             .map(|(field, _, integrity)| format!("{field} {}", verdict_briefly(integrity.as_ref())))
             .collect();
         text.push_str(&format!(
-            " Earlier signature{}: {}.",
+            "\nEarlier signature{}: {}.",
             if earlier.len() == 1 { "" } else { "s" },
             listed.join(", ")
         ));

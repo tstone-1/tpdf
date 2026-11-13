@@ -484,6 +484,7 @@
     plainly,
   } from "./lib/recovery";
   import { spoken, spokenError } from "./lib/said";
+  import { DETAIL_START, LABEL_END, messageLines, resultTone, type MessageTone } from "./lib/messagelines";
   import { releaseOrphans } from "./lib/orphans";
   import type { DocumentInfo, PageSize, PrintSettings } from "./lib/ipc";
   import { call } from "./lib/ipc";
@@ -708,7 +709,7 @@
   let sidebarHost = $state<HTMLDivElement | null>(null);
   let title = $state("");
   let error = $state<string | null>(null);
-  let messageSuccess = $state(false);
+  let messageTone = $state<MessageTone>("problem");
   /**
    * What the reader can press about {@link error}, in the order shown.
    *
@@ -896,7 +897,7 @@
       edits, place: currentPlace(false), covered: new Map(covered), query,
       findShown, searchOptions: viewer.searchOptionsNow,
       searchScope: keepScope(viewer.searchScopeRanges, edits.state.pages), sidebarTab: sidebar?.tab ?? "outline",
-      error, messageSuccess, offers, notice, redactedCopyPath, measures: viewer.measurements,
+      error, messageTone, offers, notice, redactedCopyPath, measures: viewer.measurements,
     });
     refreshTabs();
   }
@@ -910,8 +911,8 @@
     query: (value) => { query = value; },
     findShown: (value) => { findShown = value; },
     // The message and its buttons are one fact, shown by one call.
-    error: (value, kept) => say(value, kept.offers, kept.messageSuccess),
-    messageSuccess: restoredWith("error"),
+    error: (value, kept) => say(value, kept.offers, kept.messageTone),
+    messageTone: restoredWith("error"),
     offers: restoredWith("error"),
     notice: (value) => { notice = value; },
     redactedCopyPath: (value) => { redactedCopyPath = value; },
@@ -1804,7 +1805,7 @@
     findShown: { get: () => findShown, set: (value) => { findShown = value; } },
     findTimer: { get: () => findTimer, set: (value) => { findTimer = value; } },
     error: { get: () => error, set: (value) => { error = value; } },
-    messageSuccess: { get: () => messageSuccess, set: (value) => { messageSuccess = value; } },
+    messageTone: { get: () => messageTone, set: (value) => { messageTone = value; } },
     offers: { get: () => offers, set: (value) => { offers = value; } },
     notice: { get: () => notice, set: (value) => { notice = value; } },
     redactedCopyPath: { get: () => redactedCopyPath, set: (value) => { redactedCopyPath = value; } },
@@ -3769,7 +3770,7 @@
       // Cancelled, which is an answer rather than an error.
       if (!chosen) return;
       const result = afterRedactionCopy(await edits.redactCopy(openPathName, chosen, redactionFill));
-      say(result.message, result.offers, result.success);
+      say(result.message, result.offers, resultTone(result.success));
       redactedCopyPath = chosen;
     } catch (e) {
         if (e instanceof SaveCancelled) return;
@@ -3829,7 +3830,7 @@
         afterRasterRedaction(
           await edits.redactRasterCopy(source, chosen, redactionFill),
           basename(chosen),
-        ), [], true,
+        ), [], "success",
       );
     } catch (e) {
         if (e instanceof SaveCancelled) return;
@@ -4008,7 +4009,7 @@
       refreshMenu();
       try {
         await shown.recognisePage(slot, recognitionLanguage.language);
-        asDocument(view, () => say(message("recognisedPage"), [], true));
+        asDocument(view, () => say(message("recognisedPage"), [], "success"));
       } catch (e) {
         asDocument(view, () => say(String(e)));
       } finally {
@@ -4390,7 +4391,7 @@
         return;
       }
       await reopenAfterWrite(path, place);
-      if (!error) say(said, [], success);
+      if (!error) say(said, [], resultTone(success));
     });
   }
 
@@ -4626,8 +4627,14 @@
           // this waits destroys it, which answers `null` and ends the signing.
           place: async () => {
             if (!viewer) return null;
-            say(signing.PLACE);
-            return await viewer.armPlacement();
+            // Amber: an instruction to act on now, not a failure.
+            say(signing.PLACE, [], "attention");
+            const placed = await viewer.armPlacement();
+            // Dragged or cancelled, the instruction is done. Left standing, it
+            // stayed on screen after Esc ended the signing, since a cancelled
+            // signing says nothing more.
+            if (error === spoken(signing.PLACE)) say(null);
+            return placed;
           },
           saveAs: async (suggested) => {
             const panel = () =>
@@ -4652,7 +4659,7 @@
           discard: (pending) => call("sign_discard", { pending }),
           completed: (signed) => { signingSuccess = signing.succeeded(signed); },
         }, field);
-        if (said) say(said, [], signingSuccess);
+        if (said) say(said, [], resultTone(signingSuccess));
       } catch (e) {
         say(String(e));
       }
@@ -5262,8 +5269,8 @@
    * (`said.ts`); one already worded here matches no template and is unchanged.
    * A sentence from Rust inside one of ours is translated where it is put in.
    */
-  function say(message: string | null, next: Offer[] = [], success = false) {
-    messageSuccess = message !== null && success;
+  function say(message: string | null, next: Offer[] = [], tone: MessageTone = "problem") {
+    messageTone = message === null ? "problem" : tone;
     redactedCopyPath = null;
     error = message === null ? null : spoken(message);
     offers = message === null ? [] : next;
@@ -6354,7 +6361,7 @@
     }
     languageChoice = choice;
     refreshMenu();
-    say(LANGUAGE_TEXT().restart, [], true);
+    say(LANGUAGE_TEXT().restart, [], "success");
   }
 
   function setRestoreTabs(restore: boolean): void {
@@ -7364,24 +7371,36 @@
 
 
   {#if error}
-    <div class="problem-bar" class:success={messageSuccess} data-testid="problem">
+    <div class="problem-bar" class:success={messageTone === "success"}
+      class:attention={messageTone === "attention"} data-testid="problem">
       {#if redactedCopyPath}
         <p>{TEXT().redactedCopySaved(basename(redactedCopyPath))}</p>
         <button data-testid="open-redacted-copy" disabled={copyTaskBusy}
           onclick={async () => {
             const path = redactedCopyPath;
             const verdict = error;
-            const success = messageSuccess;
+            const tone = messageTone;
             if (!path) return;
             await openPath(path);
-            if (openPathName === path) say(verdict, [], success);
+            if (openPathName === path) say(verdict, [], tone);
           }}>{TEXT().openSavedCopy}</button>
       {/if}
       {#if offers.includes("rasterCopy")}
         <p class="error">{TEXT().rasterOffer}</p>
         <details><summary>{TEXT().technicalDetails}</summary><p class="error">{error}</p></details>
       {:else}
-        <p class="error">{plainly(error)}</p>
+        {@const lines = messageLines(plainly(error))}
+        {#if lines.length === 1}
+          <p class="error">{plainly(error)}</p>
+        {:else}
+          <!--
+            The first line, then one row per line with its label in a column of
+            its own (`messagelines.ts`). Written on one line, with each line
+            break as a text node of its own, so the element's text is the message
+            character for character: the window checks read it.
+          -->
+          <p class="error message-lines">{#each lines as line, at}{#if at > 0}{"\n"}{/if}{#if line.label === null}<span class="message-line">{line.value}{#if line.detail !== null}<span class="message-detail">{DETAIL_START}{line.detail}</span>{/if}</span>{:else}<span class="message-label">{line.label}{LABEL_END}</span><span class="message-value">{line.value}{#if line.detail !== null}<span class="message-detail">{DETAIL_START}{line.detail}</span>{/if}</span>{/if}{/each}</p>
+        {/if}
       {/if}
       <!--
         The buttons a message carries, and never more than the message earns:
@@ -8012,6 +8031,12 @@
     border-left-color: #278341;
     background: color-mix(in srgb, #278341 14%, Canvas);
   }
+  /* An instruction the reader has to act on now: amber, neither the red of a
+     failure nor the green of a result. */
+  .problem-bar.attention {
+    border-left-color: #c98a00;
+    background: color-mix(in srgb, #e0a100 18%, Canvas);
+  }
   .problem-bar p { margin: 0; }
   /* Opens on a row of its own, under the message and the buttons. */
   .problem-bar details { flex: 1 1 100%; order: 1; }
@@ -8036,6 +8061,23 @@
     min-width: 0;
     white-space: pre-wrap;
   }
+  /* A message of several lines: the first line across the whole width, then a
+     row per line, its label in a column of its own. `normal` on the grid, so
+     the line breaks between the rows, there for the element's text, are not
+     drawn as cells of their own. */
+  .error.message-lines {
+    /* A zero basis, so the close button stays on the row beside it. */
+    flex: 1 1 0;
+    display: grid;
+    grid-template-columns: max-content minmax(0, 1fr);
+    gap: 0.2rem 0.8rem;
+    white-space: normal;
+  }
+  .message-lines > span { white-space: pre-wrap; }
+  .message-lines > .message-line { grid-column: 1 / -1; }
+  .message-lines > .message-line:first-child { margin-bottom: 0.2rem; }
+  .message-label { font-weight: 600; }
+  .message-detail { opacity: 0.72; }
   .error, :global([role="alert"]) {
     -webkit-user-select: text;
     user-select: text;

@@ -6,6 +6,7 @@ import type { Tab } from "./sidebar";
 import { PLAIN_SEARCH, type SearchOptions, type ScopeRange } from "./search";
 import { labelsFor } from "./recents";
 import type { Offer } from "./recovery";
+import type { MessageTone } from "./messagelines";
 import type { PageId } from "./pages";
 import type { ViewId } from "./views";
 
@@ -27,7 +28,7 @@ export interface DocumentTab {
   searchScope: KeptScope | null;
   sidebarTab: Tab;
   error: string | null;
-  messageSuccess: boolean;
+  messageTone: MessageTone;
   offers: Offer[];
   notice: string | null;
   redactedCopyPath: string | null;
@@ -109,7 +110,7 @@ export function freshState(): FreshState {
     searchScope: null,
     sidebarTab: "outline",
     error: null,
-    messageSuccess: false,
+    messageTone: "problem",
     offers: [],
     notice: null,
     redactedCopyPath: null,
@@ -135,9 +136,9 @@ export function keepState(tab: DocumentTab, state: TabState): void {
  */
 export function restoredState(tab: DocumentTab | undefined): FreshState {
   if (!tab) return freshState();
-  const { covered, query, findShown, searchOptions, searchScope, sidebarTab, error, messageSuccess, offers, notice,
+  const { covered, query, findShown, searchOptions, searchScope, sidebarTab, error, messageTone, offers, notice,
     redactedCopyPath, measures } = tab;
-  return { covered, query, findShown, searchOptions, searchScope, sidebarTab, error, messageSuccess, offers, notice,
+  return { covered, query, findShown, searchOptions, searchScope, sidebarTab, error, messageTone, offers, notice,
     redactedCopyPath, measures };
 }
 
@@ -161,7 +162,7 @@ const RESTORED_AT: { readonly [K in keyof FreshState]: RestorePoint } = {
   query: "unmounted",
   findShown: "unmounted",
   error: "unmounted",
-  messageSuccess: "unmounted",
+  messageTone: "unmounted",
   offers: "unmounted",
   notice: "unmounted",
   redactedCopyPath: "unmounted",

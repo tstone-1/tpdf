@@ -31,6 +31,7 @@ import type { Outline } from "./outline";
 import type { RegionPlan } from "./pages";
 import type { Properties } from "./properties";
 import type { Offer } from "./recovery";
+import type { MessageTone } from "./messagelines";
 import type { Sidebar } from "./sidebar";
 import type { TextEditor } from "./textedit";
 import type { Viewer, ViewerStatus } from "./viewer";
@@ -75,7 +76,7 @@ export interface LiveDocument {
    */
   findTimer: number;
   error: string | null;
-  messageSuccess: boolean;
+  messageTone: MessageTone;
   offers: Offer[];
   notice: string | null;
   redactedCopyPath: string | null;
@@ -123,7 +124,7 @@ export function blankLive(): LiveDocument {
     findShown: false,
     findTimer: 0,
     error: null,
-    messageSuccess: false,
+    messageTone: "problem",
     offers: [],
     notice: null,
     redactedCopyPath: null,

@@ -235,5 +235,5 @@
       "pades": null
     }
   ],
-  "summary": "Signed as Signature2 and saved to contract-signed.pdf. Read back after writing, the signature is intact. Earlier signature: Signature1 intact."
+  "summary": "Signed as Signature2 and saved to contract-signed.pdf. Read back after writing, the signature is intact.\nEarlier signature: Signature1 intact."
 }

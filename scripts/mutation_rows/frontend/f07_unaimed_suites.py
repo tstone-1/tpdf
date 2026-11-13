@@ -141,4 +141,17 @@ ROWS = [
         "<em>RE-2026-0417</em>",
         "<em>INV-2026-0417</em>",
         "names the German invoice's number, which differs from the English one"),
+    # --- messagelines.ts -----------------------------------------------------------
+    Mutation("message lines: a colon deep in a sentence read as a label", "src/lib/messagelines.ts",
+        "    const labelled = end > 0 && end <= LABEL_MAX;",
+        "    const labelled = end > 0;",
+        "puts every line back together character for character"),
+    Mutation("message lines: the first line split into a label", "src/lib/messagelines.ts",
+        "    if (at === 0) return { label: null, value: line, detail: null };\n",
+        "",
+        "puts every line back together character for character"),
+    Mutation("message lines: a failed result drawn green", "src/lib/messagelines.ts",
+        '  return success ? "success" : "problem";',
+        '  return "success";',
+        "draws a result green only when it succeeded"),
 ]

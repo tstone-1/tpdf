@@ -849,8 +849,8 @@ fn a_signature_not_checked_again_ends_sign_with_1_and_says_which_check_happened(
         ),
         "a-signed.pdf was written. The new signature Signature2 was intact when tpdf checked \
          it before writing; reading the file back did not check it again, because the \
-         document's signatures together cover more data than tpdf checks at once. Earlier \
-         signature: Signature1 intact."
+         document's signatures together cover more data than tpdf checks at once.\n\
+         Earlier signature: Signature1 intact."
     );
     // Only for that reason: any other unchecked signature is a copy not to
     // rely on, as it was.
