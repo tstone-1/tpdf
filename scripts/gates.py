@@ -228,6 +228,15 @@ def gates() -> "list[tuple[str, list[str], str]]":
             "the packaged API runner or publication guard failed its controls",
         ),
         (
+            # The update checks start the old copy a second time only when its
+            # launch check was answered `current`; any other answer is a
+            # finding. That rule is one function, and a wrong answer from it
+            # either hides a failure or brings back the manual rerun.
+            "updatelog",
+            [sys.executable, str(ROOT / "scripts" / "test_update_log.py")],
+            "the update checks would start the old copy again on an answer that is a finding",
+        ),
+        (
             # Beside parity rather than folded into it, because parity is
             # structurally blind to this: it compares the two workflows against
             # each other, so four identical wrong fixture paths are perfect

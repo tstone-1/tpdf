@@ -15,7 +15,9 @@ WHAT IT DOES, in order, and each line it prints is one check:
      scratch folder, and starts it on a copy of the document that lies under a
      folder with a space in its name;
   3. waits for *Install update* in the application's menu to become available,
-     which is the offer, and chooses it;
+     which is the offer, and chooses it; when the copy's own check was
+     answered `current`, it quits the copy and starts it once more
+     (`update_log.py`, `SECOND_START_S`);
   4. waits for *Restart to finish update* and chooses that;
   5. waits for the application to come back: another process from the same
      bundle, the tool inside the bundle at the new version, the document open
@@ -62,7 +64,7 @@ import time
 import urllib.request
 from pathlib import Path
 
-from update_log import explain
+from update_log import SECOND_START_S, explain, served_old
 
 LATEST = "https://github.com/tstone-1/tpdf/releases/latest/download/latest.json"
 NAME = re.compile(r"^tpdf_(\d+\.\d+\.\d+)_aarch64\.dmg$")
@@ -160,20 +162,22 @@ def update(checks: Checks, app: Path, document: Path, scratch: Path, old: str, n
     cli = app / "Contents/MacOS/tpdf-cli"
     session = scratch / "session.json"
     print(f"--- {old} opens the document and offers the update ---")
+    log = scratch / "tpdf.log"
     said = run(str(cli), "--version").stdout.strip()
     checks.note(said.endswith(old), f"the tool in the bundle is version {old}", said)
-    opened = run("open", "-n", "-a", str(app), str(document),
-                 "--env", f"TPDF_SESSION_FILE={session}", "--env", f"TPDF_LOG_FILE={scratch / 'tpdf.log'}")
-    first: list[int] = []
-    deadline = time.monotonic() + wait
-    while time.monotonic() < deadline and not first:
-        first = copies(binary)
-        time.sleep(0.3)
-    if not checks.note(bool(first), "the application starts", opened.stderr.strip()):
+    pid, opened = start(app, binary, document, session, log, wait)
+    if not checks.note(bool(pid), "the application starts", opened):
         return
-    pid = first[0]
     try:
         offer = wait_for(pid, "Install update", "enabled", wait)
+        if offer != "enabled" and served_old(log):
+            print(f"[INFO] {old} was told it is current ({explain(log)}), while latest.json "
+                  f"offers {new}; it asks once per launch, so it is started again in "
+                  f"{SECOND_START_S} s, once")
+            stop(binary)
+            time.sleep(SECOND_START_S)
+            pid, opened = start(app, binary, document, session, log, wait)
+            offer = wait_for(pid, "Install update", "enabled", wait) if pid else opened
         checks.note(offer == "enabled", "the menu offers Install update", offer)
         if offer != "enabled":
             print(f"[INFO] the application's own update checks: {explain(scratch / 'tpdf.log')}")
@@ -218,11 +222,28 @@ def update(checks: Checks, app: Path, document: Path, scratch: Path, old: str, n
         checks.note("Notarized Developer ID" in gate.stderr, "the bundle on disk is notarized Developer ID",
                     " ".join(gate.stderr.split())[:160])
     finally:
-        for running in copies(binary):
-            run("kill", str(running))
-        time.sleep(1)
-        for running in copies(binary):
-            run("kill", "-9", str(running))
+        stop(binary)
+
+
+def start(app: Path, binary: Path, document: Path, session: Path, log: Path,
+          wait: float) -> tuple[int, str]:
+    """Starts the old copy on the document: its pid, or 0 and what `open` said."""
+    opened = run("open", "-n", "-a", str(app), str(document),
+                 "--env", f"TPDF_SESSION_FILE={session}", "--env", f"TPDF_LOG_FILE={log}")
+    first: list[int] = []
+    deadline = time.monotonic() + wait
+    while time.monotonic() < deadline and not first:
+        first = copies(binary)
+        time.sleep(0.3)
+    return (first[0] if first else 0), opened.stderr.strip()
+
+
+def stop(binary: Path) -> None:
+    for running in copies(binary):
+        run("kill", str(running))
+    time.sleep(1)
+    for running in copies(binary):
+        run("kill", "-9", str(running))
 
 
 def main() -> int:

@@ -17,6 +17,8 @@ WHAT IT DOES, in order, and each line it prints is one check:
   3. starts it on a copy of the document that lies under a folder with a space
      in its name, and waits for its window;
   4. finds the button that offers the update in that window, and presses it;
+     when the copy's own check was answered `current`, it closes the copy and
+     starts it once more (`update_log.py`, `SECOND_START_S`);
   5. waits for the application to end and for the installer to start it again:
      a window of the new version, from the same folder, with the document open
      again in a worker that maps the installed PDFium;
@@ -66,10 +68,10 @@ import urllib.request
 from pathlib import Path
 
 from installed_check import (APP_KEY, NAME, PDF_CLASS, UNINSTALL_KEY, WM_CLOSE, Checks, RanOut,
-                             bounded, descendants, installed_engine, processes, registry, tool,
-                             uninstall, window_titles)
+                             already_installed, bounded, descendants, installed_engine, processes,
+                             registry, tool, uninstall, window_titles)
 from live_output import stream_results
-from update_log import explain
+from update_log import SECOND_START_S, explain, served_old
 
 LATEST = "https://github.com/tstone-1/tpdf/releases/latest/download/latest.json"
 
@@ -161,6 +163,33 @@ def close(pids: list[int]) -> None:
         subprocess.run(["taskkill", "/PID", str(pid), "/T", "/F"], capture_output=True, check=False)
 
 
+def start(folder: Path, pdf: Path, env: dict[str, str], scratch: Path, old: str,
+          wait: float) -> tuple[subprocess.Popen[bytes], int]:
+    """Starts the installed old copy on the document; its window, or 0 when none came."""
+    app = subprocess.Popen([str(folder / "tpdf.exe"), str(pdf)], env=env, cwd=str(scratch))
+    window = 0
+    deadline = time.monotonic() + wait
+    while time.monotonic() < deadline and app.poll() is None and not window:
+        shown = [w for w in window_titles(app.pid) if w[1].startswith(f"tpdf v{old}")]
+        window = shown[0][0] if shown else 0
+        time.sleep(0.2)
+    return app, window
+
+
+def offers(script: Path, window: int, offer: str, wait: float) -> list[str]:
+    """The window's buttons, read until one is the offer or `wait` runs out.
+
+    The offer comes after a request to the network, and the automation tree
+    after the first question put to it, so both are asked for again.
+    """
+    seen: list[str] = []
+    deadline = time.monotonic() + wait
+    while time.monotonic() < deadline and f"BUTTON {offer}" not in seen:
+        seen = buttons(script, window)
+        time.sleep(1)
+    return seen
+
+
 def update(checks: Checks, folder: Path, pdf: Path, scratch: Path, old: str, new: str,
            real_session: Path, wait: float, press: bool) -> None:
     from win_modules import modules_of
@@ -168,27 +197,26 @@ def update(checks: Checks, folder: Path, pdf: Path, scratch: Path, old: str, new
     script = scratch / "buttons.ps1"
     script.write_text(AUTOMATION, encoding="utf-8")
     session = scratch / "session.json"
-    env = dict(os.environ, TPDF_SESSION_FILE=str(session), TPDF_LOG_FILE=str(scratch / "tpdf.log"))
+    log = scratch / "tpdf.log"
+    env = dict(os.environ, TPDF_SESSION_FILE=str(session), TPDF_LOG_FILE=str(log))
     print(f"--- {old} opens the document and offers the update ---")
-    app = subprocess.Popen([str(folder / "tpdf.exe"), str(pdf)], env=env, cwd=str(scratch))
+    app, window = start(folder, pdf, env, scratch, old, wait)
     started: list[int] = [app.pid]
     try:
-        window = 0
-        deadline = time.monotonic() + wait
-        while time.monotonic() < deadline and app.poll() is None and not window:
-            shown = [w for w in window_titles(app.pid) if w[1].startswith(f"tpdf v{old}")]
-            window = shown[0][0] if shown else 0
-            time.sleep(0.2)
         checks.note(bool(window), f"a window titled 'tpdf v{old}' is shown")
         if not window:
             return
-        # The offer comes after a request to the network, and the automation
-        # tree after the first question put to it, so both are asked for again.
         offer = f"Update to {new}"
-        seen: list[str] = []
-        while time.monotonic() < deadline and f"BUTTON {offer}" not in seen:
-            seen = buttons(script, window)
-            time.sleep(1)
+        seen = offers(script, window, offer, wait)
+        if f"BUTTON {offer}" not in seen and served_old(log):
+            print(f"[INFO] {old} was told it is current ({explain(log)}), while latest.json "
+                  f"offers {new}; it asks once per launch, so it is started again in "
+                  f"{SECOND_START_S} s, once")
+            close([app.pid])
+            time.sleep(SECOND_START_S)
+            app, window = start(folder, pdf, env, scratch, old, wait)
+            started.append(app.pid)
+            seen = offers(script, window, offer, wait) if window else []
         checks.note(f"BUTTON {offer}" in seen, f"the window offers '{offer}'",
                     f"{len(seen)} buttons read" if seen else "no button could be read")
         if f"BUTTON {offer}" not in seen:
@@ -316,8 +344,9 @@ def main() -> int:
     if new == old:
         print(f"[ERROR] latest.json offers {new}, which is the installer given; give the one before")
         return 2
-    if registry(UNINSTALL_KEY) is not None:
-        print("[ERROR] tpdf is installed on this machine; this check installs and removes it")
+    listing = registry(UNINSTALL_KEY)
+    if listing is not None:
+        print(already_installed(listing))
         return 2
     if running:
         print("[ERROR] tpdf is running; a second start would be handed to it")

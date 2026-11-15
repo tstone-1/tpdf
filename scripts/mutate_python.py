@@ -667,6 +667,18 @@ MUTATIONS = [
         red=True,
         says="entries found in LICENSE",
     ),
+    Mutation(
+        # Any answer of the launch check counting as `current` is the defect
+        # this gate exists for: a failed or stalled check would then be
+        # started again until a later run passed over it.
+        "updatelog: a failed launch check earns a second start",
+        "updatelog",
+        "scripts/update_log.py",
+        'return bool(launches) and launches[-1].rstrip().endswith(": current")',
+        "return bool(launches)",
+        red=True,
+        says="test_a_failed_or_stalled_launch_check_is_a_finding",
+    ),
 ]
 
 

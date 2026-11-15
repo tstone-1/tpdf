@@ -5,6 +5,7 @@
         [--suite cli|lib|all] [--rev REV] [--timeout SECONDS]
         [--pictures FOLDER [--picture-arg ARG]...]
         [--window-checks [--only TEXT]...] [--nvda]
+        [--installed INSTALLER] [--update INSTALLER]
 
 WHY THIS EXISTS. `check_windows.py` type-checks the Windows tree from a Mac and
 runs nothing, so behaviour that exists only on Windows is first exercised by
@@ -89,6 +90,18 @@ session the same way: what NVDA says while tpdf opens a labelled document and
 output comes back; the speech log stays in `<clone>-check-run\\nvda` there. The
 exit is `nvda_check.py`'s.
 
+AN INSTALLER INSTEAD. `--installed INSTALLER` sends that installer and runs
+`installed_check.py` on it in the desktop session (`BUILD.md` step 8); the
+release draft's installer is the one to give. `--update INSTALLER` sends the
+installer of the release before the published one and runs `update_check.py`
+(step 12). Neither builds anything: what they test is what the installer puts
+on the machine. Both need the generated `text-wide.pdf`, so the fixtures are
+made as for `--window-checks`, and both refuse a machine where tpdf is
+installed. They replace a scheduled-task script written by hand for each
+release: on 2026-11-15 one written with `printf` turned the `\\b`, `\\t` and `\\r`
+of its Windows paths into control characters, and the run waited out its whole
+limit doing nothing. All of the output comes back; the exit is the check's.
+
 NOT A GATE. It needs a second machine that is switched on, so `gates.py` does
 not run it, for the reason it does not run `check_windows.py`.
 """
@@ -107,6 +120,8 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 MARKER = "TPDF-REMOTE-EXIT"
+# The name `installed_check.py` and `update_check.py` read the version from.
+INSTALLER = re.compile(r"^tpdf_\d+\.\d+\.\d+_x64-setup\.exe$")
 REF = "refs/tpdf-remote/check"
 
 SUITES = {
@@ -329,6 +344,33 @@ python -u scripts\\nvda_check.py src-tauri\\target\\release\\tpdf.exe --keep "$r
 """
 
 
+# How long an install check may take: 26 checks in about two minutes on
+# 2026-11-15, and room for a slow uninstall. The update check also waits for
+# the published update to download and for a second start (`update_log.py`).
+INSTALLED_LIMIT = 900
+UPDATE_LIMIT = 1500
+
+
+def installer_task(clone: str, job: str, installer: str) -> str:
+    """The script that runs `installed_check.py` or `update_check.py` on an installer sent along.
+
+    It is the installer's own name in the run folder, because both scripts
+    read the version from it. All of the output comes back: about 30 lines.
+    """
+    tree = clone.rstrip("\\/") + "-check"
+    run = clone.rstrip("\\/") + "-check-run"
+    script, extra = {"installed": ("installed_check.py", " --word Ledger"),
+                     "update": ("update_check.py", "")}[job]
+    return f"""$run = '{run}'
+Remove-Item "$run\\{job}.txt" -ErrorAction SilentlyContinue
+Set-Location '{tree}'
+$env:PYTHONIOENCODING = "utf-8"
+python -u scripts\\{script} "$run\\{installer}" testdata\\text-wide.pdf{extra} *> "$run\\{job}.txt"
+"exit $LASTEXITCODE" | Add-Content "$run\\{job}.txt"
+'done' | Set-Content "$run\\{job}.done"
+"""
+
+
 LOCK_TASK = """rundll32.exe user32.dll,LockWorkStation
 'done' | Set-Content "$PSScriptRoot\\lock.done"
 """
@@ -336,23 +378,29 @@ LOCK_TASK = """rundll32.exe user32.dll,LockWorkStation
 
 # What runs in the desktop session, as `<job>.ps1` ending in `<job>.done`: the task's
 # name, the lines to show at the end, the transcript to show when it runs out of
-# time, how long it may take, and whether it needs the fixtures CI generates.
+# time, how long it may take, whether it needs the fixtures CI generates, and
+# whether it needs the checks binary built. The two installer runs test what an
+# installer put on the machine, so a build there would only cost time.
 JOBS = {
-    "pictures": ("tpdf-pictures", "pictures.txt", "pictures.txt", PICTURE_LIMIT, False),
-    "window": ("tpdf-window", "window-shown.txt", "window.txt", WINDOW_LIMIT, True),
-    "nvda": ("tpdf-nvda", "nvda.txt", "nvda.txt", NVDA_LIMIT, True),
+    "pictures": ("tpdf-pictures", "pictures.txt", "pictures.txt", PICTURE_LIMIT, False, True),
+    "window": ("tpdf-window", "window-shown.txt", "window.txt", WINDOW_LIMIT, True, True),
+    "nvda": ("tpdf-nvda", "nvda.txt", "nvda.txt", NVDA_LIMIT, True, True),
+    "installed": ("tpdf-installed", "installed.txt", "installed.txt", INSTALLED_LIMIT, True, False),
+    "update": ("tpdf-update", "update.txt", "update.txt", UPDATE_LIMIT, True, False),
 }
 
 
 def powershell_desktop(clone: str, sha: str, job: str) -> str:
-    """Builds the checks binary, gets a screen, runs `<job>.ps1` there, locks again."""
-    task, shown, progress, limit, fixtures = JOBS[job]
-    return checkout(clone, sha) + f"""python scripts\\fetch_pdfium.py 2>&1 | Select-Object -Last 1
+    """Builds the checks binary when the job needs it, gets a screen, runs `<job>.ps1` there, locks again."""
+    task, shown, progress, limit, fixtures, build = JOBS[job]
+    built = f"""python scripts\\fetch_pdfium.py 2>&1 | Select-Object -Last 1
 if ($LASTEXITCODE) {{ Stop-Run "PDFium could not be fetched" 2 }}
 """ + (FIXTURES if fixtures else "") + f"""$env:CARGO_BUILD_JOBS = "2"
 npm run tauri build -- --config src-tauri/tauri.checks.conf.json --no-bundle *> "$run\\build.txt"
 if ($LASTEXITCODE) {{ Get-Content "$run\\build.txt" -Tail 12; Stop-Run "the checks build failed" 2 }}
 "[OK] built tpdf.exe " + (Get-Item src-tauri\\target\\release\\tpdf.exe).LastWriteTime
+"""
+    return checkout(clone, sha) + (built if build else FIXTURES if fixtures else "") + f"""
 
 # Runs a script in the desktop session and waits for its marker file. The
 # marker is removed first: one left by an earlier run ends the wait at once
@@ -421,8 +469,12 @@ if ($attached) {{
 
 
 def run_desktop(host: str, clone: str, sha: str, bundle: bytes | None, job: str, task: str,
-                timeout: float) -> subprocess.CompletedProcess[str] | str:
-    """`run_under_powershell` for a run in the desktop session: three scripts, one command."""
+                timeout: float, send: Path | None = None) -> subprocess.CompletedProcess[str] | str:
+    """`run_under_powershell` for a run in the desktop session: three scripts, one command.
+
+    `send` is one more file for the run folder, under its own name: the
+    installer an installer run is about.
+    """
     if "'" in clone or " " in clone:
         raise SystemExit("[FAIL] --clone with a quote or a space in it cannot be passed to schtasks")
     run = clone.rstrip("\\/") + "-check-run"
@@ -447,6 +499,8 @@ def run_desktop(host: str, clone: str, sha: str, bundle: bytes | None, job: str,
         if bundle is not None:
             files.append(Path(scratch) / "tree.bundle")
             files[-1].write_bytes(bundle)
+        if send is not None:
+            files.append(send)
         copied = subprocess.run(
             ["scp", "-q", *SSH_OPTIONS, *map(str, files), f"{host}:{run.replace(chr(92), '/')}/"],
             stdin=subprocess.DEVNULL, capture_output=True, text=True, timeout=600,
@@ -613,9 +667,25 @@ def main() -> int:
     parser.add_argument("--nvda", action="store_true",
                         help="build the checks binary and run nvda_check.py there, "
                              "instead of the tests")
+    parser.add_argument("--installed", type=Path, metavar="INSTALLER",
+                        help="send this tpdf_<version>_x64-setup.exe and run installed_check.py "
+                             "on it there, instead of the tests")
+    parser.add_argument("--update", type=Path, metavar="INSTALLER",
+                        help="send the installer of the release before the published one and run "
+                             "update_check.py on it there, instead of the tests")
     args = parser.parse_args()
-    if sum(map(bool, (args.pictures, args.window_checks, args.nvda))) > 1:
-        print("[FAIL] --pictures, --window-checks and --nvda are separate runs; ask for one")
+    modes = (args.pictures, args.window_checks, args.nvda, args.installed, args.update)
+    if sum(map(bool, modes)) > 1:
+        print("[FAIL] --pictures, --window-checks, --nvda, --installed and --update are "
+              "separate runs; ask for one")
+        return 2
+    installer = args.installed or args.update
+    if installer is not None and not INSTALLER.match(installer.name):
+        print(f"[FAIL] {installer.name} is not named tpdf_<version>_x64-setup.exe, and both "
+              "checks read the version from the name")
+        return 2
+    if installer is not None and not installer.is_file():
+        print(f"[FAIL] no {installer}")
         return 2
     if args.only and not args.window_checks:
         print("[FAIL] --only is for --window-checks")
@@ -629,8 +699,11 @@ def main() -> int:
     bundle = bundle_of(sha)
     sent = "already on origin/main" if bundle is None else f"{len(bundle):,} bytes of commits sent"
     job = ("pictures" if args.pictures else "window" if args.window_checks
-           else "nvda" if args.nvda else None)
-    doing = {"pictures": "pictures", "window": "window checks", "nvda": "NVDA check"}.get(
+           else "nvda" if args.nvda else "installed" if args.installed
+           else "update" if args.update else None)
+    doing = {"pictures": "pictures", "window": "window checks", "nvda": "NVDA check",
+             "installed": f"install check of {installer.name if installer else ''}",
+             "update": f"update check from {installer.name if installer else ''}"}.get(
         job or "", f"suite {args.suite}")
     print(f"[..] {what} ({sha[:9]}, {sent}) on {args.host}: {doing}")
     try:
@@ -641,7 +714,8 @@ def main() -> int:
                   f"so nothing was sent: {(asked.stderr or asked.stdout).strip()[-400:]}")
             return 2
         if job and shell != "powershell":
-            flag = {"pictures": "--pictures", "window": "--window-checks", "nvda": "--nvda"}[job]
+            flag = {"pictures": "--pictures", "window": "--window-checks", "nvda": "--nvda",
+                    "installed": "--installed", "update": "--update"}[job]
             print(f"[FAIL] {flag} needs a PowerShell login shell, and {args.host}'s is bash: "
                   "the scheduled task that reaches the desktop is started from PowerShell")
             return 2
@@ -654,6 +728,10 @@ def main() -> int:
         elif job == "nvda":
             read = run_desktop(args.host, args.clone, sha, bundle, job,
                                nvda_check_task(args.clone), args.timeout)
+        elif job in ("installed", "update") and installer is not None:
+            read = run_desktop(args.host, args.clone, sha, bundle, job,
+                               installer_task(args.clone, job, installer.name), args.timeout,
+                               send=installer)
         else:
             run = run_under_bash if shell == "bash" else run_under_powershell
             read = run(args.host, args.clone, sha, args.suite, bundle, args.timeout)
@@ -679,6 +757,15 @@ def main() -> int:
         count = len(list(args.pictures.glob("*.png")))
         print(f"[{'OK' if code == 0 else 'FAIL'}] {count} pictures in {args.pictures}; "
               f"screenshots.py exited {code} on {args.host}")
+        return code
+    if job in ("installed", "update"):
+        what = {"installed": "installed_check.py", "update": "update_check.py"}[job]
+        if code == 0:
+            print(f"[OK] {what} passed on {args.host}")
+        elif code == 1:
+            print(f"[FAIL] {what} failed on {args.host}")
+        else:
+            print(f"[FAIL] the {what} run on {args.host} could not start or did not finish")
         return code
     if job == "nvda":
         verdicts = {0: "[OK] NVDA said what tpdf should on",

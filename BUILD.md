@@ -2059,7 +2059,16 @@ starts at 0 and increments within the month.
    `one-install`, `no-uninstall`, `engine`, `document`, `time-limit`) and exits 0 exactly when the checks
    aimed at it failed and no other did; run them when the script or the installer changed. Over ssh the window needs an interactive scheduled task
    (`schtasks /Create ... /IT`, then `/Run`): started from the ssh session itself the
-   application has no desktop to open a window on.
+   application has no desktop to open a window on. `run_on_windows.py` does that, and sends
+   the installer with it:
+
+   ```
+   python scripts/run_on_windows.py --host <host> --clone '<clone>' --installed <path>/tpdf_<version>_x64-setup.exe
+   ```
+
+   Until 26.11.9 that task was a script written by hand each release, and one written with
+   `printf` turned the `\b`, `\t` and `\r` of its Windows paths into control characters, so
+   the run waited out its limit doing nothing.
 
    **Signing on a clean Windows is a second command**, on a machine with the Windows Sandbox
    feature on and a desktop, because every machine that builds tpdf already holds the roots this
@@ -2615,6 +2624,14 @@ starts at 0 and increments within the month.
     window. Then it uninstalls and reads the registry back. `--control no-press` finds the
     button and does not press it, and exits 0 exactly when the checks of the restart failed.
     The real session file is moved away for the run and put back. It needs the network.
+
+    From another machine, `run_on_windows.py --host <host> --clone '<clone>' --update
+    <path>/tpdf_<previous>_x64-setup.exe` runs it in the desktop session there.
+
+    **Both checks start the old copy a second time when its launch check was answered
+    `current`** (since 26.11.9, `update_log.py`): the application asks once per launch, so
+    watching it longer cannot help. Any other answer stays a failure. The paragraph below is
+    why.
 
     **A single failure of the offer check minutes after publishing is not yet a finding.**
     26.11.1, 2026-11-02: the first run, about ten minutes after `publish_release.py`, failed

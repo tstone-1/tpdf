@@ -226,6 +226,24 @@ def registry(key: str) -> str | None:
     return asked.stdout if asked.returncode == 0 else None
 
 
+def already_installed(listing: str) -> str:
+    """The refusal for a machine where tpdf is installed, naming what removes it.
+
+    `listing` is `registry(UNINSTALL_KEY)`. Until 2026-11-15 the refusal named
+    nothing, and the install it met on the Windows build machine was one the
+    NVDA check had left that morning, in a folder named after neither check.
+    """
+    values = {}
+    for line in listing.splitlines():
+        parts = re.split(r"\s{4}", line.strip(), maxsplit=2)
+        if len(parts) == 3 and parts[1].startswith("REG_"):
+            values[parts[0]] = parts[2].strip()
+    version = values.get("DisplayVersion", "an unknown version")
+    remover = values.get("UninstallString")
+    how = f"remove it with {remover} /S and run again" if remover else "remove it and run again"
+    return f"[ERROR] tpdf {version} is installed on this machine; this check installs and removes it: {how}"
+
+
 def restore_app_key(before: str | None) -> None:
     """Puts the application's key back to the `reg query` listing taken before.
 
@@ -520,8 +538,9 @@ def main() -> int:
     except RuntimeError as e:
         print(f"[ERROR] {e}")
         return 2
-    if registry(UNINSTALL_KEY) is not None:
-        print("[ERROR] tpdf is installed on this machine; this check installs and removes it")
+    listing = registry(UNINSTALL_KEY)
+    if listing is not None:
+        print(already_installed(listing))
         return 2
     if running:
         print("[ERROR] tpdf is running; a second start would be handed to it")
