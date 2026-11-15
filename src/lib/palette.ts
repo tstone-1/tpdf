@@ -20,6 +20,7 @@
 
 import type { Command, CommandRegistry, Ranked } from "./commands";
 import { catalog } from "./i18n";
+import { isMac } from "./keys";
 
 const TEXT = catalog({
   "en-US": {
@@ -42,6 +43,14 @@ export interface PaletteOptions {
    * would never see the keys.
    */
   turnPage?: (forward: boolean) => void;
+  /**
+   * Whether the screen reader speaks a new name given to the focused field.
+   * NVDA does; VoiceOver in WebKit does not, and said nothing when *Extract
+   * pages* asked for its range (`voiceover_check.py`, 2026-11-15). Where it
+   * does not, the question is also put in the live region until something is
+   * typed; where it does, that would say it twice. Not on macOS by default.
+   */
+  namesAreSpoken?: boolean;
 }
 
 /** Rows shown at once. More than this and the list scrolls. */
@@ -83,6 +92,7 @@ export class Palette {
    */
   private readonly heard: HTMLDivElement;
   private readonly turnPage: ((forward: boolean) => void) | null;
+  private readonly namesAreSpoken: boolean;
 
   private results: Ranked[] = [];
   private selected = 0;
@@ -101,6 +111,7 @@ export class Palette {
   constructor(registry: CommandRegistry, options: PaletteOptions = {}) {
     this.registry = registry;
     this.turnPage = options.turnPage ?? null;
+    this.namesAreSpoken = options.namesAreSpoken ?? !isMac();
 
     this.backdrop = document.createElement("div");
     this.backdrop.className = "tpdf-palette";
@@ -429,7 +440,7 @@ export class Palette {
       this.list.append(asked, row);
       // Only when it says something new: an unchanged text is not announced
       // again, and an empty field has nothing to say yet.
-      const heard = raw === "" ? "" : row.textContent;
+      const heard = raw !== "" ? row.textContent : this.namesAreSpoken ? "" : askedName(this.asking);
       if (this.heard.textContent !== heard) this.heard.textContent = heard;
       return;
     }

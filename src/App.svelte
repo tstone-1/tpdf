@@ -487,6 +487,7 @@
   import { spoken, spokenError } from "./lib/said";
   import { printedLabel, printedRuns } from "./lib/pagelabels";
   import { DETAIL_START, LABEL_END, announcement, messageLines, resultTone, type MessageTone } from "./lib/messagelines";
+  import { whenHeard, windowClock } from "./lib/livetext";
   import { releaseOrphans } from "./lib/orphans";
   import type { DocumentInfo, PageSize, PrintSettings } from "./lib/ipc";
   import { call } from "./lib/ipc";
@@ -729,6 +730,17 @@
   const heard = $derived(announcement(
     error === null ? null : offers.includes("rasterCopy") ? TEXT().rasterOffer : plainly(error),
     messageTone));
+  // What the two regions hold, written when VoiceOver will hear it: a report
+  // made as the save sheet closes was dropped (`livetext.ts`).
+  const focusClock = windowClock();
+  let heardAlert = $state("");
+  let heardStatus = $state("");
+  const sayAlert = whenHeard((text) => { heardAlert = text; }, focusClock);
+  const sayStatus = whenHeard((text) => { heardStatus = text; }, focusClock);
+  $effect(() => {
+    sayAlert(heard.alert);
+    sayStatus(heard.status);
+  });
   let opening = $state(false);
   let documentBusy = $state(false);
   const documentTasks = new DocumentTasks((busy) => {
@@ -6659,6 +6671,7 @@
       pages,
       // Run as this document by `scoped`, so each side names its own pages.
       printedOf: (slot) => printedOf(slot),
+      focusClock,
       // The panel's selection follows the page, so a note opened by clicking
       // a mark highlights its row --- and the two can never disagree about
       // which comment is being read, which is the whole reason this is a
@@ -7408,8 +7421,8 @@
 
 
   <!-- Always in the page, and only their text changes: `announcement`. -->
-  <div class="live-message" role="alert">{heard.alert}</div>
-  <div class="live-message" role="status">{heard.status}</div>
+  <div class="live-message" role="alert">{heardAlert}</div>
+  <div class="live-message" role="status">{heardStatus}</div>
   {#if error}
     <div class="problem-bar" class:success={messageTone === "success"}
       class:attention={messageTone === "attention"} data-testid="problem">

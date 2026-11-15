@@ -3,7 +3,7 @@
 
     scripts/run_on_mac.py --host HOST --clone '~/path/to/tpdf'
         [--wrap 'COMMAND --'] [--rev REV] [--only TEXT]... [--timeout SECONDS]
-        [--pictures FOLDER [--picture-arg ARG]... | --phase PHASE FIXTURE]
+        [--pictures FOLDER [--picture-arg ARG]... | --phase PHASE FIXTURE | --voiceover]
 
 WHY THIS EXISTS. `window_checks.py` drives a real window, takes the keyboard
 and needs a screen that is unlocked and not covered, so on the machine somebody
@@ -77,6 +77,12 @@ ONE PHASE INSTEAD. `--phase PHASE FIXTURE` runs `tabs_check.py FIXTURE --phase
 PHASE` there, for the window phases `window_checks.py` does not carry, such as
 `--phase textedit testdata/textedit-embedded.pdf`. The fixture is a path in the
 clone's `testdata`. The exit is then `tabs_check.py`'s.
+
+VOICEOVER INSTEAD. `--voiceover` runs `voiceover_check.py` there in place of
+the window checks: the walk `nvda_check.py` makes on Windows, heard through
+VoiceOver. The other Mac needs *Allow VoiceOver to be controlled with
+AppleScript* ticked once in VoiceOver Utility. The exit is then
+`voiceover_check.py`'s.
 
 NOT A GATE. It needs a second machine that is switched on.
 """
@@ -186,7 +192,7 @@ cat >"$run/job.plist" <<PLIST
 <key>ProgramArguments</key><array><string>$run/job.sh</string></array>
 <key>RunAtLoad</key><true/></dict></plist>
 PLIST
-launchctl bootstrap "gui/$(id -u)" "$run/job.plist" || {{ show_again; stop "launchd did not take the job; is anybody logged in on this Mac?"; }}
+{start} || {{ show_again; stop "launchd did not take the job; is anybody logged in on this Mac?"; }}
 waited=0
 while [ ! -f "$run/done" ] && [ "$waited" -lt {limit} ]; do sleep 5; waited=$((waited + 5)); done
 launchctl bootout "gui/$(id -u)/$job" 2>/dev/null
@@ -241,6 +247,7 @@ def tree_to_send(rev: str | None) -> str:
 
 def remote(args: argparse.Namespace, sha: str) -> str:
     only = " ".join(f"--only {shlex.quote(text)}" for text in args.only)
+    start = 'launchctl bootstrap "gui/$(id -u)" "$run/job.plist"'
     if args.pictures:
         extra = " ".join(shlex.quote(text) for text in args.picture_arg)
         # Emptied first: a picture left by an earlier run would be copied back
@@ -249,6 +256,14 @@ def remote(args: argparse.Namespace, sha: str) -> str:
                'uv run --with reportlab --with pillow scripts/screenshots.py '
                f'"$app/Contents/MacOS/tpdf" --more --out "$run/pictures" {extra}')
         show = 'grep -v \'^EXIT\' "$run/checks.log"'
+    elif args.voiceover:
+        job = 'python3 scripts/voiceover_check.py "$app" --keep "$run/voiceover"'
+        show = 'grep -v \'^EXIT\' "$run/checks.log"'
+        # From this SSH session, not from launchd: VoiceOver answers an
+        # AppleEvent from the first and lets one from a `gui/<uid>` job time
+        # out (-1712), measured 2026-11-15. `open` puts the app on the
+        # desktop from either.
+        start = '( nohup "$run/job.sh" >/dev/null 2>&1 & )'
     elif args.phase:
         phase, fixture = args.phase
         job = (f'uv run scripts/tabs_check.py "$app/Contents/MacOS/tpdf" {shlex.quote(fixture)} '
@@ -261,7 +276,7 @@ def remote(args: argparse.Namespace, sha: str) -> str:
                 'sed -n \'/^=== summary/,$p\' "$run/checks.log" | grep -v \'^EXIT\'')
     return REMOTE.format(clone=shlex.quote(args.clone), sha=shlex.quote(sha), marker=MARKER,
                          ref=REF, wrap=args.wrap, app=APP, job=job, show=show,
-                         limit=int(args.timeout))
+                         limit=int(args.timeout), start=start)
 
 
 def main() -> int:
@@ -279,9 +294,11 @@ def main() -> int:
                         help="passed to screenshots.py, once for each argument")
     parser.add_argument("--phase", nargs=2, metavar=("PHASE", "FIXTURE"),
                         help="run tabs_check.py FIXTURE --phase PHASE there instead")
+    parser.add_argument("--voiceover", action="store_true",
+                        help="run voiceover_check.py there instead")
     args = parser.parse_args()
-    if args.phase and args.pictures:
-        parser.error("--phase and --pictures are two different runs; pass one")
+    if sum(map(bool, (args.phase, args.pictures, args.voiceover))) > 1:
+        parser.error("--phase, --pictures and --voiceover are different runs; pass one")
 
     sha = tree_to_send(args.rev)
     print(f"--- sending {sha[:10]} to {args.host} ---", flush=True)

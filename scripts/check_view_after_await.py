@@ -100,6 +100,9 @@ ALLOWED: dict[str, str] = {
 #: sides share it on purpose; one that names a page, a mark, a search or
 #: anything else of one file belongs in `LiveDocument` and `liveSlots`.
 PER_WINDOW: dict[str, str] = {
+    # The message bar's two live regions, written by `livetext.ts`.
+    "heardAlert": "the text of the window's one alert region",
+    "heardStatus": "the text of the window's one status region",
     # The two page areas and what is drawn round them.
     "areaHosts": "the window's two page areas",
     "paneLayout": "what the markup draws of the two sides",

@@ -251,7 +251,7 @@ describe("what a screen reader is told while a value is typed", () => {
     return found.concat(...from.children.map(statuses));
   }
 
-  function setUp() {
+  function setUp(options: { namesAreSpoken?: boolean } = {}) {
     const registry = new CommandRegistry();
     registry.register({
       id: "file.extractPages",
@@ -263,7 +263,7 @@ describe("what a screen reader is told while a value is typed", () => {
         run: () => {},
       },
     });
-    const palette = new Palette(registry);
+    const palette = new Palette(registry, options);
     const body = (globalThis as unknown as { document: { body: FakeElement } }).document.body;
     const input = body.querySelector("input")!;
     const type = (text: string) => {
@@ -297,6 +297,17 @@ describe("what a screen reader is told while a value is typed", () => {
     type("99");
     expect(statuses(body)).toEqual([heard]);
     expect(heard?.textContent).toBe("There is no page 99");
+  });
+
+  it("says the question in the live region where a new name is not spoken, until something is typed", () => {
+    // VoiceOver in WebKit, measured 2026-11-15. Where names are spoken the
+    // region stays empty, as the test above asserts, or NVDA says it twice.
+    const { palette, body, type } = setUp({ namesAreSpoken: false });
+    palette.askFor("file.extractPages");
+    const [heard] = statuses(body);
+    expect(heard?.textContent).toBe("Extract pages: Pages, e.g. 1-3,5");
+    type("3-4");
+    expect(heard?.textContent).toBe("Extract 3-4");
   });
 
   it("empties the live region when the question is left", () => {

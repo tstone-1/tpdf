@@ -36,6 +36,11 @@ have the binary.)
   keyword in both languages against the first words of the other titles. It found 13 more
   keywords that hid a command, among them `insert`, `compare` and `remove` in English and
   `grafik`, `bild` and `inhalt` in German.
+- **VoiceOver hears the page at launch, the palette's question and the report of an
+  extraction.** It drops what is announced while tpdf's window is not the active one or has
+  just become it again, so such a text now waits until the window has settled. VoiceOver
+  also does not read the new name of the palette's field, so on macOS the question is
+  announced as well.
 - **Split document and Merge documents report their result in green.** Their reports were
   drawn red and read out by a screen reader as an alert, as a failure is.
 

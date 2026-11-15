@@ -51,6 +51,7 @@
 
 import { catalog } from "./i18n";
 import { linkRunsIn, onPage as linksOnPage, type Link } from "./links";
+import { whenHeard, type FocusClock } from "./livetext";
 import { printedRuns } from "./pagelabels";
 import { readingBlocks, textOfRanges, type ReadingBlock } from "./reading";
 import { type PageText } from "./text";
@@ -121,6 +122,7 @@ const SR_ONLY =
 export class AccessibleText {
   private readonly host: HTMLElement;
   private readonly announcer: HTMLElement;
+  private readonly speak: (text: string) => void;
   private readonly pages = new Map<number, HTMLElement>();
   /**
    * What each built page was built from, so it can be built again.
@@ -163,6 +165,8 @@ export class AccessibleText {
     root: HTMLElement,
     pageCount: number,
     printedOf: (slot: number) => string | null | undefined = () => null,
+    /** Holds the page announcement until the window will be heard (`livetext.ts`); none writes at once. */
+    clock?: FocusClock,
   ) {
     this.pageCount = pageCount;
     this.printedOf = printedOf;
@@ -181,6 +185,8 @@ export class AccessibleText {
     this.announcer.setAttribute("aria-live", "polite");
     this.announcer.style.cssText = SR_ONLY;
     root.appendChild(this.announcer);
+    const write = (text: string) => { this.announcer.textContent = text; };
+    this.speak = clock ? whenHeard(write, clock) : write;
   }
 
   destroy(): void {
@@ -287,7 +293,7 @@ export class AccessibleText {
     const message = this.nameOf(page);
     if (message === this.announced) return;
     this.announced = message;
-    this.announcer.textContent = message;
+    this.speak(message);
   }
 
   /**

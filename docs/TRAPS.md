@@ -340,6 +340,7 @@ hop through the index.
 - A WKWebView probe's evaluateJavaScript runs as a user gesture, so it measured a clipboard write the app is refused
 - Svelte drops a space written as the first text of an element, so the counter read 1 / 8(i)
 - A live region built together with its text is not announced, and the palette's preview was one
+- VoiceOver drops what is announced while the window is not key, and does not speak a focused field's new name
 
 ## Rust and macOS
 - A locked macOS session cannot be unlocked from a script, so it must be prevented
@@ -776,6 +777,7 @@ hop through the index.
 - A browser window left covering the second Mac's screen made the open check hang on every tree
 - A key pressed at a machine running the window checks moved the open check's page
 - Driving NVDA from a script: three mistakes in the driver read as tpdf defects first
+- VoiceOver answers AppleScript from an SSH session and times out for a launchd job
 
 ## Windows and portability
 - The gates had never run on the platform where they fail
@@ -27588,3 +27590,43 @@ each decision point. Run the control first; a step that fails without NVDA is th
 The driver became `scripts/nvda_check.py`, which presses keys only in focus mode, presses
 Escape until the field has lost the focus, and stops with exit 2 when the foreground window is
 not tpdf.
+
+### VoiceOver drops what is announced while the window is not key, and does not speak a focused field's new name
+
+Measured with `scripts/voiceover_check.py` on macOS 27.2, 2026-11-15, after the NVDA fixes of
+the same day had passed under NVDA. Three of the eleven checks still failed under VoiceOver:
+
+- **The page announcement at launch.** VoiceOver began the window's phrase ("tpdf Checks tpdf
+  window, Document text and 1 more item group, has keyboard focus") about 4 s after the app
+  was opened and spoke it for about 3 s. A polite text written before or during that was
+  never heard, and holding it 400 ms after the viewer was made was not enough.
+- **The report of an extraction.** It was written as the save sheet closed; VoiceOver said
+  "Closing dialogue" and nothing more.
+- **The palette's question.** The field's `aria-label` changes to the question when a command
+  asks for a value. NVDA speaks a new name on the focused field; VoiceOver in WebKit does not,
+  so it heard the echo of the typed letters and a hint.
+
+Every text written in the steady state, the previews and the page turn included, was heard.
+So the fix is about *when* a text is written, not about how: `livetext.ts`'s `whenHeard` holds
+a live-region text until 5 s after the page started and until 400 ms after each time the window
+gets the focus, keeping only the latest. The palette puts the question into its live region
+where names are not spoken (`namesAreSpoken`, false on macOS), and not elsewhere, or NVDA says
+it twice. With both, VoiceOver heard all eleven and NVDA was run again.
+
+### VoiceOver answers AppleScript from an SSH session and times out for a launchd job
+
+`tell application "VoiceOver" to get content of last phrase` answered at once from an SSH
+login on the second Mac, and ended in `AppleEvent timed out (-1712)` from a job in `gui/<uid>`,
+which is where `run_on_mac.py` starts every window check. The first probe of the day hung the
+same way and read as a consent dialog; there was none. So `run_on_mac.py --voiceover` starts the
+job from the SSH session (`start` in `remote`), and `open` still puts the app on the desktop.
+System Events keystrokes worked from both.
+
+Two other things the first runs paid for: VoiceOver's first start opens the *VoiceOver
+Quickstart* splash in front of everything (`defaults write com.apple.VoiceOverTraining
+doNotShowSplashScreen -bool true` stops it), and starting VoiceOver can leave the previously
+active app in front, so the check brings tpdf forward once after opening it. The AppleScript
+control itself needs *Allow VoiceOver to be controlled with AppleScript* in VoiceOver Utility,
+which takes an administrator's password and leaves
+`/private/var/db/Accessibility/.VoiceOverAppleScriptEnabled`; without that marker the check
+exits 2 and says so.

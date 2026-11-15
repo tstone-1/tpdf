@@ -35,6 +35,7 @@ import { redrawn, type FieldEdited } from "./savedfields";
  */
 
 import { AccessibleText } from "./a11y";
+import type { FocusClock } from "./livetext";
 import { forgetPageSurface, inTextField, isMac, matches, namePageSurface, nativeCopy } from "./keys";
 import { drawSignature, fitSignature, rotateSignature, signatureCanvas, validSignature, type SignatureImage } from "./signature";
 import { PictureCache, pictureCanvas, rotatePixels, visible, type PicturePixels } from "./picture";
@@ -462,6 +463,8 @@ export interface ViewerOptions {
    * position, for what a screen reader is told of each page (`a11y.ts`).
    */
   printedOf?: (slot: number) => string | null | undefined;
+  /** The window, for when the page announcement is heard (`livetext.ts`). */
+  focusClock?: FocusClock;
   /**
    * Geometry of the pages the open reported, index-aligned from page 1.
    *
@@ -1865,7 +1868,7 @@ export class Viewer {
     // page behind that round trip, so the viewer needs an order before it.
     this.pages = unedited(opts.pageCount);
     this.text = new TextCache(opts.doc, this.recovery.text);
-    this.a11y = new AccessibleText(root, opts.pageCount, opts.printedOf);
+    this.a11y = new AccessibleText(root, opts.pageCount, opts.printedOf, opts.focusClock);
     this.searcher = new Search(
       opts.doc,
       opts.pageCount,

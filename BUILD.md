@@ -1339,7 +1339,17 @@ starts at 0 and increments within the month.
    left over after Escape, the answer to a printed number typed as `ii`, and the report of an
    extraction saved through the dialog. Before it existed every release record said *Not heard*, and 26.11.8
    shipped three things NVDA did not say; run against that release it fails 7 of its 11 checks.
-   VoiceOver has no such check yet.
+
+   **And with VoiceOver** (2026-11-15), the same walk on a second Mac:
+
+   ```
+   scripts/run_on_mac.py --host HOST --clone '~/path/to/tpdf' --voiceover
+   ```
+
+   `scripts/voiceover_check.py` reads VoiceOver's last phrase through AppleScript, which that
+   Mac allows once *Allow VoiceOver to be controlled with AppleScript* is ticked in VoiceOver
+   Utility. It found three things NVDA heard and VoiceOver did not; against the 26.11.8 build
+   it fails 7 of its 11 checks.
 6. <a id="release-step-6"></a>**Re-check `docs/THREAT-MODEL.md` against the code**, and correct the document before
    trusting anything else in this list — §3's boundary table, §5's sandbox policy and
    §6's macOS column especially. Every present-tense sentence there claims something is
