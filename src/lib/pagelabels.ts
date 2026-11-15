@@ -24,9 +24,11 @@ import { catalog } from "./i18n";
 const TEXT = catalog({
   "en-US": {
     printedAs: (printed: string) => `printed as ${printed}`,
+    typePositions: (printed: string, positions: string) => `Printed as ${printed}: type ${positions}`,
   },
   "de-DE": {
     printedAs: (printed: string) => `gedruckt als ${printed}`,
+    typePositions: (printed: string, positions: string) => `Gedruckt als ${printed}: ${positions} eingeben`,
   },
 });
 
@@ -87,4 +89,60 @@ export function runsOf(slots: readonly number[]): number[][] {
 export function withPrinted(preview: string, printed: string): string {
   if (printed === "") return preview;
   return preview === "" ? printed : `${preview} · ${printed}`;
+}
+
+/**
+ * What to type instead of printed numbers, for a value the page-number parser
+ * refused: `Printed as ii, App-A: type 2,7`, or `null` when the value is not
+ * made of this document's labels.
+ *
+ * The parser still refuses the value, for the reason at the top of this file:
+ * accepting labels would make `5` ambiguous. But a reader asked for "pages ii
+ * and App-A" was told `"ii" is not a page number` and had to find the
+ * positions alone (measured with NVDA, 2026-11-15). Only a refused value gets
+ * here, so a number is never reinterpreted.
+ *
+ * Each comma part is a position, a label, or two of them joined by `-`. A label
+ * may hold a hyphen itself (`App-A`), so every `-` is tried as the join. A
+ * label printed on more than one page names no position, and the value is then
+ * left to the parser's own refusal. `labelOf` is {@link printedLabel} for a
+ * zero-based slot.
+ */
+export function positionsFor(
+  raw: string,
+  pageCount: number,
+  labelOf: (slot: number) => string | null,
+): string | null {
+  const slotsOf = new Map<string, number[]>();
+  for (let slot = 0; slot < pageCount; slot++) {
+    const label = labelOf(slot);
+    if (label !== null) slotsOf.set(label, [...(slotsOf.get(label) ?? []), slot]);
+  }
+  if (slotsOf.size === 0) return null;
+  let usedLabel = false;
+  const one = (text: string): string | null => {
+    if (/^[0-9]+$/.test(text)) return text;
+    const slots = slotsOf.get(text);
+    if (slots?.length !== 1) return null;
+    usedLabel = true;
+    return String(slots[0]! + 1);
+  };
+  const parts = raw.split(",").map((part) => part.trim());
+  const typed: string[] = [];
+  for (const part of parts) {
+    const whole = one(part);
+    if (whole !== null) {
+      typed.push(whole);
+      continue;
+    }
+    let joined: string | null = null;
+    for (let at = part.indexOf("-"); at > 0 && joined === null; at = part.indexOf("-", at + 1)) {
+      const from = one(part.slice(0, at).trim());
+      const to = from === null ? null : one(part.slice(at + 1).trim());
+      if (from !== null && to !== null) joined = `${from}-${to}`;
+    }
+    if (joined === null) return null;
+    typed.push(joined);
+  }
+  return usedLabel ? TEXT().typePositions(parts.join(", "), typed.join(",")) : null;
 }

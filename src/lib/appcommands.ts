@@ -46,7 +46,7 @@ import {
   parsePageRange,
   parseSplitPoints,
 } from "./pageranges";
-import { runsOf, withPrinted } from "./pagelabels";
+import { positionsFor, runsOf, withPrinted } from "./pagelabels";
 import { DISK_CHANGE_MODES, type DiskChangeMode } from "./diskwatch";
 import { PALETTE } from "./markcolors";
 import type { CloseWhich } from "./tabclose";
@@ -593,6 +593,8 @@ export interface AppActions {
    * of the commands that take page numbers, which are positions.
    */
   printedPages(runs: number[][]): string;
+  /** The number printed on the page in a zero-based slot where it is not the position, or null. */
+  printedOf(slot: number): string | null;
   /** Ask for a file and open it. */
   openDocument(): void;
   /** Close the active document, checking for unsaved work. */
@@ -1255,6 +1257,12 @@ export function registerAppCommands(
    */
   const available = () => !(actions.busyDocument?.() ?? false);
   const withDocument = () => actions.viewer() !== null && available();
+  /**
+   * A refusal of page numbers, or what to type instead where the refused
+   * value is this document's printed numbers (`pagelabels.ts`, `positionsFor`).
+   */
+  const orPositions = (raw: string, problem: string | null): string | null =>
+    problem === null ? null : positionsFor(raw, actions.pageCount(), (slot) => actions.printedOf(slot)) ?? problem;
   /** Offered while `kind` is not the layout already shown; changes to it. */
   const layoutCommand = (kind: SpreadKind) => ({
     enabled: () => {
@@ -3064,7 +3072,7 @@ export function registerAppCommands(
       argument: {
         placeholder: TEXT(locale).extractPlaceholder,
         problem: (raw: string) =>
-          parsePageRange(raw, actions.pageCount()).problem ?? null,
+          orPositions(raw, parsePageRange(raw, actions.pageCount()).problem ?? null),
         preview: (raw: string) => {
           const range = parsePageRange(raw, actions.pageCount());
           return range.slots
@@ -3104,7 +3112,7 @@ export function registerAppCommands(
       argument: {
         placeholder: TEXT(locale).splitPlaceholder,
         problem: (raw: string) =>
-          parseSplitPoints(raw, actions.pageCount()).problem ?? null,
+          orPositions(raw, parseSplitPoints(raw, actions.pageCount()).problem ?? null),
         preview: (raw: string) => {
           const split = parseSplitPoints(raw, actions.pageCount());
           return split.groups
@@ -3285,7 +3293,7 @@ export function registerAppCommands(
           const trimmed = raw.trim();
           if (trimmed === "") return TEXT(locale).pageNumberRange(pages);
           if (!/^[0-9]+$/.test(trimmed))
-            return TEXT(locale).notAPageNumber(trimmed);
+            return orPositions(trimmed, TEXT(locale).notAPageNumber(trimmed));
           const page = Number(trimmed);
           if (page < 1 || page > pages) {
             return TEXT(locale).documentPages(pages);

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { printedLabel, printedRuns, runsOf, withPrinted } from "./pagelabels";
+import { positionsFor, printedLabel, printedRuns, runsOf, withPrinted } from "./pagelabels";
 
 /** The labels `outline-labels.pdf` states: roman front matter, a body, an appendix. */
 const LABELS = ["i", "ii", "1", "2", "3", "4", "App-A", "App-B"];
@@ -63,5 +63,29 @@ describe("withPrinted", () => {
     expect(withPrinted("Extract 3 pages", "")).toBe("Extract 3 pages");
     expect(withPrinted("Extract 3 pages", "printed as i–1")).toBe("Extract 3 pages · printed as i–1");
     expect(withPrinted("", "printed as i")).toBe("printed as i");
+  });
+});
+
+describe("positionsFor", () => {
+  const of = (raw: string, labels: readonly (string | null)[] = LABELS) =>
+    positionsFor(raw, labels.length, (slot) => labels[slot] ?? null);
+
+  it("names the positions of printed numbers, singly, in ranges and with a hyphen in a label", () => {
+    expect(of("ii")).toBe("Printed as ii: type 2");
+    expect(of("i-ii, App-A")).toBe("Printed as i-ii, App-A: type 1-2,7");
+    expect(of("App-A-App-B")).toBe("Printed as App-A-App-B: type 7-8");
+    expect(of("ii-4, 8")).toBe("Printed as ii-4, 8: type 2-4,8");
+  });
+
+  it("names nothing for a value with no label in it, or with a word that is none", () => {
+    // Numbers alone are positions, and the parser decides about them.
+    expect(of("1-3")).toBeNull();
+    expect(of("ii, appendix")).toBeNull();
+    expect(of("")).toBeNull();
+  });
+
+  it("names nothing for a label printed on two pages, or in a document without labels", () => {
+    expect(of("ii", ["i", "ii", "ii"])).toBeNull();
+    expect(of("ii", [null, null])).toBeNull();
   });
 });

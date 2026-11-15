@@ -27,9 +27,11 @@ to the step it fell in and checks:
   preview more  "Extract 3 pages · printed as 1–2, App-A"     (typed `,7`)
   page turn     "Page 2 of 8, printed as ii"                  (Page Down in the field)
   cancel        nothing naming *Extract* after the palette is left
+  printed typed "Printed as ii: type 2"                       (typed `ii`)
+  extracted     "Wrote 2 pages to extracted.pdf."             (`3-4`, saved)
 
-Nothing is saved, so the document is never written; its digest is compared
-before and after anyway.
+The extraction is written to the scratch folder, and that file must exist.
+The document itself is never written; its digest is compared before and after.
 
 NVDA KEEPS SOME KEYS, which is why this presses what it presses: in browse mode
 a letter is quick navigation and Page Down moves NVDA's own cursor, and in focus
@@ -73,6 +75,8 @@ ROOT = Path(__file__).resolve().parent.parent
 NVDA = Path(r"C:\Program Files\NVDA\nvda.exe")
 DEFAULT_BINARY = ROOT / "src-tauri" / "target" / "release" / "tpdf.exe"
 DEFAULT_PDF = ROOT / "testdata" / "outline-labels.pdf"
+# What the walk extracts pages 3-4 to, in the scratch folder.
+EXTRACTED = "extracted.pdf"
 
 # No welcome dialog, no question about usage statistics, no update check: each
 # of those is a window that takes the focus from tpdf. The silence synthesizer,
@@ -125,7 +129,7 @@ class INPUT(ctypes.Structure):
 
 
 KEYUP, UNICODE, EXTENDED = 0x2, 0x4, 0x1
-VK = {"ctrl": 0x11, "alt": 0x12, "enter": 0x0D, "esc": 0x1B, "pgdn": 0x22, "k": 0x4B, "f4": 0x73}
+VK = {"ctrl": 0x11, "alt": 0x12, "enter": 0x0D, "esc": 0x1B, "pgdn": 0x22, "a": 0x41, "k": 0x4B, "f4": 0x73}
 # Page Down is an extended key; sent without the flag it is the keypad's 3.
 EXTENDED_KEYS = {0x22}
 
@@ -297,6 +301,38 @@ def walk(binary: Path, pdf: Path, scratch: Path) -> tuple[list[Step], float, Pat
             raise Lost("four presses of Escape did not leave the palette")
         steps.append(Step("cancel", time.time(), forbid=["Extract"]))
         time.sleep(4)
+
+        # The palette again, so its speech is this step's and not the cancel's.
+        steps.append(Step("reopen", time.time()))
+        ensure_front()
+        press("ctrl", "k")
+        time.sleep(2)
+        type_text("extract pages")
+        time.sleep(2)
+        ensure_front()
+        press("enter")
+        time.sleep(2.5)
+        if "Edit|" not in focused():
+            raise Lost(f"after Enter the focus is {focused()!r}, not the palette's field")
+        steps.append(Step("printed typed", time.time(), expect=["Printed as ii: type 2"]))
+        type_text("ii")
+        time.sleep(3)
+        press("ctrl", "a")
+        type_text("3-4")
+        time.sleep(2)
+        steps.append(Step("save dialog", time.time()))
+        press("enter")
+        time.sleep(4)
+        title = foreground_title()
+        if not title.startswith("Extract pages"):
+            raise Lost(f"after Enter the foreground window is {title!r}, not the save dialog")
+        # The name field holds the suggested name, selected; a full path replaces it.
+        type_text(str(scratch / EXTRACTED))
+        time.sleep(1)
+        steps.append(Step("extracted", time.time(), expect=[f"Wrote 2 pages to {EXTRACTED}."]))
+        press("enter")
+        time.sleep(6)
+        ensure_front()
         end = time.time()
 
         ensure_front()
@@ -352,12 +388,14 @@ def main() -> int:
             return 2
         failures = judge(steps, said, end)
         if digest(pdf) != before:
-            failures.append("the document changed on disk, and nothing in the walk saves")
+            failures.append("the document changed on disk, and the walk only extracts from it")
+        if not (scratch / EXTRACTED).is_file():
+            failures.append(f"extracted: no {EXTRACTED} was written")
         kept = f", the log kept in {args.keep / log.name}" if args.keep else ""
         print(f"[..]   {len(said)} utterances{kept}")
         for failure in failures:
             print(f"[FAIL] {failure}")
-        checks = sum(len(step.expect) + len(step.forbid) for step in steps) + 1
+        checks = sum(len(step.expect) + len(step.forbid) for step in steps) + 2
         if failures:
             print(f"[FAIL] {len(failures)} of {checks} checks failed")
             return 1

@@ -130,6 +130,7 @@ function harness(
         : null,
     pageCount: () => 3,
     printedPages: () => "",
+    printedOf: () => null,
     openDocument: () => fired.push("openDocument"),
     closeDocument: () => fired.push("closeDocument"),
     closeAllDocuments: () => fired.push("closeAllDocuments"),
@@ -1378,6 +1379,29 @@ describe("the page operations", () => {
     });
   });
 
+  describe("printed page numbers typed where a position is asked", () => {
+    // Three pages printed i, ii and 1. A refusal names the positions instead
+    // of only refusing (`pagelabels.ts`, `positionsFor`); the value is still
+    // refused, so nothing runs on a printed number.
+    const LABELS = ["i", "ii", null];
+    function problem(id: string, raw: string) {
+      const { registry } = harness(true, {}, {}, false, false, false, {}, false, false, false, false, false, false,
+        null, null, null, { printedOf: (slot) => LABELS[slot] ?? null });
+      return registry.all().find((c) => c.id === id)?.argument?.problem(raw);
+    }
+
+    it("in Extract pages, Split document and Go to page", () => {
+      expect(problem("file.extractPages", "i-ii")).toBe("Printed as i-ii: type 1-2");
+      expect(problem("file.splitDocument", "ii")).toBe("Printed as ii: type 2");
+      expect(problem("nav.goToPage", "ii")).toBe("Printed as ii: type 2");
+    });
+
+    it("and leaves a value that is not a label to the parser's own refusal", () => {
+      expect(problem("file.extractPages", "x")).toBe('"x" is not a page number');
+      expect(problem("file.extractPages", "1-2")).toBeNull();
+    });
+  });
+
   it("preview a split as the files it would write", () => {
     const { registry } = harness();
     const command = registry.all().find((c) => c.id === "file.splitDocument");
@@ -2093,6 +2117,7 @@ describe("the window shortcuts for editing", () => {
         }) as never,
       pageCount: () => 3,
       printedPages: () => "",
+      printedOf: () => null,
       openDocument: () => fired.push("openDocument"),
     closeDocument: () => fired.push("closeDocument"),
     closeAllDocuments: () => fired.push("closeAllDocuments"),

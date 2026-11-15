@@ -58,6 +58,8 @@ const TEXT = catalog({
       `Saved ${name}. Created an image-only PDF with ` +
       `${regions === 1 ? "1 masked region" : `${regions} masked regions`}. ` +
       "The original is unchanged.",
+    extracted: (pages: number, name: string) =>
+      `Wrote ${pages === 1 ? "1 page" : `${pages} pages`} to ${name}.`,
     splitNothing: "Nothing was written.",
     splitWrote: (count: number, first: string, last: string) =>
       `Wrote ${count} file${count === 1 ? "" : "s"}, ${first} to ${last}.`,
@@ -96,6 +98,8 @@ const TEXT = catalog({
       `${name} gespeichert. Ein PDF nur aus Bildern mit ` +
       `${regions === 1 ? "1 abgedecktem Bereich" : `${regions} abgedeckten Bereichen`} wurde erstellt. ` +
       "Das Original ist unverändert.",
+    extracted: (pages: number, name: string) =>
+      `${pages === 1 ? "1 Seite" : `${pages} Seiten`} in ${name} geschrieben.`,
     splitNothing: "Es wurde nichts geschrieben.",
     splitWrote: (count: number, first: string, last: string) =>
       `${count} ${count === 1 ? "Datei" : "Dateien"} geschrieben, ${first} bis ${last}.`,
@@ -409,6 +413,22 @@ export function afterRedactionCopy(applied: Parameters<typeof afterRedaction>[0]
 /** What to say after creating the deliberately image-only redaction fallback. */
 export function afterRasterRedaction(applied: { regions: number }, name: string): string {
   return TEXT().rasterSaved(name, applied.regions);
+}
+
+/**
+ * What to say after an extraction, which is always something.
+ *
+ * {@link afterMerge}'s reason, not {@link afterCopy}'s. A copy is the whole
+ * document, so the file is what was asked for. An extract is the pages the
+ * reader typed, and which pages went in cannot be told from the folder. Until
+ * 2026-11-15 it was silent, and under NVDA nothing at all was heard after the
+ * save dialog closed: the window looked exactly as it had before Enter.
+ *
+ * The changed-source sentence is appended, as for a split.
+ */
+export function afterExtract(extracted: { changed?: boolean }, path: string, pages: number): string {
+  const said = TEXT().extracted(pages, basenameOf(path));
+  return extracted.changed ? `${said} ${TEXT().afterCopyChanged}` : said;
 }
 
 /**

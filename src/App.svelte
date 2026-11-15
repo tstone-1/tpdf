@@ -474,6 +474,7 @@
     afterCopy,
     afterRedactionCopy,
     afterRasterRedaction,
+    afterExtract,
     afterSplit,
     afterMerge,
     afterRefusal,
@@ -1956,6 +1957,7 @@
     fillForm: () => formLayer?.focus(),
     pageCount: () => status?.pageCount ?? 0,
     printedPages: (runs) => printedRuns(runs, printedOf),
+    printedOf: (slot) => printedOf(slot),
     openDocument: () => void pickAndOpen(),
     reloadDocument: () => void reloadDocument(),
     diskChangeMode: () => diskChangeMode,
@@ -4449,10 +4451,9 @@
       // same way". An extract from a file that changed underneath is built from
       // the newer version exactly as a copy is; saying nothing left that to be
       // discovered.
-      const said = afterCopy(
-        await edits.extractPages(openPathName, chosen, slots),
-      );
-      if (said) say(said);
+      // Said, and green unless the source changed: `afterExtract`.
+      const extracted = await edits.extractPages(openPathName, chosen, slots);
+      say(afterExtract(extracted, chosen, slots.length), [], resultTone(!extracted.changed));
     } catch (e) {
         if (e instanceof SaveCancelled) return;
       say(String(e));
@@ -4469,7 +4470,7 @@
    * So the default offered here has no page numbers in it, where an extract's
    * carries `namePages` --- naming a range in a stem would put it in every part.
    *
-   * **The report is not optional**, unlike an extract's. `afterSplit` always
+   * **The report is not optional**, as an extract's is. `afterSplit` always
    * says something, because the file the reader named is not one of the files
    * that appeared, and silence would send them looking for it.
    *
@@ -4487,7 +4488,10 @@
           filters: [{ name: "PDF", extensions: ["pdf"] }],
         });
       if (!chosen) return;
-      say(afterSplit(await edits.splitDocument(openPathName, chosen, groups)));
+      // A result, not a problem: until 2026-11-15 it was drawn red and read
+      // out through the alert region as an interruption.
+      const split = await edits.splitDocument(openPathName, chosen, groups);
+      say(afterSplit(split), [], resultTone(!split.changed && split.paths.length > 0));
     } catch (e) {
         if (e instanceof SaveCancelled) return;
       say(String(e));
@@ -4553,7 +4557,8 @@
         filters: [{ name: "PDF", extensions: ["pdf"] }],
       });
       if (!chosen) return;
-      say(afterMerge(await edits.mergeDocuments(openPathName, chosen, others)));
+      const merged = await edits.mergeDocuments(openPathName, chosen, others);
+      say(afterMerge(merged), [], resultTone(!merged.changed));
     } catch (e) {
         if (e instanceof SaveCancelled) return;
       say(String(e));

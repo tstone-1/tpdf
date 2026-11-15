@@ -175,6 +175,46 @@ describe("the keyword table", () => {
     );
     expect(repeats).toEqual([]);
   });
+
+  /**
+   * A keyword typed in full outranks every title that only begins with it
+   * (`commands.ts`, `EXACT`). That is right for "form", whose command is
+   * *Fill form*, and wrong for "extract", which until 2026-11-15 was a keyword
+   * of *Save an attachment...*: typing the first word of *Extract pages...*
+   * highlighted another command, and Enter ran it.
+   *
+   * So a one-word keyword that is the first word of another command's title
+   * belongs only to a command whose own title has that word. A title that is
+   * the word and nothing else is not hidden, since it wins on `EXACT` itself
+   * (*Verkleinern*). The exceptions are listed with their reason; the first
+   * sweep found seventeen, and fourteen were wrong.
+   */
+  const earned = new Map([
+    // "Texterkennung: Sprache..." is a setting of the command a reader means.
+    ["file.recogniseText: texterkennung", "the language setting is not what is meant"],
+    ["file.recognisePage: texterkennung", "the language setting is not what is meant"],
+  ]);
+  for (const locale of ["en-US", "de-DE"] as const) {
+    it(`hides no command behind another's keyword typed in full (${locale})`, () => {
+      const all = everyCommand(locale);
+      const words = (title: string) => title.toLowerCase().split(/[^\p{L}\p{N}]+/u).filter(Boolean);
+      const firstWords = new Map<string, string[]>();
+      for (const command of all) {
+        const first = words(command.title)[0];
+        if (!first || command.title.toLowerCase() === first) continue;
+        firstWords.set(first, [...(firstWords.get(first) ?? []), command.id]);
+      }
+      const hiding = all.flatMap((command) =>
+        (command.keywords ?? [])
+          .filter((word) => firstWords.has(word) && !words(command.title).includes(word))
+          .filter((word) => !earned.has(`${command.id}: ${word}`))
+          .map((word) => `${command.id}: "${word}" hides ${firstWords.get(word)!.join(", ")}`),
+      );
+      // The control: the first words are there to be hidden.
+      expect(firstWords.size).toBeGreaterThan(30);
+      expect(hiding).toEqual([]);
+    });
+  }
 });
 
 describe("a reader of the German window", () => {

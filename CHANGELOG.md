@@ -19,7 +19,25 @@ have the binary.)
 
 ## [26.11.9] - Unreleased
 
+### Changed
+
+- **Extract pages says what it wrote**: "Wrote 2 pages to report 3-4.pdf." Until now a
+  finished extraction said nothing, and the window looked as it had before the save.
+  *Save a copy* stays silent: it writes the whole document, so there is nothing to report.
+- **A printed page number typed where a position is asked is answered with the position.**
+  `ii` in *Extract pages*, *Split document* or *Go to page* was refused as "not a page
+  number"; tpdf now answers "Printed as ii: type 2". The value is still refused, so `5`
+  always means the fifth page.
+
 ### Fixed
+
+- **Typing `extract` finds Extract pages first.** It found *Save an attachment...*, because
+  "extract" was one of that command's keywords, and Enter ran it. A test now checks every
+  keyword in both languages against the first words of the other titles. It found 13 more
+  keywords that hid a command, among them `insert`, `compare` and `remove` in English and
+  `grafik`, `bild` and `inhalt` in German.
+- **Split document and Merge documents report their result in green.** Their reports were
+  drawn red and read out by a screen reader as an alert, as a failure is.
 
 - **A screen reader hears what the palette asks for.** After a command that takes a value
   was chosen, the field kept the name "Run a command", so NVDA said nothing; it is now

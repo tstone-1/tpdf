@@ -1335,9 +1335,10 @@ starts at 0 and increments within the month.
 
    `scripts/nvda_check.py` opens `outline-labels.pdf` under NVDA, walks *Extract pages*
    through the palette and reads NVDA's speech log: the page named with its printed number,
-   the question, the preview as a range is typed, a page turned from the field, and nothing
-   left over after Escape. Before it existed every release record said *Not heard*, and 26.11.8
-   shipped three things NVDA did not say; run against that release it fails 5 of its 8 checks.
+   the question, the preview as a range is typed, a page turned from the field, nothing
+   left over after Escape, the answer to a printed number typed as `ii`, and the report of an
+   extraction saved through the dialog. Before it existed every release record said *Not heard*, and 26.11.8
+   shipped three things NVDA did not say; run against that release it fails 7 of its 11 checks.
    VoiceOver has no such check yet.
 6. <a id="release-step-6"></a>**Re-check `docs/THREAT-MODEL.md` against the code**, and correct the document before
    trusting anything else in this list — §3's boundary table, §5's sandbox policy and

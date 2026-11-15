@@ -375,6 +375,7 @@ export async function appCommandChecks(
     viewer: () => viewer,
     pageCount: () => doc.page_count,
     printedPages: () => "",
+    printedOf: () => null,
     openDocument: () => fired.push("openDocument"),
     closeDocument: () => fired.push("closeDocument"),
     closeAllDocuments: () => fired.push("closeAllDocuments"),

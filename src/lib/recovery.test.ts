@@ -5,6 +5,7 @@ import { withoutComments } from "./sourcetext";
 import {
   plainly,
   afterCopy,
+  afterExtract,
   afterMerge,
   afterRedaction,
   afterRedactionCopy,
@@ -301,6 +302,22 @@ describe("afterCopy", () => {
     expect(said).not.toBeNull();
     expect(said).toContain("changed on disk");
     expect(said).toContain("written");
+  });
+});
+
+describe("afterExtract", () => {
+  it("names how many pages went into which file", () => {
+    // A copy is the whole document and stays silent; an extract is the pages
+    // typed, which the folder cannot show (`afterExtract`).
+    expect(afterExtract({ changed: false }, "/tmp/report 3-4.pdf", 2)).toBe("Wrote 2 pages to report 3-4.pdf.");
+    expect(afterExtract({}, "C:\\Users\\me\\one.pdf", 1)).toBe("Wrote 1 page to one.pdf.");
+    expect(afterCopy({ changed: false })).toBeNull();
+  });
+
+  it("keeps the count when the source had changed", () => {
+    const said = afterExtract({ changed: true }, "/tmp/x.pdf", 3);
+    expect(said).toContain("Wrote 3 pages to x.pdf.");
+    expect(said).toContain("changed on disk");
   });
 });
 
