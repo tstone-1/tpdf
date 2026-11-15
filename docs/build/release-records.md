@@ -2,6 +2,43 @@
 
 What was run for each release, what passed, and what was not run. The record of a new release goes at the top. Moved here verbatim from `BUILD.md` on 2026-10-23, which indexes this file.
 
+**26.11.9 verification and publication, 2026-11-15:** prepared on the Windows development machine.
+The release is a command palette a screen reader hears: the question a command asks, the preview
+and the refusal of a value as it is typed, and the page by its printed number. It also answers a
+printed number typed as a position with that position (*Printed as ii: type 2*), reports what
+Extract pages wrote, ranks Extract pages first for "extract", and reports split and merge in green.
+`nvda_check.py` passed 11 of 11 on the feature tree on the Windows build machine against 7 of 11
+for 26.11.8, and the new `voiceover_check.py` 11 of 11 on the second Mac against 7 of 11 for the
+26.11.8 source. Step 1 took `zip` 9.6.0, `nix` 0.32.0, `jiff` 0.2.45 and eleven other crates in
+both lockfiles; the notices file changed only in those version rows. The push of `0c944fca`
+started an engine build for one new upstream commit, and the pin moved to `pdfium-8127-tpdf.3`
+(the record is in `pdfium-records.md`); the compiled code did not move, so the probes were not
+re-run. All 35 gates passed on the release tree, and `check_linux.py` passed. `window_checks.py`
+17 of 17 on the second Mac and on the Windows build machine, both on the new engine. Step 7 in the
+mutation worktree: `mutate_python.py` 38/38, `mutate_frontend.py --near v26.11.8` 40/40 with four
+new rows for the live-text hold, the palette question and printed positions, and `mutate_rust.py
+--near v26.11.8` selected nothing, as no Rust source changed. **Not run:** `print-probe` and
+`redact-reach-probe`, as for 26.11.7: nothing in printing or OCR changed and the engine's code is
+the same. The local installer carried `tpdf_shell.dll`, `tpdf-cli.exe` and `pdfium\pdfium.dll`;
+unpacked outside the tree its `tpdf-cli` answered 26.11.9 and verified `incr-signed.pdf`, and with
+the bundled engine removed it exited 3. CI passed all three jobs on `7abb4f22` (run 43726458066)
+and `Audit` passed (run 43726457939). No rehearsal: `release.yml` changed only in its notes. Release
+run 43729757676 skipped its gates for the CI-passed commit and completed the draft at 8 files. On
+the draft's files: the installer read as `Valid`, timestamped by Certum, and passed
+`installed_check.py` 26/26 on the Windows build machine, after the 26.11.8 that the NVDA baseline
+had installed there was removed; the `.dmg` was stapled, its app accepted as Notarized Developer
+ID, and its `tpdf-cli` (Developer ID, `runtime`) answered 26.11.9 and verified the signed fixture.
+The body needed no correction, and `SECURITY.md` no change: no new parser, format or destination.
+`publish_release.py v26.11.9 --publish` published it; without authentication `releases/latest` is
+v26.11.9 with 8 assets, all 8 answer 200, and `latest.json` offers 26.11.9. Step 12 from the
+published 26.11.8: the Mac passed 12/12 at the first run. On Windows the first run, about ten
+minutes after publishing, failed only *the window offers 'Update to 26.11.9'*, with the
+application's launch check reading `current`; the second run, with nothing changed, passed 18/18,
+as in 26.11.1. The cask went to 26.11.9 with the published `.dmg`'s SHA-256; `brew audit --cask
+--online` exited 0 and `brew livecheck` reads 26.11.9. The winget pull request (445804) moved from
+26.11.8 to 26.11.9 through the REST API on manifest version 1.28.0, still the newest, after
+`winget validate` passed.
+
 **26.11.8 verification and publication, 2026-11-13:** prepared on the Windows development machine.
 The release is the printed page number from `/PageLabels` beside the position in the page counter
 and in the previews of Extract pages, Split document and Go to page; the message bar as two live
