@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { CommandRegistry } from "./commands";
-import { Palette } from "./palette";
+import { askedName, Palette } from "./palette";
 import { FakeElement, installFakeDom, type FakeDom } from "./testdom";
 
 /**
@@ -237,5 +237,78 @@ describe("a command's question", () => {
     const { key } = asked();
     key("Escape");
     expect(texts()).not.toContain("Pages");
+  });
+});
+
+describe("what a screen reader is told while a value is typed", () => {
+  // Measured with NVDA 2026.2 on the installed 26.11.8, 2026-11-15: after Enter
+  // chose *Extract pages* it said nothing, and typing `3-4` was echoed letter
+  // by letter with no word of the preview.
+
+  /** Every element under `from` with `role="status"`. */
+  function statuses(from: FakeElement): FakeElement[] {
+    const found = from.getAttribute("role") === "status" ? [from] : [];
+    return found.concat(...from.children.map(statuses));
+  }
+
+  function setUp() {
+    const registry = new CommandRegistry();
+    registry.register({
+      id: "file.extractPages",
+      title: "Extract pages...",
+      argument: {
+        placeholder: "Pages, e.g. 1-3,5",
+        problem: (raw) => (raw === "99" ? "There is no page 99" : null),
+        preview: (raw) => (raw === "" ? "" : `Extract ${raw}`),
+        run: () => {},
+      },
+    });
+    const palette = new Palette(registry);
+    const body = (globalThis as unknown as { document: { body: FakeElement } }).document.body;
+    const input = body.querySelector("input")!;
+    const type = (text: string) => {
+      (input as unknown as { value: string }).value = text;
+      input.dispatch("input", {});
+    };
+    const key = (k: string) => input.dispatch("keydown", { key: k });
+    return { palette, body, input, type, key };
+  }
+
+  it("names the field by the question while it asks, and by the search after", () => {
+    const { palette, input, key } = setUp();
+    palette.open();
+    expect(input.getAttribute("aria-label")).toBe("Run a command");
+    palette.askFor("file.extractPages");
+    expect(input.getAttribute("aria-label")).toBe("Extract pages: Pages, e.g. 1-3,5");
+    key("Escape");
+    expect(input.getAttribute("aria-label")).toBe("Run a command");
+  });
+
+  it("puts the preview and the refusal into one live region that is never rebuilt", () => {
+    const { palette, body, type } = setUp();
+    palette.askFor("file.extractPages");
+    const [heard, ...more] = statuses(body);
+    // One region: a second, inside the rebuilt list, is the one that stays silent.
+    expect(more).toEqual([]);
+    expect(heard?.textContent).toBe("");
+    type("3-4");
+    expect(statuses(body)).toEqual([heard]);
+    expect(heard?.textContent).toBe("Extract 3-4");
+    type("99");
+    expect(statuses(body)).toEqual([heard]);
+    expect(heard?.textContent).toBe("There is no page 99");
+  });
+
+  it("empties the live region when the question is left", () => {
+    const { palette, body, type, key } = setUp();
+    palette.askFor("file.extractPages");
+    type("3-4");
+    key("Escape");
+    expect(statuses(body)[0]?.textContent).toBe("");
+  });
+
+  it("names a command without a question by its title alone", () => {
+    expect(askedName({ id: "x", title: "Go to page…", argument: {
+      placeholder: "", problem: () => null, preview: () => "", run: () => {} } })).toBe("Go to page");
   });
 });

@@ -339,6 +339,7 @@ hop through the index.
 - On macOS a web view pastes only on a Paste menu item's action, so ⌘V pasted nothing
 - A WKWebView probe's evaluateJavaScript runs as a user gesture, so it measured a clipboard write the app is refused
 - Svelte drops a space written as the first text of an element, so the counter read 1 / 8(i)
+- A live region built together with its text is not announced, and the palette's preview was one
 
 ## Rust and macOS
 - A locked macOS session cannot be unlocked from a script, so it must be prevented
@@ -774,6 +775,7 @@ hop through the index.
 - `check_linux.py` cannot run from a `git worktree`, and two runs of it share one ref and one clone
 - A browser window left covering the second Mac's screen made the open check hang on every tree
 - A key pressed at a machine running the window checks moved the open check's page
+- Driving NVDA from a script: three mistakes in the driver read as tpdf defects first
 
 ## Windows and portability
 - The gates had never run on the platform where they fail
@@ -27537,3 +27539,52 @@ component drops whitespace that is the first text inside an element, so the coun
 window, failed on both the Windows build machine and the second Mac on its first run (26.11.8).
 Put the space inside an expression, ``{` (${printed})`}``, which the compiler keeps as data, and
 check the rendered text rather than the source wherever a space carries meaning.
+
+### A live region built together with its text is not announced, and the palette's preview was one
+
+While the palette asks for a value, the line under the field says what the value will do
+(`Extract 2 pages · printed as 1–2`) or why it is refused. That line carried `role="status"`,
+and `paint` in `src/lib/palette.ts` empties the list and builds the line again on every
+keystroke. A screen reader announces a change to a live region that already exists; an element
+inserted with its text already in it is not a change. Measured 2026-11-15 with NVDA 2026.2 on
+the installed 26.11.8 (Windows 11): typing `3-4` was echoed character by character and the
+preview was never spoken. The field also kept the `aria-label` "Run a command" while it asked
+for pages, so the switch into the question was silent too.
+
+The fix is one region built in the constructor whose `textContent` alone changes, and the
+field's name set to the command and its question in `ask` and back in `leave`. The message bar
+in `App.svelte` was already built this way (two regions always in the page, only their text
+changes). Before adding `role="status"` or `aria-live` anywhere, check that the element
+outlives the text it announces.
+
+### Driving NVDA from a script: three mistakes in the driver read as tpdf defects first
+
+2026-11-15, NVDA 2026.2 on the Windows build machine, driven from an `/IT` scheduled task with
+`SendInput`. What works: start NVDA through `ShellExecute` (`cmd /c start "" nvda.exe ...`),
+because the installed `nvda.exe` has `uiAccess` and `CreateProcess` refuses it with
+`WinError 740`; pass `-m --config-path=<dir>` with a `nvda.ini` that sets
+`showWelcomeDialogAtStartup = False` and `askedAllowUsageStats = True`, so no first-run dialog
+takes the focus; and `--log-file=<file> --log-level=12`, at which every utterance is logged as a
+`Speaking [...]` line with a millisecond time. Read that log as UTF-8: NVDA writes U+FFFC for an
+embedded object such as the page canvas, which PowerShell 5.1's default reading shows as `���`.
+
+Three results looked like defects in tpdf and were defects in the driver:
+
+- **The typed word chose another command.** `extract` ranks *Save an attachment...* above
+  *Extract pages...*, so Enter ran the first, which reports "This document carries no
+  attachments." and gives the focus back to the page. The range typed next went to the
+  document. A screenshot taken just before Enter showed the highlighted row.
+- **NVDA keeps keys.** In browse mode a letter is quick navigation (`3` is "next heading at
+  level 3") and Page Down moves NVDA's own cursor, so neither reaches tpdf. In focus mode the
+  first Escape returns NVDA to browse mode and is not passed on, so leaving the palette's
+  question takes one Escape more than without NVDA.
+- **Escape leaves the question one level at a time.** The palette goes back to the command
+  list first, so a Ctrl+K after one Escape closed the palette, and the next letters armed a
+  text tool and typed into the page.
+
+What separated them: a control run of the same driver without NVDA, the focused element read
+through UI Automation at each step (`AutomationElement.FocusedElement`), and a screenshot at
+each decision point. Run the control first; a step that fails without NVDA is the driver's.
+The driver became `scripts/nvda_check.py`, which presses keys only in focus mode, presses
+Escape until the field has lost the focus, and stops with exit 2 when the foreground window is
+not tpdf.

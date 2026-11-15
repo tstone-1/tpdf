@@ -4,7 +4,7 @@
     scripts/run_on_windows.py --host HOST --clone 'C:\\Users\\me\\tpdf'
         [--suite cli|lib|all] [--rev REV] [--timeout SECONDS]
         [--pictures FOLDER [--picture-arg ARG]...]
-        [--window-checks [--only TEXT]...]
+        [--window-checks [--only TEXT]...] [--nvda]
 
 WHY THIS EXISTS. `check_windows.py` type-checks the Windows tree from a Mac and
 runs nothing, so behaviour that exists only on Windows is first exercised by
@@ -81,6 +81,13 @@ window checks moved the open check's page*). Run there, nobody's screen is
 taken. Every `[FAIL]` line and the summary come back; the whole transcript
 stays in `<clone>-check-run\\window.txt`. `--only` is passed on. The exit is
 `window_checks.py`'s.
+
+THE NVDA CHECK INSTEAD. `--nvda` builds the checks binary and generates the
+fixtures as `--window-checks` does, and runs `nvda_check.py` in the desktop
+session the same way: what NVDA says while tpdf opens a labelled document and
+*Extract pages* asks for a range. The host needs NVDA installed. All of its
+output comes back; the speech log stays in `<clone>-check-run\\nvda` there. The
+exit is `nvda_check.py`'s.
 
 NOT A GATE. It needs a second machine that is switched on, so `gates.py` does
 not run it, for the reason it does not run `check_windows.py`.
@@ -304,6 +311,24 @@ $shown | Set-Content "$run\\window-shown.txt"
 """
 
 
+# How long the NVDA walk may take: about a minute, and NVDA's own start.
+NVDA_LIMIT = 300
+
+
+def nvda_check_task(clone: str) -> str:
+    """The script that runs `nvda_check.py` in the desktop session. Its output is short, so all of it comes back."""
+    tree = clone.rstrip("\\/") + "-check"
+    run = clone.rstrip("\\/") + "-check-run"
+    return f"""$run = '{run}'
+Remove-Item "$run\\nvda.txt" -ErrorAction SilentlyContinue
+Set-Location '{tree}'
+$env:PYTHONIOENCODING = "utf-8"
+python -u scripts\\nvda_check.py src-tauri\\target\\release\\tpdf.exe --keep "$run\\nvda" *> "$run\\nvda.txt"
+"exit $LASTEXITCODE" | Add-Content "$run\\nvda.txt"
+'done' | Set-Content "$run\\nvda.done"
+"""
+
+
 LOCK_TASK = """rundll32.exe user32.dll,LockWorkStation
 'done' | Set-Content "$PSScriptRoot\\lock.done"
 """
@@ -315,6 +340,7 @@ LOCK_TASK = """rundll32.exe user32.dll,LockWorkStation
 JOBS = {
     "pictures": ("tpdf-pictures", "pictures.txt", "pictures.txt", PICTURE_LIMIT, False),
     "window": ("tpdf-window", "window-shown.txt", "window.txt", WINDOW_LIMIT, True),
+    "nvda": ("tpdf-nvda", "nvda.txt", "nvda.txt", NVDA_LIMIT, True),
 }
 
 
@@ -584,9 +610,12 @@ def main() -> int:
                              "instead of the tests")
     parser.add_argument("--only", action="append", default=[],
                         help="passed to window_checks.py, once for each")
+    parser.add_argument("--nvda", action="store_true",
+                        help="build the checks binary and run nvda_check.py there, "
+                             "instead of the tests")
     args = parser.parse_args()
-    if args.pictures and args.window_checks:
-        print("[FAIL] --pictures and --window-checks are two runs; ask for one")
+    if sum(map(bool, (args.pictures, args.window_checks, args.nvda))) > 1:
+        print("[FAIL] --pictures, --window-checks and --nvda are separate runs; ask for one")
         return 2
     if args.only and not args.window_checks:
         print("[FAIL] --only is for --window-checks")
@@ -599,8 +628,10 @@ def main() -> int:
     sha, what = tree_to_send(args.rev)
     bundle = bundle_of(sha)
     sent = "already on origin/main" if bundle is None else f"{len(bundle):,} bytes of commits sent"
-    job = "pictures" if args.pictures else "window" if args.window_checks else None
-    doing = {"pictures": "pictures", "window": "window checks"}.get(job or "", f"suite {args.suite}")
+    job = ("pictures" if args.pictures else "window" if args.window_checks
+           else "nvda" if args.nvda else None)
+    doing = {"pictures": "pictures", "window": "window checks", "nvda": "NVDA check"}.get(
+        job or "", f"suite {args.suite}")
     print(f"[..] {what} ({sha[:9]}, {sent}) on {args.host}: {doing}")
     try:
         asked = ssh(args.host, SHELL_PROBE, 60)
@@ -610,7 +641,7 @@ def main() -> int:
                   f"so nothing was sent: {(asked.stderr or asked.stdout).strip()[-400:]}")
             return 2
         if job and shell != "powershell":
-            flag = "--pictures" if job == "pictures" else "--window-checks"
+            flag = {"pictures": "--pictures", "window": "--window-checks", "nvda": "--nvda"}[job]
             print(f"[FAIL] {flag} needs a PowerShell login shell, and {args.host}'s is bash: "
                   "the scheduled task that reaches the desktop is started from PowerShell")
             return 2
@@ -620,6 +651,9 @@ def main() -> int:
         elif job == "window":
             read = run_desktop(args.host, args.clone, sha, bundle, job,
                                window_checks_task(args.clone, args.only), args.timeout)
+        elif job == "nvda":
+            read = run_desktop(args.host, args.clone, sha, bundle, job,
+                               nvda_check_task(args.clone), args.timeout)
         else:
             run = run_under_bash if shell == "bash" else run_under_powershell
             read = run(args.host, args.clone, sha, args.suite, bundle, args.timeout)
@@ -645,6 +679,11 @@ def main() -> int:
         count = len(list(args.pictures.glob("*.png")))
         print(f"[{'OK' if code == 0 else 'FAIL'}] {count} pictures in {args.pictures}; "
               f"screenshots.py exited {code} on {args.host}")
+        return code
+    if job == "nvda":
+        verdicts = {0: "[OK] NVDA said what tpdf should on",
+                    1: "[FAIL] NVDA did not say what tpdf should on"}
+        print(f"{verdicts.get(code, '[FAIL] the NVDA walk did not finish on')} {args.host}")
         return code
     if job == "window":
         if code == 0:

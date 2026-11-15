@@ -458,6 +458,11 @@ export interface ViewerOptions {
   doc: number;
   pageCount: number;
   /**
+   * The number printed on the page in a zero-based slot where it is not the
+   * position, for what a screen reader is told of each page (`a11y.ts`).
+   */
+  printedOf?: (slot: number) => string | null | undefined;
+  /**
    * Geometry of the pages the open reported, index-aligned from page 1.
    *
    * Usually just page 1: the open is lazy by default because collecting the
@@ -1860,7 +1865,7 @@ export class Viewer {
     // page behind that round trip, so the viewer needs an order before it.
     this.pages = unedited(opts.pageCount);
     this.text = new TextCache(opts.doc, this.recovery.text);
-    this.a11y = new AccessibleText(root, opts.pageCount);
+    this.a11y = new AccessibleText(root, opts.pageCount, opts.printedOf);
     this.searcher = new Search(
       opts.doc,
       opts.pageCount,

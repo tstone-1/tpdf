@@ -1326,6 +1326,19 @@ starts at 0 and increments within the month.
    logged-in session through a one-shot scheduled task, attaching and locking the session
    as `--pictures` does. It needs a PowerShell login shell and an administrator account.
    The `[FAIL]` lines and the summary come back; the whole transcript stays on the host.
+
+   **And hear it with NVDA** (2026-11-15), on the same machine, which has NVDA installed:
+
+   ```
+   scripts/run_on_windows.py --host HOST --clone 'C:\path\to\tpdf' --nvda
+   ```
+
+   `scripts/nvda_check.py` opens `outline-labels.pdf` under NVDA, walks *Extract pages*
+   through the palette and reads NVDA's speech log: the page named with its printed number,
+   the question, the preview as a range is typed, a page turned from the field, and nothing
+   left over after Escape. Before it existed every release record said *Not heard*, and 26.11.8
+   shipped three things NVDA did not say; run against that release it fails 5 of its 8 checks.
+   VoiceOver has no such check yet.
 6. <a id="release-step-6"></a>**Re-check `docs/THREAT-MODEL.md` against the code**, and correct the document before
    trusting anything else in this list — §3's boundary table, §5's sandbox policy and
    §6's macOS column especially. Every present-tense sentence there claims something is

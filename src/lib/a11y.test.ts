@@ -456,3 +456,54 @@ describe("AccessibleText and a paragraph the producer wrapped", () => {
     }
   });
 });
+
+describe("AccessibleText names a page by the number printed on it", () => {
+  // The visible counter has shown `8 / 8 (App-B)` since 26.11.8; NVDA 2026.2
+  // said "Page 8 of 8" for the same page until 2026-11-15.
+
+  type Node = { tagName: string; textContent: string; children: Node[]; getAttribute(name: string): string | null };
+  const all = (node: Node): Node[] => [node, ...node.children.flatMap(all)];
+  /** One line of text, as `AccessibleText and a change of order` builds it. */
+  const page = (codes: number[]) => ({
+    codes,
+    boxes: codes.flatMap((_, at) => [10 + at * 10, 100, 20 + at * 10, 90]),
+    width_pt: 612,
+    height_pt: 792,
+    turns: 0,
+  });
+
+  it("adds the printed number to the announcement and the page's name, where it differs", () => {
+    const dom = installFakeDom();
+    try {
+      const labels = ["i", "ii", "1"];
+      const layer = new AccessibleText(dom.root as never, 3, (slot) => labels[slot] ?? null);
+      layer.sync([1], () => page([72, 105]) as never);
+      layer.announce(1);
+      const nodes = all(dom.root as never);
+      const status = nodes.find((node) => node.getAttribute("role") === "status");
+      const article = nodes.find((node) => node.tagName === "article");
+      expect(status?.textContent).toBe("Page 2 of 3, printed as ii");
+      expect(article?.getAttribute("aria-label")).toBe("Page 2 of 3, printed as ii");
+    } finally {
+      dom.restore();
+    }
+  });
+
+  it("says the position alone where there is no printed number to add", () => {
+    // The control: the lookup is asked on every page, so the name must decide
+    // by its answer and not by having asked. A label equal to the position is
+    // already `null` by then (`printedLabel`); `undefined` is the answer for a
+    // document no longer mounted (`scoped`).
+    const dom = installFakeDom();
+    try {
+      const layer = new AccessibleText(dom.root as never, 3, (slot) => (slot === 2 ? null : undefined));
+      const status = () => all(dom.root as never).find((node) => node.getAttribute("role") === "status");
+      layer.announce(2);
+      expect(status()?.textContent).toBe("Page 3 of 3");
+      layer.announce(0);
+      expect(status()?.textContent).toBe("Page 1 of 3");
+    } finally {
+      dom.restore();
+    }
+  });
+});

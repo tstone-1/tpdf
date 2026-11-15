@@ -50,12 +50,38 @@ const MAX_ROWS = 12;
 /** The placeholder shown while a command is being searched for. */
 const SEARCH_PLACEHOLDER = (): string => TEXT().runCommand;
 
+/** A command's title without the `...` that says it asks for something. */
+function bareTitle(command: Command): string {
+  return command.title.replace(/(\.{3}|…)$/, "");
+}
+
+/**
+ * The field's name while it asks for `command`'s value: `Extract pages: Pages,
+ * e.g. 1-3,5`. The command and the question, which is what the panel shows
+ * above the field.
+ */
+export function askedName(command: Command): string {
+  const wanted = command.argument?.placeholder ?? "";
+  return wanted === "" ? bareTitle(command) : `${bareTitle(command)}: ${wanted}`;
+}
+
 export class Palette {
   private readonly registry: CommandRegistry;
   private readonly backdrop: HTMLDivElement;
   private readonly input: HTMLInputElement;
   private readonly list: HTMLDivElement;
   private readonly panel: HTMLDivElement;
+  /**
+   * What a screen reader hears of the value being typed: the preview, or why
+   * the value is refused.
+   *
+   * One element, built once, whose text alone changes. Until 2026-11-15 the
+   * visible row carried `role="status"` itself, and `paint` builds that row
+   * anew on every keystroke; a live region inserted together with its text is
+   * not announced, and NVDA 2026.2 said nothing of "Extract 2 pages · printed
+   * as 1–2" while the reader typed `3-4`.
+   */
+  private readonly heard: HTMLDivElement;
   private readonly turnPage: ((forward: boolean) => void) | null;
 
   private results: Ranked[] = [];
@@ -109,7 +135,15 @@ export class Palette {
     this.list.setAttribute("role", "listbox");
     this.list.style.cssText = `max-height:${MAX_ROWS * 32}px;overflow-y:auto;`;
 
-    panel.append(this.input, this.list);
+    this.heard = document.createElement("div");
+    this.heard.setAttribute("role", "status");
+    // Hidden visually and present in the accessibility tree: `display:none`
+    // would take it out of the tree and silence it (`a11y.ts`, `SR_ONLY`).
+    this.heard.style.cssText =
+      "position:absolute;width:1px;height:1px;margin:-1px;padding:0;overflow:hidden;" +
+      "clip:rect(0 0 0 0);clip-path:inset(50%);white-space:normal;border:0;";
+
+    panel.append(this.input, this.list, this.heard);
     this.backdrop.appendChild(panel);
     document.body.appendChild(this.backdrop);
 
@@ -193,6 +227,8 @@ export class Palette {
   private leave(): void {
     const left = this.asking;
     this.asking = null;
+    this.input.setAttribute("aria-label", SEARCH_PLACEHOLDER());
+    this.heard.textContent = "";
     this.letDocumentThrough(false);
     left?.argument?.dismissed?.();
   }
@@ -262,6 +298,11 @@ export class Palette {
     this.letDocumentThrough(true);
     this.input.value = "";
     this.input.placeholder = command.argument.placeholder;
+    // The field's name is what a screen reader says of it, and the placeholder
+    // is not its name: until 2026-11-15 the field stayed "Run a command" while
+    // it asked for pages, and NVDA said nothing at all when Enter chose
+    // *Extract pages*. A name change on the focused field is read out.
+    this.input.setAttribute("aria-label", askedName(command));
     this.paint();
     this.input.focus();
   }
@@ -370,7 +411,7 @@ export class Palette {
       const asked = document.createElement("div");
       asked.style.cssText = "padding:0.5rem 0.9rem 0;";
       const title = document.createElement("div");
-      title.textContent = this.asking.title.replace(/(\.{3}|\u2026)$/, "");
+      title.textContent = bareTitle(this.asking);
       title.style.cssText = "font-weight:600;";
       const wanted = document.createElement("div");
       wanted.textContent = this.asking.argument.placeholder;
@@ -383,10 +424,13 @@ export class Palette {
         asked.append(browse);
       }
       const row = document.createElement("div");
-      row.setAttribute("role", "status");
       row.style.cssText = `padding:0.6rem 0.9rem;${problem ? "opacity:0.55;" : ""}`;
       row.textContent = problem ?? this.asking.argument.preview(raw);
       this.list.append(asked, row);
+      // Only when it says something new: an unchanged text is not announced
+      // again, and an empty field has nothing to say yet.
+      const heard = raw === "" ? "" : row.textContent;
+      if (this.heard.textContent !== heard) this.heard.textContent = heard;
       return;
     }
 

@@ -17,6 +17,21 @@ as *downloadable*, while the release sat as a draft that GitHub showed to nobody
 are given now because they are different facts, and only the second one means a reader can
 have the binary.)
 
+## [26.11.9] - Unreleased
+
+### Fixed
+
+- **A screen reader hears what the palette asks for.** After a command that takes a value
+  was chosen, the field kept the name "Run a command", so NVDA said nothing; it is now
+  named by the command and its question, such as "Extract pages: Pages, e.g. 1-3,5".
+- **A screen reader hears the preview of a value and the reason one is refused.** The line
+  under the field (`Extract 2 pages · printed as 1–2`, `"ii" is not a page number`) was a live
+  region built anew on every keystroke, which NVDA does not announce. It is now one region
+  whose text changes.
+- **A screen reader hears the printed page number.** The counter has shown `8 / 8 (App-B)`
+  since 26.11.8, while the page was announced as "Page 8 of 8". It is now "Page 8 of 8,
+  printed as App-B", in the announcement and in each page's name.
+
 ## [26.11.8] - 2026-11-13
 
 ### Changed

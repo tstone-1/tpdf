@@ -6652,6 +6652,8 @@
       doc: doc.id,
       pageCount: doc.page_count,
       pages,
+      // Run as this document by `scoped`, so each side names its own pages.
+      printedOf: (slot) => printedOf(slot),
       // The panel's selection follows the page, so a note opened by clicking
       // a mark highlights its row --- and the two can never disagree about
       // which comment is being read, which is the whole reason this is a

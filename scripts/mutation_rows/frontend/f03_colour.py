@@ -1235,8 +1235,8 @@ ROWS += [
         # the next search no longer dims or catches a click outside.
         "palette: leave the document reachable after a question",
         "src/lib/palette.ts",
-        "    this.asking = null;\n    this.letDocumentThrough(false);",
-        "    this.asking = null;",
+        "    this.heard.textContent = \"\";\n    this.letDocumentThrough(false);",
+        "    this.heard.textContent = \"\";",
         "stops taking it once the question is answered",
     ),
     Mutation(

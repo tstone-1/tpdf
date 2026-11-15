@@ -51,6 +51,7 @@
 
 import { catalog } from "./i18n";
 import { linkRunsIn, onPage as linksOnPage, type Link } from "./links";
+import { printedRuns } from "./pagelabels";
 import { readingBlocks, textOfRanges, type ReadingBlock } from "./reading";
 import { type PageText } from "./text";
 
@@ -146,9 +147,25 @@ export class AccessibleText {
    */
   private links: readonly Link[] = [];
   private announced = "";
+  /**
+   * The number printed on the page in a zero-based slot, where it is not the
+   * position (`pagelabels.ts`), or nothing.
+   *
+   * Read at the moment a page is named rather than held, because the labels
+   * arrive with the outline after first paint, and the rebuild `setLinks`
+   * does then picks them up. Until 2026-11-15 the visible counter read
+   * `8 / 8 (App-B)` while NVDA 2026.2 said "Page 8 of 8", so a reader asked
+   * for appendix B had no way to hear which page it was.
+   */
+  private readonly printedOf: (slot: number) => string | null | undefined;
 
-  constructor(root: HTMLElement, pageCount: number) {
+  constructor(
+    root: HTMLElement,
+    pageCount: number,
+    printedOf: (slot: number) => string | null | undefined = () => null,
+  ) {
     this.pageCount = pageCount;
+    this.printedOf = printedOf;
 
     this.host = document.createElement("div");
     this.host.setAttribute("role", "document");
@@ -267,10 +284,20 @@ export class AccessibleText {
 
   /** Announces the page being read, when it changes. */
   announce(page: number): void {
-    const message = TEXT().pageOf(page + 1, this.pageCount);
+    const message = this.nameOf(page);
     if (message === this.announced) return;
     this.announced = message;
     this.announcer.textContent = message;
+  }
+
+  /**
+   * `Page 2 of 8`, and `Page 2 of 8, printed as ii` where the page prints a
+   * number other than its position: what the counter shows, in words.
+   */
+  private nameOf(page: number): string {
+    const printed = printedRuns([[page]], (slot) => this.printedOf(slot) ?? null);
+    const position = TEXT().pageOf(page + 1, this.pageCount);
+    return printed === "" ? position : `${position}, ${printed}`;
   }
 
   /**
@@ -288,7 +315,7 @@ export class AccessibleText {
 
   private build(page: number, content: PageText, unreadable = false): HTMLElement {
     const article = document.createElement("article");
-    article.setAttribute("aria-label", TEXT().pageOf(page + 1, this.pageCount));
+    article.setAttribute("aria-label", this.nameOf(page));
     // Focusable programmatically but not in the tab order: Tab through a
     // 775-page document would be a trap, and the page still needs to be a
     // target for "go to this page".

@@ -1234,3 +1234,22 @@ ROWS += [
         "",
         "adds nothing to the detail when nothing came, and says what came otherwise"),
 ]
+# --- What a screen reader hears of the palette and the page, 2026-11-15 ----------------
+ROWS += [
+    Mutation("palette: the field keeps the search's name while it asks", "src/lib/palette.ts",
+        "    this.input.setAttribute(\"aria-label\", askedName(command));\n",
+        "",
+        "names the field by the question while it asks, and by the search after"),
+    Mutation("palette: the preview row is the live region again", "src/lib/palette.ts",
+        "      row.style.cssText = `padding",
+        "      row.setAttribute(\"role\", \"status\");\n      row.style.cssText = `padding",
+        "puts the preview and the refusal into one live region that is never rebuilt"),
+    Mutation("palette: the live region is never given the preview", "src/lib/palette.ts",
+        "      if (this.heard.textContent !== heard) this.heard.textContent = heard;\n",
+        "",
+        "puts the preview and the refusal into one live region that is never rebuilt"),
+    Mutation("a11y: a page named by its position alone, as before 26.11.9", "src/lib/a11y.ts",
+        "    return printed === \"\" ? position : `${position}, ${printed}`;",
+        "    return position;",
+        "adds the printed number to the announcement and the page's name, where it differs"),
+]
