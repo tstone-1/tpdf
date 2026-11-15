@@ -2,6 +2,18 @@
 
 Each engine pin since 8044: what moved, the candidate run that built it, the probes that cleared it, and the release verifications that turned on the engine. Newest first; the record of a new pin goes at the top. Moved here verbatim from `BUILD.md` on 2026-10-23, which indexes this file.
 
+**PDFium 8127-tpdf.3 (2026-11-15).** The push of `0c944fca` turned `Audit` red: `chromium/8127`
+had gained *[M158] Add BlockingScope in AlertIfPossible()* (`65a1784f`) after the pin.
+`pdfium-bump` opened issue #10 and started
+[run 43722290992](https://github.com/tstone-1/tpdf/actions/runs/43722290992), which built all
+three platforms: 63 upstream text tests on macOS and Linux, 62 on Windows, no failures. The
+commit is in the JavaScript runtime, which this build does not compile, and the binaries were
+compared first. **The compiled code did not move.** Against `8127-tpdf.2`, all 50 other files
+of the macOS and Linux archives are byte-identical, `DEPENDENCIES.json` and `PROVENANCE.json`
+aside, and the Windows DLL differs only in `.rdata` and `.rsrc`. So the compatibility probes
+were not re-run, and `THIRD-PARTY-NOTICES.md` does not change. The prerelease's evidence
+archive is the run's three artifacts without their archives, 51 files, as 8127-tpdf.2's was.
+
 **PDFium 8127-tpdf.2 (2026-11-12).** The push of `ff6bb436` turned `Audit` red: `chromium/8127`
 had gained two commits after the pin, *[M158] Use CJS_Runtime::BlockingScope to handle nested
 blocking calls* (`7aa64b32`) and *[M158] Guard JSPLATFORM dialog call-outs with

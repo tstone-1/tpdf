@@ -1,6 +1,6 @@
 {
-  "version": "8127-tpdf.2",
-  "pdfium": "b23fee3ac22360878efaa8aa533dac892fe777ab",
+  "version": "8127-tpdf.3",
+  "pdfium": "65a1784fbce7c80d4e3e226f69d56e28de06425b",
   "builder": "0eb94b28c2252d2baae3dfe15dc6b237131d8cd8",
   "depot_tools": "56b8271b3f10e046bffac2cfc44b2f81162cd97e",
   "font_url": "https://github.com/dejavu-fonts/dejavu-fonts/releases/download/version_2_37/dejavu-fonts-ttf-2.37.tar.bz2",

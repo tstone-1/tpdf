@@ -995,7 +995,9 @@ measured the Windows render constants come out 1.5–1.8x worse.
   file is untouched. It refuses a reversed range rather than quietly correcting it. The
   numbers are positions in the file; where the document states the numbers printed on its
   pages, the preview names those too ("printed as i–ii, 1–3"), as do Split document, Go
-  to page and the page counter. The
+  to page and the page counter. Typing a printed number in any of the three is answered
+  with its position ("Printed as ii: type 2"), not taken as one. When the file is written
+  it says how many pages went into which file. The
   pages left out are left out of the file: their content goes, and so do the pictures and
   fonts that only they used, also when the document keeps every page's in one shared list.
   <!-- built: file.extractPages -->

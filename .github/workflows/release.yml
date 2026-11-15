@@ -567,6 +567,17 @@ jobs:
           workers run under Landlock and seccomp. The Linux packages (deb
           and AppImage) do not update themselves: install the new one.
 
+          **New in 26.11.9.** A screen reader now hears the command
+          palette: NVDA and VoiceOver say what a command asks for, the
+          preview of the value as it is typed, the reason one is refused,
+          and the page by the number printed on it ("Page 2 of 8, printed
+          as ii"). Typing a printed number where a position is asked is
+          answered with the position ("Printed as ii: type 2"). Extract
+          pages says what it wrote, typing "extract" finds Extract pages
+          first, and Split document and Merge documents report their
+          result in green instead of red. The PDF engine is the newest
+          build of PDFium 8127; its code is unchanged. Dependency updates.
+
           **New in 26.11.8.** Where a document states its page numbers,
           the page printed on a page is shown beside its position: the
           page counter reads 5 / 20 (1), and the previews of Extract pages,

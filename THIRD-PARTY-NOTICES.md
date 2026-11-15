@@ -3091,7 +3091,7 @@ SOFTWARE.
 | block-padding | 0.4.2 | MIT OR Apache-2.0 |
 | block2 | 0.6.2 | MIT |
 | blocking | 1.7.0 | Apache-2.0 OR MIT |
-| brotli | 9.1.1 | BSD-3-Clause AND MIT |
+| brotli | 9.1.2 | BSD-3-Clause AND MIT |
 | brotli-decompressor | 5.0.3 | BSD-3-Clause/MIT |
 | brotli-decompressor | 6.3.1 | BSD-3-Clause/MIT |
 | bs58 | 0.5.1 | MIT/Apache-2.0 |
@@ -3141,7 +3141,7 @@ SOFTWARE.
 | cryptoki-sys | 0.5.0 | Apache-2.0 |
 | cssparser | 0.37.0 | MPL-2.0 |
 | cssparser-macros | 0.7.1 | MPL-2.0 |
-| ctor | 1.0.13 | Apache-2.0 OR MIT |
+| ctor | 1.0.14 | Apache-2.0 OR MIT |
 | ctutils | 0.4.8 | Apache-2.0 OR MIT |
 | darling | 0.24.1 | MIT |
 | darling_core | 0.24.1 | MIT |
@@ -3266,9 +3266,9 @@ SOFTWARE.
 | itoa | 1.0.19 | MIT OR Apache-2.0 |
 | javascriptcore-rs | 1.1.2 | MIT |
 | javascriptcore-rs-sys | 1.1.1 | MIT |
-| jiff | 0.2.43 | Unlicense OR MIT |
-| jiff-core | 0.1.5 | Unlicense OR MIT |
-| jiff-tzdb | 0.1.9 | Unlicense OR MIT |
+| jiff | 0.2.45 | Unlicense OR MIT |
+| jiff-core | 0.1.7 | Unlicense OR MIT |
+| jiff-tzdb | 0.1.10 | Unlicense OR MIT |
 | jiff-tzdb-platform | 0.1.3 | Unlicense OR MIT |
 | json-patch | 4.2.0 | MIT/Apache-2.0 |
 | jsonptr | 0.7.1 | MIT OR Apache-2.0 |
@@ -3282,7 +3282,7 @@ SOFTWARE.
 | libdbus-sys | 0.2.7 | Apache-2.0/MIT |
 | libloading | 0.7.4 | ISC |
 | libloading | 0.8.9 | ISC |
-| libloading | 0.9.0 | ISC |
+| libloading | 0.9.1 | ISC |
 | libm | 0.2.16 | MIT |
 | linux-raw-sys | 0.12.1 | Apache-2.0 WITH LLVM-exception OR Apache-2.0 OR MIT |
 | litemap | 0.8.3 | Unicode-3.0 |
@@ -3298,7 +3298,7 @@ SOFTWARE.
 | minisign-verify | 0.3.0 | MIT |
 | miniz_oxide | 0.8.9 | MIT OR Zlib OR Apache-2.0 |
 | miniz_oxide | 0.9.1 | MIT OR Zlib OR Apache-2.0 |
-| mio | 1.2.4 | MIT |
+| mio | 1.2.5 | MIT |
 | moxcms | 0.8.1 | BSD-3-Clause OR Apache-2.0 |
 | muda | 0.20.0 | Apache-2.0 OR MIT |
 | multiversion_no_op | 1.0.0 | Apache-2.0 OR MIT |
@@ -3373,7 +3373,7 @@ SOFTWARE.
 | pxfm | 0.1.30 | BSD-3-Clause OR Apache-2.0 |
 | quick-xml | 0.42.0 | MIT |
 | quote | 1.0.47 | MIT OR Apache-2.0 |
-| rand | 0.10.3 | MIT OR Apache-2.0 |
+| rand | 0.10.4 | MIT OR Apache-2.0 |
 | rand | 0.8.8 | MIT OR Apache-2.0 |
 | rand_chacha | 0.3.1 | MIT OR Apache-2.0 |
 | rand_core | 0.10.1 | MIT OR Apache-2.0 |
@@ -3576,7 +3576,7 @@ SOFTWARE.
 | zerotrie | 0.2.5 | Unicode-3.0 |
 | zerovec | 0.11.9 | Unicode-3.0 |
 | zerovec-derive | 0.11.7 | Unicode-3.0 |
-| zip | 9.5.1 | MIT |
+| zip | 9.6.0 | MIT |
 | zlib-rs | 0.6.8 | Zlib |
 | zmij | 1.0.23 | MIT |
 | zune-core | 0.5.3 | MIT OR Apache-2.0 OR Zlib |

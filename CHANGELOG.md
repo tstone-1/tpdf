@@ -17,10 +17,15 @@ as *downloadable*, while the release sat as a draft that GitHub showed to nobody
 are given now because they are different facts, and only the second one means a reader can
 have the binary.)
 
-## [26.11.9] - Unreleased
+## [26.11.9] - 2026-11-15
 
 ### Changed
 
+- The PDF engine is PDFium 8127 at the head of its branch again. The one upstream commit
+  since the last build is in the JavaScript runtime, which tpdf does not compile, so the
+  engine's code is unchanged.
+- Dependency updates within their ranges: `zip` 9.6.0, `nix` 0.32.0, `jiff` 0.2.45 and
+  eleven other crates.
 - **Extract pages says what it wrote**: "Wrote 2 pages to report 3-4.pdf." Until now a
   finished extraction said nothing, and the window looked as it had before the save.
   *Save a copy* stays silent: it writes the whole document, so there is nothing to report.

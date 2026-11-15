@@ -78,17 +78,17 @@ from pathlib import Path
 
 # The pinned source-built release. Re-run BUILD.md's compatibility probes on a bump;
 # historical Phase 0 measurements describe their original build, not this one.
-TAG = "pdfium-8127-tpdf.2"
+TAG = "pdfium-8127-tpdf.3"
 
 # asset name -> sha256 of the archive as published under TAG.
 #
-# Verified artifacts from PDFium candidate run 43183468021, commit ff6bb436, all
+# Verified artifacts from PDFium candidate run 43722290992, commit 0c944fca, all
 # three platforms from the one run.
 # Only tpdf's architectures are built and published.
 PINS = {
-    "mac-arm64": "87e7558ce814624a51541f3b5dffa888745b780ad2a3d041545c95d9adfbab57",
-    "win-x64": "7447506622cd18276546349944d62cd9efd89b5cd0f81dcd3d9345522fa49f8a",
-    "linux-x64": "5f5e7e91d43b9837c3b75a5f96c0d1cabb5b21363a75db477744addc4292a063",
+    "mac-arm64": "1dd16295d9f006f1cfd5551310964cbc14059422557b55f11b650ba4f9453b25",
+    "win-x64": "102e91fded04d1cbe9d430712beab64b19f4c5d7745e87842cbacc87ede77849",
+    "linux-x64": "667d031e8fa745b767261f1bc550f8286a32d65bd3bff5e401277a80cc94a48f",
 }
 
 RELEASE_URL = "https://github.com/tstone-1/tpdf/releases/download"
