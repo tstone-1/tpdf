@@ -45,6 +45,32 @@ def served_old(log: Path) -> bool:
     return bool(launches) and launches[-1].rstrip().endswith(": current")
 
 
+def last_launch(log: Path) -> str | None:
+    """What the copy's last launch check was answered: `current`, `available <v>`, `failed: ...`.
+
+    None when the log has no launch check line.
+    """
+    launches = [line for line in update_lines(log) if "launch check" in line]
+    if not launches:
+        return None
+    return launches[-1].rstrip().partition(": ")[2] or None
+
+
+def first_attempt(answer: str | None, second_start: bool) -> str:
+    """The first launch's result, for the run's last line beside the count of checks.
+
+    A run that passes on the second start is a pass of the update path, not of
+    the first launch: a reader who started tpdf at that moment was told it is
+    current and asked nothing more until the next launch. Until 2026-11-16 the
+    summary said only that the run passed, and the miss was an `[INFO]` line
+    above it.
+    """
+    said = answer if answer is not None else "no launch check line"
+    if second_start:
+        return f"first launch MISSED (its check said {said}), offered on the second start"
+    return f"first launch: {said}"
+
+
 def explain(log: Path) -> str:
     """One detail for the failed offer check: the lines, or why there are none."""
     lines = update_lines(log)

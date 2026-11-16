@@ -2652,6 +2652,13 @@ starts at 0 and increments within the month.
     write no line, so the check that installs 26.11.4 as the old copy still says only
     that there is none. Keep that line in the release record when it appears.
 
+    **Since 2026-11-16 the last line also carries the first launch's result**, after the
+    count: `first launch: available <v>`, or `first launch MISSED (its check said current),
+    offered on the second start`. The second start makes the run pass; it does not make
+    the first launch pass, and a reader who started tpdf at that moment was offered
+    nothing until the next launch. Write both into the release record: the count, and the
+    first launch.
+
     **First run, 2026-10-10, Windows 11, from 26.10.13 to the published 26.10.14:** 16 of 17
     checks passed and the control failed its seven. The one failure is a defect in every
     release up to 26.10.14 and not in the check: after an update and an uninstall, `.pdf`

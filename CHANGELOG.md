@@ -17,6 +17,21 @@ as *downloadable*, while the release sat as a draft that GitHub showed to nobody
 are given now because they are different facts, and only the second one means a reader can
 have the binary.)
 
+## [26.11.10] - Unreleased
+
+### Security
+
+- **`SECURITY.md` says what to do about a redaction made with 26.11.5 or earlier**: which
+  documents could keep a copy of what was redacted while the result read *verified*, and
+  that the original is to be redacted again with 26.11.6 or later. 26.11.6 fixed the
+  defects but told nobody to redo earlier work.
+
+### Internal
+
+- The update checks end with the first launch's result beside the count of checks. A run
+  that passes because the old copy was started a second time, after its first launch was
+  told it is current, now says `first launch MISSED` instead of only that it passed.
+
 ## [26.11.9] - 2026-11-15
 
 ### Changed

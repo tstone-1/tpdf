@@ -679,6 +679,18 @@ MUTATIONS = [
         red=True,
         says="test_a_failed_or_stalled_launch_check_is_a_finding",
     ),
+    Mutation(
+        # A pass on the second start reported like a pass on the first is the
+        # defect the first-launch result exists for: the miss a reader would
+        # have had disappears from the run's last line.
+        "updatelog: a second start reads as a first-launch pass",
+        "updatelog",
+        "scripts/update_log.py",
+        "    if second_start:\n",
+        "    if False:\n",
+        red=True,
+        says="test_a_pass_on_the_second_start_is_reported_as_a_first_launch_miss",
+    ),
 ]
 
 

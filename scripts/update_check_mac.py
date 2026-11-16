@@ -64,7 +64,7 @@ import time
 import urllib.request
 from pathlib import Path
 
-from update_log import SECOND_START_S, explain, served_old
+from update_log import SECOND_START_S, explain, first_attempt, last_launch, served_old
 
 LATEST = "https://github.com/tstone-1/tpdf/releases/latest/download/latest.json"
 NAME = re.compile(r"^tpdf_(\d+\.\d+\.\d+)_aarch64\.dmg$")
@@ -157,7 +157,8 @@ def names(document: Path, sessions: list[Path], since: float) -> str:
 
 
 def update(checks: Checks, app: Path, document: Path, scratch: Path, old: str, new: str,
-           wait: float, press: bool) -> None:
+           wait: float, press: bool, attempt: dict[str, object]) -> None:
+    """`attempt` receives the first launch's answer and whether a second start was made."""
     binary = app / "Contents/MacOS/tpdf"
     cli = app / "Contents/MacOS/tpdf-cli"
     session = scratch / "session.json"
@@ -170,7 +171,9 @@ def update(checks: Checks, app: Path, document: Path, scratch: Path, old: str, n
         return
     try:
         offer = wait_for(pid, "Install update", "enabled", wait)
+        attempt["answer"] = last_launch(log)
         if offer != "enabled" and served_old(log):
+            attempt["second"] = True
             print(f"[INFO] {old} was told it is current ({explain(log)}), while latest.json "
                   f"offers {new}; it asks once per launch, so it is started again in "
                   f"{SECOND_START_S} s, once")
@@ -283,6 +286,7 @@ def main() -> int:
     if control:
         print("--- control: the offer is waited for and nothing is chosen ---")
     checks = Checks()
+    attempt: dict[str, object] = {"answer": None, "second": False}
     # Resolved, because `ps` prints the path without the `/var` link in it.
     scratch = Path(tempfile.mkdtemp(prefix="tpdf-update-check-")).resolve()
     kept = scratch / "session-as-it-was.json"
@@ -303,7 +307,8 @@ def main() -> int:
         run("hdiutil", "detach", "-quiet", str(mount))
         if checks.note(copied, "the application is copied out of the disk image",
                        "" if copied else attached.stderr.strip()):
-            update(checks, app, document, scratch, old, new, args.wait, press=control != "no-press")
+            update(checks, app, document, scratch, old, new, args.wait, press=control != "no-press",
+                   attempt=attempt)
     finally:
         if REAL_SESSION.is_file():
             REAL_SESSION.unlink()
@@ -313,6 +318,8 @@ def main() -> int:
         shutil.rmtree(scratch, ignore_errors=True)
 
     print()
+    answer = attempt["answer"]
+    first = first_attempt(answer if isinstance(answer, str) else None, attempt["second"] is True)
     if control:
         unexpected = [n for n in checks.failed if not any(n.startswith(e) for e in NO_PRESS)]
         missing = [e for e in NO_PRESS if not any(n.startswith(e) for n in checks.failed)]
@@ -323,9 +330,9 @@ def main() -> int:
         print(f"[OK] control '{control}': what it is aimed at failed ({len(NO_PRESS)}), and nothing else")
         return 0
     if checks.failed:
-        print(f"[FAIL] {len(checks.failed)} of {checks.count} checks failed: {'; '.join(checks.failed)}")
+        print(f"[FAIL] {len(checks.failed)} of {checks.count} checks failed: {'; '.join(checks.failed)}; {first}")
         return 1
-    print(f"[OK] {checks.count}/{checks.count} checks passed: {old} updated itself to {new}")
+    print(f"[OK] {checks.count}/{checks.count} checks passed: {old} updated itself to {new}; {first}")
     return 0
 
 

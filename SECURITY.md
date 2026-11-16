@@ -22,6 +22,30 @@ boundaries, the sandbox profile in full, and the residual risks in one list. Eve
 there is either measured with the spike named, or marked untested. Read it before
 reporting, and please say which claim you believe is wrong.
 
+## Redactions made with 26.11.5 or earlier
+
+Up to 26.11.5, a redacted file could keep a copy of what was redacted in two ways.
+
+**The check did not read every copy, and still said verified.** Four kinds of document were
+affected:
+
+- a document that draws its text through a composite (Type0) font, which is most output
+  of Word and LaTeX;
+- a document that names a stream's filter indirectly (`/Filter 7 0 R`);
+- a document that carries embedded files;
+- a document that carries an application's private data (`/PieceInfo`).
+
+In such a document a second copy of the words, elsewhere in the file, could stay while the
+result read *verified*. 26.11.6 reads these documents as *not verified*, with the reason.
+
+**Two copies over the marked region were not removed**, in any kind of document: an
+annotation written inline over the region, and the page's thumbnail (a small picture of
+the page some documents store). 26.11.6 removes both.
+
+If you redacted a document with 26.11.5 or earlier, redact the original again with 26.11.6
+or later and use the new file. If the earlier copy was already sent, assume that it can
+still hold what was redacted.
+
 ## Reporting a vulnerability
 
 Use **GitHub's private vulnerability reporting** on this repository

@@ -71,7 +71,7 @@ from installed_check import (APP_KEY, NAME, PDF_CLASS, UNINSTALL_KEY, WM_CLOSE, 
                              already_installed, bounded, descendants, installed_engine, processes,
                              registry, tool, uninstall, window_titles)
 from live_output import stream_results
-from update_log import SECOND_START_S, explain, served_old
+from update_log import SECOND_START_S, explain, first_attempt, last_launch, served_old
 
 LATEST = "https://github.com/tstone-1/tpdf/releases/latest/download/latest.json"
 
@@ -191,7 +191,8 @@ def offers(script: Path, window: int, offer: str, wait: float) -> list[str]:
 
 
 def update(checks: Checks, folder: Path, pdf: Path, scratch: Path, old: str, new: str,
-           real_session: Path, wait: float, press: bool) -> None:
+           real_session: Path, wait: float, press: bool, attempt: dict[str, object]) -> None:
+    """`attempt` receives the first launch's answer and whether a second start was made."""
     from win_modules import modules_of
 
     script = scratch / "buttons.ps1"
@@ -208,7 +209,9 @@ def update(checks: Checks, folder: Path, pdf: Path, scratch: Path, old: str, new
             return
         offer = f"Update to {new}"
         seen = offers(script, window, offer, wait)
+        attempt["answer"] = last_launch(log)
         if f"BUTTON {offer}" not in seen and served_old(log):
+            attempt["second"] = True
             print(f"[INFO] {old} was told it is current ({explain(log)}), while latest.json "
                   f"offers {new}; it asks once per launch, so it is started again in "
                   f"{SECOND_START_S} s, once")
@@ -360,6 +363,7 @@ def main() -> int:
     if control:
         print("--- control: the button is found and not pressed ---")
     checks = Checks()
+    attempt: dict[str, object] = {"answer": None, "second": False}
     before = {key: registry(key) for key in (PDF_CLASS, APP_KEY)}
     real_session = Path(os.environ["APPDATA"]) / "com.timostein.tpdf" / "session.json"
     with tempfile.TemporaryDirectory(prefix="tpdf-update-check-") as temporary:
@@ -378,7 +382,7 @@ def main() -> int:
             said = tool(folder / "tpdf-cli.exe", "--version").stdout.strip()
             checks.note(said.endswith(old), f"the installed tool is version {old}", said)
             update(checks, folder, document, scratch, old, new, real_session, args.wait,
-                   press=control != "no-press")
+                   press=control != "no-press", attempt=attempt)
         except (RanOut, RuntimeError, OSError) as e:
             checks.note(False, "every step ends, and within its time limit", str(e))
         finally:
@@ -390,6 +394,8 @@ def main() -> int:
                 shutil.move(str(kept), str(real_session))
 
     print()
+    answer = attempt["answer"]
+    first = first_attempt(answer if isinstance(answer, str) else None, attempt["second"] is True)
     if control:
         unexpected = [n for n in checks.failed if not any(n.startswith(e) for e in NO_PRESS)]
         missing = [e for e in NO_PRESS if not any(n.startswith(e) for n in checks.failed)]
@@ -400,9 +406,9 @@ def main() -> int:
         print(f"[OK] control '{control}': what it is aimed at failed ({len(NO_PRESS)}), and nothing else")
         return 0
     if checks.failed:
-        print(f"[FAIL] {len(checks.failed)} of {checks.count} checks failed: {'; '.join(checks.failed)}")
+        print(f"[FAIL] {len(checks.failed)} of {checks.count} checks failed: {'; '.join(checks.failed)}; {first}")
         return 1
-    print(f"[OK] {checks.count}/{checks.count} checks passed: {old} updated itself to {new}")
+    print(f"[OK] {checks.count}/{checks.count} checks passed: {old} updated itself to {new}; {first}")
     return 0
 
 

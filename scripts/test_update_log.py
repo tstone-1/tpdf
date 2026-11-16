@@ -16,7 +16,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from update_log import served_old  # noqa: E402
+from update_log import first_attempt, last_launch, served_old  # noqa: E402
 
 CURRENT = "2026-11-15T16:21:42.719Z [update] launch check after 519 ms: current"
 AVAILABLE = "2026-11-15T16:31:12.101Z [update] launch check after 610 ms: available 26.11.9"
@@ -50,6 +50,37 @@ class ServedOld(unittest.TestCase):
     def test_no_line_and_no_log_are_findings(self) -> None:
         self.assertFalse(self.answer())
         self.assertFalse(served_old(Path(tempfile.gettempdir()) / "no-such-tpdf.log"))
+
+
+class FirstAttempt(unittest.TestCase):
+    """The first launch's answer stays in the summary when a second start passes."""
+
+    def answer(self, *lines: str) -> str | None:
+        with tempfile.TemporaryDirectory() as scratch:
+            log = Path(scratch) / "tpdf.log"
+            log.write_text("\n".join(["2026-11-15 started", *lines]) + "\n", encoding="utf-8")
+            return last_launch(log)
+
+    def test_the_last_launch_answer_is_read_whole(self) -> None:
+        self.assertEqual(self.answer(CURRENT), "current")
+        self.assertEqual(self.answer(AVAILABLE), "available 26.11.9")
+        self.assertEqual(self.answer(FAILED), "failed: timed out")
+        self.assertEqual(self.answer(CURRENT, AVAILABLE), "available 26.11.9")
+        self.assertIsNone(self.answer(MANUAL))
+        self.assertIsNone(self.answer())
+
+    def test_a_pass_on_the_second_start_is_reported_as_a_first_launch_miss(self) -> None:
+        said = first_attempt("current", second_start=True)
+        self.assertIn("MISSED", said)
+        self.assertIn("current", said)
+
+    def test_a_first_launch_that_was_offered_is_not_a_miss(self) -> None:
+        said = first_attempt("available 26.11.9", second_start=False)
+        self.assertNotIn("MISSED", said)
+        self.assertIn("available 26.11.9", said)
+
+    def test_no_line_is_named(self) -> None:
+        self.assertIn("no launch check line", first_attempt(None, second_start=False))
 
 
 if __name__ == "__main__":
