@@ -334,6 +334,10 @@ fn main() {
             redact::empty_shows_are_passed_over,
         ),
         (
+            "redact names a QR code that still carries a removed word",
+            redact::codes_carrying_removed_text,
+        ),
+        (
             "redact's verdict is the application's",
             redact::verdict_is_the_applications,
         ),

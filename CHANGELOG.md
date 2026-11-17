@@ -30,6 +30,18 @@ have the binary.)
   updating tpdf does not change files it has already written. A notice only in `SECURITY.md`
   reached nobody who opened the page to download.
 
+### Added
+
+- **A redaction reads the QR codes on the pages it changed.** A payment code beside a marked
+  name holds the name too (an EPC "GiroCode" carries the payee and the IBAN), and neither
+  the byte scan nor text recognition could see it. When a QR, Aztec, Data Matrix or PDF417
+  code on a redacted page still holds something the redaction removed, the result is *not
+  verified*, and the reason names the page, the kind of code and the removed text. It never
+  shows what else the code holds. A code whose content is not text cannot be compared and is
+  a reason as well. A code tpdf cannot decode (damaged, too small, partly covered) is not
+  reported, and linear barcodes are not read. The codes are decoded in the sandboxed
+  worker, and `tpdf redact` reports them the same way.
+
 ### Fixed
 
 - **A Windows update whose download fails now says so.** Until now the *Downloading update*

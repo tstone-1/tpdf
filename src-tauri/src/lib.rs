@@ -26,6 +26,9 @@ pub mod certificate;
 pub mod cli;
 /// *Install command-line tool…*: the `/usr/local/bin/tpdf` link on macOS.
 pub mod clitool;
+/// QR codes and other 2D codes on a redacted page, read in the worker and
+/// compared with what the redaction removed.
+pub mod codes;
 /// Every `#[tauri::command]` this crate registers, grouped by the state it
 /// touches. The registry below stays here; the bodies do not.
 mod commands;

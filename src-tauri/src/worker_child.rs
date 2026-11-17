@@ -674,6 +674,10 @@ fn handle(
             Ok(properties) => Response::reply(Reply::Properties(Box::new(properties))),
             Err(e) => Response::err(e),
         },
+        Request::Codes { page } => match render::run_codes(bindings, document, *page) {
+            Ok(found) => Response::reply(Reply::Codes(Box::new(found))),
+            Err(e) => Response::err(e),
+        },
         Request::Shrink { compress } => match render::run_shrink(bindings, document, *compress) {
             Ok(estimate) => Response::reply(Reply::Shrunk(Box::new(estimate))),
             Err(e) => Response::err(e),

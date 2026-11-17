@@ -236,6 +236,16 @@ every mode it reads consumes input bits, so its work is bounded by the encoded l
 which `images/stencil.rs` caps like any encoded stream. Both lockfiles carry it: the fuzz
 package resolves the application by path.
 
+**`rxing` (Apache-2.0, a port of ZXing) was added 2026-11-17 to read 2D codes on redacted
+pages** (`codes.rs`). Six linked packages come with it (`rxing`, `codepage-437`, `num` and
+three `num-*` crates) and three more that only run in `codepage-437`'s build script (`csv`,
+`csv-core`, `ryu`); default features are off, so there is no `image` crate, no `rayon` and no
+encoder in the shipped binary. The tests turn `encoders` on to draw the codes they read. It
+reads pixels PDFium drew from attacker-chosen bytes, so it runs in the document worker,
+under the call deadline: a page that makes the decoder slow kills the worker, and the
+redaction reads *not verified* with that reason, never *verified*. `zbar`, the other common
+reader, is LGPL and was not considered.
+
 **Three more crates arrived with the text editor, and two of them read attacker-chosen bytes.**
 All three run in the document worker (`textedit.rs`'s header: "executed in the document
 worker"), and none of them is reached before the stream holding its input has

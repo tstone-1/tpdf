@@ -2154,6 +2154,13 @@ impl Engine for Workers {
         }
     }
 
+    fn codes(&self, doc: u32, page: u32) -> Result<crate::codes::PageCodes, String> {
+        match self.ask(doc, &Request::Codes { page })? {
+            Reply::Codes(found) => Ok(*found),
+            other => Err(mismatched("codes", &other)),
+        }
+    }
+
     fn shrink(
         &self,
         doc: u32,

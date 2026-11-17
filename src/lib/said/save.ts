@@ -2,7 +2,7 @@
  * `save.rs`, `save/`, `save_outside.rs`, `save_order.rs`, `redact.rs`,
  * `redact/glyph_cut.rs`, `raster_redact.rs`, `redaction_fill.rs`, `verify.rs`,
  * `pagetree.rs`, `merge.rs`, `sweep.rs`, `docgraph.rs`, `redaction_steps.rs`,
- * `commands/redact.rs` and `commands/save.rs`. */
+ * `codes.rs`, `commands/redact.rs` and `commands/save.rs`. */
 
 import type { Wording } from "./de";
 
@@ -628,6 +628,31 @@ export default {
   // docgraph.rs
   "the document's bytes could not be read":
     "Die Bytes des Dokuments konnten nicht gelesen werden",
+
+  // codes.rs and its reader in redaction_steps.rs: 2D codes on redacted pages.
+  "QR code": "QR-Code",
+  "Aztec code": "Aztec-Code",
+  "Data Matrix code": "Data-Matrix-Code",
+  "PDF417 code": "PDF417-Code",
+  "two-dimensional code": "zweidimensionaler Code",
+  "page {n} has a {kind} that still carries \"{first}\", which the redaction removed; redact the code too":
+    "Seite {n} hat einen {kind}, der noch „{first}“ enthält, was die Schwärzung entfernt hat; schwärze auch den Code",
+  "page {n} has a {kind} that still carries \"{first}\" and {others} more of what the redaction removed; redact the code too":
+    "Seite {n} hat einen {kind}, der noch „{first}“ und {others} weitere Stellen dessen enthält, was die Schwärzung entfernt hat; schwärze auch den Code",
+  "page {n} has a {kind} whose content is not plain text, so whether it still carries what was removed could not be checked":
+    "Seite {n} hat einen {kind}, dessen Inhalt kein reiner Text ist, daher ließ sich nicht prüfen, ob er noch Entferntes enthält",
+  "page {n} has more than {MAX_CODES} codes, and the ones after those were not compared with what was removed":
+    "Seite {n} hat mehr als {MAX_CODES} Codes; die übrigen wurden nicht mit dem Entfernten verglichen",
+  "the codes on page {n} could not be read, so whether one still carries what was removed is not known: {e}":
+    "Die Codes auf Seite {n} konnten nicht gelesen werden, daher ist unbekannt, ob einer noch Entferntes enthält: {e}",
+  "the codes on the page could not be read: {e}":
+    "Die Codes auf der Seite konnten nicht gelesen werden: {e}",
+  "the codes on the redacted pages could not be checked, so the file cannot be shown clean: {e}":
+    "Die Codes auf den geschwärzten Seiten konnten nicht geprüft werden, daher lässt sich nicht zeigen, dass die Datei sauber ist: {e}",
+  "the page image is {got} values for {width} x {height}":
+    "Das Seitenbild hat {got} Werte für {width} x {height}",
+  "the written file could not be reopened to read the codes on its redacted pages, so it cannot be shown clean: {reason}":
+    "Die geschriebene Datei konnte nicht erneut geöffnet werden, um die Codes auf ihren geschwärzten Seiten zu lesen, daher lässt sich nicht zeigen, dass sie sauber ist: {reason}",
 } satisfies Record<string, Wording>;
 
 /** The entries above that say "du", addressing the reader with "Sie" instead. */
@@ -712,4 +737,8 @@ export const sie = {
     "Die Quelle hat sich geändert. Öffnen Sie sie neu und markieren Sie die Bereiche noch einmal",
   "pages {first} and {second} are the same page in this file, so they cannot be turned differently. Turn them the same way, or leave both as they are.":
     "Die Seiten {first} und {second} sind in dieser Datei dieselbe Seite und lassen sich daher nicht unterschiedlich drehen. Drehen Sie beide gleich oder lassen Sie beide, wie sie sind.",
+  "page {n} has a {kind} that still carries \"{first}\", which the redaction removed; redact the code too":
+    "Seite {n} hat einen {kind}, der noch „{first}“ enthält, was die Schwärzung entfernt hat; schwärzen Sie auch den Code",
+  "page {n} has a {kind} that still carries \"{first}\" and {others} more of what the redaction removed; redact the code too":
+    "Seite {n} hat einen {kind}, der noch „{first}“ und {others} weitere Stellen dessen enthält, was die Schwärzung entfernt hat; schwärzen Sie auch den Code",
 } satisfies Record<string, Wording>;

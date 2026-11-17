@@ -73,6 +73,16 @@ regex = { version = "1", default-features = false, features = ["std", "perf", "u
 # Low-level PDF object graph and content-stream operators.
 lopdf = "0.46"
 
+# Reading QR codes and other 2D codes on a redacted page, in `codes.rs`, inside
+# the worker: an invoice's payment code carries the payee's name and IBAN, a
+# ticket's Aztec code the traveller's name. Apache-2.0. Decoders only, and only
+# the four 2D formats that carry text: no image crate, no rayon, no encoders.
+# Nine packages new to the lockfile on 2026-11-17: six linked (rxing,
+# codepage-437, num, num-bigint, num-complex, num-rational) and three that only
+# run in codepage-437's build script (csv, csv-core, ryu). All MIT, Apache-2.0
+# or both, checked with `cargo metadata` and by the `notices` gate.
+rxing = { version = "0.9.4", default-features = false, features = ["decoders", "multi_barcode_readers", "qrcode", "aztec", "datamatrix", "pdf417", "encoding_rs"] }
+
 # The file key of a new password, in `protect.rs`. MIT OR Apache-2.0, and already
 # in the tree at this version through `lopdf`, so declaring it adds no package.
 getrandom = "0.4"
@@ -459,6 +469,9 @@ tauri-plugin-single-instance = "2.4.4"
 # already in the tree (rand 0.8.8, rand_chacha 0.3.1 over rand_core 0.6.4), so
 # this adds no package; nothing here reaches the shipped binary.
 [dev-dependencies]
+# The same crate with its encoders, so `codes.rs`'s tests can draw the codes
+# they read. Tests only: the shipped binary reads and never writes a code.
+rxing = { version = "0.9.4", default-features = false, features = ["decoders", "multi_barcode_readers", "qrcode", "aztec", "datamatrix", "pdf417", "encoding_rs", "encoders"] }
 # The Explorer handler's class ids, which `explorer.rs` registers and a test
 # holds equal to the DLL's own.
 tpdf-shell = { path = "shellext" }

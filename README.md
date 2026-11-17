@@ -115,7 +115,9 @@ text within the limits listed further down.
 
 **Redact for real.** A redaction removes the words from the file; it does not draw a black
 box over them. You mark regions, review them in a list, and tpdf reads the result back and
-tells you whether the removal is verified.
+tells you whether the removal is verified. That check includes QR codes and other 2D codes
+on the redacted pages: a payment code still holding the name you removed is reported, and
+the result is not verified until the code is redacted too.
 
 ![Two regions marked for removal and listed for review](docs/img/redact.png)
 

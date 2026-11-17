@@ -5765,6 +5765,13 @@ because the arm it ran was the one written for "any other platform".
     a hex string, a kerned `TJ` array or octal escapes. `verify::scan` withholds the verdict
     for a composite font, an indirect filter, embedded files and `/PieceInfo`, and not for
     these. The decoded-stream and extraction checks of §T6.11 are what cover them.
+41. **A 2D code the decoder cannot read is silent**, added 2026-11-17. `codes.rs` decodes the
+    QR, Aztec, Data Matrix and PDF417 codes on each page a redaction changed, and a code that
+    still holds a removed text withholds *verified*. rxing reports only the codes it decoded,
+    so a damaged, very small or partly covered code adds no reason, and that departs from
+    §T6's rule that a carrier which cannot be decoded means *not verified*. Before 26.11.10
+    no code was read at all. Also unread: linear barcodes, pages the redaction did not
+    change, and a removed text of one character.
 
 ## 8. How to re-verify any of this
 

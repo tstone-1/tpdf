@@ -236,6 +236,16 @@ pub enum Request {
         /// How the copy would be made smaller.
         compress: crate::compress::Compress,
     },
+    /// Draw one page and read the QR codes and other 2D codes on it.
+    ///
+    /// Asked of a redaction's written file, page by page, so the verdict can
+    /// say when a code still carries what was removed (`codes.rs`). The pixels
+    /// stay in the worker; the answer is [`Reply::Codes`], the decoded strings,
+    /// bounded by `codes::MAX_CODES` and `codes::MAX_TEXT`.
+    Codes {
+        /// Zero-based.
+        page: u32,
+    },
     /// Build the update section for a save that only adds marks.
     ///
     /// **The one request that produces bytes for a file**, and it is here rather
@@ -661,6 +671,8 @@ pub enum Reply {
     /// What a smaller copy would come to. Boxed for [`Reply::Properties`]'
     /// reason: it carries a sample of pixels.
     Shrunk(Box<crate::compress::Estimate>),
+    /// The codes one page carries. Boxed for [`Reply::Properties`]' reason.
+    Codes(Box<crate::codes::PageCodes>),
     /// The update section for a save that only adds marks.
     Append(crate::save::Update),
     /// The revision a signature goes into, with its hole still empty.
@@ -1046,6 +1058,7 @@ mod tests {
             ("Mapping", "mapping"),
             ("Properties", "properties"),
             ("Shrink", "shrink"),
+            ("Codes", "codes"),
             ("Append", "append"),
             ("PrepareSignature", "prepare_signature"),
             ("SignaturePreview", "signature_preview"),
@@ -1466,6 +1479,14 @@ mod tests {
             // wire by nothing.
             Reply::Properties(Box::default()),
             Reply::Shrunk(Box::default()),
+            Reply::Codes(Box::new(crate::codes::PageCodes {
+                codes: vec![crate::codes::Code {
+                    kind: "QR code".into(),
+                    text: "BCD\n002".into(),
+                    plain: true,
+                }],
+                more: false,
+            })),
             Reply::Append(crate::save::Update {
                 update: vec![1, 2, 3],
                 pages: 2,
@@ -1549,6 +1570,7 @@ mod tests {
                 | Reply::Mapping(_)
                 | Reply::Properties(_)
                 | Reply::Shrunk(_)
+                | Reply::Codes(_)
                 | Reply::Append(_)
                 | Reply::PreparedSignature(_)
                 | Reply::SignatureImage(_)

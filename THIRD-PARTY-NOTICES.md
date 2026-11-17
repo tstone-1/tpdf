@@ -3051,7 +3051,7 @@ SOFTWARE.
 
 ## Rust crates
 
-529 crates are linked into the application binary. Build- and dev-dependencies are excluded: they run at compile time and are not distributed.
+535 crates are linked into the application binary. Build- and dev-dependencies are excluded: they run at compile time and are not distributed.
 
 | Crate | Version | Licence |
 |---|---|---|
@@ -3115,6 +3115,7 @@ SOFTWARE.
 | cipher | 0.5.2 | MIT OR Apache-2.0 |
 | cmov | 0.5.4 | Apache-2.0 OR MIT |
 | cms | 0.2.3 | Apache-2.0 OR MIT |
+| codepage-437 | 0.1.0 | MIT |
 | concurrent-queue | 2.5.0 | Apache-2.0 OR MIT |
 | const-oid | 0.10.3 | Apache-2.0 OR MIT |
 | const-oid | 0.9.6 | Apache-2.0 OR MIT |
@@ -3304,10 +3305,14 @@ SOFTWARE.
 | multiversion_no_op | 1.0.0 | Apache-2.0 OR MIT |
 | new_debug_unreachable | 1.0.6 | MIT |
 | nom | 8.0.0 | MIT |
+| num | 0.4.3 | MIT OR Apache-2.0 |
+| num-bigint | 0.4.8 | MIT OR Apache-2.0 |
 | num-bigint-dig | 0.8.6 | MIT/Apache-2.0 |
+| num-complex | 0.4.6 | MIT OR Apache-2.0 |
 | num-conv | 0.2.2 | MIT OR Apache-2.0 |
 | num-integer | 0.1.47 | MIT OR Apache-2.0 |
 | num-iter | 0.1.46 | MIT OR Apache-2.0 |
+| num-rational | 0.4.2 | MIT OR Apache-2.0 |
 | num-traits | 0.2.19 | MIT OR Apache-2.0 |
 | objc2 | 0.6.5 | MIT |
 | objc2-app-kit | 0.3.2 | Zlib OR Apache-2.0 OR MIT |
@@ -3400,6 +3405,7 @@ SOFTWARE.
 | rustls-pki-types | 1.16.0 | MIT OR Apache-2.0 |
 | rustls-platform-verifier | 0.7.1 | MIT OR Apache-2.0 |
 | rustls-webpki | 0.103.17 | ISC |
+| rxing | 0.9.4 | Apache-2.0 |
 | salsa20 | 0.10.2 | MIT OR Apache-2.0 |
 | same-file | 1.0.6 | Unlicense/MIT |
 | schemars | 0.8.22 | MIT |
@@ -3705,6 +3711,7 @@ MIT and the BSD family require the copyright notice itself to be reproduced, whi
 - Copyright (c) 2018 Sam Rijs, Alex Crichton and contributors
 - Copyright (c) 2018 The Servo Project Developers
 - Copyright (c) 2018 Yevhenii Reizner
+- Copyright (c) 2018 nabijaczleweli
 - Copyright (c) 2018-2019 Sean McArthur
 - Copyright (c) 2018-2019 The RustCrypto Project Developers
 - Copyright (c) 2018-2019 dirs-rs contributors
@@ -3852,6 +3859,7 @@ MIT and the BSD family require the copyright notice itself to be reproduced, whi
 - Copyright Individual contributors
 - Copyright Mozilla Foundation
 - Copyright [2017] [Maik Klein]
+- Copyright [2019-2026] [rxing developers]
 - Copyright [yyyy] [name of copyright owner]
 - Copyright notices are retained in src/* files where relevant.
 - Copyright {yyyy} {name of copyright owner}

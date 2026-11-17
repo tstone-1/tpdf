@@ -10,8 +10,8 @@ use std::path::Path;
 
 use super::{await_reply, outside_of, password_for, reply_channel};
 use crate::redaction_steps::{
-    ask_redactions, finish_redaction_fill, gate_written_file, redact_copy_asked, scan_written_file,
-    Stopped,
+    ask_redactions, codes_written_file, finish_redaction_fill, gate_written_file,
+    redact_copy_asked, scan_written_file, Stopped,
 };
 use crate::render::RenderService;
 use crate::{
@@ -298,6 +298,17 @@ pub async fn redact_document(
             source.clone(),
             asked.gate,
             key.clone(),
+        )
+        .await,
+    );
+    // The codes on those pages, as `redaction_steps::redact_copy_asked` reads them.
+    why.extend(
+        codes_written_file(
+            service.inner().clone(),
+            source.clone(),
+            asked.marked.clone(),
+            key.clone(),
+            asked.needles.clone(),
         )
         .await,
     );

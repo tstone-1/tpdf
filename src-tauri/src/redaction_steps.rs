@@ -337,6 +337,77 @@ pub(crate) async fn gate_written_file(
         })
 }
 
+/// Reads the QR codes and other 2D codes on every page a redaction touched, in
+/// the written file, and returns a reason for each code that still carries a
+/// removed text ([`crate::codes::reasons`]).
+///
+/// The pages the redaction touched and not the whole file: a payment code sits
+/// on the page whose name was marked, and each page costs a full-page render at
+/// up to 3x and a decode with rxing's `TryHarder`, so a whole 300-page file
+/// would multiply that by hundreds for pages nobody marked. Not yet timed on a
+/// real document. The pages are the written file's, as [`Asked::marked`] gives
+/// them.
+///
+/// **Nothing here refuses**, as in [`gate_written_file`]: a file that will not
+/// reopen, or a page that will not draw, is a reason the file cannot be called
+/// clean. The decoded content never leaves this function.
+pub(crate) async fn codes_written_file(
+    service: RenderService,
+    path: String,
+    pages: Vec<u32>,
+    password: Option<String>,
+    needles: Vec<String>,
+) -> Vec<String> {
+    if pages.is_empty() || needles.is_empty() {
+        return Vec::new();
+    }
+    tauri::async_runtime::spawn_blocking(move || {
+        read_codes(&service, &path, password, &pages, &needles)
+    })
+    .await
+    .unwrap_or_else(|e| {
+        vec![said!(
+            "the codes on the redacted pages could not be checked, so the file cannot be shown \
+             clean: {e}"
+        )]
+    })
+}
+
+/// [`codes_written_file`], on the blocking thread it runs on.
+pub(crate) fn read_codes(
+    service: &RenderService,
+    path: &str,
+    password: Option<String>,
+    pages: &[u32],
+    needles: &[String],
+) -> Vec<String> {
+    let opened = match ocr_gate::wait(|reply| {
+        service.open(std::path::PathBuf::from(path), true, password, reply)
+    }) {
+        Ok(info) => info,
+        Err(refusal) => {
+            return vec![said!(
+                "the written file could not be reopened to read the codes on its redacted pages, \
+                 so it cannot be shown clean: {reason}",
+                reason = refusal.reason
+            )]
+        }
+    };
+    let mut why = Vec::new();
+    for &page in pages {
+        match ocr_gate::wait(|reply| service.codes(opened.id, page, reply)) {
+            Ok(found) => why.extend(crate::codes::reasons(page, &found, needles)),
+            Err(e) => why.push(said!(
+                "the codes on page {n} could not be read, so whether one still carries what was \
+                 removed is not known: {e}",
+                n = page + 1
+            )),
+        }
+    }
+    let _: Result<(), String> = ocr_gate::wait(|reply| service.close(opened.id, reply));
+    why
+}
+
 /// Why a redaction to a new file stopped before it had a verdict.
 ///
 /// **Two kinds, because a caller that can delete has to know which one.** The
@@ -543,6 +614,18 @@ pub async fn redact_copy_asked(
     let notes = ocr_gate::sizing_notes(&asked.gate);
     let taken_here = asked.notes;
     why.extend(gate_written_file(service.clone(), out_path.clone(), asked.gate, key.clone()).await);
+    // Then the codes on those pages, which neither reader above can see: a
+    // payment code beside the marked name holds the name too (`codes.rs`).
+    why.extend(
+        codes_written_file(
+            service.clone(),
+            out_path.clone(),
+            asked.marked.clone(),
+            key.clone(),
+            asked.needles.clone(),
+        )
+        .await,
+    );
     finish_redaction_fill(
         library,
         backend,
@@ -565,4 +648,46 @@ pub async fn redact_copy_asked(
         notes: redact::notes_for(why.is_empty(), notes, taken_here),
         why,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    /// The body of a function in `source`, from its `fn` line to the next
+    /// line that starts a top-level item.
+    fn body<'a>(source: &'a str, signature: &str) -> &'a str {
+        let start = source.find(signature).expect("the function is in the file");
+        let rest = &source[start..];
+        let end = rest[1..].find("\n}\n").map_or(rest.len(), |at| at + 3);
+        &rest[..end]
+    }
+
+    /// The window's in-place redaction repeats [`super::redact_copy_asked`]'s
+    /// chain of readers rather than calling it, and no test drives that
+    /// command. So this holds the two lists of readers equal in the source.
+    ///
+    /// It proves each call is written in the body, not that it runs; a reader
+    /// dropped from one copy is what it catches, which is how a check added to
+    /// one copy goes missing from the other.
+    #[test]
+    fn in_place_redaction_calls_every_reader_the_copy_calls() {
+        const READERS: [&str; 5] = [
+            "scan_written_file(",
+            "redact::short_needle_note(",
+            "redact::marked_pages_note(",
+            "gate_written_file(",
+            "codes_written_file(",
+        ];
+        let copy = body(
+            include_str!("redaction_steps.rs"),
+            "pub async fn redact_copy_asked(",
+        );
+        let in_place = body(
+            include_str!("commands/redact.rs"),
+            "pub async fn redact_document(",
+        );
+        for reader in READERS {
+            assert!(copy.contains(reader), "redact_copy_asked calls {reader}");
+            assert!(in_place.contains(reader), "redact_document calls {reader}");
+        }
+    }
 }

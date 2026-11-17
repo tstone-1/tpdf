@@ -1794,6 +1794,147 @@ fn query_args(queries: &[(SearchKind, &str)]) -> Vec<String> {
         .collect()
 }
 
+/// One page with a payee line and a QR code drawn as filled squares, the way a
+/// payment code on an invoice is drawn: one path of `re` operators. `payload`
+/// is what the code holds.
+///
+/// Returns the file and the code's box as displayed, `[x, y, width, height]`
+/// with y down from the top of the 792 pt page.
+fn coded_pdf(payload: &str) -> (Vec<u8>, [f32; 4]) {
+    use rxing::Writer;
+    let matrix = rxing::MultiFormatWriter
+        .encode(payload, &rxing::BarcodeFormat::QR_CODE, 0, 0)
+        .expect("the test's code encodes");
+    let module = 3.0_f32;
+    let (left, bottom) = (300.0_f32, 400.0_f32);
+    #[allow(clippy::cast_precision_loss)]
+    let side = matrix.getHeight() as f32 * module;
+    let mut body = String::from("BT /F1 12 Tf 72 700 Td (Pay to Jane Doe) Tj ET\n");
+    for y in 0..matrix.getHeight() {
+        for x in 0..matrix.getWidth() {
+            if matrix.get(x, y) {
+                #[allow(clippy::cast_precision_loss)]
+                let (px, py) = (
+                    left + x as f32 * module,
+                    bottom + side - (y as f32 + 1.0) * module,
+                );
+                body.push_str(&format!("{px} {py} {module} {module} re\n"));
+            }
+        }
+    }
+    body.push_str("f\n");
+    let mut doc = Document::with_version("1.7");
+    let pages = doc.new_object_id();
+    let font = doc.add_object(dictionary! {
+        "Type" => "Font", "Subtype" => "Type1", "BaseFont" => "Helvetica",
+        "Encoding" => "WinAnsiEncoding",
+    });
+    let content = doc.add_object(Stream::new(dictionary! {}, body.into_bytes()));
+    let page = doc.add_object(dictionary! {
+        "Type" => "Page", "Parent" => pages,
+        "Resources" => dictionary! { "Font" => dictionary! { "F1" => font } },
+        "MediaBox" => vec![0.into(), 0.into(), 612.into(), 792.into()],
+        "Contents" => content,
+    });
+    doc.objects.insert(
+        pages,
+        dictionary! { "Type" => "Pages", "Kids" => vec![Object::Reference(page)], "Count" => 1 }
+            .into(),
+    );
+    let catalog = doc.add_object(dictionary! { "Type" => "Catalog", "Pages" => pages });
+    doc.trailer.set("Root", catalog);
+    let mut bytes = Vec::new();
+    doc.save_to(&mut bytes).expect("serialises");
+    (bytes, [left, 792.0 - bottom - side, side, side])
+}
+
+/// A QR code that still carries a removed name withholds *verified*, names the
+/// name and never the code's content; one that carries something else, or is
+/// removed with the name, adds nothing.
+pub(super) fn codes_carrying_removed_text(report: &mut Report) {
+    const EPC: &str = "BCD\n002\n1\nSCT\nCOBADEFFXXX\nJane Doe\nDE89370400440532013000\nEUR123.45\n\n\nInvoice 2026-117\n";
+    const OTHER: &str =
+        "BCD\n002\n1\nSCT\nCOBADEFFXXX\nRichard Roe\nDE89370400440532013000\nEUR123.45\n";
+    let dir = scratch("redact-codes");
+    let about_codes = |json: &serde_json::Value| -> Vec<String> {
+        json["reasons"]
+            .as_array()
+            .map(|all| {
+                all.iter()
+                    .filter_map(|r| r.as_str())
+                    .filter(|r| r.contains("QR code"))
+                    .map(str::to_owned)
+                    .collect()
+            })
+            .unwrap_or_default()
+    };
+    let redact = |name: &str, payload: &str, regions: bool| {
+        let (bytes, [x, y, w, h]) = coded_pdf(payload);
+        let input = dir.join(format!("{name}-in.pdf"));
+        let output = dir.join(format!("{name}.pdf"));
+        std::fs::write(&input, bytes).expect("coded input");
+        let mut args = strings(&[
+            "redact",
+            &s(&input),
+            "-o",
+            &s(&output),
+            "--text",
+            "Jane Doe",
+            "--json",
+        ]);
+        if regions {
+            // The code too, by a region a little larger than it.
+            let file = dir.join(format!("{name}.json"));
+            let rect = [x - 4.0, y - 4.0, w + 8.0, h + 8.0];
+            std::fs::write(
+                &file,
+                format!(
+                    r#"[{{"page":1,"rect":[{},{},{},{}]}}]"#,
+                    rect[0], rect[1], rect[2], rect[3]
+                ),
+            )
+            .expect("regions");
+            args.extend(strings(&["--regions", &s(&file)]));
+        }
+        run(&args, &[])
+    };
+
+    let (code, json, stderr) = redact("carries", EPC, false);
+    let said = about_codes(&json);
+    report.check(
+        "a QR code still carrying the removed name withholds verified and names the name",
+        code != 0
+            && json["written"] == true
+            && json["verified"] == false
+            && said.len() == 1
+            && said[0].contains("page 1 has a QR code that still carries \"Jane Doe\""),
+        &format!("exit {code}: {stderr}; {json}"),
+    );
+    report.check(
+        "the reason never quotes what else the code holds",
+        said.iter()
+            .all(|r| !r.contains("COBADEFF") && !r.contains("DE89") && !r.contains("123.45")),
+        &format!("{said:?}"),
+    );
+
+    let (code, json, stderr) = redact("other", OTHER, false);
+    report.check(
+        "control: a QR code holding none of the removed words adds no reason",
+        json["written"] == true && about_codes(&json).is_empty(),
+        &format!("exit {code}: {stderr}; {json}"),
+    );
+
+    let (code, json, stderr) = redact("both", EPC, true);
+    report.check(
+        "a QR code removed with the name adds no reason",
+        json["written"] == true
+            && json["pages"][0]["path_removals"] == 1
+            && about_codes(&json).is_empty(),
+        &format!("exit {code}: {stderr}; {json}"),
+    );
+    let _ = std::fs::remove_dir_all(dir);
+}
+
 fn run(args: &[String], env: &[(&str, &str)]) -> (i32, serde_json::Value, String) {
     let refs: Vec<&str> = args.iter().map(String::as_str).collect();
     let (code, stdout, stderr) = tool(&refs, env);

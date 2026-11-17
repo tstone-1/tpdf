@@ -513,6 +513,11 @@ pub(crate) enum Job {
         compress: crate::compress::Compress,
         reply: Reply<crate::compress::Estimate>,
     },
+    Codes {
+        doc: u32,
+        page: u32,
+        reply: Reply<crate::codes::PageCodes>,
+    },
     Append {
         doc: u32,
         /// Boxed because a plan is the one large thing any job carries, and
@@ -1128,6 +1133,14 @@ impl RenderService {
         }
     }
 
+    /// Reads the QR codes and other 2D codes on one page, invoking `reply` on a
+    /// service thread. See `codes.rs`; the page is drawn where it is parsed.
+    pub fn codes(&self, doc: u32, page: u32, reply: Reply<crate::codes::PageCodes>) {
+        if self.tx.send(Job::Codes { doc, page, reply }).is_err() {
+            // Render thread is gone; nothing left to reply with.
+        }
+    }
+
     /// Reports, per page, whether the text means anything, on a service thread.
     ///
     /// Asked for lazily --- see [`crate::encoding`] and `RawDocument::mapping`.
@@ -1394,6 +1407,7 @@ pub(crate) trait Engine {
         doc: u32,
         compress: crate::compress::Compress,
     ) -> Result<crate::compress::Estimate, String>;
+    fn codes(&self, doc: u32, page: u32) -> Result<crate::codes::PageCodes, String>;
     fn append(&self, doc: u32, plan: &edits::Plan) -> Result<save::Update, String>;
     fn prepare_signature(
         &self,
@@ -1501,6 +1515,7 @@ pub(crate) fn dispatch(job: Job, engine: &dyn Engine) {
             compress,
             reply,
         } => reply(engine.shrink(doc, compress)),
+        Job::Codes { doc, page, reply } => reply(engine.codes(doc, page)),
         Job::Links { doc, reply } => reply(engine.links(doc)),
         Job::Mapping { doc, reply } => reply(engine.mapping(doc)),
         Job::Append { doc, plan, reply } => reply(engine.append(doc, &plan)),
@@ -1578,6 +1593,7 @@ impl Job {
             Mapping,
             Properties,
             Shrink,
+            Codes,
             Append,
             PrepareSignature,
             SignaturePreview,
@@ -1836,6 +1852,10 @@ impl Engine for InProcess {
             open_slot(&self.docs.borrow(), doc)?,
             compress,
         )
+    }
+
+    fn codes(&self, doc: u32, page: u32) -> Result<crate::codes::PageCodes, String> {
+        run_codes(self.bindings, open_slot(&self.docs.borrow(), doc)?, page)
     }
 
     fn append(&self, doc: u32, plan: &edits::Plan) -> Result<save::Update, String> {
@@ -3014,6 +3034,53 @@ pub(crate) fn run_shrink(
         estimate.sample = page_sample(bindings, document, estimated.bytes, focus).unwrap_or(None);
     }
     Ok(estimate)
+}
+
+/// Draws one page and reads the codes on it: [`crate::codes`].
+///
+/// Drawn with annotations, because a code can be a stamp or a widget's
+/// appearance, and at [`crate::codes::scale_for`]. The pixels never leave the
+/// worker; only the decoded strings do.
+pub(crate) fn run_codes(
+    bindings: Bindings,
+    document: &OpenDocument,
+    page: u32,
+) -> Result<crate::codes::PageCodes, String> {
+    let (width_pt, height_pt) = {
+        let at = document.page(page)?;
+        (at.width_pt(), at.height_pt())
+    };
+    let scale = crate::codes::scale_for(width_pt, height_pt);
+    let side = crate::codes::PAGE_SIDE;
+    #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+    let (width, height) = (
+        (width_pt * scale).floor().clamp(1.0, side) as u16,
+        (height_pt * scale).floor().clamp(1.0, side) as u16,
+    );
+    let request = TileRequest {
+        annotations: true,
+        rid: 0,
+        doc: 0,
+        page,
+        scale,
+        turns: 0,
+        invert: false,
+        x: 0,
+        y: 0,
+        width,
+        height,
+        format: TileFormat::Raw,
+        crop: None,
+    };
+    let pixels = match render_tile(bindings, document, &request, &CancelToken::default())? {
+        TileOutcome::Rendered(tile) => tile.bytes,
+        TileOutcome::Abandoned => return Err(said!("the drawing was abandoned")),
+    };
+    crate::codes::read(
+        crate::codes::luma_of_rgba(&pixels),
+        u32::from(width),
+        u32::from(height),
+    )
 }
 
 /// The most pixels a page is drawn at, on its longer side, for a sample.
