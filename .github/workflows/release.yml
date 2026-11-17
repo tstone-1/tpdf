@@ -567,6 +567,14 @@ jobs:
           workers run under Landlock and seccomp. The Linux packages (deb
           and AppImage) do not update themselves: install the new one.
 
+          **Redacted with 26.11.5 or earlier? Redact the originals again.**
+          A redacted file from those versions can still hold a copy of what
+          was removed, even where tpdf said verified. Updating tpdf does not
+          change files it has already written: redo the redaction from the
+          original with 26.11.6 or later and use the new file. If the older
+          file was already sent, assume it can still hold what was redacted.
+          Details: https://github.com/tstone-1/tpdf/blob/main/SECURITY.md#redactions-made-with-26115-or-earlier
+
           **New in 26.11.9.** A screen reader now hears the command
           palette: NVDA and VoiceOver say what a command asks for, the
           preview of the value as it is typed, the reason one is refused,

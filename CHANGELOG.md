@@ -25,6 +25,10 @@ have the binary.)
   documents could keep a copy of what was redacted while the result read *verified*, and
   that the original is to be redacted again with 26.11.6 or later. 26.11.6 fixed the
   defects but told nobody to redo earlier work.
+- **The same notice is on the paths users take**: at the top of the README's Download
+  section, in its Security section, and in the release notes from 26.11.10 on. Both say that
+  updating tpdf does not change files it has already written. A notice only in `SECURITY.md`
+  reached nobody who opened the page to download.
 
 ### Internal
 

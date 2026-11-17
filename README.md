@@ -11,6 +11,13 @@ Free, MIT-licensed, no account, no telemetry; your documents are not uploaded an
 
 ## Download
 
+**If you redacted documents with tpdf 26.11.5 or earlier, redact the originals again with
+26.11.6 or later.** A redacted file from those versions can still hold a copy of what was
+removed, even where tpdf said *verified*. Updating tpdf does not change files it has already
+written: redo the redaction from the original and use the new file. If the older file was
+already sent, assume it can still hold what was redacted.
+[What was affected](SECURITY.md#redactions-made-with-26115-or-earlier).
+
 Take the file for your computer from the
 [latest release](https://github.com/tstone-1/tpdf/releases/latest):
 
@@ -2434,6 +2441,9 @@ tpdf parses hostile input by design, and [`docs/THREAT-MODEL.md`](docs/THREAT-MO
 the worked-out position rather than a paragraph of reassurance: the trust boundaries, the
 sandbox profile in full, and the residual risks in one list, with every claim either
 measured and attributed to the spike that measured it, or marked untested.
+
+A redaction made with 26.11.5 or earlier can still hold what it removed; `SECURITY.md` has
+[which documents, and what to redo](SECURITY.md#redactions-made-with-26115-or-earlier).
 
 To report a vulnerability, see [`SECURITY.md`](SECURITY.md). Please do not open a public
 issue for one.
