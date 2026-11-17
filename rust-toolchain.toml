@@ -23,5 +23,5 @@
 # action that installs its own toolchain may set. A pin nothing verifies is
 # indistinguishable from no pin.
 [toolchain]
-channel = "1.97.1"
+channel = "1.100.0"
 components = ["clippy", "rustfmt"]

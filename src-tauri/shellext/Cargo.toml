@@ -11,7 +11,10 @@ name = "tpdf-shell"
 version = "0.0.0"
 publish = false
 edition = "2021"
-rust-version = "1.86"
+# 1.95 for `AtomicUsize::try_update` in `LockServer`, raised from 1.86 on
+# 2026-11-17 when the toolchain pin moved to 1.100, which deprecates the old
+# name `fetch_update`. Only this crate needs it; the application stays at 1.86.
+rust-version = "1.95"
 license = "MIT"
 
 [lib]

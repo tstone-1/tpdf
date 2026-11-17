@@ -31,6 +31,10 @@ have the binary.)
 - The update checks end with the first launch's result beside the count of checks. A run
   that passes because the old copy was started a second time, after its first launch was
   told it is current, now says `first launch MISSED` instead of only that it passed.
+- The Rust toolchain pin moves from 1.97.1 to 1.100.0. The Explorer handler uses
+  `try_update`, the new name of the deprecated `fetch_update`, which raises its minimum
+  Rust to 1.95; the application stays at 1.86. Four test imports that 1.100 reports as
+  unused, because `use super::*` already brings the same traits in, are gone.
 
 ## [26.11.9] - 2026-11-15
 

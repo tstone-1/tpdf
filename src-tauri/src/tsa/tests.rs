@@ -12,9 +12,6 @@ use std::net::{TcpListener, TcpStream};
 use std::sync::mpsc;
 use std::time::{Duration, Instant};
 
-use der::{Decode as _, Encode as _};
-use sha2_10::Digest as _;
-
 use super::*;
 use crate::integrity::test_tsa::{self, mint, mint_with, Faults, Imprint, TestTsa};
 use crate::integrity::Why;

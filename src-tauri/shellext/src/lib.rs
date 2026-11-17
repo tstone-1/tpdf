@@ -203,8 +203,7 @@ mod windows_parts {
                 LOCKS.fetch_add(1, Ordering::SeqCst);
             } else {
                 // Never below zero, whatever a caller does.
-                let _ =
-                    LOCKS.fetch_update(Ordering::SeqCst, Ordering::SeqCst, |n| n.checked_sub(1));
+                let _ = LOCKS.try_update(Ordering::SeqCst, Ordering::SeqCst, |n| n.checked_sub(1));
             }
             Ok(())
         }

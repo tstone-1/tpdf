@@ -6,7 +6,7 @@
 //! which certificate decides it, so a chain that reached the right standing
 //! through the wrong certificate cannot pass.
 
-use der::{Decode as _, Encode as _};
+use der::Decode as _;
 
 use super::*;
 use crate::integrity::test_tsa::{
