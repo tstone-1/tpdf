@@ -30,6 +30,13 @@ have the binary.)
   updating tpdf does not change files it has already written. A notice only in `SECURITY.md`
   reached nobody who opened the page to download.
 
+### Fixed
+
+- **A Windows update whose download fails now says so.** Until now the *Downloading update*
+  button disappeared and nothing was said, and the menu's install item went with it. The
+  message gives the reason, says the documents are still open, and names *Check for updates*
+  as the way to try again.
+
 ### Internal
 
 - The update checks end with the first launch's result beside the count of checks. A run

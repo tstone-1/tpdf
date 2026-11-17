@@ -594,7 +594,7 @@
   import { DegradedLabel } from "./lib/degraded";
   import { pageCopyNotice } from "./lib/pagecopynotice";
   import {
-    finishUpdate, pluginUpdater, stepEndsProcess, stepFor, Updates, updateLabel, updateNotice,
+    finishUpdate, installFailure, pluginUpdater, stepEndsProcess, stepFor, Updates, updateLabel, updateNotice,
     type FinishStep, type UpdateState,
   } from "./lib/update";
   import { Viewer, type PageClick, type ViewerOptions, type ViewerStatus } from "./lib/viewer";
@@ -6217,11 +6217,12 @@
         cancelLabel: prompt.cancelLabel,
       }),
       act: async () => {
-        // `install` reports its own failures through the state machine, which
-        // is what puts `failed` in the header; it never rejects, so `say`
-        // below is not a second channel for the same news.
+        // `install` never rejects: a failed download comes back as the
+        // `failed` state, which the header shows as nothing at all. So the
+        // reader is told here, once, with the way to try again.
         if (step === "install") {
-          await updates.install();
+          const failure = installFailure(await updates.install());
+          if (failure) say(failure);
           return;
         }
         // The place is issued by `settleDocument` above and **awaited** here,

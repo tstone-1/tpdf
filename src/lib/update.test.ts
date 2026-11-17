@@ -28,6 +28,7 @@ import {
   finishPrompt,
   finishUpdate,
   installEndsProcess,
+  installFailure,
   stepEndsProcess,
   stepFor,
   percentOfDownload,
@@ -775,6 +776,32 @@ describe("finishing an update", () => {
     const { log, effects: e } = effects({ fail: "no such binary" });
     expect(await finishUpdate("restart", ready, true, e)).toBe("failed");
     expect(log).toEqual(["unsaved", "hold", "act", "say:Error: no such binary", "release"]);
+  });
+
+  it("tells the reader when a download fails, which the header does not", async () => {
+    // A download that breaks ends in `failed`, `updateLabel` says nothing for
+    // it, and `install` never rejects --- so until 26.11.10 the button went and
+    // nothing was said (`update_edit_check.py` saw it on an installed 26.11.8).
+    // Mutation: `installFailure` returns null -> red; the shell not calling it
+    // -> red.
+    const broken: UpdateHandle = {
+      version: "26.8.2",
+      downloadAndInstall: async () => { throw new Error("connection reset"); },
+    };
+    const updates = new Updates(api(broken));
+    await updates.check();
+    const after = await updates.install();
+    expect(updateLabel(after)).toBeNull();
+    const said = installFailure(after);
+    expect(said).toContain("connection reset");
+    expect(said).toContain("Check for updates");
+    for (const state of [{ kind: "available", version: "26.8.2" }, { kind: "current" }] as const) {
+      expect(installFailure(state)).toBeNull();
+    }
+    expect(missingFrom(functionIn(app, "async function finishUpdateStep(step: FinishStep): Promise<void> {"), [
+      "const failure = installFailure(await updates.install());",
+      "if (failure) say(failure);",
+    ])).toEqual([]);
   });
 });
 

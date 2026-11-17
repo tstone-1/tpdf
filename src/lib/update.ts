@@ -47,6 +47,8 @@ const TEXT = catalog({
     downloadingVersion: (newer: string) => `Downloading version ${newer}`,
     installed: (newer: string) => `Version ${newer} is installed — restart tpdf to finish`,
     failed: (version: string, reason: string) => `tpdf ${version} — could not check for updates: ${reason}`,
+    installFailed: (reason: string) =>
+      `The update could not be installed: ${reason}. Your documents are still open. To try again, choose Check for updates.`,
   },
   "de-DE": {
     manualUpdates:
@@ -70,12 +72,16 @@ const TEXT = catalog({
     downloadingVersion: (newer: string) => `Version ${newer} wird heruntergeladen`,
     installed: (newer: string) => `Version ${newer} ist installiert – starte tpdf neu, um abzuschließen`,
     failed: (version: string, reason: string) => `tpdf ${version} – Suche nach Updates fehlgeschlagen: ${reason}`,
+    installFailed: (reason: string) =>
+      `Das Update konnte nicht installiert werden: ${reason}. Deine Dokumente sind noch geöffnet. Um es erneut zu versuchen, wähle „Nach Updates suchen“.`,
   },
   "de-DE-formal": {
     manualUpdates: "unter Linux wird tpdf aktualisiert, indem Sie das neue Paket von https://github.com/tstone-1/tpdf/releases installieren",
     restartMessage: (what: string) => `Möchten Sie ${what} verwerfen und neu starten, um das Update abzuschließen?`,
     installMessage: (what: string) => `Die Installation schließt tpdf. Möchten Sie ${what} verwerfen?`,
     installed: (newer: string) => `Version ${newer} ist installiert – starten Sie tpdf neu, um abzuschließen`,
+    installFailed: (reason: string) =>
+      `Das Update konnte nicht installiert werden: ${reason}. Ihre Dokumente sind noch geöffnet. Um es erneut zu versuchen, wählen Sie „Nach Updates suchen“.`,
   },
 });
 
@@ -591,6 +597,21 @@ async function attempt(effects: FinishEffects): Promise<FinishOutcome> {
     return "failed";
   }
   return "acted";
+}
+
+/**
+ * What to tell a reader whose install came back as `state`, or `null` when it
+ * did not fail.
+ *
+ * {@link updateLabel} says nothing for `failed`, which is right for a check
+ * nobody asked for and wrong here: the reader pressed the button, watched
+ * "Downloading update" and then saw the button go with no word, and the menu's
+ * install item went with it. Until 26.11.10 that is what a failed download
+ * looked like on Windows. The message names the command that tries again,
+ * because the failed state offers nothing else to press.
+ */
+export function installFailure(state: UpdateState): string | null {
+  return state.kind === "failed" ? TEXT().installFailed(state.message) : null;
 }
 
 /**
