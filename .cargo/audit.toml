@@ -67,6 +67,14 @@ ignore = [
     "RUSTSEC-2026-0370", # zvariant
     "RUSTSEC-2026-0371", # zbus_names
     "RUSTSEC-2026-0372", # zvariant_derive
+    # chrono: unmaintained (chronotope/chrono#1768); the advisory reports no
+    # defect and names jiff and time. It reaches tpdf through lopdf, where it is
+    # a default feature, and pdfium-render 0.9.5, which requires it with no
+    # feature to turn it off, so dropping lopdf's default would not remove it.
+    # Recorded 2026-11-17, the day the advisory reached the database and turned
+    # Audit red with no commit of ours; remove it when pdfium-render drops the
+    # dependency or moves to an alternative, and lopdf's default goes with it.
+    "RUSTSEC-2026-0543",
 ]
 
 [output]
