@@ -39,6 +39,13 @@ have the binary.)
 
 ### Internal
 
+- **`scripts/update_edit_check.py` checks unsaved work through a real Windows update**, which
+  `update_check.py` never edits: the question naming the document, *Keep open*, edit
+  commands disabled while a local proxy paces the published download, the reader saving after
+  the proxy cuts it, and the update on a second start keeping the saved file.
+  `run_on_windows.py --update-edits` runs it on another machine, and `--check-arg` passes
+  arguments to the installer checks. First run, 26.11.8 to 26.11.9: 32 of 33, the one failure
+  being the silent failed download fixed above.
 - The update checks end with the first launch's result beside the count of checks. A run
   that passes because the old copy was started a second time, after its first launch was
   told it is current, now says `first launch MISSED` instead of only that it passed.

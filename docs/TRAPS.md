@@ -866,6 +866,7 @@ hop through the index.
 - PDFium unpacked through a Python temporary directory could not be loaded by a low-integrity worker
 - A clean Windows holds none of the timestamp authorities' roots, and HTTPS hid it for one of them
 - A section over the document's file held every other program off it, and Python called that `Invalid argument`
+- Keys sent into the installed window landed in two runs of five, and the dialog's buttons cannot be invoked
 
 ## Fixtures
 - The test fixtures are generated, not committed
@@ -27630,3 +27631,34 @@ control itself needs *Allow VoiceOver to be controlled with AppleScript* in Voic
 which takes an administrator's password and leaves
 `/private/var/db/Accessibility/.VoiceOverAppleScriptEnabled`; without that marker the check
 exits 2 and says so.
+
+### Keys sent into the installed window landed in two runs of five, and the dialog's buttons cannot be invoked
+
+`update_edit_check.py` took eleven runs on the Windows build machine on 2026-11-17, and every
+failure until the last was the harness's own input, never tpdf. Four things, each of which
+looked like a fault in the application:
+
+- **`SendInput` keys reach the WebView2 page only sometimes.** Ctrl+Shift+R after
+  `SetForegroundWindow` turned the page in two runs of five; a click in the middle of the
+  window to give the page the keyboard moved the foreground to another window. Nothing failed
+  where the keys went missing: the next step simply met a document with nothing unsaved. What
+  is reliable is UI Automation on the page's own controls, which is how `update_check.py` had
+  always pressed *Update to*.
+- **A button with `aria-expanded` has no Invoke in WebView2.** The tool row's *Pages* answers
+  UI Automation with ExpandCollapse only; `Expand()` runs its click. The items in the popup
+  then have Invoke.
+- **The first control named *Pages* is not the tool row's.** Pressing by name alone opened
+  something else, and *Rotate page clockwise* was "not found". `-Expandable` limits the press to
+  a control with ExpandCollapse.
+- **The unsaved-work question is a task dialog, and its choices are panes without Invoke.**
+  A click on their centre missed twice, DPI-aware or not. A task dialog takes
+  `TDM_CLICK_BUTTON` (`WM_USER + 102`) with the button's number from any process; rfd 0.17.2
+  numbers the two custom buttons 1000 (OK, *Discard and install*) and 1001 (Cancel, *Keep
+  open*). The harness reads both labels first, so a changed numbering fails instead of
+  pressing the other choice.
+
+Two rules the runs added to the harness, and they are the general lesson: **confirm each
+input's effect before the next step** (the tab's *Unsaved changes* marker after the turn, the
+dialog gone after the answer), because a press that lands nowhere is silent; and **make the
+step after a missed press harmless** (the proxy paces and cuts from the first press, so an
+offer pressed with nothing unsaved cannot finish an install).

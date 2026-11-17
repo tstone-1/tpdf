@@ -2615,6 +2615,18 @@ starts at 0 and increments within the month.
     python scripts\update_check.py <path>\tpdf_<previous>_x64-setup.exe testdata\text-wide.pdf
     ```
 
+    **Unsaved work during an update has its own check since 2026-11-17**, on the same kind of
+    machine and installer (26.11.6 or later):
+    `python scripts\update_edit_check.py <path>\tpdf_<previous>_x64-setup.exe`, or from
+    another machine `run_on_windows.py --update-edits <installer>`. It turns a page, answers
+    the question *Keep open* and then *Discard and install*, tries to turn the page twice
+    while a local proxy paces the real download, lets the proxy cut it, saves, and updates on
+    a second start. The saved page must read `/Rotate 90`. `--control edit-after` (through
+    `run_on_windows.py`, `--check-arg=--control --check-arg=edit-after`) makes the two turns
+    after the failure and must fail only the two rotation checks. A copy before 26.11.10 also fails *the
+    copy says the update was not installed*: it said nothing when a download broke.
+    First run, 2026-11-17, 26.11.8 to 26.11.9: 32 of 33, that line the one failure.
+
     It reads `latest.json` for the version on offer, installs the previous release into a
     folder of its own, starts it on a copy of the document under a folder with a space in
     its name, finds the button `Update to <version>` through UI Automation and presses it,

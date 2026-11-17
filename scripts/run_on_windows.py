@@ -5,7 +5,7 @@
         [--suite cli|lib|all] [--rev REV] [--timeout SECONDS]
         [--pictures FOLDER [--picture-arg ARG]...]
         [--window-checks [--only TEXT]...] [--nvda]
-        [--installed INSTALLER] [--update INSTALLER]
+        [--installed INSTALLER] [--update INSTALLER] [--update-edits INSTALLER]
 
 WHY THIS EXISTS. `check_windows.py` type-checks the Windows tree from a Mac and
 runs nothing, so behaviour that exists only on Windows is first exercised by
@@ -94,10 +94,12 @@ AN INSTALLER INSTEAD. `--installed INSTALLER` sends that installer and runs
 `installed_check.py` on it in the desktop session (`BUILD.md` step 8); the
 release draft's installer is the one to give. `--update INSTALLER` sends the
 installer of the release before the published one and runs `update_check.py`
-(step 12). Neither builds anything: what they test is what the installer puts
-on the machine. Both need the generated `text-wide.pdf`, so the fixtures are
-made as for `--window-checks`, and both refuse a machine where tpdf is
-installed. They replace a scheduled-task script written by hand for each
+(step 12). `--update-edits INSTALLER` runs `update_edit_check.py` on the same
+kind of installer: edits made before, during and after an update that is
+refused, held and broken. None of them builds anything: what they test is
+what the installer puts on the machine. The first two need the generated
+`text-wide.pdf`, so the fixtures are made as for `--window-checks`; the third
+writes its own document. All three refuse a machine where tpdf is installed. They replace a scheduled-task script written by hand for each
 release: on 2026-11-15 one written with `printf` turned the `\\b`, `\\t` and `\\r`
 of its Windows paths into control characters, and the run waited out its whole
 limit doing nothing. All of the output comes back; the exit is the check's.
@@ -351,7 +353,7 @@ INSTALLED_LIMIT = 900
 UPDATE_LIMIT = 1500
 
 
-def installer_task(clone: str, job: str, installer: str) -> str:
+def installer_task(clone: str, job: str, installer: str, more: list[str] | None = None) -> str:
     """The script that runs `installed_check.py` or `update_check.py` on an installer sent along.
 
     It is the installer's own name in the run folder, because both scripts
@@ -359,13 +361,16 @@ def installer_task(clone: str, job: str, installer: str) -> str:
     """
     tree = clone.rstrip("\\/") + "-check"
     run = clone.rstrip("\\/") + "-check-run"
-    script, extra = {"installed": ("installed_check.py", " --word Ledger"),
-                     "update": ("update_check.py", "")}[job]
+    script, extra = {"installed": ("installed_check.py", " testdata\\text-wide.pdf --word Ledger"),
+                     "update": ("update_check.py", " testdata\\text-wide.pdf"),
+                     "updateedit": ("update_edit_check.py", "")}[job]
+    # Plain words only: they are written into a PowerShell line as they are.
+    extra += "".join(f" {arg}" for arg in more or [])
     return f"""$run = '{run}'
 Remove-Item "$run\\{job}.txt" -ErrorAction SilentlyContinue
 Set-Location '{tree}'
 $env:PYTHONIOENCODING = "utf-8"
-python -u scripts\\{script} "$run\\{installer}" testdata\\text-wide.pdf{extra} *> "$run\\{job}.txt"
+python -u scripts\\{script} "$run\\{installer}"{extra} *> "$run\\{job}.txt"
 "exit $LASTEXITCODE" | Add-Content "$run\\{job}.txt"
 'done' | Set-Content "$run\\{job}.done"
 """
@@ -387,6 +392,7 @@ JOBS = {
     "nvda": ("tpdf-nvda", "nvda.txt", "nvda.txt", NVDA_LIMIT, True, True),
     "installed": ("tpdf-installed", "installed.txt", "installed.txt", INSTALLED_LIMIT, True, False),
     "update": ("tpdf-update", "update.txt", "update.txt", UPDATE_LIMIT, True, False),
+    "updateedit": ("tpdf-update-edit", "updateedit.txt", "updateedit.txt", UPDATE_LIMIT, False, False),
 }
 
 
@@ -673,13 +679,25 @@ def main() -> int:
     parser.add_argument("--update", type=Path, metavar="INSTALLER",
                         help="send the installer of the release before the published one and run "
                              "update_check.py on it there, instead of the tests")
+    parser.add_argument("--update-edits", type=Path, metavar="INSTALLER",
+                        help="send the installer of a release before the published one and run "
+                             "update_edit_check.py on it there, instead of the tests")
+    parser.add_argument("--check-arg", action="append", default=[],
+                        help="passed to the installer check, once for each; letters, digits, "
+                             "'-', '=' and '.' only (--control edit-after, for example)")
     args = parser.parse_args()
-    modes = (args.pictures, args.window_checks, args.nvda, args.installed, args.update)
-    if sum(map(bool, modes)) > 1:
-        print("[FAIL] --pictures, --window-checks, --nvda, --installed and --update are "
-              "separate runs; ask for one")
+    if any(not re.fullmatch(r"[A-Za-z0-9=.\-]+", arg) for arg in args.check_arg):
+        print("[FAIL] --check-arg takes letters, digits, '-', '=' and '.' only")
         return 2
-    installer = args.installed or args.update
+    if args.check_arg and not (args.installed or args.update or args.update_edits):
+        print("[FAIL] --check-arg is for --installed, --update and --update-edits")
+        return 2
+    modes = (args.pictures, args.window_checks, args.nvda, args.installed, args.update, args.update_edits)
+    if sum(map(bool, modes)) > 1:
+        print("[FAIL] --pictures, --window-checks, --nvda, --installed, --update and --update-edits "
+              "are separate runs; ask for one")
+        return 2
+    installer = args.installed or args.update or args.update_edits
     if installer is not None and not INSTALLER.match(installer.name):
         print(f"[FAIL] {installer.name} is not named tpdf_<version>_x64-setup.exe, and both "
               "checks read the version from the name")
@@ -700,10 +718,11 @@ def main() -> int:
     sent = "already on origin/main" if bundle is None else f"{len(bundle):,} bytes of commits sent"
     job = ("pictures" if args.pictures else "window" if args.window_checks
            else "nvda" if args.nvda else "installed" if args.installed
-           else "update" if args.update else None)
+           else "update" if args.update else "updateedit" if args.update_edits else None)
     doing = {"pictures": "pictures", "window": "window checks", "nvda": "NVDA check",
              "installed": f"install check of {installer.name if installer else ''}",
-             "update": f"update check from {installer.name if installer else ''}"}.get(
+             "update": f"update check from {installer.name if installer else ''}",
+             "updateedit": f"update-with-edits check from {installer.name if installer else ''}"}.get(
         job or "", f"suite {args.suite}")
     print(f"[..] {what} ({sha[:9]}, {sent}) on {args.host}: {doing}")
     try:
@@ -715,7 +734,8 @@ def main() -> int:
             return 2
         if job and shell != "powershell":
             flag = {"pictures": "--pictures", "window": "--window-checks", "nvda": "--nvda",
-                    "installed": "--installed", "update": "--update"}[job]
+                    "installed": "--installed", "update": "--update",
+                    "updateedit": "--update-edits"}[job]
             print(f"[FAIL] {flag} needs a PowerShell login shell, and {args.host}'s is bash: "
                   "the scheduled task that reaches the desktop is started from PowerShell")
             return 2
@@ -728,9 +748,9 @@ def main() -> int:
         elif job == "nvda":
             read = run_desktop(args.host, args.clone, sha, bundle, job,
                                nvda_check_task(args.clone), args.timeout)
-        elif job in ("installed", "update") and installer is not None:
+        elif job in ("installed", "update", "updateedit") and installer is not None:
             read = run_desktop(args.host, args.clone, sha, bundle, job,
-                               installer_task(args.clone, job, installer.name), args.timeout,
+                               installer_task(args.clone, job, installer.name, args.check_arg), args.timeout,
                                send=installer)
         else:
             run = run_under_bash if shell == "bash" else run_under_powershell
@@ -758,8 +778,9 @@ def main() -> int:
         print(f"[{'OK' if code == 0 else 'FAIL'}] {count} pictures in {args.pictures}; "
               f"screenshots.py exited {code} on {args.host}")
         return code
-    if job in ("installed", "update"):
-        what = {"installed": "installed_check.py", "update": "update_check.py"}[job]
+    if job in ("installed", "update", "updateedit"):
+        what = {"installed": "installed_check.py", "update": "update_check.py",
+                "updateedit": "update_edit_check.py"}[job]
         if code == 0:
             print(f"[OK] {what} passed on {args.host}")
         elif code == 1:
