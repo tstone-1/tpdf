@@ -337,16 +337,35 @@ pub(crate) async fn gate_written_file(
         })
 }
 
-/// Reads the QR codes and other 2D codes on every page a redaction touched, in
-/// the written file, and returns a reason for each code that still carries a
-/// removed text ([`crate::codes::reasons`]).
+/// What reading the codes of a written file found.
+#[derive(Debug, Default, PartialEq, Eq)]
+pub(crate) struct CodesRead {
+    /// A reason for each code that still carries a removed text, and for each
+    /// page or code that could not be compared ([`crate::codes::reasons`]).
+    pub why: Vec<String>,
+    /// What a clean verdict says about the codes: how many were read. `None`
+    /// when nothing was compared, because nothing was removed as text.
+    pub note: Option<String>,
+}
+
+/// Reads the QR codes and other 2D codes on every page of the written file,
+/// and returns a reason for each code that still carries a removed text
+/// ([`crate::codes::reasons`]).
 ///
-/// The pages the redaction touched and not the whole file: a payment code sits
-/// on the page whose name was marked, and each page costs a full-page render at
-/// up to 3x and a decode with rxing's `TryHarder`, so a whole 300-page file
-/// would multiply that by hundreds for pages nobody marked. Not yet timed on a
-/// real document. The pages are the written file's, as [`Asked::marked`] gives
-/// them.
+/// **Every page, as the byte scan reads every byte.** A removed name that is
+/// still written on page 5 withholds *verified* whichever page was marked, and
+/// a code on page 5 that holds it is the same finding: an invoice prints its
+/// payment code on the last page and the payee on the first. Until 2026-11-18
+/// only the marked pages were read, on the estimate that a full-page render at
+/// up to 3x and a decode with rxing's `TryHarder` was too much for pages nobody
+/// marked. Timed that day on Windows x64, release, against the build without
+/// this reader: 16 to 48 ms a page, the higher figure on dense text, so about
+/// 15 s for 300 pages.
+///
+/// **A clean result says how many codes were read** ([`CodesRead::note`]),
+/// because rxing reports nothing about a code it found and could not decode.
+/// A reader who sees a code on the page and a count of 0 knows it was not
+/// compared; without the count that code is silent.
 ///
 /// **Nothing here refuses**, as in [`gate_written_file`]: a file that will not
 /// reopen, or a page that will not draw, is a reason the file cannot be called
@@ -354,23 +373,21 @@ pub(crate) async fn gate_written_file(
 pub(crate) async fn codes_written_file(
     service: RenderService,
     path: String,
-    pages: Vec<u32>,
     password: Option<String>,
     needles: Vec<String>,
-) -> Vec<String> {
-    if pages.is_empty() || needles.is_empty() {
-        return Vec::new();
+) -> CodesRead {
+    if needles.is_empty() {
+        return CodesRead::default();
     }
-    tauri::async_runtime::spawn_blocking(move || {
-        read_codes(&service, &path, password, &pages, &needles)
-    })
-    .await
-    .unwrap_or_else(|e| {
-        vec![said!(
-            "the codes on the redacted pages could not be checked, so the file cannot be shown \
-             clean: {e}"
-        )]
-    })
+    tauri::async_runtime::spawn_blocking(move || read_codes(&service, &path, password, &needles))
+        .await
+        .unwrap_or_else(|e| CodesRead {
+            why: vec![said!(
+                "the codes in the written file could not be checked, so the file cannot be shown \
+                 clean: {e}"
+            )],
+            note: None,
+        })
 }
 
 /// [`codes_written_file`], on the blocking thread it runs on.
@@ -378,25 +395,33 @@ pub(crate) fn read_codes(
     service: &RenderService,
     path: &str,
     password: Option<String>,
-    pages: &[u32],
     needles: &[String],
-) -> Vec<String> {
+) -> CodesRead {
     let opened = match ocr_gate::wait(|reply| {
         service.open(std::path::PathBuf::from(path), true, password, reply)
     }) {
         Ok(info) => info,
         Err(refusal) => {
-            return vec![said!(
-                "the written file could not be reopened to read the codes on its redacted pages, \
-                 so it cannot be shown clean: {reason}",
-                reason = refusal.reason
-            )]
+            return CodesRead {
+                why: vec![said!(
+                    "the written file could not be reopened to read the codes on its pages, so \
+                     it cannot be shown clean: {reason}",
+                    reason = refusal.reason
+                )],
+                note: None,
+            }
         }
     };
     let mut why = Vec::new();
-    for &page in pages {
+    let mut codes = 0usize;
+    // A page count past `u32` is not a file this opened; the cast cannot cut.
+    let pages = u32::try_from(opened.page_count).unwrap_or(u32::MAX);
+    for page in 0..pages {
         match ocr_gate::wait(|reply| service.codes(opened.id, page, reply)) {
-            Ok(found) => why.extend(crate::codes::reasons(page, &found, needles)),
+            Ok(found) => {
+                codes += found.codes.len();
+                why.extend(crate::codes::reasons(page, &found, needles));
+            }
             Err(e) => why.push(said!(
                 "the codes on page {n} could not be read, so whether one still carries what was \
                  removed is not known: {e}",
@@ -405,7 +430,10 @@ pub(crate) fn read_codes(
         }
     }
     let _: Result<(), String> = ocr_gate::wait(|reply| service.close(opened.id, reply));
-    why
+    CodesRead {
+        why,
+        note: Some(crate::codes::read_note(codes)),
+    }
 }
 
 /// Why a redaction to a new file stopped before it had a verdict.
@@ -611,21 +639,20 @@ pub async fn redact_copy_asked(
     // Then §6 step 4, which is the only one of the two that can see a picture of
     // the words. It runs on the file that was just written, never on the source
     // --- see `ocr::RedactedPixels`, where that is a type-level rule.
-    let notes = ocr_gate::sizing_notes(&asked.gate);
+    let mut notes = ocr_gate::sizing_notes(&asked.gate);
     let taken_here = asked.notes;
     why.extend(gate_written_file(service.clone(), out_path.clone(), asked.gate, key.clone()).await);
-    // Then the codes on those pages, which neither reader above can see: a
+    // Then the codes in the file, which neither reader above can see: a
     // payment code beside the marked name holds the name too (`codes.rs`).
-    why.extend(
-        codes_written_file(
-            service.clone(),
-            out_path.clone(),
-            asked.marked.clone(),
-            key.clone(),
-            asked.needles.clone(),
-        )
-        .await,
-    );
+    let codes = codes_written_file(
+        service.clone(),
+        out_path.clone(),
+        key.clone(),
+        asked.needles.clone(),
+    )
+    .await;
+    why.extend(codes.why);
+    notes.extend(codes.note);
     finish_redaction_fill(
         library,
         backend,

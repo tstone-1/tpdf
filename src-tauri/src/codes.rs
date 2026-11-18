@@ -1,4 +1,4 @@
-//! QR codes and other 2D codes on a redacted page, and whether they still carry
+//! QR codes and other 2D codes in a redacted file, and whether they still carry
 //! what the redaction removed.
 //!
 //! **A code is a carrier the other two readers cannot see.** The byte scan
@@ -24,7 +24,9 @@
 //!
 //! **What it cannot see, said here rather than discovered.** rxing reports the
 //! codes it decoded and nothing about a code it found and could not decode, so a
-//! damaged, tiny or partly covered code is silent; the formats are the four 2D
+//! damaged, tiny or partly covered code adds no reason; a clean result says how
+//! many codes were read ([`read_note`]), which is what a reader holds against
+//! the codes on the page. The formats are the four 2D
 //! ones that carry text ([`FORMATS`]), and a linear barcode is not read. A code
 //! whose content is not text --- a ticket's compressed Aztec payload --- cannot be
 //! compared, and is a reason of its own rather than a pass.
@@ -285,11 +287,42 @@ pub fn reasons(page: u32, found: &PageCodes, needles: &[String]) -> Vec<String> 
     out
 }
 
+/// What a clean verdict says about the codes: how many were read in the file.
+///
+/// rxing reports the codes it decoded and nothing about one it could not, so
+/// *verified* cannot mean "no code carries the name"; it means "none of the
+/// codes read does". The count is what lets a reader see the difference: a
+/// page showing a code, beside a count of 0, is a code nobody compared.
+///
+/// Two sentences, because "0 codes, none carrying the name" reads as a check
+/// that passed when it is a check that had nothing to look at.
+#[must_use]
+pub fn read_note(codes: usize) -> String {
+    if codes == 0 {
+        said!(
+            "no QR code or other 2D code was read in the file; if a page shows one, it was not \
+             compared with what was removed"
+        )
+    } else {
+        said!(
+            "2D codes read in the file and compared with what was removed: {codes}; if the \
+             pages show more, the others were not compared"
+        )
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::{
-        folded, is_plain, luma_of_rgba, read, reasons, scale_for, terms_of, Code, PageCodes,
+        folded, is_plain, luma_of_rgba, read, read_note, reasons, scale_for, terms_of, Code,
+        PageCodes,
     };
+
+    #[test]
+    fn the_note_beside_a_clean_verdict_carries_the_count() {
+        assert!(read_note(0).starts_with("no QR code or other 2D code was read"));
+        assert!(read_note(3).contains("compared with what was removed: 3;"));
+    }
 
     /// A code drawn black on white, `module` pixels a module, with a quiet zone,
     /// as a grey image. Drawn by rxing's own encoder, which only the tests link.

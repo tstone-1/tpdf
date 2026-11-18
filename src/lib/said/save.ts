@@ -629,7 +629,7 @@ export default {
   "the document's bytes could not be read":
     "Die Bytes des Dokuments konnten nicht gelesen werden",
 
-  // codes.rs and its reader in redaction_steps.rs: 2D codes on redacted pages.
+  // codes.rs and its reader in redaction_steps.rs: 2D codes in a redacted file.
   "QR code": "QR-Code",
   "Aztec code": "Aztec-Code",
   "Data Matrix code": "Data-Matrix-Code",
@@ -647,12 +647,16 @@ export default {
     "Die Codes auf Seite {n} konnten nicht gelesen werden, daher ist unbekannt, ob einer noch Entferntes enthält: {e}",
   "the codes on the page could not be read: {e}":
     "Die Codes auf der Seite konnten nicht gelesen werden: {e}",
-  "the codes on the redacted pages could not be checked, so the file cannot be shown clean: {e}":
-    "Die Codes auf den geschwärzten Seiten konnten nicht geprüft werden, daher lässt sich nicht zeigen, dass die Datei sauber ist: {e}",
+  "the codes in the written file could not be checked, so the file cannot be shown clean: {e}":
+    "Die Codes in der geschriebenen Datei konnten nicht geprüft werden, daher lässt sich nicht zeigen, dass die Datei sauber ist: {e}",
+  "no QR code or other 2D code was read in the file; if a page shows one, it was not compared with what was removed":
+    "In der Datei wurde kein QR-Code oder anderer 2D-Code gelesen; zeigt eine Seite einen, wurde er nicht mit dem Entfernten verglichen",
+  "2D codes read in the file and compared with what was removed: {codes}; if the pages show more, the others were not compared":
+    "In der Datei gelesene und mit dem Entfernten verglichene 2D-Codes: {codes}; zeigen die Seiten mehr, wurden die übrigen nicht verglichen",
   "the page image is {got} values for {width} x {height}":
     "Das Seitenbild hat {got} Werte für {width} x {height}",
-  "the written file could not be reopened to read the codes on its redacted pages, so it cannot be shown clean: {reason}":
-    "Die geschriebene Datei konnte nicht erneut geöffnet werden, um die Codes auf ihren geschwärzten Seiten zu lesen, daher lässt sich nicht zeigen, dass sie sauber ist: {reason}",
+  "the written file could not be reopened to read the codes on its pages, so it cannot be shown clean: {reason}":
+    "Die geschriebene Datei konnte nicht erneut geöffnet werden, um die Codes auf ihren Seiten zu lesen, daher lässt sich nicht zeigen, dass sie sauber ist: {reason}",
 } satisfies Record<string, Wording>;
 
 /** The entries above that say "du", addressing the reader with "Sie" instead. */

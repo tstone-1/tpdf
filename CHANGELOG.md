@@ -32,15 +32,17 @@ have the binary.)
 
 ### Added
 
-- **A redaction reads the QR codes on the pages it changed.** A payment code beside a marked
+- **A redaction reads the QR codes in the file it wrote.** A payment code beside a marked
   name holds the name too (an EPC "GiroCode" carries the payee and the IBAN), and neither
   the byte scan nor text recognition could see it. When a QR, Aztec, Data Matrix or PDF417
-  code on a redacted page still holds something the redaction removed, the result is *not
+  code on any page still holds something the redaction removed, the result is *not
   verified*, and the reason names the page, the kind of code and the removed text. It never
   shows what else the code holds. A code whose content is not text cannot be compared and is
-  a reason as well. A code tpdf cannot decode (damaged, too small, partly covered) is not
-  reported, and linear barcodes are not read. The codes are decoded in the sandboxed
-  worker, and `tpdf redact` reports them the same way.
+  a reason as well. Every page is read, not only the marked ones: a code read costs 16 to
+  48 ms a page, measured on Windows. A code tpdf cannot decode (damaged, too small, partly
+  covered) adds no reason, so a verified result says how many codes were read, for the
+  reader to hold against the codes the pages show. Linear barcodes are not read. The codes
+  are decoded in the sandboxed worker, and `tpdf redact` reports them the same way.
 
 ### Fixed
 

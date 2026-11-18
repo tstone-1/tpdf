@@ -290,7 +290,7 @@ pub async fn redact_document(
     ));
     // Then §6 step 4, against the reader's own file --- which is now the only
     // copy, so this is the sharper of the two places it runs.
-    let notes = ocr_gate::sizing_notes(&asked.gate);
+    let mut notes = ocr_gate::sizing_notes(&asked.gate);
     let taken_here = asked.notes;
     why.extend(
         gate_written_file(
@@ -301,17 +301,16 @@ pub async fn redact_document(
         )
         .await,
     );
-    // The codes on those pages, as `redaction_steps::redact_copy_asked` reads them.
-    why.extend(
-        codes_written_file(
-            service.inner().clone(),
-            source.clone(),
-            asked.marked.clone(),
-            key.clone(),
-            asked.needles.clone(),
-        )
-        .await,
-    );
+    // The codes in the file, as `redaction_steps::redact_copy_asked` reads them.
+    let codes = codes_written_file(
+        service.inner().clone(),
+        source.clone(),
+        key.clone(),
+        asked.needles.clone(),
+    )
+    .await;
+    why.extend(codes.why);
+    notes.extend(codes.note);
     finish_redaction_fill(
         pdfium_library_dir(&app),
         service.backend(),

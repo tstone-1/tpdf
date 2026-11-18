@@ -5765,13 +5765,17 @@ because the arm it ran was the one written for "any other platform".
     a hex string, a kerned `TJ` array or octal escapes. `verify::scan` withholds the verdict
     for a composite font, an indirect filter, embedded files and `/PieceInfo`, and not for
     these. The decoded-stream and extraction checks of §T6.11 are what cover them.
-41. **A 2D code the decoder cannot read is silent**, added 2026-11-17. `codes.rs` decodes the
-    QR, Aztec, Data Matrix and PDF417 codes on each page a redaction changed, and a code that
-    still holds a removed text withholds *verified*. rxing reports only the codes it decoded,
-    so a damaged, very small or partly covered code adds no reason, and that departs from
-    §T6's rule that a carrier which cannot be decoded means *not verified*. Before 26.11.10
-    no code was read at all. Also unread: linear barcodes, pages the redaction did not
-    change, and a removed text of one character.
+41. **A 2D code the decoder cannot read adds no reason**, added 2026-11-17. `codes.rs` decodes
+    the QR, Aztec, Data Matrix and PDF417 codes on every page of the written file, and a code
+    that still holds a removed text withholds *verified*. rxing reports only the codes it
+    decoded, so a damaged, very small or partly covered code adds no reason, and that departs
+    from §T6's rule that a carrier which cannot be decoded means *not verified*. What bounds
+    it since 2026-11-18: a verified result carries the number of codes read
+    (`codes::read_note`), so a reader who sees a code beside a count of 0 knows it was not
+    compared. That relies on the reader looking. Before 26.11.10 no code was read at all.
+    Also unread: linear barcodes, and a removed text of one character. Until 2026-11-18 only
+    the pages a redaction changed were read; the cost that argued for it was measured that
+    day at 16 to 48 ms a page (Windows x64, release) and did not hold.
 
 ## 8. How to re-verify any of this
 

@@ -903,7 +903,13 @@ pub(super) fn drawings_are_removed(report: &mut Report) {
             && json["verified"] == true
             && json["pages"][0]["text_removals"] == 1
             && json["pages"][0]["path_removals"] == 2
-            && json["notes"].as_array().is_some_and(Vec::is_empty)
+            // The one note a clean removal of text carries: how many codes were read.
+            && json["notes"].as_array().is_some_and(|notes| {
+                notes.len() == 1
+                    && notes[0]
+                        .as_str()
+                        .is_some_and(|n| n.starts_with("no QR code or other 2D code was read"))
+            })
             && json["pages"][0]["left"]
                 .as_array()
                 .is_some_and(Vec::is_empty),
@@ -1794,13 +1800,25 @@ fn query_args(queries: &[(SearchKind, &str)]) -> Vec<String> {
         .collect()
 }
 
-/// One page with a payee line and a QR code drawn as filled squares, the way a
-/// payment code on an invoice is drawn: one path of `re` operators. `payload`
-/// is what the code holds.
+/// Where [`coded_pdf`] draws the code, and how much of it.
+#[derive(Clone, Copy, PartialEq)]
+enum Coded {
+    /// On the page with the payee line.
+    Beside,
+    /// On a second page, which holds nothing else.
+    NextPage,
+    /// On the page with the payee line, its right half left out: a code a
+    /// reader sees and no decoder reads.
+    Half,
+}
+
+/// A payee line and a QR code drawn as filled squares, the way a payment code
+/// on an invoice is drawn: one path of `re` operators. `payload` is what the
+/// code holds, and `how` says where it is drawn.
 ///
 /// Returns the file and the code's box as displayed, `[x, y, width, height]`
 /// with y down from the top of the 792 pt page.
-fn coded_pdf(payload: &str) -> (Vec<u8>, [f32; 4]) {
+fn coded_pdf(payload: &str, how: Coded) -> (Vec<u8>, [f32; 4]) {
     use rxing::Writer;
     let matrix = rxing::MultiFormatWriter
         .encode(payload, &rxing::BarcodeFormat::QR_CODE, 0, 0)
@@ -1809,9 +1827,17 @@ fn coded_pdf(payload: &str) -> (Vec<u8>, [f32; 4]) {
     let (left, bottom) = (300.0_f32, 400.0_f32);
     #[allow(clippy::cast_precision_loss)]
     let side = matrix.getHeight() as f32 * module;
-    let mut body = String::from("BT /F1 12 Tf 72 700 Td (Pay to Jane Doe) Tj ET\n");
+    // The second line stays on the page: the read-back of the removed area
+    // needs a word left there that draws no taller than `Jane Doe`, to size
+    // its control from. Letters of x-height only, so every word qualifies.
+    let payee = "BT /F1 12 Tf 72 700 Td (Pay to Jane Doe) Tj ET\n\
+                 BT /F1 12 Tf 72 650 Td (seven sums over zero rows) Tj ET\n";
+    let mut body = String::new();
     for y in 0..matrix.getHeight() {
         for x in 0..matrix.getWidth() {
+            if how == Coded::Half && x > matrix.getWidth() / 2 {
+                continue;
+            }
             if matrix.get(x, y) {
                 #[allow(clippy::cast_precision_loss)]
                 let (px, py) = (
@@ -1829,17 +1855,30 @@ fn coded_pdf(payload: &str) -> (Vec<u8>, [f32; 4]) {
         "Type" => "Font", "Subtype" => "Type1", "BaseFont" => "Helvetica",
         "Encoding" => "WinAnsiEncoding",
     });
-    let content = doc.add_object(Stream::new(dictionary! {}, body.into_bytes()));
-    let page = doc.add_object(dictionary! {
-        "Type" => "Page", "Parent" => pages,
-        "Resources" => dictionary! { "Font" => dictionary! { "F1" => font } },
-        "MediaBox" => vec![0.into(), 0.into(), 612.into(), 792.into()],
-        "Contents" => content,
-    });
+    // One page holding both, or the payee line on the first and the code on
+    // the second.
+    let bodies = if how == Coded::NextPage {
+        vec![payee.to_owned(), body]
+    } else {
+        vec![format!("{payee}{body}")]
+    };
+    let kids: Vec<Object> = bodies
+        .into_iter()
+        .map(|body| {
+            let content = doc.add_object(Stream::new(dictionary! {}, body.into_bytes()));
+            Object::Reference(doc.add_object(dictionary! {
+                "Type" => "Page", "Parent" => pages,
+                "Resources" => dictionary! { "Font" => dictionary! { "F1" => font } },
+                "MediaBox" => vec![0.into(), 0.into(), 612.into(), 792.into()],
+                "Contents" => content,
+            }))
+        })
+        .collect();
+    #[allow(clippy::cast_possible_wrap)]
+    let count = kids.len() as i64;
     doc.objects.insert(
         pages,
-        dictionary! { "Type" => "Pages", "Kids" => vec![Object::Reference(page)], "Count" => 1 }
-            .into(),
+        dictionary! { "Type" => "Pages", "Kids" => kids, "Count" => count }.into(),
     );
     let catalog = doc.add_object(dictionary! { "Type" => "Catalog", "Pages" => pages });
     doc.trailer.set("Root", catalog);
@@ -1868,8 +1907,19 @@ pub(super) fn codes_carrying_removed_text(report: &mut Report) {
             })
             .unwrap_or_default()
     };
-    let redact = |name: &str, payload: &str, regions: bool| {
-        let (bytes, [x, y, w, h]) = coded_pdf(payload);
+    let notes_of = |json: &serde_json::Value| -> Vec<String> {
+        json["notes"]
+            .as_array()
+            .map(|all| {
+                all.iter()
+                    .filter_map(|n| n.as_str())
+                    .map(str::to_owned)
+                    .collect()
+            })
+            .unwrap_or_default()
+    };
+    let redact_as = |name: &str, payload: &str, regions: bool, how: Coded| {
+        let (bytes, [x, y, w, h]) = coded_pdf(payload, how);
         let input = dir.join(format!("{name}-in.pdf"));
         let output = dir.join(format!("{name}.pdf"));
         std::fs::write(&input, bytes).expect("coded input");
@@ -1898,6 +1948,8 @@ pub(super) fn codes_carrying_removed_text(report: &mut Report) {
         }
         run(&args, &[])
     };
+    let redact =
+        |name: &str, payload: &str, regions: bool| redact_as(name, payload, regions, Coded::Beside);
 
     let (code, json, stderr) = redact("carries", EPC, false);
     let said = about_codes(&json);
@@ -1919,17 +1971,54 @@ pub(super) fn codes_carrying_removed_text(report: &mut Report) {
 
     let (code, json, stderr) = redact("other", OTHER, false);
     report.check(
-        "control: a QR code holding none of the removed words adds no reason",
-        json["written"] == true && about_codes(&json).is_empty(),
+        "control: a QR code holding none of the removed words adds no reason, and the clean \
+         result counts it",
+        code == 0
+            && json["verified"] == true
+            && about_codes(&json).is_empty()
+            && notes_of(&json)
+                .iter()
+                .any(|n| n.contains("compared with what was removed: 1;")),
         &format!("exit {code}: {stderr}; {json}"),
     );
 
     let (code, json, stderr) = redact("both", EPC, true);
     report.check(
-        "a QR code removed with the name adds no reason",
-        json["written"] == true
+        "a QR code removed with the name adds no reason, and the clean result counts none",
+        code == 0
+            && json["verified"] == true
             && json["pages"][0]["path_removals"] == 1
-            && about_codes(&json).is_empty(),
+            && about_codes(&json).is_empty()
+            && notes_of(&json)
+                .iter()
+                .any(|n| n.starts_with("no QR code or other 2D code was read")),
+        &format!("exit {code}: {stderr}; {json}"),
+    );
+
+    // The name on page 1 and the code on page 2, which nobody marked.
+    let (code, json, stderr) = redact_as("next-page", EPC, false, Coded::NextPage);
+    let said = about_codes(&json);
+    report.check(
+        "a QR code on a page nobody marked, still carrying the removed name, withholds verified",
+        code != 0
+            && json["written"] == true
+            && json["verified"] == false
+            && said.len() == 1
+            && said[0].contains("page 2 has a QR code that still carries \"Jane Doe\""),
+        &format!("exit {code}: {stderr}; {json}"),
+    );
+
+    // Half a code: a reader sees one, no decoder reads it. The result cannot
+    // name it, so what it says is that it read none.
+    let (code, json, stderr) = redact_as("half", EPC, false, Coded::Half);
+    report.check(
+        "a code that cannot be read adds no reason, and the clean result says no code was read",
+        code == 0
+            && json["verified"] == true
+            && about_codes(&json).is_empty()
+            && notes_of(&json)
+                .iter()
+                .any(|n| n.starts_with("no QR code or other 2D code was read")),
         &format!("exit {code}: {stderr}; {json}"),
     );
     let _ = std::fs::remove_dir_all(dir);

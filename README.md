@@ -115,9 +115,15 @@ text within the limits listed further down.
 
 **Redact for real.** A redaction removes the words from the file; it does not draw a black
 box over them. You mark regions, review them in a list, and tpdf reads the result back and
-tells you whether the removal is verified. That check includes QR codes and other 2D codes
-on the redacted pages: a payment code still holding the name you removed is reported, and
-the result is not verified until the code is redacted too.
+tells you whether the removal is verified.
+
+From 26.11.10 on, that check reads the QR, Aztec, Data Matrix and PDF417 codes on every
+page of the file: a payment code still holding the name you removed is reported, and the
+result is not verified until the code is redacted too. 26.11.9 and earlier read no code.
+The check finds a code it can read, and a verified result says how many it read. A code
+that is damaged, very small or partly covered is not among them, and a barcode made of
+lines is not read: if a page shows more codes than the result counts, check those
+yourself before you send the file.
 
 ![Two regions marked for removal and listed for review](docs/img/redact.png)
 
