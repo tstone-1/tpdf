@@ -3288,12 +3288,22 @@ mod tests {
             .expect("posting a withdrawal waited on a writer that is stuck");
 
         let kept = accepted.iter().filter(|ok| **ok).count();
-        // The writer holds one item and the channel four more; the first is
-        // taken before the posts finish only if the thread is fast, so five
-        // or four may be accepted, and every other is dropped.
+        // The writer holds one item and the channel four more. The first four
+        // posts always fit. A fifth is accepted when the writer's thread takes
+        // the first item off the channel before the posts finish, and it is
+        // whichever post comes next: the second on a fast thread, the last on
+        // a runner that started the thread late. Every other is dropped.
+        //
+        // (Until 2026-11-18 this asserted that post 99 is dropped, which is
+        // the late thread's fifth: it failed once on the macOS runner with
+        // posts 0 to 3 and 99 accepted, on a commit that had not touched this
+        // file.)
         assert!((4..=5).contains(&kept), "{kept} of 100 were accepted");
-        assert!(accepted[0], "the first post is accepted");
-        assert!(!accepted[99], "a post past the room is dropped");
+        assert!(
+            accepted[..4].iter().all(|ok| *ok),
+            "the first four posts fit the channel: {:?}",
+            &accepted[..4]
+        );
 
         release.send(()).expect("let the writer go");
         let order: Vec<u64> = (0..kept)
