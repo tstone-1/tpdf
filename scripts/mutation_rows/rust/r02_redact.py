@@ -1144,8 +1144,8 @@ ROWS += [
         # outside the redacted rectangle" left open.
         "redact: leave a field holding what went when its widget is elsewhere",
         "src/redact.rs",
-        "            text.len() >= MIN_FIELD_VALUE && folded.iter().any(|line| line.contains(&text))",
-        "            text.len() >= MIN_FIELD_VALUE && folded.iter().any(|line| line.is_empty())",
+        "    text.len() >= MIN_FIELD_VALUE && folded.iter().any(|line| line.contains(&text))\n}",
+        "    text.len() >= MIN_FIELD_VALUE && folded.iter().any(|line| line.is_empty())\n}",
         "a_field_holding_what_went_goes_even_with_its_widget_elsewhere",
     ),
     Mutation(
@@ -1154,8 +1154,8 @@ ROWS += [
         # default it was pre-filled from has removed nothing.
         "redact: read a field's value and not the default beside it",
         "src/redact.rs",
-        "        let carries = [b\"V\".as_slice(), b\"DV\".as_slice()].into_iter().any(|key| {",
-        "        let carries = [b\"V\".as_slice()].into_iter().any(|key| {",
+        "    [b\"V\".as_slice(), b\"DV\".as_slice()].into_iter().any(|key| {\n        let Ok(value) = field",
+        "    [b\"V\".as_slice()].into_iter().any(|key| {\n        let Ok(value) = field",
         "a_field_whose_default_holds_what_went_is_taken_too",
     ),
     Mutation(
@@ -1164,9 +1164,21 @@ ROWS += [
         # line.
         "redact: match a field value too short to be distinctive",
         "src/redact.rs",
-        "            text.len() >= MIN_FIELD_VALUE && folded.iter().any(|line| line.contains(&text))",
-        "            folded.iter().any(|line| line.contains(&text))",
+        "    text.len() >= MIN_FIELD_VALUE && folded.iter().any(|line| line.contains(&text))\n}",
+        "    folded.iter().any(|line| line.contains(&text))\n}",
         "a_field_value_too_short_to_be_distinctive_is_not_matched",
+    ),
+    Mutation(
+        # The same key list, for a field written out in place: read its value
+        # and not its default. The three rows above landed here after the rule
+        # was copied into `prune_inline`, each anchor still occurring once, and
+        # left the original unmutated; the rule is one function now, and this
+        # row is the copy of the list that remains.
+        "redact: read an inline field's value and not the default beside it",
+        "src/redact.rs",
+        "        let carries = [b\"V\".as_slice(), b\"DV\".as_slice()].into_iter().any(|key| {",
+        "        let carries = [b\"V\".as_slice()].into_iter().any(|key| {",
+        "a_redaction_takes_an_inline_field_whose_default_holds_what_it_removed",
     ),
     Mutation(
         # Take a matched field and leave its widgets. They are annotations on a

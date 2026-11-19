@@ -4435,12 +4435,19 @@ fn carries_taken(doc: &Document, field: &Dictionary, folded: &[String]) -> bool 
             return false;
         };
         // A name is not a string, and `as_str` on `/Off` answers nothing.
-        let Ok(bytes) = value.as_str() else {
-            return false;
-        };
-        let text = fold(&annots::decode_text_string(bytes));
-        text.len() >= MIN_FIELD_VALUE && folded.iter().any(|line| line.contains(&text))
+        value.as_str().is_ok_and(|bytes| holds_taken(bytes, folded))
     })
+}
+
+/// Whether a field value, as its string's bytes, is text the removal took.
+///
+/// The one statement of the rule, for a field that is an object of its own
+/// ([`carries_taken`]) and for one written out in place ([`prune_inline`]). A
+/// value shorter than [`MIN_FIELD_VALUE`] is not matched: it occurs inside
+/// unrelated words.
+fn holds_taken(bytes: &[u8], folded: &[String]) -> bool {
+    let text = fold(&annots::decode_text_string(bytes));
+    text.len() >= MIN_FIELD_VALUE && folded.iter().any(|line| line.contains(&text))
 }
 
 /// Removes the fields written out in place that [`covered_fields`]'s rules
@@ -4559,10 +4566,10 @@ fn prune_inline(entries: &mut Vec<Object>, folded: &[String], budget: &mut usize
             gone += prune_inline(kids, folded, budget);
         }
         let carries = [b"V".as_slice(), b"DV".as_slice()].into_iter().any(|key| {
-            field.get(key).and_then(Object::as_str).is_ok_and(|bytes| {
-                let text = fold(&annots::decode_text_string(bytes));
-                text.len() >= MIN_FIELD_VALUE && folded.iter().any(|line| line.contains(&text))
-            })
+            field
+                .get(key)
+                .and_then(Object::as_str)
+                .is_ok_and(|bytes| holds_taken(bytes, folded))
         });
         let orphaned = field
             .get(b"Kids")

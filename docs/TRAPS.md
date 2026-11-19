@@ -628,6 +628,7 @@ hop through the index.
 - A test plan built with `plan_of(&[0, 1])` turns the second page, and a turn sweeps the file by itself
 - A test font whose glyphs fill their boxes hides the difference between ink and advance
 - A fix written for the reported spelling leaves the neighbouring spellings open
+- An anchor that begins with spaces matches inside a deeper copy of its line, and the row moves there unseen
 
 ## Harnesses: running checks and reading what they print
 - A mutation harness needs the same control as the thing it is testing
@@ -27747,3 +27748,21 @@ that draws it could not be followed (`compress.rs`).
 The other half is a residual and not only a fixture note: a picture drawn after such junk is
 still invisible to the walk that measures how large pictures are shown, and nothing reports
 that the walk stopped early.
+
+### An anchor that begins with spaces matches inside a deeper copy of its line, and the row moves there unseen
+
+Three rows in `r02_redact.py` were anchored on lines of `covered_fields` that began with
+eight and twelve spaces. A change on 2026-11-19 moved that check into a function of its own,
+four spaces shallower, and wrote a copy of it for fields written out in place, where the same
+line stands sixteen spaces in. Each anchor still occurred exactly once: the twelve-space
+anchor is a substring of the sixteen-space line. So the `anchors` gate passed, the harness's
+count of one passed, and all three rows mutated the copy. `mutate_rust.py --near` said so
+only because the copy was less well tested than the original: one row went red in a test it
+did not name and two survived, while the original check was mutated by no row at all.
+
+Two things follow. A row that is caught by the wrong test, or survives right after a
+refactor near it, has probably moved and not gone weak: read where the anchor lands before
+judging the test. And a rule that exists twice gets its rows aimed at one of the two by
+accident of indentation; here the rule became one function (`redact::holds_taken`), which
+left one place for the anchor to be. Ending an anchor on the line after it (`...\n}`) pins
+it better than its leading spaces do.

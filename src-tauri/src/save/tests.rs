@@ -8717,6 +8717,62 @@ fn a_redaction_takes_an_inline_field_holding_what_it_removed() {
     );
 }
 
+/// The same for a field whose answer is empty and whose default, `/DV`, holds
+/// the line: a reader resets the form and the words are back. And a field
+/// beside it whose value is too short to be distinctive stays, as it does when
+/// the field is an object of its own.
+#[test]
+fn a_redaction_takes_an_inline_field_whose_default_holds_what_it_removed() {
+    let (mut doc, page, _, _) = described_document();
+    let catalog = doc
+        .trailer
+        .get(b"Root")
+        .and_then(Object::as_reference)
+        .expect("the catalog");
+    doc.get_object_mut(catalog)
+        .and_then(Object::as_dict_mut)
+        .expect("the catalog")
+        .set(
+            "AcroForm",
+            lopdf::dictionary! {
+                "Fields" => vec![
+                    Object::Dictionary(lopdf::dictionary! {
+                        "T" => Object::string_literal("account"),
+                        "FT" => "Tx",
+                        "DV" => Object::string_literal("secret"),
+                    }),
+                    // Three letters that occur inside "secret".
+                    Object::Dictionary(lopdf::dictionary! {
+                        "T" => Object::string_literal("code"),
+                        "FT" => "Tx",
+                        "V" => Object::string_literal("cre"),
+                    }),
+                ],
+            },
+        );
+    let mut redaction = redaction_of(page);
+    redaction[0].taking = vec!["the secret line".to_string()];
+
+    let done = apply_redactions(&mut doc, &[page], &redaction).expect("applicable");
+
+    assert_eq!(done.fields, 1, "the default went, the short value stayed");
+    let left = doc
+        .catalog()
+        .expect("catalog")
+        .get(b"AcroForm")
+        .and_then(Object::as_dict)
+        .and_then(|form| form.get(b"Fields"))
+        .and_then(Object::as_array)
+        .expect("the form is still there, for the field that stayed")
+        .clone();
+    assert_eq!(left.len(), 1);
+    let kept = left[0].as_dict().expect("a field");
+    assert_eq!(
+        kept.get(b"T").and_then(Object::as_str).ok(),
+        Some(&b"code"[..])
+    );
+}
+
 #[test]
 fn a_redacted_page_does_not_keep_its_thumbnail() {
     let (mut doc, page, _, _) = described_document();
