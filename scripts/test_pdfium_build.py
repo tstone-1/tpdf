@@ -186,6 +186,17 @@ class ArtifactTests(unittest.TestCase):
             complete_licenses(root, root, "::warning file=steps/08-licenses.sh::Unknown library libyuv")
             self.assertEqual((root / "licenses/libyuv.txt").read_bytes(), source.read_bytes())
 
+    def test_brotli_notice_is_copied_from_its_license_file(self):
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            (root / "licenses").mkdir()
+            (root / "licenses/pdfium.txt").write_text("Synthetic PDFium license fixture")
+            source = root / "third_party/brotli/LICENSE"
+            source.parent.mkdir(parents=True)
+            source.write_text("Synthetic brotli license fixture")
+            complete_licenses(root, root, "::warning file=steps/08-licenses.sh::Unknown library brotli")
+            self.assertEqual((root / "licenses/brotli.txt").read_bytes(), source.read_bytes())
+
 
 if __name__ == "__main__":
     unittest.main()

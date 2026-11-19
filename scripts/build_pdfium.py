@@ -114,9 +114,12 @@ def complete_licenses(source, stage, log):
     # permissive; copy notices from the actual DEPS-pinned sources. libyuv is
     # compiled in from chromium/8103 on; its LICENSE is BSD-3-Clause. Dragonbox
     # and HarfBuzz were supplemented here until the builder pin of 2026-11-06,
-    # whose collector copies both itself.
+    # whose collector copies both itself. Brotli is compiled in from
+    # chromium/8154 on; its LICENSE is MIT (read 2026-11-19 at the DEPS
+    # revision, 803ac716).
     supplements = {
         "libyuv": ("third_party/libyuv/LICENSE", "libyuv.txt"),
+        "brotli": ("third_party/brotli/LICENSE", "brotli.txt"),
     }
     # That builder reports an unknown library as a GitHub annotation on stdout,
     # `::warning file=steps/08-licenses.sh::Unknown library X`; the one before
