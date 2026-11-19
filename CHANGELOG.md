@@ -68,6 +68,15 @@ have the binary.)
 - **The Python client no longer runs a `tpdf-cli` found in the current directory** on
   Windows.
 
+### Changed
+
+- **The PDF engine is PDFium 8154**, the branch Chrome 159 ships, built from its head
+  without patches. It compiles in Brotli, whose MIT notice is in the third-party notices.
+  Upstream's text tests gained one, `ArabicActualTextOrdering`, and all pass; the two known
+  mixed-direction limitations are unchanged.
+- Dependency updates within their ranges: `tauri` 2.12.6, `jiff` 0.2.46, `zip` 9.6.1,
+  `svelte` 5.58.0 and seven other packages.
+
 ### Added
 
 - **A redaction reads the QR codes in the file it wrote.** A payment code beside a marked

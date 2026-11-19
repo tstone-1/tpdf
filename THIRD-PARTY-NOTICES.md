@@ -263,6 +263,7 @@ PDFium is built from pinned source by tpdf's PDFium candidate workflow, using pa
 - **pdfium-binaries (packaging)** — `vendor/pdfium/licenses/LICENSE`
 - **abseil** — `vendor/pdfium/licenses/abseil.txt`
 - **agg23** — `vendor/pdfium/licenses/agg23.txt`
+- **brotli** — `vendor/pdfium/licenses/brotli.txt`
 - **dragonbox-Apache2-LLVM** — `vendor/pdfium/licenses/dragonbox-Apache2-LLVM.txt`
 - **dragonbox-Boost** — `vendor/pdfium/licenses/dragonbox-Boost.txt`
 - **fast_float** — `vendor/pdfium/licenses/fast_float.txt`
@@ -517,6 +518,30 @@ Contact: mcseem@antigrain.com
          mcseemagg@yahoo.com
          http://www.antigrain.com
 ----------------------------------------------------------------------------
+```
+
+### brotli
+
+```
+Copyright (c) 2009, 2010, 2013-2016 by the Brotli Authors.
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in
+all copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.  IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
+THE SOFTWARE.
 ```
 
 ### dragonbox-Apache2-LLVM

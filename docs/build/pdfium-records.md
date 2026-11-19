@@ -2,6 +2,32 @@
 
 Each engine pin since 8044: what moved, the candidate run that built it, the probes that cleared it, and the release verifications that turned on the engine. Newest first; the record of a new pin goes at the top. Moved here verbatim from `BUILD.md` on 2026-10-23, which indexes this file.
 
+**PDFium 8154-tpdf.1 (2026-11-20).** `check_pdfium_age.py`, run in step 1 of the 26.11.10
+release, was red: Chrome stable 159 had moved to `chromium/8154`. No `Audit` run had seen it
+yet, so the candidate was started by hand, and it took three builds. The first
+([run 44622335502](https://github.com/tstone-1/tpdf/actions/runs/44622335502)) built the
+engine on all three platforms and stopped at *Unexpected upstream text test count*: upstream
+added `ArabicActualTextOrdering`, so 64 tests ran on macOS and Linux and 63 on Windows, all
+passing, against pins of 63 and 62. The build pin moved to 8154 with the counts (`7173f95c`).
+The second (run 44625551234) passed the count and the observation and stopped in the licence
+inventory at *Unknown library brotli*: 8154 compiles Brotli in, and the supplier's collector at
+builder `0eb94b2` does not know it. Its `LICENSE` at the DEPS revision (`803ac716`) is MIT, and
+`build_pdfium.py` copies it as it does libyuv's (`37f26e46`). The builder pin did not move.
+[Run 44631377520](https://github.com/tstone-1/tpdf/actions/runs/44631377520) at `3ed43655`
+built all three platforms: 64 upstream text tests on macOS and Linux, 63 on Windows, 9 of 11
+ordering cases with the two mixed-direction limitations unchanged. **The code moved**, a new
+branch, so the probes were run. `THIRD-PARTY-NOTICES.md` gains the Brotli section and nothing
+else. Probes on Windows 11: `remove-probe c`; multilingual search 68/68 and encoding search
+23/23 with `--lib vendor/pdfium/bin`; `progressive-probe` identical on vector-heavy and the
+form; `backend-probe` 42/44 on `vector-heavy.pdf` with two skipped and 41/44 on
+`text-heavy.pdf` with three skipped; `worker-probe` 48/48; `win-sandbox-probe` identical up to
+the job with low integrity and UI limits: the same counts as 8127. On the Mac mini, on the
+published mac archive (digest checked): the engine scan found no V8, only the no-op JavaScript
+stub, and no XFA; `worker-bench --mode authority` denied the file read, the temp write and both
+socket binds under the worker profile and rendered pixel-identically; `window_checks.py` passed
+18 of 18. The prerelease's evidence archive is the run's three artifacts without their
+archives, 51 files.
+
 **PDFium 8127-tpdf.3 (2026-11-15).** The push of `0c944fca` turned `Audit` red: `chromium/8127`
 had gained *[M158] Add BlockingScope in AlertIfPossible()* (`65a1784f`) after the pin.
 `pdfium-bump` opened issue #10 and started

@@ -595,8 +595,9 @@ jobs:
           In the command-line tool, verify --strict fails a document whose
           list of signatures may be incomplete, and redact --force refuses
           to leave an earlier output in place when nothing matched.
-          Explorer's preview pane ends a page it no longer shows.
-          Dependency updates.
+          Explorer's preview pane ends a page it no longer shows. The PDF
+          engine is PDFium 8154, the branch Chrome 159 ships. Dependency
+          updates.
 
           **New in 26.11.9.** A screen reader now hears the command
           palette: NVDA and VoiceOver say what a command asks for, the
