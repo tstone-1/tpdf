@@ -126,6 +126,13 @@ that is damaged, very small or partly covered is not among them, and a barcode m
 lines is not read: if a page shows more codes than the result counts, check those
 yourself before you send the file.
 
+**A picture is not read, so a document that holds one is not verified.** A figure, a logo
+or a scanned page can show the removed words as pixels, and the check does not look inside
+pictures. From 26.11.10 on that holds for every picture, however it is stored; 26.11.9 and
+earlier said it only for JPEG and fax-coded pictures and passed the others. The result
+names each picture as a reason, wherever in the document it is. Look at those pictures
+yourself, or make the image-only copy and check what it shows.
+
 ![Two regions marked for removal and listed for review](docs/img/redact.png)
 
 For a document somebody else redacted, *Find text the pages do not show* and
@@ -890,7 +897,11 @@ measured the Windows render constants come out 1.5–1.8x worse.
   at 300 dpi, painting the marked pixels in the colour chosen for the boxes, and writing a fresh PDF without the
   original text layers, annotations, links or metadata. It preserves encryption and
   keeps the original file. Text in the copy is no longer selectable. The output is
-  checked structurally and rendered back before it is saved. It is the one removal a
+  checked structurally and rendered back before it is saved, and the QR and other 2D codes
+  on its pages are read as they are for the other copies: a code that still holds a removed
+  text makes the result *not verified*, with the reason. A second copy of the removed words
+  on a page you did not mark becomes pixels like the rest of that page, and nothing reads
+  it. It is the one removal a
   document holding pages from another file cannot have, because every page of the copy is
   drawn through the engine that holds the document you opened.
   <!-- built: file.redactRasterCopy -->

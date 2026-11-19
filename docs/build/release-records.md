@@ -2,6 +2,38 @@
 
 What was run for each release, what passed, and what was not run. The record of a new release goes at the top. Moved here verbatim from `BUILD.md` on 2026-10-23, which indexes this file.
 
+**26.11.10 verification, 2026-11-20:** prepared on the Windows development machine. The release
+is the fixes from a read-through of the whole tree on 2026-11-19: a redaction's verdict is
+withheld for a picture however it is stored, for a stream the check could not decode as a viewer
+does and for the image-only copy of a document with a 2D code, the three redaction commands take
+their verdict from one function, the removal reaches form XObjects, the trailer and inline fields,
+and thirty smaller defects in the window, the save path, the command-line tool, the Python client
+and the Explorer handler. `SECURITY.md` has a second notice, for redactions made with 26.11.9 or
+earlier. Step 1 took `tauri` 2.12.6, `jiff` 0.2.46, `zip` 9.6.1 and four other crates in both
+lockfiles and four npm packages, and found the engine pin behind Chrome stable; the pin moved to
+`pdfium-8154-tpdf.1` after three candidate builds (the record is in `pdfium-records.md`), and the
+notices file gained Brotli. The first push failed the `build` and `bundleshare` gates on all three
+runners, because the new window phase's module was not in the harness inventory; the gates had not
+been run whole before that push. All 38 gates then passed on the release tree on the new engine,
+`check_linux.py` passed, and on the second Mac clippy and all tests passed, the first run there
+having failed clippy on a test helper only Windows calls. `window_checks.py` 18 of 18 on the second
+Mac and on the Windows build machine, both on the new engine, the new `disk-change` phase among
+them; its first run on the Mac failed 2 of 9 on the check's own text match, with the prompt on
+screen. The Windows build machine also passed 3,486 unit tests and 668 command-line checks with 4
+skipped. Step 7 in the mutation worktree at `ba457ec0`: `mutate_python.py` 40/40,
+`mutate_frontend.py --near v26.11.9` 206/206, `mutate_rust.py --near v26.11.9` 310 of 313 with 4
+skipped as macOS-only. The three were rows that had moved onto a copy of the field-value rule
+(`docs/TRAPS.md` has the entry); the rule became one function, an inline-default test was added,
+and the three rows and one new row were proved red by hand, five mutations, without a second
+run of the table. `print-probe` passed 15 of 15, 15 of 15 and 14 of 14. `redact-reach-probe` with
+the gate on had only 3 documents on this machine, where earlier records had 197: 203 regions, 193
+taken whole, none still reading as text; it shows the probe runs on the new engine and is not a
+comparable sample. The local installer carried `tpdf_shell.dll`, `tpdf-cli.exe` and
+`pdfium\pdfium.dll`; unpacked outside the tree its `tpdf-cli` answered 26.11.10 and verified
+`incr-signed.pdf`, and with the bundled engine removed it exited 3. **Not run:** the PowerPoint
+paste check of step 8, `mutate_viewer.py`, the Explorer preview pane by hand (the steps are in
+`running.md`), and the two update-check scripts' changed lines, which need an install.
+
 **26.11.9 verification and publication, 2026-11-15:** prepared on the Windows development machine.
 The release is a command palette a screen reader hears: the question a command asks, the preview
 and the refusal of a value as it is typed, and the page by its printed number. It also answers a
