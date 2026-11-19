@@ -39,11 +39,12 @@ ENTRY_POINTS = {
 # `__TPDF_CHECKS__`, so a normal build must drop it too --- which this asserts
 # rather than assumes.
 # `screenshotcheck.ts` is the phase `scripts/screenshots.py` drives, and
-# `screencheck.ts`, `closecheck.ts` and `fitcheck.ts` three phases of `tabs_check.py`.
+# `screencheck.ts`, `closecheck.ts` and `fitcheck.ts` three phases of `tabs_check.py`,
+# and `diskchangecheck.ts` a fourth, reached from `opencheck.ts`.
 SHARED = {"checkreport.ts", "signaturecheck.ts", "signingcheck.ts", "signphase.ts", "saveanswer.ts",
           "screenshotcheck.ts", "recognisecheck.ts", "protectcheck.ts", "picturescheck.ts",
           "compresscheck.ts", "fieldcheck.ts", "screencheck.ts", "closecheck.ts", "addtextcheck.ts",
-          "fitcheck.ts"}
+          "fitcheck.ts", "diskchangecheck.ts"}
 
 FAMILY = ENTRY_POINTS | SHARED
 
